@@ -65,6 +65,8 @@ dependencies = [
 name = "bumbledb-lmdb"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "bumbledb-core",
  "heed",
  "tempfile",
  "thiserror",

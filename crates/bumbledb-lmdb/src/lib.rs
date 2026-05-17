@@ -3,11 +3,15 @@
 //! This crate intentionally keeps all LMDB details behind opaque environment and
 //! transaction types. Higher layers should not depend on raw LMDB handles.
 
+mod storage;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use heed::types::Bytes;
 use heed::{Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
+
+pub use storage::{KeyValues, Row, StorageSchema, Value};
 
 /// Current on-disk storage format version.
 pub const STORAGE_FORMAT_VERSION: u32 = 1;
@@ -50,6 +54,74 @@ pub enum Error {
     /// Storage metadata is malformed.
     #[error("storage metadata is corrupt: {0}")]
     CorruptMetadata(&'static str),
+
+    /// Schema descriptor failure.
+    #[error(transparent)]
+    Schema(#[from] bumbledb_core::schema::SchemaError),
+
+    /// Relation is not present in the storage schema.
+    #[error("unknown relation {relation}")]
+    UnknownRelation { relation: String },
+
+    /// Field is not present in the relation.
+    #[error("unknown field {relation}.{field}")]
+    UnknownField { relation: String, field: String },
+
+    /// Required field is missing from a row or key.
+    #[error("missing field {relation}.{field}")]
+    MissingField { relation: String, field: String },
+
+    /// A value does not match the schema field type.
+    #[error("type mismatch for {relation}.{field}: expected {expected}, got {actual}")]
+    TypeMismatch {
+        relation: String,
+        field: String,
+        expected: String,
+        actual: &'static str,
+    },
+
+    /// A tuple with the same primary identity already exists.
+    #[error("duplicate tuple in relation {relation}")]
+    DuplicateTuple { relation: String },
+
+    /// A tuple could not be found.
+    #[error("tuple not found in relation {relation}")]
+    NotFound { relation: String },
+
+    /// Declared unique constraint was violated.
+    #[error("unique constraint {relation}.{constraint} violated")]
+    UniqueViolation {
+        relation: String,
+        constraint: String,
+    },
+
+    /// Foreign-key reference points at a missing target row.
+    #[error("foreign key {relation}.{field} references missing {target_relation}")]
+    ForeignKeyViolation {
+        relation: String,
+        field: String,
+        target_relation: String,
+    },
+
+    /// Default restrict delete failed because another row references the target.
+    #[error("cannot delete {relation}; referenced by {referenced_by}.{field}")]
+    RestrictViolation {
+        relation: String,
+        referenced_by: String,
+        field: String,
+    },
+
+    /// A dictionary value hash collided with different raw bytes.
+    #[error("dictionary hash collision for {kind}")]
+    HashCollision { kind: &'static str },
+
+    /// A requested dictionary value is not interned.
+    #[error("dictionary value not found for {kind}")]
+    DictionaryValueNotFound { kind: &'static str },
+
+    /// Current stage supports refs only to single-field primary keys.
+    #[error("foreign key target {target_relation} must have a single-field primary key")]
+    UnsupportedCompositeForeignKey { target_relation: String },
 
     /// Internal storage invariant failure.
     #[error("internal storage error: {0}")]
@@ -139,7 +211,12 @@ impl Environment {
         E: From<Error>,
     {
         let txn = self.env.write_txn().map_err(Error::from).map_err(E::from)?;
-        let mut write = WriteTxn { txn, dbs: self.dbs };
+        let mut write = WriteTxn {
+            txn,
+            dbs: self.dbs,
+            active_tx_id: None,
+            history_seq: 0,
+        };
 
         match f(&mut write) {
             Ok(value) => {
@@ -205,6 +282,8 @@ pub struct WriteTxn<'env> {
     txn: RwTxn<'env>,
     #[allow(dead_code)]
     dbs: Databases,
+    active_tx_id: Option<u64>,
+    history_seq: u32,
 }
 
 impl WriteTxn<'_> {
