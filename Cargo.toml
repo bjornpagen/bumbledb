@@ -1,0 +1,16 @@
+[workspace]
+members = [
+    "crates/bumbledb",
+    "crates/bumbledb-lmdb",
+]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.96"
+
+[workspace.dependencies]
+bumbledb-lmdb = { path = "crates/bumbledb-lmdb" }
+heed = { version = "0.22.1", default-features = false }
+tempfile = "3.23.0"
+thiserror = "2.0.17"
