@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/bumbledb",
+    "crates/bumbledb-core",
     "crates/bumbledb-lmdb",
 ]
 resolver = "3"
@@ -10,7 +11,9 @@ edition = "2024"
 rust-version = "1.96"
 
 [workspace.dependencies]
+bumbledb-core = { path = "crates/bumbledb-core" }
 bumbledb-lmdb = { path = "crates/bumbledb-lmdb" }
+blake3 = "1.8.2"
 heed = { version = "0.22.1", default-features = false }
 tempfile = "3.23.0"
 thiserror = "2.0.17"

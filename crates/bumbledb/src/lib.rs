@@ -6,6 +6,8 @@
 use std::marker::PhantomData;
 use std::path::Path;
 
+pub use bumbledb_core::{encoding, schema};
+
 /// Result type for public Bumbledb operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
