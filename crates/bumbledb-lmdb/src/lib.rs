@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 use heed::types::Bytes;
 use heed::{Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
-pub use storage::{KeyValues, Row, StorageSchema, Value};
+pub use storage::{
+    AccessPathDescriptor, EncodedComponent, FieldValues, IndexScan, KeyValues, Row, ScanItem,
+    StorageSchema, Value,
+};
 
 /// Current on-disk storage format version.
 pub const STORAGE_FORMAT_VERSION: u32 = 1;
@@ -55,6 +58,10 @@ pub enum Error {
     #[error("storage metadata is corrupt: {0}")]
     CorruptMetadata(&'static str),
 
+    /// Dictionary string bytes are not valid UTF-8.
+    #[error("dictionary string is not valid UTF-8")]
+    InvalidUtf8DictionaryString,
+
     /// Schema descriptor failure.
     #[error(transparent)]
     Schema(#[from] bumbledb_core::schema::SchemaError),
@@ -66,6 +73,10 @@ pub enum Error {
     /// Field is not present in the relation.
     #[error("unknown field {relation}.{field}")]
     UnknownField { relation: String, field: String },
+
+    /// Index is not present in the relation.
+    #[error("unknown index {relation}.{index}")]
+    UnknownIndex { relation: String, index: String },
 
     /// Required field is missing from a row or key.
     #[error("missing field {relation}.{field}")]

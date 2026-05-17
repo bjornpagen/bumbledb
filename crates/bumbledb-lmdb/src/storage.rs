@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use bumbledb_core::encoding::InternId;
 use bumbledb_core::encoding::{
-    DecimalRaw, TimestampMicros, UuidBytes, encode_bool, encode_decimal, encode_i64,
-    encode_intern_id, encode_timestamp, encode_u64, encode_uuid,
+    DecimalRaw, InternId, TimestampMicros, UuidBytes, decode_bool, decode_decimal, decode_i64,
+    decode_intern_id, decode_timestamp, decode_u64, decode_uuid, encode_bool, encode_decimal,
+    encode_i64, encode_intern_id, encode_timestamp, encode_u64, encode_uuid,
 };
 use bumbledb_core::schema::{
-    ConstraintDescriptor, CurrentIndexLayout, FieldDescriptor, RelationDescriptor,
-    SchemaDescriptor, ValueType,
+    ConstraintDescriptor, CurrentIndexLayout, FieldDescriptor, IndexComponent, IndexKind,
+    RelationDescriptor, SchemaDescriptor, ValueType,
 };
 
 use crate::{Error, ReadTxn, Result, WriteTxn};
@@ -51,6 +51,15 @@ impl StorageSchema {
         &self.layouts
     }
 
+    /// Returns planner-facing access paths for a relation.
+    pub fn access_paths(&self, relation_name: &str) -> Result<Vec<AccessPathDescriptor>> {
+        let (relation_id, _) = self.relation(relation_name)?;
+        Ok(self
+            .layouts_for_relation(relation_id)
+            .map(AccessPathDescriptor::from_layout)
+            .collect())
+    }
+
     fn relation(&self, name: &str) -> Result<(u16, &RelationDescriptor)> {
         self.descriptor
             .relations
@@ -73,6 +82,33 @@ impl StorageSchema {
         self.layouts
             .iter()
             .find(|layout| layout.relation_name == relation && layout.index_name == index)
+    }
+}
+
+/// Planner-facing access path descriptor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AccessPathDescriptor {
+    /// Relation name.
+    pub relation_name: String,
+    /// Index name.
+    pub index_name: String,
+    /// Index kind.
+    pub kind: IndexKind,
+    /// Leading fields usable as an index prefix.
+    pub leading_fields: Vec<String>,
+    /// Full covering components in encoded order.
+    pub components: Vec<IndexComponent>,
+}
+
+impl AccessPathDescriptor {
+    fn from_layout(layout: &CurrentIndexLayout) -> Self {
+        Self {
+            relation_name: layout.relation_name.clone(),
+            index_name: layout.index_name.clone(),
+            kind: layout.kind,
+            leading_fields: layout.leading_fields.clone(),
+            components: layout.components.clone(),
+        }
     }
 }
 
@@ -101,6 +137,39 @@ impl Row {
     /// Returns this row's relation name.
     pub fn relation(&self) -> &str {
         &self.relation
+    }
+
+    /// Returns a field value.
+    pub fn value(&self, field: &str) -> Option<&Value> {
+        self.values.get(field)
+    }
+
+    /// Returns all row values keyed by field name.
+    pub fn values(&self) -> &BTreeMap<String, Value> {
+        &self.values
+    }
+}
+
+/// Field values used to build an index prefix.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FieldValues {
+    relation: String,
+    values: BTreeMap<String, Value>,
+}
+
+impl FieldValues {
+    /// Creates index-prefix field values for `relation`.
+    pub fn new(
+        relation: impl Into<String>,
+        values: impl IntoIterator<Item = (impl Into<String>, Value)>,
+    ) -> Self {
+        Self {
+            relation: relation.into(),
+            values: values
+                .into_iter()
+                .map(|(field, value)| (field.into(), value))
+                .collect(),
+        }
     }
 }
 
@@ -169,6 +238,99 @@ impl Value {
             Value::String(_) => "string",
             Value::Bytes(_) => "bytes",
         }
+    }
+}
+
+/// Encoded component from a covering index key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EncodedComponent {
+    /// Field name.
+    pub field_name: String,
+    /// Encoded bytes for this field in the index key.
+    pub bytes: Vec<u8>,
+}
+
+/// A row yielded from an index scan.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScanItem {
+    /// Decoded logical row.
+    pub row: Row,
+    /// Encoded components in index-key order.
+    pub encoded_components: Vec<EncodedComponent>,
+}
+
+impl ScanItem {
+    /// Returns an encoded component by field name.
+    pub fn encoded_component(&self, field: &str) -> Option<&[u8]> {
+        self.encoded_components
+            .iter()
+            .find(|component| component.field_name == field)
+            .map(|component| component.bytes.as_slice())
+    }
+}
+
+/// Transaction-scoped scan over one current covering index.
+pub struct IndexScan<'borrow, 'env, 'schema> {
+    iter: heed::RoPrefix<'borrow, heed::types::Bytes, heed::types::Bytes>,
+    txn: &'borrow heed::RoTxn<'env, heed::WithoutTls>,
+    dict: crate::RawDatabase,
+    relation: &'schema RelationDescriptor,
+    layout: &'schema CurrentIndexLayout,
+    range: Option<EncodedRange>,
+}
+
+#[derive(Clone, Debug)]
+struct EncodedRange {
+    offset: usize,
+    width: usize,
+    start: Option<Vec<u8>>,
+    end: Option<Vec<u8>>,
+}
+
+impl Iterator for IndexScan<'_, '_, '_> {
+    type Item = Result<ScanItem>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let (key, _) = match self.iter.next()? {
+                Ok(item) => item,
+                Err(error) => return Some(Err(error.into())),
+            };
+
+            if !self.range_matches(key) {
+                continue;
+            }
+
+            return Some(decode_index_scan_item(
+                self.dict,
+                self.txn,
+                self.relation,
+                self.layout,
+                key,
+            ));
+        }
+    }
+}
+
+impl IndexScan<'_, '_, '_> {
+    fn range_matches(&self, key: &[u8]) -> bool {
+        let Some(range) = &self.range else {
+            return true;
+        };
+        let Some(value) = key.get(range.offset..range.offset + range.width) else {
+            return false;
+        };
+        if let Some(start) = &range.start
+            && value < start.as_slice()
+        {
+            return false;
+        }
+        if let Some(end) = &range.end
+            && value >= end.as_slice()
+        {
+            return false;
+        }
+        true
     }
 }
 
@@ -684,7 +846,118 @@ impl WriteTxn<'_> {
     }
 }
 
-impl ReadTxn<'_> {
+impl<'env> ReadTxn<'env> {
+    /// Looks up a row by primary key using the primary covering index.
+    pub fn get_row(&self, schema: &StorageSchema, key: &KeyValues) -> Result<Option<Row>> {
+        let (relation_id, relation) = schema.relation(&key.relation)?;
+        let primary_layout =
+            schema
+                .layout(&key.relation, "primary")
+                .ok_or_else(|| Error::UnknownIndex {
+                    relation: key.relation.clone(),
+                    index: "primary".to_owned(),
+                })?;
+        let primary = self.encode_primary_key_existing(relation, &key.values)?;
+        let mut prefix = current_index_prefix(relation_id, primary_layout.index_id);
+        prefix.extend_from_slice(&primary);
+        let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
+
+        let Some((index_key, _)) = iter.next().transpose()? else {
+            return Ok(None);
+        };
+        let item = decode_index_scan_item(
+            self.dbs.dict,
+            &self.txn,
+            relation,
+            primary_layout,
+            index_key,
+        )?;
+        Ok(Some(item.row))
+    }
+
+    /// Scans a whole relation through the primary covering index.
+    pub fn scan_relation<'borrow, 'schema>(
+        &'borrow self,
+        schema: &'schema StorageSchema,
+        relation_name: &str,
+    ) -> Result<IndexScan<'borrow, 'env, 'schema>> {
+        self.scan_index_with_prefix(schema, relation_name, "primary", &[], None)
+    }
+
+    /// Scans a covering index by a leading-field prefix.
+    pub fn scan_prefix<'borrow, 'schema>(
+        &'borrow self,
+        schema: &'schema StorageSchema,
+        relation_name: &str,
+        index_name: &str,
+        prefix: &FieldValues,
+    ) -> Result<IndexScan<'borrow, 'env, 'schema>> {
+        if prefix.relation != relation_name {
+            return Err(Error::Internal(format!(
+                "prefix relation {} does not match scan relation {relation_name}",
+                prefix.relation
+            )));
+        }
+        let (_, relation) = schema.relation(relation_name)?;
+        let layout =
+            schema
+                .layout(relation_name, index_name)
+                .ok_or_else(|| Error::UnknownIndex {
+                    relation: relation_name.to_owned(),
+                    index: index_name.to_owned(),
+                })?;
+
+        let encoded_prefix = self.encode_index_prefix(relation, layout, &prefix.values)?;
+        self.scan_index_with_prefix(schema, relation_name, index_name, &encoded_prefix, None)
+    }
+
+    /// Scans a range index. Bounds are inclusive start and exclusive end.
+    pub fn scan_range<'borrow, 'schema>(
+        &'borrow self,
+        schema: &'schema StorageSchema,
+        relation_name: &str,
+        index_name: &str,
+        start: Option<Value>,
+        end: Option<Value>,
+    ) -> Result<IndexScan<'borrow, 'env, 'schema>> {
+        let (_, relation) = schema.relation(relation_name)?;
+        let layout =
+            schema
+                .layout(relation_name, index_name)
+                .ok_or_else(|| Error::UnknownIndex {
+                    relation: relation_name.to_owned(),
+                    index: index_name.to_owned(),
+                })?;
+        let Some(first_field) = layout.leading_fields.first() else {
+            return Err(Error::Internal(format!(
+                "range index {relation_name}.{index_name} has no leading field"
+            )));
+        };
+        let field = relation
+            .field(first_field)
+            .ok_or_else(|| Error::UnknownField {
+                relation: relation.name.clone(),
+                field: first_field.clone(),
+            })?;
+
+        let start = start
+            .as_ref()
+            .map(|value| self.encode_read_value(relation, field, value))
+            .transpose()?;
+        let end = end
+            .as_ref()
+            .map(|value| self.encode_read_value(relation, field, value))
+            .transpose()?;
+        let range = EncodedRange {
+            offset: current_index_prefix(layout.relation_id, layout.index_id).len(),
+            width: field.value_type.encoded_width(),
+            start,
+            end,
+        };
+
+        self.scan_index_with_prefix(schema, relation_name, index_name, &[], Some(range))
+    }
+
     /// Returns the last committed storage transaction ID.
     pub fn last_committed_tx_id(&self) -> Result<u64> {
         Ok(read_u64(&self.dbs.meta, &self.txn, NEXT_TX_ID_KEY)?.unwrap_or(1) - 1)
@@ -760,6 +1033,96 @@ impl ReadTxn<'_> {
     /// Looks up an interned string ID.
     pub fn dictionary_string_id(&self, value: &str) -> Result<Option<u64>> {
         lookup_intern_value(&self.dbs.dict, &self.txn, DICT_STRING, value.as_bytes())
+    }
+
+    fn scan_index_with_prefix<'borrow, 'schema>(
+        &'borrow self,
+        schema: &'schema StorageSchema,
+        relation_name: &str,
+        index_name: &str,
+        encoded_prefix: &[u8],
+        range: Option<EncodedRange>,
+    ) -> Result<IndexScan<'borrow, 'env, 'schema>> {
+        let (relation_id, relation) = schema.relation(relation_name)?;
+        let layout =
+            schema
+                .layout(relation_name, index_name)
+                .ok_or_else(|| Error::UnknownIndex {
+                    relation: relation_name.to_owned(),
+                    index: index_name.to_owned(),
+                })?;
+        let mut prefix = current_index_prefix(relation_id, layout.index_id);
+        prefix.extend_from_slice(encoded_prefix);
+        let iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
+        Ok(IndexScan {
+            iter,
+            txn: &self.txn,
+            dict: self.dbs.dict,
+            relation,
+            layout,
+            range,
+        })
+    }
+
+    fn encode_index_prefix(
+        &self,
+        relation: &RelationDescriptor,
+        layout: &CurrentIndexLayout,
+        values: &BTreeMap<String, Value>,
+    ) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        let mut saw_missing = false;
+
+        for field_name in &layout.leading_fields {
+            match values.get(field_name) {
+                Some(value) if !saw_missing => {
+                    let field = relation
+                        .field(field_name)
+                        .ok_or_else(|| Error::UnknownField {
+                            relation: relation.name.clone(),
+                            field: field_name.clone(),
+                        })?;
+                    out.extend_from_slice(&self.encode_read_value(relation, field, value)?);
+                }
+                Some(_) => {
+                    return Err(Error::Internal(format!(
+                        "index prefix for {}.{} is not contiguous",
+                        relation.name, layout.index_name
+                    )));
+                }
+                None => saw_missing = true,
+            }
+        }
+
+        for field_name in values.keys() {
+            if !layout
+                .leading_fields
+                .iter()
+                .any(|leading| leading == field_name)
+            {
+                return Err(Error::UnknownField {
+                    relation: relation.name.clone(),
+                    field: field_name.clone(),
+                });
+            }
+        }
+
+        Ok(out)
+    }
+
+    fn encode_read_value(
+        &self,
+        relation: &RelationDescriptor,
+        field: &FieldDescriptor,
+        value: &Value,
+    ) -> Result<Vec<u8>> {
+        encode_value_with(relation, field, value, |kind, raw| {
+            lookup_intern_value(&self.dbs.dict, &self.txn, kind, raw)?.ok_or(
+                Error::DictionaryValueNotFound {
+                    kind: dict_kind_name(kind),
+                },
+            )
+        })
     }
 
     fn encode_row_existing(&self, relation: &RelationDescriptor, row: &Row) -> Result<EncodedRow> {
@@ -848,6 +1211,137 @@ fn encode_value_with(
     };
 
     Ok(bytes)
+}
+
+fn decode_index_scan_item(
+    dict: crate::RawDatabase,
+    txn: &heed::RoTxn,
+    relation: &RelationDescriptor,
+    layout: &CurrentIndexLayout,
+    key: &[u8],
+) -> Result<ScanItem> {
+    let (encoded, encoded_components) = decode_index_key(relation, layout, key)?;
+    let row = decode_encoded_row(dict, txn, relation, &encoded)?;
+    Ok(ScanItem {
+        row,
+        encoded_components,
+    })
+}
+
+fn decode_index_key(
+    relation: &RelationDescriptor,
+    layout: &CurrentIndexLayout,
+    key: &[u8],
+) -> Result<(EncodedRow, Vec<EncodedComponent>)> {
+    let prefix_len = current_index_prefix(layout.relation_id, layout.index_id).len();
+    if key.len() != layout.encoded_len {
+        return Err(Error::CorruptMetadata(
+            "index key width does not match layout",
+        ));
+    }
+    if key.get(0..prefix_len)
+        != Some(current_index_prefix(layout.relation_id, layout.index_id).as_slice())
+    {
+        return Err(Error::CorruptMetadata(
+            "index key prefix does not match layout",
+        ));
+    }
+
+    let mut fields = BTreeMap::new();
+    let mut components = Vec::with_capacity(layout.components.len());
+    let mut offset = prefix_len;
+
+    for component in &layout.components {
+        let end = offset + component.encoded_width;
+        let bytes = key
+            .get(offset..end)
+            .ok_or(Error::CorruptMetadata("index key component is truncated"))?
+            .to_vec();
+        fields.insert(component.field_name.clone(), bytes.clone());
+        components.push(EncodedComponent {
+            field_name: component.field_name.clone(),
+            bytes,
+        });
+        offset = end;
+    }
+
+    if fields.len() != relation.fields.len() {
+        return Err(Error::CorruptMetadata(
+            "index key does not cover every relation field",
+        ));
+    }
+
+    Ok((EncodedRow { fields }, components))
+}
+
+fn decode_encoded_row(
+    dict: crate::RawDatabase,
+    txn: &heed::RoTxn,
+    relation: &RelationDescriptor,
+    encoded: &EncodedRow,
+) -> Result<Row> {
+    let mut values = BTreeMap::new();
+    for field in &relation.fields {
+        let bytes = encoded.field(relation, &field.name)?;
+        values.insert(
+            field.name.clone(),
+            decode_value(dict, txn, &field.value_type, bytes)?,
+        );
+    }
+    Ok(Row {
+        relation: relation.name.clone(),
+        values,
+    })
+}
+
+fn decode_value(
+    dict: crate::RawDatabase,
+    txn: &heed::RoTxn,
+    value_type: &ValueType,
+    bytes: &[u8],
+) -> Result<Value> {
+    let value = match value_type {
+        ValueType::Bool => Value::Bool(
+            decode_bool(bytes).map_err(|_| Error::CorruptMetadata("bool width invalid"))?,
+        ),
+        ValueType::U64 => {
+            Value::U64(decode_u64(bytes).map_err(|_| Error::CorruptMetadata("u64 width invalid"))?)
+        }
+        ValueType::I64 => {
+            Value::I64(decode_i64(bytes).map_err(|_| Error::CorruptMetadata("i64 width invalid"))?)
+        }
+        ValueType::Id { .. } => {
+            Value::Id(decode_u64(bytes).map_err(|_| Error::CorruptMetadata("id width invalid"))?)
+        }
+        ValueType::Ref { .. } => {
+            Value::Ref(decode_u64(bytes).map_err(|_| Error::CorruptMetadata("ref width invalid"))?)
+        }
+        ValueType::TimestampMicros => Value::Timestamp(
+            decode_timestamp(bytes)
+                .map_err(|_| Error::CorruptMetadata("timestamp width invalid"))?,
+        ),
+        ValueType::Decimal { .. } => Value::Decimal(
+            decode_decimal(bytes).map_err(|_| Error::CorruptMetadata("decimal width invalid"))?,
+        ),
+        ValueType::Uuid => Value::Uuid(
+            decode_uuid(bytes).map_err(|_| Error::CorruptMetadata("uuid width invalid"))?,
+        ),
+        ValueType::Symbol { .. } => Value::Symbol(
+            decode_u64(bytes).map_err(|_| Error::CorruptMetadata("symbol width invalid"))?,
+        ),
+        ValueType::String => {
+            let InternId(id) = decode_intern_id(bytes)
+                .map_err(|_| Error::CorruptMetadata("string intern ID width invalid"))?;
+            let raw = lookup_intern_raw_by_id(dict, txn, DICT_STRING, id)?;
+            Value::String(String::from_utf8(raw).map_err(|_| Error::InvalidUtf8DictionaryString)?)
+        }
+        ValueType::Bytes => {
+            let InternId(id) = decode_intern_id(bytes)
+                .map_err(|_| Error::CorruptMetadata("bytes intern ID width invalid"))?;
+            Value::Bytes(lookup_intern_raw_by_id(dict, txn, DICT_BYTES, id)?)
+        }
+    };
+    Ok(value)
 }
 
 fn value_type_name(value_type: &ValueType) -> String {
@@ -1026,6 +1520,19 @@ fn lookup_intern_value(
         });
     }
     Ok(Some(id))
+}
+
+fn lookup_intern_raw_by_id(
+    db: crate::RawDatabase,
+    txn: &heed::RoTxn,
+    kind: u8,
+    id: u64,
+) -> Result<Vec<u8>> {
+    db.get(txn, dict_rev_key(kind, id).as_slice())?
+        .map(ToOwned::to_owned)
+        .ok_or(Error::DictionaryValueNotFound {
+            kind: dict_kind_name(kind),
+        })
 }
 
 fn dict_kind_name(kind: u8) -> &'static str {
@@ -1276,6 +1783,127 @@ mod tests {
         .unwrap();
     }
 
+    #[test]
+    fn read_access_paths_decode_rows_and_preserve_snapshots() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Environment::open(dir.path()).unwrap();
+        let schema = storage_schema(&env);
+
+        env.write(|txn| {
+            txn.insert(&schema, holder_row(1, "Alice"))?;
+            txn.insert(&schema, holder_row(2, "Bob"))?;
+            txn.insert(&schema, account_row(1, 1, 840))?;
+            txn.insert(&schema, account_row(2, 1, 978))?;
+            Ok::<(), Error>(())
+        })
+        .unwrap();
+
+        env.read(|txn| {
+            assert_eq!(
+                txn.get_row(&schema, &holder_key(1))?,
+                Some(holder_row(1, "Alice"))
+            );
+            assert_eq!(
+                txn.get_row(&schema, &account_key(1))?,
+                Some(account_row(1, 1, 840))
+            );
+
+            let access_paths = schema.access_paths("Account")?;
+            assert!(access_paths.iter().any(|path| path.index_name == "primary"));
+            assert!(
+                access_paths
+                    .iter()
+                    .any(|path| path.index_name == "by_holder")
+            );
+            assert!(
+                access_paths
+                    .iter()
+                    .any(|path| path.index_name == "by_opened")
+            );
+            assert!(
+                access_paths
+                    .iter()
+                    .any(|path| path.index_name == "unique_holder_currency")
+            );
+
+            let full = collect_rows(txn.scan_relation(&schema, "Account")?)?;
+            assert_same_rows(&full, &[account_row(1, 1, 840), account_row(2, 1, 978)]);
+
+            let by_holder_items = collect_items(txn.scan_prefix(
+                &schema,
+                "Account",
+                "by_holder",
+                &FieldValues::new("Account", [("holder", Value::Ref(1))]),
+            )?)?;
+            assert_same_rows(
+                &by_holder_items
+                    .iter()
+                    .map(|item| item.row.clone())
+                    .collect::<Vec<_>>(),
+                &[account_row(1, 1, 840), account_row(2, 1, 978)],
+            );
+            assert!(
+                by_holder_items
+                    .iter()
+                    .all(|item| item.encoded_component("holder").is_some())
+            );
+
+            let unique_holder = collect_rows(txn.scan_prefix(
+                &schema,
+                "Holder",
+                "unique_name",
+                &FieldValues::new("Holder", [("name", Value::String("Alice".to_owned()))]),
+            )?)?;
+            assert_eq!(unique_holder, [holder_row(1, "Alice")]);
+
+            let ranged = collect_rows(txn.scan_range(
+                &schema,
+                "Account",
+                "by_opened",
+                Some(Value::Timestamp(TimestampMicros(15))),
+                Some(Value::Timestamp(TimestampMicros(31))),
+            )?)?;
+            assert_same_rows(&ranged, &[account_row(2, 1, 978)]);
+
+            for path in access_paths {
+                let rows = collect_rows(txn.scan_prefix(
+                    &schema,
+                    "Account",
+                    &path.index_name,
+                    &FieldValues::new("Account", std::iter::empty::<(&str, Value)>()),
+                )?)?;
+                assert_same_rows(&rows, &[account_row(1, 1, 840), account_row(2, 1, 978)]);
+            }
+
+            env.write(|write| {
+                write.insert(&schema, account_row(3, 2, 840))?;
+                Ok::<(), Error>(())
+            })?;
+
+            let still_two = collect_rows(txn.scan_relation(&schema, "Account")?)?;
+            assert_same_rows(
+                &still_two,
+                &[account_row(1, 1, 840), account_row(2, 1, 978)],
+            );
+            Ok::<(), Error>(())
+        })
+        .unwrap();
+
+        env.read(|txn| {
+            let now_three = collect_rows(txn.scan_relation(&schema, "Account")?)?;
+            assert_same_rows(
+                &now_three,
+                &[
+                    account_row(1, 1, 840),
+                    account_row(2, 1, 978),
+                    account_row(3, 2, 840),
+                ],
+            );
+            Ok::<(), Error>(())
+        })
+        .unwrap();
+    }
+
     fn storage_schema(env: &Environment) -> StorageSchema {
         StorageSchema::new(ledger_schema(), env.max_key_size()).unwrap()
     }
@@ -1325,6 +1953,7 @@ mod tests {
                                 name: "Currency".to_owned(),
                             },
                         ),
+                        FieldDescriptor::new("opened", ValueType::TimestampMicros).range_indexed(),
                     ],
                     PrimaryKeyDescriptor::new(["id"]),
                 )
@@ -1374,6 +2003,10 @@ mod tests {
                 ("id", Value::Id(id)),
                 ("holder", Value::Ref(holder)),
                 ("currency", Value::Symbol(currency)),
+                (
+                    "opened",
+                    Value::Timestamp(TimestampMicros((id as i64) * 10)),
+                ),
             ],
         )
     }
@@ -1394,5 +2027,45 @@ mod tests {
 
     fn account_key(id: u64) -> KeyValues {
         KeyValues::new("Account", [("id", Value::Id(id))])
+    }
+
+    fn collect_items(scan: IndexScan<'_, '_, '_>) -> Result<Vec<ScanItem>> {
+        scan.collect()
+    }
+
+    fn collect_rows(scan: IndexScan<'_, '_, '_>) -> Result<Vec<Row>> {
+        scan.map(|item| item.map(|item| item.row)).collect()
+    }
+
+    fn assert_same_rows(actual: &[Row], expected: &[Row]) {
+        let mut actual = row_keys(actual);
+        let mut expected = row_keys(expected);
+        actual.sort();
+        expected.sort();
+        assert_eq!(actual, expected);
+    }
+
+    fn row_keys(rows: &[Row]) -> Vec<(u64, u64, u64, i64)> {
+        rows.iter()
+            .map(|row| {
+                let id = match row.value("id").unwrap() {
+                    Value::Id(value) => *value,
+                    other => panic!("unexpected id value: {other:?}"),
+                };
+                let holder = match row.value("holder").unwrap() {
+                    Value::Ref(value) => *value,
+                    other => panic!("unexpected holder value: {other:?}"),
+                };
+                let currency = match row.value("currency").unwrap() {
+                    Value::Symbol(value) => *value,
+                    other => panic!("unexpected currency value: {other:?}"),
+                };
+                let opened = match row.value("opened").unwrap() {
+                    Value::Timestamp(value) => value.0,
+                    other => panic!("unexpected opened value: {other:?}"),
+                };
+                (id, holder, currency, opened)
+            })
+            .collect()
     }
 }
