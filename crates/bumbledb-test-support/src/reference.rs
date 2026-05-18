@@ -8,7 +8,10 @@ use bumbledb_core::datalog::{
 };
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::schema::ValueType;
-use bumbledb_lmdb::{Error, InputBindings, Result, Row, Value};
+use bumbledb_lmdb::{
+    AggregateError, Error, ExecuteError, InputBindings, InternalError, QueryError, Result, Row,
+    Value,
+};
 
 /// In-memory reference database.
 #[derive(Clone, Debug, Default)]
@@ -201,17 +204,19 @@ fn input_value<'a>(
     input: usize,
 ) -> Result<&'a Value> {
     let input = &query.inputs[input];
-    let value = inputs
-        .value(&input.name)
-        .ok_or_else(|| Error::MissingInput {
+    let value = inputs.value(&input.name).ok_or_else(|| {
+        Error::Query(QueryError::Execute(ExecuteError::MissingInput {
             input: input.name.clone(),
-        })?;
+        }))
+    })?;
     if !value_matches_type(value, &input.value_type) {
-        return Err(Error::QueryInputTypeMismatch {
-            input: input.name.clone(),
-            expected: value_type_name(&input.value_type),
-            actual: value_kind_name(value),
-        });
+        return Err(Error::Query(QueryError::Execute(
+            ExecuteError::InputTypeMismatch {
+                input: input.name.clone(),
+                expected: value_type_name(&input.value_type),
+                actual: value_kind_name(value),
+            },
+        )));
     }
     Ok(value)
 }
@@ -301,9 +306,11 @@ fn project_aggregates(query: &TypedQuery, bindings: &[Binding]) -> Result<Vec<Ve
 }
 
 fn bound_variable(binding: &Binding, variable: usize) -> Result<&Value> {
-    binding
-        .get(variable)
-        .ok_or_else(|| Error::Internal(format!("variable {variable} is unbound")))
+    binding.get(variable).ok_or_else(|| {
+        Error::Internal(InternalError::Invariant {
+            message: format!("variable {variable} is unbound"),
+        })
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -330,25 +337,35 @@ impl AggregateState {
     fn apply(&mut self, value: &Value) -> Result<()> {
         match self {
             Self::Count(count) => {
-                *count = count
-                    .checked_add(1)
-                    .ok_or(Error::IntegerOverflow { operation: "count" })?
+                *count = count.checked_add(1).ok_or_else(|| {
+                    Error::Query(QueryError::Aggregate(AggregateError::IntegerOverflow {
+                        operation: "count",
+                    }))
+                })?
             }
             Self::SumI64(sum) => {
                 let Value::I64(value) = value else {
-                    return Err(Error::Internal("sum(i64) type mismatch".to_owned()));
+                    return Err(Error::Internal(InternalError::Invariant {
+                        message: "sum(i64) type mismatch".to_owned(),
+                    }));
                 };
-                *sum = sum
-                    .checked_add(*value)
-                    .ok_or(Error::IntegerOverflow { operation: "sum" })?;
+                *sum = sum.checked_add(*value).ok_or_else(|| {
+                    Error::Query(QueryError::Aggregate(AggregateError::IntegerOverflow {
+                        operation: "sum",
+                    }))
+                })?;
             }
             Self::SumDecimal(sum) => {
                 let Value::Decimal(DecimalRaw(value)) = value else {
-                    return Err(Error::Internal("sum(decimal) type mismatch".to_owned()));
+                    return Err(Error::Internal(InternalError::Invariant {
+                        message: "sum(decimal) type mismatch".to_owned(),
+                    }));
                 };
-                *sum = sum
-                    .checked_add(*value)
-                    .ok_or(Error::DecimalOverflow { operation: "sum" })?;
+                *sum = sum.checked_add(*value).ok_or_else(|| {
+                    Error::Query(QueryError::Aggregate(AggregateError::DecimalOverflow {
+                        operation: "sum",
+                    }))
+                })?;
             }
             Self::Min(current) => match current {
                 Some(existing) if &*existing <= value => {}
@@ -386,7 +403,11 @@ fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
             Value::Timestamp(TimestampMicros(*value as i64))
         }
         (Literal::Integer(value), ValueType::Decimal { .. }) => Value::Decimal(DecimalRaw(*value)),
-        _ => return Err(Error::Internal("typed literal mismatch".to_owned())),
+        _ => {
+            return Err(Error::Internal(InternalError::Invariant {
+                message: "typed literal mismatch".to_owned(),
+            }));
+        }
     })
 }
 

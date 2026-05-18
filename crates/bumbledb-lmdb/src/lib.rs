@@ -4,6 +4,7 @@
 //! transaction types. Higher layers should not depend on raw LMDB handles.
 
 pub mod benchmark;
+mod error;
 #[cfg(feature = "test-failpoints")]
 pub mod failpoints;
 #[cfg(not(feature = "test-failpoints"))]
@@ -17,6 +18,7 @@ use std::path::{Path, PathBuf};
 use heed::types::Bytes;
 use heed::{CompactionOption, Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
+pub use error::*;
 pub use query::{InputBindings, PlanCounters, PlannedAtom, QueryOutput, QueryPlan, ResultColumn};
 pub use storage::{
     AccessPathDescriptor, BulkLoadReport, EncodedComponent, FieldValues, IndexScan, KeyValues, Row,
@@ -39,145 +41,6 @@ const STORAGE_FORMAT_VERSION_KEY: &[u8] = b"storage_format_version";
 const SCHEMA_FINGERPRINT_KEY: &[u8] = b"schema_fingerprint";
 
 type RawDatabase = Database<Bytes, Bytes>;
-
-/// Result type for storage operations.
-pub type Result<T> = std::result::Result<T, Error>;
-
-/// Storage-layer errors.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    /// LMDB or heed failure.
-    #[error(transparent)]
-    Heed(#[from] heed::Error),
-
-    /// Filesystem failure.
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-
-    /// Existing database has an incompatible storage format version.
-    #[error("storage format version mismatch: expected {expected}, found {found}")]
-    StorageFormatMismatch { expected: u32, found: u32 },
-
-    /// Existing database is missing required storage metadata.
-    #[error("storage format version metadata is missing")]
-    MissingStorageFormatVersion,
-
-    /// Existing database was opened with a different compiled schema.
-    #[error("schema fingerprint mismatch: expected {expected}, found {found}")]
-    SchemaMismatch { expected: String, found: String },
-
-    /// Bulk ETL creation was asked to target an existing database.
-    #[error("bulk load target already contains a database: {path}")]
-    BulkLoadTargetExists { path: String },
-
-    /// Storage metadata is malformed.
-    #[error("storage metadata is corrupt: {0}")]
-    CorruptMetadata(&'static str),
-
-    /// Dictionary string bytes are not valid UTF-8.
-    #[error("dictionary string is not valid UTF-8")]
-    InvalidUtf8DictionaryString,
-
-    /// Schema descriptor failure.
-    #[error(transparent)]
-    Schema(#[from] bumbledb_core::schema::SchemaError),
-
-    /// Relation is not present in the storage schema.
-    #[error("unknown relation {relation}")]
-    UnknownRelation { relation: String },
-
-    /// Field is not present in the relation.
-    #[error("unknown field {relation}.{field}")]
-    UnknownField { relation: String, field: String },
-
-    /// Index is not present in the relation.
-    #[error("unknown index {relation}.{index}")]
-    UnknownIndex { relation: String, index: String },
-
-    /// Required field is missing from a row or key.
-    #[error("missing field {relation}.{field}")]
-    MissingField { relation: String, field: String },
-
-    /// Required query input is missing.
-    #[error("missing query input ${input}")]
-    MissingInput { input: String },
-
-    /// Query input does not match its inferred type.
-    #[error("query input ${input} expected {expected}, got {actual}")]
-    QueryInputTypeMismatch {
-        input: String,
-        expected: String,
-        actual: &'static str,
-    },
-
-    /// A value does not match the schema field type.
-    #[error("type mismatch for {relation}.{field}: expected {expected}, got {actual}")]
-    TypeMismatch {
-        relation: String,
-        field: String,
-        expected: String,
-        actual: &'static str,
-    },
-
-    /// A tuple with the same primary identity already exists.
-    #[error("duplicate tuple in relation {relation}")]
-    DuplicateTuple { relation: String },
-
-    /// A tuple could not be found.
-    #[error("tuple not found in relation {relation}")]
-    NotFound { relation: String },
-
-    /// Declared unique constraint was violated.
-    #[error("unique constraint {relation}.{constraint} violated")]
-    UniqueViolation {
-        relation: String,
-        constraint: String,
-    },
-
-    /// Foreign-key reference points at a missing target row.
-    #[error("foreign key {relation}.{field} references missing {target_relation}")]
-    ForeignKeyViolation {
-        relation: String,
-        field: String,
-        target_relation: String,
-    },
-
-    /// Default restrict delete failed because another row references the target.
-    #[error("cannot delete {relation}; referenced by {referenced_by}.{field}")]
-    RestrictViolation {
-        relation: String,
-        referenced_by: String,
-        field: String,
-    },
-
-    /// A dictionary value hash collided with different raw bytes.
-    #[error("dictionary hash collision for {kind}")]
-    HashCollision { kind: &'static str },
-
-    /// A requested dictionary value is not interned.
-    #[error("dictionary value not found for {kind}")]
-    DictionaryValueNotFound { kind: &'static str },
-
-    /// Integer aggregation overflowed.
-    #[error("integer overflow during {operation}")]
-    IntegerOverflow { operation: &'static str },
-
-    /// Decimal aggregation overflowed.
-    #[error("decimal overflow during {operation}")]
-    DecimalOverflow { operation: &'static str },
-
-    /// Test failpoint injected a storage failure.
-    #[error("injected failpoint: {name}")]
-    InjectedFailpoint { name: &'static str },
-
-    /// Current stage supports refs only to single-field primary keys.
-    #[error("foreign key target {target_relation} must have a single-field primary key")]
-    UnsupportedCompositeForeignKey { target_relation: String },
-
-    /// Internal storage invariant failure.
-    #[error("internal storage error: {0}")]
-    Internal(String),
-}
 
 /// Fixed LMDB databases opened by every environment.
 #[derive(Clone, Copy)]
@@ -240,6 +103,7 @@ pub struct IndexDiagnostics {
 
 impl Environment {
     /// Opens or creates an LMDB environment at `path`.
+    #[tracing::instrument(name = "bumbledb.open", skip_all, fields(path = %path.as_ref().display()))]
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let had_data_file = path.join(DATA_FILE).exists();
@@ -253,6 +117,11 @@ impl Environment {
 
         let env = unsafe { options.open(path)? };
         let dbs = Self::open_fixed_databases(&env, had_data_file)?;
+        tracing::info!(
+            max_readers = DEFAULT_MAX_READERS,
+            max_dbs = FIXED_DATABASE_COUNT,
+            "opened LMDB environment"
+        );
 
         Ok(Self {
             env,
@@ -265,6 +134,7 @@ impl Environment {
     ///
     /// If the database has no stored schema fingerprint yet, this writes one. If a
     /// different fingerprint is already stored, open fails without modifying data.
+    #[tracing::instrument(name = "bumbledb.open_with_schema", skip_all, fields(path = %path.as_ref().display(), schema = %schema.descriptor().fingerprint()))]
     pub fn open_with_schema(path: impl AsRef<Path>, schema: &StorageSchema) -> Result<Self> {
         let env = Self::open(path)?;
         env.verify_schema(schema)?;
@@ -275,6 +145,7 @@ impl Environment {
     ///
     /// This refuses to target a path that already contains `data.mdb`; migrations
     /// are explicit ETL into a new database, never in-place upgrades.
+    #[tracing::instrument(name = "bumbledb.bulk_load_new", skip_all, fields(path = %path.as_ref().display(), schema = %schema.descriptor().fingerprint()))]
     pub fn bulk_load_new(
         path: impl AsRef<Path>,
         schema: &StorageSchema,
@@ -283,9 +154,7 @@ impl Environment {
         let path = path.as_ref();
         let data_path = path.join(DATA_FILE);
         if data_path.exists() {
-            return Err(Error::BulkLoadTargetExists {
-                path: data_path.display().to_string(),
-            });
+            return Err(Error::bulk_load_target_exists(data_path));
         }
 
         let env = Self::open_with_schema(path, schema)?;
@@ -304,8 +173,13 @@ impl Environment {
     }
 
     /// Clears stale LMDB reader slots.
+    #[tracing::instrument(name = "bumbledb.reader_cleanup", skip_all)]
     pub fn clear_stale_readers(&self) -> Result<usize> {
-        Ok(self.env.clear_stale_readers()?)
+        let cleared = self.env.clear_stale_readers()?;
+        if cleared > 0 {
+            tracing::warn!(cleared, "cleared stale LMDB readers");
+        }
+        Ok(cleared)
     }
 
     /// Reads the storage format version from metadata.
@@ -314,15 +188,13 @@ impl Environment {
     }
 
     /// Verifies or initializes this database's schema fingerprint.
+    #[tracing::instrument(name = "bumbledb.verify_schema", skip_all, fields(schema = %schema.descriptor().fingerprint()))]
     pub fn verify_schema(&self, schema: &StorageSchema) -> Result<()> {
         let expected = schema.descriptor().fingerprint().0;
         self.write(
             |txn| match txn.dbs.meta.get(&txn.txn, SCHEMA_FINGERPRINT_KEY)? {
                 Some(found) if found == expected.as_slice() => Ok(()),
-                Some(found) => Err(Error::SchemaMismatch {
-                    expected: hex(&expected),
-                    found: hex(found),
-                }),
+                Some(found) => Err(Error::schema_mismatch(hex(&expected), hex(found))),
                 None => Ok(txn.dbs.meta.put(
                     &mut txn.txn,
                     SCHEMA_FINGERPRINT_KEY,
@@ -333,6 +205,7 @@ impl Environment {
     }
 
     /// Bulk-loads rows in one write transaction and returns ETL diagnostics.
+    #[tracing::instrument(name = "bumbledb.bulk_load", skip_all, fields(schema = %schema.descriptor().fingerprint()))]
     pub fn bulk_load(
         &self,
         schema: &StorageSchema,
@@ -340,20 +213,29 @@ impl Environment {
     ) -> Result<BulkLoadReport> {
         let rows_inserted = self.write(|txn| txn.bulk_load(schema, rows))?;
         self.read(|txn| {
-            Ok(BulkLoadReport {
+            let report = BulkLoadReport {
                 rows_inserted,
                 storage_tx_id: txn.last_committed_tx_id()?,
                 dictionary_entries: txn.dictionary_entry_count()?,
-            })
+            };
+            tracing::info!(
+                rows_inserted = report.rows_inserted,
+                storage_tx_id = report.storage_tx_id,
+                dictionary_entries = report.dictionary_entries,
+                "bulk load committed"
+            );
+            Ok(report)
         })
     }
 
     /// Copies this database into `target_dir` using LMDB's copy API.
+    #[tracing::instrument(name = "bumbledb.backup", skip_all, fields(target = %target_dir.as_ref().display(), compact = false))]
     pub fn backup_to_path(&self, target_dir: impl AsRef<Path>) -> Result<()> {
         self.copy_to_database_dir(target_dir.as_ref(), CompactionOption::Disabled)
     }
 
     /// Copies this database into `target_dir` with LMDB compaction enabled.
+    #[tracing::instrument(name = "bumbledb.compact_copy", skip_all, fields(target = %target_dir.as_ref().display(), compact = true))]
     pub fn compact_copy_to_path(&self, target_dir: impl AsRef<Path>) -> Result<()> {
         self.copy_to_database_dir(target_dir.as_ref(), CompactionOption::Enabled)
     }
@@ -399,6 +281,7 @@ impl Environment {
     }
 
     /// Runs a closure inside a read-only transaction.
+    #[tracing::instrument(name = "bumbledb.read_txn", skip_all)]
     pub fn read<T, E>(
         &self,
         f: impl for<'txn> FnOnce(&ReadTxn<'txn>) -> std::result::Result<T, E>,
@@ -412,6 +295,7 @@ impl Environment {
     }
 
     /// Runs a closure inside a read-write transaction.
+    #[tracing::instrument(name = "bumbledb.write_txn", skip_all)]
     pub fn write<T, E>(
         &self,
         f: impl for<'txn> FnOnce(&mut WriteTxn<'txn>) -> std::result::Result<T, E>,
@@ -431,14 +315,20 @@ impl Environment {
             Ok(value) => {
                 let WriteTxn { txn, .. } = write;
                 failpoints::check(failpoints::Failpoint::BeforeCommit)?;
+                let _span = tracing::debug_span!("bumbledb.commit").entered();
                 txn.commit().map_err(Error::from).map_err(E::from)?;
+                tracing::debug!("write transaction committed");
                 Ok(value)
             }
-            Err(error) => Err(error),
+            Err(error) => {
+                tracing::debug!("write transaction aborted");
+                Err(error)
+            }
         }
     }
 
     fn open_fixed_databases(env: &Env<WithoutTls>, had_data_file: bool) -> Result<Databases> {
+        let _span = tracing::debug_span!("bumbledb.open_fixed_databases").entered();
         let mut txn = env.write_txn()?;
         let dbs = Databases {
             meta: env.create_database(&mut txn, Some(META_DB))?,
@@ -449,12 +339,12 @@ impl Environment {
         match read_u32(&dbs.meta, &txn, STORAGE_FORMAT_VERSION_KEY)? {
             Some(STORAGE_FORMAT_VERSION) => {}
             Some(found) => {
-                return Err(Error::StorageFormatMismatch {
-                    expected: STORAGE_FORMAT_VERSION,
+                return Err(Error::storage_format_mismatch(
+                    STORAGE_FORMAT_VERSION,
                     found,
-                });
+                ));
             }
-            None if had_data_file => return Err(Error::MissingStorageFormatVersion),
+            None if had_data_file => return Err(Error::missing_storage_format_version()),
             None => write_u32(
                 &dbs.meta,
                 &mut txn,
@@ -494,7 +384,7 @@ impl ReadTxn<'_> {
     /// Reads the storage format version visible to this snapshot.
     pub fn storage_format_version(&self) -> Result<u32> {
         read_u32(&self.dbs.meta, &self.txn, STORAGE_FORMAT_VERSION_KEY)?
-            .ok_or(Error::MissingStorageFormatVersion)
+            .ok_or_else(Error::missing_storage_format_version)
     }
 
     #[cfg(test)]
@@ -526,7 +416,7 @@ fn read_u32(db: &RawDatabase, txn: &RoTxn, key: &[u8]) -> Result<Option<u32>> {
 
     let bytes: [u8; 4] = bytes
         .try_into()
-        .map_err(|_| Error::CorruptMetadata("u32 metadata must be four bytes"))?;
+        .map_err(|_| Error::corrupt("u32 metadata must be four bytes"))?;
     Ok(Some(u32::from_be_bytes(bytes)))
 }
 
@@ -586,7 +476,7 @@ mod tests {
 
         let result: Result<()> = env.write(|txn| {
             txn.put_meta_bytes(MARKER_KEY, b"aborted")?;
-            Err(Error::Internal("intentional abort".to_owned()))
+            Err(Error::internal("intentional abort"))
         });
 
         assert!(result.is_err());
@@ -683,7 +573,10 @@ mod tests {
         rows.push(rows[0].clone());
 
         let result = env.bulk_load(&schema, rows);
-        assert!(matches!(result, Err(Error::DuplicateTuple { .. })));
+        assert!(matches!(
+            result,
+            Err(Error::Constraint(ConstraintError::DuplicateTuple { .. }))
+        ));
 
         let diagnostics = env.storage_diagnostics(&schema).unwrap();
         assert_eq!(diagnostics.storage_tx_id, 0);
@@ -709,7 +602,10 @@ mod tests {
             Ok(_) => panic!("schema mismatch unexpectedly opened"),
             Err(error) => error,
         };
-        assert!(matches!(mismatch, Error::SchemaMismatch { .. }));
+        assert!(matches!(
+            mismatch,
+            Error::Schema(SchemaError::SchemaMismatch { .. })
+        ));
 
         let env = Environment::open_with_schema(dir.path(), &schema).unwrap();
         let diagnostics = env.storage_diagnostics(&schema).unwrap();
@@ -784,7 +680,10 @@ mod tests {
             Ok(_) => panic!("bulk load unexpectedly targeted an existing database"),
             Err(error) => error,
         };
-        assert!(matches!(existing, Error::BulkLoadTargetExists { .. }));
+        assert!(matches!(
+            existing,
+            Error::Storage(StorageError::BulkLoadTargetExists { .. })
+        ));
 
         let env = Environment::open_with_schema(dir.path(), &schema).unwrap();
         let diagnostics = env.storage_diagnostics(&schema).unwrap();

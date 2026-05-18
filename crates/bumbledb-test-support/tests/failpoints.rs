@@ -1,7 +1,7 @@
 use std::sync::{Mutex, OnceLock};
 
 use bumbledb_lmdb::failpoints::{self, Failpoint};
-use bumbledb_lmdb::{Environment, Error, StorageSchema};
+use bumbledb_lmdb::{Environment, Error, StorageSchema, TestError};
 use bumbledb_test_support::assertions::assert_invariants;
 use bumbledb_test_support::rows::{account, holder, posting, seeded_ledger_rows};
 use bumbledb_test_support::schemas::ledger_schema;
@@ -31,7 +31,10 @@ fn failpoint_insert_is_atomic(failpoint: Failpoint) {
     failpoints::set(failpoint);
     let result = env.write(|txn| txn.insert(&schema, holder(1, "x")));
     failpoints::clear();
-    assert!(matches!(result, Err(Error::InjectedFailpoint { .. })));
+    assert!(matches!(
+        result,
+        Err(Error::Test(TestError::InjectedFailpoint { .. }))
+    ));
     let diagnostics = env.storage_diagnostics(&schema).unwrap();
     assert!(
         diagnostics
@@ -52,7 +55,7 @@ fn failpoint_replace_delete_and_bulk_are_atomic() {
     failpoints::set(Failpoint::AfterCurrentRowPut);
     assert!(matches!(
         env.write(|txn| txn.replace(&schema, account(1, 1, 999))),
-        Err(Error::InjectedFailpoint { .. })
+        Err(Error::Test(TestError::InjectedFailpoint { .. }))
     ));
     failpoints::clear();
     assert_invariants(&env, &schema).unwrap();
@@ -60,7 +63,7 @@ fn failpoint_replace_delete_and_bulk_are_atomic() {
     failpoints::set(Failpoint::BeforeCommit);
     assert!(matches!(
         env.write(|txn| txn.delete(&schema, bumbledb_test_support::rows::account_key(3))),
-        Err(Error::InjectedFailpoint { .. })
+        Err(Error::Test(TestError::InjectedFailpoint { .. }))
     ));
     failpoints::clear();
     assert_invariants(&env, &schema).unwrap();
@@ -74,7 +77,7 @@ fn failpoint_replace_delete_and_bulk_are_atomic() {
             &schema,
             vec![holder(1, "x"), account(1, 1, 840), posting(1, 1, 10, 1)]
         ),
-        Err(Error::InjectedFailpoint { .. })
+        Err(Error::Test(TestError::InjectedFailpoint { .. }))
     ));
     failpoints::clear();
     let diagnostics = env.storage_diagnostics(&schema).unwrap();

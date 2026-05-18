@@ -199,6 +199,7 @@ struct ExecutionPlan<'query> {
 
 impl<'env> ReadTxn<'env> {
     /// Executes a typed positive Datalog query against current indexes.
+    #[tracing::instrument(name = "bumbledb.query.execute", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
     pub fn execute_query(
         &self,
         schema: &StorageSchema,
@@ -208,6 +209,7 @@ impl<'env> ReadTxn<'env> {
         validate_inputs(query, inputs)?;
 
         let mut plan = plan_query(schema, query, inputs)?;
+        tracing::debug!(variable_order = ?plan.summary.variable_order, atoms = plan.summary.atoms.len(), "query planned");
         let mut bindings = Vec::new();
         let initial = Binding::new(query.variables.len());
 
@@ -223,6 +225,7 @@ impl<'env> ReadTxn<'env> {
         {
             plan.summary.counters.aggregate_groups = rows.len() as u64;
         }
+        tracing::debug!(?plan.summary.counters, "query executed");
         Ok(QueryOutput {
             columns,
             rows,
@@ -258,6 +261,14 @@ impl<'env> ReadTxn<'env> {
         let atom = plan.relation_atoms[plan.atom_indices[depth]];
         let access = choose_access_path(schema, atom, query, inputs, &binding)?;
         plan.summary.atoms[depth] = access.summary.clone();
+        let _span = tracing::debug_span!(
+            "bumbledb.query.execute_atom",
+            relation = %atom.relation,
+            index = %access.summary.index,
+            kind = ?access.summary.kind,
+            depth
+        )
+        .entered();
 
         plan.summary.counters.cursor_seeks += 1;
         let scan = open_scan(self, schema, atom, &access)?;
@@ -279,6 +290,7 @@ impl<'env> ReadTxn<'env> {
             plan.summary.counters.rows_matched += 1;
             self.execute_atoms(schema, query, inputs, plan, depth + 1, next_binding, output)?;
         }
+        tracing::debug!(relation = %atom.relation, index = %access.summary.index, depth, "atom execution complete");
 
         Ok(())
     }
@@ -298,6 +310,7 @@ fn plan_query<'query>(
     query: &'query TypedQuery,
     inputs: &InputBindings,
 ) -> Result<ExecutionPlan<'query>> {
+    let _span = tracing::debug_span!("bumbledb.query.plan").entered();
     let relation_atoms = query
         .clauses
         .iter()
@@ -437,7 +450,7 @@ fn choose_access_path(
     }
 
     let (score, _, path, prefix) =
-        best.ok_or_else(|| Error::Internal("relation has no access paths".to_owned()))?;
+        best.ok_or_else(|| Error::internal("relation has no access paths"))?;
     if score > 0 {
         return Ok(ChosenAccess {
             summary: PlannedAtom {
@@ -467,7 +480,7 @@ fn choose_access_path(
     let primary = paths
         .iter()
         .find(|path| path.kind == IndexKind::Primary)
-        .ok_or_else(|| Error::Internal(format!("missing primary index for {}", atom.relation)))?;
+        .ok_or_else(|| Error::internal(format!("missing primary index for {}", atom.relation)))?;
     Ok(ChosenAccess {
         summary: PlannedAtom {
             relation: atom.relation.clone(),
@@ -692,15 +705,15 @@ fn input_value<'a>(
     input: usize,
 ) -> Result<&'a Value> {
     let input = &query.inputs[input];
-    let value = inputs.get(&input.name).ok_or_else(|| Error::MissingInput {
-        input: input.name.clone(),
-    })?;
+    let value = inputs
+        .get(&input.name)
+        .ok_or_else(|| Error::missing_input(&input.name))?;
     if !value_matches_type(value, &input.value_type) {
-        return Err(Error::QueryInputTypeMismatch {
-            input: input.name.clone(),
-            expected: value_type_name(&input.value_type),
-            actual: value.kind_name(),
-        });
+        return Err(Error::query_input_type_mismatch(
+            &input.name,
+            value_type_name(&input.value_type),
+            value.kind_name(),
+        ));
     }
     Ok(value)
 }
@@ -751,8 +764,8 @@ fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
         }
         (Literal::Integer(value), ValueType::Decimal { .. }) => Value::Decimal(DecimalRaw(*value)),
         _ => {
-            return Err(Error::Internal(
-                "typed literal does not match literal value".to_owned(),
+            return Err(Error::internal(
+                "typed literal does not match literal value",
             ));
         }
     };
@@ -778,6 +791,7 @@ fn result_columns(query: &TypedQuery) -> Vec<ResultColumn> {
 }
 
 fn project_results(query: &TypedQuery, bindings: &[Binding]) -> Result<Vec<Vec<Value>>> {
+    let _span = tracing::debug_span!("bumbledb.query.project", bindings = bindings.len()).entered();
     let has_aggregate = query
         .find
         .iter()
@@ -801,6 +815,8 @@ fn project_results(query: &TypedQuery, bindings: &[Binding]) -> Result<Vec<Vec<V
 }
 
 fn project_aggregates(query: &TypedQuery, bindings: &[Binding]) -> Result<Vec<Vec<Value>>> {
+    let _span =
+        tracing::debug_span!("bumbledb.query.aggregate", bindings = bindings.len()).entered();
     let group_terms = query
         .find
         .iter()
@@ -859,7 +875,7 @@ fn project_aggregates(query: &TypedQuery, bindings: &[Binding]) -> Result<Vec<Ve
 fn bound_variable(binding: &Binding, variable: usize) -> Result<&Value> {
     binding
         .get(variable)
-        .ok_or_else(|| Error::Internal(format!("variable {variable} is unbound at projection")))
+        .ok_or_else(|| Error::internal(format!("variable {variable} is unbound at projection")))
 }
 
 #[derive(Clone, Debug)]
@@ -890,33 +906,31 @@ impl AggregateState {
             AggregateState::Count(count) => {
                 *count = count
                     .checked_add(1)
-                    .ok_or(Error::IntegerOverflow { operation: "count" })?;
+                    .ok_or_else(|| Error::integer_overflow("count"))?;
             }
             AggregateState::SumU64(sum) => {
                 let Value::U64(value) = value else {
-                    return Err(Error::Internal("sum(u64) received non-u64".to_owned()));
+                    return Err(Error::aggregate_type_mismatch("sum", value.kind_name()));
                 };
                 *sum = sum
                     .checked_add(*value)
-                    .ok_or(Error::IntegerOverflow { operation: "sum" })?;
+                    .ok_or_else(|| Error::integer_overflow("sum"))?;
             }
             AggregateState::SumI64(sum) => {
                 let Value::I64(value) = value else {
-                    return Err(Error::Internal("sum(i64) received non-i64".to_owned()));
+                    return Err(Error::aggregate_type_mismatch("sum", value.kind_name()));
                 };
                 *sum = sum
                     .checked_add(*value)
-                    .ok_or(Error::IntegerOverflow { operation: "sum" })?;
+                    .ok_or_else(|| Error::integer_overflow("sum"))?;
             }
             AggregateState::SumDecimal(sum) => {
                 let Value::Decimal(DecimalRaw(value)) = value else {
-                    return Err(Error::Internal(
-                        "sum(decimal) received non-decimal".to_owned(),
-                    ));
+                    return Err(Error::aggregate_type_mismatch("sum", value.kind_name()));
                 };
                 *sum = sum
                     .checked_add(*value)
-                    .ok_or(Error::DecimalOverflow { operation: "sum" })?;
+                    .ok_or_else(|| Error::decimal_overflow("sum"))?;
             }
             AggregateState::Min(current) => match current {
                 Some(existing) if &*existing <= value => {}
@@ -961,7 +975,7 @@ fn value_type_name(value_type: &ValueType) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Environment;
+    use crate::{AggregateError, Environment, ExecuteError, QueryError};
     use bumbledb_core::datalog::parse_and_typecheck;
     use bumbledb_core::schema::{
         FieldDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
@@ -1136,14 +1150,24 @@ mod tests {
         let int_error = env
             .read(|txn| txn.execute_query(&schema, &int_query, &InputBindings::new()))
             .unwrap_err();
-        assert!(matches!(int_error, Error::IntegerOverflow { .. }));
+        assert!(matches!(
+            int_error,
+            Error::Query(QueryError::Aggregate(
+                AggregateError::IntegerOverflow { .. }
+            ))
+        ));
 
         let decimal_query =
             parse_and_typecheck(schema.descriptor(), "find sum(?d) where Number(d: ?d)").unwrap();
         let decimal_error = env
             .read(|txn| txn.execute_query(&schema, &decimal_query, &InputBindings::new()))
             .unwrap_err();
-        assert!(matches!(decimal_error, Error::DecimalOverflow { .. }));
+        assert!(matches!(
+            decimal_error,
+            Error::Query(QueryError::Aggregate(
+                AggregateError::DecimalOverflow { .. }
+            ))
+        ));
     }
 
     #[test]
@@ -1163,7 +1187,10 @@ mod tests {
                 )
             })
             .unwrap_err();
-        assert!(matches!(error, Error::QueryInputTypeMismatch { .. }));
+        assert!(matches!(
+            error,
+            Error::Query(QueryError::Execute(ExecuteError::InputTypeMismatch { .. }))
+        ));
     }
 
     #[test]

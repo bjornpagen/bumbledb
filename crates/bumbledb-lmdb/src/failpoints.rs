@@ -2,7 +2,9 @@
 
 use std::sync::{Mutex, OnceLock};
 
-use crate::{Error, Result};
+use crate::Result;
+#[cfg(feature = "test-failpoints")]
+use crate::TestError;
 
 /// Named test failpoint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,11 +58,20 @@ pub fn clear() {
 }
 
 pub(crate) fn check(failpoint: Failpoint) -> Result<()> {
-    if *active().lock().unwrap() == Some(failpoint) {
-        Err(Error::InjectedFailpoint {
-            name: failpoint.name(),
-        })
-    } else {
+    #[cfg(feature = "test-failpoints")]
+    {
+        if *active().lock().unwrap() == Some(failpoint) {
+            Err(TestError::InjectedFailpoint {
+                name: failpoint.name(),
+            }
+            .into())
+        } else {
+            Ok(())
+        }
+    }
+    #[cfg(not(feature = "test-failpoints"))]
+    {
+        let _ = failpoint;
         Ok(())
     }
 }

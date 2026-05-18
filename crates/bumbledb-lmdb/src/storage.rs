@@ -78,9 +78,7 @@ impl StorageSchema {
             .enumerate()
             .find(|(_, relation)| relation.name == name)
             .map(|(id, relation)| (id as u16, relation))
-            .ok_or_else(|| Error::UnknownRelation {
-                relation: name.to_owned(),
-            })
+            .ok_or_else(|| Error::unknown_relation(name))
     }
 
     fn layouts_for_relation(&self, relation_id: u16) -> impl Iterator<Item = &CurrentIndexLayout> {
@@ -355,10 +353,7 @@ impl EncodedRow {
         self.fields
             .get(name)
             .map(Vec::as_slice)
-            .ok_or_else(|| Error::MissingField {
-                relation: relation.name.clone(),
-                field: name.to_owned(),
-            })
+            .ok_or_else(|| Error::missing_field(&relation.name, name))
     }
 
     fn payload(&self, relation: &RelationDescriptor) -> Result<Vec<u8>> {
@@ -376,9 +371,7 @@ impl EncodedRow {
             .map(|field| field.value_type.encoded_width())
             .sum::<usize>();
         if payload.len() != expected {
-            return Err(Error::CorruptMetadata(
-                "row payload width does not match schema",
-            ));
+            return Err(Error::corrupt("row payload width does not match schema"));
         }
 
         let mut offset = 0;
@@ -400,16 +393,14 @@ enum InternMode {
 
 impl WriteTxn<'_> {
     /// Allocates a generated ID for a relation and advances its persisted counter.
+    #[tracing::instrument(name = "bumbledb.alloc_id", skip_all, fields(relation = relation_name))]
     pub fn alloc_id(&mut self, schema: &StorageSchema, relation_name: &str) -> Result<u64> {
         let (relation_id, relation) = schema.relation(relation_name)?;
         let generated = relation.generated_id.as_ref().ok_or_else(|| {
-            Error::Internal(format!("relation {relation_name} has no generated ID"))
+            Error::internal(format!("relation {relation_name} has no generated ID"))
         })?;
         if relation.field(&generated.field).is_none() {
-            return Err(Error::UnknownField {
-                relation: relation.name.clone(),
-                field: generated.field.clone(),
-            });
+            return Err(Error::unknown_field(&relation.name, &generated.field));
         }
 
         let key = next_id_key(relation_id);
@@ -428,7 +419,9 @@ impl WriteTxn<'_> {
         schema: &StorageSchema,
         rows: impl IntoIterator<Item = Row>,
     ) -> Result<usize> {
+        let _span = tracing::debug_span!("bumbledb.storage.bulk_load").entered();
         let mut rows = rows.into_iter().collect::<Vec<_>>();
+        tracing::debug!(rows = rows.len(), "bulk load rows sorted by relation order");
         rows.sort_by_key(|row| relation_sort_key(schema, row.relation()));
 
         let mut inserted = 0;
@@ -440,6 +433,7 @@ impl WriteTxn<'_> {
     }
 
     /// Inserts a primary-keyed relation row.
+    #[tracing::instrument(name = "bumbledb.insert", skip_all, fields(relation = row.relation()))]
     pub fn insert(&mut self, schema: &StorageSchema, row: Row) -> Result<()> {
         self.insert_inner(schema, row)
     }
@@ -450,15 +444,14 @@ impl WriteTxn<'_> {
     }
 
     /// Replaces an existing row by primary key.
+    #[tracing::instrument(name = "bumbledb.replace", skip_all, fields(relation = row.relation()))]
     pub fn replace(&mut self, schema: &StorageSchema, row: Row) -> Result<()> {
         let (relation_id, relation) = schema.relation(&row.relation)?;
         let new_encoded = self.encode_row(relation, &row, InternMode::Create)?;
         let primary = primary_bytes(relation, &new_encoded)?;
         let row_key = current_row_key(relation_id, &primary);
         let Some(old_payload) = self.dbs.index.get(&self.txn, row_key.as_slice())? else {
-            return Err(Error::NotFound {
-                relation: relation.name.clone(),
-            });
+            return Err(Error::not_found(&relation.name));
         };
         let old_payload = old_payload.to_vec();
         let old_encoded = EncodedRow::from_payload(relation, &old_payload)?;
@@ -488,6 +481,7 @@ impl WriteTxn<'_> {
     }
 
     /// Deletes an existing primary-keyed row.
+    #[tracing::instrument(name = "bumbledb.delete", skip_all)]
     pub fn delete(&mut self, schema: &StorageSchema, key: KeyValues) -> Result<()> {
         self.delete_inner(schema, key)
     }
@@ -504,10 +498,7 @@ impl WriteTxn<'_> {
                     .get(field)
                     .cloned()
                     .map(|value| (field.clone(), value))
-                    .ok_or_else(|| Error::MissingField {
-                        relation: relation.name.clone(),
-                        field: field.clone(),
-                    })
+                    .ok_or_else(|| Error::missing_field(&relation.name, field))
             })
             .collect::<Result<Vec<_>>>()?;
         self.delete_inner(schema, KeyValues::new(row.relation, key_values))
@@ -520,9 +511,7 @@ impl WriteTxn<'_> {
         let row_key = current_row_key(relation_id, &primary);
 
         if self.dbs.index.get(&self.txn, row_key.as_slice())?.is_some() {
-            return Err(Error::DuplicateTuple {
-                relation: relation.name.clone(),
-            });
+            return Err(Error::duplicate_tuple(&relation.name));
         }
 
         self.check_foreign_keys(schema, relation, &encoded)?;
@@ -552,9 +541,7 @@ impl WriteTxn<'_> {
         let primary = self.encode_primary_key(relation, &key.values, InternMode::Existing)?;
         let row_key = current_row_key(relation_id, &primary);
         let Some(old_payload) = self.dbs.index.get(&self.txn, row_key.as_slice())? else {
-            return Err(Error::NotFound {
-                relation: relation.name.clone(),
-            });
+            return Err(Error::not_found(&relation.name));
         };
         let old_payload = old_payload.to_vec();
         let old_encoded = EncodedRow::from_payload(relation, &old_payload)?;
@@ -581,10 +568,7 @@ impl WriteTxn<'_> {
             .collect::<BTreeSet<_>>();
         for field in row.values.keys() {
             if !known_fields.contains(field.as_str()) {
-                return Err(Error::UnknownField {
-                    relation: relation.name.clone(),
-                    field: field.clone(),
-                });
+                return Err(Error::unknown_field(&relation.name, field));
             }
         }
 
@@ -593,10 +577,7 @@ impl WriteTxn<'_> {
             let value = row
                 .values
                 .get(&field.name)
-                .ok_or_else(|| Error::MissingField {
-                    relation: relation.name.clone(),
-                    field: field.name.clone(),
-                })?;
+                .ok_or_else(|| Error::missing_field(&relation.name, &field.name))?;
             fields.insert(
                 field.name.clone(),
                 self.encode_value(relation, field, value, &mode)?,
@@ -615,14 +596,10 @@ impl WriteTxn<'_> {
         for field_name in &relation.primary_key.fields {
             let field = relation
                 .field(field_name)
-                .ok_or_else(|| Error::UnknownField {
-                    relation: relation.name.clone(),
-                    field: field_name.clone(),
-                })?;
-            let value = values.get(field_name).ok_or_else(|| Error::MissingField {
-                relation: relation.name.clone(),
-                field: field_name.clone(),
-            })?;
+                .ok_or_else(|| Error::unknown_field(&relation.name, field_name))?;
+            let value = values
+                .get(field_name)
+                .ok_or_else(|| Error::missing_field(&relation.name, field_name))?;
             out.extend_from_slice(&self.encode_value(relation, field, value, &mode)?);
         }
         Ok(out)
@@ -637,12 +614,9 @@ impl WriteTxn<'_> {
     ) -> Result<Vec<u8>> {
         encode_value_with(relation, field, value, |kind, raw| match mode {
             InternMode::Create => self.intern_value(kind, raw),
-            InternMode::Existing => {
-                self.lookup_intern_value(kind, raw)?
-                    .ok_or(Error::DictionaryValueNotFound {
-                        kind: dict_kind_name(kind),
-                    })
-            }
+            InternMode::Existing => self
+                .lookup_intern_value(kind, raw)?
+                .ok_or_else(|| Error::dictionary_value_not_found(dict_kind_name(kind))),
         })
     }
 
@@ -661,19 +635,17 @@ impl WriteTxn<'_> {
             };
             let (target_relation_id, target) = schema.relation(target_relation)?;
             if target.primary_key.fields.len() != 1 {
-                return Err(Error::UnsupportedCompositeForeignKey {
-                    target_relation: target.name.clone(),
-                });
+                return Err(Error::unsupported_composite_foreign_key(&target.name));
             }
 
             let target_primary = row.field(relation, &field.name)?.to_vec();
             let key = current_row_key(target_relation_id, &target_primary);
             if self.dbs.index.get(&self.txn, key.as_slice())?.is_none() {
-                return Err(Error::ForeignKeyViolation {
-                    relation: relation.name.clone(),
-                    field: field.name.clone(),
-                    target_relation: target.name.clone(),
-                });
+                return Err(Error::foreign_key_violation(
+                    &relation.name,
+                    &field.name,
+                    &target.name,
+                ));
             }
         }
         Ok(())
@@ -692,10 +664,7 @@ impl WriteTxn<'_> {
             if let Some(existing_primary) = self.dbs.index.get(&self.txn, key.as_slice())?
                 && existing_primary != primary
             {
-                return Err(Error::UniqueViolation {
-                    relation: relation.name.clone(),
-                    constraint: name.clone(),
-                });
+                return Err(Error::unique_violation(&relation.name, name));
             }
         }
         Ok(())
@@ -740,11 +709,11 @@ impl WriteTxn<'_> {
                 prefix.extend_from_slice(&target_primary);
                 let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
                 if iter.next().transpose()?.is_some() {
-                    return Err(Error::RestrictViolation {
-                        relation: relation.name.clone(),
-                        referenced_by: source_relation.name.clone(),
-                        field: field.name.clone(),
-                    });
+                    return Err(Error::restrict_violation(
+                        &relation.name,
+                        &source_relation.name,
+                        &field.name,
+                    ));
                 }
             }
         }
@@ -759,6 +728,7 @@ impl WriteTxn<'_> {
         row: &EncodedRow,
     ) -> Result<()> {
         for layout in schema.layouts_for_relation(relation_id) {
+            tracing::trace!(relation = %relation.name, index = %layout.index_name, "put current index entry");
             let key = current_index_key(layout, relation, row)?;
             self.dbs.index.put(&mut self.txn, key.as_slice(), &[])?;
             crate::failpoints::check(crate::failpoints::Failpoint::AfterCurrentIndexPut)?;
@@ -775,6 +745,7 @@ impl WriteTxn<'_> {
         row: &EncodedRow,
     ) -> Result<()> {
         for layout in schema.layouts_for_relation(relation_id) {
+            tracing::trace!(relation = %relation.name, index = %layout.index_name, "delete current index entry");
             let key = current_index_key(layout, relation, row)?;
             self.dbs.index.delete(&mut self.txn, key.as_slice())?;
             adjust_index_entry_count(self, relation_id, layout.index_id, -1)?;
@@ -822,9 +793,10 @@ impl WriteTxn<'_> {
     ) -> Result<()> {
         let tx_id = self.ensure_tx_id()?;
         let seq = self.history_seq;
-        self.history_seq = self.history_seq.checked_add(1).ok_or_else(|| {
-            Error::Internal("too many history records in one transaction".to_owned())
-        })?;
+        self.history_seq = self
+            .history_seq
+            .checked_add(1)
+            .ok_or_else(|| Error::internal("too many history records in one transaction"))?;
 
         let mut key = vec![NS_HISTORY];
         push_u64(&mut key, tx_id);
@@ -856,7 +828,14 @@ impl WriteTxn<'_> {
     }
 
     fn intern_value(&mut self, kind: u8, raw: &[u8]) -> Result<u64> {
+        let _span = tracing::trace_span!(
+            "bumbledb.dict_intern",
+            kind = dict_kind_name(kind),
+            bytes = raw.len()
+        )
+        .entered();
         if let Some(id) = self.lookup_intern_value(kind, raw)? {
+            tracing::trace!(id, existing = true, "dictionary value already interned");
             return Ok(id);
         }
 
@@ -876,6 +855,7 @@ impl WriteTxn<'_> {
             .dict
             .put(&mut self.txn, dict_rev_key(kind, id).as_slice(), raw)?;
         crate::failpoints::check(crate::failpoints::Failpoint::AfterDictionaryPut)?;
+        tracing::trace!(id, existing = false, "dictionary value interned");
 
         Ok(id)
     }
@@ -898,13 +878,9 @@ impl<'env> ReadTxn<'env> {
     /// Looks up a row by primary key using the primary covering index.
     pub fn get_row(&self, schema: &StorageSchema, key: &KeyValues) -> Result<Option<Row>> {
         let (relation_id, relation) = schema.relation(&key.relation)?;
-        let primary_layout =
-            schema
-                .layout(&key.relation, "primary")
-                .ok_or_else(|| Error::UnknownIndex {
-                    relation: key.relation.clone(),
-                    index: "primary".to_owned(),
-                })?;
+        let primary_layout = schema
+            .layout(&key.relation, "primary")
+            .ok_or_else(|| Error::unknown_index(&key.relation, "primary"))?;
         let primary = self.encode_primary_key_existing(relation, &key.values)?;
         let mut prefix = current_index_prefix(relation_id, primary_layout.index_id);
         prefix.extend_from_slice(&primary);
@@ -941,19 +917,15 @@ impl<'env> ReadTxn<'env> {
         prefix: &FieldValues,
     ) -> Result<IndexScan<'borrow, 'env, 'schema>> {
         if prefix.relation != relation_name {
-            return Err(Error::Internal(format!(
+            return Err(Error::internal(format!(
                 "prefix relation {} does not match scan relation {relation_name}",
                 prefix.relation
             )));
         }
         let (_, relation) = schema.relation(relation_name)?;
-        let layout =
-            schema
-                .layout(relation_name, index_name)
-                .ok_or_else(|| Error::UnknownIndex {
-                    relation: relation_name.to_owned(),
-                    index: index_name.to_owned(),
-                })?;
+        let layout = schema
+            .layout(relation_name, index_name)
+            .ok_or_else(|| Error::unknown_index(relation_name, index_name))?;
 
         let encoded_prefix = self.encode_index_prefix(relation, layout, &prefix.values)?;
         self.scan_index_with_prefix(schema, relation_name, index_name, &encoded_prefix, None)
@@ -969,24 +941,17 @@ impl<'env> ReadTxn<'env> {
         end: Option<Value>,
     ) -> Result<IndexScan<'borrow, 'env, 'schema>> {
         let (_, relation) = schema.relation(relation_name)?;
-        let layout =
-            schema
-                .layout(relation_name, index_name)
-                .ok_or_else(|| Error::UnknownIndex {
-                    relation: relation_name.to_owned(),
-                    index: index_name.to_owned(),
-                })?;
+        let layout = schema
+            .layout(relation_name, index_name)
+            .ok_or_else(|| Error::unknown_index(relation_name, index_name))?;
         let Some(first_field) = layout.leading_fields.first() else {
-            return Err(Error::Internal(format!(
+            return Err(Error::internal(format!(
                 "range index {relation_name}.{index_name} has no leading field"
             )));
         };
         let field = relation
             .field(first_field)
-            .ok_or_else(|| Error::UnknownField {
-                relation: relation.name.clone(),
-                field: first_field.clone(),
-            })?;
+            .ok_or_else(|| Error::unknown_field(&relation.name, first_field))?;
 
         let start = start
             .as_ref()
@@ -1030,7 +995,7 @@ impl<'env> ReadTxn<'env> {
         index_name: &str,
     ) -> Result<u64> {
         let layout = schema.layout(relation_name, index_name).ok_or_else(|| {
-            Error::Internal(format!("missing index {relation_name}.{index_name}"))
+            Error::internal(format!("missing index {relation_name}.{index_name}"))
         })?;
         Ok(read_u64(
             &self.dbs.meta,
@@ -1060,7 +1025,7 @@ impl<'env> ReadTxn<'env> {
     ) -> Result<bool> {
         let (_, relation) = schema.relation(&row.relation)?;
         let layout = schema.layout(&row.relation, index_name).ok_or_else(|| {
-            Error::Internal(format!("missing index {}.{index_name}", row.relation))
+            Error::internal(format!("missing index {}.{index_name}", row.relation))
         })?;
         let encoded = self.encode_row_existing(relation, row)?;
         let key = current_index_key(layout, relation, &encoded)?;
@@ -1102,14 +1067,18 @@ impl<'env> ReadTxn<'env> {
         encoded_prefix: &[u8],
         range: Option<EncodedRange>,
     ) -> Result<IndexScan<'borrow, 'env, 'schema>> {
+        let _span = tracing::trace_span!(
+            "bumbledb.query.scan",
+            relation = relation_name,
+            index = index_name,
+            prefix_bytes = encoded_prefix.len(),
+            range = range.is_some()
+        )
+        .entered();
         let (relation_id, relation) = schema.relation(relation_name)?;
-        let layout =
-            schema
-                .layout(relation_name, index_name)
-                .ok_or_else(|| Error::UnknownIndex {
-                    relation: relation_name.to_owned(),
-                    index: index_name.to_owned(),
-                })?;
+        let layout = schema
+            .layout(relation_name, index_name)
+            .ok_or_else(|| Error::unknown_index(relation_name, index_name))?;
         let mut prefix = current_index_prefix(relation_id, layout.index_id);
         prefix.extend_from_slice(encoded_prefix);
         let iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
@@ -1137,14 +1106,11 @@ impl<'env> ReadTxn<'env> {
                 Some(value) if !saw_missing => {
                     let field = relation
                         .field(field_name)
-                        .ok_or_else(|| Error::UnknownField {
-                            relation: relation.name.clone(),
-                            field: field_name.clone(),
-                        })?;
+                        .ok_or_else(|| Error::unknown_field(&relation.name, field_name))?;
                     out.extend_from_slice(&self.encode_read_value(relation, field, value)?);
                 }
                 Some(_) => {
-                    return Err(Error::Internal(format!(
+                    return Err(Error::internal(format!(
                         "index prefix for {}.{} is not contiguous",
                         relation.name, layout.index_name
                     )));
@@ -1159,10 +1125,7 @@ impl<'env> ReadTxn<'env> {
                 .iter()
                 .any(|leading| leading == field_name)
             {
-                return Err(Error::UnknownField {
-                    relation: relation.name.clone(),
-                    field: field_name.clone(),
-                });
+                return Err(Error::unknown_field(&relation.name, field_name));
             }
         }
 
@@ -1176,11 +1139,8 @@ impl<'env> ReadTxn<'env> {
         value: &Value,
     ) -> Result<Vec<u8>> {
         encode_value_with(relation, field, value, |kind, raw| {
-            lookup_intern_value(&self.dbs.dict, &self.txn, kind, raw)?.ok_or(
-                Error::DictionaryValueNotFound {
-                    kind: dict_kind_name(kind),
-                },
-            )
+            lookup_intern_value(&self.dbs.dict, &self.txn, kind, raw)?
+                .ok_or_else(|| Error::dictionary_value_not_found(dict_kind_name(kind)))
         })
     }
 
@@ -1190,18 +1150,12 @@ impl<'env> ReadTxn<'env> {
             let value = row
                 .values
                 .get(&field.name)
-                .ok_or_else(|| Error::MissingField {
-                    relation: relation.name.clone(),
-                    field: field.name.clone(),
-                })?;
+                .ok_or_else(|| Error::missing_field(&relation.name, &field.name))?;
             fields.insert(
                 field.name.clone(),
                 encode_value_with(relation, field, value, |kind, raw| {
-                    lookup_intern_value(&self.dbs.dict, &self.txn, kind, raw)?.ok_or(
-                        Error::DictionaryValueNotFound {
-                            kind: dict_kind_name(kind),
-                        },
-                    )
+                    lookup_intern_value(&self.dbs.dict, &self.txn, kind, raw)?
+                        .ok_or_else(|| Error::dictionary_value_not_found(dict_kind_name(kind)))
                 })?,
             );
         }
@@ -1217,20 +1171,13 @@ impl<'env> ReadTxn<'env> {
         for field_name in &relation.primary_key.fields {
             let field = relation
                 .field(field_name)
-                .ok_or_else(|| Error::UnknownField {
-                    relation: relation.name.clone(),
-                    field: field_name.clone(),
-                })?;
-            let value = values.get(field_name).ok_or_else(|| Error::MissingField {
-                relation: relation.name.clone(),
-                field: field_name.clone(),
-            })?;
+                .ok_or_else(|| Error::unknown_field(&relation.name, field_name))?;
+            let value = values
+                .get(field_name)
+                .ok_or_else(|| Error::missing_field(&relation.name, field_name))?;
             out.extend_from_slice(&encode_value_with(relation, field, value, |kind, raw| {
-                lookup_intern_value(&self.dbs.dict, &self.txn, kind, raw)?.ok_or(
-                    Error::DictionaryValueNotFound {
-                        kind: dict_kind_name(kind),
-                    },
-                )
+                lookup_intern_value(&self.dbs.dict, &self.txn, kind, raw)?
+                    .ok_or_else(|| Error::dictionary_value_not_found(dict_kind_name(kind)))
             })?);
         }
         Ok(out)
@@ -1260,12 +1207,12 @@ fn encode_value_with(
             encode_intern_id(InternId(intern(DICT_BYTES, value)?)).to_vec()
         }
         _ => {
-            return Err(Error::TypeMismatch {
-                relation: relation.name.clone(),
-                field: field.name.clone(),
-                expected: value_type_name(&field.value_type),
-                actual: value.kind_name(),
-            });
+            return Err(Error::type_mismatch(
+                &relation.name,
+                &field.name,
+                value_type_name(&field.value_type),
+                value.kind_name(),
+            ));
         }
     };
 
@@ -1294,16 +1241,12 @@ fn decode_index_key(
 ) -> Result<(EncodedRow, Vec<EncodedComponent>)> {
     let prefix_len = current_index_prefix(layout.relation_id, layout.index_id).len();
     if key.len() != layout.encoded_len {
-        return Err(Error::CorruptMetadata(
-            "index key width does not match layout",
-        ));
+        return Err(Error::corrupt("index key width does not match layout"));
     }
     if key.get(0..prefix_len)
         != Some(current_index_prefix(layout.relation_id, layout.index_id).as_slice())
     {
-        return Err(Error::CorruptMetadata(
-            "index key prefix does not match layout",
-        ));
+        return Err(Error::corrupt("index key prefix does not match layout"));
     }
 
     let mut fields = BTreeMap::new();
@@ -1314,7 +1257,7 @@ fn decode_index_key(
         let end = offset + component.encoded_width;
         let bytes = key
             .get(offset..end)
-            .ok_or(Error::CorruptMetadata("index key component is truncated"))?
+            .ok_or_else(|| Error::corrupt("index key component is truncated"))?
             .to_vec();
         fields.insert(component.field_name.clone(), bytes.clone());
         components.push(EncodedComponent {
@@ -1325,7 +1268,7 @@ fn decode_index_key(
     }
 
     if fields.len() != relation.fields.len() {
-        return Err(Error::CorruptMetadata(
+        return Err(Error::corrupt(
             "index key does not cover every relation field",
         ));
     }
@@ -1360,43 +1303,44 @@ fn decode_value(
     bytes: &[u8],
 ) -> Result<Value> {
     let value = match value_type {
-        ValueType::Bool => Value::Bool(
-            decode_bool(bytes).map_err(|_| Error::CorruptMetadata("bool width invalid"))?,
-        ),
+        ValueType::Bool => {
+            Value::Bool(decode_bool(bytes).map_err(|_| Error::corrupt("bool width invalid"))?)
+        }
         ValueType::U64 => {
-            Value::U64(decode_u64(bytes).map_err(|_| Error::CorruptMetadata("u64 width invalid"))?)
+            Value::U64(decode_u64(bytes).map_err(|_| Error::corrupt("u64 width invalid"))?)
         }
         ValueType::I64 => {
-            Value::I64(decode_i64(bytes).map_err(|_| Error::CorruptMetadata("i64 width invalid"))?)
+            Value::I64(decode_i64(bytes).map_err(|_| Error::corrupt("i64 width invalid"))?)
         }
         ValueType::Id { .. } => {
-            Value::Id(decode_u64(bytes).map_err(|_| Error::CorruptMetadata("id width invalid"))?)
+            Value::Id(decode_u64(bytes).map_err(|_| Error::corrupt("id width invalid"))?)
         }
         ValueType::Ref { .. } => {
-            Value::Ref(decode_u64(bytes).map_err(|_| Error::CorruptMetadata("ref width invalid"))?)
+            Value::Ref(decode_u64(bytes).map_err(|_| Error::corrupt("ref width invalid"))?)
         }
         ValueType::TimestampMicros => Value::Timestamp(
-            decode_timestamp(bytes)
-                .map_err(|_| Error::CorruptMetadata("timestamp width invalid"))?,
+            decode_timestamp(bytes).map_err(|_| Error::corrupt("timestamp width invalid"))?,
         ),
         ValueType::Decimal { .. } => Value::Decimal(
-            decode_decimal(bytes).map_err(|_| Error::CorruptMetadata("decimal width invalid"))?,
+            decode_decimal(bytes).map_err(|_| Error::corrupt("decimal width invalid"))?,
         ),
-        ValueType::Uuid => Value::Uuid(
-            decode_uuid(bytes).map_err(|_| Error::CorruptMetadata("uuid width invalid"))?,
-        ),
-        ValueType::Symbol { .. } => Value::Symbol(
-            decode_u64(bytes).map_err(|_| Error::CorruptMetadata("symbol width invalid"))?,
-        ),
+        ValueType::Uuid => {
+            Value::Uuid(decode_uuid(bytes).map_err(|_| Error::corrupt("uuid width invalid"))?)
+        }
+        ValueType::Symbol { .. } => {
+            Value::Symbol(decode_u64(bytes).map_err(|_| Error::corrupt("symbol width invalid"))?)
+        }
         ValueType::String => {
             let InternId(id) = decode_intern_id(bytes)
-                .map_err(|_| Error::CorruptMetadata("string intern ID width invalid"))?;
+                .map_err(|_| Error::corrupt("string intern ID width invalid"))?;
             let raw = lookup_intern_raw_by_id(dict, txn, DICT_STRING, id)?;
-            Value::String(String::from_utf8(raw).map_err(|_| Error::InvalidUtf8DictionaryString)?)
+            Value::String(
+                String::from_utf8(raw).map_err(|_| Error::invalid_utf8_dictionary_string())?,
+            )
         }
         ValueType::Bytes => {
             let InternId(id) = decode_intern_id(bytes)
-                .map_err(|_| Error::CorruptMetadata("bytes intern ID width invalid"))?;
+                .map_err(|_| Error::corrupt("bytes intern ID width invalid"))?;
             Value::Bytes(lookup_intern_raw_by_id(dict, txn, DICT_BYTES, id)?)
         }
     };
@@ -1483,7 +1427,7 @@ fn read_u64(db: &crate::RawDatabase, txn: &heed::RoTxn, key: &[u8]) -> Result<Op
     };
     let bytes: [u8; 8] = bytes
         .try_into()
-        .map_err(|_| Error::CorruptMetadata("u64 metadata must be eight bytes"))?;
+        .map_err(|_| Error::corrupt("u64 metadata must be eight bytes"))?;
     Ok(Some(u64::from_be_bytes(bytes)))
 }
 
@@ -1510,11 +1454,11 @@ fn adjust_u64_meta(txn: &mut WriteTxn<'_>, key: &[u8], delta: i64) -> Result<()>
     let next = if delta >= 0 {
         current
             .checked_add(delta as u64)
-            .ok_or_else(|| Error::Internal("metadata counter overflow".to_owned()))?
+            .ok_or_else(|| Error::internal("metadata counter overflow"))?
     } else {
         current
             .checked_sub(delta.unsigned_abs())
-            .ok_or_else(|| Error::Internal("metadata counter underflow".to_owned()))?
+            .ok_or_else(|| Error::internal("metadata counter underflow"))?
     };
     write_u64_meta(txn, key, next)?;
     crate::failpoints::check(crate::failpoints::Failpoint::AfterStatsUpdate)?;
@@ -1568,17 +1512,15 @@ fn lookup_intern_value(
         return Ok(None);
     };
     if value.len() < 8 {
-        return Err(Error::CorruptMetadata("dictionary forward value too short"));
+        return Err(Error::corrupt("dictionary forward value too short"));
     }
     let id = u64::from_be_bytes(
         value[..8]
             .try_into()
-            .map_err(|_| Error::CorruptMetadata("dictionary ID width invalid"))?,
+            .map_err(|_| Error::corrupt("dictionary ID width invalid"))?,
     );
     if &value[8..] != raw {
-        return Err(Error::HashCollision {
-            kind: dict_kind_name(kind),
-        });
+        return Err(Error::hash_collision(dict_kind_name(kind)));
     }
     Ok(Some(id))
 }
@@ -1591,9 +1533,7 @@ fn lookup_intern_raw_by_id(
 ) -> Result<Vec<u8>> {
     db.get(txn, dict_rev_key(kind, id).as_slice())?
         .map(ToOwned::to_owned)
-        .ok_or(Error::DictionaryValueNotFound {
-            kind: dict_kind_name(kind),
-        })
+        .ok_or_else(|| Error::dictionary_value_not_found(dict_kind_name(kind)))
 }
 
 fn dict_kind_name(kind: u8) -> &'static str {
@@ -1634,7 +1574,7 @@ fn push_optional_bytes(out: &mut Vec<u8>, bytes: Option<&[u8]>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Environment;
+    use crate::{ConstraintError, Environment};
     use bumbledb_core::schema::{
         ConstraintDescriptor, FieldDescriptor, GeneratedIdDescriptor, PrimaryKeyDescriptor,
         RelationKind,
@@ -1696,7 +1636,7 @@ mod tests {
 
         env.write(|txn| {
             assert_eq!(txn.alloc_id(&schema, "Holder")?, 2);
-            Err::<(), Error>(Error::Internal("rollback counter check".to_owned()))
+            Err::<(), Error>(Error::internal("rollback counter check"))
         })
         .unwrap_err();
     }
@@ -1714,13 +1654,24 @@ mod tests {
         .unwrap();
 
         let duplicate = env.write(|txn| txn.insert(&schema, holder_row(1, "Bob")));
-        assert!(matches!(duplicate, Err(Error::DuplicateTuple { .. })));
+        assert!(matches!(
+            duplicate,
+            Err(Error::Constraint(ConstraintError::DuplicateTuple { .. }))
+        ));
 
         let unique = env.write(|txn| txn.insert(&schema, holder_row(2, "Alice")));
-        assert!(matches!(unique, Err(Error::UniqueViolation { .. })));
+        assert!(matches!(
+            unique,
+            Err(Error::Constraint(ConstraintError::UniqueViolation { .. }))
+        ));
 
         let fk = env.write(|txn| txn.insert(&schema, account_row(1, 999, 840)));
-        assert!(matches!(fk, Err(Error::ForeignKeyViolation { .. })));
+        assert!(matches!(
+            fk,
+            Err(Error::Constraint(
+                ConstraintError::ForeignKeyViolation { .. }
+            ))
+        ));
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 1);
@@ -1788,7 +1739,10 @@ mod tests {
         .unwrap();
 
         let restricted = env.write(|txn| txn.delete(&schema, holder_key(1)));
-        assert!(matches!(restricted, Err(Error::RestrictViolation { .. })));
+        assert!(matches!(
+            restricted,
+            Err(Error::Constraint(ConstraintError::RestrictViolation { .. }))
+        ));
 
         env.write(|txn| {
             txn.delete(&schema, account_key(1))?;
@@ -1824,7 +1778,10 @@ mod tests {
         .unwrap();
 
         let duplicate = env.write(|txn| txn.insert_tuple(&schema, tag_row(1, 7)));
-        assert!(matches!(duplicate, Err(Error::DuplicateTuple { .. })));
+        assert!(matches!(
+            duplicate,
+            Err(Error::Constraint(ConstraintError::DuplicateTuple { .. }))
+        ));
 
         env.write(|txn| {
             txn.delete_tuple(&schema, tag_row(1, 7))?;

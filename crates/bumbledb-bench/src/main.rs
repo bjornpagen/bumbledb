@@ -14,6 +14,14 @@ mod open;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env();
+    if config.trace {
+        let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "bumbledb_lmdb=debug".to_owned());
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(true)
+            .try_init()
+            .ok();
+    }
     println!("BumbleDB benchmark suite");
     println!(
         "scale={} repeats={} datasets={:?} open_datasets={}",
@@ -55,6 +63,7 @@ struct Config {
     tpch_dir: Option<String>,
     lahman_dir: Option<String>,
     ldbc_dir: Option<String>,
+    trace: bool,
 }
 
 impl Config {
@@ -66,6 +75,7 @@ impl Config {
         let mut tpch_dir = None;
         let mut lahman_dir = None;
         let mut ldbc_dir = None;
+        let mut trace = false;
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -88,9 +98,10 @@ impl Config {
                 "--tpch-dir" => tpch_dir = Some(args.next().expect("--tpch-dir value")),
                 "--lahman-dir" => lahman_dir = Some(args.next().expect("--lahman-dir value")),
                 "--ldbc-dir" => ldbc_dir = Some(args.next().expect("--ldbc-dir value")),
+                "--trace" => trace = true,
                 "--help" | "-h" => {
                     println!(
-                        "usage: cargo run -p bumbledb-bench --release -- [--scale N] [--repeats N] [--dataset ledger|sailors|joinstress|tpch|imdb|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
+                        "usage: cargo run -p bumbledb-bench --release -- [--scale N] [--repeats N] [--trace] [--dataset ledger|sailors|joinstress|tpch|imdb|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
                     );
                     std::process::exit(0);
                 }
@@ -105,6 +116,7 @@ impl Config {
             tpch_dir,
             lahman_dir,
             ldbc_dir,
+            trace,
         }
     }
 

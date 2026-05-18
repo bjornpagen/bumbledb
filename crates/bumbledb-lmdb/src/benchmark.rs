@@ -429,7 +429,7 @@ mod tests {
     }
 
     fn sqlite_error(error: rusqlite::Error) -> crate::Error {
-        crate::Error::Internal(format!("sqlite benchmark error: {error}"))
+        crate::Error::internal(format!("sqlite benchmark error: {error}"))
     }
 
     fn id(row: &Row, field: &str) -> i64 {

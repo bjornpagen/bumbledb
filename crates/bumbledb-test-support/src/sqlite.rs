@@ -1,7 +1,7 @@
 //! SQLite comparison helpers.
 
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
-use bumbledb_lmdb::{Error, Result, Row, Value};
+use bumbledb_lmdb::{Error, InternalError, Result, Row, Value};
 use rusqlite::{Connection, params};
 
 /// Loads the small ledger rows into an indexed SQLite database.
@@ -81,7 +81,9 @@ pub fn query_i64_rows(conn: &Connection, sql: &str, args: &[i64]) -> Result<Vec<
 }
 
 fn sqlite_error(error: rusqlite::Error) -> Error {
-    Error::Internal(format!("sqlite test error: {error}"))
+    Error::Internal(InternalError::Invariant {
+        message: format!("sqlite test error: {error}"),
+    })
 }
 
 fn id(row: &Row, field: &str) -> i64 {

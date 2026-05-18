@@ -127,6 +127,13 @@ Each query prints:
 - `rows_scanned`.
 - `output_rows`.
 
+**Tracing Benchmarks**
+```sh
+RUST_LOG=bumbledb_lmdb=debug cargo run -p bumbledb-bench --release -- --trace --dataset joinstress --scale 2000 --repeats 10
+```
+
+The library never initializes a tracing subscriber. The benchmark binary installs one only when `--trace` is passed.
+
 **Current Interpretation**
 Bumbledb currently behaves well for highly selective prefix joins. It is slow for broad joins because the planner/executor is still primitive:
 

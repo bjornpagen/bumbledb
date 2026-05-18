@@ -9,6 +9,7 @@ bumbledb-core.workspace = true
 blake3.workspace = true
 heed.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [features]
 test-failpoints = []
