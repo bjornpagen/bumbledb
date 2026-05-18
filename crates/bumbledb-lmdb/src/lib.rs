@@ -11,6 +11,7 @@ pub mod failpoints;
 mod failpoints;
 mod query;
 mod query_image;
+mod sorted_trie;
 mod storage;
 
 use std::fs;
@@ -29,6 +30,10 @@ pub use query_image::{
     ColumnImage, EncodedRef, FieldId, FieldImage, FixedColumn, QueryImage, QueryImageCache,
     QueryImageKey, QueryImageStats, RelationId, RelationImage, RelationStats, RowId, RowRange,
     RowSetRef,
+};
+pub use sorted_trie::{
+    EncodedOwned, IndexSpec, LinearIter, SortedTrieIndex, SortedTrieIter, TrieFrame, TrieIter,
+    TrieLevel, TrieStats,
 };
 pub use storage::{
     AccessPathDescriptor, BulkLoadReport, EncodedComponent, FieldValues, IndexScan, KeyValues, Row,
