@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 use bumbledb_core::datalog::parse_and_typecheck;
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::schema::{
-    FieldDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind, SchemaDescriptor,
-    ValueType,
+    FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
+    SchemaDescriptor, ValueType,
 };
 use bumbledb_lmdb::{Environment, InputBindings, Row, StorageSchema, Value};
 use rusqlite::{Connection, params_from_iter};
@@ -413,7 +413,8 @@ fn sailors_dataset(scale: u64) -> Dataset {
                         ),
                     ],
                     PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_index(IndexDescriptor::equality("by_color", ["color", "id"])),
                 RelationDescriptor::new(
                     "Reserve",
                     RelationKind::Edge,
@@ -656,7 +657,8 @@ fn tpch_dataset(scale: u64) -> Dataset {
                         ),
                     ],
                     PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_index(IndexDescriptor::equality("by_nation", ["nation", "id"])),
                 RelationDescriptor::new(
                     "Supplier",
                     RelationKind::Entity,
@@ -670,7 +672,8 @@ fn tpch_dataset(scale: u64) -> Dataset {
                         ),
                     ],
                     PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_index(IndexDescriptor::equality("by_nation", ["nation", "id"])),
                 RelationDescriptor::new(
                     "Part",
                     RelationKind::Entity,

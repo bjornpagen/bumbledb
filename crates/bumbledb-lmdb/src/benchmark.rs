@@ -2,8 +2,8 @@
 
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::schema::{
-    FieldDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind, SchemaDescriptor,
-    ValueType,
+    FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
+    SchemaDescriptor, ValueType,
 };
 
 use crate::{Row, Value};
@@ -111,7 +111,8 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                     ),
                 ],
                 PrimaryKeyDescriptor::new(["posting", "tag"]),
-            ),
+            )
+            .with_index(IndexDescriptor::permutation("by_tag", ["tag", "posting"])),
             RelationDescriptor::new(
                 "OrgParent",
                 RelationKind::Edge,

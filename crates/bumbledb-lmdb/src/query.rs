@@ -1179,6 +1179,7 @@ fn operand_is_bound(operand: &TypedOperand, binding: &EncodedBinding) -> bool {
 fn kind_rank(kind: IndexKind) -> usize {
     match kind {
         IndexKind::Unique => 4,
+        IndexKind::Equality | IndexKind::Permutation => 4,
         IndexKind::Primary => 3,
         IndexKind::Ref => 2,
         IndexKind::Range => 1,
@@ -1886,9 +1887,11 @@ mod tests {
 
         assert_same_rows(&output.rows, &[vec![Value::Id(1)], vec![Value::Id(3)]]);
         let expected_fields = vec!["currency".to_owned(), "id".to_owned()];
-        assert!(output.plan.missing_indexes.iter().any(|missing| {
-            missing.relation == "Account" && missing.fields == expected_fields
-        }));
+        assert!(
+            output.plan.missing_indexes.iter().any(|missing| {
+                missing.relation == "Account" && missing.fields == expected_fields
+            })
+        );
     }
 
     #[test]

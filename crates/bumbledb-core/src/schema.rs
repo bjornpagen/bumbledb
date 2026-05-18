@@ -23,6 +23,14 @@ pub enum SchemaError {
         actual: usize,
         max: usize,
     },
+
+    /// An index declared the same leading field more than once.
+    #[error("index {relation}.{index} declares duplicate leading field {field}")]
+    DuplicateIndexField {
+        relation: String,
+        index: String,
+        field: String,
+    },
 }
 
 /// Whole compiled schema descriptor.
@@ -58,7 +66,8 @@ impl SchemaDescriptor {
 
             for (index_id, candidate) in candidates.into_iter().enumerate() {
                 let index_id = index_id as u16;
-                let components = relation.covering_components(&candidate.fields)?;
+                let components =
+                    relation.covering_components(&candidate.name, &candidate.fields)?;
                 let encoded_len = INDEX_KEY_OVERHEAD_BYTES
                     + components
                         .iter()
@@ -136,6 +145,8 @@ pub struct RelationDescriptor {
     pub generated_id: Option<GeneratedIdDescriptor>,
     /// Explicit constraints.
     pub constraints: Vec<ConstraintDescriptor>,
+    /// Explicit physical indexes.
+    pub indexes: Vec<IndexDescriptor>,
 }
 
 impl RelationDescriptor {
@@ -153,6 +164,7 @@ impl RelationDescriptor {
             primary_key,
             generated_id: None,
             constraints: Vec::new(),
+            indexes: Vec::new(),
         }
     }
 
@@ -165,6 +177,12 @@ impl RelationDescriptor {
     /// Adds an explicit constraint.
     pub fn with_constraint(mut self, constraint: ConstraintDescriptor) -> Self {
         self.constraints.push(constraint);
+        self
+    }
+
+    /// Adds an explicit physical index.
+    pub fn with_index(mut self, index: IndexDescriptor) -> Self {
+        self.indexes.push(index);
         self
     }
 
@@ -221,10 +239,24 @@ impl RelationDescriptor {
             }
         }
 
+        for index in &self.indexes {
+            if seen.insert(index.fields.clone()) {
+                candidates.push(IndexCandidate {
+                    name: index.name.clone(),
+                    kind: index.kind,
+                    fields: index.fields.clone(),
+                });
+            }
+        }
+
         candidates
     }
 
-    fn covering_components(&self, leading_fields: &[String]) -> Result<Vec<IndexComponent>> {
+    fn covering_components(
+        &self,
+        index_name: &str,
+        leading_fields: &[String],
+    ) -> Result<Vec<IndexComponent>> {
         let mut components = Vec::with_capacity(self.fields.len());
         let mut seen = BTreeSet::new();
 
@@ -236,7 +268,13 @@ impl RelationDescriptor {
                     field: field_name.clone(),
                 })?;
 
-            seen.insert(field.name.clone());
+            if !seen.insert(field.name.clone()) {
+                return Err(SchemaError::DuplicateIndexField {
+                    relation: self.name.clone(),
+                    index: index_name.to_owned(),
+                    field: field.name.clone(),
+                });
+            }
             components.push(IndexComponent::new(field, ComponentRole::Leading));
         }
 
@@ -271,6 +309,11 @@ impl RelationDescriptor {
         push_u32(out, self.constraints.len() as u32);
         for constraint in &self.constraints {
             constraint.push_canonical(out);
+        }
+
+        push_u32(out, self.indexes.len() as u32);
+        for index in &self.indexes {
+            index.push_canonical(out);
         }
     }
 }
@@ -485,6 +528,54 @@ impl ConstraintDescriptor {
     }
 }
 
+/// Explicit physical index descriptor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IndexDescriptor {
+    /// Stable index name within the relation.
+    pub name: String,
+    /// Index access kind.
+    pub kind: IndexKind,
+    /// Leading fields in encoded key order.
+    pub fields: Vec<String>,
+}
+
+impl IndexDescriptor {
+    /// Creates an explicit physical index descriptor.
+    pub fn new(
+        name: impl Into<String>,
+        kind: IndexKind,
+        fields: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            kind,
+            fields: fields.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    /// Creates an equality index over scalar leading fields.
+    pub fn equality(
+        name: impl Into<String>,
+        fields: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self::new(name, IndexKind::Equality, fields)
+    }
+
+    /// Creates a permutation index for alternate trie traversal order.
+    pub fn permutation(
+        name: impl Into<String>,
+        fields: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self::new(name, IndexKind::Permutation, fields)
+    }
+
+    fn push_canonical(&self, out: &mut Vec<u8>) {
+        push_str(out, &self.name);
+        self.kind.push_canonical(out);
+        push_string_list(out, &self.fields);
+    }
+}
+
 /// Current index kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IndexKind {
@@ -496,6 +587,26 @@ pub enum IndexKind {
     Unique,
     /// Range leading covering index.
     Range,
+    /// Equality leading covering index.
+    Equality,
+    /// Explicit alternate component-order index.
+    Permutation,
+}
+
+impl IndexKind {
+    fn push_canonical(self, out: &mut Vec<u8>) {
+        push_u8(
+            out,
+            match self {
+                IndexKind::Primary => 1,
+                IndexKind::Ref => 2,
+                IndexKind::Unique => 3,
+                IndexKind::Range => 4,
+                IndexKind::Equality => 5,
+                IndexKind::Permutation => 6,
+            },
+        );
+    }
 }
 
 /// Generated current-state index layout.
@@ -629,6 +740,10 @@ mod tests {
         let mut changed_constraint = ledger_schema();
         changed_constraint.relations[0].constraints.clear();
         assert_ne!(schema.fingerprint(), changed_constraint.fingerprint());
+
+        let mut changed_explicit_index = ledger_schema();
+        changed_explicit_index.relations[0].indexes.clear();
+        assert_ne!(schema.fingerprint(), changed_explicit_index.fingerprint());
     }
 
     #[test]
@@ -654,6 +769,11 @@ mod tests {
         let holder_unique = find_layout(&layouts, "Holder", "unique_name");
         assert_eq!(holder_unique.kind, IndexKind::Unique);
         assert_eq!(holder_unique.leading_fields, ["name"]);
+
+        let account_currency = find_layout(&layouts, "Account", "by_currency");
+        assert_eq!(account_currency.kind, IndexKind::Equality);
+        assert_eq!(account_currency.leading_fields, ["currency", "id"]);
+        assert_eq!(field_names(account_currency), ["currency", "id", "holder"]);
 
         assert!(
             layouts
@@ -703,6 +823,45 @@ mod tests {
         assert!(matches!(error, SchemaError::KeyLayoutTooLarge { .. }));
     }
 
+    #[test]
+    fn rejects_duplicate_explicit_index_fields() {
+        let schema = SchemaDescriptor::new(
+            "DuplicateIndexFields",
+            vec![
+                RelationDescriptor::new(
+                    "Account",
+                    RelationKind::Entity,
+                    vec![
+                        FieldDescriptor::new(
+                            "id",
+                            ValueType::Id {
+                                name: "AccountId".to_owned(),
+                                relation: "Account".to_owned(),
+                            },
+                        ),
+                        FieldDescriptor::new(
+                            "currency",
+                            ValueType::Symbol {
+                                name: "Currency".to_owned(),
+                            },
+                        ),
+                    ],
+                    PrimaryKeyDescriptor::new(["id"]),
+                )
+                .with_index(IndexDescriptor::equality(
+                    "bad_currency",
+                    ["currency", "currency"],
+                )),
+            ],
+        );
+
+        let error = schema.current_index_layouts(511).unwrap_err();
+        assert!(matches!(
+            error,
+            SchemaError::DuplicateIndexField { field, .. } if field == "currency"
+        ));
+    }
+
     fn ledger_schema() -> SchemaDescriptor {
         SchemaDescriptor::new(
             "LedgerDb",
@@ -738,7 +897,8 @@ mod tests {
                 .with_constraint(ConstraintDescriptor::unique(
                     "holder_currency",
                     ["holder", "currency"],
-                )),
+                ))
+                .with_index(IndexDescriptor::equality("by_currency", ["currency", "id"])),
                 RelationDescriptor::new(
                     "Posting",
                     RelationKind::Event,

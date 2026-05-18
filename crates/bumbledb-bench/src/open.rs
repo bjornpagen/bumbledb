@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::schema::{
-    FieldDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind, SchemaDescriptor,
-    ValueType,
+    FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
+    SchemaDescriptor, ValueType,
 };
 use bumbledb_lmdb::{Row, Value};
 use csv::{ReaderBuilder, StringRecord};
@@ -244,7 +244,11 @@ fn imdb_schema() -> SchemaDescriptor {
                 bumbledb_core::schema::PrimaryKeyDescriptor::new([
                     "title", "name", "category", "ordering",
                 ]),
-            ),
+            )
+            .with_index(IndexDescriptor::permutation(
+                "by_category",
+                ["category", "title", "name"],
+            )),
         ],
     )
 }
@@ -624,7 +628,11 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                         FieldDescriptor::new("hits", ValueType::I64),
                     ],
                     PrimaryKeyDescriptor::new(["player", "team", "year"]),
-                ),
+                )
+                .with_index(IndexDescriptor::permutation(
+                    "by_year",
+                    ["year", "player", "team"],
+                )),
                 RelationDescriptor::new(
                     "Salary",
                     RelationKind::Edge,
@@ -635,7 +643,11 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                         FieldDescriptor::new("salary", ValueType::I64),
                     ],
                     PrimaryKeyDescriptor::new(["player", "team", "year"]),
-                ),
+                )
+                .with_index(IndexDescriptor::permutation(
+                    "by_year",
+                    ["year", "player", "team"],
+                )),
             ],
         ),
         rows,
@@ -700,7 +712,11 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
                     PrimaryKeyDescriptor::new(["person1", "person2"]),
-                ),
+                )
+                .with_index(IndexDescriptor::permutation(
+                    "by_person2",
+                    ["person2", "person1"],
+                )),
                 RelationDescriptor::new(
                     "Likes",
                     RelationKind::Edge,
@@ -710,7 +726,8 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
                     PrimaryKeyDescriptor::new(["person", "post"]),
-                ),
+                )
+                .with_index(IndexDescriptor::permutation("by_post", ["post", "person"])),
             ],
         ),
         rows,
