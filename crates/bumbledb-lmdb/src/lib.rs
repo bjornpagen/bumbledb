@@ -3,6 +3,7 @@
 //! This crate intentionally keeps all LMDB details behind opaque environment and
 //! transaction types. Higher layers should not depend on raw LMDB handles.
 
+mod query;
 mod storage;
 
 use std::fs;
@@ -11,6 +12,7 @@ use std::path::{Path, PathBuf};
 use heed::types::Bytes;
 use heed::{Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
+pub use query::{InputBindings, PlanCounters, PlannedAtom, QueryOutput, QueryPlan, ResultColumn};
 pub use storage::{
     AccessPathDescriptor, EncodedComponent, FieldValues, IndexScan, KeyValues, Row, ScanItem,
     StorageSchema, Value,
@@ -82,6 +84,18 @@ pub enum Error {
     #[error("missing field {relation}.{field}")]
     MissingField { relation: String, field: String },
 
+    /// Required query input is missing.
+    #[error("missing query input ${input}")]
+    MissingInput { input: String },
+
+    /// Query input does not match its inferred type.
+    #[error("query input ${input} expected {expected}, got {actual}")]
+    QueryInputTypeMismatch {
+        input: String,
+        expected: String,
+        actual: &'static str,
+    },
+
     /// A value does not match the schema field type.
     #[error("type mismatch for {relation}.{field}: expected {expected}, got {actual}")]
     TypeMismatch {
@@ -129,6 +143,14 @@ pub enum Error {
     /// A requested dictionary value is not interned.
     #[error("dictionary value not found for {kind}")]
     DictionaryValueNotFound { kind: &'static str },
+
+    /// Integer aggregation overflowed.
+    #[error("integer overflow during {operation}")]
+    IntegerOverflow { operation: &'static str },
+
+    /// Decimal aggregation overflowed.
+    #[error("decimal overflow during {operation}")]
+    DecimalOverflow { operation: &'static str },
 
     /// Current stage supports refs only to single-field primary keys.
     #[error("foreign key target {target_relation} must have a single-field primary key")]

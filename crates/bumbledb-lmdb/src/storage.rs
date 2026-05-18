@@ -113,7 +113,7 @@ impl AccessPathDescriptor {
 }
 
 /// A logical row for the generic storage layer.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Row {
     relation: String,
     values: BTreeMap<String, Value>,
@@ -197,7 +197,7 @@ impl KeyValues {
 }
 
 /// Logical storage value.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Value {
     /// Boolean.
     Bool(bool),
@@ -224,7 +224,7 @@ pub enum Value {
 }
 
 impl Value {
-    fn kind_name(&self) -> &'static str {
+    pub(crate) fn kind_name(&self) -> &'static str {
         match self {
             Value::Bool(_) => "bool",
             Value::U64(_) => "u64",
