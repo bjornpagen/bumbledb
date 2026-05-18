@@ -26,8 +26,9 @@ pub use query::{
     ResultColumn, VariableEstimate,
 };
 pub use query_image::{
-    ColumnImage, FieldId, FieldImage, QueryImage, QueryImageCache, QueryImageKey, QueryImageStats,
-    RelationId, RelationImage, RowId,
+    ColumnImage, EncodedRef, FieldId, FieldImage, FixedColumn, QueryImage, QueryImageCache,
+    QueryImageKey, QueryImageStats, RelationId, RelationImage, RelationStats, RowId, RowRange,
+    RowSetRef,
 };
 pub use storage::{
     AccessPathDescriptor, BulkLoadReport, EncodedComponent, FieldValues, IndexScan, KeyValues, Row,

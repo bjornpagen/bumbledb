@@ -39,6 +39,51 @@ pub struct FieldId(pub u16);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RowId(pub u32);
 
+/// Half-open row-id range inside a relation image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RowRange {
+    /// Inclusive start row id.
+    pub start: RowId,
+    /// Exclusive end row id.
+    pub end: RowId,
+}
+
+/// Borrowed row-id set reference used by future indexes and plan nodes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowSetRef<'a> {
+    /// Empty row set.
+    Empty,
+    /// Single row id.
+    One(RowId),
+    /// Contiguous row-id range.
+    Range(RowRange),
+    /// Borrowed row-id slice.
+    Slice(&'a [RowId]),
+}
+
+/// Borrowed fixed-width encoded value reference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum EncodedRef<'a> {
+    /// One-byte encoded value.
+    One(&'a [u8; 1]),
+    /// Eight-byte encoded value.
+    Eight(&'a [u8; 8]),
+    /// Sixteen-byte encoded value.
+    Sixteen(&'a [u8; 16]),
+}
+
+impl<'a> EncodedRef<'a> {
+    /// Returns the encoded bytes for this value.
+    #[inline]
+    pub fn as_bytes(self) -> &'a [u8] {
+        match self {
+            EncodedRef::One(bytes) => &bytes[..],
+            EncodedRef::Eight(bytes) => &bytes[..],
+            EncodedRef::Sixteen(bytes) => &bytes[..],
+        }
+    }
+}
+
 /// Immutable snapshot-local image used by the future query runtime.
 #[derive(Clone, Debug)]
 pub struct QueryImage {
@@ -112,7 +157,7 @@ impl QueryImage {
             hasher.update(&(relation.row_count as u64).to_be_bytes());
             for field in &relation.fields {
                 hasher.update(field.name.as_bytes());
-                hasher.update(&(field.encoded_width as u64).to_be_bytes());
+                hasher.update(&(field.width as u64).to_be_bytes());
             }
             for column in &relation.columns {
                 column.hash_into(&mut hasher);
@@ -152,18 +197,58 @@ pub struct RelationImage {
     pub fields: Vec<FieldImage>,
     /// Encoded columns in declaration order.
     pub columns: Vec<ColumnImage>,
+    /// Placeholder count for sorted indexes built in PRD 03.
+    pub sorted_index_count: usize,
+    /// Placeholder count for hash indexes built in PRD 06.
+    pub hash_index_count: usize,
+    /// Relation image statistics.
+    pub stats: RelationStats,
 }
 
 impl RelationImage {
     /// Returns the encoded value for `row` and `field`.
-    pub fn encoded(&self, row: RowId, field: FieldId) -> Option<&[u8]> {
+    pub fn encoded(&self, row: RowId, field: FieldId) -> Option<EncodedRef<'_>> {
         self.columns.get(field.0 as usize)?.encoded(row)
+    }
+
+    /// Returns the encoded bytes for `row` and `field`.
+    pub fn encoded_bytes(&self, row: RowId, field: FieldId) -> Option<&[u8]> {
+        self.encoded(row, field).map(EncodedRef::as_bytes)
+    }
+
+    /// Returns field metadata by ID.
+    pub fn field(&self, field: FieldId) -> Option<&FieldImage> {
+        self.fields.get(field.0 as usize)
+    }
+
+    /// Returns column metadata/data by field ID.
+    pub fn column(&self, field: FieldId) -> Option<&ColumnImage> {
+        self.columns.get(field.0 as usize)
+    }
+
+    /// Returns all row IDs in this relation image.
+    pub fn all_rows(&self) -> RowRange {
+        RowRange {
+            start: RowId(0),
+            end: RowId(self.row_count as u32),
+        }
     }
 
     /// Encoded column byte footprint.
     pub fn encoded_column_bytes(&self) -> usize {
         self.columns.iter().map(ColumnImage::byte_len).sum()
     }
+}
+
+/// Relation-level image statistics.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RelationStats {
+    /// Number of rows in the relation image.
+    pub row_count: usize,
+    /// Number of fields/columns.
+    pub field_count: usize,
+    /// Encoded column bytes.
+    pub encoded_column_bytes: usize,
 }
 
 /// Field metadata inside a relation image.
@@ -176,89 +261,160 @@ pub struct FieldImage {
     /// Logical value type.
     pub value_type: ValueType,
     /// Fixed encoded width.
-    pub encoded_width: usize,
+    pub width: usize,
+}
+
+impl FieldImage {
+    /// Fixed encoded width for this field.
+    pub fn encoded_width(&self) -> usize {
+        self.width
+    }
+}
+
+/// Typed fixed-width column.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FixedColumn<T> {
+    field: FieldId,
+    values: Vec<T>,
+}
+
+impl<T> FixedColumn<T> {
+    fn new(field: FieldId, values: Vec<T>) -> Self {
+        Self { field, values }
+    }
+
+    /// Field ID stored by this column.
+    pub fn field(&self) -> FieldId {
+        self.field
+    }
+
+    /// Number of encoded values in the column.
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// True when this column has no values.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+}
+
+impl<T: Copy> FixedColumn<T> {
+    /// Returns a copied value by row ID.
+    #[inline]
+    pub fn get(&self, row: RowId) -> Option<T> {
+        self.values.get(row.0 as usize).copied()
+    }
+
+    /// Returns a borrowed value by row ID.
+    #[inline]
+    pub fn get_ref(&self, row: RowId) -> Option<&T> {
+        self.values.get(row.0 as usize)
+    }
 }
 
 /// Encoded fixed-width column image.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ColumnImage {
-    /// One-byte fixed-width column.
-    Fixed1 {
-        field: FieldId,
-        values: Vec<[u8; 1]>,
-    },
+    /// Boolean/one-byte fixed-width column.
+    Bool(FixedColumn<[u8; 1]>),
     /// Eight-byte fixed-width column.
-    Fixed8 {
-        field: FieldId,
-        values: Vec<[u8; 8]>,
-    },
+    Fixed8(FixedColumn<[u8; 8]>),
     /// Sixteen-byte fixed-width column.
-    Fixed16 {
-        field: FieldId,
-        values: Vec<[u8; 16]>,
-    },
+    Fixed16(FixedColumn<[u8; 16]>),
 }
 
 impl ColumnImage {
     fn from_bytes(field: FieldId, width: usize, values: Vec<Vec<u8>>) -> Result<Self> {
         Ok(match width {
-            1 => ColumnImage::Fixed1 {
+            1 => ColumnImage::Bool(FixedColumn::new(
                 field,
-                values: values
+                values
                     .into_iter()
                     .map(|bytes| exact_array::<1>(&bytes))
                     .collect::<Result<Vec<_>>>()?,
-            },
-            8 => ColumnImage::Fixed8 {
+            )),
+            8 => ColumnImage::Fixed8(FixedColumn::new(
                 field,
-                values: values
+                values
                     .into_iter()
                     .map(|bytes| exact_array::<8>(&bytes))
                     .collect::<Result<Vec<_>>>()?,
-            },
-            16 => ColumnImage::Fixed16 {
+            )),
+            16 => ColumnImage::Fixed16(FixedColumn::new(
                 field,
-                values: values
+                values
                     .into_iter()
                     .map(|bytes| exact_array::<16>(&bytes))
                     .collect::<Result<Vec<_>>>()?,
-            },
+            )),
             _ => return Err(Error::internal(format!("unsupported column width {width}"))),
         })
     }
 
-    fn encoded(&self, row: RowId) -> Option<&[u8]> {
-        let row = row.0 as usize;
+    fn encoded(&self, row: RowId) -> Option<EncodedRef<'_>> {
         match self {
-            ColumnImage::Fixed1 { values, .. } => values.get(row).map(|bytes| bytes.as_slice()),
-            ColumnImage::Fixed8 { values, .. } => values.get(row).map(|bytes| bytes.as_slice()),
-            ColumnImage::Fixed16 { values, .. } => values.get(row).map(|bytes| bytes.as_slice()),
+            ColumnImage::Bool(column) => column.get_ref(row).map(EncodedRef::One),
+            ColumnImage::Fixed8(column) => column.get_ref(row).map(EncodedRef::Eight),
+            ColumnImage::Fixed16(column) => column.get_ref(row).map(EncodedRef::Sixteen),
+        }
+    }
+
+    /// Field ID stored by this column.
+    pub fn field(&self) -> FieldId {
+        match self {
+            ColumnImage::Bool(column) => column.field(),
+            ColumnImage::Fixed8(column) => column.field(),
+            ColumnImage::Fixed16(column) => column.field(),
+        }
+    }
+
+    /// Number of values in this column.
+    pub fn len(&self) -> usize {
+        match self {
+            ColumnImage::Bool(column) => column.len(),
+            ColumnImage::Fixed8(column) => column.len(),
+            ColumnImage::Fixed16(column) => column.len(),
+        }
+    }
+
+    /// True when this column has no values.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Fixed encoded width of values in this column.
+    pub fn width(&self) -> usize {
+        match self {
+            ColumnImage::Bool(_) => 1,
+            ColumnImage::Fixed8(_) => 8,
+            ColumnImage::Fixed16(_) => 16,
         }
     }
 
     fn byte_len(&self) -> usize {
         match self {
-            ColumnImage::Fixed1 { values, .. } => values.len(),
-            ColumnImage::Fixed8 { values, .. } => values.len() * 8,
-            ColumnImage::Fixed16 { values, .. } => values.len() * 16,
+            ColumnImage::Bool(column) => column.len(),
+            ColumnImage::Fixed8(column) => column.len() * 8,
+            ColumnImage::Fixed16(column) => column.len() * 16,
         }
     }
 
     #[cfg(test)]
     fn hash_into(&self, hasher: &mut blake3::Hasher) {
         match self {
-            ColumnImage::Fixed1 { values, .. } => {
-                for value in values {
+            ColumnImage::Bool(column) => {
+                for value in &column.values {
                     hasher.update(value);
                 }
             }
-            ColumnImage::Fixed8 { values, .. } => {
-                for value in values {
+            ColumnImage::Fixed8(column) => {
+                for value in &column.values {
                     hasher.update(value);
                 }
             }
-            ColumnImage::Fixed16 { values, .. } => {
-                for value in values {
+            ColumnImage::Fixed16(column) => {
+                for value in &column.values {
                     hasher.update(value);
                 }
             }
@@ -376,7 +532,7 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
                 id: FieldId(field_id as u16),
                 name: field.name.clone(),
                 value_type: field.value_type.clone(),
-                encoded_width: field.value_type.encoded_width(),
+                width: field.value_type.encoded_width(),
             })
             .collect::<Vec<_>>();
         let mut raw_columns = vec![Vec::<Vec<u8>>::new(); fields.len()];
@@ -413,17 +569,25 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
             .map(|field| {
                 ColumnImage::from_bytes(
                     field.id,
-                    field.encoded_width,
+                    field.width,
                     raw_columns[field.id.0 as usize].clone(),
                 )
             })
             .collect::<Result<Vec<_>>>()?;
+        let encoded_column_bytes = columns.iter().map(ColumnImage::byte_len).sum();
         Ok(RelationImage {
             id: self.relation_id,
             name: self.relation.name.clone(),
             row_count,
             fields,
             columns,
+            sorted_index_count: 0,
+            hash_index_count: 0,
+            stats: RelationStats {
+                row_count,
+                field_count: self.relation.fields.len(),
+                encoded_column_bytes,
+            },
         })
     }
 }
@@ -455,8 +619,79 @@ mod tests {
 
         let account = image.relation("Account").unwrap();
         assert_eq!(account.row_count, 2);
-        assert_eq!(account.fields.len(), 3);
-        assert_eq!(account.encoded_column_bytes(), 2 * (8 + 8 + 8));
+        assert_eq!(account.fields.len(), 5);
+        assert_eq!(account.encoded_column_bytes(), 2 * (8 + 8 + 1 + 8 + 8));
+        assert_eq!(account.stats.row_count, account.row_count);
+        assert_eq!(account.stats.field_count, account.fields.len());
+        assert_eq!(
+            account.stats.encoded_column_bytes,
+            account.encoded_column_bytes()
+        );
+    }
+
+    #[test]
+    fn relation_image_columns_expose_widths_and_stable_row_ids() {
+        let (env, schema) = seeded_env();
+        let image = env.query_image(&schema).unwrap();
+        let account = image.relation("Account").unwrap();
+
+        assert_eq!(
+            account.all_rows(),
+            RowRange {
+                start: RowId(0),
+                end: RowId(2)
+            }
+        );
+        assert_eq!(account.field(FieldId(0)).unwrap().encoded_width(), 8);
+        assert_eq!(account.field(FieldId(2)).unwrap().encoded_width(), 1);
+        assert_eq!(account.column(FieldId(0)).unwrap().len(), 2);
+        assert_eq!(account.column(FieldId(0)).unwrap().field(), FieldId(0));
+        assert_eq!(account.column(FieldId(2)).unwrap().width(), 1);
+        assert!(matches!(
+            account.column(FieldId(2)).unwrap(),
+            ColumnImage::Bool(_)
+        ));
+
+        assert_eq!(
+            account.encoded_bytes(RowId(0), FieldId(0)).unwrap(),
+            1u64.to_be_bytes().as_slice()
+        );
+        assert_eq!(
+            account.encoded_bytes(RowId(1), FieldId(0)).unwrap(),
+            2u64.to_be_bytes().as_slice()
+        );
+        assert!(matches!(
+            account.encoded(RowId(0), FieldId(2)).unwrap(),
+            EncodedRef::One(_)
+        ));
+    }
+
+    #[test]
+    fn string_and_bytes_columns_store_intern_ids_not_raw_values() {
+        let (env, schema) = seeded_env();
+        let image = env.query_image(&schema).unwrap();
+        let account = image.relation("Account").unwrap();
+
+        let payload = account.encoded_bytes(RowId(0), FieldId(3)).unwrap();
+        let name = account.encoded_bytes(RowId(0), FieldId(4)).unwrap();
+
+        assert_eq!(payload.len(), 8);
+        assert_eq!(name.len(), 8);
+        assert_ne!(payload, &[1, 2, 3][..]);
+        assert_ne!(name, b"Cash USD".as_slice());
+
+        env.read(|txn| {
+            assert_eq!(
+                txn.decode_query_value(&account.field(FieldId(3)).unwrap().value_type, payload)?,
+                Value::Bytes(vec![1, 2, 3])
+            );
+            assert_eq!(
+                txn.decode_query_value(&account.field(FieldId(4)).unwrap().value_type, name)?,
+                Value::String("Cash USD".to_owned())
+            );
+            Ok::<_, crate::Error>(())
+        })
+        .unwrap();
     }
 
     #[test]
@@ -508,6 +743,8 @@ mod tests {
                     [
                         ("id", Value::Id(3)),
                         ("currency", Value::Symbol(826)),
+                        ("active", Value::Bool(true)),
+                        ("payload", Value::Bytes(vec![7, 8, 9])),
                         ("name", Value::String("Cash GBP".to_owned())),
                     ],
                 ),
@@ -550,6 +787,8 @@ mod tests {
                     [
                         ("id", Value::Id(1)),
                         ("currency", Value::Symbol(840)),
+                        ("active", Value::Bool(true)),
+                        ("payload", Value::Bytes(vec![1, 2, 3])),
                         ("name", Value::String("Cash USD".to_owned())),
                     ],
                 ),
@@ -561,6 +800,8 @@ mod tests {
                     [
                         ("id", Value::Id(2)),
                         ("currency", Value::Symbol(978)),
+                        ("active", Value::Bool(false)),
+                        ("payload", Value::Bytes(vec![4, 5, 6])),
                         ("name", Value::String("Cash EUR".to_owned())),
                     ],
                 ),
@@ -586,6 +827,8 @@ mod tests {
                     name: "Currency".to_owned(),
                 },
             ),
+            FieldDescriptor::new("active", ValueType::Bool),
+            FieldDescriptor::new("payload", ValueType::Bytes),
         ];
         if with_name {
             fields.push(FieldDescriptor::new("name", ValueType::String));
@@ -614,7 +857,7 @@ mod tests {
                         .ok_or_else(|| Error::internal("missing query image field"))?;
                     Ok((
                         field.name.clone(),
-                        txn.decode_query_value(&field.value_type, bytes)?,
+                        txn.decode_query_value(&field.value_type, bytes.as_bytes())?,
                     ))
                 })
                 .collect::<Result<Vec<_>>>()?;
