@@ -25,6 +25,18 @@ The Rosetta Stone remains normative. These todo documents are the execution plan
 - `10_comprehensive_testing_and_hardening.md`
 - `11_errors_and_tracing_foundation.md`
 
+**Get Fast Mission**
+- `get_fast/README.md`
+- `get_fast/01_encoded_trie_wcoj_executor/README.md`
+- `get_fast/02_encoded_bindings_and_late_materialization/README.md`
+- `get_fast/03_statistics_and_variable_ordering/README.md`
+- `get_fast/04_index_permutations_and_access_layouts/README.md`
+- `get_fast/05_factorized_aggregation/README.md`
+- `get_fast/06_tracing_and_benchmark_gates/README.md`
+- `get_fast/07_delete_old_executor_and_harden/README.md`
+
+The get-fast mission supersedes incremental tuning of the current query executor. Its core directive is to replace relation-at-a-time recursive execution with encoded trie/WCOJ execution and remove the old path rather than maintain dual engines.
+
 **Completion Philosophy**
 - Each stage should leave the project in a coherent state.
 - Tests should pass at every stage boundary.
