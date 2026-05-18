@@ -3,6 +3,7 @@
 //! This crate intentionally keeps all LMDB details behind opaque environment and
 //! transaction types. Higher layers should not depend on raw LMDB handles.
 
+pub mod benchmark;
 mod query;
 mod storage;
 
@@ -179,6 +180,47 @@ pub struct Environment {
     path: PathBuf,
 }
 
+/// Storage diagnostics for the current database snapshot and LMDB environment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageDiagnostics {
+    /// Schema fingerprint rendered as lowercase hex.
+    pub schema_fingerprint: String,
+    /// Current storage transaction ID from Bumbledb metadata.
+    pub storage_tx_id: u64,
+    /// LMDB environment last transaction ID.
+    pub lmdb_last_tx_id: usize,
+    /// LMDB configured map size in bytes.
+    pub lmdb_map_size: usize,
+    /// LMDB maximum reader slots.
+    pub lmdb_max_readers: u32,
+    /// LMDB current reader count.
+    pub lmdb_num_readers: u32,
+    /// Number of reverse dictionary entries.
+    pub dictionary_entries: usize,
+    /// Relation diagnostics.
+    pub relations: Vec<RelationDiagnostics>,
+}
+
+/// Relation-level diagnostics.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RelationDiagnostics {
+    /// Relation name.
+    pub relation: String,
+    /// Current row count.
+    pub row_count: u64,
+    /// Index diagnostics for this relation.
+    pub indexes: Vec<IndexDiagnostics>,
+}
+
+/// Index-level diagnostics.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IndexDiagnostics {
+    /// Index name.
+    pub index: String,
+    /// Current entry count.
+    pub entry_count: u64,
+}
+
 impl Environment {
     /// Opens or creates an LMDB environment at `path`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -220,6 +262,46 @@ impl Environment {
     /// Reads the storage format version from metadata.
     pub fn storage_format_version(&self) -> Result<u32> {
         self.read(|txn| txn.storage_format_version())
+    }
+
+    /// Returns storage and LMDB diagnostics without exposing raw LMDB handles.
+    pub fn storage_diagnostics(&self, schema: &StorageSchema) -> Result<StorageDiagnostics> {
+        let info = self.env.info();
+        self.read(|txn| {
+            let mut relations = Vec::new();
+            for relation in &schema.descriptor().relations {
+                let indexes = schema
+                    .access_paths(&relation.name)?
+                    .into_iter()
+                    .map(|path| {
+                        Ok(IndexDiagnostics {
+                            entry_count: txn.index_entry_count(
+                                schema,
+                                &relation.name,
+                                &path.index_name,
+                            )?,
+                            index: path.index_name,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                relations.push(RelationDiagnostics {
+                    row_count: txn.relation_row_count(schema, &relation.name)?,
+                    relation: relation.name.clone(),
+                    indexes,
+                });
+            }
+
+            Ok(StorageDiagnostics {
+                schema_fingerprint: schema.descriptor().fingerprint().to_string(),
+                storage_tx_id: txn.last_committed_tx_id()?,
+                lmdb_last_tx_id: info.last_txn_id,
+                lmdb_map_size: info.map_size,
+                lmdb_max_readers: info.maximum_number_of_readers,
+                lmdb_num_readers: info.number_of_readers,
+                dictionary_entries: txn.dictionary_entry_count()?,
+                relations,
+            })
+        })
     }
 
     /// Runs a closure inside a read-only transaction.

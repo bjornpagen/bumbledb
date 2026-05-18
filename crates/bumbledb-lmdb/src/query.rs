@@ -47,6 +47,13 @@ pub struct QueryOutput {
     pub plan: QueryPlan,
 }
 
+impl QueryOutput {
+    /// Renders a human-readable explain plan for this executed query.
+    pub fn explain(&self) -> String {
+        self.plan.explain()
+    }
+}
+
 /// Result column metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResultColumn {
@@ -74,6 +81,48 @@ pub struct QueryPlan {
     pub uses_indexed_multiway_join: bool,
 }
 
+impl QueryPlan {
+    /// Renders this physical plan and its current execution counters.
+    pub fn explain(&self) -> String {
+        let mut out = String::new();
+        out.push_str("QueryPlan\n");
+        out.push_str(&format!("variable_order: {:?}\n", self.variable_order));
+        out.push_str(&format!(
+            "uses_indexed_multiway_join: {}\n",
+            self.uses_indexed_multiway_join
+        ));
+        out.push_str("atoms:\n");
+        for atom in &self.atoms {
+            out.push_str(&format!(
+                "  relation={} index={} kind={:?} prefix_fields={:?}\n",
+                atom.relation, atom.index, atom.kind, atom.prefix_fields
+            ));
+        }
+        out.push_str("counters:\n");
+        out.push_str(&format!("  cursor_seeks: {}\n", self.counters.cursor_seeks));
+        out.push_str(&format!("  rows_scanned: {}\n", self.counters.rows_scanned));
+        out.push_str(&format!("  rows_matched: {}\n", self.counters.rows_matched));
+        out.push_str(&format!(
+            "  bindings_yielded: {}\n",
+            self.counters.bindings_yielded
+        ));
+        out.push_str(&format!(
+            "  comparisons_evaluated: {}\n",
+            self.counters.comparisons_evaluated
+        ));
+        out.push_str(&format!(
+            "  comparisons_failed: {}\n",
+            self.counters.comparisons_failed
+        ));
+        out.push_str(&format!(
+            "  aggregate_groups: {}\n",
+            self.counters.aggregate_groups
+        ));
+        out.push_str(&format!("  output_rows: {}\n", self.counters.output_rows));
+        out
+    }
+}
+
 /// Planned relation atom.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlannedAtom {
@@ -90,12 +139,22 @@ pub struct PlannedAtom {
 /// Execution counters for stage-06 explain metadata.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlanCounters {
+    /// Number of logical cursor seeks/scan openings.
+    pub cursor_seeks: u64,
     /// Number of cursor-backed row candidates scanned.
     pub rows_scanned: u64,
     /// Number of candidate rows accepted by relation atom matching.
     pub rows_matched: u64,
     /// Number of complete bindings yielded before projection/aggregation.
     pub bindings_yielded: u64,
+    /// Number of comparison predicates evaluated.
+    pub comparisons_evaluated: u64,
+    /// Number of comparison predicate failures.
+    pub comparisons_failed: u64,
+    /// Number of aggregate groups produced.
+    pub aggregate_groups: u64,
+    /// Number of final output rows.
+    pub output_rows: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -151,6 +210,14 @@ impl<'env> ReadTxn<'env> {
 
         let columns = result_columns(query);
         let rows = project_results(query, &bindings)?;
+        plan.summary.counters.output_rows = rows.len() as u64;
+        if query
+            .find
+            .iter()
+            .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }))
+        {
+            plan.summary.counters.aggregate_groups = rows.len() as u64;
+        }
         Ok(QueryOutput {
             columns,
             rows,
@@ -169,7 +236,13 @@ impl<'env> ReadTxn<'env> {
         output: &mut Vec<Binding>,
     ) -> Result<()> {
         if depth == plan.atom_indices.len() {
-            if comparisons_pass(&plan.comparisons, query, inputs, &binding)? {
+            if comparisons_pass(
+                &plan.comparisons,
+                query,
+                inputs,
+                &binding,
+                &mut plan.summary.counters,
+            )? {
                 plan.summary.counters.bindings_yielded += 1;
                 output.push(binding);
             }
@@ -180,6 +253,7 @@ impl<'env> ReadTxn<'env> {
         let access = choose_access_path(schema, atom, query, inputs, &binding)?;
         plan.summary.atoms[depth] = access.summary.clone();
 
+        plan.summary.counters.cursor_seeks += 1;
         let scan = open_scan(self, schema, atom, &access)?;
         for item in scan {
             plan.summary.counters.rows_scanned += 1;
@@ -187,7 +261,13 @@ impl<'env> ReadTxn<'env> {
             let Some(next_binding) = match_atom(atom, query, inputs, &binding, &item.row)? else {
                 continue;
             };
-            if !comparisons_pass(&plan.comparisons, query, inputs, &next_binding)? {
+            if !comparisons_pass(
+                &plan.comparisons,
+                query,
+                inputs,
+                &next_binding,
+                &mut plan.summary.counters,
+            )? {
                 continue;
             }
             plan.summary.counters.rows_matched += 1;
@@ -540,6 +620,7 @@ fn comparisons_pass(
     query: &TypedQuery,
     inputs: &InputBindings,
     binding: &Binding,
+    counters: &mut PlanCounters,
 ) -> Result<bool> {
     for comparison in comparisons {
         let Some(left) = operand_value(&comparison.left, query, inputs, binding)? else {
@@ -548,9 +629,11 @@ fn comparisons_pass(
         let Some(right) = operand_value(&comparison.right, query, inputs, binding)? else {
             continue;
         };
+        counters.comparisons_evaluated += 1;
         let left = normalize_value_for_type(&left, &comparison.value_type);
         let right = normalize_value_for_type(&right, &comparison.value_type);
         if !compare_values(&left, comparison.operator, &right) {
+            counters.comparisons_failed += 1;
             return Ok(false);
         }
     }
@@ -1075,24 +1158,130 @@ mod tests {
         assert!(matches!(error, Error::QueryInputTypeMismatch { .. }));
     }
 
+    #[test]
+    fn explain_and_storage_diagnostics_are_available() {
+        let (env, schema) = seeded_db();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?posting ?amount
+            where
+              Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
+              Account(id: ?account, holder: $holder)
+              ?t >= $start
+              ?t < $end
+            "#,
+        )
+        .unwrap();
+
+        let output = env
+            .read(|txn| {
+                txn.execute_query(
+                    &schema,
+                    &query,
+                    &InputBindings::from_values([
+                        ("holder", Value::Ref(1)),
+                        ("start", Value::Timestamp(TimestampMicros(0))),
+                        ("end", Value::Timestamp(TimestampMicros(100))),
+                    ]),
+                )
+            })
+            .unwrap();
+        let explain = output.explain();
+        assert!(explain.contains("variable_order"));
+        assert!(explain.contains("index="));
+        assert!(explain.contains("cursor_seeks"));
+        assert!(explain.contains("rows_scanned"));
+        assert!(explain.contains("bindings_yielded"));
+        assert!(explain.contains("output_rows"));
+
+        let diagnostics = env.storage_diagnostics(&schema).unwrap();
+        assert_eq!(diagnostics.storage_tx_id, 1);
+        assert!(diagnostics.lmdb_map_size > 0);
+        assert!(diagnostics.dictionary_entries > 0);
+        assert!(
+            diagnostics
+                .relations
+                .iter()
+                .any(|relation| relation.relation == "Account" && relation.row_count == 3)
+        );
+        assert_eq!(
+            diagnostics.schema_fingerprint,
+            schema.descriptor().fingerprint().to_string()
+        );
+    }
+
+    #[test]
+    fn differential_reference_evaluator_matches_lmdb() {
+        let (env, schema) = seeded_db();
+        let reference = ReferenceDb::from_rows(seeded_rows());
+        let cases = [
+            (
+                "find ?account where Account(id: ?account, holder: $holder)",
+                InputBindings::from_values([("holder", Value::Ref(1))]),
+            ),
+            (
+                r#"
+                find ?account ?holder_name
+                where
+                  Account(id: ?account, holder: ?holder)
+                  Holder(id: ?holder, name: ?holder_name)
+                "#,
+                InputBindings::new(),
+            ),
+            (
+                r#"
+                find ?account sum(?amount) count(?posting)
+                where
+                  Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
+                  ?t >= $start
+                  ?t < $end
+                "#,
+                InputBindings::from_values([
+                    ("start", Value::Timestamp(TimestampMicros(0))),
+                    ("end", Value::Timestamp(TimestampMicros(100))),
+                ]),
+            ),
+        ];
+
+        for (source, inputs) in cases {
+            let query = parse_and_typecheck(schema.descriptor(), source).unwrap();
+            let lmdb_rows = env
+                .read(|txn| txn.execute_query(&schema, &query, &inputs))
+                .unwrap()
+                .rows;
+            let reference_rows = reference.execute(&query, &inputs).unwrap();
+            assert_same_rows(&lmdb_rows, &reference_rows);
+        }
+    }
+
     fn seeded_db() -> (Environment, StorageSchema) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.keep();
         let env = Environment::open(&path).unwrap();
         let schema = StorageSchema::new(ledger_schema(), env.max_key_size()).unwrap();
+        let rows = seeded_rows();
         env.write(|txn| {
-            txn.insert(&schema, holder_row(1, "Alice"))?;
-            txn.insert(&schema, holder_row(2, "Bob"))?;
-            txn.insert(&schema, account_row(1, 1, 840))?;
-            txn.insert(&schema, account_row(2, 1, 978))?;
-            txn.insert(&schema, account_row(3, 2, 840))?;
-            txn.insert(&schema, posting_row(1, 1, 100, 10))?;
-            txn.insert(&schema, posting_row(2, 1, 200, 20))?;
-            txn.insert(&schema, posting_row(3, 2, 300, 30))?;
+            for row in &rows {
+                txn.insert(&schema, row.clone())?;
+            }
             Ok::<(), Error>(())
         })
         .unwrap();
         (env, schema)
+    }
+
+    fn seeded_rows() -> Vec<Row> {
+        vec![
+            holder_row(1, "Alice"),
+            holder_row(2, "Bob"),
+            account_row(1, 1, 840),
+            account_row(2, 1, 978),
+            account_row(3, 2, 840),
+            posting_row(1, 1, 100, 10),
+            posting_row(2, 1, 200, 20),
+            posting_row(3, 2, 300, 30),
+        ]
     }
 
     fn ledger_schema() -> bumbledb_core::schema::SchemaDescriptor {
@@ -1243,5 +1432,94 @@ mod tests {
         actual.sort();
         expected.sort();
         assert_eq!(actual, expected);
+    }
+
+    struct ReferenceDb {
+        rows: BTreeMap<String, Vec<Row>>,
+    }
+
+    impl ReferenceDb {
+        fn from_rows(rows: Vec<Row>) -> Self {
+            let mut by_relation: BTreeMap<String, Vec<Row>> = BTreeMap::new();
+            for row in rows {
+                by_relation
+                    .entry(row.relation().to_owned())
+                    .or_default()
+                    .push(row);
+            }
+            Self { rows: by_relation }
+        }
+
+        fn execute(&self, query: &TypedQuery, inputs: &InputBindings) -> Result<Vec<Vec<Value>>> {
+            validate_inputs(query, inputs)?;
+            let atoms = query
+                .clauses
+                .iter()
+                .filter_map(|clause| match clause {
+                    TypedClause::Relation(atom) => Some(atom),
+                    TypedClause::Comparison(_) => None,
+                })
+                .collect::<Vec<_>>();
+            let comparisons = query
+                .clauses
+                .iter()
+                .filter_map(|clause| match clause {
+                    TypedClause::Comparison(comparison) => Some(comparison),
+                    TypedClause::Relation(_) => None,
+                })
+                .collect::<Vec<_>>();
+            let mut output = Vec::new();
+            let mut counters = PlanCounters::default();
+            self.recurse(
+                query,
+                inputs,
+                &atoms,
+                &comparisons,
+                0,
+                Binding::new(query.variables.len()),
+                &mut output,
+                &mut counters,
+            )?;
+            project_results(query, &output)
+        }
+
+        fn recurse(
+            &self,
+            query: &TypedQuery,
+            inputs: &InputBindings,
+            atoms: &[&TypedRelationAtom],
+            comparisons: &[&TypedComparison],
+            depth: usize,
+            binding: Binding,
+            output: &mut Vec<Binding>,
+            counters: &mut PlanCounters,
+        ) -> Result<()> {
+            if depth == atoms.len() {
+                if comparisons_pass(comparisons, query, inputs, &binding, counters)? {
+                    output.push(binding);
+                }
+                return Ok(());
+            }
+
+            let atom = atoms[depth];
+            for row in self.rows.get(&atom.relation).into_iter().flatten() {
+                let Some(next) = match_atom(atom, query, inputs, &binding, row)? else {
+                    continue;
+                };
+                if comparisons_pass(comparisons, query, inputs, &next, counters)? {
+                    self.recurse(
+                        query,
+                        inputs,
+                        atoms,
+                        comparisons,
+                        depth + 1,
+                        next,
+                        output,
+                        counters,
+                    )?;
+                }
+            }
+            Ok(())
+        }
     }
 }

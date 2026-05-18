@@ -1035,6 +1035,17 @@ impl<'env> ReadTxn<'env> {
         lookup_intern_value(&self.dbs.dict, &self.txn, DICT_STRING, value.as_bytes())
     }
 
+    /// Counts reverse dictionary entries across all dictionary kinds.
+    pub fn dictionary_entry_count(&self) -> Result<usize> {
+        let prefix = [DICT_REV];
+        let mut iter = self.dbs.dict.prefix_iter(&self.txn, &prefix[..])?;
+        let mut count = 0;
+        while iter.next().transpose()?.is_some() {
+            count += 1;
+        }
+        Ok(count)
+    }
+
     fn scan_index_with_prefix<'borrow, 'schema>(
         &'borrow self,
         schema: &'schema StorageSchema,
