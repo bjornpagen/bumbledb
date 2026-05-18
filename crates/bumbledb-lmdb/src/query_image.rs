@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use bumbledb_core::schema::{RelationDescriptor, SchemaFingerprint, ValueType};
 
+use crate::planner_stats::{PlannerStatsCache, PlannerStatsCacheDiagnostics};
 use crate::{Error, ReadTxn, Result, SegmentDescriptor, StorageSchema};
 
 /// Cache key for an immutable query image.
@@ -91,6 +92,7 @@ pub struct QueryImage {
     relations: Vec<RelationImage>,
     relation_by_name: BTreeMap<String, RelationId>,
     stats: QueryImageStats,
+    planner_stats: PlannerStatsCache,
 }
 
 impl QueryImage {
@@ -130,6 +132,7 @@ impl QueryImage {
                 built_from_segments,
                 build_micros,
             },
+            planner_stats: PlannerStatsCache::default(),
         }
     }
 
@@ -152,6 +155,19 @@ impl QueryImage {
     /// Returns memory/build statistics for this image.
     pub fn stats(&self) -> &QueryImageStats {
         &self.stats
+    }
+
+    /// Returns current planner statistics cache diagnostics for this image.
+    pub fn planner_stats_diagnostics(&self) -> PlannerStatsCacheDiagnostics {
+        self.planner_stats.diagnostics()
+    }
+
+    pub(crate) fn planner_relation_stats(
+        &self,
+        schema: &StorageSchema,
+        relation: &RelationImage,
+    ) -> Result<std::sync::Arc<crate::planner_stats::OptimizerRelationStats>> {
+        self.planner_stats.get_or_build(schema, relation)
     }
 
     #[cfg(test)]

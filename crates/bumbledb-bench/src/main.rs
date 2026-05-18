@@ -229,6 +229,11 @@ struct BenchmarkRunResult {
     query_image_segment_count: usize,
     query_image_segment_bytes: usize,
     query_image_built_from_segments: bool,
+    planner_stats_cached_relations: usize,
+    planner_stats_hits: u64,
+    planner_stats_misses: u64,
+    planner_stats_builds: u64,
+    planner_stats_build_micros: u64,
     gate: GateOutcome,
 }
 
@@ -455,6 +460,11 @@ fn benchmark_result(
         query_image_segment_count: query_image_stats.segment_count,
         query_image_segment_bytes: query_image_stats.segment_bytes,
         query_image_built_from_segments: query_image_stats.built_from_segments,
+        planner_stats_cached_relations: output.plan.planner_stats.cached_relations,
+        planner_stats_hits: output.plan.planner_stats.hits,
+        planner_stats_misses: output.plan.planner_stats.misses,
+        planner_stats_builds: output.plan.planner_stats.builds,
+        planner_stats_build_micros: output.plan.planner_stats.build_micros,
         gate,
     }
 }
@@ -592,14 +602,12 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | rows | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | image build us | image segments | image segment bytes | built from segments | iterator ops | hash build | hash probe | materialized | dict lookups | gate |\n");
-    out.push_str(
-        "|---|---|---:|---:|---:|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---|\n",
-    );
+    out.push_str("| dataset | query | rows | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | image build us | image segments | image segment bytes | built from segments | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | iterator ops | hash build | hash probe | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---:|---:|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.rows,
@@ -611,6 +619,11 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.query_image_segment_count,
             result.query_image_segment_bytes,
             result.query_image_built_from_segments,
+            result.planner_stats_cached_relations,
+            result.planner_stats_hits,
+            result.planner_stats_misses,
+            result.planner_stats_builds,
+            result.planner_stats_build_micros,
             result.iterator_ops,
             result.hash_build_rows,
             result.hash_probe_rows,
@@ -661,6 +674,7 @@ fn print_explain(explain: &str) {
         if line.contains("relation=")
             || line.contains("variable_estimate")
             || line.contains("missing_index")
+            || line.contains("planner_stats")
             || line.contains("chosen_plan")
             || line.contains("candidate_plan")
             || line.contains("free_join_estimates")
@@ -1627,6 +1641,11 @@ mod tests {
             query_image_segment_count: 4,
             query_image_segment_bytes: 128,
             query_image_built_from_segments: true,
+            planner_stats_cached_relations: 1,
+            planner_stats_hits: 2,
+            planner_stats_misses: 1,
+            planner_stats_builds: 1,
+            planner_stats_build_micros: 9,
             gate: GateOutcome {
                 passed: true,
                 notes: vec!["ok".to_owned()],

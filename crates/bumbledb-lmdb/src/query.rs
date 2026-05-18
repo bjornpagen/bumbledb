@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
-use crate::query_image::QueryImageBuilder;
 use bumbledb_core::datalog::{
     AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm,
     TypedLiteral, TypedOperand, TypedQuery, TypedRelationAtom, TypedTerm,
@@ -13,6 +13,10 @@ use crate::{
     IndexSpec, LinearIter, NodeId, NodeImpl, OutputPlan, PayloadDemand, PlanEstimates, PlanNode,
     ProjectPlan, ReadTxn, RelationImage, RelationStats, Result, RowId, SortedTrieIndex,
     StorageSchema, SubAtom, TrieIter, Value, VarId,
+};
+
+use crate::planner_stats::{
+    OptimizerFieldStats, OptimizerIndexStats, OptimizerRelationStats, PlannerStatsCacheDiagnostics,
 };
 
 /// Query input bindings keyed by input name without `$`.
@@ -229,6 +233,8 @@ pub struct QueryPlan {
     pub missing_indexes: Vec<MissingIndexRecommendation>,
     /// Optimizer candidates and chosen cost key.
     pub optimizer: OptimizerTrace,
+    /// Planner statistics cache diagnostics after planning.
+    pub planner_stats: PlannerStatsCacheDiagnostics,
     /// Node-level estimated and observed row/candidate counts.
     pub node_rows: Vec<NodeRowEstimate>,
     /// Free Join physical plan IR.
@@ -272,6 +278,14 @@ impl QueryPlan {
             }
         }
         out.push_str("optimizer:\n");
+        out.push_str(&format!(
+            "  planner_stats cached_relations={} hits={} misses={} builds={} build_micros={}\n",
+            self.planner_stats.cached_relations,
+            self.planner_stats.hits,
+            self.planner_stats.misses,
+            self.planner_stats.builds,
+            self.planner_stats.build_micros
+        ));
         out.push_str(&format!("  chosen_plan: {}\n", self.optimizer.chosen));
         for candidate in &self.optimizer.candidates {
             out.push_str(&format!(
@@ -572,7 +586,7 @@ struct ExecutionPlan {
 
 #[derive(Clone, Debug)]
 struct PlannerStats {
-    relations: BTreeMap<String, OptimizerRelationStats>,
+    relations: BTreeMap<String, Arc<OptimizerRelationStats>>,
 }
 
 impl PlannerStats {
@@ -592,7 +606,7 @@ impl PlannerStats {
                 .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
             relations.insert(
                 atom.relation_name.clone(),
-                OptimizerRelationStats::build(schema, relation)?,
+                image.planner_relation_stats(schema, relation)?,
             );
         }
         Ok(Self { relations })
@@ -612,147 +626,6 @@ impl PlannerStats {
 
     fn index_stats(&self, relation: &str, index: &str) -> Option<&OptimizerIndexStats> {
         self.relations.get(relation)?.indexes.get(index)
-    }
-}
-
-#[derive(Clone, Debug)]
-struct OptimizerRelationStats {
-    rows: usize,
-    fields: BTreeMap<String, OptimizerFieldStats>,
-    indexes: BTreeMap<String, OptimizerIndexStats>,
-}
-
-impl OptimizerRelationStats {
-    fn build(schema: &StorageSchema, relation: &RelationImage) -> Result<Self> {
-        let mut fields = BTreeMap::new();
-        for field in &relation.fields {
-            fields.insert(
-                field.name.clone(),
-                OptimizerFieldStats::build(relation, field.id)?,
-            );
-        }
-
-        let mut indexes = BTreeMap::new();
-        for path in schema.access_paths(&relation.name)? {
-            let field_ids = path
-                .leading_fields
-                .iter()
-                .map(|field_name| {
-                    relation
-                        .fields
-                        .iter()
-                        .find(|field| &field.name == field_name)
-                        .map(|field| field.id)
-                        .ok_or_else(|| Error::unknown_field(&relation.name, field_name))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            let layout = schema
-                .layout(&relation.name, &path.index_name)
-                .ok_or_else(|| Error::unknown_index(&relation.name, &path.index_name))?;
-            let trie = SortedTrieIndex::build(
-                relation,
-                IndexSpec::new(format!("{}_stats", path.index_name), field_ids),
-            )?;
-            indexes.insert(
-                path.index_name,
-                OptimizerIndexStats {
-                    index: AccessId(layout.index_id),
-                    rows: relation.row_count,
-                    distinct_by_depth: trie.stats.distinct_by_depth,
-                    avg_fanout_by_depth: trie.stats.avg_fanout_by_depth,
-                    max_fanout_by_depth: trie.stats.max_fanout_by_depth,
-                },
-            );
-        }
-
-        Ok(Self {
-            rows: relation.row_count,
-            fields,
-            indexes,
-        })
-    }
-}
-
-#[derive(Clone, Debug)]
-struct OptimizerFieldStats {
-    distinct: usize,
-    min: Option<EncodedOwned>,
-    max: Option<EncodedOwned>,
-    heavy_hitters: Vec<(EncodedOwned, usize)>,
-}
-
-impl OptimizerFieldStats {
-    fn build(relation: &RelationImage, field: FieldId) -> Result<Self> {
-        let mut frequencies = BTreeMap::<EncodedOwned, usize>::new();
-        for row in 0..relation.row_count {
-            let value = relation
-                .encoded(RowId(row as u32), field)
-                .map(EncodedOwned::from_ref)
-                .ok_or_else(|| Error::internal("missing optimizer field value"))?;
-            *frequencies.entry(value).or_insert(0) += 1;
-        }
-        let distinct = frequencies.len();
-        let min = frequencies.keys().next().cloned();
-        let max = frequencies.keys().next_back().cloned();
-        let heavy_hitter_floor = (relation.row_count / 10).max(2);
-        let mut heavy_hitters = frequencies
-            .iter()
-            .filter(|(_, count)| **count >= heavy_hitter_floor)
-            .map(|(value, count)| (value.clone(), *count))
-            .collect::<Vec<_>>();
-        heavy_hitters.sort_by(|(left_value, left_count), (right_value, right_count)| {
-            right_count
-                .cmp(left_count)
-                .then_with(|| left_value.cmp(right_value))
-        });
-        heavy_hitters.truncate(4);
-        Ok(Self {
-            distinct,
-            min,
-            max,
-            heavy_hitters,
-        })
-    }
-}
-
-#[derive(Clone, Debug)]
-struct OptimizerIndexStats {
-    index: AccessId,
-    rows: usize,
-    distinct_by_depth: Vec<usize>,
-    avg_fanout_by_depth: Vec<f64>,
-    max_fanout_by_depth: Vec<usize>,
-}
-
-impl OptimizerIndexStats {
-    fn estimated_rows_for_prefix(&self, prefix_len: usize) -> u64 {
-        if prefix_len == 0 {
-            return self.rows.max(1) as u64;
-        }
-        let distinct = self
-            .distinct_by_depth
-            .get(prefix_len - 1)
-            .copied()
-            .unwrap_or(1)
-            .max(1);
-        divide_ceil(self.rows.max(1) as u64, distinct as u64).max(1)
-    }
-
-    fn fanout_after_prefix(&self, prefix_len: usize) -> u64 {
-        self.avg_fanout_by_depth
-            .get(prefix_len)
-            .copied()
-            .unwrap_or(1.0)
-            .ceil()
-            .max(1.0) as u64
-    }
-
-    fn max_fanout_after_prefix(&self, prefix_len: usize) -> usize {
-        self.max_fanout_by_depth
-            .get(prefix_len)
-            .copied()
-            .unwrap_or(1)
-            .max(1)
     }
 }
 
@@ -828,12 +701,12 @@ impl<'env> ReadTxn<'env> {
 
         let mut normalized = normalize_query(self, schema, query)?;
         let encoded_inputs = encode_inputs(self, &normalized, inputs)?;
-        let image = QueryImageBuilder::new(self, schema).build()?;
-        let mut plan = plan_query(schema, &mut normalized, &image)?;
+        let image = self.query_images.get_or_build(self, schema)?;
+        let mut plan = plan_query(schema, &mut normalized, image.as_ref())?;
         tracing::debug!(variable_order = ?plan.summary.variable_order, nodes = plan.summary.free_join.nodes.len(), "free join query planned");
         let mut sink = OutputSink::new(&plan.summary.free_join.output);
         execute_lftj(
-            &image,
+            image.as_ref(),
             self,
             &normalized,
             &encoded_inputs,
@@ -1298,6 +1171,7 @@ fn plan_query(
         &stats,
     )?;
     free_join.validate()?;
+    let planner_stats = image.planner_stats_diagnostics();
 
     let uses_indexed_multiway_join = relation_atoms.len() > 1;
     Ok(ExecutionPlan {
@@ -1309,6 +1183,7 @@ fn plan_query(
             variable_estimates,
             missing_indexes,
             optimizer,
+            planner_stats,
             node_rows,
             free_join,
             counters: PlanCounters::default(),
@@ -1572,14 +1447,6 @@ fn estimate_atom_variable_access(
         has_max: false,
         heavy_hitters: 0,
     }))
-}
-
-fn divide_ceil(value: u64, divisor: u64) -> u64 {
-    if divisor == 0 {
-        value
-    } else {
-        value.div_ceil(divisor)
-    }
 }
 
 fn field_is_bound_for_estimate(field: &NormAtomField, bound: &BTreeSet<usize>) -> bool {
@@ -3141,6 +3008,7 @@ fn value_type_name(value_type: &ValueType) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query_image::QueryImageBuilder;
     use crate::{AggregateError, Environment, ExecuteError, QueryError, Row};
     use bumbledb_core::datalog::parse_and_typecheck;
     use bumbledb_core::schema::{
@@ -3326,6 +3194,98 @@ mod tests {
         assert!(first.explain().contains("candidate_plan"));
         assert!(first.explain().contains("free_join_estimates"));
         assert!(first.explain().contains("reason=stats"));
+    }
+
+    #[test]
+    fn planner_stats_are_cached_per_query_image() {
+        let (env, schema) = seeded_db();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            "find ?account where Account(id: ?account, holder: $holder)",
+        )
+        .unwrap();
+        let inputs = InputBindings::from_values([("holder", Value::Ref(1))]);
+
+        let first = env
+            .read(|txn| txn.execute_query(&schema, &query, &inputs))
+            .unwrap();
+        let second = env
+            .read(|txn| txn.execute_query(&schema, &query, &inputs))
+            .unwrap();
+
+        assert_eq!(first.rows, second.rows);
+        assert_eq!(first.plan.planner_stats.builds, 1);
+        assert_eq!(first.plan.planner_stats.misses, 1);
+        assert_eq!(second.plan.planner_stats.builds, 1);
+        assert_eq!(second.plan.planner_stats.misses, 1);
+        assert!(second.plan.planner_stats.hits >= 1);
+    }
+
+    #[test]
+    fn planner_stats_reuse_shared_relations_across_queries() {
+        let (env, schema) = seeded_db();
+        let first_query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?posting
+            where
+              Posting(id: ?posting, account: ?account)
+              Account(id: ?account, holder: $holder)
+            "#,
+        )
+        .unwrap();
+        let second_query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?posting
+            where
+              Posting(id: ?posting, account: ?account, at: ?t)
+              ?t >= $start
+            "#,
+        )
+        .unwrap();
+
+        let inputs = InputBindings::from_values([
+            ("holder", Value::Ref(1)),
+            ("start", Value::Timestamp(TimestampMicros(0))),
+        ]);
+
+        let first = env
+            .read(|txn| txn.execute_query(&schema, &first_query, &inputs))
+            .unwrap();
+        let second = env
+            .read(|txn| txn.execute_query(&schema, &second_query, &inputs))
+            .unwrap();
+
+        assert_eq!(first.plan.planner_stats.builds, 2);
+        assert_eq!(second.plan.planner_stats.builds, 2);
+        assert!(second.plan.planner_stats.hits >= 1);
+    }
+
+    #[test]
+    fn planner_stats_cache_is_snapshot_scoped() {
+        let (env, schema) = seeded_db();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            "find ?account where Account(id: ?account, holder: ?holder)",
+        )
+        .unwrap();
+
+        let before = env
+            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
+            .unwrap();
+        env.write(|txn| {
+            txn.insert(&schema, account_row(4, 2, 978))?;
+            Ok::<_, Error>(())
+        })
+        .unwrap();
+        let after = env
+            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
+            .unwrap();
+
+        assert_eq!(before.plan.planner_stats.builds, 1);
+        assert_eq!(after.plan.planner_stats.builds, 1);
+        assert_eq!(after.rows.len(), before.rows.len() + 1);
     }
 
     #[test]

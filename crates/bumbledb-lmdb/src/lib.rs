@@ -11,6 +11,7 @@ pub mod failpoints;
 mod failpoints;
 mod free_join;
 mod hash_trie;
+mod planner_stats;
 mod query;
 mod query_image;
 mod sorted_trie;
@@ -30,6 +31,7 @@ pub use free_join::{
     PayloadDemand, PlanEstimates, PlanNode, ProjectPlan, SubAtom, VarId,
 };
 pub use hash_trie::{HashNode, HashTrieIndex, HashTrieStats, LeafMode, PrefixProbe, RowSet};
+pub use planner_stats::PlannerStatsCacheDiagnostics;
 pub use query::{
     CostKey, InputBindings, InputId, MissingIndexRecommendation, NodeRowEstimate, NormAtom,
     NormAtomField, NormFindTerm, NormInput, NormOperand, NormPredicate, NormTerm, NormVar,
@@ -323,7 +325,11 @@ impl Environment {
         E: From<Error>,
     {
         let txn = self.env.read_txn().map_err(Error::from).map_err(E::from)?;
-        let read = ReadTxn { txn, dbs: self.dbs };
+        let read = ReadTxn {
+            txn,
+            dbs: self.dbs,
+            query_images: &self.query_images,
+        };
         f(&read)
     }
 
@@ -413,6 +419,7 @@ fn hex(bytes: &[u8]) -> String {
 pub struct ReadTxn<'env> {
     txn: RoTxn<'env, WithoutTls>,
     dbs: Databases,
+    query_images: &'env QueryImageCache,
 }
 
 impl ReadTxn<'_> {
