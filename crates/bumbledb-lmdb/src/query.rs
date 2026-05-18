@@ -90,6 +90,8 @@ pub struct QueryPlan {
     pub atoms: Vec<PlannedAtom>,
     /// Physical index recommendations for predicates not served by leading indexes.
     pub missing_indexes: Vec<MissingIndexRecommendation>,
+    /// Optimizer candidates and chosen cost key.
+    pub optimizer: OptimizerTrace,
     /// Free Join physical plan IR.
     pub free_join: FreeJoinPlan,
     /// Execution counters.
@@ -111,12 +113,14 @@ impl QueryPlan {
         out.push_str("variable_estimates:\n");
         for estimate in &self.variable_estimates {
             out.push_str(&format!(
-                "  variable_estimate name={} estimated_candidates={} static_constraints={} bound_constraints={} relation_constraints={}\n",
+                "  variable_estimate name={} estimated_candidates={} static_constraints={} bound_constraints={} relation_constraints={} access={} reason={}\n",
                 estimate.variable,
                 estimate.estimated_candidates,
                 estimate.static_constraints,
                 estimate.bound_constraints,
-                estimate.relation_constraints
+                estimate.relation_constraints,
+                estimate.access,
+                estimate.reason
             ));
         }
         out.push_str("atoms:\n");
@@ -135,6 +139,31 @@ impl QueryPlan {
                 ));
             }
         }
+        out.push_str("optimizer:\n");
+        out.push_str(&format!("  chosen_plan: {}\n", self.optimizer.chosen));
+        for candidate in &self.optimizer.candidates {
+            out.push_str(&format!(
+                "  candidate_plan name={} selected={} estimated_micros={} memory_bytes={} materialization_penalty={} tie_breaker={} rejected_reason={} impls={:?}\n",
+                candidate.name,
+                candidate.selected,
+                candidate.cost.estimated_micros,
+                candidate.cost.memory_bytes,
+                candidate.cost.materialization_penalty,
+                candidate.cost.tie_breaker,
+                candidate.rejected_reason,
+                candidate.implementations
+            ));
+        }
+        out.push_str(&format!(
+            "free_join_estimates: output_rows={} iterator_ops={} hash_build_rows={} hash_probe_rows={} materialized_values={} memory_bytes={} actual_output_rows={}\n",
+            self.free_join.estimates.output_rows,
+            self.free_join.estimates.iterator_ops,
+            self.free_join.estimates.hash_build_rows,
+            self.free_join.estimates.hash_probe_rows,
+            self.free_join.estimates.materialized_values,
+            self.free_join.estimates.memory_bytes,
+            self.counters.output_rows
+        ));
         out.push_str("free_join_plan:\n");
         for node in &self.free_join.nodes {
             out.push_str(&format!(
@@ -233,6 +262,10 @@ pub struct VariableEstimate {
     pub bound_constraints: usize,
     /// Number of relation atoms constraining this variable.
     pub relation_constraints: usize,
+    /// Stats-backed access path used for the estimate.
+    pub access: String,
+    /// Human-readable stats explanation for the chosen variable order step.
+    pub reason: String,
 }
 
 /// Physical index recommendation emitted by the planner.
@@ -244,6 +277,43 @@ pub struct MissingIndexRecommendation {
     pub fields: Vec<String>,
     /// Why the planner wants this index.
     pub reason: String,
+}
+
+/// Optimizer trace for one planned query.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OptimizerTrace {
+    /// Chosen candidate name.
+    pub chosen: String,
+    /// Candidate plans considered by the optimizer.
+    pub candidates: Vec<PlanCandidate>,
+}
+
+/// One optimizer candidate and its stable cost key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanCandidate {
+    /// Stable candidate name.
+    pub name: String,
+    /// Node implementations in plan order.
+    pub implementations: Vec<NodeImpl>,
+    /// Stable cost key used for ordering.
+    pub cost: CostKey,
+    /// True for the selected candidate.
+    pub selected: bool,
+    /// Top-level rejection reason for non-selected candidates.
+    pub rejected_reason: String,
+}
+
+/// Stable optimizer cost key.
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CostKey {
+    /// Estimated execution time in microseconds.
+    pub estimated_micros: u64,
+    /// Estimated extra memory footprint in bytes.
+    pub memory_bytes: usize,
+    /// Penalty for materializing output values or intermediate payload.
+    pub materialization_penalty: u64,
+    /// Stable deterministic tie-breaker.
+    pub tie_breaker: String,
 }
 
 /// Planned relation atom.
@@ -357,46 +427,192 @@ struct ExecutionPlan<'query> {
 
 #[derive(Clone, Debug)]
 struct PlannerStats {
-    relation_rows: BTreeMap<String, u64>,
-    index_entries: BTreeMap<(String, String), u64>,
+    relations: BTreeMap<String, OptimizerRelationStats>,
 }
 
 impl PlannerStats {
     fn collect(
-        txn: &ReadTxn<'_>,
         schema: &StorageSchema,
+        image: &crate::QueryImage,
         atoms: &[&TypedRelationAtom],
     ) -> Result<Self> {
-        let mut relation_rows = BTreeMap::new();
-        let index_entries = BTreeMap::new();
+        let mut relations = BTreeMap::new();
         for atom in atoms {
-            if relation_rows.contains_key(&atom.relation) {
+            if relations.contains_key(&atom.relation) {
                 continue;
             }
-            relation_rows.insert(
+            let relation = image
+                .relation(&atom.relation)
+                .ok_or_else(|| Error::unknown_relation(&atom.relation))?;
+            relations.insert(
                 atom.relation.clone(),
-                txn.relation_row_count(schema, &atom.relation)?,
+                OptimizerRelationStats::build(schema, relation)?,
             );
         }
-        Ok(Self {
-            relation_rows,
-            index_entries,
-        })
+        Ok(Self { relations })
     }
 
     fn relation_rows(&self, relation: &str) -> u64 {
-        self.relation_rows
+        self.relations
             .get(relation)
-            .copied()
+            .map(|stats| stats.rows as u64)
             .unwrap_or(1)
             .max(1)
     }
 
+    fn field_stats(&self, relation: &str, field: &str) -> Option<&OptimizerFieldStats> {
+        self.relations.get(relation)?.fields.get(field)
+    }
+
+    fn index_stats(&self, relation: &str, index: &str) -> Option<&OptimizerIndexStats> {
+        self.relations.get(relation)?.indexes.get(index)
+    }
+
     fn index_entries(&self, relation: &str, index: &str) -> u64 {
-        self.index_entries
-            .get(&(relation.to_owned(), index.to_owned()))
-            .copied()
+        self.index_stats(relation, index)
+            .map(|stats| stats.rows as u64)
             .unwrap_or_else(|| self.relation_rows(relation))
+            .max(1)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct OptimizerRelationStats {
+    rows: usize,
+    fields: BTreeMap<String, OptimizerFieldStats>,
+    indexes: BTreeMap<String, OptimizerIndexStats>,
+}
+
+impl OptimizerRelationStats {
+    fn build(schema: &StorageSchema, relation: &RelationImage) -> Result<Self> {
+        let mut fields = BTreeMap::new();
+        for field in &relation.fields {
+            fields.insert(
+                field.name.clone(),
+                OptimizerFieldStats::build(relation, field.id)?,
+            );
+        }
+
+        let mut indexes = BTreeMap::new();
+        for path in schema.access_paths(&relation.name)? {
+            let field_ids = path
+                .leading_fields
+                .iter()
+                .map(|field_name| {
+                    relation
+                        .fields
+                        .iter()
+                        .find(|field| &field.name == field_name)
+                        .map(|field| field.id)
+                        .ok_or_else(|| Error::unknown_field(&relation.name, field_name))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let layout = schema
+                .layout(&relation.name, &path.index_name)
+                .ok_or_else(|| Error::unknown_index(&relation.name, &path.index_name))?;
+            let trie = SortedTrieIndex::build(
+                relation,
+                IndexSpec::new(format!("{}_stats", path.index_name), field_ids),
+            )?;
+            indexes.insert(
+                path.index_name,
+                OptimizerIndexStats {
+                    index: AccessId(layout.index_id),
+                    rows: relation.row_count,
+                    distinct_by_depth: trie.stats.distinct_by_depth,
+                    avg_fanout_by_depth: trie.stats.avg_fanout_by_depth,
+                    max_fanout_by_depth: trie.stats.max_fanout_by_depth,
+                },
+            );
+        }
+
+        Ok(Self {
+            rows: relation.row_count,
+            fields,
+            indexes,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct OptimizerFieldStats {
+    distinct: usize,
+    min: Option<EncodedOwned>,
+    max: Option<EncodedOwned>,
+    heavy_hitters: Vec<(EncodedOwned, usize)>,
+}
+
+impl OptimizerFieldStats {
+    fn build(relation: &RelationImage, field: FieldId) -> Result<Self> {
+        let mut frequencies = BTreeMap::<EncodedOwned, usize>::new();
+        for row in 0..relation.row_count {
+            let value = relation
+                .encoded(RowId(row as u32), field)
+                .map(EncodedOwned::from_ref)
+                .ok_or_else(|| Error::internal("missing optimizer field value"))?;
+            *frequencies.entry(value).or_insert(0) += 1;
+        }
+        let distinct = frequencies.len();
+        let min = frequencies.keys().next().cloned();
+        let max = frequencies.keys().next_back().cloned();
+        let heavy_hitter_floor = (relation.row_count / 10).max(2);
+        let mut heavy_hitters = frequencies
+            .iter()
+            .filter(|(_, count)| **count >= heavy_hitter_floor)
+            .map(|(value, count)| (value.clone(), *count))
+            .collect::<Vec<_>>();
+        heavy_hitters.sort_by(|(left_value, left_count), (right_value, right_count)| {
+            right_count
+                .cmp(left_count)
+                .then_with(|| left_value.cmp(right_value))
+        });
+        heavy_hitters.truncate(4);
+        Ok(Self {
+            distinct,
+            min,
+            max,
+            heavy_hitters,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct OptimizerIndexStats {
+    index: AccessId,
+    rows: usize,
+    distinct_by_depth: Vec<usize>,
+    avg_fanout_by_depth: Vec<f64>,
+    max_fanout_by_depth: Vec<usize>,
+}
+
+impl OptimizerIndexStats {
+    fn estimated_rows_for_prefix(&self, prefix_len: usize) -> u64 {
+        if prefix_len == 0 {
+            return self.rows.max(1) as u64;
+        }
+        let distinct = self
+            .distinct_by_depth
+            .get(prefix_len - 1)
+            .copied()
+            .unwrap_or(1)
+            .max(1);
+        divide_ceil(self.rows.max(1) as u64, distinct as u64).max(1)
+    }
+
+    fn fanout_after_prefix(&self, prefix_len: usize) -> u64 {
+        self.avg_fanout_by_depth
+            .get(prefix_len)
+            .copied()
+            .unwrap_or(1.0)
+            .ceil()
+            .max(1.0) as u64
+    }
+
+    fn max_fanout_after_prefix(&self, prefix_len: usize) -> usize {
+        self.max_fanout_by_depth
+            .get(prefix_len)
+            .copied()
+            .unwrap_or(1)
             .max(1)
     }
 }
@@ -409,6 +625,44 @@ struct VariableCost {
     bound_constraints: usize,
     relation_constraints: usize,
     degree: usize,
+    access: String,
+    reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AccessEstimate {
+    relation: String,
+    index: String,
+    access: AccessId,
+    estimated_rows: u64,
+    prefix_len: usize,
+    distinct: usize,
+    avg_fanout: u64,
+    max_fanout: usize,
+    variable_distinct: usize,
+    has_min: bool,
+    has_max: bool,
+    heavy_hitters: usize,
+}
+
+impl AccessEstimate {
+    fn access_label(&self) -> String {
+        format!("{}.{}", self.relation, self.index)
+    }
+
+    fn reason(&self) -> String {
+        format!(
+            "stats(prefix_len={},prefix_distinct={},avg_fanout={},max_fanout={},variable_distinct={},min={},max={},heavy_hitters={})",
+            self.prefix_len,
+            self.distinct,
+            self.avg_fanout,
+            self.max_fanout,
+            self.variable_distinct,
+            self.has_min,
+            self.has_max,
+            self.heavy_hitters
+        )
+    }
 }
 
 struct LftjAtomPlan {
@@ -433,10 +687,11 @@ impl<'env> ReadTxn<'env> {
     ) -> Result<QueryOutput> {
         validate_inputs(query, inputs)?;
 
-        let mut plan = plan_query(self, schema, query, inputs)?;
+        let image = QueryImageBuilder::new(self, schema).build()?;
+        let mut plan = plan_query(schema, query, inputs, &image)?;
         tracing::debug!(variable_order = ?plan.summary.variable_order, atoms = plan.summary.atoms.len(), "wcoj query planned");
         let mut sink = OutputSink::new(&plan.summary.free_join.output);
-        execute_lftj(self, schema, query, inputs, &mut plan, &mut sink)?;
+        execute_lftj(&image, self, query, inputs, &mut plan, &mut sink)?;
 
         let columns = result_columns(query);
         let rows = sink.finish(self, query, &mut plan.summary.counters)?;
@@ -458,29 +713,27 @@ impl<'env> ReadTxn<'env> {
 }
 
 fn execute_lftj<'txn, 'query, S: TupleSink>(
+    image: &crate::QueryImage,
     txn: &ReadTxn<'txn>,
-    schema: &StorageSchema,
     query: &'query TypedQuery,
     inputs: &InputBindings,
     plan: &mut ExecutionPlan<'query>,
     sink: &mut S,
 ) -> Result<()> {
-    let image = QueryImageBuilder::new(txn, schema).build()?;
     let free_join_order = plan
         .summary
         .free_join
         .nodes
         .iter()
-        .filter(|node| node.implementation == NodeImpl::SortedLeapfrog)
         .flat_map(|node| node.bind_vars.iter().map(|var| var.0 as usize))
         .collect::<Vec<_>>();
     if free_join_order != plan.variable_order_ids {
         return Err(Error::internal(
-            "free join LFTJ node order does not match variable order",
+            "free join node order does not match variable order",
         ));
     }
     let atom_plans = build_lftj_atom_plans(
-        &image,
+        image,
         query,
         inputs,
         &plan.relation_atoms,
@@ -872,10 +1125,10 @@ fn value_matches_encoded_field(value: &Value, value_type: &ValueType, encoded: &
 }
 
 fn plan_query<'query>(
-    txn: &ReadTxn<'_>,
     schema: &StorageSchema,
     query: &'query TypedQuery,
     inputs: &InputBindings,
+    image: &crate::QueryImage,
 ) -> Result<ExecutionPlan<'query>> {
     let _span = tracing::debug_span!("bumbledb.query.plan").entered();
     let relation_atoms = query
@@ -895,7 +1148,7 @@ fn plan_query<'query>(
         })
         .collect::<Vec<_>>();
 
-    let stats = PlannerStats::collect(txn, schema, &relation_atoms)?;
+    let stats = PlannerStats::collect(schema, image, &relation_atoms)?;
     let (variable_order_ids, variable_costs) =
         choose_variable_order(schema, query, &relation_atoms, &comparisons, &stats)?;
     let variable_order = variable_order_ids
@@ -910,16 +1163,27 @@ fn plan_query<'query>(
             static_constraints: cost.static_constraints,
             bound_constraints: cost.bound_constraints,
             relation_constraints: cost.relation_constraints,
+            access: cost.access.clone(),
+            reason: cost.reason.clone(),
         })
         .collect::<Vec<_>>();
-    let missing_indexes = missing_index_recommendations(schema, &relation_atoms)?;
-    let free_join = build_pure_lftj_free_join_plan(query, &relation_atoms, &variable_order_ids)?;
+    let missing_indexes = missing_index_recommendations(schema, query, &relation_atoms)?;
+    let (free_join, optimizer) = optimize_free_join_plan(
+        schema,
+        query,
+        &relation_atoms,
+        &variable_order_ids,
+        &variable_costs,
+        &stats,
+    )?;
     free_join.validate()?;
 
     let empty = EncodedBinding::new(query.variables.len());
     let mut atoms = Vec::new();
     for atom in &relation_atoms {
-        atoms.push(choose_summary_access(schema, atom, query, inputs, &empty)?);
+        atoms.push(choose_summary_access(
+            schema, &stats, atom, query, inputs, &empty,
+        )?);
     }
 
     let uses_indexed_multiway_join = relation_atoms.len() > 1;
@@ -932,6 +1196,7 @@ fn plan_query<'query>(
             variable_estimates,
             atoms,
             missing_indexes,
+            optimizer,
             free_join,
             counters: PlanCounters::default(),
             uses_indexed_multiway_join,
@@ -1007,6 +1272,9 @@ fn estimate_variable_cost(
         })
         .collect::<Vec<_>>();
     let has_constrained_stream = atom_infos.iter().any(|(_, strength, _)| *strength > 0);
+    let has_unconstrained_payload_stream = atom_infos
+        .iter()
+        .any(|(_, strength, has_unbound_other)| *strength == 0 && *has_unbound_other);
     let mut estimates = Vec::new();
     let mut relation_constraints = 0usize;
     let mut static_constraints = comparison_static_constraint_count(comparisons, variable, bound);
@@ -1028,7 +1296,38 @@ fn estimate_variable_cost(
         .iter()
         .filter(|atom| atom_contains_variable(atom, variable))
         .count();
-    let estimated_candidates = estimates.into_iter().min().unwrap_or(u64::MAX / 4).max(1);
+    let best_access = estimates.into_iter().min_by_key(|estimate| {
+        (
+            estimate.estimated_rows,
+            std::cmp::Reverse(estimate.prefix_len),
+            estimate.access_label(),
+        )
+    });
+    let mut estimated_candidates = best_access
+        .as_ref()
+        .map(|estimate| estimate.estimated_rows)
+        .unwrap_or(u64::MAX / 4)
+        .max(1);
+    if static_constraints == 0
+        && bound_constraints == 0
+        && degree == 1
+        && has_unconstrained_payload_stream
+    {
+        estimated_candidates = estimated_candidates.max(
+            best_access
+                .as_ref()
+                .map(|estimate| stats.relation_rows(&estimate.relation))
+                .unwrap_or(u64::MAX / 8),
+        );
+    }
+    let access = best_access
+        .as_ref()
+        .map(AccessEstimate::access_label)
+        .unwrap_or_else(|| "unindexed".to_owned());
+    let reason = best_access
+        .as_ref()
+        .map(AccessEstimate::reason)
+        .unwrap_or_else(|| "no relation stats for variable".to_owned());
 
     Ok(VariableCost {
         variable,
@@ -1037,6 +1336,8 @@ fn estimate_variable_cost(
         bound_constraints,
         relation_constraints,
         degree,
+        access,
+        reason,
     })
 }
 
@@ -1046,10 +1347,10 @@ fn estimate_atom_variable_access(
     bound: &BTreeSet<usize>,
     atom: &TypedRelationAtom,
     variable: usize,
-) -> Result<u64> {
+) -> Result<AccessEstimate> {
     let paths = schema.access_paths(&atom.relation)?;
     let relation_rows = stats.relation_rows(&atom.relation);
-    let mut best = relation_rows.saturating_mul(4).max(1);
+    let mut best: Option<AccessEstimate> = None;
 
     for path in paths {
         if !path.components.iter().any(|component| {
@@ -1078,23 +1379,82 @@ fn estimate_atom_variable_access(
             }
         }
 
-        let mut estimate = stats.index_entries(&atom.relation, &path.index_name);
-        if prefix_len > 0 {
-            estimate = divide_ceil(estimate, 16_u64.saturating_pow(prefix_len as u32));
-        }
-        if !current_is_next {
-            estimate = estimate.saturating_mul(2);
-        }
+        let Some(index_stats) = stats.index_stats(&atom.relation, &path.index_name) else {
+            continue;
+        };
+        let mut estimate = if current_is_next {
+            if prefix_len == 0 {
+                index_stats
+                    .distinct_by_depth
+                    .first()
+                    .copied()
+                    .unwrap_or(index_stats.rows)
+                    .max(1) as u64
+            } else {
+                index_stats.fanout_after_prefix(prefix_len)
+            }
+        } else {
+            index_stats.estimated_rows_for_prefix(prefix_len)
+        };
         if path.kind == IndexKind::Unique
             && current_is_next
             && prefix_len + 1 == path.leading_fields.len()
         {
             estimate = estimate.min(1);
         }
-        best = best.min(estimate.max(1));
+        let variable_field_stats = atom
+            .fields
+            .iter()
+            .find(|field| matches!(field.term, TypedTerm::Variable(id) if id == variable))
+            .and_then(|field| stats.field_stats(&atom.relation, &field.field));
+        let distinct = index_stats
+            .distinct_by_depth
+            .get(prefix_len.saturating_sub(1))
+            .copied()
+            .unwrap_or(1);
+        let candidate = AccessEstimate {
+            relation: atom.relation.clone(),
+            index: path.index_name,
+            access: index_stats.index,
+            estimated_rows: estimate.max(1),
+            prefix_len,
+            distinct,
+            avg_fanout: index_stats.fanout_after_prefix(prefix_len),
+            max_fanout: index_stats.max_fanout_after_prefix(prefix_len),
+            variable_distinct: variable_field_stats.map_or(1, |stats| stats.distinct),
+            has_min: variable_field_stats.is_some_and(|stats| stats.min.is_some()),
+            has_max: variable_field_stats.is_some_and(|stats| stats.max.is_some()),
+            heavy_hitters: variable_field_stats.map_or(0, |stats| stats.heavy_hitters.len()),
+        };
+        if best.as_ref().is_none_or(|best| {
+            (
+                candidate.estimated_rows,
+                std::cmp::Reverse(candidate.prefix_len),
+                candidate.access_label(),
+            ) < (
+                best.estimated_rows,
+                std::cmp::Reverse(best.prefix_len),
+                best.access_label(),
+            )
+        }) {
+            best = Some(candidate);
+        }
     }
 
-    Ok(best.max(1))
+    Ok(best.unwrap_or_else(|| AccessEstimate {
+        relation: atom.relation.clone(),
+        index: "full_scan".to_owned(),
+        access: AccessId(0),
+        estimated_rows: relation_rows.saturating_mul(4).max(1),
+        prefix_len: 0,
+        distinct: 1,
+        avg_fanout: relation_rows.max(1),
+        max_fanout: relation_rows as usize,
+        variable_distinct: 1,
+        has_min: false,
+        has_max: false,
+        heavy_hitters: 0,
+    }))
 }
 
 fn divide_ceil(value: u64, divisor: u64) -> u64 {
@@ -1201,26 +1561,49 @@ fn operand_constrains_for_estimate(
 
 fn missing_index_recommendations(
     schema: &StorageSchema,
+    query: &TypedQuery,
     atoms: &[&TypedRelationAtom],
 ) -> Result<Vec<MissingIndexRecommendation>> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
+    let mut variable_degree = vec![0usize; query.variables.len()];
+    for atom in atoms {
+        for variable in atom_variables(atom) {
+            variable_degree[variable] += 1;
+        }
+    }
     for atom in atoms {
         let (_, relation) = schema.relation(&atom.relation)?;
         for field in &atom.fields {
-            if !matches!(field.term, TypedTerm::Input(_) | TypedTerm::Literal(_)) {
-                continue;
-            }
-            if has_leading_index(schema, &atom.relation, &field.field)? {
-                continue;
-            }
-            let fields = recommended_index_fields(relation, &field.field);
-            if seen.insert((atom.relation.clone(), fields.clone())) {
-                out.push(MissingIndexRecommendation {
-                    relation: atom.relation.clone(),
-                    fields,
-                    reason: "static predicate has no leading index".to_owned(),
-                });
+            match field.term {
+                TypedTerm::Input(_) | TypedTerm::Literal(_) => {
+                    if has_leading_index(schema, &atom.relation, &field.field)? {
+                        continue;
+                    }
+                    let fields = recommended_index_fields(relation, &field.field);
+                    if seen.insert((atom.relation.clone(), fields.clone())) {
+                        out.push(MissingIndexRecommendation {
+                            relation: atom.relation.clone(),
+                            fields,
+                            reason: "StaticPredicate: chosen prefix has no leading index"
+                                .to_owned(),
+                        });
+                    }
+                }
+                TypedTerm::Variable(variable) if variable_degree[variable] > 1 => {
+                    if has_leading_index(schema, &atom.relation, &field.field)? {
+                        continue;
+                    }
+                    let fields = recommended_index_fields(relation, &field.field);
+                    if seen.insert((atom.relation.clone(), fields.clone())) {
+                        out.push(MissingIndexRecommendation {
+                            relation: atom.relation.clone(),
+                            fields,
+                            reason: "JoinPrefix: joined variable has no leading index".to_owned(),
+                        });
+                    }
+                }
+                TypedTerm::Variable(_) | TypedTerm::Wildcard => {}
             }
         }
     }
@@ -1248,18 +1631,183 @@ fn recommended_index_fields(
     fields
 }
 
-fn build_pure_lftj_free_join_plan(
+fn optimize_free_join_plan(
+    schema: &StorageSchema,
     query: &TypedQuery,
     atoms: &[&TypedRelationAtom],
     variable_order_ids: &[usize],
+    variable_costs: &[VariableCost],
+    stats: &PlannerStats,
+) -> Result<(FreeJoinPlan, OptimizerTrace)> {
+    let cyclic = is_cyclic_multiway_query(query, atoms);
+    let mut candidates = Vec::new();
+
+    let lftj_impls = vec![NodeImpl::SortedLeapfrog; variable_order_ids.len()];
+    candidates.push(build_plan_candidate(
+        "pure_lftj",
+        schema,
+        query,
+        atoms,
+        variable_order_ids,
+        variable_costs,
+        stats,
+        lftj_impls,
+        cyclic,
+    )?);
+
+    let probe_impls = probe_node_impls(schema, atoms, variable_order_ids, stats, cyclic)?;
+    candidates.push(build_plan_candidate(
+        "hash_probe",
+        schema,
+        query,
+        atoms,
+        variable_order_ids,
+        variable_costs,
+        stats,
+        probe_impls,
+        cyclic,
+    )?);
+
+    let hybrid_impls = hybrid_node_impls(schema, atoms, variable_order_ids, stats, cyclic)?;
+    candidates.push(build_plan_candidate(
+        "hybrid",
+        schema,
+        query,
+        atoms,
+        variable_order_ids,
+        variable_costs,
+        stats,
+        hybrid_impls,
+        cyclic,
+    )?);
+
+    if query
+        .find
+        .iter()
+        .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }))
+    {
+        candidates.push(build_plan_candidate(
+            "aggregate_pushdown",
+            schema,
+            query,
+            atoms,
+            variable_order_ids,
+            variable_costs,
+            stats,
+            vec![NodeImpl::SortedLeapfrog; variable_order_ids.len()],
+            cyclic,
+        )?);
+    }
+
+    candidates.sort_by_key(|candidate| candidate.cost.clone());
+    let chosen = candidates
+        .first()
+        .ok_or_else(|| Error::internal("no optimizer plan candidates"))?
+        .name
+        .clone();
+    let plan = candidates
+        .iter()
+        .find(|candidate| candidate.name == chosen)
+        .ok_or_else(|| Error::internal("chosen optimizer candidate missing"))?
+        .plan
+        .clone();
+    let trace_candidates = candidates
+        .into_iter()
+        .map(|candidate| PlanCandidate {
+            selected: candidate.name == chosen,
+            rejected_reason: if candidate.name == chosen {
+                "selected minimum stable cost".to_owned()
+            } else {
+                "higher stable cost".to_owned()
+            },
+            name: candidate.name,
+            implementations: candidate.implementations,
+            cost: candidate.cost,
+        })
+        .collect::<Vec<_>>();
+
+    Ok((
+        plan,
+        OptimizerTrace {
+            chosen,
+            candidates: trace_candidates,
+        },
+    ))
+}
+
+#[derive(Clone, Debug)]
+struct OptimizerCandidate {
+    name: String,
+    implementations: Vec<NodeImpl>,
+    cost: CostKey,
+    plan: FreeJoinPlan,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_plan_candidate(
+    name: &str,
+    schema: &StorageSchema,
+    query: &TypedQuery,
+    atoms: &[&TypedRelationAtom],
+    variable_order_ids: &[usize],
+    variable_costs: &[VariableCost],
+    stats: &PlannerStats,
+    implementations: Vec<NodeImpl>,
+    cyclic: bool,
+) -> Result<OptimizerCandidate> {
+    let estimates = estimate_free_join_plan(name, query, variable_costs, &implementations, cyclic);
+    let cost = CostKey {
+        estimated_micros: estimates
+            .iterator_ops
+            .saturating_add(estimates.hash_probe_rows)
+            .saturating_add(estimates.hash_build_rows / 64)
+            .saturating_add(estimates.materialized_values),
+        memory_bytes: estimates.memory_bytes,
+        materialization_penalty: estimates.materialized_values,
+        tie_breaker: format!(
+            "{}:{}",
+            name,
+            implementations
+                .iter()
+                .map(|implementation| format!("{implementation:?}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    };
+    let plan = build_free_join_plan(
+        schema,
+        query,
+        atoms,
+        variable_order_ids,
+        &implementations,
+        stats,
+        estimates,
+    )?;
+    Ok(OptimizerCandidate {
+        name: name.to_owned(),
+        implementations,
+        cost,
+        plan,
+    })
+}
+
+fn build_free_join_plan(
+    schema: &StorageSchema,
+    query: &TypedQuery,
+    atoms: &[&TypedRelationAtom],
+    variable_order_ids: &[usize],
+    implementations: &[NodeImpl],
+    stats: &PlannerStats,
+    estimates: PlanEstimates,
 ) -> Result<FreeJoinPlan> {
     let mut nodes = Vec::new();
+    let mut bound = BTreeSet::new();
     for (node_id, variable) in variable_order_ids.iter().enumerate() {
         let var_id = VarId(*variable as u16);
         let subatoms = atoms
             .iter()
             .enumerate()
-            .filter_map(|(atom_id, atom)| {
+            .map(|(atom_id, atom)| {
                 let fields = atom
                     .fields
                     .iter()
@@ -1268,29 +1816,219 @@ fn build_pure_lftj_free_join_plan(
                     )
                     .map(|field| FieldId(field.field_id as u16))
                     .collect::<Vec<_>>();
-                (!fields.is_empty()).then_some(SubAtom {
+                if fields.is_empty() {
+                    return Ok(None);
+                }
+                let access =
+                    estimate_atom_variable_access(schema, stats, &bound, atom, *variable)?.access;
+                Ok(Some(SubAtom {
                     atom_id: AtomId(atom_id as u16),
                     relation: crate::RelationId(atom.relation_id as u16),
                     vars: vec![var_id; fields.len()],
                     fields,
-                    access: AccessId(0),
-                })
+                    access,
+                }))
             })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
             .collect::<Vec<_>>();
         nodes.push(PlanNode {
             id: NodeId(node_id as u16),
             bind_vars: vec![var_id],
             subatoms,
-            implementation: NodeImpl::SortedLeapfrog,
+            implementation: implementations
+                .get(node_id)
+                .copied()
+                .unwrap_or(NodeImpl::SortedLeapfrog),
             payload: payload_demand(query),
         });
+        bound.insert(*variable);
     }
 
     Ok(FreeJoinPlan {
         nodes,
         output: output_plan(query),
-        estimates: PlanEstimates::default(),
+        estimates,
     })
+}
+
+fn estimate_free_join_plan(
+    name: &str,
+    query: &TypedQuery,
+    variable_costs: &[VariableCost],
+    implementations: &[NodeImpl],
+    cyclic: bool,
+) -> PlanEstimates {
+    let mut iterator_ops = 0u64;
+    let mut hash_build_rows = 0u64;
+    let mut hash_probe_rows = 0u64;
+    for (cost, implementation) in variable_costs.iter().zip(implementations) {
+        let mut variable_ops = cost.estimated_candidates.max(1);
+        match implementation {
+            NodeImpl::SortedLeapfrog => {
+                variable_ops = variable_ops.saturating_mul(if cyclic { 1 } else { 3 });
+            }
+            NodeImpl::HashProbe => {
+                hash_probe_rows = hash_probe_rows.saturating_add(cost.estimated_candidates.max(1));
+                hash_build_rows = hash_build_rows.saturating_add(cost.estimated_candidates.max(1));
+            }
+            NodeImpl::Hybrid => {
+                variable_ops = variable_ops.saturating_mul(2);
+                hash_probe_rows =
+                    hash_probe_rows.saturating_add(cost.estimated_candidates.max(1) / 2);
+            }
+            NodeImpl::VectorLoop
+            | NodeImpl::ExistenceCheck
+            | NodeImpl::Product
+            | NodeImpl::AggregateSink => {
+                variable_ops = variable_ops.saturating_mul(4);
+            }
+        }
+        iterator_ops = iterator_ops.saturating_add(variable_ops);
+    }
+
+    if cyclic && name != "pure_lftj" && name != "aggregate_pushdown" {
+        iterator_ops = iterator_ops.saturating_mul(8);
+    }
+
+    if name == "hybrid" {
+        iterator_ops = iterator_ops.saturating_add(25);
+    }
+
+    let output_rows = estimate_output_rows(query, variable_costs);
+    let materialized_values = estimate_materialized_values(query, output_rows);
+    let memory_bytes = (hash_build_rows as usize)
+        .saturating_mul(32)
+        .saturating_add(materialized_values as usize * 16);
+
+    PlanEstimates {
+        output_rows,
+        iterator_ops,
+        hash_build_rows,
+        hash_probe_rows,
+        materialized_values,
+        memory_bytes,
+    }
+}
+
+fn estimate_output_rows(query: &TypedQuery, variable_costs: &[VariableCost]) -> u64 {
+    let has_aggregate = query
+        .find
+        .iter()
+        .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }));
+    let group_vars = query
+        .find
+        .iter()
+        .filter(|term| matches!(term, TypedFindTerm::Variable { .. }))
+        .count() as u64;
+    if has_aggregate && group_vars == 0 {
+        return 1;
+    }
+    variable_costs
+        .iter()
+        .map(|cost| cost.estimated_candidates)
+        .min()
+        .unwrap_or(1)
+        .max(1)
+}
+
+fn estimate_materialized_values(query: &TypedQuery, output_rows: u64) -> u64 {
+    let projected_values = query.find.len() as u64;
+    output_rows
+        .saturating_mul(projected_values)
+        .max(projected_values)
+}
+
+fn probe_node_impls(
+    schema: &StorageSchema,
+    atoms: &[&TypedRelationAtom],
+    variable_order_ids: &[usize],
+    stats: &PlannerStats,
+    cyclic: bool,
+) -> Result<Vec<NodeImpl>> {
+    let mut bound = BTreeSet::new();
+    let mut out = Vec::new();
+    for variable in variable_order_ids {
+        let implementation =
+            if !cyclic && variable_probe_eligible(schema, atoms, stats, &bound, *variable)? {
+                NodeImpl::HashProbe
+            } else {
+                NodeImpl::SortedLeapfrog
+            };
+        out.push(implementation);
+        bound.insert(*variable);
+    }
+    Ok(out)
+}
+
+fn hybrid_node_impls(
+    schema: &StorageSchema,
+    atoms: &[&TypedRelationAtom],
+    variable_order_ids: &[usize],
+    stats: &PlannerStats,
+    cyclic: bool,
+) -> Result<Vec<NodeImpl>> {
+    let mut bound = BTreeSet::new();
+    let mut out = Vec::new();
+    for variable in variable_order_ids {
+        let implementation =
+            if !cyclic && variable_probe_eligible(schema, atoms, stats, &bound, *variable)? {
+                NodeImpl::Hybrid
+            } else {
+                NodeImpl::SortedLeapfrog
+            };
+        out.push(implementation);
+        bound.insert(*variable);
+    }
+    Ok(out)
+}
+
+fn variable_probe_eligible(
+    schema: &StorageSchema,
+    atoms: &[&TypedRelationAtom],
+    stats: &PlannerStats,
+    bound: &BTreeSet<usize>,
+    variable: usize,
+) -> Result<bool> {
+    for atom in atoms
+        .iter()
+        .copied()
+        .filter(|atom| atom_contains_variable(atom, variable))
+    {
+        let estimate = estimate_atom_variable_access(schema, stats, bound, atom, variable)?;
+        let relation_rows = stats.relation_rows(&atom.relation);
+        if estimate.prefix_len > 0 && estimate.estimated_rows <= relation_rows.max(1).div_ceil(2) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn is_cyclic_multiway_query(query: &TypedQuery, atoms: &[&TypedRelationAtom]) -> bool {
+    if atoms.len() < 3 {
+        return false;
+    }
+    let mut degree = vec![0usize; query.variables.len()];
+    for atom in atoms {
+        for variable in atom_variables(atom) {
+            degree[variable] += 1;
+        }
+    }
+    degree
+        .into_iter()
+        .filter(|count| *count > 0)
+        .all(|count| count >= 2)
+}
+
+fn atom_variables(atom: &TypedRelationAtom) -> BTreeSet<usize> {
+    atom.fields
+        .iter()
+        .filter_map(|field| match field.term {
+            TypedTerm::Variable(variable) => Some(variable),
+            TypedTerm::Input(_) | TypedTerm::Literal(_) | TypedTerm::Wildcard => None,
+        })
+        .collect()
 }
 
 fn payload_demand(query: &TypedQuery) -> PayloadDemand {
@@ -1355,13 +2093,14 @@ fn output_plan(query: &TypedQuery) -> OutputPlan {
 
 fn choose_summary_access(
     schema: &StorageSchema,
+    stats: &PlannerStats,
     atom: &TypedRelationAtom,
     query: &TypedQuery,
     inputs: &InputBindings,
     binding: &EncodedBinding,
 ) -> Result<PlannedAtom> {
     let paths = schema.access_paths(&atom.relation)?;
-    let mut best: Option<(usize, usize, AccessPathDescriptor)> = None;
+    let mut best: Option<(u64, usize, usize, String, AccessPathDescriptor)> = None;
     for path in paths {
         let prefix_len = path
             .leading_fields
@@ -1377,18 +2116,45 @@ fn choose_summary_access(
             })
             .count();
         let mut score = prefix_len;
-        if score == 0 && range_field_for_atom(&path, atom, query, inputs, binding).is_some() {
+        let range_match =
+            score == 0 && range_field_for_atom(&path, atom, query, inputs, binding).is_some();
+        if range_match {
             score = 1;
         }
-        let candidate = (score, kind_rank(path.kind), path);
-        if best
-            .as_ref()
-            .is_none_or(|best| (candidate.0, candidate.1) > (best.0, best.1))
-        {
+        let mut estimate = stats
+            .index_stats(&atom.relation, &path.index_name)
+            .map(|index| index.estimated_rows_for_prefix(prefix_len))
+            .unwrap_or_else(|| stats.index_entries(&atom.relation, &path.index_name));
+        if range_match {
+            estimate = divide_ceil(stats.relation_rows(&atom.relation), 4);
+        }
+        if score == 0 {
+            estimate = estimate.saturating_mul(4);
+        }
+        let candidate = (
+            estimate.max(1),
+            score,
+            kind_rank(path.kind),
+            path.index_name.clone(),
+            path,
+        );
+        if best.as_ref().is_none_or(|best| {
+            (
+                candidate.0,
+                std::cmp::Reverse(candidate.1),
+                std::cmp::Reverse(candidate.2),
+                candidate.3.clone(),
+            ) < (
+                best.0,
+                std::cmp::Reverse(best.1),
+                std::cmp::Reverse(best.2),
+                best.3.clone(),
+            )
+        }) {
             best = Some(candidate);
         }
     }
-    let (_, _, path) = best.ok_or_else(|| Error::internal("relation has no access paths"))?;
+    let (_, _, _, _, path) = best.ok_or_else(|| Error::internal("relation has no access paths"))?;
     Ok(PlannedAtom {
         relation: atom.relation.clone(),
         index: path.index_name,
@@ -2140,7 +2906,7 @@ mod tests {
     use crate::{AggregateError, Environment, ExecuteError, QueryError, Row};
     use bumbledb_core::datalog::parse_and_typecheck;
     use bumbledb_core::schema::{
-        FieldDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
+        FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
     };
 
     #[test]
@@ -2187,11 +2953,130 @@ mod tests {
 
         assert_same_rows(&output.rows, &[vec![Value::Id(1)], vec![Value::Id(3)]]);
         let expected_fields = vec!["currency".to_owned(), "id".to_owned()];
-        assert!(
-            output.plan.missing_indexes.iter().any(|missing| {
-                missing.relation == "Account" && missing.fields == expected_fields
+        assert!(output.plan.missing_indexes.iter().any(|missing| {
+            missing.relation == "Account"
+                && missing.fields == expected_fields
+                && missing.reason.contains("StaticPredicate")
+        }));
+    }
+
+    #[test]
+    fn optimizer_selects_equality_index_and_hash_probe_for_static_lookup() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Environment::open(dir.path()).unwrap();
+        let schema = StorageSchema::new(optimizer_schema(), env.max_key_size()).unwrap();
+        env.write(|txn| {
+            txn.insert(&schema, item_row(1, 1))?;
+            txn.insert(&schema, item_row(2, 1))?;
+            txn.insert(&schema, item_row(3, 2))?;
+            Ok::<(), Error>(())
+        })
+        .unwrap();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            "find ?item where Item(id: ?item, kind: $kind)",
+        )
+        .unwrap();
+
+        let output = env
+            .read(|txn| {
+                txn.execute_query(
+                    &schema,
+                    &query,
+                    &InputBindings::from_values([("kind", Value::Symbol(1))]),
+                )
             })
+            .unwrap();
+
+        assert_eq!(output.plan.atoms[0].index, "by_kind");
+        assert_eq!(output.plan.atoms[0].kind, IndexKind::Equality);
+        assert!(
+            output
+                .plan
+                .free_join
+                .nodes
+                .iter()
+                .any(|node| node.implementation == NodeImpl::HashProbe)
         );
+        assert_eq!(output.plan.optimizer.chosen, "hash_probe");
+        assert_same_rows(&output.rows, &[vec![Value::Id(1)], vec![Value::Id(2)]]);
+    }
+
+    #[test]
+    fn optimizer_keeps_cyclic_triangle_on_lftj() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Environment::open(dir.path()).unwrap();
+        let schema = StorageSchema::new(triangle_schema(), env.max_key_size()).unwrap();
+        env.write(|txn| {
+            txn.insert(&schema, edge_ab_row(1, 10))?;
+            txn.insert(&schema, edge_ac_row(1, 20))?;
+            txn.insert(&schema, edge_bc_row(10, 20))?;
+            txn.insert(&schema, edge_ab_row(2, 10))?;
+            txn.insert(&schema, edge_ac_row(2, 30))?;
+            txn.insert(&schema, edge_bc_row(10, 40))?;
+            Ok::<(), Error>(())
+        })
+        .unwrap();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find count(?a)
+            where
+              EdgeAB(a: ?a, b: ?b)
+              EdgeAC(a: ?a, c: ?c)
+              EdgeBC(b: ?b, c: ?c)
+            "#,
+        )
+        .unwrap();
+
+        let output = env
+            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
+            .unwrap();
+
+        assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+        assert!(
+            output
+                .plan
+                .free_join
+                .nodes
+                .iter()
+                .all(|node| node.implementation == NodeImpl::SortedLeapfrog)
+        );
+        assert!(
+            output
+                .plan
+                .optimizer
+                .candidates
+                .iter()
+                .any(|candidate| candidate.name == "pure_lftj")
+        );
+    }
+
+    #[test]
+    fn optimizer_trace_and_cost_tiebreak_are_stable() {
+        let (env, schema) = seeded_db();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?account ?holder_name
+            where
+              Account(id: ?account, holder: ?holder)
+              Holder(id: ?holder, name: ?holder_name)
+            "#,
+        )
+        .unwrap();
+
+        let first = env
+            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
+            .unwrap();
+        let second = env
+            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
+            .unwrap();
+
+        assert_eq!(first.plan.optimizer, second.plan.optimizer);
+        assert!(first.explain().contains("candidate_plan"));
+        assert!(first.explain().contains("free_join_estimates"));
+        assert!(first.explain().contains("reason=stats"));
     }
 
     #[test]
@@ -2516,6 +3401,8 @@ mod tests {
         assert!(explain.contains("variable_order"));
         assert!(explain.contains("variable_estimate"));
         assert!(explain.contains("free_join_node"));
+        assert!(explain.contains("candidate_plan"));
+        assert!(explain.contains("free_join_estimates"));
         assert!(explain.contains("index="));
         assert!(explain.contains("cursor_seeks"));
         assert!(explain.contains("rows_scanned"));
@@ -2714,6 +3601,70 @@ mod tests {
         )
     }
 
+    fn optimizer_schema() -> bumbledb_core::schema::SchemaDescriptor {
+        bumbledb_core::schema::SchemaDescriptor::new(
+            "OptimizerDb",
+            vec![
+                RelationDescriptor::new(
+                    "Item",
+                    RelationKind::Entity,
+                    vec![
+                        FieldDescriptor::new(
+                            "id",
+                            ValueType::Id {
+                                name: "ItemId".to_owned(),
+                                relation: "Item".to_owned(),
+                            },
+                        ),
+                        FieldDescriptor::new(
+                            "kind",
+                            ValueType::Symbol {
+                                name: "Kind".to_owned(),
+                            },
+                        ),
+                    ],
+                    PrimaryKeyDescriptor::new(["id"]),
+                )
+                .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"])),
+            ],
+        )
+    }
+
+    fn triangle_schema() -> bumbledb_core::schema::SchemaDescriptor {
+        bumbledb_core::schema::SchemaDescriptor::new(
+            "TriangleDb",
+            vec![
+                RelationDescriptor::new(
+                    "EdgeAB",
+                    RelationKind::Edge,
+                    vec![
+                        FieldDescriptor::new("a", ValueType::U64),
+                        FieldDescriptor::new("b", ValueType::U64),
+                    ],
+                    PrimaryKeyDescriptor::new(["a", "b"]),
+                ),
+                RelationDescriptor::new(
+                    "EdgeAC",
+                    RelationKind::Edge,
+                    vec![
+                        FieldDescriptor::new("a", ValueType::U64),
+                        FieldDescriptor::new("c", ValueType::U64),
+                    ],
+                    PrimaryKeyDescriptor::new(["a", "c"]),
+                ),
+                RelationDescriptor::new(
+                    "EdgeBC",
+                    RelationKind::Edge,
+                    vec![
+                        FieldDescriptor::new("b", ValueType::U64),
+                        FieldDescriptor::new("c", ValueType::U64),
+                    ],
+                    PrimaryKeyDescriptor::new(["b", "c"]),
+                ),
+            ],
+        )
+    }
+
     fn holder_row(id: u64, name: &str) -> Row {
         Row::new(
             "Holder",
@@ -2756,6 +3707,25 @@ mod tests {
                 ("d", Value::Decimal(DecimalRaw(d))),
             ],
         )
+    }
+
+    fn item_row(id: u64, kind: u64) -> Row {
+        Row::new(
+            "Item",
+            [("id", Value::Id(id)), ("kind", Value::Symbol(kind))],
+        )
+    }
+
+    fn edge_ab_row(a: u64, b: u64) -> Row {
+        Row::new("EdgeAB", [("a", Value::U64(a)), ("b", Value::U64(b))])
+    }
+
+    fn edge_ac_row(a: u64, c: u64) -> Row {
+        Row::new("EdgeAC", [("a", Value::U64(a)), ("c", Value::U64(c))])
+    }
+
+    fn edge_bc_row(b: u64, c: u64) -> Row {
+        Row::new("EdgeBC", [("b", Value::U64(b)), ("c", Value::U64(c))])
     }
 
     fn assert_same_rows(actual: &[Vec<Value>], expected: &[Vec<Value>]) {
