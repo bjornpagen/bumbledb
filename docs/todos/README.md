@@ -37,6 +37,25 @@ The Rosetta Stone remains normative. These todo documents are the execution plan
 
 The get-fast mission supersedes incremental tuning of the current query executor. Its core directive is to replace relation-at-a-time recursive execution with encoded trie/WCOJ execution and remove the old path rather than maintain dual engines.
 
+**Rearchitecture V2 PRD Suite**
+- `rearchitecture_v2/README.md`
+- `rearchitecture_v2/00_architecture_and_rca.md`
+- `rearchitecture_v2/01_query_image.md`
+- `rearchitecture_v2/02_columnar_relation_image.md`
+- `rearchitecture_v2/03_sorted_trie_index.md`
+- `rearchitecture_v2/04_leapfrog_triejoin_executor.md`
+- `rearchitecture_v2/05_free_join_plan_ir.md`
+- `rearchitecture_v2/06_hash_trie_and_hybrid_nodes.md`
+- `rearchitecture_v2/07_factorized_projection_and_aggregation.md`
+- `rearchitecture_v2/08_optimizer_and_statistics.md`
+- `rearchitecture_v2/09_durable_segments_and_snapshots.md`
+- `rearchitecture_v2/10_benchmark_gates_and_testing.md`
+- `rearchitecture_v2/11_cutover_and_code_deletion.md`
+- `rearchitecture_v2/12_query_normalization_and_runtime_specialization.md`
+- `rearchitecture_v2/13_dependency_graph_and_migration_plan.md`
+
+The rearchitecture suite is the successor to the get-fast experiment. It treats LMDB as durable storage and moves hot query execution to snapshot-local QueryImages, specialized sorted/hash tries, Free Join plans, LFTJ, hybrid probes, and factorized aggregation.
+
 **Completion Philosophy**
 - Each stage should leave the project in a coherent state.
 - Tests should pass at every stage boundary.
