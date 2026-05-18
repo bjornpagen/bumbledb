@@ -234,6 +234,10 @@ struct BenchmarkRunResult {
     planner_stats_misses: u64,
     planner_stats_builds: u64,
     planner_stats_build_micros: u64,
+    sorted_trie_cache_hits: u64,
+    sorted_trie_cache_misses: u64,
+    sorted_trie_builds: u64,
+    atom_temp_relation_builds: u64,
     gate: GateOutcome,
 }
 
@@ -465,6 +469,10 @@ fn benchmark_result(
         planner_stats_misses: output.plan.planner_stats.misses,
         planner_stats_builds: output.plan.planner_stats.builds,
         planner_stats_build_micros: output.plan.planner_stats.build_micros,
+        sorted_trie_cache_hits: output.plan.counters.sorted_trie_cache_hits,
+        sorted_trie_cache_misses: output.plan.counters.sorted_trie_cache_misses,
+        sorted_trie_builds: output.plan.counters.sorted_trie_builds,
+        atom_temp_relation_builds: output.plan.counters.atom_temp_relation_builds,
         gate,
     }
 }
@@ -602,12 +610,12 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | rows | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | image build us | image segments | image segment bytes | built from segments | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | iterator ops | hash build | hash probe | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---:|---:|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | rows | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | image build us | image segments | image segment bytes | built from segments | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | iterator ops | hash build | hash probe | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---:|---:|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.rows,
@@ -624,6 +632,10 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.planner_stats_misses,
             result.planner_stats_builds,
             result.planner_stats_build_micros,
+            result.sorted_trie_cache_hits,
+            result.sorted_trie_cache_misses,
+            result.sorted_trie_builds,
+            result.atom_temp_relation_builds,
             result.iterator_ops,
             result.hash_build_rows,
             result.hash_probe_rows,
@@ -695,6 +707,9 @@ fn print_explain(explain: &str) {
             || line.contains("trie_next")
             || line.contains("trie_seek")
             || line.contains("trie_key_reads")
+            || line.contains("sorted_trie_cache")
+            || line.contains("sorted_trie_build")
+            || line.contains("atom_temp_relation")
             || line.contains("output_rows")
         {
             println!("  {line}");
@@ -1646,6 +1661,10 @@ mod tests {
             planner_stats_misses: 1,
             planner_stats_builds: 1,
             planner_stats_build_micros: 9,
+            sorted_trie_cache_hits: 1,
+            sorted_trie_cache_misses: 1,
+            sorted_trie_builds: 1,
+            atom_temp_relation_builds: 1,
             gate: GateOutcome {
                 passed: true,
                 notes: vec!["ok".to_owned()],

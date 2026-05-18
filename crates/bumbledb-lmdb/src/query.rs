@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use bumbledb_core::datalog::{
@@ -396,6 +397,34 @@ impl QueryPlan {
             "  trie_key_reads: {}\n",
             self.counters.trie_key_reads
         ));
+        out.push_str(&format!(
+            "  sorted_trie_cache_hits: {}\n",
+            self.counters.sorted_trie_cache_hits
+        ));
+        out.push_str(&format!(
+            "  sorted_trie_cache_misses: {}\n",
+            self.counters.sorted_trie_cache_misses
+        ));
+        out.push_str(&format!(
+            "  sorted_trie_builds: {}\n",
+            self.counters.sorted_trie_builds
+        ));
+        out.push_str(&format!(
+            "  sorted_trie_build_micros: {}\n",
+            self.counters.sorted_trie_build_micros
+        ));
+        out.push_str(&format!(
+            "  atom_temp_relation_builds: {}\n",
+            self.counters.atom_temp_relation_builds
+        ));
+        out.push_str(&format!(
+            "  atom_temp_relation_source_rows: {}\n",
+            self.counters.atom_temp_relation_source_rows
+        ));
+        out.push_str(&format!(
+            "  atom_temp_relation_rows: {}\n",
+            self.counters.atom_temp_relation_rows
+        ));
         out.push_str(&format!("  output_rows: {}\n", self.counters.output_rows));
         out
     }
@@ -524,6 +553,20 @@ pub struct PlanCounters {
     pub trie_seek: u64,
     /// Number of trie iterator key reads.
     pub trie_key_reads: u64,
+    /// Number of sorted trie cache hits while preparing query atom indexes.
+    pub sorted_trie_cache_hits: u64,
+    /// Number of sorted trie cache misses while preparing query atom indexes.
+    pub sorted_trie_cache_misses: u64,
+    /// Number of sorted trie builds while preparing query atom indexes.
+    pub sorted_trie_builds: u64,
+    /// Total sorted trie build time while preparing query atom indexes.
+    pub sorted_trie_build_micros: u64,
+    /// Number of temporary atom relation images built on cache misses.
+    pub atom_temp_relation_builds: u64,
+    /// Number of source rows inspected while building temporary atom relations.
+    pub atom_temp_relation_source_rows: u64,
+    /// Number of rows retained in temporary atom relations.
+    pub atom_temp_relation_rows: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -679,7 +722,7 @@ impl AccessEstimate {
 
 struct LftjAtomPlan {
     variables: Vec<usize>,
-    trie: SortedTrieIndex,
+    trie: Arc<SortedTrieIndex>,
     row_count: usize,
 }
 
@@ -755,6 +798,7 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
         inputs,
         &plan.relation_atoms,
         &plan.variable_order_ids,
+        &mut plan.summary.counters,
     )?;
     if atom_plans
         .iter()
@@ -767,7 +811,10 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
             .iter()
             .map(|atom| atom.variables.clone())
             .collect(),
-        iters: atom_plans.iter().map(|atom| atom.trie.iter()).collect(),
+        iters: atom_plans
+            .iter()
+            .map(|atom| atom.trie.as_ref().iter())
+            .collect(),
     };
     let mut executor = LftjExecutor {
         txn,
@@ -971,10 +1018,11 @@ fn build_lftj_atom_plans(
     inputs: &EncodedInputs,
     atoms: &[NormAtom],
     variable_order_ids: &[usize],
+    counters: &mut PlanCounters,
 ) -> Result<Vec<LftjAtomPlan>> {
     atoms
         .iter()
-        .map(|atom| build_lftj_atom_plan(image, query, inputs, atom, variable_order_ids))
+        .map(|atom| build_lftj_atom_plan(image, query, inputs, atom, variable_order_ids, counters))
         .collect()
 }
 
@@ -984,12 +1032,48 @@ fn build_lftj_atom_plan(
     inputs: &EncodedInputs,
     atom: &NormAtom,
     variable_order_ids: &[usize],
+    counters: &mut PlanCounters,
 ) -> Result<LftjAtomPlan> {
     let source = image
         .relations()
         .get(atom.relation.0 as usize)
         .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
     let variables = atom_variables_in_plan_order(atom, variable_order_ids);
+    let cache_key = lftj_atom_cache_key(atom, &variables, variable_order_ids, inputs);
+    let source_row_count = source.row_count;
+    let cached = image.cached_sorted_trie(cache_key, || {
+        build_lftj_sorted_trie(source, query, inputs, atom, &variables)
+    })?;
+    if cached.hit {
+        counters.sorted_trie_cache_hits += 1;
+    } else {
+        counters.sorted_trie_cache_misses += 1;
+        counters.sorted_trie_builds += 1;
+        counters.sorted_trie_build_micros = counters
+            .sorted_trie_build_micros
+            .saturating_add(cached.build_micros as u64);
+        counters.atom_temp_relation_builds += 1;
+        counters.atom_temp_relation_source_rows = counters
+            .atom_temp_relation_source_rows
+            .saturating_add(source_row_count as u64);
+        counters.atom_temp_relation_rows = counters
+            .atom_temp_relation_rows
+            .saturating_add(cached.index.stats.row_count as u64);
+    }
+    Ok(LftjAtomPlan {
+        variables,
+        trie: cached.index.clone(),
+        row_count: cached.index.stats.row_count,
+    })
+}
+
+fn build_lftj_sorted_trie(
+    source: &RelationImage,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    atom: &NormAtom,
+    variables: &[usize],
+) -> Result<SortedTrieIndex> {
     let fields = variables
         .iter()
         .enumerate()
@@ -1005,7 +1089,7 @@ fn build_lftj_atom_plan(
 
     for row in 0..source.row_count {
         let row = RowId(row as u32);
-        let Some(values) = atom_row_values(source, query, inputs, atom, row, &variables)? else {
+        let Some(values) = atom_row_values(source, query, inputs, atom, row, variables)? else {
             continue;
         };
         included_rows += 1;
@@ -1043,18 +1127,57 @@ fn build_lftj_atom_plan(
             encoded_column_bytes: raw_columns.iter().flatten().map(Vec::len).sum::<usize>(),
         },
     };
-    let trie = SortedTrieIndex::build(
+    let trie = crate::query_image::build_sorted_trie_index(
         &relation,
         IndexSpec::new(
             format!("{}_lftj", atom.relation_name),
             (0..variables.len()).map(|id| FieldId(id as u16)),
         ),
     )?;
-    Ok(LftjAtomPlan {
-        variables,
-        trie,
-        row_count: relation.row_count,
-    })
+    Ok(trie)
+}
+
+fn lftj_atom_cache_key(
+    atom: &NormAtom,
+    variables: &[usize],
+    variable_order_ids: &[usize],
+    inputs: &EncodedInputs,
+) -> String {
+    let mut key = String::new();
+    let _ = write!(
+        key,
+        "relation={};atom={};vars={:?};order={:?};fields=",
+        atom.relation.0, atom.id.0, variables, variable_order_ids
+    );
+    for field in &atom.fields {
+        let _ = write!(key, "{}:", field.field.0);
+        match &field.term {
+            NormTerm::Var(variable) => {
+                let _ = write!(key, "v{}", variable.0);
+            }
+            NormTerm::Input(input) => {
+                let _ = write!(key, "i{}=", input.0);
+                if let Some(value) = inputs.get(*input) {
+                    append_hex(&mut key, value.as_bytes());
+                } else {
+                    key.push_str("missing");
+                }
+            }
+            NormTerm::Literal(value) => {
+                key.push_str("l=");
+                append_hex(&mut key, value.as_bytes());
+            }
+            NormTerm::Wildcard => key.push('_'),
+        }
+        key.push(';');
+    }
+    key
+}
+
+fn append_hex(out: &mut String, bytes: &[u8]) {
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
 }
 
 fn atom_variables_in_plan_order(atom: &NormAtom, variable_order_ids: &[usize]) -> Vec<usize> {
@@ -3219,6 +3342,9 @@ mod tests {
         assert_eq!(second.plan.planner_stats.builds, 1);
         assert_eq!(second.plan.planner_stats.misses, 1);
         assert!(second.plan.planner_stats.hits >= 1);
+        assert_eq!(second.plan.counters.sorted_trie_builds, 0);
+        assert_eq!(second.plan.counters.atom_temp_relation_builds, 0);
+        assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
     }
 
     #[test]

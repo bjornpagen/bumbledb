@@ -4,8 +4,9 @@ use std::time::Instant;
 
 use bumbledb_core::schema::{RelationDescriptor, SchemaFingerprint, ValueType};
 
+use crate::IndexSpec;
 use crate::planner_stats::{PlannerStatsCache, PlannerStatsCacheDiagnostics};
-use crate::{Error, ReadTxn, Result, SegmentDescriptor, StorageSchema};
+use crate::{Error, ReadTxn, Result, SegmentDescriptor, SortedTrieIndex, StorageSchema};
 
 /// Cache key for an immutable query image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -93,6 +94,7 @@ pub struct QueryImage {
     relation_by_name: BTreeMap<String, RelationId>,
     stats: QueryImageStats,
     planner_stats: PlannerStatsCache,
+    sorted_trie_cache: Arc<RwLock<BTreeMap<String, Arc<SortedTrieIndex>>>>,
 }
 
 impl QueryImage {
@@ -114,6 +116,7 @@ impl QueryImage {
             .iter()
             .map(RelationImage::encoded_column_bytes)
             .sum();
+        let sorted_trie_bytes = segment_bytes.saturating_sub(encoded_column_bytes);
         Self {
             key: QueryImageKey {
                 schema: schema.descriptor().fingerprint(),
@@ -125,7 +128,7 @@ impl QueryImage {
                 relation_count: schema.descriptor().relations.len(),
                 row_count,
                 encoded_column_bytes,
-                sorted_trie_bytes: 0,
+                sorted_trie_bytes,
                 hash_trie_bytes: 0,
                 segment_count,
                 segment_bytes,
@@ -133,6 +136,7 @@ impl QueryImage {
                 build_micros,
             },
             planner_stats: PlannerStatsCache::default(),
+            sorted_trie_cache: Arc::default(),
         }
     }
 
@@ -170,6 +174,47 @@ impl QueryImage {
         self.planner_stats.get_or_build(schema, relation)
     }
 
+    pub(crate) fn cached_sorted_trie(
+        &self,
+        key: String,
+        build: impl FnOnce() -> Result<SortedTrieIndex>,
+    ) -> Result<CachedSortedTrie> {
+        if let Some(index) = self
+            .sorted_trie_cache
+            .read()
+            .map_err(|_| Error::internal("sorted trie cache read lock poisoned"))?
+            .get(&key)
+            .cloned()
+        {
+            return Ok(CachedSortedTrie {
+                index,
+                hit: true,
+                build_micros: 0,
+            });
+        }
+
+        let start = Instant::now();
+        let index = Arc::new(build()?);
+        let build_micros = start.elapsed().as_micros();
+        let mut cache = self
+            .sorted_trie_cache
+            .write()
+            .map_err(|_| Error::internal("sorted trie cache write lock poisoned"))?;
+        if let Some(existing) = cache.get(&key).cloned() {
+            return Ok(CachedSortedTrie {
+                index: existing,
+                hit: true,
+                build_micros: 0,
+            });
+        }
+        cache.insert(key, index.clone());
+        Ok(CachedSortedTrie {
+            index,
+            hit: false,
+            build_micros,
+        })
+    }
+
     #[cfg(test)]
     fn content_fingerprint(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
@@ -187,6 +232,19 @@ impl QueryImage {
         }
         *hasher.finalize().as_bytes()
     }
+}
+
+pub(crate) struct CachedSortedTrie {
+    pub index: Arc<SortedTrieIndex>,
+    pub hit: bool,
+    pub build_micros: u128,
+}
+
+pub(crate) fn build_sorted_trie_index(
+    relation: &RelationImage,
+    spec: IndexSpec,
+) -> Result<SortedTrieIndex> {
+    SortedTrieIndex::build(relation, spec)
 }
 
 /// Query image build/cache statistics.
@@ -738,7 +796,7 @@ mod tests {
 
         assert_eq!(image.stats().relation_count, 1);
         assert_eq!(image.stats().row_count, 2);
-        assert_eq!(image.stats().sorted_trie_bytes, 0);
+        assert!(image.stats().sorted_trie_bytes > 0);
         assert_eq!(image.stats().hash_trie_bytes, 0);
         assert_eq!(image.stats().segment_count, 1);
         assert!(image.stats().segment_bytes > 0);
