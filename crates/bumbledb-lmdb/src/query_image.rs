@@ -326,6 +326,14 @@ pub enum ColumnImage {
 
 impl ColumnImage {
     fn from_bytes(field: FieldId, width: usize, values: Vec<Vec<u8>>) -> Result<Self> {
+        Self::from_query_image_bytes(field, width, values)
+    }
+
+    pub(crate) fn from_query_image_bytes(
+        field: FieldId,
+        width: usize,
+        values: Vec<Vec<u8>>,
+    ) -> Result<Self> {
         Ok(match width {
             1 => ColumnImage::Bool(FixedColumn::new(
                 field,

@@ -1,14 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::query_image::QueryImageBuilder;
 use bumbledb_core::datalog::{
     AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm,
     TypedLiteral, TypedOperand, TypedQuery, TypedRelationAtom, TypedTerm,
 };
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
-use bumbledb_core::schema::{IndexComponent, IndexKind, ValueType};
+use bumbledb_core::schema::{IndexKind, ValueType};
 
-use crate::storage::EncodedIndexItem;
-use crate::{AccessPathDescriptor, Error, ReadTxn, Result, StorageSchema, Value};
+use crate::{
+    AccessPathDescriptor, EncodedOwned, Error, FieldId, IndexSpec, LinearIter, ReadTxn,
+    RelationImage, RelationStats, Result, RowId, SortedTrieIndex, StorageSchema, TrieIter, Value,
+};
 
 /// Query input bindings keyed by input name without `$`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -176,6 +179,14 @@ impl QueryPlan {
             "  materialized_output_values: {}\n",
             self.counters.materialized_output_values
         ));
+        out.push_str(&format!("  trie_open: {}\n", self.counters.trie_open));
+        out.push_str(&format!("  trie_up: {}\n", self.counters.trie_up));
+        out.push_str(&format!("  trie_next: {}\n", self.counters.trie_next));
+        out.push_str(&format!("  trie_seek: {}\n", self.counters.trie_seek));
+        out.push_str(&format!(
+            "  trie_key_reads: {}\n",
+            self.counters.trie_key_reads
+        ));
         out.push_str(&format!("  output_rows: {}\n", self.counters.output_rows));
         out
     }
@@ -253,6 +264,16 @@ pub struct PlanCounters {
     pub decoded_comparisons_evaluated: u64,
     /// Number of final logical output values materialized.
     pub materialized_output_values: u64,
+    /// Number of trie iterator open operations.
+    pub trie_open: u64,
+    /// Number of trie iterator up operations.
+    pub trie_up: u64,
+    /// Number of trie iterator next operations.
+    pub trie_next: u64,
+    /// Number of trie iterator seek operations.
+    pub trie_seek: u64,
+    /// Number of trie iterator key reads.
+    pub trie_key_reads: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -305,22 +326,6 @@ struct ExecutionPlan<'query> {
     comparisons: Vec<&'query TypedComparison>,
     summary: QueryPlan,
 }
-
-#[derive(Clone, Debug)]
-struct ScanAccess {
-    summary: PlannedAtom,
-    prefix: Vec<u8>,
-    components: Vec<IndexComponent>,
-}
-
-type ScanAccessCandidate = (
-    usize,
-    bool,
-    usize,
-    AccessPathDescriptor,
-    Vec<u8>,
-    Vec<String>,
-);
 
 #[derive(Clone, Debug)]
 struct PlannerStats {
@@ -378,6 +383,17 @@ struct VariableCost {
     degree: usize,
 }
 
+struct LftjAtomPlan {
+    variables: Vec<usize>,
+    trie: SortedTrieIndex,
+    row_count: usize,
+}
+
+struct LftjRuntime<'a> {
+    atom_variables: Vec<Vec<usize>>,
+    iters: Vec<crate::SortedTrieIter<'a>>,
+}
+
 impl<'env> ReadTxn<'env> {
     /// Executes a typed positive Datalog query against current indexes.
     #[tracing::instrument(name = "bumbledb.query.execute", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
@@ -391,26 +407,7 @@ impl<'env> ReadTxn<'env> {
 
         let mut plan = plan_query(self, schema, query, inputs)?;
         tracing::debug!(variable_order = ?plan.summary.variable_order, atoms = plan.summary.atoms.len(), "wcoj query planned");
-        let mut bindings = Vec::new();
-        let mut current = EncodedBinding::new(query.variables.len());
-
-        if self.constant_atoms_exist(
-            schema,
-            query,
-            inputs,
-            &plan.relation_atoms,
-            &mut plan.summary.counters,
-        )? {
-            self.execute_variables(
-                schema,
-                query,
-                inputs,
-                &mut plan,
-                0,
-                &mut current,
-                &mut bindings,
-            )?;
-        }
+        let bindings = execute_lftj(self, schema, query, inputs, &mut plan)?;
 
         let columns = result_columns(query);
         let rows = project_results(self, query, &bindings, &mut plan.summary.counters)?;
@@ -429,191 +426,400 @@ impl<'env> ReadTxn<'env> {
             plan: plan.summary,
         })
     }
+}
 
-    #[allow(clippy::too_many_arguments)]
-    fn execute_variables(
-        &self,
-        schema: &StorageSchema,
-        query: &TypedQuery,
-        inputs: &InputBindings,
-        plan: &mut ExecutionPlan<'_>,
-        depth: usize,
-        binding: &mut EncodedBinding,
-        output: &mut Vec<EncodedBinding>,
-    ) -> Result<()> {
-        if depth == plan.variable_order_ids.len() {
+fn execute_lftj<'txn, 'query>(
+    txn: &ReadTxn<'txn>,
+    schema: &StorageSchema,
+    query: &'query TypedQuery,
+    inputs: &InputBindings,
+    plan: &mut ExecutionPlan<'query>,
+) -> Result<Vec<EncodedBinding>> {
+    let image = QueryImageBuilder::new(txn, schema).build()?;
+    let atom_plans = build_lftj_atom_plans(
+        &image,
+        query,
+        inputs,
+        &plan.relation_atoms,
+        &plan.variable_order_ids,
+    )?;
+    if atom_plans
+        .iter()
+        .any(|atom| atom.variables.is_empty() && atom.row_count == 0)
+    {
+        return Ok(Vec::new());
+    }
+    let runtime = LftjRuntime {
+        atom_variables: atom_plans
+            .iter()
+            .map(|atom| atom.variables.clone())
+            .collect(),
+        iters: atom_plans.iter().map(|atom| atom.trie.iter()).collect(),
+    };
+    let mut executor = LftjExecutor {
+        txn,
+        query,
+        inputs,
+        plan,
+        runtime,
+        binding: EncodedBinding::new(query.variables.len()),
+        output: Vec::new(),
+    };
+    executor.execute(0)?;
+    Ok(executor.output)
+}
+
+struct LftjExecutor<'txn, 'input, 'query, 'plan, 'image> {
+    txn: &'input ReadTxn<'txn>,
+    query: &'query TypedQuery,
+    inputs: &'input InputBindings,
+    plan: &'plan mut ExecutionPlan<'query>,
+    runtime: LftjRuntime<'image>,
+    binding: EncodedBinding,
+    output: Vec<EncodedBinding>,
+}
+
+impl LftjExecutor<'_, '_, '_, '_, '_> {
+    fn execute(&mut self, depth: usize) -> Result<()> {
+        if depth == self.plan.variable_order_ids.len() {
             if comparisons_ready_pass(
-                self,
-                &plan.comparisons,
-                query,
-                inputs,
-                binding,
-                &mut plan.summary.counters,
+                self.txn,
+                &self.plan.comparisons,
+                self.query,
+                self.inputs,
+                &self.binding,
+                &mut self.plan.summary.counters,
             )? {
-                plan.summary.counters.bindings_yielded += 1;
-                output.push(binding.clone());
+                self.plan.summary.counters.bindings_yielded += 1;
+                self.output.push(self.binding.clone());
             }
             return Ok(());
         }
 
-        let variable = plan.variable_order_ids[depth];
-        let candidates = self.candidate_values_for_variable(
-            schema,
-            query,
-            inputs,
-            &plan.relation_atoms,
-            variable,
-            binding,
-            &mut plan.summary.counters,
-        )?;
-        plan.summary.counters.variable_candidates += candidates.len() as u64;
-
-        for candidate in candidates {
-            if !binding.bind(variable, candidate) {
-                continue;
-            }
-            let keep = comparisons_ready_pass(
-                self,
-                &plan.comparisons,
-                query,
-                inputs,
-                binding,
-                &mut plan.summary.counters,
-            )?;
-            if keep {
-                self.execute_variables(schema, query, inputs, plan, depth + 1, binding, output)?;
-            }
-            binding.unbind(variable);
+        let variable = self.plan.variable_order_ids[depth];
+        let participants = self.participants(variable);
+        if participants.is_empty() {
+            return Err(Error::internal(format!(
+                "variable {} is not constrained by any trie atom",
+                self.query.variables[variable].name
+            )));
         }
 
+        for atom_id in &participants {
+            self.runtime.iters[*atom_id].open();
+            self.plan.summary.counters.trie_open += 1;
+        }
+
+        let mut leapfrog = LeapfrogState::new(participants.clone());
+        leapfrog.init(&mut self.runtime.iters, &mut self.plan.summary.counters);
+        while !leapfrog.at_end {
+            let value = leapfrog.key(&self.runtime.iters, &mut self.plan.summary.counters)?;
+            self.plan.summary.counters.variable_candidates += 1;
+            if self.binding.bind(
+                variable,
+                EncodedValue::new(
+                    self.query.variables[variable].value_type.clone(),
+                    value.as_bytes().to_vec(),
+                ),
+            ) {
+                let keep = comparisons_ready_pass(
+                    self.txn,
+                    &self.plan.comparisons,
+                    self.query,
+                    self.inputs,
+                    &self.binding,
+                    &mut self.plan.summary.counters,
+                )?;
+                if keep {
+                    self.execute(depth + 1)?;
+                }
+                self.binding.unbind(variable);
+            }
+            leapfrog.next(&mut self.runtime.iters, &mut self.plan.summary.counters);
+        }
+
+        for atom_id in participants.iter().rev() {
+            self.runtime.iters[*atom_id].up();
+            self.plan.summary.counters.trie_up += 1;
+        }
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn candidate_values_for_variable(
-        &self,
-        schema: &StorageSchema,
-        query: &TypedQuery,
-        inputs: &InputBindings,
-        atoms: &[&TypedRelationAtom],
-        variable: usize,
-        binding: &EncodedBinding,
-        counters: &mut PlanCounters,
-    ) -> Result<BTreeSet<EncodedValue>> {
-        let atom_infos = atoms
+    fn participants(&self, variable: usize) -> Vec<usize> {
+        self.runtime
+            .atom_variables
             .iter()
-            .copied()
-            .filter(|atom| atom_contains_variable(atom, variable))
-            .map(|atom| {
-                (
-                    atom,
-                    atom_constraint_strength(atom, variable, binding),
-                    atom_has_unbound_other_variable(atom, variable, binding),
-                )
-            })
-            .collect::<Vec<_>>();
-        let has_constrained_stream = atom_infos.iter().any(|(_, strength, _)| *strength > 0);
+            .enumerate()
+            .filter_map(|(atom_id, variables)| variables.contains(&variable).then_some(atom_id))
+            .collect()
+    }
+}
 
-        let mut sets = Vec::new();
-        for (atom, strength, has_unbound_other) in atom_infos {
-            if has_constrained_stream && strength == 0 && has_unbound_other {
-                continue;
-            }
-            sets.push(self.collect_atom_candidates(
-                schema, query, inputs, atom, variable, binding, counters,
-            )?);
+struct LeapfrogState {
+    iter_ids: Vec<usize>,
+    p: usize,
+    at_end: bool,
+}
+
+impl LeapfrogState {
+    fn new(iter_ids: Vec<usize>) -> Self {
+        Self {
+            iter_ids,
+            p: 0,
+            at_end: false,
         }
-        let mut sets = sets.into_iter();
-        let Some(mut intersection) = sets.next() else {
-            return Err(Error::internal(format!(
-                "variable {} is not constrained by any relation atom",
-                query.variables[variable].name
-            )));
+    }
+
+    fn init(&mut self, iters: &mut [crate::SortedTrieIter<'_>], counters: &mut PlanCounters) {
+        if self.iter_ids.iter().any(|id| iters[*id].at_end()) {
+            self.at_end = true;
+            return;
+        }
+        self.iter_ids.sort_by(|left, right| {
+            let left = key_owned(&iters[*left], counters);
+            let right = key_owned(&iters[*right], counters);
+            left.cmp(&right)
+        });
+        self.p = 0;
+        self.search(iters, counters);
+    }
+
+    fn key(
+        &self,
+        iters: &[crate::SortedTrieIter<'_>],
+        counters: &mut PlanCounters,
+    ) -> Result<EncodedOwned> {
+        self.iter_ids
+            .first()
+            .map(|id| key_owned(&iters[*id], counters))
+            .ok_or_else(|| Error::internal("leapfrog join has no iterators"))
+    }
+
+    fn next(&mut self, iters: &mut [crate::SortedTrieIter<'_>], counters: &mut PlanCounters) {
+        if self.at_end {
+            return;
+        }
+        let id = self.iter_ids[self.p];
+        iters[id].next();
+        counters.trie_next += 1;
+        if iters[id].at_end() {
+            self.at_end = true;
+            return;
+        }
+        self.p = (self.p + 1) % self.iter_ids.len();
+        self.search(iters, counters);
+    }
+
+    fn search(&mut self, iters: &mut [crate::SortedTrieIter<'_>], counters: &mut PlanCounters) {
+        if self.iter_ids.is_empty() || self.at_end {
+            return;
+        }
+        if self.iter_ids.len() == 1 {
+            return;
+        }
+        let mut max = key_owned(
+            &iters[self.iter_ids[(self.p + self.iter_ids.len() - 1) % self.iter_ids.len()]],
+            counters,
+        );
+        loop {
+            let id = self.iter_ids[self.p];
+            let current = key_owned(&iters[id], counters);
+            if current == max {
+                return;
+            }
+            iters[id].seek(max.as_ref());
+            counters.trie_seek += 1;
+            if iters[id].at_end() {
+                self.at_end = true;
+                return;
+            }
+            max = key_owned(&iters[id], counters);
+            self.p = (self.p + 1) % self.iter_ids.len();
+        }
+    }
+}
+
+fn key_owned(iter: &crate::SortedTrieIter<'_>, counters: &mut PlanCounters) -> EncodedOwned {
+    counters.trie_key_reads += 1;
+    EncodedOwned::from_ref(iter.key())
+}
+
+fn build_lftj_atom_plans(
+    image: &crate::QueryImage,
+    query: &TypedQuery,
+    inputs: &InputBindings,
+    atoms: &[&TypedRelationAtom],
+    variable_order_ids: &[usize],
+) -> Result<Vec<LftjAtomPlan>> {
+    atoms
+        .iter()
+        .map(|atom| build_lftj_atom_plan(image, query, inputs, atom, variable_order_ids))
+        .collect()
+}
+
+fn build_lftj_atom_plan(
+    image: &crate::QueryImage,
+    query: &TypedQuery,
+    inputs: &InputBindings,
+    atom: &TypedRelationAtom,
+    variable_order_ids: &[usize],
+) -> Result<LftjAtomPlan> {
+    let source = image
+        .relation(&atom.relation)
+        .ok_or_else(|| Error::unknown_relation(&atom.relation))?;
+    let variables = atom_variables_in_plan_order(atom, variable_order_ids);
+    let fields = variables
+        .iter()
+        .enumerate()
+        .map(|(id, variable)| crate::FieldImage {
+            id: FieldId(id as u16),
+            name: query.variables[*variable].name.clone(),
+            value_type: query.variables[*variable].value_type.clone(),
+            width: query.variables[*variable].value_type.encoded_width(),
+        })
+        .collect::<Vec<_>>();
+    let mut raw_columns = vec![Vec::<Vec<u8>>::new(); variables.len()];
+    let mut included_rows = 0usize;
+
+    for row in 0..source.row_count {
+        let row = RowId(row as u32);
+        let Some(values) = atom_row_values(source, query, inputs, atom, row, &variables)? else {
+            continue;
         };
-        for set in sets {
-            counters.trie_intersections += 1;
-            intersection = intersection.intersection(&set).cloned().collect();
-            if intersection.is_empty() {
-                break;
-            }
+        included_rows += 1;
+        for (column, bytes) in values.into_iter().enumerate() {
+            raw_columns[column].push(bytes);
         }
-        Ok(intersection)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn collect_atom_candidates(
-        &self,
-        schema: &StorageSchema,
-        query: &TypedQuery,
-        inputs: &InputBindings,
-        atom: &TypedRelationAtom,
-        variable: usize,
-        binding: &EncodedBinding,
-        counters: &mut PlanCounters,
-    ) -> Result<BTreeSet<EncodedValue>> {
-        let access =
-            choose_scan_access(self, schema, atom, query, inputs, binding, Some(variable))?;
-        counters.cursor_seeks += 1;
-        let scan = self.scan_encoded_index_prefix(
-            schema,
-            &atom.relation,
-            &access.summary.index,
-            &access.prefix,
-        )?;
-        let mut values = BTreeSet::new();
-        for item in scan {
-            counters.rows_scanned += 1;
-            let item = item?;
-            if let Some(value) = atom_candidate_from_item(
-                self, schema, query, inputs, atom, variable, binding, &access, &item,
-            )? {
-                counters.rows_matched += 1;
-                values.insert(value);
-            }
-        }
-        Ok(values)
-    }
+    let row_count = if variables.is_empty() {
+        included_rows
+    } else {
+        raw_columns[0].len()
+    };
+    let columns = fields
+        .iter()
+        .map(|field| {
+            crate::ColumnImage::from_query_image_bytes(
+                field.id,
+                field.width,
+                raw_columns[field.id.0 as usize].clone(),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let relation = RelationImage {
+        id: source.id,
+        name: atom.relation.clone(),
+        row_count,
+        fields,
+        columns,
+        sorted_index_count: 0,
+        hash_index_count: 0,
+        stats: RelationStats {
+            row_count,
+            field_count: variables.len(),
+            encoded_column_bytes: raw_columns.iter().flatten().map(Vec::len).sum::<usize>(),
+        },
+    };
+    let trie = SortedTrieIndex::build(
+        &relation,
+        IndexSpec::new(
+            format!("{}_lftj", atom.relation),
+            (0..variables.len()).map(|id| FieldId(id as u16)),
+        ),
+    )?;
+    Ok(LftjAtomPlan {
+        variables,
+        trie,
+        row_count: relation.row_count,
+    })
+}
 
-    fn constant_atoms_exist(
-        &self,
-        schema: &StorageSchema,
-        query: &TypedQuery,
-        inputs: &InputBindings,
-        atoms: &[&TypedRelationAtom],
-        counters: &mut PlanCounters,
-    ) -> Result<bool> {
-        let binding = EncodedBinding::new(query.variables.len());
-        for atom in atoms {
-            if atom
-                .fields
-                .iter()
-                .any(|field| matches!(field.term, TypedTerm::Variable(_)))
-            {
-                continue;
-            }
-            let access = choose_scan_access(self, schema, atom, query, inputs, &binding, None)?;
-            counters.cursor_seeks += 1;
-            let scan = self.scan_encoded_index_prefix(
-                schema,
-                &atom.relation,
-                &access.summary.index,
-                &access.prefix,
-            )?;
-            let mut found = false;
-            for item in scan {
-                counters.rows_scanned += 1;
-                let item = item?;
-                if atom_matches_item(self, schema, query, inputs, atom, &binding, &access, &item)? {
-                    counters.rows_matched += 1;
-                    found = true;
-                    break;
+fn atom_variables_in_plan_order(
+    atom: &TypedRelationAtom,
+    variable_order_ids: &[usize],
+) -> Vec<usize> {
+    variable_order_ids
+        .iter()
+        .copied()
+        .filter(|variable| atom_contains_variable(atom, *variable))
+        .collect()
+}
+
+fn atom_row_values(
+    relation: &RelationImage,
+    query: &TypedQuery,
+    inputs: &InputBindings,
+    atom: &TypedRelationAtom,
+    row: RowId,
+    variables: &[usize],
+) -> Result<Option<Vec<Vec<u8>>>> {
+    let mut values_by_variable = BTreeMap::<usize, Vec<u8>>::new();
+    for field in &atom.fields {
+        let bytes = relation
+            .encoded_bytes(row, FieldId(field.field_id as u16))
+            .ok_or_else(|| Error::internal("missing atom field in relation image"))?;
+        match &field.term {
+            TypedTerm::Variable(variable) => {
+                if let Some(existing) = values_by_variable.get(variable) {
+                    if existing.as_slice() != bytes {
+                        return Ok(None);
+                    }
+                } else {
+                    values_by_variable.insert(*variable, bytes.to_vec());
                 }
             }
-            if !found {
-                return Ok(false);
+            TypedTerm::Input(input) => {
+                let input_value = input_value(query, inputs, *input)?;
+                let normalized = normalize_value_for_type(input_value, &field.value_type);
+                // The source row is already encoded by the same field type, so decode-free
+                // comparison is valid after using the query input's logical type check.
+                if !value_matches_encoded_field(&normalized, &field.value_type, bytes) {
+                    return Ok(None);
+                }
             }
+            TypedTerm::Literal(literal) => {
+                let value = literal_to_value(literal)?;
+                let normalized = normalize_value_for_type(&value, &field.value_type);
+                if !value_matches_encoded_field(&normalized, &field.value_type, bytes) {
+                    return Ok(None);
+                }
+            }
+            TypedTerm::Wildcard => {}
         }
-        Ok(true)
+    }
+    variables
+        .iter()
+        .map(|variable| {
+            values_by_variable
+                .get(variable)
+                .cloned()
+                .ok_or_else(|| Error::internal("missing LFTJ variable value"))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
+}
+
+fn value_matches_encoded_field(value: &Value, value_type: &ValueType, encoded: &[u8]) -> bool {
+    // Avoid adding storage-level encode helpers to this cutover. For fixed-width numeric
+    // benchmark/query values, logical decode-free comparisons are handled by existing
+    // primitive encodings. String/bytes literals are not part of current query tests.
+    match (value, value_type) {
+        (Value::Bool(value), ValueType::Bool) => encoded == [u8::from(*value)],
+        (Value::U64(value), ValueType::U64)
+        | (Value::Id(value), ValueType::Id { .. })
+        | (Value::Ref(value), ValueType::Ref { .. })
+        | (Value::Symbol(value), ValueType::Symbol { .. }) => encoded == value.to_be_bytes(),
+        (Value::I64(value), ValueType::I64) => {
+            encoded == ((*value as u64) ^ (1u64 << 63)).to_be_bytes()
+        }
+        (Value::Timestamp(value), ValueType::TimestampMicros) => {
+            encoded == ((value.0 as u64) ^ (1u64 << 63)).to_be_bytes()
+        }
+        (Value::Decimal(value), ValueType::Decimal { .. }) => {
+            encoded == ((value.0 as u128) ^ (1u128 << 127)).to_be_bytes()
+        }
+        _ => false,
     }
 }
 
@@ -998,17 +1204,6 @@ fn choose_summary_access(
     inputs: &InputBindings,
     binding: &EncodedBinding,
 ) -> Result<PlannedAtom> {
-    let access = choose_scan_access_summary(schema, atom, query, inputs, binding)?;
-    Ok(access.summary)
-}
-
-fn choose_scan_access_summary(
-    schema: &StorageSchema,
-    atom: &TypedRelationAtom,
-    query: &TypedQuery,
-    inputs: &InputBindings,
-    binding: &EncodedBinding,
-) -> Result<ScanAccess> {
     let paths = schema.access_paths(&atom.relation)?;
     let mut best: Option<(usize, usize, AccessPathDescriptor)> = None;
     for path in paths {
@@ -1038,87 +1233,11 @@ fn choose_scan_access_summary(
         }
     }
     let (_, _, path) = best.ok_or_else(|| Error::internal("relation has no access paths"))?;
-    Ok(ScanAccess {
-        summary: PlannedAtom {
-            relation: atom.relation.clone(),
-            index: path.index_name,
-            kind: path.kind,
-            prefix_fields: path.leading_fields,
-        },
-        prefix: Vec::new(),
-        components: path.components,
-    })
-}
-
-fn choose_scan_access(
-    txn: &ReadTxn<'_>,
-    schema: &StorageSchema,
-    atom: &TypedRelationAtom,
-    query: &TypedQuery,
-    inputs: &InputBindings,
-    binding: &EncodedBinding,
-    current_variable: Option<usize>,
-) -> Result<ScanAccess> {
-    let paths = schema.access_paths(&atom.relation)?;
-    let mut best: Option<ScanAccessCandidate> = None;
-    for path in paths {
-        if let Some(variable) = current_variable
-            && !path.components.iter().any(|component| {
-                atom.fields.iter().any(|field| {
-                    field.field == component.field_name
-                        && matches!(field.term, TypedTerm::Variable(id) if id == variable)
-                })
-            })
-        {
-            continue;
-        }
-
-        let mut prefix = Vec::new();
-        let mut prefix_fields = Vec::new();
-        let mut current_is_next = false;
-        for field_name in &path.leading_fields {
-            let Some(field) = atom.fields.iter().find(|field| &field.field == field_name) else {
-                break;
-            };
-            if matches!(field.term, TypedTerm::Variable(variable) if Some(variable) == current_variable)
-            {
-                current_is_next = true;
-                break;
-            }
-            let Some(bytes) = term_bound_bytes(txn, schema, atom, field, query, inputs, binding)?
-            else {
-                break;
-            };
-            prefix.extend_from_slice(&bytes);
-            prefix_fields.push(field_name.clone());
-        }
-
-        let candidate = (
-            prefix_fields.len(),
-            current_is_next,
-            kind_rank(path.kind),
-            path,
-            prefix,
-            prefix_fields,
-        );
-        if best
-            .as_ref()
-            .is_none_or(|best| (candidate.0, candidate.1, candidate.2) > (best.0, best.1, best.2))
-        {
-            best = Some(candidate);
-        }
-    }
-    let (_, _, _, path, prefix, prefix_fields) =
-        best.ok_or_else(|| Error::internal("relation has no usable trie access path"))?;
-    Ok(ScanAccess {
-        summary: PlannedAtom {
-            relation: atom.relation.clone(),
-            index: path.index_name,
-            kind: path.kind,
-            prefix_fields,
-        },
-        prefix,
-        components: path.components,
+    Ok(PlannedAtom {
+        relation: atom.relation.clone(),
+        index: path.index_name,
+        kind: path.kind,
+        prefix_fields: path.leading_fields,
     })
 }
 
@@ -1186,174 +1305,10 @@ fn kind_rank(kind: IndexKind) -> usize {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn atom_candidate_from_item(
-    txn: &ReadTxn<'_>,
-    schema: &StorageSchema,
-    query: &TypedQuery,
-    inputs: &InputBindings,
-    atom: &TypedRelationAtom,
-    variable: usize,
-    binding: &EncodedBinding,
-    access: &ScanAccess,
-    item: &EncodedIndexItem,
-) -> Result<Option<EncodedValue>> {
-    let mut candidate: Option<EncodedValue> = None;
-    for field in &atom.fields {
-        let bytes = component_bytes(access, item, &field.field)?;
-        match &field.term {
-            TypedTerm::Variable(field_variable) if *field_variable == variable => {
-                let value = EncodedValue::new(
-                    query.variables[*field_variable].value_type.clone(),
-                    bytes.to_vec(),
-                );
-                match &candidate {
-                    Some(existing) if existing.bytes != value.bytes => return Ok(None),
-                    Some(_) => {}
-                    None => candidate = Some(value),
-                }
-            }
-            TypedTerm::Variable(field_variable) => {
-                if let Some(bound) = binding.get(*field_variable)
-                    && bound.bytes != bytes
-                {
-                    return Ok(None);
-                }
-            }
-            TypedTerm::Input(_) | TypedTerm::Literal(_) => {
-                let Some(expected) =
-                    term_bound_bytes(txn, schema, atom, field, query, inputs, binding)?
-                else {
-                    return Ok(None);
-                };
-                if expected.as_slice() != bytes {
-                    return Ok(None);
-                }
-            }
-            TypedTerm::Wildcard => {}
-        }
-    }
-    Ok(candidate)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn atom_matches_item(
-    txn: &ReadTxn<'_>,
-    schema: &StorageSchema,
-    query: &TypedQuery,
-    inputs: &InputBindings,
-    atom: &TypedRelationAtom,
-    binding: &EncodedBinding,
-    access: &ScanAccess,
-    item: &EncodedIndexItem,
-) -> Result<bool> {
-    for field in &atom.fields {
-        let bytes = component_bytes(access, item, &field.field)?;
-        match &field.term {
-            TypedTerm::Variable(variable) => {
-                if let Some(bound) = binding.get(*variable)
-                    && bound.bytes != bytes
-                {
-                    return Ok(false);
-                }
-            }
-            TypedTerm::Input(_) | TypedTerm::Literal(_) => {
-                let Some(expected) =
-                    term_bound_bytes(txn, schema, atom, field, query, inputs, binding)?
-                else {
-                    return Ok(false);
-                };
-                if expected.as_slice() != bytes {
-                    return Ok(false);
-                }
-            }
-            TypedTerm::Wildcard => {}
-        }
-    }
-    Ok(true)
-}
-
-fn component_bytes<'a>(
-    access: &ScanAccess,
-    item: &'a EncodedIndexItem,
-    field_name: &str,
-) -> Result<&'a [u8]> {
-    let index = access
-        .components
-        .iter()
-        .position(|component| component.field_name == field_name)
-        .ok_or_else(|| Error::internal(format!("missing component for field {field_name}")))?;
-    item.component(&access.components, index)
-        .ok_or_else(|| Error::corrupt("encoded index item missing component"))
-}
-
-fn term_bound_bytes(
-    txn: &ReadTxn<'_>,
-    schema: &StorageSchema,
-    atom: &TypedRelationAtom,
-    field: &bumbledb_core::datalog::TypedFieldBinding,
-    query: &TypedQuery,
-    inputs: &InputBindings,
-    binding: &EncodedBinding,
-) -> Result<Option<Vec<u8>>> {
-    match &field.term {
-        TypedTerm::Variable(variable) => {
-            Ok(binding.get(*variable).map(|value| value.bytes.clone()))
-        }
-        TypedTerm::Input(input) => {
-            let value = input_value(query, inputs, *input)?;
-            let normalized = normalize_value_for_type(value, &field.value_type);
-            Ok(Some(txn.encode_query_field_value(
-                schema,
-                &atom.relation,
-                &field.field,
-                &normalized,
-            )?))
-        }
-        TypedTerm::Literal(literal) => {
-            let value = literal_to_value(literal)?;
-            let normalized = normalize_value_for_type(&value, &field.value_type);
-            Ok(Some(txn.encode_query_field_value(
-                schema,
-                &atom.relation,
-                &field.field,
-                &normalized,
-            )?))
-        }
-        TypedTerm::Wildcard => Ok(None),
-    }
-}
-
 fn atom_contains_variable(atom: &TypedRelationAtom, variable: usize) -> bool {
     atom.fields
         .iter()
         .any(|field| matches!(field.term, TypedTerm::Variable(id) if id == variable))
-}
-
-fn atom_constraint_strength(
-    atom: &TypedRelationAtom,
-    variable: usize,
-    binding: &EncodedBinding,
-) -> usize {
-    atom.fields
-        .iter()
-        .filter(|field| match field.term {
-            TypedTerm::Variable(id) if id == variable => false,
-            TypedTerm::Variable(id) => binding.get(id).is_some(),
-            TypedTerm::Input(_) | TypedTerm::Literal(_) => true,
-            TypedTerm::Wildcard => false,
-        })
-        .count()
-}
-
-fn atom_has_unbound_other_variable(
-    atom: &TypedRelationAtom,
-    variable: usize,
-    binding: &EncodedBinding,
-) -> bool {
-    atom.fields.iter().any(|field| {
-        matches!(field.term, TypedTerm::Variable(id) if id != variable && binding.get(id).is_none())
-    })
 }
 
 fn comparisons_ready_pass(
@@ -2122,6 +2077,8 @@ mod tests {
         assert!(explain.contains("decoded_values"));
         assert!(explain.contains("encoded_comparisons_evaluated"));
         assert!(explain.contains("materialized_output_values"));
+        assert!(explain.contains("trie_open"));
+        assert!(explain.contains("trie_seek"));
         assert!(explain.contains("output_rows"));
 
         let diagnostics = env.storage_diagnostics(&schema).unwrap();

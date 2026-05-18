@@ -279,6 +279,11 @@ fn print_explain(explain: &str) {
             || line.contains("encoded_comparisons_evaluated")
             || line.contains("decoded_comparisons_evaluated")
             || line.contains("materialized_output_values")
+            || line.contains("trie_open")
+            || line.contains("trie_up")
+            || line.contains("trie_next")
+            || line.contains("trie_seek")
+            || line.contains("trie_key_reads")
             || line.contains("output_rows")
         {
             println!("  {line}");

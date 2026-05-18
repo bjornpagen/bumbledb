@@ -1037,21 +1037,6 @@ impl<'env> ReadTxn<'env> {
         })
     }
 
-    /// Encodes a query value for a relation field using existing dictionary entries.
-    pub(crate) fn encode_query_field_value(
-        &self,
-        schema: &StorageSchema,
-        relation_name: &str,
-        field_name: &str,
-        value: &Value,
-    ) -> Result<Vec<u8>> {
-        let (_, relation) = schema.relation(relation_name)?;
-        let field = relation
-            .field(field_name)
-            .ok_or_else(|| Error::unknown_field(&relation.name, field_name))?;
-        self.encode_read_value(relation, field, value)
-    }
-
     /// Decodes one encoded query value by logical type.
     pub(crate) fn decode_query_value(&self, value_type: &ValueType, bytes: &[u8]) -> Result<Value> {
         decode_value(self.dbs.dict, &self.txn, value_type, bytes)

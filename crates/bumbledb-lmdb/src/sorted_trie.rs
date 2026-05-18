@@ -32,7 +32,8 @@ impl EncodedOwned {
         }
     }
 
-    fn as_ref(&self) -> EncodedRef<'_> {
+    /// Returns this owned value as a borrowed encoded reference.
+    pub fn as_ref(&self) -> EncodedRef<'_> {
         match self {
             EncodedOwned::One(bytes) => EncodedRef::One(bytes),
             EncodedOwned::Eight(bytes) => EncodedRef::Eight(bytes),
