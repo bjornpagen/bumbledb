@@ -9,8 +9,10 @@ use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::schema::{IndexKind, ValueType};
 
 use crate::{
-    AccessPathDescriptor, EncodedOwned, Error, FieldId, IndexSpec, LinearIter, ReadTxn,
-    RelationImage, RelationStats, Result, RowId, SortedTrieIndex, StorageSchema, TrieIter, Value,
+    AccessId, AccessPathDescriptor, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error,
+    FieldId, FreeJoinPlan, IndexSpec, LinearIter, NodeId, NodeImpl, OutputPlan, PayloadDemand,
+    PlanEstimates, PlanNode, ProjectPlan, ReadTxn, RelationImage, RelationStats, Result, RowId,
+    SortedTrieIndex, StorageSchema, SubAtom, TrieIter, Value, VarId,
 };
 
 /// Query input bindings keyed by input name without `$`.
@@ -88,6 +90,8 @@ pub struct QueryPlan {
     pub atoms: Vec<PlannedAtom>,
     /// Physical index recommendations for predicates not served by leading indexes.
     pub missing_indexes: Vec<MissingIndexRecommendation>,
+    /// Free Join physical plan IR.
+    pub free_join: FreeJoinPlan,
     /// Execution counters.
     pub counters: PlanCounters,
     /// True when multiple relation atoms are evaluated as one indexed multiway search.
@@ -128,6 +132,30 @@ impl QueryPlan {
                 out.push_str(&format!(
                     "  missing_index relation={} fields={:?} reason={}\n",
                     missing.relation, missing.fields, missing.reason
+                ));
+            }
+        }
+        out.push_str("free_join_plan:\n");
+        for node in &self.free_join.nodes {
+            out.push_str(&format!(
+                "  free_join_node id={} impl={:?} bind_vars={:?} subatoms={}\n",
+                node.id.0,
+                node.implementation,
+                node.bind_vars.iter().map(|var| var.0).collect::<Vec<_>>(),
+                node.subatoms.len()
+            ));
+            for subatom in &node.subatoms {
+                out.push_str(&format!(
+                    "    free_join_subatom atom={} relation={} fields={:?} vars={:?} access={}\n",
+                    subatom.atom_id.0,
+                    subatom.relation.0,
+                    subatom
+                        .fields
+                        .iter()
+                        .map(|field| field.0)
+                        .collect::<Vec<_>>(),
+                    subatom.vars.iter().map(|var| var.0).collect::<Vec<_>>(),
+                    subatom.access.0
                 ));
             }
         }
@@ -436,6 +464,19 @@ fn execute_lftj<'txn, 'query>(
     plan: &mut ExecutionPlan<'query>,
 ) -> Result<Vec<EncodedBinding>> {
     let image = QueryImageBuilder::new(txn, schema).build()?;
+    let free_join_order = plan
+        .summary
+        .free_join
+        .nodes
+        .iter()
+        .filter(|node| node.implementation == NodeImpl::SortedLeapfrog)
+        .flat_map(|node| node.bind_vars.iter().map(|var| var.0 as usize))
+        .collect::<Vec<_>>();
+    if free_join_order != plan.variable_order_ids {
+        return Err(Error::internal(
+            "free join LFTJ node order does not match variable order",
+        ));
+    }
     let atom_plans = build_lftj_atom_plans(
         &image,
         query,
@@ -865,6 +906,8 @@ fn plan_query<'query>(
         })
         .collect::<Vec<_>>();
     let missing_indexes = missing_index_recommendations(schema, &relation_atoms)?;
+    let free_join = build_pure_lftj_free_join_plan(query, &relation_atoms, &variable_order_ids)?;
+    free_join.validate()?;
 
     let empty = EncodedBinding::new(query.variables.len());
     let mut atoms = Vec::new();
@@ -882,6 +925,7 @@ fn plan_query<'query>(
             variable_estimates,
             atoms,
             missing_indexes,
+            free_join,
             counters: PlanCounters::default(),
             uses_indexed_multiway_join,
         },
@@ -1195,6 +1239,111 @@ fn recommended_index_fields(
         }
     }
     fields
+}
+
+fn build_pure_lftj_free_join_plan(
+    query: &TypedQuery,
+    atoms: &[&TypedRelationAtom],
+    variable_order_ids: &[usize],
+) -> Result<FreeJoinPlan> {
+    let mut nodes = Vec::new();
+    for (node_id, variable) in variable_order_ids.iter().enumerate() {
+        let var_id = VarId(*variable as u16);
+        let subatoms = atoms
+            .iter()
+            .enumerate()
+            .filter_map(|(atom_id, atom)| {
+                let fields = atom
+                    .fields
+                    .iter()
+                    .filter(
+                        |field| matches!(field.term, TypedTerm::Variable(id) if id == *variable),
+                    )
+                    .map(|field| FieldId(field.field_id as u16))
+                    .collect::<Vec<_>>();
+                (!fields.is_empty()).then_some(SubAtom {
+                    atom_id: AtomId(atom_id as u16),
+                    relation: crate::RelationId(atom.relation_id as u16),
+                    vars: vec![var_id; fields.len()],
+                    fields,
+                    access: AccessId(0),
+                })
+            })
+            .collect::<Vec<_>>();
+        nodes.push(PlanNode {
+            id: NodeId(node_id as u16),
+            bind_vars: vec![var_id],
+            subatoms,
+            implementation: NodeImpl::SortedLeapfrog,
+            payload: payload_demand(query),
+        });
+    }
+
+    Ok(FreeJoinPlan {
+        nodes,
+        output: output_plan(query),
+        estimates: PlanEstimates::default(),
+    })
+}
+
+fn payload_demand(query: &TypedQuery) -> PayloadDemand {
+    let mut projected_vars = Vec::new();
+    let mut aggregate_vars = Vec::new();
+    for term in &query.find {
+        match term {
+            TypedFindTerm::Variable { variable } => projected_vars.push(VarId(*variable as u16)),
+            TypedFindTerm::Aggregate { variable, .. } => {
+                aggregate_vars.push(VarId(*variable as u16));
+            }
+        }
+    }
+    PayloadDemand {
+        projected_vars,
+        aggregate_vars,
+        existence_only_relations: Vec::new(),
+        row_id_demands: Vec::new(),
+    }
+}
+
+fn output_plan(query: &TypedQuery) -> OutputPlan {
+    let has_aggregate = query
+        .find
+        .iter()
+        .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }));
+    if has_aggregate {
+        let mut group_vars = Vec::new();
+        let mut aggregates = Vec::new();
+        for term in &query.find {
+            match term {
+                TypedFindTerm::Variable { variable } => group_vars.push(VarId(*variable as u16)),
+                TypedFindTerm::Aggregate {
+                    function,
+                    variable,
+                    value_type,
+                } => aggregates.push(AggregateTerm {
+                    function: *function,
+                    var: VarId(*variable as u16),
+                    value_type: value_type.clone(),
+                }),
+            }
+        }
+        OutputPlan::Aggregate(AggregatePlan {
+            group_vars,
+            aggregates,
+        })
+    } else {
+        OutputPlan::Project(ProjectPlan {
+            vars: query
+                .find
+                .iter()
+                .filter_map(|term| match term {
+                    TypedFindTerm::Variable { variable } => Some(VarId(*variable as u16)),
+                    TypedFindTerm::Aggregate { .. } => None,
+                })
+                .collect(),
+            set_semantics: true,
+        })
+    }
 }
 
 fn choose_summary_access(
@@ -2070,6 +2219,7 @@ mod tests {
         let explain = output.explain();
         assert!(explain.contains("variable_order"));
         assert!(explain.contains("variable_estimate"));
+        assert!(explain.contains("free_join_node"));
         assert!(explain.contains("index="));
         assert!(explain.contains("cursor_seeks"));
         assert!(explain.contains("rows_scanned"));

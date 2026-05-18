@@ -270,6 +270,8 @@ fn print_explain(explain: &str) {
         if line.contains("relation=")
             || line.contains("variable_estimate")
             || line.contains("missing_index")
+            || line.contains("free_join_node")
+            || line.contains("free_join_subatom")
             || line.contains("rows_scanned")
             || line.contains("cursor_seeks")
             || line.contains("trie_intersections")

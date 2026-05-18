@@ -9,6 +9,7 @@ mod error;
 pub mod failpoints;
 #[cfg(not(feature = "test-failpoints"))]
 mod failpoints;
+mod free_join;
 mod query;
 mod query_image;
 mod sorted_trie;
@@ -22,6 +23,10 @@ use heed::types::Bytes;
 use heed::{CompactionOption, Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
 pub use error::*;
+pub use free_join::{
+    AccessId, AggregatePlan, AggregateTerm, AtomId, FreeJoinPlan, NodeId, NodeImpl, OutputPlan,
+    PayloadDemand, PlanEstimates, PlanNode, ProjectPlan, SubAtom, VarId,
+};
 pub use query::{
     InputBindings, MissingIndexRecommendation, PlanCounters, PlannedAtom, QueryOutput, QueryPlan,
     ResultColumn, VariableEstimate,
