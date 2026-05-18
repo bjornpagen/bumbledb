@@ -56,6 +56,19 @@ The get-fast mission supersedes incremental tuning of the current query executor
 
 The rearchitecture suite is the successor to the get-fast experiment. It treats LMDB as durable storage and moves hot query execution to snapshot-local QueryImages, specialized sorted/hash tries, Free Join plans, LFTJ, hybrid probes, and factorized aggregation.
 
+**Trace-Backed Performance Kill List**
+- `performance_kill_list/README.md`
+- `performance_kill_list/01_cache_planner_stats.md`
+- `performance_kill_list/02_cache_query_image_indexes.md`
+- `performance_kill_list/03_route_queries_through_query_image_cache.md`
+- `performance_kill_list/04_real_hash_probe_runtime.md`
+- `performance_kill_list/05_direct_selective_query_kernels.md`
+- `performance_kill_list/06_optimize_lftj_inner_loop.md`
+- `performance_kill_list/07_improve_cardinality_estimates.md`
+- `performance_kill_list/08_add_phase_timing_and_tracing.md`
+
+This kill list is derived from scale-10000 trace evidence after the v2 cutover. It is ordered by observed time impact and is the next performance execution plan.
+
 **Completion Philosophy**
 - Each stage should leave the project in a coherent state.
 - Tests should pass at every stage boundary.
