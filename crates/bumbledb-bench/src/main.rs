@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -7,7 +8,9 @@ use bumbledb_core::schema::{
     FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
     SchemaDescriptor, ValueType,
 };
-use bumbledb_lmdb::{Environment, InputBindings, Row, StorageSchema, Value};
+use bumbledb_lmdb::{
+    Environment, InputBindings, PlanCounters, QueryOutput, ResultColumn, Row, StorageSchema, Value,
+};
 use rusqlite::{Connection, params_from_iter};
 
 mod open;
@@ -46,12 +49,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("no matching datasets".into());
     }
 
+    let mut results = Vec::new();
     for dataset in datasets {
-        run_dataset(dataset, config.repeats)?;
+        results.extend(run_dataset(dataset, config.repeats, config.format)?);
         println!();
     }
 
+    if config.format.includes_markdown() {
+        println!("{}", render_markdown_results(&results));
+    }
+
+    if config.fail_gates {
+        let failures = results
+            .iter()
+            .filter(|result| !result.gate.passed)
+            .collect::<Vec<_>>();
+        if !failures.is_empty() {
+            return Err(format!("{} benchmark gate(s) failed", failures.len()).into());
+        }
+    }
+
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OutputFormat {
+    Text,
+    Markdown,
+    Both,
+}
+
+impl OutputFormat {
+    fn includes_text(self) -> bool {
+        matches!(self, OutputFormat::Text | OutputFormat::Both)
+    }
+
+    fn includes_markdown(self) -> bool {
+        matches!(self, OutputFormat::Markdown | OutputFormat::Both)
+    }
 }
 
 #[derive(Debug)]
@@ -64,6 +99,8 @@ struct Config {
     lahman_dir: Option<String>,
     ldbc_dir: Option<String>,
     trace: bool,
+    format: OutputFormat,
+    fail_gates: bool,
 }
 
 impl Config {
@@ -76,6 +113,8 @@ impl Config {
         let mut lahman_dir = None;
         let mut ldbc_dir = None;
         let mut trace = false;
+        let mut format = OutputFormat::Text;
+        let mut fail_gates = false;
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -99,9 +138,19 @@ impl Config {
                 "--lahman-dir" => lahman_dir = Some(args.next().expect("--lahman-dir value")),
                 "--ldbc-dir" => ldbc_dir = Some(args.next().expect("--ldbc-dir value")),
                 "--trace" => trace = true,
+                "--format" => {
+                    format = match args.next().expect("--format value").as_str() {
+                        "text" => OutputFormat::Text,
+                        "markdown" => OutputFormat::Markdown,
+                        "both" => OutputFormat::Both,
+                        other => panic!("unknown --format {other}"),
+                    }
+                }
+                "--markdown" => format = OutputFormat::Markdown,
+                "--fail-gates" => fail_gates = true,
                 "--help" | "-h" => {
                     println!(
-                        "usage: cargo run -p bumbledb-bench --release -- [--scale N] [--repeats N] [--trace] [--dataset ledger|sailors|joinstress|tpch|imdb|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
+                        "usage: cargo run -p bumbledb-bench --release -- [--scale N] [--repeats N] [--trace] [--format text|markdown|both] [--markdown] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
                     );
                     std::process::exit(0);
                 }
@@ -117,6 +166,8 @@ impl Config {
             lahman_dir,
             ldbc_dir,
             trace,
+            format,
+            fail_gates,
         }
     }
 
@@ -147,6 +198,54 @@ pub(crate) struct BenchQuery {
     sqlite_params: Vec<SqlParam>,
 }
 
+#[derive(Clone, Debug)]
+struct BenchmarkGate {
+    dataset: &'static str,
+    query: &'static str,
+    max_bumbledb_avg_micros: Option<u64>,
+    max_sqlite_ratio: Option<f64>,
+    max_iterator_ops: Option<u64>,
+    max_materialized_values: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+struct BenchmarkRunResult {
+    dataset: &'static str,
+    query: &'static str,
+    rows: usize,
+    bumbledb_avg: Duration,
+    sqlite_avg: Duration,
+    sqlite_ratio: f64,
+    chosen_plan: String,
+    iterator_ops: u64,
+    hash_build_rows: u64,
+    hash_probe_rows: u64,
+    materialized_values: u64,
+    dictionary_reverse_lookups: u64,
+    counters: PlanCounters,
+    final_output_values: u64,
+    output_contains_dictionary_values: bool,
+    query_image_build_micros: u128,
+    query_image_segment_count: usize,
+    query_image_segment_bytes: usize,
+    query_image_built_from_segments: bool,
+    gate: GateOutcome,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct QueryImageBenchStats {
+    build_micros: u128,
+    segment_count: usize,
+    segment_bytes: usize,
+    built_from_segments: bool,
+}
+
+#[derive(Clone, Debug)]
+struct GateOutcome {
+    passed: bool,
+    notes: Vec<String>,
+}
+
 #[derive(Clone)]
 pub(crate) enum SqlParam {
     I64(i64),
@@ -160,22 +259,52 @@ impl rusqlite::ToSql for SqlParam {
     }
 }
 
-fn run_dataset(dataset: Dataset, repeats: u64) -> Result<(), Box<dyn std::error::Error>> {
-    println!("== {} ==", dataset.name);
-    println!("rows={}", dataset.rows.len());
+fn run_dataset(
+    dataset: Dataset,
+    repeats: u64,
+    format: OutputFormat,
+) -> Result<Vec<BenchmarkRunResult>, Box<dyn std::error::Error>> {
+    if format.includes_text() {
+        println!("== {} ==", dataset.name);
+        println!("rows={}", dataset.rows.len());
+    }
 
     let bumble_dir = tempfile::tempdir()?;
     let bumble_env = Environment::open(bumble_dir.path())?;
     let bumble_schema = StorageSchema::new(dataset.schema.clone(), bumble_env.max_key_size())?;
 
     let bumble_load = timed(|| bumble_env.bulk_load(&bumble_schema, dataset.rows.clone()))?;
-    println!("load.bumbledb={:?}", bumble_load.elapsed);
+    if format.includes_text() {
+        println!("load.bumbledb={:?}", bumble_load.elapsed);
+    }
+    let query_image = bumble_env.query_image(&bumble_schema)?;
+    let query_image_stats = QueryImageBenchStats {
+        build_micros: query_image.stats().build_micros,
+        segment_count: query_image.stats().segment_count,
+        segment_bytes: query_image.stats().segment_bytes,
+        built_from_segments: query_image.stats().built_from_segments,
+    };
+    if format.includes_text() {
+        println!(
+            "query_image relation_count={} row_count={} encoded_column_bytes={} segment_count={} segment_bytes={} built_from_segments={} build_micros={}",
+            query_image.stats().relation_count,
+            query_image.stats().row_count,
+            query_image.stats().encoded_column_bytes,
+            query_image.stats().segment_count,
+            query_image.stats().segment_bytes,
+            query_image.stats().built_from_segments,
+            query_image.stats().build_micros,
+        );
+    }
 
     let mut sqlite = Connection::open_in_memory()?;
     sqlite.execute_batch(dataset.sqlite_schema)?;
     let sqlite_load = timed(|| (dataset.sqlite_insert)(&sqlite, &dataset.rows))?;
-    println!("load.sqlite={:?}", sqlite_load.elapsed);
+    if format.includes_text() {
+        println!("load.sqlite={:?}", sqlite_load.elapsed);
+    }
 
+    let mut results = Vec::new();
     for query in dataset.queries {
         let typed = parse_and_typecheck(bumble_schema.descriptor(), query.datalog)?;
         let inputs = InputBindings::from_values(query.inputs.clone());
@@ -208,19 +337,36 @@ fn run_dataset(dataset: Dataset, repeats: u64) -> Result<(), Box<dyn std::error:
             Ok::<_, Box<dyn std::error::Error>>(())
         })?;
 
-        println!(
-            "query={} rows={} bumbledb_total={:?} bumbledb_avg={:?} sqlite_total={:?} sqlite_avg={:?}",
-            query.name,
-            bumble_once.rows.len(),
-            bumble_time,
-            avg(bumble_time, repeats),
-            sqlite_time,
-            avg(sqlite_time, repeats),
+        let bumbledb_avg = avg(bumble_time, repeats);
+        let sqlite_avg = avg(sqlite_time, repeats);
+        let result = benchmark_result(
+            dataset.name,
+            &query,
+            &bumble_once,
+            bumbledb_avg,
+            sqlite_avg,
+            query_image_stats,
         );
-        print_explain(&bumble_once.explain());
+        if format.includes_text() {
+            println!(
+                "query={} rows={} bumbledb_total={:?} bumbledb_avg={:?} sqlite_total={:?} sqlite_avg={:?} gate={}",
+                query.name,
+                bumble_once.rows.len(),
+                bumble_time,
+                bumbledb_avg,
+                sqlite_time,
+                sqlite_avg,
+                if result.gate.passed { "pass" } else { "fail" },
+            );
+            print_explain(&bumble_once.explain());
+            for note in &result.gate.notes {
+                println!("  gate_note: {note}");
+            }
+        }
+        results.push(result);
     }
 
-    Ok(())
+    Ok(results)
 }
 
 struct Timed<T> {
@@ -265,6 +411,251 @@ fn sqlite_count(
     Ok(rows)
 }
 
+fn benchmark_result(
+    dataset: &'static str,
+    query: &BenchQuery,
+    output: &QueryOutput,
+    bumbledb_avg: Duration,
+    sqlite_avg: Duration,
+    query_image_stats: QueryImageBenchStats,
+) -> BenchmarkRunResult {
+    let final_output_values = (output.rows.len() * output.columns.len()) as u64;
+    let output_contains_dictionary_values = output
+        .rows
+        .iter()
+        .flatten()
+        .any(|value| matches!(value, Value::String(_) | Value::Bytes(_)));
+    let sqlite_ratio = duration_ratio(bumbledb_avg, sqlite_avg);
+    let gate = evaluate_gate(
+        dataset,
+        query,
+        output,
+        bumbledb_avg,
+        sqlite_ratio,
+        final_output_values,
+        output_contains_dictionary_values,
+    );
+    BenchmarkRunResult {
+        dataset,
+        query: query.name,
+        rows: output.rows.len(),
+        bumbledb_avg,
+        sqlite_avg,
+        sqlite_ratio,
+        chosen_plan: output.plan.optimizer.chosen.clone(),
+        iterator_ops: output.plan.free_join.estimates.iterator_ops,
+        hash_build_rows: output.plan.free_join.estimates.hash_build_rows,
+        hash_probe_rows: output.plan.free_join.estimates.hash_probe_rows,
+        materialized_values: output.plan.counters.materialized_output_values,
+        dictionary_reverse_lookups: output.plan.counters.dictionary_reverse_lookups,
+        counters: output.plan.counters.clone(),
+        final_output_values,
+        output_contains_dictionary_values,
+        query_image_build_micros: query_image_stats.build_micros,
+        query_image_segment_count: query_image_stats.segment_count,
+        query_image_segment_bytes: query_image_stats.segment_bytes,
+        query_image_built_from_segments: query_image_stats.built_from_segments,
+        gate,
+    }
+}
+
+fn evaluate_gate(
+    dataset: &'static str,
+    query: &BenchQuery,
+    output: &QueryOutput,
+    bumbledb_avg: Duration,
+    sqlite_ratio: f64,
+    final_output_values: u64,
+    output_contains_dictionary_values: bool,
+) -> GateOutcome {
+    let mut passed = true;
+    let mut notes = Vec::new();
+    if let Some(gate) = benchmark_gate(dataset, query.name) {
+        notes.push(format!("performance gate {}.{}", gate.dataset, gate.query));
+        let avg_micros = duration_micros(bumbledb_avg);
+        if let Some(max) = gate.max_bumbledb_avg_micros
+            && avg_micros > u128::from(max)
+        {
+            passed = false;
+            notes.push(format!("avg {avg_micros}us exceeds {max}us"));
+        }
+        if let Some(max) = gate.max_sqlite_ratio
+            && sqlite_ratio > max
+        {
+            passed = false;
+            notes.push(format!("sqlite ratio {sqlite_ratio:.2} exceeds {max:.2}"));
+        }
+        if let Some(max) = gate.max_iterator_ops
+            && output.plan.free_join.estimates.iterator_ops > max
+        {
+            passed = false;
+            notes.push(format!(
+                "iterator_ops {} exceeds {max}",
+                output.plan.free_join.estimates.iterator_ops
+            ));
+        }
+        if let Some(max) = gate.max_materialized_values
+            && output.plan.counters.materialized_output_values > max
+        {
+            passed = false;
+            notes.push(format!(
+                "materialized_output_values {} exceeds {max}",
+                output.plan.counters.materialized_output_values
+            ));
+        }
+    } else {
+        notes.push("no performance gate configured for query".to_owned());
+    }
+
+    let counters = &output.plan.counters;
+    if counters.cursor_seeks != 0 || counters.rows_scanned != 0 {
+        passed = false;
+        notes.push(format!(
+            "LMDB scan counters nonzero: cursor_seeks={} rows_scanned={}",
+            counters.cursor_seeks, counters.rows_scanned
+        ));
+    }
+    if !output_contains_dictionary_values && counters.dictionary_reverse_lookups != 0 {
+        passed = false;
+        notes.push(format!(
+            "dictionary_reverse_lookups {} without string/bytes output",
+            counters.dictionary_reverse_lookups
+        ));
+    }
+    let has_aggregate = output
+        .columns
+        .iter()
+        .any(|column| matches!(column, ResultColumn::Aggregate { .. }));
+    if !has_aggregate && counters.materialized_output_values != final_output_values {
+        passed = false;
+        notes.push(format!(
+            "materialized_output_values {} != final output values {}",
+            counters.materialized_output_values, final_output_values
+        ));
+    }
+    if has_aggregate
+        && query.datalog.contains("count(")
+        && counters.materialized_output_values > final_output_values
+    {
+        passed = false;
+        notes.push(format!(
+            "count aggregate materialized {} values for {} final values",
+            counters.materialized_output_values, final_output_values
+        ));
+    }
+
+    if passed && notes.is_empty() {
+        notes.push("all configured gates passed".to_owned());
+    }
+    GateOutcome { passed, notes }
+}
+
+fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<BenchmarkGate> {
+    let gate = match (dataset, query) {
+        ("joinstress", "triangle_count") => BenchmarkGate {
+            dataset,
+            query,
+            max_bumbledb_avg_micros: Some(250_000),
+            max_sqlite_ratio: None,
+            max_iterator_ops: Some(1_000_000),
+            max_materialized_values: Some(1),
+        },
+        ("ledger", "tag_lookup_join") => BenchmarkGate {
+            dataset,
+            query,
+            max_bumbledb_avg_micros: Some(250_000),
+            max_sqlite_ratio: None,
+            max_iterator_ops: Some(2_000_000),
+            max_materialized_values: None,
+        },
+        ("sailors", "red_boat_sailors") => BenchmarkGate {
+            dataset,
+            query,
+            max_bumbledb_avg_micros: Some(250_000),
+            max_sqlite_ratio: None,
+            max_iterator_ops: Some(2_000_000),
+            max_materialized_values: None,
+        },
+        ("tpch", "supplier_nation_orders") => BenchmarkGate {
+            dataset,
+            query,
+            max_bumbledb_avg_micros: Some(250_000),
+            max_sqlite_ratio: None,
+            max_iterator_ops: Some(2_000_000),
+            max_materialized_values: None,
+        },
+        _ => return None,
+    };
+    Some(gate)
+}
+
+fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
+    let mut out = String::new();
+    out.push_str("## Benchmark Results\n\n");
+    out.push_str("| dataset | query | rows | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | image build us | image segments | image segment bytes | built from segments | iterator ops | hash build | hash probe | materialized | dict lookups | gate |\n");
+    out.push_str(
+        "|---|---|---:|---:|---:|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---|\n",
+    );
+    for result in results {
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            markdown_escape(result.dataset),
+            markdown_escape(result.query),
+            result.rows,
+            duration_micros(result.bumbledb_avg),
+            duration_micros(result.sqlite_avg),
+            result.sqlite_ratio,
+            markdown_escape(&result.chosen_plan),
+            result.query_image_build_micros,
+            result.query_image_segment_count,
+            result.query_image_segment_bytes,
+            result.query_image_built_from_segments,
+            result.iterator_ops,
+            result.hash_build_rows,
+            result.hash_probe_rows,
+            result.materialized_values,
+            result.dictionary_reverse_lookups,
+            if result.gate.passed { "pass" } else { "fail" },
+        );
+    }
+    out.push_str("\n## Counter Gates\n\n");
+    out.push_str("| dataset | query | cursor seeks | rows scanned | final values | materialized values | dictionary output | dictionary lookups | notes |\n");
+    out.push_str("|---|---|---:|---:|---:|---:|---|---:|---|\n");
+    for result in results {
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            markdown_escape(result.dataset),
+            markdown_escape(result.query),
+            result.counters.cursor_seeks,
+            result.counters.rows_scanned,
+            result.final_output_values,
+            result.materialized_values,
+            result.output_contains_dictionary_values,
+            result.dictionary_reverse_lookups,
+            markdown_escape(&result.gate.notes.join("; ")),
+        );
+    }
+    out
+}
+
+fn duration_ratio(left: Duration, right: Duration) -> f64 {
+    let right = right.as_nanos();
+    if right == 0 {
+        return f64::INFINITY;
+    }
+    left.as_nanos() as f64 / right as f64
+}
+
+fn duration_micros(duration: Duration) -> u128 {
+    duration.as_micros()
+}
+
+fn markdown_escape(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', " ")
+}
+
 fn print_explain(explain: &str) {
     for line in explain.lines() {
         if line.contains("relation=")
@@ -274,6 +665,7 @@ fn print_explain(explain: &str) {
             || line.contains("candidate_plan")
             || line.contains("free_join_estimates")
             || line.contains("free_join_node")
+            || line.contains("node_rows")
             || line.contains("free_join_subatom")
             || line.contains("rows_scanned")
             || line.contains("cursor_seeks")
@@ -1203,4 +1595,63 @@ pub(crate) fn ref_field(id_type: &str, field: &str, target: &str) -> FieldDescri
             target_relation: target.to_owned(),
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markdown_renderer_emits_gate_tables() {
+        let result = BenchmarkRunResult {
+            dataset: "joinstress",
+            query: "triangle_count",
+            rows: 1,
+            bumbledb_avg: Duration::from_micros(10),
+            sqlite_avg: Duration::from_micros(5),
+            sqlite_ratio: 2.0,
+            chosen_plan: "pure_lftj".to_owned(),
+            iterator_ops: 7,
+            hash_build_rows: 0,
+            hash_probe_rows: 0,
+            materialized_values: 1,
+            dictionary_reverse_lookups: 0,
+            counters: PlanCounters {
+                output_rows: 1,
+                materialized_output_values: 1,
+                ..PlanCounters::default()
+            },
+            final_output_values: 1,
+            output_contains_dictionary_values: false,
+            query_image_build_micros: 3,
+            query_image_segment_count: 4,
+            query_image_segment_bytes: 128,
+            query_image_built_from_segments: true,
+            gate: GateOutcome {
+                passed: true,
+                notes: vec!["ok".to_owned()],
+            },
+        };
+
+        let markdown = render_markdown_results(&[result]);
+        assert!(markdown.contains("| joinstress | triangle_count |"));
+        assert!(markdown.contains("| dataset | query | cursor seeks |"));
+        assert!(
+            markdown.contains("| joinstress | triangle_count | 0 | 0 | 1 | 1 | false | 0 | ok |")
+        );
+    }
+
+    #[test]
+    fn focused_gate_definitions_are_present() {
+        assert!(benchmark_gate("joinstress", "triangle_count").is_some());
+        assert!(benchmark_gate("ledger", "tag_lookup_join").is_some());
+        assert!(benchmark_gate("sailors", "red_boat_sailors").is_some());
+        assert!(benchmark_gate("tpch", "supplier_nation_orders").is_some());
+        assert!(benchmark_gate("ledger", "unknown").is_none());
+    }
+
+    #[test]
+    fn duration_ratio_handles_zero_sqlite_time() {
+        assert!(duration_ratio(Duration::from_micros(1), Duration::ZERO).is_infinite());
+    }
 }

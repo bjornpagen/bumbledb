@@ -92,6 +92,8 @@ pub struct QueryPlan {
     pub missing_indexes: Vec<MissingIndexRecommendation>,
     /// Optimizer candidates and chosen cost key.
     pub optimizer: OptimizerTrace,
+    /// Node-level estimated and observed row/candidate counts.
+    pub node_rows: Vec<NodeRowEstimate>,
     /// Free Join physical plan IR.
     pub free_join: FreeJoinPlan,
     /// Execution counters.
@@ -173,6 +175,12 @@ impl QueryPlan {
                 node.bind_vars.iter().map(|var| var.0).collect::<Vec<_>>(),
                 node.subatoms.len()
             ));
+            if let Some(rows) = self.node_rows.get(node.id.0 as usize) {
+                out.push_str(&format!(
+                    "    node_rows variable={} estimated_rows={} actual_rows={}\n",
+                    rows.variable, rows.estimated_rows, rows.actual_rows
+                ));
+            }
             for subatom in &node.subatoms {
                 out.push_str(&format!(
                     "    free_join_subatom atom={} relation={} fields={:?} vars={:?} access={}\n",
@@ -314,6 +322,19 @@ pub struct CostKey {
     pub materialization_penalty: u64,
     /// Stable deterministic tie-breaker.
     pub tie_breaker: String,
+}
+
+/// Estimated and observed rows/candidates for one Free Join node.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NodeRowEstimate {
+    /// Dense node ID.
+    pub node: NodeId,
+    /// Variable bound by this node.
+    pub variable: String,
+    /// Estimated rows/candidates for this node.
+    pub estimated_rows: u64,
+    /// Observed accepted candidates for this node.
+    pub actual_rows: u64,
 }
 
 /// Planned relation atom.
@@ -832,6 +853,9 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
                     &mut self.plan.summary.counters,
                 )?;
                 if keep {
+                    if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
+                        rows.actual_rows = rows.actual_rows.saturating_add(1);
+                    }
                     self.execute(depth + 1)?;
                 }
                 self.binding.unbind(variable);
@@ -1167,6 +1191,18 @@ fn plan_query<'query>(
             reason: cost.reason.clone(),
         })
         .collect::<Vec<_>>();
+    let node_rows = variable_order_ids
+        .iter()
+        .enumerate()
+        .map(|(node_id, variable)| NodeRowEstimate {
+            node: NodeId(node_id as u16),
+            variable: query.variables[*variable].name.clone(),
+            estimated_rows: variable_costs
+                .get(node_id)
+                .map_or(1, |cost| cost.estimated_candidates),
+            actual_rows: 0,
+        })
+        .collect::<Vec<_>>();
     let missing_indexes = missing_index_recommendations(schema, query, &relation_atoms)?;
     let (free_join, optimizer) = optimize_free_join_plan(
         schema,
@@ -1197,6 +1233,7 @@ fn plan_query<'query>(
             atoms,
             missing_indexes,
             optimizer,
+            node_rows,
             free_join,
             counters: PlanCounters::default(),
             uses_indexed_multiway_join,

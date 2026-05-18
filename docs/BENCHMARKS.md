@@ -14,6 +14,26 @@ The harness compares Bumbledb against SQLite with explicit indexes and prints Bu
 cargo run -p bumbledb-bench --release -- --scale 500 --repeats 5
 ```
 
+**CI Gates**
+```sh
+scripts/bench-quick.sh
+scripts/bench-extreme.sh
+scripts/bench-focused.sh
+```
+
+`bench-quick.sh` runs tests, clippy, fuzz check, and the generated scale-2000 benchmark gate.
+`bench-extreme.sh` runs the generated scale-10000 benchmark gate.
+`bench-focused.sh` runs the focused ledger/sailors/joinstress/tpch gates at scale 10000 by default.
+
+Set `BUMBLED_BENCH_SCALE` or `BUMBLED_BENCH_REPEATS` for `bench-focused.sh` when a smaller local smoke is needed.
+
+**Markdown Output**
+```sh
+cargo run -p bumbledb-bench --release -- --scale 2000 --repeats 10 --format markdown
+```
+
+Markdown output includes result and counter-gate tables with QueryImage segment/build stats, chosen Free Join plan, iterator estimates, hash build/probe estimates, materialized values, dictionary reverse lookups, and gate status.
+
 **Run One Generated Dataset**
 ```sh
 cargo run -p bumbledb-bench --release -- --dataset ledger --scale 2000 --repeats 10
@@ -127,6 +147,33 @@ Each query prints:
 - `rows_scanned`.
 - `output_rows`.
 
+The markdown table additionally prints:
+
+- QueryImage build time and durable segment usage.
+- chosen Free Join candidate.
+- estimated iterator operations.
+- estimated hash build/probe rows.
+- counter-gate notes.
+
+**Current Gate Interpretation**
+
+The active gates are intentionally CI-safe current-stage gates. They enforce structural regressions that should not return during the rearchitecture:
+
+- no LMDB cursor/prefix scans inside query variable recursion,
+- no dictionary reverse lookups unless string/bytes are present in final output,
+- projection materialization equals final output values,
+- count aggregation does not materialize more values than final output.
+
+The long-term post-rearchitecture target gates remain:
+
+- `joinstress/triangle_count`: under 25ms at scale 10000,
+- `ledger/tag_lookup_join`: under 5ms at scale 10000,
+- `sailors/red_boat_sailors`: under 5ms at scale 10000,
+- `tpch/supplier_nation_orders`: under 5ms at scale 10000,
+- small selective queries: under 10us at scale 10000.
+
+Known current-stage regressions are expected while PRDs 10 and earlier still route all physical implementations through the LFTJ executor substrate. The benchmark gates document those regressions in markdown output instead of making the full extreme target mandatory for every local edit.
+
 **Tracing Benchmarks**
 ```sh
 RUST_LOG=bumbledb_lmdb=debug cargo run -p bumbledb-bench --release -- --trace --dataset joinstress --scale 2000 --repeats 10
@@ -135,12 +182,10 @@ RUST_LOG=bumbledb_lmdb=debug cargo run -p bumbledb-bench --release -- --trace --
 The library never initializes a tracing subscriber. The benchmark binary installs one only when `--trace` is passed.
 
 **Current Interpretation**
-Bumbledb currently behaves well for highly selective prefix joins. It is slow for broad joins because the planner/executor is still primitive:
+Bumbledb currently behaves well for highly selective prefix joins. Broad joins are still slower than the target gates because physical `HashProbe`/`Hybrid` plans are selected and explained, but execution is still routed through the sorted-trie LFTJ substrate until the remaining cutover/deletion PRDs land:
 
-- no cost-based statistics,
-- no real worst-case-optimal join implementation yet,
-- low-selectivity predicates often start with primary scans,
-- symbol/equality fields are not always indexed in a useful order,
-- broad joins do a lot of row decoding and nested cursor work.
+- selected hash/hybrid node implementations are not yet separate executors,
+- broad joins still perform many sorted-trie operations,
+- full post-rearchitecture latency gates are tracked but not mandatory for local edits.
 
 Do not treat the current benchmark results as the final design limit. They are a planner baseline.
