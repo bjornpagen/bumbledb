@@ -19,7 +19,10 @@ use heed::types::Bytes;
 use heed::{CompactionOption, Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
 pub use error::*;
-pub use query::{InputBindings, PlanCounters, PlannedAtom, QueryOutput, QueryPlan, ResultColumn};
+pub use query::{
+    InputBindings, MissingIndexRecommendation, PlanCounters, PlannedAtom, QueryOutput, QueryPlan,
+    ResultColumn, VariableEstimate,
+};
 pub use storage::{
     AccessPathDescriptor, BulkLoadReport, EncodedComponent, FieldValues, IndexScan, KeyValues, Row,
     ScanItem, StorageSchema, Value,

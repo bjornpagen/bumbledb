@@ -77,10 +77,14 @@ pub enum ResultColumn {
 /// Physical query plan summary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryPlan {
-    /// Deterministic variable ordering heuristic output.
+    /// Deterministic variable ordering optimizer output.
     pub variable_order: Vec<String>,
+    /// Estimated work for variables in execution order.
+    pub variable_estimates: Vec<VariableEstimate>,
     /// Planned relation atoms in execution order.
     pub atoms: Vec<PlannedAtom>,
+    /// Physical index recommendations for predicates not served by leading indexes.
+    pub missing_indexes: Vec<MissingIndexRecommendation>,
     /// Execution counters.
     pub counters: PlanCounters,
     /// True when multiple relation atoms are evaluated as one indexed multiway search.
@@ -97,12 +101,32 @@ impl QueryPlan {
             "uses_indexed_multiway_join: {}\n",
             self.uses_indexed_multiway_join
         ));
+        out.push_str("variable_estimates:\n");
+        for estimate in &self.variable_estimates {
+            out.push_str(&format!(
+                "  variable_estimate name={} estimated_candidates={} static_constraints={} bound_constraints={} relation_constraints={}\n",
+                estimate.variable,
+                estimate.estimated_candidates,
+                estimate.static_constraints,
+                estimate.bound_constraints,
+                estimate.relation_constraints
+            ));
+        }
         out.push_str("atoms:\n");
         for atom in &self.atoms {
             out.push_str(&format!(
                 "  relation={} index={} kind={:?} prefix_fields={:?}\n",
                 atom.relation, atom.index, atom.kind, atom.prefix_fields
             ));
+        }
+        if !self.missing_indexes.is_empty() {
+            out.push_str("missing_indexes:\n");
+            for missing in &self.missing_indexes {
+                out.push_str(&format!(
+                    "  missing_index relation={} fields={:?} reason={}\n",
+                    missing.relation, missing.fields, missing.reason
+                ));
+            }
         }
         out.push_str("counters:\n");
         out.push_str(&format!("  cursor_seeks: {}\n", self.counters.cursor_seeks));
@@ -155,6 +179,32 @@ impl QueryPlan {
         out.push_str(&format!("  output_rows: {}\n", self.counters.output_rows));
         out
     }
+}
+
+/// Optimizer estimate for one variable in execution order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VariableEstimate {
+    /// Variable name without `?`.
+    pub variable: String,
+    /// Estimated candidate domain size at the point this variable is bound.
+    pub estimated_candidates: u64,
+    /// Input/literal/comparison constraints available before binding this variable.
+    pub static_constraints: usize,
+    /// Already-bound variable constraints available before binding this variable.
+    pub bound_constraints: usize,
+    /// Number of relation atoms constraining this variable.
+    pub relation_constraints: usize,
+}
+
+/// Physical index recommendation emitted by the planner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MissingIndexRecommendation {
+    /// Relation name.
+    pub relation: String,
+    /// Suggested leading fields.
+    pub fields: Vec<String>,
+    /// Why the planner wants this index.
+    pub reason: String,
 }
 
 /// Planned relation atom.
@@ -272,6 +322,62 @@ type ScanAccessCandidate = (
     Vec<String>,
 );
 
+#[derive(Clone, Debug)]
+struct PlannerStats {
+    relation_rows: BTreeMap<String, u64>,
+    index_entries: BTreeMap<(String, String), u64>,
+}
+
+impl PlannerStats {
+    fn collect(
+        txn: &ReadTxn<'_>,
+        schema: &StorageSchema,
+        atoms: &[&TypedRelationAtom],
+    ) -> Result<Self> {
+        let mut relation_rows = BTreeMap::new();
+        let index_entries = BTreeMap::new();
+        for atom in atoms {
+            if relation_rows.contains_key(&atom.relation) {
+                continue;
+            }
+            relation_rows.insert(
+                atom.relation.clone(),
+                txn.relation_row_count(schema, &atom.relation)?,
+            );
+        }
+        Ok(Self {
+            relation_rows,
+            index_entries,
+        })
+    }
+
+    fn relation_rows(&self, relation: &str) -> u64 {
+        self.relation_rows
+            .get(relation)
+            .copied()
+            .unwrap_or(1)
+            .max(1)
+    }
+
+    fn index_entries(&self, relation: &str, index: &str) -> u64 {
+        self.index_entries
+            .get(&(relation.to_owned(), index.to_owned()))
+            .copied()
+            .unwrap_or_else(|| self.relation_rows(relation))
+            .max(1)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VariableCost {
+    variable: usize,
+    estimated_candidates: u64,
+    static_constraints: usize,
+    bound_constraints: usize,
+    relation_constraints: usize,
+    degree: usize,
+}
+
 impl<'env> ReadTxn<'env> {
     /// Executes a typed positive Datalog query against current indexes.
     #[tracing::instrument(name = "bumbledb.query.execute", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
@@ -283,7 +389,7 @@ impl<'env> ReadTxn<'env> {
     ) -> Result<QueryOutput> {
         validate_inputs(query, inputs)?;
 
-        let mut plan = plan_query(schema, query, inputs)?;
+        let mut plan = plan_query(self, schema, query, inputs)?;
         tracing::debug!(variable_order = ?plan.summary.variable_order, atoms = plan.summary.atoms.len(), "wcoj query planned");
         let mut bindings = Vec::new();
         let mut current = EncodedBinding::new(query.variables.len());
@@ -512,6 +618,7 @@ impl<'env> ReadTxn<'env> {
 }
 
 fn plan_query<'query>(
+    txn: &ReadTxn<'_>,
     schema: &StorageSchema,
     query: &'query TypedQuery,
     inputs: &InputBindings,
@@ -534,26 +641,24 @@ fn plan_query<'query>(
         })
         .collect::<Vec<_>>();
 
-    let mut variable_degree = vec![0usize; query.variables.len()];
-    let mut variable_static_score = vec![0usize; query.variables.len()];
-    for atom in &relation_atoms {
-        let static_bound_fields = atom
-            .fields
-            .iter()
-            .filter(|field| matches!(field.term, TypedTerm::Input(_) | TypedTerm::Literal(_)))
-            .count();
-        for field in &atom.fields {
-            if let TypedTerm::Variable(variable) = field.term {
-                variable_degree[variable] += 1;
-                variable_static_score[variable] += static_bound_fields;
-            }
-        }
-    }
-    let variable_order_ids = variable_order_ids(query, &variable_degree, &variable_static_score);
+    let stats = PlannerStats::collect(txn, schema, &relation_atoms)?;
+    let (variable_order_ids, variable_costs) =
+        choose_variable_order(schema, query, &relation_atoms, &comparisons, &stats)?;
     let variable_order = variable_order_ids
         .iter()
         .map(|id| query.variables[*id].name.clone())
         .collect::<Vec<_>>();
+    let variable_estimates = variable_costs
+        .iter()
+        .map(|cost| VariableEstimate {
+            variable: query.variables[cost.variable].name.clone(),
+            estimated_candidates: cost.estimated_candidates,
+            static_constraints: cost.static_constraints,
+            bound_constraints: cost.bound_constraints,
+            relation_constraints: cost.relation_constraints,
+        })
+        .collect::<Vec<_>>();
+    let missing_indexes = missing_index_recommendations(schema, &relation_atoms)?;
 
     let empty = EncodedBinding::new(query.variables.len());
     let mut atoms = Vec::new();
@@ -568,23 +673,322 @@ fn plan_query<'query>(
         comparisons,
         summary: QueryPlan {
             variable_order,
+            variable_estimates,
             atoms,
+            missing_indexes,
             counters: PlanCounters::default(),
             uses_indexed_multiway_join,
         },
     })
 }
 
-fn variable_order_ids(query: &TypedQuery, degree: &[usize], static_score: &[usize]) -> Vec<usize> {
-    let mut ids = (0..query.variables.len()).collect::<Vec<_>>();
-    ids.sort_by_key(|id| {
-        (
-            std::cmp::Reverse(static_score[*id]),
-            std::cmp::Reverse(degree[*id]),
-            query.variables[*id].name.clone(),
-        )
-    });
-    ids
+fn choose_variable_order(
+    schema: &StorageSchema,
+    query: &TypedQuery,
+    atoms: &[&TypedRelationAtom],
+    comparisons: &[&TypedComparison],
+    stats: &PlannerStats,
+) -> Result<(Vec<usize>, Vec<VariableCost>)> {
+    let mut remaining = (0..query.variables.len()).collect::<BTreeSet<_>>();
+    let mut bound = BTreeSet::new();
+    let mut order = Vec::new();
+    let mut costs = Vec::new();
+
+    while !remaining.is_empty() {
+        let mut candidates = remaining
+            .iter()
+            .map(|variable| {
+                estimate_variable_cost(schema, atoms, comparisons, stats, &bound, *variable)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        candidates.sort_by_key(|cost| {
+            (
+                cost.estimated_candidates,
+                std::cmp::Reverse(cost.static_constraints),
+                std::cmp::Reverse(cost.bound_constraints),
+                std::cmp::Reverse(cost.relation_constraints),
+                std::cmp::Reverse(cost.degree),
+                query.variables[cost.variable].name.clone(),
+            )
+        });
+        let best = candidates
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::internal("query has no remaining variables"))?;
+        remaining.remove(&best.variable);
+        bound.insert(best.variable);
+        order.push(best.variable);
+        costs.push(best);
+    }
+
+    Ok((order, costs))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn estimate_variable_cost(
+    schema: &StorageSchema,
+    atoms: &[&TypedRelationAtom],
+    comparisons: &[&TypedComparison],
+    stats: &PlannerStats,
+    bound: &BTreeSet<usize>,
+    variable: usize,
+) -> Result<VariableCost> {
+    let atom_infos = atoms
+        .iter()
+        .copied()
+        .filter(|atom| atom_contains_variable(atom, variable))
+        .map(|atom| {
+            let relation_constraints = atom_bound_constraint_count(atom, variable, bound);
+            let static_constraints = atom_static_constraint_count(atom, variable)
+                + comparison_static_constraint_count(comparisons, variable, bound);
+            let has_unbound_other = atom_has_unbound_other_variable_id(atom, variable, bound);
+            (
+                atom,
+                relation_constraints + static_constraints,
+                has_unbound_other,
+            )
+        })
+        .collect::<Vec<_>>();
+    let has_constrained_stream = atom_infos.iter().any(|(_, strength, _)| *strength > 0);
+    let mut estimates = Vec::new();
+    let mut relation_constraints = 0usize;
+    let mut static_constraints = comparison_static_constraint_count(comparisons, variable, bound);
+    let mut bound_constraints = comparison_bound_constraint_count(comparisons, variable, bound);
+
+    for (atom, strength, has_unbound_other) in atom_infos {
+        relation_constraints += 1;
+        static_constraints += atom_static_constraint_count(atom, variable);
+        bound_constraints += atom_bound_constraint_count(atom, variable, bound);
+        if has_constrained_stream && strength == 0 && has_unbound_other {
+            continue;
+        }
+        estimates.push(estimate_atom_variable_access(
+            schema, stats, bound, atom, variable,
+        )?);
+    }
+
+    let degree = atoms
+        .iter()
+        .filter(|atom| atom_contains_variable(atom, variable))
+        .count();
+    let estimated_candidates = estimates.into_iter().min().unwrap_or(u64::MAX / 4).max(1);
+
+    Ok(VariableCost {
+        variable,
+        estimated_candidates,
+        static_constraints,
+        bound_constraints,
+        relation_constraints,
+        degree,
+    })
+}
+
+fn estimate_atom_variable_access(
+    schema: &StorageSchema,
+    stats: &PlannerStats,
+    bound: &BTreeSet<usize>,
+    atom: &TypedRelationAtom,
+    variable: usize,
+) -> Result<u64> {
+    let paths = schema.access_paths(&atom.relation)?;
+    let relation_rows = stats.relation_rows(&atom.relation);
+    let mut best = relation_rows.saturating_mul(4).max(1);
+
+    for path in paths {
+        if !path.components.iter().any(|component| {
+            atom.fields.iter().any(|field| {
+                field.field == component.field_name
+                    && matches!(field.term, TypedTerm::Variable(id) if id == variable)
+            })
+        }) {
+            continue;
+        }
+
+        let mut prefix_len = 0usize;
+        let mut current_is_next = false;
+        for field_name in &path.leading_fields {
+            let Some(field) = atom.fields.iter().find(|field| &field.field == field_name) else {
+                break;
+            };
+            if matches!(field.term, TypedTerm::Variable(id) if id == variable) {
+                current_is_next = true;
+                break;
+            }
+            if field_is_bound_for_estimate(field, bound) {
+                prefix_len += 1;
+            } else {
+                break;
+            }
+        }
+
+        let mut estimate = stats.index_entries(&atom.relation, &path.index_name);
+        if prefix_len > 0 {
+            estimate = divide_ceil(estimate, 16_u64.saturating_pow(prefix_len as u32));
+        }
+        if !current_is_next {
+            estimate = estimate.saturating_mul(2);
+        }
+        if path.kind == IndexKind::Unique
+            && current_is_next
+            && prefix_len + 1 == path.leading_fields.len()
+        {
+            estimate = estimate.min(1);
+        }
+        best = best.min(estimate.max(1));
+    }
+
+    Ok(best.max(1))
+}
+
+fn divide_ceil(value: u64, divisor: u64) -> u64 {
+    if divisor == 0 {
+        value
+    } else {
+        value.div_ceil(divisor)
+    }
+}
+
+fn field_is_bound_for_estimate(
+    field: &bumbledb_core::datalog::TypedFieldBinding,
+    bound: &BTreeSet<usize>,
+) -> bool {
+    match field.term {
+        TypedTerm::Variable(variable) => bound.contains(&variable),
+        TypedTerm::Input(_) | TypedTerm::Literal(_) => true,
+        TypedTerm::Wildcard => false,
+    }
+}
+
+fn atom_static_constraint_count(atom: &TypedRelationAtom, variable: usize) -> usize {
+    atom.fields
+        .iter()
+        .filter(|field| {
+            !matches!(field.term, TypedTerm::Variable(id) if id == variable)
+                && matches!(field.term, TypedTerm::Input(_) | TypedTerm::Literal(_))
+        })
+        .count()
+}
+
+fn atom_bound_constraint_count(
+    atom: &TypedRelationAtom,
+    variable: usize,
+    bound: &BTreeSet<usize>,
+) -> usize {
+    atom.fields
+        .iter()
+        .filter(|field| {
+            matches!(field.term, TypedTerm::Variable(id) if id != variable && bound.contains(&id))
+        })
+        .count()
+}
+
+fn atom_has_unbound_other_variable_id(
+    atom: &TypedRelationAtom,
+    variable: usize,
+    bound: &BTreeSet<usize>,
+) -> bool {
+    atom.fields.iter().any(|field| {
+        matches!(field.term, TypedTerm::Variable(id) if id != variable && !bound.contains(&id))
+    })
+}
+
+fn comparison_static_constraint_count(
+    comparisons: &[&TypedComparison],
+    variable: usize,
+    bound: &BTreeSet<usize>,
+) -> usize {
+    comparisons
+        .iter()
+        .filter(|comparison| comparison_constrains_variable(comparison, variable, bound, true))
+        .count()
+}
+
+fn comparison_bound_constraint_count(
+    comparisons: &[&TypedComparison],
+    variable: usize,
+    bound: &BTreeSet<usize>,
+) -> usize {
+    comparisons
+        .iter()
+        .filter(|comparison| comparison_constrains_variable(comparison, variable, bound, false))
+        .count()
+}
+
+fn comparison_constrains_variable(
+    comparison: &TypedComparison,
+    variable: usize,
+    bound: &BTreeSet<usize>,
+    static_only: bool,
+) -> bool {
+    let left_is_var = matches!(comparison.left, TypedOperand::Variable(id) if id == variable);
+    let right_is_var = matches!(comparison.right, TypedOperand::Variable(id) if id == variable);
+    if left_is_var {
+        operand_constrains_for_estimate(&comparison.right, bound, static_only)
+    } else if right_is_var {
+        operand_constrains_for_estimate(&comparison.left, bound, static_only)
+    } else {
+        false
+    }
+}
+
+fn operand_constrains_for_estimate(
+    operand: &TypedOperand,
+    bound: &BTreeSet<usize>,
+    static_only: bool,
+) -> bool {
+    match operand {
+        TypedOperand::Variable(variable) => !static_only && bound.contains(variable),
+        TypedOperand::Input(_) | TypedOperand::Literal(_) => static_only,
+    }
+}
+
+fn missing_index_recommendations(
+    schema: &StorageSchema,
+    atoms: &[&TypedRelationAtom],
+) -> Result<Vec<MissingIndexRecommendation>> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for atom in atoms {
+        let (_, relation) = schema.relation(&atom.relation)?;
+        for field in &atom.fields {
+            if !matches!(field.term, TypedTerm::Input(_) | TypedTerm::Literal(_)) {
+                continue;
+            }
+            if has_leading_index(schema, &atom.relation, &field.field)? {
+                continue;
+            }
+            let fields = recommended_index_fields(relation, &field.field);
+            if seen.insert((atom.relation.clone(), fields.clone())) {
+                out.push(MissingIndexRecommendation {
+                    relation: atom.relation.clone(),
+                    fields,
+                    reason: "static predicate has no leading index".to_owned(),
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn has_leading_index(schema: &StorageSchema, relation: &str, field: &str) -> Result<bool> {
+    Ok(schema.access_paths(relation)?.iter().any(|path| {
+        path.leading_fields
+            .first()
+            .is_some_and(|leading| leading == field)
+    }))
+}
+
+fn recommended_index_fields(
+    relation: &bumbledb_core::schema::RelationDescriptor,
+    field: &str,
+) -> Vec<String> {
+    let mut fields = vec![field.to_owned()];
+    for primary in &relation.primary_key.fields {
+        if !fields.iter().any(|field| field == primary) {
+            fields.push(primary.clone());
+        }
+    }
+    fields
 }
 
 fn choose_summary_access(
@@ -1462,6 +1866,32 @@ mod tests {
     }
 
     #[test]
+    fn planner_recommends_missing_static_predicate_index() {
+        let (env, schema) = seeded_db();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            "find ?account where Account(id: ?account, currency: $currency)",
+        )
+        .unwrap();
+
+        let output = env
+            .read(|txn| {
+                txn.execute_query(
+                    &schema,
+                    &query,
+                    &InputBindings::from_values([("currency", Value::Symbol(840))]),
+                )
+            })
+            .unwrap();
+
+        assert_same_rows(&output.rows, &[vec![Value::Id(1)], vec![Value::Id(3)]]);
+        let expected_fields = vec!["currency".to_owned(), "id".to_owned()];
+        assert!(output.plan.missing_indexes.iter().any(|missing| {
+            missing.relation == "Account" && missing.fields == expected_fields
+        }));
+    }
+
+    #[test]
     fn executes_two_relation_join() {
         let (env, schema) = seeded_db();
         let query = parse_and_typecheck(
@@ -1681,6 +2111,7 @@ mod tests {
             .unwrap();
         let explain = output.explain();
         assert!(explain.contains("variable_order"));
+        assert!(explain.contains("variable_estimate"));
         assert!(explain.contains("index="));
         assert!(explain.contains("cursor_seeks"));
         assert!(explain.contains("rows_scanned"));
