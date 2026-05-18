@@ -5,9 +5,9 @@ use std::time::Instant;
 
 use bumbledb_core::schema::{RelationDescriptor, SchemaFingerprint, ValueType};
 
-use crate::IndexSpec;
 use crate::planner_stats::{PlannerStatsCache, PlannerStatsCacheDiagnostics};
 use crate::{Error, ReadTxn, Result, SegmentDescriptor, SortedTrieIndex, StorageSchema};
+use crate::{HashTrieIndex, IndexSpec, LeafMode};
 
 /// Cache key for an immutable query image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -96,6 +96,7 @@ pub struct QueryImage {
     stats: QueryImageStats,
     planner_stats: PlannerStatsCache,
     sorted_trie_cache: Arc<RwLock<BTreeMap<String, Arc<SortedTrieIndex>>>>,
+    hash_trie_cache: Arc<RwLock<BTreeMap<String, Arc<HashTrieIndex>>>>,
 }
 
 impl QueryImage {
@@ -138,6 +139,7 @@ impl QueryImage {
             },
             planner_stats: PlannerStatsCache::default(),
             sorted_trie_cache: Arc::default(),
+            hash_trie_cache: Arc::default(),
         }
     }
 
@@ -216,6 +218,36 @@ impl QueryImage {
         })
     }
 
+    pub(crate) fn cached_hash_trie(
+        &self,
+        key: String,
+        build: impl FnOnce() -> Result<HashTrieIndex>,
+    ) -> Result<CachedHashTrie> {
+        if let Some(index) = self
+            .hash_trie_cache
+            .read()
+            .map_err(|_| Error::internal("hash trie cache read lock poisoned"))?
+            .get(&key)
+            .cloned()
+        {
+            return Ok(CachedHashTrie { index, hit: true });
+        }
+
+        let index = Arc::new(build()?);
+        let mut cache = self
+            .hash_trie_cache
+            .write()
+            .map_err(|_| Error::internal("hash trie cache write lock poisoned"))?;
+        if let Some(existing) = cache.get(&key).cloned() {
+            return Ok(CachedHashTrie {
+                index: existing,
+                hit: true,
+            });
+        }
+        cache.insert(key, index.clone());
+        Ok(CachedHashTrie { index, hit: false })
+    }
+
     #[cfg(test)]
     fn content_fingerprint(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
@@ -241,11 +273,23 @@ pub(crate) struct CachedSortedTrie {
     pub build_micros: u128,
 }
 
+pub(crate) struct CachedHashTrie {
+    pub index: Arc<HashTrieIndex>,
+    pub hit: bool,
+}
+
 pub(crate) fn build_sorted_trie_index(
     relation: &RelationImage,
     spec: IndexSpec,
 ) -> Result<SortedTrieIndex> {
     SortedTrieIndex::build(relation, spec)
+}
+
+pub(crate) fn build_hash_trie_index(
+    relation: &RelationImage,
+    spec: IndexSpec,
+) -> Result<HashTrieIndex> {
+    HashTrieIndex::build_with_mode(relation, spec, LeafMode::Rows)
 }
 
 /// Query image build/cache statistics.

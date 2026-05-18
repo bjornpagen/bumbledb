@@ -172,6 +172,30 @@ pub trait PrefixProbe {
     fn rows<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> RowSetRef<'a>;
 }
 
+impl HashTrieIndex {
+    /// Collects row IDs under any prefix depth for row-retaining tries.
+    pub fn rows_owned(&self, prefix: &[EncodedRef<'_>]) -> Vec<RowId> {
+        let Some(node) = find_node(&self.root, prefix) else {
+            return Vec::new();
+        };
+        let mut rows = Vec::new();
+        collect_rows(node, &mut rows);
+        rows
+    }
+
+    /// Visits row IDs under any prefix depth for row-retaining tries.
+    pub fn for_each_row(
+        &self,
+        prefix: &[EncodedRef<'_>],
+        mut visit: impl FnMut(RowId) -> bool,
+    ) {
+        let Some(node) = find_node(&self.root, prefix) else {
+            return;
+        };
+        visit_rows(node, &mut visit);
+    }
+}
+
 impl PrefixProbe for HashTrieIndex {
     fn exists(&self, prefix: &[EncodedRef<'_>]) -> bool {
         find_node(&self.root, prefix).is_some_and(|node| match node {
@@ -240,6 +264,57 @@ fn count_node(node: &HashNode) -> usize {
         HashNode::Inner(map) => map.values().map(count_node).sum(),
         HashNode::Leaf(rows) => rows.len(),
         HashNode::CountOnly(count) => *count as usize,
+    }
+}
+
+fn collect_rows(node: &HashNode, out: &mut Vec<RowId>) {
+    match node {
+        HashNode::Inner(map) => {
+            for child in map.values() {
+                collect_rows(child, out);
+            }
+        }
+        HashNode::Leaf(rows) => match rows {
+            RowSet::Empty => {}
+            RowSet::One(row) => out.push(*row),
+            RowSet::Small(rows) | RowSet::Many(rows) => out.extend_from_slice(rows),
+            RowSet::Range(range) => out.extend((range.start.0..range.end.0).map(RowId)),
+        },
+        HashNode::CountOnly(_) => {}
+    }
+}
+
+fn visit_rows(node: &HashNode, visit: &mut impl FnMut(RowId) -> bool) -> bool {
+    match node {
+        HashNode::Inner(map) => {
+            for child in map.values() {
+                if !visit_rows(child, visit) {
+                    return false;
+                }
+            }
+            true
+        }
+        HashNode::Leaf(rows) => match rows {
+            RowSet::Empty => true,
+            RowSet::One(row) => visit(*row),
+            RowSet::Small(rows) | RowSet::Many(rows) => {
+                for row in rows {
+                    if !visit(*row) {
+                        return false;
+                    }
+                }
+                true
+            }
+            RowSet::Range(range) => {
+                for row in (range.start.0..range.end.0).map(RowId) {
+                    if !visit(row) {
+                        return false;
+                    }
+                }
+                true
+            }
+        },
+        HashNode::CountOnly(_) => true,
     }
 }
 

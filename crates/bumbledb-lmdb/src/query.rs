@@ -7,13 +7,13 @@ use bumbledb_core::datalog::{
     TypedLiteral, TypedOperand, TypedQuery, TypedRelationAtom, TypedTerm,
 };
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
-use bumbledb_core::schema::{IndexKind, ValueType};
+use bumbledb_core::schema::{CurrentIndexLayout, IndexKind, ValueType};
 
 use crate::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FreeJoinPlan,
-    IndexSpec, LinearIter, NodeId, NodeImpl, OutputPlan, PayloadDemand, PlanEstimates, PlanNode,
-    ProjectPlan, ReadTxn, RelationImage, RelationStats, Result, RowId, SortedTrieIndex,
-    StorageSchema, SubAtom, TrieIter, Value, VarId,
+    HashTrieIndex, IndexSpec, LinearIter, NodeId, NodeImpl, OutputPlan, PayloadDemand,
+    PlanEstimates, PlanNode, PrefixProbe, ProjectPlan, ReadTxn, RelationImage, RelationStats,
+    Result, RowId, SortedTrieIndex, StorageSchema, SubAtom, TrieIter, Value, VarId,
 };
 
 use crate::QueryImageCacheDiagnostics;
@@ -436,6 +436,34 @@ impl QueryPlan {
             "  atom_temp_relation_rows: {}\n",
             self.counters.atom_temp_relation_rows
         ));
+        out.push_str(&format!(
+            "  hash_index_builds: {}\n",
+            self.counters.hash_index_builds
+        ));
+        out.push_str(&format!(
+            "  hash_index_build_rows: {}\n",
+            self.counters.hash_index_build_rows
+        ));
+        out.push_str(&format!(
+            "  hash_probe_calls: {}\n",
+            self.counters.hash_probe_calls
+        ));
+        out.push_str(&format!(
+            "  hash_probe_hits: {}\n",
+            self.counters.hash_probe_hits
+        ));
+        out.push_str(&format!(
+            "  hash_probe_misses: {}\n",
+            self.counters.hash_probe_misses
+        ));
+        out.push_str(&format!(
+            "  hash_rows_returned: {}\n",
+            self.counters.hash_rows_returned
+        ));
+        out.push_str(&format!(
+            "  hash_distinct_emits: {}\n",
+            self.counters.hash_distinct_emits
+        ));
         out.push_str(&format!("  output_rows: {}\n", self.counters.output_rows));
         out
     }
@@ -578,6 +606,20 @@ pub struct PlanCounters {
     pub atom_temp_relation_source_rows: u64,
     /// Number of rows retained in temporary atom relations.
     pub atom_temp_relation_rows: u64,
+    /// Number of hash trie indexes built for hash probe execution.
+    pub hash_index_builds: u64,
+    /// Number of source rows used to build hash indexes.
+    pub hash_index_build_rows: u64,
+    /// Number of hash prefix probe calls.
+    pub hash_probe_calls: u64,
+    /// Number of hash prefix probes that found at least one row.
+    pub hash_probe_hits: u64,
+    /// Number of hash prefix probes that found no rows.
+    pub hash_probe_misses: u64,
+    /// Number of row IDs returned from hash prefix probes.
+    pub hash_rows_returned: u64,
+    /// Number of bindings emitted by hash probe nodes.
+    pub hash_distinct_emits: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -702,6 +744,7 @@ struct AccessEstimate {
     access: AccessId,
     estimated_rows: u64,
     prefix_len: usize,
+    current_is_next: bool,
     distinct: usize,
     avg_fanout: u64,
     max_fanout: usize,
@@ -742,6 +785,13 @@ struct LftjRuntime<'a> {
     iters: Vec<crate::SortedTrieIter<'a>>,
 }
 
+struct HashAtomIndex {
+    node_id: usize,
+    atom_id: usize,
+    index: Arc<HashTrieIndex>,
+    fields: Vec<FieldId>,
+}
+
 impl<'env> ReadTxn<'env> {
     /// Executes a typed positive Datalog query against current indexes.
     #[tracing::instrument(name = "bumbledb.query.execute", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
@@ -760,9 +810,10 @@ impl<'env> ReadTxn<'env> {
         let mut plan = plan_query(schema, &mut normalized, image.as_ref(), query_image_cache)?;
         tracing::debug!(variable_order = ?plan.summary.variable_order, nodes = plan.summary.free_join.nodes.len(), "free join query planned");
         let mut sink = OutputSink::new(&plan.summary.free_join.output);
-        execute_lftj(
+        execute_free_join(
             image.as_ref(),
             self,
+            schema,
             &normalized,
             &encoded_inputs,
             &mut plan,
@@ -781,6 +832,536 @@ impl<'env> ReadTxn<'env> {
             rows,
             plan: plan.summary,
         })
+    }
+}
+
+fn execute_free_join<'txn, 'query, S: TupleSink>(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'txn>,
+    schema: &StorageSchema,
+    query: &'query NormalizedQuery,
+    inputs: &EncodedInputs,
+    plan: &mut ExecutionPlan,
+    sink: &mut S,
+) -> Result<()> {
+    if plan
+        .summary
+        .free_join
+        .nodes
+        .iter()
+        .all(|node| node.implementation == NodeImpl::HashProbe && node.bind_vars.len() == 1)
+    {
+        return execute_hash_probe(image, txn, schema, query, inputs, plan, sink);
+    }
+    execute_lftj(image, txn, query, inputs, plan, sink)
+}
+
+fn execute_hash_probe<'txn, 'query, S: TupleSink>(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'txn>,
+    schema: &StorageSchema,
+    query: &'query NormalizedQuery,
+    inputs: &EncodedInputs,
+    plan: &mut ExecutionPlan,
+    sink: &mut S,
+) -> Result<()> {
+    let atom_indexes = build_hash_atom_indexes(image, schema, query, plan)?;
+    let mut executor = HashProbeExecutor {
+        image,
+        txn,
+        query,
+        inputs,
+        plan,
+        atom_indexes,
+        binding: EncodedBinding::new(query.vars.len()),
+        sink,
+    };
+    if !executor.static_atoms_pass()? {
+        return Ok(());
+    }
+    executor.execute(0)
+}
+
+fn build_hash_atom_indexes(
+    image: &crate::QueryImage,
+    schema: &StorageSchema,
+    query: &NormalizedQuery,
+    plan: &mut ExecutionPlan,
+) -> Result<Vec<HashAtomIndex>> {
+    let mut out = Vec::new();
+    let mut requested = BTreeSet::new();
+    let subatoms = plan
+        .summary
+        .free_join
+        .nodes
+        .iter()
+        .flat_map(|node| {
+            node.subatoms.iter().map(move |subatom| {
+                (
+                    node.id.0 as usize,
+                    subatom.atom_id.0 as usize,
+                    subatom.access,
+                    subatom.fields.clone(),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    for (node_id, atom_id, access, bind_fields) in subatoms {
+        if !requested.insert((node_id, atom_id, access.0)) {
+            continue;
+        }
+        let atom = &plan.relation_atoms[atom_id];
+        let layout = layout_by_access(schema, atom, access)?;
+        let mut fields = layout
+            .leading_fields
+            .iter()
+            .map(|field_name| {
+                atom.fields
+                    .iter()
+                    .find(|field| &field.field_name == field_name)
+                    .map(|field| field.field)
+                    .ok_or_else(|| Error::unknown_field(&atom.relation_name, field_name))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for field in bind_fields {
+            if !fields.contains(&field) {
+                fields.push(field);
+            }
+        }
+        let relation = image
+            .relations()
+            .get(atom.relation.0 as usize)
+            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
+        let key = format!(
+            "relation={};access={};fields={:?}",
+            atom.relation.0, access.0, fields
+        );
+        let cached = image.cached_hash_trie(key, || {
+            crate::query_image::build_hash_trie_index(
+                relation,
+                IndexSpec::new(format!("{}_hash", atom.relation_name), fields.clone()),
+            )
+        })?;
+        if !cached.hit {
+            plan.summary.counters.hash_index_builds += 1;
+            plan.summary.counters.hash_index_build_rows = plan
+                .summary
+                .counters
+                .hash_index_build_rows
+                .saturating_add(relation.row_count as u64);
+        }
+        let _ = query;
+        out.push(HashAtomIndex {
+            node_id,
+            atom_id,
+            index: cached.index,
+            fields,
+        });
+    }
+    for atom_id in 0..plan.relation_atoms.len() {
+        if !atom_variables(&plan.relation_atoms[atom_id]).is_empty() {
+            continue;
+        }
+        if requested.iter().any(|(_, id, _)| *id == atom_id) {
+            continue;
+        }
+        let atom = &plan.relation_atoms[atom_id];
+        let access = AccessId(0);
+        let layout = layout_by_access(schema, atom, access)?;
+        let fields = layout
+            .leading_fields
+            .iter()
+            .map(|field_name| {
+                atom.fields
+                    .iter()
+                    .find(|field| &field.field_name == field_name)
+                    .map(|field| field.field)
+                    .ok_or_else(|| Error::unknown_field(&atom.relation_name, field_name))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let relation = image
+            .relations()
+            .get(atom.relation.0 as usize)
+            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
+        let key = format!(
+            "relation={};access={};fields={:?}",
+            atom.relation.0, access.0, fields
+        );
+        let cached = image.cached_hash_trie(key, || {
+            crate::query_image::build_hash_trie_index(
+                relation,
+                IndexSpec::new(format!("{}_hash", atom.relation_name), fields.clone()),
+            )
+        })?;
+        if !cached.hit {
+            plan.summary.counters.hash_index_builds += 1;
+            plan.summary.counters.hash_index_build_rows = plan
+                .summary
+                .counters
+                .hash_index_build_rows
+                .saturating_add(relation.row_count as u64);
+        }
+        out.push(HashAtomIndex {
+            node_id: usize::MAX,
+            atom_id,
+            index: cached.index,
+            fields,
+        });
+    }
+    Ok(out)
+}
+
+fn layout_by_access<'a>(
+    schema: &'a StorageSchema,
+    atom: &NormAtom,
+    access: AccessId,
+) -> Result<&'a CurrentIndexLayout> {
+    schema
+        .layouts()
+        .iter()
+        .find(|layout| layout.relation_id == atom.relation.0 && layout.index_id == access.0)
+        .ok_or_else(|| {
+            Error::internal(format!(
+                "missing access {} for relation {}",
+                access.0, atom.relation_name
+            ))
+        })
+}
+
+struct HashProbeExecutor<'txn, 'input, 'query, 'plan, S: TupleSink> {
+    image: &'input crate::QueryImage,
+    txn: &'input ReadTxn<'txn>,
+    query: &'query NormalizedQuery,
+    inputs: &'input EncodedInputs,
+    plan: &'plan mut ExecutionPlan,
+    atom_indexes: Vec<HashAtomIndex>,
+    binding: EncodedBinding,
+    sink: &'plan mut S,
+}
+
+impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
+    fn static_atoms_pass(&mut self) -> Result<bool> {
+        let static_atoms = self
+            .plan
+            .relation_atoms
+            .iter()
+            .enumerate()
+            .filter_map(|(atom_id, atom)| atom_variables(atom).is_empty().then_some(atom_id))
+            .collect::<Vec<_>>();
+        for atom_id in static_atoms {
+            if !self.atom_has_matching_row(usize::MAX, atom_id)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn execute(&mut self, depth: usize) -> Result<()> {
+        if depth == self.plan.variable_order_ids.len() {
+            if comparisons_ready_pass(
+                self.txn,
+                &self.plan.comparisons,
+                self.query,
+                self.inputs,
+                &self.binding,
+                &mut self.plan.summary.counters,
+            )? {
+                self.plan.summary.counters.bindings_yielded += 1;
+                self.sink.emit(
+                    self.txn,
+                    self.query,
+                    &self.binding,
+                    &mut self.plan.summary.counters,
+                )?;
+            }
+            return Ok(());
+        }
+
+        let variable = self.plan.variable_order_ids[depth];
+        let participants = self.participants(variable);
+        if participants.is_empty() {
+            return Err(Error::internal(format!(
+                "variable {} is not constrained by any hash atom",
+                self.query.vars[variable].name
+            )));
+        }
+        let driver = self.choose_driver(depth, &participants)?;
+        let rows = self.probe_atom_rows(depth, driver)?;
+        self.plan.summary.counters.hash_probe_calls += 1;
+        if rows.is_empty() {
+            self.plan.summary.counters.hash_probe_misses += 1;
+            return Ok(());
+        }
+        self.plan.summary.counters.hash_probe_hits += 1;
+        self.plan.summary.counters.hash_rows_returned = self
+            .plan
+            .summary
+            .counters
+            .hash_rows_returned
+            .saturating_add(rows.len() as u64);
+
+        let mut emitted = BTreeSet::new();
+        for row in rows {
+            if !self.row_satisfies_atom(driver, row)? {
+                continue;
+            }
+            let Some(value) = self.variable_value_from_row(driver, row, variable)? else {
+                continue;
+            };
+            if !emitted.insert(value.bytes.clone()) {
+                continue;
+            }
+            if !self.binding.bind(variable, value) {
+                continue;
+            }
+            let mut keep = true;
+            for atom_id in &participants {
+                if *atom_id == driver {
+                    continue;
+                }
+                if !self.atom_has_matching_row(depth, *atom_id)? {
+                    keep = false;
+                    break;
+                }
+            }
+            if keep
+                && comparisons_ready_pass(
+                    self.txn,
+                    &self.plan.comparisons,
+                    self.query,
+                    self.inputs,
+                    &self.binding,
+                    &mut self.plan.summary.counters,
+                )?
+            {
+                if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
+                    rows.actual_rows = rows.actual_rows.saturating_add(1);
+                }
+                self.plan.summary.counters.hash_distinct_emits += 1;
+                self.execute(depth + 1)?;
+            }
+            self.binding.unbind(variable);
+        }
+        Ok(())
+    }
+
+    fn participants(&self, variable: usize) -> Vec<usize> {
+        self.plan
+            .relation_atoms
+            .iter()
+            .enumerate()
+            .filter_map(|(atom_id, atom)| atom_contains_variable(atom, variable).then_some(atom_id))
+            .collect()
+    }
+
+    fn choose_driver(&self, depth: usize, participants: &[usize]) -> Result<usize> {
+        let mut best = None;
+        for atom_id in participants {
+            let count = self.probe_atom_count(depth, *atom_id)?;
+            if best.is_none_or(|(_, best_count)| count < best_count) {
+                best = Some((*atom_id, count));
+            }
+        }
+        best.map(|(atom_id, _)| atom_id)
+            .ok_or_else(|| Error::internal("hash probe node has no driver"))
+    }
+
+    fn probe_atom_count(&self, depth: usize, atom_id: usize) -> Result<usize> {
+        let index = self.hash_index(depth, atom_id)?;
+        let prefix = self.hash_prefix(depth, atom_id)?;
+        let refs = prefix.iter().map(EncodedOwned::as_ref).collect::<Vec<_>>();
+        Ok(index.index.count(&refs))
+    }
+
+    fn probe_atom_rows(&self, depth: usize, atom_id: usize) -> Result<Vec<RowId>> {
+        let index = self.hash_index(depth, atom_id)?;
+        let prefix = self.hash_prefix(depth, atom_id)?;
+        let refs = prefix.iter().map(EncodedOwned::as_ref).collect::<Vec<_>>();
+        Ok(index.index.rows_owned(&refs))
+    }
+
+    fn atom_has_matching_row(&mut self, depth: usize, atom_id: usize) -> Result<bool> {
+        let index = self.hash_index(depth, atom_id)?.index.clone();
+        let prefix = self.hash_prefix(depth, atom_id)?;
+        let refs = prefix.iter().map(EncodedOwned::as_ref).collect::<Vec<_>>();
+        let row_count = index.count(&refs);
+        self.plan.summary.counters.hash_probe_calls += 1;
+        if row_count == 0 {
+            self.plan.summary.counters.hash_probe_misses += 1;
+            return Ok(false);
+        }
+        self.plan.summary.counters.hash_probe_hits += 1;
+        self.plan.summary.counters.hash_rows_returned = self
+            .plan
+            .summary
+            .counters
+            .hash_rows_returned
+            .saturating_add(row_count as u64);
+        let mut found = false;
+        let mut error = None;
+        index.for_each_row(&refs, |row| match self.row_satisfies_atom(atom_id, row) {
+            Ok(true) => {
+                found = true;
+                false
+            }
+            Ok(false) => true,
+            Err(err) => {
+                error = Some(err);
+                false
+            }
+        });
+        if let Some(error) = error {
+            return Err(error);
+        }
+        Ok(found)
+    }
+
+    fn hash_prefix(&self, depth: usize, atom_id: usize) -> Result<Vec<EncodedOwned>> {
+        let atom = &self.plan.relation_atoms[atom_id];
+        let index = self.hash_index(depth, atom_id)?;
+        let mut prefix = Vec::new();
+        for field in &index.fields {
+            let Some(atom_field) = atom
+                .fields
+                .iter()
+                .find(|atom_field| atom_field.field == *field)
+            else {
+                break;
+            };
+            match self.term_bound_value(&atom_field.term)? {
+                Some(value) => prefix.push(value),
+                None => break,
+            }
+        }
+        Ok(prefix)
+    }
+
+    fn term_bound_value(&self, term: &NormTerm) -> Result<Option<EncodedOwned>> {
+        Ok(match term {
+            NormTerm::Var(variable) => self
+                .binding
+                .get(variable.0 as usize)
+                .map(encoded_owned_for_value)
+                .transpose()?,
+            NormTerm::Input(input) => self.inputs.get(*input).cloned(),
+            NormTerm::Literal(value) => Some(value.clone()),
+            NormTerm::Wildcard => None,
+        })
+    }
+
+    fn row_satisfies_atom(&self, atom_id: usize, row: RowId) -> Result<bool> {
+        let atom = &self.plan.relation_atoms[atom_id];
+        let relation = self.relation(atom)?;
+        for field in &atom.fields {
+            let bytes = relation
+                .encoded_bytes(row, field.field)
+                .ok_or_else(|| Error::internal("missing hash probe field"))?;
+            match &field.term {
+                NormTerm::Var(variable) => {
+                    if let Some(bound) = self.binding.get(variable.0 as usize)
+                        && bound.bytes.as_slice() != bytes
+                    {
+                        return Ok(false);
+                    }
+                }
+                NormTerm::Input(input) => {
+                    let Some(input) = self.inputs.get(*input) else {
+                        return Ok(false);
+                    };
+                    if input.as_bytes() != bytes {
+                        return Ok(false);
+                    }
+                }
+                NormTerm::Literal(value) => {
+                    if value.as_bytes() != bytes {
+                        return Ok(false);
+                    }
+                }
+                NormTerm::Wildcard => {}
+            }
+        }
+        Ok(true)
+    }
+
+    fn variable_value_from_row(
+        &self,
+        atom_id: usize,
+        row: RowId,
+        variable: usize,
+    ) -> Result<Option<EncodedValue>> {
+        let atom = &self.plan.relation_atoms[atom_id];
+        let relation = self.relation(atom)?;
+        let mut out = None;
+        for field in atom
+            .fields
+            .iter()
+            .filter(|field| matches!(field.term, NormTerm::Var(var) if var.0 as usize == variable))
+        {
+            let bytes = relation
+                .encoded_bytes(row, field.field)
+                .ok_or_else(|| Error::internal("missing hash probe variable field"))?;
+            if let Some(existing) = &out {
+                let existing: &EncodedValue = existing;
+                if existing.bytes.as_slice() != bytes {
+                    return Ok(None);
+                }
+            } else {
+                out = Some(EncodedValue::new(field.value_type.clone(), bytes.to_vec()));
+            }
+        }
+        Ok(out)
+    }
+
+    fn relation(&self, atom: &NormAtom) -> Result<&RelationImage> {
+        self.plan
+            .relation_atoms
+            .get(atom.id.0 as usize)
+            .ok_or_else(|| Error::internal("missing hash probe atom"))?;
+        self.image
+            .relations()
+            .get(atom.relation.0 as usize)
+            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))
+    }
+
+    fn hash_index(&self, depth: usize, atom_id: usize) -> Result<&HashAtomIndex> {
+        self.atom_indexes
+            .iter()
+            .find(|index| index.node_id == depth && index.atom_id == atom_id)
+            .or_else(|| {
+                self.atom_indexes
+                    .iter()
+                    .find(|index| index.node_id == usize::MAX && index.atom_id == atom_id)
+            })
+            .ok_or_else(|| Error::internal("missing hash atom index"))
+    }
+}
+
+fn encoded_owned_for_value(value: &EncodedValue) -> Result<EncodedOwned> {
+    match value.value_type.encoded_width() {
+        1 => Ok(EncodedOwned::One(
+            value
+                .bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| Error::internal("encoded value width mismatch"))?,
+        )),
+        8 => Ok(EncodedOwned::Eight(
+            value
+                .bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| Error::internal("encoded value width mismatch"))?,
+        )),
+        16 => Ok(EncodedOwned::Sixteen(
+            value
+                .bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| Error::internal("encoded value width mismatch"))?,
+        )),
+        width => Err(Error::internal(format!(
+            "unsupported encoded value width {width}"
+        ))),
     }
 }
 
@@ -1425,6 +2006,7 @@ fn estimate_variable_cost(
         (
             estimate.estimated_rows,
             std::cmp::Reverse(estimate.prefix_len),
+            std::cmp::Reverse(estimate.current_is_next),
             estimate.access_label(),
         )
     });
@@ -1547,6 +2129,7 @@ fn estimate_atom_variable_access(
             access: index_stats.index,
             estimated_rows: estimate.max(1),
             prefix_len,
+            current_is_next,
             distinct,
             avg_fanout: index_stats.fanout_after_prefix(prefix_len),
             max_fanout: index_stats.max_fanout_after_prefix(prefix_len),
@@ -1559,10 +2142,12 @@ fn estimate_atom_variable_access(
             (
                 candidate.estimated_rows,
                 std::cmp::Reverse(candidate.prefix_len),
+                std::cmp::Reverse(candidate.current_is_next),
                 candidate.access_label(),
             ) < (
                 best.estimated_rows,
                 std::cmp::Reverse(best.prefix_len),
+                std::cmp::Reverse(best.current_is_next),
                 best.access_label(),
             )
         }) {
@@ -1576,6 +2161,7 @@ fn estimate_atom_variable_access(
         access: AccessId(0),
         estimated_rows: relation_rows.saturating_mul(4).max(1),
         prefix_len: 0,
+        current_is_next: false,
         distinct: 1,
         avg_fanout: relation_rows.max(1),
         max_fanout: relation_rows as usize,
@@ -3253,7 +3839,48 @@ mod tests {
                 .any(|node| node.implementation == NodeImpl::HashProbe)
         );
         assert_eq!(output.plan.optimizer.chosen, "hash_probe");
+        assert!(output.plan.counters.hash_probe_calls > 0);
+        assert_eq!(output.plan.counters.trie_open, 0);
+        assert_eq!(output.plan.counters.trie_next, 0);
+        assert_eq!(output.plan.counters.trie_seek, 0);
+        assert_eq!(output.plan.counters.trie_key_reads, 0);
         assert_same_rows(&output.rows, &[vec![Value::Id(1)], vec![Value::Id(2)]]);
+    }
+
+    #[test]
+    fn hash_probe_runtime_checks_static_existence_atoms() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Environment::open(dir.path()).unwrap();
+        let schema = StorageSchema::new(chain_schema(), env.max_key_size()).unwrap();
+        env.write(|txn| {
+            txn.insert(&schema, b_row(1, 99))?;
+            Ok::<(), Error>(())
+        })
+        .unwrap();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?b
+            where
+              A(id: $a)
+              B(id: ?b, a: $a)
+            "#,
+        )
+        .unwrap();
+
+        let output = env
+            .read(|txn| {
+                txn.execute_query(
+                    &schema,
+                    &query,
+                    &InputBindings::from_values([("a", Value::U64(99))]),
+                )
+            })
+            .unwrap();
+
+        assert!(output.rows.is_empty());
+        assert_eq!(output.plan.counters.trie_open, 0);
+        assert!(output.plan.counters.hash_probe_calls > 0);
     }
 
     #[test]
@@ -3356,9 +3983,20 @@ mod tests {
         assert_eq!(second.plan.planner_stats.builds, 1);
         assert_eq!(second.plan.planner_stats.misses, 1);
         assert!(second.plan.planner_stats.hits >= 1);
-        assert_eq!(second.plan.counters.sorted_trie_builds, 0);
-        assert_eq!(second.plan.counters.atom_temp_relation_builds, 0);
-        assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
+        if second
+            .plan
+            .free_join
+            .nodes
+            .iter()
+            .all(|node| node.implementation == NodeImpl::HashProbe)
+        {
+            assert!(second.plan.counters.hash_probe_calls > 0);
+            assert_eq!(second.plan.counters.trie_open, 0);
+        } else {
+            assert_eq!(second.plan.counters.sorted_trie_builds, 0);
+            assert_eq!(second.plan.counters.atom_temp_relation_builds, 0);
+            assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
+        }
     }
 
     #[test]
@@ -4263,6 +4901,30 @@ mod tests {
         )
     }
 
+    fn chain_schema() -> bumbledb_core::schema::SchemaDescriptor {
+        bumbledb_core::schema::SchemaDescriptor::new(
+            "ChainDb",
+            vec![
+                RelationDescriptor::new(
+                    "A",
+                    RelationKind::Entity,
+                    vec![FieldDescriptor::new("id", ValueType::U64)],
+                    PrimaryKeyDescriptor::new(["id"]),
+                ),
+                RelationDescriptor::new(
+                    "B",
+                    RelationKind::Entity,
+                    vec![
+                        FieldDescriptor::new("id", ValueType::U64),
+                        FieldDescriptor::new("a", ValueType::U64),
+                    ],
+                    PrimaryKeyDescriptor::new(["id"]),
+                )
+                .with_index(IndexDescriptor::equality("by_a", ["a", "id"])),
+            ],
+        )
+    }
+
     fn holder_row(id: u64, name: &str) -> Row {
         Row::new(
             "Holder",
@@ -4324,6 +4986,10 @@ mod tests {
 
     fn edge_bc_row(b: u64, c: u64) -> Row {
         Row::new("EdgeBC", [("b", Value::U64(b)), ("c", Value::U64(c))])
+    }
+
+    fn b_row(id: u64, a: u64) -> Row {
+        Row::new("B", [("id", Value::U64(id)), ("a", Value::U64(a))])
     }
 
     fn assert_same_rows(actual: &[Vec<Value>], expected: &[Vec<Value>]) {
