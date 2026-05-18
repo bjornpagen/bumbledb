@@ -4,6 +4,10 @@
 //! transaction types. Higher layers should not depend on raw LMDB handles.
 
 pub mod benchmark;
+#[cfg(feature = "test-failpoints")]
+pub mod failpoints;
+#[cfg(not(feature = "test-failpoints"))]
+mod failpoints;
 mod query;
 mod storage;
 
@@ -161,6 +165,10 @@ pub enum Error {
     /// Decimal aggregation overflowed.
     #[error("decimal overflow during {operation}")]
     DecimalOverflow { operation: &'static str },
+
+    /// Test failpoint injected a storage failure.
+    #[error("injected failpoint: {name}")]
+    InjectedFailpoint { name: &'static str },
 
     /// Current stage supports refs only to single-field primary keys.
     #[error("foreign key target {target_relation} must have a single-field primary key")]
@@ -422,6 +430,7 @@ impl Environment {
         match f(&mut write) {
             Ok(value) => {
                 let WriteTxn { txn, .. } = write;
+                failpoints::check(failpoints::Failpoint::BeforeCommit)?;
                 txn.commit().map_err(Error::from).map_err(E::from)?;
                 Ok(value)
             }

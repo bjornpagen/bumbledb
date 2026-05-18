@@ -34,6 +34,11 @@ impl InputBindings {
     fn get(&self, name: &str) -> Option<&Value> {
         self.values.get(name)
     }
+
+    /// Returns a bound input value by name.
+    pub fn value(&self, name: &str) -> Option<&Value> {
+        self.values.get(name)
+    }
 }
 
 /// Query execution output.
@@ -225,6 +230,7 @@ impl<'env> ReadTxn<'env> {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn execute_atoms(
         &self,
         schema: &StorageSchema,
@@ -284,6 +290,8 @@ struct ChosenAccess {
     prefix: Option<FieldValues>,
     range: Option<(Option<Value>, Option<Value>)>,
 }
+
+type RangeAccessChoice = (crate::AccessPathDescriptor, Option<Value>, Option<Value>);
 
 fn plan_query<'query>(
     schema: &StorageSchema,
@@ -478,7 +486,7 @@ fn range_access(
     query: &TypedQuery,
     inputs: &InputBindings,
     binding: &Binding,
-) -> Result<Option<(crate::AccessPathDescriptor, Option<Value>, Option<Value>)>> {
+) -> Result<Option<RangeAccessChoice>> {
     for path in schema.access_paths(&atom.relation)? {
         if path.kind != IndexKind::Range || path.leading_fields.len() != 1 {
             continue;
@@ -1483,6 +1491,7 @@ mod tests {
             project_results(query, &output)
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn recurse(
             &self,
             query: &TypedQuery,

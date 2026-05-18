@@ -3,6 +3,7 @@ members = [
     "crates/bumbledb",
     "crates/bumbledb-core",
     "crates/bumbledb-lmdb",
+    "crates/bumbledb-test-support",
 ]
 resolver = "3"
 
@@ -15,6 +16,8 @@ bumbledb-core = { path = "crates/bumbledb-core" }
 bumbledb-lmdb = { path = "crates/bumbledb-lmdb" }
 blake3 = "1.8.2"
 heed = { version = "0.22.1", default-features = false }
+proptest = "1.9.0"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 tempfile = "3.23.0"
 thiserror = "2.0.17"
+trybuild = "1.0.114"

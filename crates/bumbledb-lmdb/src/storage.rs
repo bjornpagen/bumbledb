@@ -475,6 +475,7 @@ impl WriteTxn<'_> {
             row_key.as_slice(),
             new_encoded.payload(relation)?.as_slice(),
         )?;
+        crate::failpoints::check(crate::failpoints::Failpoint::AfterCurrentRowPut)?;
 
         self.append_history(
             b'R',
@@ -532,6 +533,7 @@ impl WriteTxn<'_> {
             row_key.as_slice(),
             encoded.payload(relation)?.as_slice(),
         )?;
+        crate::failpoints::check(crate::failpoints::Failpoint::AfterCurrentRowPut)?;
         self.insert_current_indexes(schema, relation_id, relation, &encoded)?;
         self.insert_unique_guards(relation_id, relation, &encoded, &primary)?;
         adjust_relation_row_count(self, relation_id, 1)?;
@@ -687,13 +689,13 @@ impl WriteTxn<'_> {
         for (constraint_id, constraint) in relation.constraints.iter().enumerate() {
             let ConstraintDescriptor::Unique { name, fields } = constraint;
             let key = unique_guard_key(relation_id, constraint_id as u16, relation, row, fields)?;
-            if let Some(existing_primary) = self.dbs.index.get(&self.txn, key.as_slice())? {
-                if existing_primary != primary {
-                    return Err(Error::UniqueViolation {
-                        relation: relation.name.clone(),
-                        constraint: name.clone(),
-                    });
-                }
+            if let Some(existing_primary) = self.dbs.index.get(&self.txn, key.as_slice())?
+                && existing_primary != primary
+            {
+                return Err(Error::UniqueViolation {
+                    relation: relation.name.clone(),
+                    constraint: name.clone(),
+                });
             }
         }
         Ok(())
@@ -759,6 +761,7 @@ impl WriteTxn<'_> {
         for layout in schema.layouts_for_relation(relation_id) {
             let key = current_index_key(layout, relation, row)?;
             self.dbs.index.put(&mut self.txn, key.as_slice(), &[])?;
+            crate::failpoints::check(crate::failpoints::Failpoint::AfterCurrentIndexPut)?;
             adjust_index_entry_count(self, relation_id, layout.index_id, 1)?;
         }
         Ok(())
@@ -790,6 +793,7 @@ impl WriteTxn<'_> {
             let ConstraintDescriptor::Unique { fields, .. } = constraint;
             let key = unique_guard_key(relation_id, constraint_id as u16, relation, row, fields)?;
             self.dbs.index.put(&mut self.txn, key.as_slice(), primary)?;
+            crate::failpoints::check(crate::failpoints::Failpoint::AfterUniqueGuardPut)?;
         }
         Ok(())
     }
@@ -836,6 +840,7 @@ impl WriteTxn<'_> {
         self.dbs
             .index
             .put(&mut self.txn, key.as_slice(), value.as_slice())?;
+        crate::failpoints::check(crate::failpoints::Failpoint::AfterHistoryAppend)?;
         Ok(())
     }
 
@@ -860,6 +865,7 @@ impl WriteTxn<'_> {
         write_u64_meta(self, &id_key, id + 1)?;
 
         let fwd_key = dict_fwd_key(kind, raw);
+        crate::failpoints::check(crate::failpoints::Failpoint::BeforeDictionaryPut)?;
         let mut fwd_value = Vec::with_capacity(8 + raw.len());
         push_u64(&mut fwd_value, id);
         fwd_value.extend_from_slice(raw);
@@ -869,6 +875,7 @@ impl WriteTxn<'_> {
         self.dbs
             .dict
             .put(&mut self.txn, dict_rev_key(kind, id).as_slice(), raw)?;
+        crate::failpoints::check(crate::failpoints::Failpoint::AfterDictionaryPut)?;
 
         Ok(id)
     }
@@ -1509,7 +1516,9 @@ fn adjust_u64_meta(txn: &mut WriteTxn<'_>, key: &[u8], delta: i64) -> Result<()>
             .checked_sub(delta.unsigned_abs())
             .ok_or_else(|| Error::Internal("metadata counter underflow".to_owned()))?
     };
-    write_u64_meta(txn, key, next)
+    write_u64_meta(txn, key, next)?;
+    crate::failpoints::check(crate::failpoints::Failpoint::AfterStatsUpdate)?;
+    Ok(())
 }
 
 fn next_id_key(relation_id: u16) -> Vec<u8> {

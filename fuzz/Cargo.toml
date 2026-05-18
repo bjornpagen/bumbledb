@@ -1,0 +1,28 @@
+[package]
+name = "bumbledb-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+bumbledb-core = { path = "../crates/bumbledb-core" }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "fuzz_encoding_decode"
+path = "fuzz_targets/fuzz_encoding_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_datalog_parser"
+path = "fuzz_targets/fuzz_datalog_parser.rs"
+test = false
+doc = false
+bench = false

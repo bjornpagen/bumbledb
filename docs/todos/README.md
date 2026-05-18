@@ -22,6 +22,7 @@ The Rosetta Stone remains normative. These todo documents are the execution plan
 - `07_observability_testing_and_benchmarks.md`
 - `08_bulk_etl_backup_and_hardening.md`
 - `09_deferred_features.md`
+- `10_comprehensive_testing_and_hardening.md`
 
 **Completion Philosophy**
 - Each stage should leave the project in a coherent state.

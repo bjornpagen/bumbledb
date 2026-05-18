@@ -10,6 +10,9 @@ blake3.workspace = true
 heed.workspace = true
 thiserror.workspace = true
 
+[features]
+test-failpoints = []
+
 [dev-dependencies]
 rusqlite.workspace = true
 tempfile.workspace = true

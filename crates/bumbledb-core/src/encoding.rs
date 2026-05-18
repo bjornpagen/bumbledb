@@ -196,7 +196,7 @@ mod tests {
             .collect();
         let mut logical = encoded.clone();
 
-        encoded.sort_by(|left, right| left.1.cmp(&right.1));
+        encoded.sort_by_key(|item| item.1);
         logical.sort_by_key(|item| item.0);
 
         let encoded_values: Vec<_> = encoded.into_iter().map(|item| item.0).collect();
