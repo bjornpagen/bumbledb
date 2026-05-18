@@ -71,7 +71,7 @@ impl StorageSchema {
             .collect())
     }
 
-    fn relation(&self, name: &str) -> Result<(u16, &RelationDescriptor)> {
+    pub(crate) fn relation(&self, name: &str) -> Result<(u16, &RelationDescriptor)> {
         self.descriptor
             .relations
             .iter()
@@ -87,7 +87,7 @@ impl StorageSchema {
             .filter(move |layout| layout.relation_id == relation_id)
     }
 
-    fn layout(&self, relation: &str, index: &str) -> Option<&CurrentIndexLayout> {
+    pub(crate) fn layout(&self, relation: &str, index: &str) -> Option<&CurrentIndexLayout> {
         self.layouts
             .iter()
             .find(|layout| layout.relation_name == relation && layout.index_name == index)
@@ -278,6 +278,20 @@ impl ScanItem {
     }
 }
 
+/// Encoded row component view yielded from a covering index scan.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EncodedIndexItem {
+    /// Encoded components in index-key order.
+    pub components: Vec<Vec<u8>>,
+}
+
+impl EncodedIndexItem {
+    /// Returns an encoded component by ordinal.
+    pub fn component(&self, index: usize) -> Option<&[u8]> {
+        self.components.get(index).map(Vec::as_slice)
+    }
+}
+
 /// Transaction-scoped scan over one current covering index.
 pub struct IndexScan<'borrow, 'env, 'schema> {
     iter: heed::RoPrefix<'borrow, heed::types::Bytes, heed::types::Bytes>,
@@ -286,6 +300,13 @@ pub struct IndexScan<'borrow, 'env, 'schema> {
     relation: &'schema RelationDescriptor,
     layout: &'schema CurrentIndexLayout,
     range: Option<EncodedRange>,
+}
+
+/// Transaction-scoped encoded scan over one current covering index.
+pub(crate) struct EncodedIndexScan<'borrow, 'env, 'schema> {
+    iter: heed::RoPrefix<'borrow, heed::types::Bytes, heed::types::Bytes>,
+    layout: &'schema CurrentIndexLayout,
+    _env: std::marker::PhantomData<&'env ()>,
 }
 
 #[derive(Clone, Debug)]
@@ -318,6 +339,18 @@ impl Iterator for IndexScan<'_, '_, '_> {
                 key,
             ));
         }
+    }
+}
+
+impl Iterator for EncodedIndexScan<'_, '_, '_> {
+    type Item = Result<EncodedIndexItem>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (key, _) = match self.iter.next()? {
+            Ok(item) => item,
+            Err(error) => return Some(Err(error.into())),
+        };
+        Some(encoded_index_item(self.layout, key))
     }
 }
 
@@ -971,6 +1004,52 @@ impl<'env> ReadTxn<'env> {
         self.scan_index_with_prefix(schema, relation_name, index_name, &[], Some(range))
     }
 
+    /// Scans a covering index by encoded key prefix without decoding logical rows.
+    pub(crate) fn scan_encoded_index_prefix<'borrow, 'schema>(
+        &'borrow self,
+        schema: &'schema StorageSchema,
+        relation_name: &str,
+        index_name: &str,
+        encoded_prefix: &[u8],
+    ) -> Result<EncodedIndexScan<'borrow, 'env, 'schema>> {
+        let (relation_id, _) = schema.relation(relation_name)?;
+        let layout = schema
+            .layout(relation_name, index_name)
+            .ok_or_else(|| Error::unknown_index(relation_name, index_name))?;
+        let mut prefix = current_index_prefix(relation_id, layout.index_id);
+        prefix.extend_from_slice(encoded_prefix);
+        let iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
+        Ok(EncodedIndexScan {
+            iter,
+            layout,
+            _env: std::marker::PhantomData,
+        })
+    }
+
+    /// Encodes a query value for a relation field using existing dictionary entries.
+    pub(crate) fn encode_query_field_value(
+        &self,
+        schema: &StorageSchema,
+        relation_name: &str,
+        field_name: &str,
+        value: &Value,
+    ) -> Result<Vec<u8>> {
+        let (_, relation) = schema.relation(relation_name)?;
+        let field = relation
+            .field(field_name)
+            .ok_or_else(|| Error::unknown_field(&relation.name, field_name))?;
+        self.encode_read_value(relation, field, value)
+    }
+
+    /// Decodes one encoded query value by logical type.
+    pub(crate) fn decode_query_value(
+        &self,
+        value_type: &ValueType,
+        bytes: &[u8],
+    ) -> Result<Value> {
+        decode_value(self.dbs.dict, &self.txn, value_type, bytes)
+    }
+
     /// Returns the last committed storage transaction ID.
     pub fn last_committed_tx_id(&self) -> Result<u64> {
         Ok(read_u64(&self.dbs.meta, &self.txn, NEXT_TX_ID_KEY)?.unwrap_or(1) - 1)
@@ -1274,6 +1353,31 @@ fn decode_index_key(
     }
 
     Ok((EncodedRow { fields }, components))
+}
+
+fn encoded_index_item(layout: &CurrentIndexLayout, key: &[u8]) -> Result<EncodedIndexItem> {
+    let prefix_len = current_index_prefix(layout.relation_id, layout.index_id).len();
+    if key.len() != layout.encoded_len {
+        return Err(Error::corrupt("index key width does not match layout"));
+    }
+    if key.get(0..prefix_len)
+        != Some(current_index_prefix(layout.relation_id, layout.index_id).as_slice())
+    {
+        return Err(Error::corrupt("index key prefix does not match layout"));
+    }
+
+    let mut components = Vec::with_capacity(layout.components.len());
+    let mut offset = prefix_len;
+    for component in &layout.components {
+        let end = offset + component.encoded_width;
+        let bytes = key
+            .get(offset..end)
+            .ok_or_else(|| Error::corrupt("index key component is truncated"))?
+            .to_vec();
+        components.push(bytes);
+        offset = end;
+    }
+    Ok(EncodedIndexItem { components })
 }
 
 fn decode_encoded_row(
