@@ -281,14 +281,19 @@ impl ScanItem {
 /// Encoded row component view yielded from a covering index scan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct EncodedIndexItem {
-    /// Encoded components in index-key order.
-    pub components: Vec<Vec<u8>>,
+    key: Vec<u8>,
+    prefix_len: usize,
 }
 
 impl EncodedIndexItem {
     /// Returns an encoded component by ordinal.
-    pub fn component(&self, index: usize) -> Option<&[u8]> {
-        self.components.get(index).map(Vec::as_slice)
+    pub fn component(&self, components: &[IndexComponent], index: usize) -> Option<&[u8]> {
+        let mut offset = self.prefix_len;
+        for component in components.get(..index)? {
+            offset += component.encoded_width;
+        }
+        let width = components.get(index)?.encoded_width;
+        self.key.get(offset..offset + width)
     }
 }
 
@@ -306,6 +311,7 @@ pub struct IndexScan<'borrow, 'env, 'schema> {
 pub(crate) struct EncodedIndexScan<'borrow, 'env, 'schema> {
     iter: heed::RoPrefix<'borrow, heed::types::Bytes, heed::types::Bytes>,
     layout: &'schema CurrentIndexLayout,
+    index_prefix: Vec<u8>,
     _env: std::marker::PhantomData<&'env ()>,
 }
 
@@ -350,7 +356,7 @@ impl Iterator for EncodedIndexScan<'_, '_, '_> {
             Ok(item) => item,
             Err(error) => return Some(Err(error.into())),
         };
-        Some(encoded_index_item(self.layout, key))
+        Some(encoded_index_item(self.layout, &self.index_prefix, key))
     }
 }
 
@@ -1016,12 +1022,17 @@ impl<'env> ReadTxn<'env> {
         let layout = schema
             .layout(relation_name, index_name)
             .ok_or_else(|| Error::unknown_index(relation_name, index_name))?;
-        let mut prefix = current_index_prefix(relation_id, layout.index_id);
-        prefix.extend_from_slice(encoded_prefix);
-        let iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
+        let index_prefix = current_index_prefix(relation_id, layout.index_id);
+        let mut scan_prefix = index_prefix.clone();
+        scan_prefix.extend_from_slice(encoded_prefix);
+        let iter = self
+            .dbs
+            .index
+            .prefix_iter(&self.txn, scan_prefix.as_slice())?;
         Ok(EncodedIndexScan {
             iter,
             layout,
+            index_prefix,
             _env: std::marker::PhantomData,
         })
     }
@@ -1042,12 +1053,20 @@ impl<'env> ReadTxn<'env> {
     }
 
     /// Decodes one encoded query value by logical type.
-    pub(crate) fn decode_query_value(
+    pub(crate) fn decode_query_value(&self, value_type: &ValueType, bytes: &[u8]) -> Result<Value> {
+        decode_value(self.dbs.dict, &self.txn, value_type, bytes)
+    }
+
+    /// Encodes a query value by logical type using existing dictionary entries.
+    pub(crate) fn encode_query_value(
         &self,
         value_type: &ValueType,
-        bytes: &[u8],
-    ) -> Result<Value> {
-        decode_value(self.dbs.dict, &self.txn, value_type, bytes)
+        value: &Value,
+    ) -> Result<Vec<u8>> {
+        encode_value_for_type(value_type, value, |kind, raw| {
+            lookup_intern_value(&self.dbs.dict, &self.txn, kind, raw)?
+                .ok_or_else(|| Error::dictionary_value_not_found(dict_kind_name(kind)))
+        })
     }
 
     /// Returns the last committed storage transaction ID.
@@ -1269,7 +1288,23 @@ fn encode_value_with(
     value: &Value,
     mut intern: impl FnMut(u8, &[u8]) -> Result<u64>,
 ) -> Result<Vec<u8>> {
-    let bytes = match (&field.value_type, value) {
+    if !storage_value_matches_type(value, &field.value_type) {
+        return Err(Error::type_mismatch(
+            &relation.name,
+            &field.name,
+            value_type_name(&field.value_type),
+            value.kind_name(),
+        ));
+    }
+    encode_value_for_type(&field.value_type, value, &mut intern)
+}
+
+fn encode_value_for_type(
+    value_type: &ValueType,
+    value: &Value,
+    mut intern: impl FnMut(u8, &[u8]) -> Result<u64>,
+) -> Result<Vec<u8>> {
+    let bytes = match (value_type, value) {
         (ValueType::Bool, Value::Bool(value)) => encode_bool(*value).to_vec(),
         (ValueType::U64, Value::U64(value)) => encode_u64(*value).to_vec(),
         (ValueType::I64, Value::I64(value)) => encode_i64(*value).to_vec(),
@@ -1286,16 +1321,32 @@ fn encode_value_with(
             encode_intern_id(InternId(intern(DICT_BYTES, value)?)).to_vec()
         }
         _ => {
-            return Err(Error::type_mismatch(
-                &relation.name,
-                &field.name,
-                value_type_name(&field.value_type),
-                value.kind_name(),
-            ));
+            return Err(Error::internal(format!(
+                "query value type mismatch: expected {}, found {}",
+                value_type_name(value_type),
+                value.kind_name()
+            )));
         }
     };
 
     Ok(bytes)
+}
+
+fn storage_value_matches_type(value: &Value, value_type: &ValueType) -> bool {
+    matches!(
+        (value, value_type),
+        (Value::Bool(_), ValueType::Bool)
+            | (Value::U64(_), ValueType::U64)
+            | (Value::I64(_), ValueType::I64)
+            | (Value::Id(_), ValueType::Id { .. })
+            | (Value::Ref(_), ValueType::Ref { .. })
+            | (Value::Timestamp(_), ValueType::TimestampMicros)
+            | (Value::Decimal(_), ValueType::Decimal { .. })
+            | (Value::Uuid(_), ValueType::Uuid)
+            | (Value::Symbol(_), ValueType::Symbol { .. })
+            | (Value::String(_), ValueType::String)
+            | (Value::Bytes(_), ValueType::Bytes)
+    )
 }
 
 fn decode_index_scan_item(
@@ -1355,29 +1406,22 @@ fn decode_index_key(
     Ok((EncodedRow { fields }, components))
 }
 
-fn encoded_index_item(layout: &CurrentIndexLayout, key: &[u8]) -> Result<EncodedIndexItem> {
-    let prefix_len = current_index_prefix(layout.relation_id, layout.index_id).len();
+fn encoded_index_item(
+    layout: &CurrentIndexLayout,
+    index_prefix: &[u8],
+    key: &[u8],
+) -> Result<EncodedIndexItem> {
+    let prefix_len = index_prefix.len();
     if key.len() != layout.encoded_len {
         return Err(Error::corrupt("index key width does not match layout"));
     }
-    if key.get(0..prefix_len)
-        != Some(current_index_prefix(layout.relation_id, layout.index_id).as_slice())
-    {
+    if key.get(0..prefix_len) != Some(index_prefix) {
         return Err(Error::corrupt("index key prefix does not match layout"));
     }
-
-    let mut components = Vec::with_capacity(layout.components.len());
-    let mut offset = prefix_len;
-    for component in &layout.components {
-        let end = offset + component.encoded_width;
-        let bytes = key
-            .get(offset..end)
-            .ok_or_else(|| Error::corrupt("index key component is truncated"))?
-            .to_vec();
-        components.push(bytes);
-        offset = end;
-    }
-    Ok(EncodedIndexItem { components })
+    Ok(EncodedIndexItem {
+        key: key.to_vec(),
+        prefix_len,
+    })
 }
 
 fn decode_encoded_row(

@@ -136,6 +136,22 @@ impl QueryPlan {
             "  decoded_values: {}\n",
             self.counters.decoded_values
         ));
+        out.push_str(&format!(
+            "  dictionary_reverse_lookups: {}\n",
+            self.counters.dictionary_reverse_lookups
+        ));
+        out.push_str(&format!(
+            "  encoded_comparisons_evaluated: {}\n",
+            self.counters.encoded_comparisons_evaluated
+        ));
+        out.push_str(&format!(
+            "  decoded_comparisons_evaluated: {}\n",
+            self.counters.decoded_comparisons_evaluated
+        ));
+        out.push_str(&format!(
+            "  materialized_output_values: {}\n",
+            self.counters.materialized_output_values
+        ));
         out.push_str(&format!("  output_rows: {}\n", self.counters.output_rows));
         out
     }
@@ -179,6 +195,14 @@ pub struct PlanCounters {
     pub variable_candidates: u64,
     /// Number of logical values decoded for comparisons/projection/aggregation.
     pub decoded_values: u64,
+    /// Number of string/bytes dictionary reverse lookups caused by decoding.
+    pub dictionary_reverse_lookups: u64,
+    /// Number of comparison predicates evaluated directly on encoded bytes.
+    pub encoded_comparisons_evaluated: u64,
+    /// Number of comparison predicates evaluated after logical decoding.
+    pub decoded_comparisons_evaluated: u64,
+    /// Number of final logical output values materialized.
+    pub materialized_output_values: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -239,7 +263,14 @@ struct ScanAccess {
     components: Vec<IndexComponent>,
 }
 
-type ScanAccessCandidate = (usize, bool, usize, AccessPathDescriptor, Vec<u8>, Vec<String>);
+type ScanAccessCandidate = (
+    usize,
+    bool,
+    usize,
+    AccessPathDescriptor,
+    Vec<u8>,
+    Vec<String>,
+);
 
 impl<'env> ReadTxn<'env> {
     /// Executes a typed positive Datalog query against current indexes.
@@ -257,7 +288,13 @@ impl<'env> ReadTxn<'env> {
         let mut bindings = Vec::new();
         let mut current = EncodedBinding::new(query.variables.len());
 
-        if self.constant_atoms_exist(schema, query, inputs, &plan.relation_atoms, &mut plan.summary.counters)? {
+        if self.constant_atoms_exist(
+            schema,
+            query,
+            inputs,
+            &plan.relation_atoms,
+            &mut plan.summary.counters,
+        )? {
             self.execute_variables(
                 schema,
                 query,
@@ -338,15 +375,7 @@ impl<'env> ReadTxn<'env> {
                 &mut plan.summary.counters,
             )?;
             if keep {
-                self.execute_variables(
-                    schema,
-                    query,
-                    inputs,
-                    plan,
-                    depth + 1,
-                    binding,
-                    output,
-                )?;
+                self.execute_variables(schema, query, inputs, plan, depth + 1, binding, output)?;
             }
             binding.unbind(variable);
         }
@@ -416,7 +445,8 @@ impl<'env> ReadTxn<'env> {
         binding: &EncodedBinding,
         counters: &mut PlanCounters,
     ) -> Result<BTreeSet<EncodedValue>> {
-        let access = choose_scan_access(self, schema, atom, query, inputs, binding, Some(variable))?;
+        let access =
+            choose_scan_access(self, schema, atom, query, inputs, binding, Some(variable))?;
         counters.cursor_seeks += 1;
         let scan = self.scan_encoded_index_prefix(
             schema,
@@ -429,15 +459,7 @@ impl<'env> ReadTxn<'env> {
             counters.rows_scanned += 1;
             let item = item?;
             if let Some(value) = atom_candidate_from_item(
-                self,
-                schema,
-                query,
-                inputs,
-                atom,
-                variable,
-                binding,
-                &access,
-                &item,
+                self, schema, query, inputs, atom, variable, binding, &access, &item,
             )? {
                 counters.rows_matched += 1;
                 values.insert(value);
@@ -456,7 +478,11 @@ impl<'env> ReadTxn<'env> {
     ) -> Result<bool> {
         let binding = EncodedBinding::new(query.variables.len());
         for atom in atoms {
-            if atom.fields.iter().any(|field| matches!(field.term, TypedTerm::Variable(_))) {
+            if atom
+                .fields
+                .iter()
+                .any(|field| matches!(field.term, TypedTerm::Variable(_)))
+            {
                 continue;
             }
             let access = choose_scan_access(self, schema, atom, query, inputs, &binding, None)?;
@@ -671,9 +697,10 @@ fn choose_scan_access(
             prefix,
             prefix_fields,
         );
-        if best.as_ref().is_none_or(|best| {
-            (candidate.0, candidate.1, candidate.2) > (best.0, best.1, best.2)
-        }) {
+        if best
+            .as_ref()
+            .is_none_or(|best| (candidate.0, candidate.1, candidate.2) > (best.0, best.1, best.2))
+        {
             best = Some(candidate);
         }
     }
@@ -702,7 +729,10 @@ fn range_field_for_atom(
         return None;
     }
     let field_name = &path.leading_fields[0];
-    let field = atom.fields.iter().find(|field| &field.field == field_name)?;
+    let field = atom
+        .fields
+        .iter()
+        .find(|field| &field.field == field_name)?;
     let TypedTerm::Variable(variable) = field.term else {
         return None;
     };
@@ -786,7 +816,9 @@ fn atom_candidate_from_item(
                 }
             }
             TypedTerm::Input(_) | TypedTerm::Literal(_) => {
-                let Some(expected) = term_bound_bytes(txn, schema, atom, field, query, inputs, binding)? else {
+                let Some(expected) =
+                    term_bound_bytes(txn, schema, atom, field, query, inputs, binding)?
+                else {
                     return Ok(None);
                 };
                 if expected.as_slice() != bytes {
@@ -821,7 +853,9 @@ fn atom_matches_item(
                 }
             }
             TypedTerm::Input(_) | TypedTerm::Literal(_) => {
-                let Some(expected) = term_bound_bytes(txn, schema, atom, field, query, inputs, binding)? else {
+                let Some(expected) =
+                    term_bound_bytes(txn, schema, atom, field, query, inputs, binding)?
+                else {
                     return Ok(false);
                 };
                 if expected.as_slice() != bytes {
@@ -844,7 +878,7 @@ fn component_bytes<'a>(
         .iter()
         .position(|component| component.field_name == field_name)
         .ok_or_else(|| Error::internal(format!("missing component for field {field_name}")))?;
-    item.component(index)
+    item.component(&access.components, index)
         .ok_or_else(|| Error::corrupt("encoded index item missing component"))
 }
 
@@ -858,7 +892,9 @@ fn term_bound_bytes(
     binding: &EncodedBinding,
 ) -> Result<Option<Vec<u8>>> {
     match &field.term {
-        TypedTerm::Variable(variable) => Ok(binding.get(*variable).map(|value| value.bytes.clone())),
+        TypedTerm::Variable(variable) => {
+            Ok(binding.get(*variable).map(|value| value.bytes.clone()))
+        }
         TypedTerm::Input(input) => {
             let value = input_value(query, inputs, *input)?;
             let normalized = normalize_value_for_type(value, &field.value_type);
@@ -924,13 +960,42 @@ fn comparisons_ready_pass(
     counters: &mut PlanCounters,
 ) -> Result<bool> {
     for comparison in comparisons {
-        let Some(left) = operand_logical_value(txn, &comparison.left, query, inputs, binding, counters)? else {
+        let Some(left_encoded) =
+            operand_encoded_value(txn, &comparison.left, comparison, query, inputs, binding)?
+        else {
             continue;
         };
-        let Some(right) = operand_logical_value(txn, &comparison.right, query, inputs, binding, counters)? else {
+        let Some(right_encoded) =
+            operand_encoded_value(txn, &comparison.right, comparison, query, inputs, binding)?
+        else {
+            continue;
+        };
+        if encoded_comparison_supported(comparison.operator, &comparison.value_type) {
+            counters.comparisons_evaluated += 1;
+            counters.encoded_comparisons_evaluated += 1;
+            if !compare_encoded_values(
+                &left_encoded.bytes,
+                comparison.operator,
+                &right_encoded.bytes,
+            ) {
+                counters.comparisons_failed += 1;
+                return Ok(false);
+            }
+            continue;
+        }
+
+        let Some(left) =
+            operand_logical_value(txn, &comparison.left, query, inputs, binding, counters)?
+        else {
+            continue;
+        };
+        let Some(right) =
+            operand_logical_value(txn, &comparison.right, query, inputs, binding, counters)?
+        else {
             continue;
         };
         counters.comparisons_evaluated += 1;
+        counters.decoded_comparisons_evaluated += 1;
         let left = normalize_value_for_type(&left, &comparison.value_type);
         let right = normalize_value_for_type(&right, &comparison.value_type);
         if !compare_values(&left, comparison.operator, &right) {
@@ -939,6 +1004,59 @@ fn comparisons_ready_pass(
         }
     }
     Ok(true)
+}
+
+fn operand_encoded_value(
+    txn: &ReadTxn<'_>,
+    operand: &TypedOperand,
+    comparison: &TypedComparison,
+    query: &TypedQuery,
+    inputs: &InputBindings,
+    binding: &EncodedBinding,
+) -> Result<Option<EncodedValue>> {
+    Ok(match operand {
+        TypedOperand::Variable(variable) => binding.get(*variable).map(|value| EncodedValue {
+            value_type: comparison.value_type.clone(),
+            bytes: value.bytes.clone(),
+        }),
+        TypedOperand::Input(input) => {
+            let value = input_value(query, inputs, *input)?;
+            let normalized = normalize_value_for_type(value, &comparison.value_type);
+            Some(EncodedValue::new(
+                comparison.value_type.clone(),
+                txn.encode_query_value(&comparison.value_type, &normalized)?,
+            ))
+        }
+        TypedOperand::Literal(literal) => {
+            let value = literal_to_value(literal)?;
+            let normalized = normalize_value_for_type(&value, &comparison.value_type);
+            Some(EncodedValue::new(
+                comparison.value_type.clone(),
+                txn.encode_query_value(&comparison.value_type, &normalized)?,
+            ))
+        }
+    })
+}
+
+fn encoded_comparison_supported(operator: ComparisonOperator, value_type: &ValueType) -> bool {
+    match operator {
+        ComparisonOperator::Eq | ComparisonOperator::NotEq => true,
+        ComparisonOperator::Lt
+        | ComparisonOperator::Lte
+        | ComparisonOperator::Gt
+        | ComparisonOperator::Gte => !matches!(value_type, ValueType::String | ValueType::Bytes),
+    }
+}
+
+fn compare_encoded_values(left: &[u8], operator: ComparisonOperator, right: &[u8]) -> bool {
+    match operator {
+        ComparisonOperator::Eq => left == right,
+        ComparisonOperator::NotEq => left != right,
+        ComparisonOperator::Lt => left < right,
+        ComparisonOperator::Lte => left <= right,
+        ComparisonOperator::Gt => left > right,
+        ComparisonOperator::Gte => left >= right,
+    }
 }
 
 fn compare_values(left: &Value, operator: ComparisonOperator, right: &Value) -> bool {
@@ -964,13 +1082,20 @@ fn operand_logical_value(
         TypedOperand::Variable(variable) => binding
             .get(*variable)
             .map(|value| {
-                counters.decoded_values += 1;
+                record_decode(&query.variables[*variable].value_type, counters);
                 txn.decode_query_value(&query.variables[*variable].value_type, &value.bytes)
             })
             .transpose()?,
         TypedOperand::Input(input) => Some(input_value(query, inputs, *input)?.clone()),
         TypedOperand::Literal(literal) => Some(literal_to_value(literal)?),
     })
+}
+
+fn record_decode(value_type: &ValueType, counters: &mut PlanCounters) {
+    counters.decoded_values += 1;
+    if matches!(value_type, ValueType::String | ValueType::Bytes) {
+        counters.dictionary_reverse_lookups += 1;
+    }
 }
 
 fn input_value<'a>(
@@ -1085,11 +1210,17 @@ fn project_results(
                 let TypedFindTerm::Variable { variable } = term else {
                     continue;
                 };
-                row.push(decode_bound_variable(txn, query, binding, *variable, counters)?);
+                row.push(bound_encoded_variable(binding, *variable)?.clone());
             }
             set.insert(row);
         }
-        Ok(set.into_iter().collect())
+        set.into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .map(|value| decode_output_value(txn, value, counters))
+                    .collect::<Result<Vec<_>>>()
+            })
+            .collect()
     }
 }
 
@@ -1122,11 +1253,11 @@ fn project_aggregates(
         })
         .collect::<Vec<_>>();
 
-    let mut groups: BTreeMap<Vec<Value>, Vec<AggregateState>> = BTreeMap::new();
+    let mut groups: BTreeMap<Vec<EncodedValue>, Vec<AggregateState>> = BTreeMap::new();
     for binding in bindings {
         let key = group_terms
             .iter()
-            .map(|variable| decode_bound_variable(txn, query, binding, *variable, counters))
+            .map(|variable| bound_encoded_variable(binding, *variable).cloned())
             .collect::<Result<Vec<_>>>()?;
         let states = groups.entry(key).or_insert_with(|| {
             aggregate_terms
@@ -1134,9 +1265,13 @@ fn project_aggregates(
                 .map(|(function, _, value_type)| AggregateState::new(*function, value_type.clone()))
                 .collect()
         });
-        for (state, (_, variable, _)) in states.iter_mut().zip(&aggregate_terms) {
-            let value = decode_bound_variable(txn, query, binding, *variable, counters)?;
-            state.apply(&value)?;
+        for (state, (function, variable, _)) in states.iter_mut().zip(&aggregate_terms) {
+            if *function == AggregateFunction::Count {
+                state.apply_count()?;
+            } else {
+                let value = decode_bound_variable(txn, query, binding, *variable, counters)?;
+                state.apply(&value)?;
+            }
         }
     }
 
@@ -1147,14 +1282,29 @@ fn project_aggregates(
         let mut state_iter = states.into_iter();
         for term in &query.find {
             match term {
-                TypedFindTerm::Variable { .. } => row.push(key_iter.next().unwrap()),
-                TypedFindTerm::Aggregate { .. } => row.push(state_iter.next().unwrap().finish()?),
+                TypedFindTerm::Variable { .. } => {
+                    row.push(decode_output_value(
+                        txn,
+                        key_iter.next().unwrap(),
+                        counters,
+                    )?);
+                }
+                TypedFindTerm::Aggregate { .. } => {
+                    counters.materialized_output_values += 1;
+                    row.push(state_iter.next().unwrap().finish()?);
+                }
             }
         }
         rows.push(row);
     }
     rows.sort();
     Ok(rows)
+}
+
+fn bound_encoded_variable(binding: &EncodedBinding, variable: usize) -> Result<&EncodedValue> {
+    binding
+        .get(variable)
+        .ok_or_else(|| Error::internal(format!("variable {variable} is unbound at projection")))
 }
 
 fn decode_bound_variable(
@@ -1164,11 +1314,19 @@ fn decode_bound_variable(
     variable: usize,
     counters: &mut PlanCounters,
 ) -> Result<Value> {
-    let value = binding
-        .get(variable)
-        .ok_or_else(|| Error::internal(format!("variable {variable} is unbound at projection")))?;
-    counters.decoded_values += 1;
+    let value = bound_encoded_variable(binding, variable)?;
+    record_decode(&query.variables[variable].value_type, counters);
     txn.decode_query_value(&query.variables[variable].value_type, &value.bytes)
+}
+
+fn decode_output_value(
+    txn: &ReadTxn<'_>,
+    value: EncodedValue,
+    counters: &mut PlanCounters,
+) -> Result<Value> {
+    counters.materialized_output_values += 1;
+    record_decode(&value.value_type, counters);
+    txn.decode_query_value(&value.value_type, &value.bytes)
 }
 
 #[derive(Clone, Debug)]
@@ -1194,13 +1352,19 @@ impl AggregateState {
         }
     }
 
+    fn apply_count(&mut self) -> Result<()> {
+        let AggregateState::Count(count) = self else {
+            return Err(Error::internal("count aggregate state mismatch"));
+        };
+        *count = count
+            .checked_add(1)
+            .ok_or_else(|| Error::integer_overflow("count"))?;
+        Ok(())
+    }
+
     fn apply(&mut self, value: &Value) -> Result<()> {
         match self {
-            AggregateState::Count(count) => {
-                *count = count
-                    .checked_add(1)
-                    .ok_or_else(|| Error::integer_overflow("count"))?;
-            }
+            AggregateState::Count(_) => self.apply_count()?,
             AggregateState::SumU64(sum) => {
                 let Value::U64(value) = value else {
                     return Err(Error::aggregate_type_mismatch("sum", value.kind_name()));
@@ -1521,6 +1685,9 @@ mod tests {
         assert!(explain.contains("cursor_seeks"));
         assert!(explain.contains("rows_scanned"));
         assert!(explain.contains("bindings_yielded"));
+        assert!(explain.contains("decoded_values"));
+        assert!(explain.contains("encoded_comparisons_evaluated"));
+        assert!(explain.contains("materialized_output_values"));
         assert!(explain.contains("output_rows"));
 
         let diagnostics = env.storage_diagnostics(&schema).unwrap();
@@ -1927,10 +2094,12 @@ mod tests {
         counters: &mut PlanCounters,
     ) -> Result<bool> {
         for comparison in comparisons {
-            let Some(left) = reference_operand_value(&comparison.left, query, inputs, binding)? else {
+            let Some(left) = reference_operand_value(&comparison.left, query, inputs, binding)?
+            else {
                 continue;
             };
-            let Some(right) = reference_operand_value(&comparison.right, query, inputs, binding)? else {
+            let Some(right) = reference_operand_value(&comparison.right, query, inputs, binding)?
+            else {
                 continue;
             };
             counters.comparisons_evaluated += 1;

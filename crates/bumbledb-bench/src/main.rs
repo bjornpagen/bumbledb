@@ -270,6 +270,13 @@ fn print_explain(explain: &str) {
         if line.contains("relation=")
             || line.contains("rows_scanned")
             || line.contains("cursor_seeks")
+            || line.contains("trie_intersections")
+            || line.contains("variable_candidates")
+            || line.contains("decoded_values")
+            || line.contains("dictionary_reverse_lookups")
+            || line.contains("encoded_comparisons_evaluated")
+            || line.contains("decoded_comparisons_evaluated")
+            || line.contains("materialized_output_values")
             || line.contains("output_rows")
         {
             println!("  {line}");
