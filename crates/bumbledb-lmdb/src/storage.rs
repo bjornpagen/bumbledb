@@ -31,6 +31,17 @@ pub struct StorageSchema {
     layouts: Vec<CurrentIndexLayout>,
 }
 
+/// Bulk ETL load report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BulkLoadReport {
+    /// Number of logical rows inserted.
+    pub rows_inserted: usize,
+    /// Storage transaction ID after the bulk load committed.
+    pub storage_tx_id: u64,
+    /// Number of interned dictionary values after the load committed.
+    pub dictionary_entries: usize,
+}
+
 impl StorageSchema {
     /// Builds storage metadata and validates generated index key lengths.
     pub fn new(descriptor: SchemaDescriptor, max_key_size: usize) -> Result<Self> {
@@ -405,6 +416,27 @@ impl WriteTxn<'_> {
         let next = read_u64_meta(self, &key)?.unwrap_or(1);
         write_u64_meta(self, &key, next + 1)?;
         Ok(next)
+    }
+
+    /// Bulk-loads rows in deterministic schema relation order.
+    ///
+    /// This is one write transaction: any constraint failure aborts all current
+    /// rows, indexes, stats, history, counters, and dictionary inserts made by
+    /// the attempted load.
+    pub fn bulk_load(
+        &mut self,
+        schema: &StorageSchema,
+        rows: impl IntoIterator<Item = Row>,
+    ) -> Result<usize> {
+        let mut rows = rows.into_iter().collect::<Vec<_>>();
+        rows.sort_by_key(|row| relation_sort_key(schema, row.relation()));
+
+        let mut inserted = 0;
+        for row in rows {
+            self.insert(schema, row)?;
+            inserted += 1;
+        }
+        Ok(inserted)
     }
 
     /// Inserts a primary-keyed relation row.
@@ -844,6 +876,15 @@ impl WriteTxn<'_> {
     fn lookup_intern_value(&self, kind: u8, raw: &[u8]) -> Result<Option<u64>> {
         lookup_intern_value(&self.dbs.dict, &self.txn, kind, raw)
     }
+}
+
+fn relation_sort_key(schema: &StorageSchema, relation_name: &str) -> usize {
+    schema
+        .descriptor
+        .relations
+        .iter()
+        .position(|relation| relation.name == relation_name)
+        .unwrap_or(usize::MAX)
 }
 
 impl<'env> ReadTxn<'env> {

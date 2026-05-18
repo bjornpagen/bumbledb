@@ -11,12 +11,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use heed::types::Bytes;
-use heed::{Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
+use heed::{CompactionOption, Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
 pub use query::{InputBindings, PlanCounters, PlannedAtom, QueryOutput, QueryPlan, ResultColumn};
 pub use storage::{
-    AccessPathDescriptor, EncodedComponent, FieldValues, IndexScan, KeyValues, Row, ScanItem,
-    StorageSchema, Value,
+    AccessPathDescriptor, BulkLoadReport, EncodedComponent, FieldValues, IndexScan, KeyValues, Row,
+    ScanItem, StorageSchema, Value,
 };
 
 /// Current on-disk storage format version.
@@ -32,6 +32,7 @@ const DICT_DB: &str = "_dict";
 
 const DATA_FILE: &str = "data.mdb";
 const STORAGE_FORMAT_VERSION_KEY: &[u8] = b"storage_format_version";
+const SCHEMA_FINGERPRINT_KEY: &[u8] = b"schema_fingerprint";
 
 type RawDatabase = Database<Bytes, Bytes>;
 
@@ -56,6 +57,14 @@ pub enum Error {
     /// Existing database is missing required storage metadata.
     #[error("storage format version metadata is missing")]
     MissingStorageFormatVersion,
+
+    /// Existing database was opened with a different compiled schema.
+    #[error("schema fingerprint mismatch: expected {expected}, found {found}")]
+    SchemaMismatch { expected: String, found: String },
+
+    /// Bulk ETL creation was asked to target an existing database.
+    #[error("bulk load target already contains a database: {path}")]
+    BulkLoadTargetExists { path: String },
 
     /// Storage metadata is malformed.
     #[error("storage metadata is corrupt: {0}")]
@@ -244,6 +253,38 @@ impl Environment {
         })
     }
 
+    /// Opens or creates a database and verifies the schema fingerprint.
+    ///
+    /// If the database has no stored schema fingerprint yet, this writes one. If a
+    /// different fingerprint is already stored, open fails without modifying data.
+    pub fn open_with_schema(path: impl AsRef<Path>, schema: &StorageSchema) -> Result<Self> {
+        let env = Self::open(path)?;
+        env.verify_schema(schema)?;
+        Ok(env)
+    }
+
+    /// Creates a new database and bulk-loads rows as the ETL migration path.
+    ///
+    /// This refuses to target a path that already contains `data.mdb`; migrations
+    /// are explicit ETL into a new database, never in-place upgrades.
+    pub fn bulk_load_new(
+        path: impl AsRef<Path>,
+        schema: &StorageSchema,
+        rows: impl IntoIterator<Item = Row>,
+    ) -> Result<(Self, BulkLoadReport)> {
+        let path = path.as_ref();
+        let data_path = path.join(DATA_FILE);
+        if data_path.exists() {
+            return Err(Error::BulkLoadTargetExists {
+                path: data_path.display().to_string(),
+            });
+        }
+
+        let env = Self::open_with_schema(path, schema)?;
+        let report = env.bulk_load(schema, rows)?;
+        Ok((env, report))
+    }
+
     /// Returns the configured maximum LMDB key size.
     pub fn max_key_size(&self) -> usize {
         self.env.max_key_size()
@@ -262,6 +303,51 @@ impl Environment {
     /// Reads the storage format version from metadata.
     pub fn storage_format_version(&self) -> Result<u32> {
         self.read(|txn| txn.storage_format_version())
+    }
+
+    /// Verifies or initializes this database's schema fingerprint.
+    pub fn verify_schema(&self, schema: &StorageSchema) -> Result<()> {
+        let expected = schema.descriptor().fingerprint().0;
+        self.write(
+            |txn| match txn.dbs.meta.get(&txn.txn, SCHEMA_FINGERPRINT_KEY)? {
+                Some(found) if found == expected.as_slice() => Ok(()),
+                Some(found) => Err(Error::SchemaMismatch {
+                    expected: hex(&expected),
+                    found: hex(found),
+                }),
+                None => Ok(txn.dbs.meta.put(
+                    &mut txn.txn,
+                    SCHEMA_FINGERPRINT_KEY,
+                    expected.as_slice(),
+                )?),
+            },
+        )
+    }
+
+    /// Bulk-loads rows in one write transaction and returns ETL diagnostics.
+    pub fn bulk_load(
+        &self,
+        schema: &StorageSchema,
+        rows: impl IntoIterator<Item = Row>,
+    ) -> Result<BulkLoadReport> {
+        let rows_inserted = self.write(|txn| txn.bulk_load(schema, rows))?;
+        self.read(|txn| {
+            Ok(BulkLoadReport {
+                rows_inserted,
+                storage_tx_id: txn.last_committed_tx_id()?,
+                dictionary_entries: txn.dictionary_entry_count()?,
+            })
+        })
+    }
+
+    /// Copies this database into `target_dir` using LMDB's copy API.
+    pub fn backup_to_path(&self, target_dir: impl AsRef<Path>) -> Result<()> {
+        self.copy_to_database_dir(target_dir.as_ref(), CompactionOption::Disabled)
+    }
+
+    /// Copies this database into `target_dir` with LMDB compaction enabled.
+    pub fn compact_copy_to_path(&self, target_dir: impl AsRef<Path>) -> Result<()> {
+        self.copy_to_database_dir(target_dir.as_ref(), CompactionOption::Enabled)
     }
 
     /// Returns storage and LMDB diagnostics without exposing raw LMDB handles.
@@ -371,6 +457,22 @@ impl Environment {
         txn.commit()?;
         Ok(dbs)
     }
+
+    fn copy_to_database_dir(&self, target_dir: &Path, compaction: CompactionOption) -> Result<()> {
+        fs::create_dir_all(target_dir)?;
+        self.env
+            .copy_to_path(target_dir.join(DATA_FILE), compaction)?;
+        Ok(())
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
 }
 
 /// Opaque read transaction wrapper.
@@ -427,6 +529,9 @@ fn write_u32(db: &RawDatabase, txn: &mut RwTxn, key: &[u8], value: u32) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::benchmark::{benchmark_queries, benchmark_rows, benchmark_schema};
+    use bumbledb_core::datalog::parse_and_typecheck;
+    use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, RelationKind, ValueType};
 
     const MARKER_KEY: &[u8] = b"test_marker";
 
@@ -512,5 +617,191 @@ mod tests {
 
         let marker = env.read(|txn| txn.get_meta_bytes(MARKER_KEY)).unwrap();
         assert_eq!(marker.as_deref(), Some(&b"after"[..]));
+    }
+
+    #[test]
+    fn bulk_load_new_matches_row_by_row_results() {
+        let rows = benchmark_rows(5);
+        let schema = StorageSchema::new(benchmark_schema(), 511).unwrap();
+
+        let row_dir = tempfile::tempdir().unwrap();
+        let row_env = Environment::open_with_schema(row_dir.path(), &schema).unwrap();
+        row_env
+            .write(|txn| {
+                for row in &rows {
+                    txn.insert(&schema, row.clone())?;
+                }
+                Ok::<(), Error>(())
+            })
+            .unwrap();
+
+        let bulk_dir = tempfile::tempdir().unwrap();
+        let (bulk_env, report) =
+            Environment::bulk_load_new(bulk_dir.path(), &schema, rows).unwrap();
+        assert_eq!(report.rows_inserted, benchmark_rows(5).len());
+        assert!(report.dictionary_entries > 0);
+
+        let query =
+            parse_and_typecheck(schema.descriptor(), benchmark_queries()[0].datalog).unwrap();
+        let inputs = InputBindings::from_values([
+            ("holder", Value::Ref(1)),
+            (
+                "start",
+                Value::Timestamp(bumbledb_core::encoding::TimestampMicros(0)),
+            ),
+            (
+                "end",
+                Value::Timestamp(bumbledb_core::encoding::TimestampMicros(1000)),
+            ),
+        ]);
+        let row_result = row_env
+            .read(|txn| txn.execute_query(&schema, &query, &inputs))
+            .unwrap()
+            .rows;
+        let bulk_result = bulk_env
+            .read(|txn| txn.execute_query(&schema, &query, &inputs))
+            .unwrap()
+            .rows;
+        assert_eq!(sorted_rows(row_result), sorted_rows(bulk_result));
+    }
+
+    #[test]
+    fn bulk_load_failure_is_atomic() {
+        let schema = StorageSchema::new(benchmark_schema(), 511).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let env = Environment::open_with_schema(dir.path(), &schema).unwrap();
+        let mut rows = benchmark_rows(2);
+        rows.push(rows[0].clone());
+
+        let result = env.bulk_load(&schema, rows);
+        assert!(matches!(result, Err(Error::DuplicateTuple { .. })));
+
+        let diagnostics = env.storage_diagnostics(&schema).unwrap();
+        assert_eq!(diagnostics.storage_tx_id, 0);
+        assert_eq!(diagnostics.dictionary_entries, 0);
+        assert!(
+            diagnostics
+                .relations
+                .iter()
+                .all(|relation| relation.row_count == 0)
+        );
+    }
+
+    #[test]
+    fn schema_mismatch_fails_without_destroying_data() {
+        let schema = StorageSchema::new(benchmark_schema(), 511).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let env = Environment::open_with_schema(dir.path(), &schema).unwrap();
+        env.bulk_load(&schema, benchmark_rows(2)).unwrap();
+        drop(env);
+
+        let changed = StorageSchema::new(changed_schema(), 511).unwrap();
+        let mismatch = match Environment::open_with_schema(dir.path(), &changed) {
+            Ok(_) => panic!("schema mismatch unexpectedly opened"),
+            Err(error) => error,
+        };
+        assert!(matches!(mismatch, Error::SchemaMismatch { .. }));
+
+        let env = Environment::open_with_schema(dir.path(), &schema).unwrap();
+        let diagnostics = env.storage_diagnostics(&schema).unwrap();
+        assert!(
+            diagnostics
+                .relations
+                .iter()
+                .any(|relation| relation.relation == "Posting" && relation.row_count > 0)
+        );
+    }
+
+    #[test]
+    fn backup_and_compact_copy_create_usable_databases() {
+        let schema = StorageSchema::new(benchmark_schema(), 511).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let env = Environment::open_with_schema(dir.path(), &schema).unwrap();
+        env.bulk_load(&schema, benchmark_rows(4)).unwrap();
+
+        let failed = env.bulk_load(&schema, vec![benchmark_rows(1)[0].clone()]);
+        assert!(failed.is_err());
+
+        let backup_dir = tempfile::tempdir().unwrap();
+        env.backup_to_path(backup_dir.path()).unwrap();
+        let backup = Environment::open_with_schema(backup_dir.path(), &schema).unwrap();
+
+        let compact_dir = tempfile::tempdir().unwrap();
+        env.compact_copy_to_path(compact_dir.path()).unwrap();
+        let compact = Environment::open_with_schema(compact_dir.path(), &schema).unwrap();
+
+        let query =
+            parse_and_typecheck(schema.descriptor(), benchmark_queries()[0].datalog).unwrap();
+        let inputs = InputBindings::from_values([
+            ("holder", Value::Ref(1)),
+            (
+                "start",
+                Value::Timestamp(bumbledb_core::encoding::TimestampMicros(0)),
+            ),
+            (
+                "end",
+                Value::Timestamp(bumbledb_core::encoding::TimestampMicros(1000)),
+            ),
+        ]);
+
+        let original = env
+            .read(|txn| txn.execute_query(&schema, &query, &inputs))
+            .unwrap()
+            .rows;
+        let backup_rows = backup
+            .read(|txn| txn.execute_query(&schema, &query, &inputs))
+            .unwrap()
+            .rows;
+        let compact_rows = compact
+            .read(|txn| txn.execute_query(&schema, &query, &inputs))
+            .unwrap()
+            .rows;
+
+        assert_eq!(sorted_rows(original.clone()), sorted_rows(backup_rows));
+        assert_eq!(sorted_rows(original), sorted_rows(compact_rows));
+    }
+
+    #[test]
+    fn bulk_load_target_must_be_new_and_large_fixture_reopens() {
+        let schema = StorageSchema::new(benchmark_schema(), 511).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let (env, report) =
+            Environment::bulk_load_new(dir.path(), &schema, benchmark_rows(12)).unwrap();
+        assert!(report.rows_inserted > 50);
+        assert!(report.dictionary_entries >= 12);
+        drop(env);
+
+        let existing = match Environment::bulk_load_new(dir.path(), &schema, benchmark_rows(1)) {
+            Ok(_) => panic!("bulk load unexpectedly targeted an existing database"),
+            Err(error) => error,
+        };
+        assert!(matches!(existing, Error::BulkLoadTargetExists { .. }));
+
+        let env = Environment::open_with_schema(dir.path(), &schema).unwrap();
+        let diagnostics = env.storage_diagnostics(&schema).unwrap();
+        assert!(diagnostics.lmdb_map_size > 0);
+        assert!(diagnostics.storage_tx_id > 0);
+    }
+
+    fn sorted_rows(mut rows: Vec<Vec<Value>>) -> Vec<Vec<Value>> {
+        rows.sort();
+        rows
+    }
+
+    fn changed_schema() -> bumbledb_core::schema::SchemaDescriptor {
+        let mut schema = benchmark_schema();
+        schema.relations.push(RelationDescriptor::new(
+            "Extra",
+            RelationKind::Entity,
+            vec![FieldDescriptor::new(
+                "id",
+                ValueType::Id {
+                    name: "ExtraId".to_owned(),
+                    relation: "Extra".to_owned(),
+                },
+            )],
+            bumbledb_core::schema::PrimaryKeyDescriptor::new(["id"]),
+        ));
+        schema
     }
 }
