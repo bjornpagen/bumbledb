@@ -34,6 +34,31 @@
 - No deferred feature is implemented accidentally while completing stages 01 through 08.
 - When a deferred feature is promoted, its scope and passing criteria are written before coding begins.
 
+**Stage 09 Audit**
+- Recursive rules remain unimplemented; rule markers are rejected intentionally by the Datalog frontend.
+- Stratified negation remains unimplemented; `not` is rejected intentionally.
+- As-of query execution remains unimplemented; `as_of` is rejected intentionally.
+- Compile-time `datalog!` macros remain unimplemented.
+- Prepared query caching and plan invalidation remain unimplemented.
+- Ordered output and `limit` remain unimplemented; both are rejected intentionally.
+- String lexical range and prefix indexes remain unimplemented.
+- User-defined pure functions remain unimplemented; unknown lower-case function-like clauses are rejected intentionally.
+- Transaction functions remain unimplemented.
+- Check constraints remain unimplemented.
+- Cascading deletes remain unimplemented; restrict delete is the only delete behavior.
+- Explicit long-lived snapshot APIs remain unimplemented; read access remains closure-scoped.
+- Spill-to-LMDB temporary relations remain unimplemented.
+- Unsafe performance modes remain unimplemented; safe LMDB durability remains the only mode.
+
+**Promotion Checklist**
+- Write a design note before implementation.
+- State whether the feature changes query semantics, storage format, public API, or file compatibility.
+- State whether the feature requires a storage format version bump and ETL.
+- Define explicit passing criteria and tests before coding.
+- Verify the feature does not weaken typed schema, BCNF modeling, LMDB-only storage, no migrations, current/history separation, or Datalog-only querying.
+- Update `docs/ROSETTA_STONE.md` if the feature changes a canonical decision.
+- Add the promoted work to a new numbered todo document instead of editing it directly into this holding pen.
+
 **Notes**
 - Recursion and as-of queries are the most strategically important deferred features.
 - Query macros are ergonomic, not foundational.
