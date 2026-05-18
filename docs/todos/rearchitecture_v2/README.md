@@ -4,6 +4,8 @@ This suite replaces the current query execution architecture with a durable-LMDB
 
 This is not an incremental tuning project. It is the roadmap for a full query-system rebuild.
 
+The strict dependency graph, current milestone status, and migration/ETL policy are maintained in `13_dependency_graph_and_migration_plan.md`.
+
 **Primary Direction**
 - Keep LMDB as the durable embedded storage substrate.
 - Build immutable snapshot-local query images for fast execution.
@@ -42,5 +44,6 @@ This is not an incremental tuning project. It is the roadmap for a full query-sy
 - `cargo test --workspace` passes at each merge point.
 - `cargo clippy --workspace --all-targets -- -D warnings` passes.
 - `cargo check --manifest-path fuzz/Cargo.toml` passes.
+- `scripts/check-prd-map.sh` and `scripts/check-cutover.sh` pass at the v2 cutover boundary.
 - Benchmark output clearly separates planning, index-image construction, iterator execution, projection, and aggregation.
 - Scale-10000 generated suite moves materially closer to SQLite, especially on triangle, tag lookup, sailors joins, and TPC-H joins.

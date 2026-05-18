@@ -22,6 +22,46 @@
   -> 11 CutoverAndCodeDeletion
 ```
 
+**Current Completion Snapshot**
+| PRD | Milestone | Status | Acceptance Gate |
+|---|---:|---|---|
+| `00_architecture_and_rca.md` | 0 | Complete | RCA and replacement architecture documented |
+| `01_query_image.md` | 1 | Complete | QueryImage build/cache tests pass |
+| `02_columnar_relation_image.md` | 1 | Complete | Encoded column APIs and row ranges tested |
+| `03_sorted_trie_index.md` | 2 | Complete | Sorted trie iterator/stat tests pass |
+| `04_leapfrog_triejoin_executor.md` | 5 | Complete | Query execution routes through LFTJ over QueryImage/sorted tries |
+| `05_free_join_plan_ir.md` | 4 | Complete | Free Join plan IR validates and explains node/subatom shapes |
+| `06_hash_trie_and_hybrid_nodes.md` | 6 | Complete | Hash trie probe/count/row-retaining primitives tested |
+| `07_factorized_projection_and_aggregation.md` | 7 | Complete | Output sinks avoid full binding storage where valid |
+| `08_optimizer_and_statistics.md` | 8 | Complete | Stats-backed candidate planning and explain traces tested |
+| `09_durable_segments_and_snapshots.md` | 9 | Complete | QueryImage builds from durable visible segment metadata |
+| `10_benchmark_gates_and_testing.md` | 10 | Complete | CI benchmark scripts, markdown parser/output, and counter gates exist |
+| `11_cutover_and_code_deletion.md` | 10 | Complete | `scripts/check-cutover.sh` passes; legacy hot paths removed |
+| `12_query_normalization_and_runtime_specialization.md` | 3 | Complete | Planner/executor consume `NormalizedQuery` plus encoded inputs |
+| `13_dependency_graph_and_migration_plan.md` | 13 | Complete | PRD map, stop conditions, and validation script are present |
+
+**Validation Script**
+- `scripts/check-prd-map.sh` verifies that every PRD file is linked from the suite README and represented in this dependency/status document.
+- This is intentionally lightweight so it can run in CI and as part of local stage-boundary checks.
+
+**Stage Boundary Command Set**
+```sh
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo check --manifest-path fuzz/Cargo.toml
+scripts/check-cutover.sh
+scripts/check-prd-map.sh
+cargo run -p bumbledb-bench --release -- --scale 500 --repeats 3 --format markdown
+```
+
+For formal benchmark gates, use:
+
+```sh
+scripts/bench-quick.sh
+scripts/bench-extreme.sh
+scripts/bench-focused.sh
+```
+
 **Milestone 1: Runtime Image Without Query Cutover**
 - Implement `QueryImage`, `RelationImage`, and encoded columns.
 - Build images from current durable LMDB state.
@@ -47,7 +87,7 @@ impl RuntimeImages {
 
 Passing criteria:
 - QueryImage tests pass.
-- Existing query tests still use the old executor and pass.
+- Existing query tests remain green during image introduction.
 - Image build can be benchmarked independently.
 - Image row counts match storage diagnostics.
 
@@ -82,7 +122,7 @@ Passing criteria:
 Rust target:
 ```rust
 let typed = parse_and_typecheck(schema.descriptor(), source)?;
-let normalized = NormalizedQuery::from_typed(schema, &typed, inputs)?;
+let normalized = normalize_query(txn, schema, &typed)?;
 assert!(normalized.atoms.iter().all(|atom| atom.relation.0 < schema.relation_count()));
 ```
 
@@ -211,6 +251,24 @@ Passing criteria:
 - One query execution architecture remains.
 - Full benchmark suite runs through v2.
 
+**Milestone 11: Dependency Closure**
+- Freeze the dependency graph and actual implementation status after the v2 cutover.
+- Keep this file and `README.md` in sync whenever new rearchitecture PRDs are added.
+- Validate PRD map coverage in CI.
+
+Passing criteria:
+- `scripts/check-prd-map.sh` passes.
+- Every PRD file is linked from `docs/todos/rearchitecture_v2/README.md`.
+- Every PRD file appears in the status table above.
+- Stop conditions and benchmark commands are explicit.
+
+**Migration And ETL Policy**
+- No compatibility layer is required for experimental v2 internal layouts.
+- Schema changes require full ETL into a new database.
+- Storage encoding or segment-layout changes require a storage format bump and full ETL.
+- Existing git history is the comparison path for old internals; old code should not remain in-tree for comparison.
+- `docs/ETL.md` and `docs/ROSETTA_STONE.md` are the normative migration references.
+
 **Global Stop Conditions**
 - If a milestone makes scale-2000 generated benchmarks more than 2x slower without a documented reason, stop and investigate before continuing.
 - If a milestone adds a second production executor path, stop and redesign the stage.
@@ -222,6 +280,7 @@ Passing criteria:
 - Every PRD can be mapped onto the milestone sequence.
 - The migration avoids a permanent dual-path architecture.
 - Each milestone has explicit code-level acceptance gates.
+- `scripts/check-prd-map.sh` passes.
 
 **Non-Goals**
 - Do not treat this document as a substitute for the detailed PRDs.
