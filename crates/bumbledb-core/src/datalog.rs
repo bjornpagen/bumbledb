@@ -612,16 +612,16 @@ impl<'a> Lexer<'a> {
                 }
                 b'\\' => {
                     self.pos += 1;
-                    let Some(escaped) = self.peek() else {
+                    let Some(escaped) = self.source[self.pos..].chars().next() else {
                         break;
                     };
-                    self.pos += 1;
+                    self.pos += escaped.len_utf8();
                     match escaped {
-                        b'"' => out.push('"'),
-                        b'\\' => out.push('\\'),
-                        b'n' => out.push('\n'),
-                        b't' => out.push('\t'),
-                        other => out.push(other as char),
+                        '"' => out.push('"'),
+                        '\\' => out.push('\\'),
+                        'n' => out.push('\n'),
+                        't' => out.push('\t'),
+                        other => out.push(other),
                     }
                 }
                 _ => {
