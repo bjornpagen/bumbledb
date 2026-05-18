@@ -229,6 +229,11 @@ struct BenchmarkRunResult {
     query_image_segment_count: usize,
     query_image_segment_bytes: usize,
     query_image_built_from_segments: bool,
+    query_image_cache_cached_images: usize,
+    query_image_cache_hits: u64,
+    query_image_cache_misses: u64,
+    query_image_cache_builds: u64,
+    query_image_cache_build_micros: u64,
     planner_stats_cached_relations: usize,
     planner_stats_hits: u64,
     planner_stats_misses: u64,
@@ -464,6 +469,11 @@ fn benchmark_result(
         query_image_segment_count: query_image_stats.segment_count,
         query_image_segment_bytes: query_image_stats.segment_bytes,
         query_image_built_from_segments: query_image_stats.built_from_segments,
+        query_image_cache_cached_images: output.plan.query_image_cache.cached_images,
+        query_image_cache_hits: output.plan.query_image_cache.hits,
+        query_image_cache_misses: output.plan.query_image_cache.misses,
+        query_image_cache_builds: output.plan.query_image_cache.builds,
+        query_image_cache_build_micros: output.plan.query_image_cache.build_micros,
         planner_stats_cached_relations: output.plan.planner_stats.cached_relations,
         planner_stats_hits: output.plan.planner_stats.hits,
         planner_stats_misses: output.plan.planner_stats.misses,
@@ -610,12 +620,12 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | rows | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | image build us | image segments | image segment bytes | built from segments | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | iterator ops | hash build | hash probe | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---:|---:|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | rows | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | image build us | image segments | image segment bytes | built from segments | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | iterator ops | hash build | hash probe | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---:|---:|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.rows,
@@ -627,6 +637,11 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.query_image_segment_count,
             result.query_image_segment_bytes,
             result.query_image_built_from_segments,
+            result.query_image_cache_cached_images,
+            result.query_image_cache_hits,
+            result.query_image_cache_misses,
+            result.query_image_cache_builds,
+            result.query_image_cache_build_micros,
             result.planner_stats_cached_relations,
             result.planner_stats_hits,
             result.planner_stats_misses,
@@ -686,6 +701,7 @@ fn print_explain(explain: &str) {
         if line.contains("relation=")
             || line.contains("variable_estimate")
             || line.contains("missing_index")
+            || line.contains("query_image_cache")
             || line.contains("planner_stats")
             || line.contains("chosen_plan")
             || line.contains("candidate_plan")
@@ -1656,6 +1672,11 @@ mod tests {
             query_image_segment_count: 4,
             query_image_segment_bytes: 128,
             query_image_built_from_segments: true,
+            query_image_cache_cached_images: 1,
+            query_image_cache_hits: 1,
+            query_image_cache_misses: 1,
+            query_image_cache_builds: 1,
+            query_image_cache_build_micros: 3,
             planner_stats_cached_relations: 1,
             planner_stats_hits: 2,
             planner_stats_misses: 1,

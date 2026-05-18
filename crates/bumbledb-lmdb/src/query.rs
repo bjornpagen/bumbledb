@@ -16,6 +16,7 @@ use crate::{
     StorageSchema, SubAtom, TrieIter, Value, VarId,
 };
 
+use crate::QueryImageCacheDiagnostics;
 use crate::planner_stats::{
     OptimizerFieldStats, OptimizerIndexStats, OptimizerRelationStats, PlannerStatsCacheDiagnostics,
 };
@@ -234,6 +235,8 @@ pub struct QueryPlan {
     pub missing_indexes: Vec<MissingIndexRecommendation>,
     /// Optimizer candidates and chosen cost key.
     pub optimizer: OptimizerTrace,
+    /// Query image cache diagnostics after acquiring this query image.
+    pub query_image_cache: QueryImageCacheDiagnostics,
     /// Planner statistics cache diagnostics after planning.
     pub planner_stats: PlannerStatsCacheDiagnostics,
     /// Node-level estimated and observed row/candidate counts.
@@ -279,6 +282,14 @@ impl QueryPlan {
             }
         }
         out.push_str("optimizer:\n");
+        out.push_str(&format!(
+            "  query_image_cache cached_images={} hits={} misses={} builds={} build_micros={}\n",
+            self.query_image_cache.cached_images,
+            self.query_image_cache.hits,
+            self.query_image_cache.misses,
+            self.query_image_cache.builds,
+            self.query_image_cache.build_micros
+        ));
         out.push_str(&format!(
             "  planner_stats cached_relations={} hits={} misses={} builds={} build_micros={}\n",
             self.planner_stats.cached_relations,
@@ -745,7 +756,8 @@ impl<'env> ReadTxn<'env> {
         let mut normalized = normalize_query(self, schema, query)?;
         let encoded_inputs = encode_inputs(self, &normalized, inputs)?;
         let image = self.query_images.get_or_build(self, schema)?;
-        let mut plan = plan_query(schema, &mut normalized, image.as_ref())?;
+        let query_image_cache = self.query_images.diagnostics();
+        let mut plan = plan_query(schema, &mut normalized, image.as_ref(), query_image_cache)?;
         tracing::debug!(variable_order = ?plan.summary.variable_order, nodes = plan.summary.free_join.nodes.len(), "free join query planned");
         let mut sink = OutputSink::new(&plan.summary.free_join.output);
         execute_lftj(
@@ -1244,6 +1256,7 @@ fn plan_query(
     schema: &StorageSchema,
     query: &mut NormalizedQuery,
     image: &crate::QueryImage,
+    query_image_cache: QueryImageCacheDiagnostics,
 ) -> Result<ExecutionPlan> {
     let _span = tracing::debug_span!("bumbledb.query.plan").entered();
     let (stats, variable_order_ids, variable_costs) = {
@@ -1306,6 +1319,7 @@ fn plan_query(
             variable_estimates,
             missing_indexes,
             optimizer,
+            query_image_cache,
             planner_stats,
             node_rows,
             free_join,
@@ -3348,6 +3362,89 @@ mod tests {
     }
 
     #[test]
+    fn execute_query_uses_warmed_query_image_cache() {
+        let (env, schema) = seeded_db();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            "find ?account where Account(id: ?account, holder: $holder)",
+        )
+        .unwrap();
+        let inputs = InputBindings::from_values([("holder", Value::Ref(1))]);
+
+        let _warm = env.query_image(&schema).unwrap();
+        let before = env.query_image_cache_diagnostics();
+        let output = env
+            .read(|txn| txn.execute_query(&schema, &query, &inputs))
+            .unwrap();
+        let after = env.query_image_cache_diagnostics();
+
+        assert_eq!(before.builds, 1);
+        assert_eq!(after.builds, 1);
+        assert_eq!(output.plan.query_image_cache.builds, 1);
+        assert!(output.plan.query_image_cache.hits > before.hits);
+        assert_eq!(output.rows, vec![vec![Value::Id(1)], vec![Value::Id(2)]]);
+    }
+
+    #[test]
+    fn execute_query_cache_misses_after_write_commit() {
+        let (env, schema) = seeded_db();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            "find ?account where Account(id: ?account, holder: ?holder)",
+        )
+        .unwrap();
+
+        let before = env
+            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
+            .unwrap();
+        env.write(|txn| {
+            txn.insert(&schema, account_row(4, 2, 978))?;
+            Ok::<_, Error>(())
+        })
+        .unwrap();
+        let after = env
+            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
+            .unwrap();
+
+        assert_eq!(before.plan.query_image_cache.builds, 1);
+        assert_eq!(after.plan.query_image_cache.builds, 2);
+        assert_eq!(after.rows.len(), before.rows.len() + 1);
+    }
+
+    #[test]
+    fn execute_query_cache_is_schema_fingerprint_scoped() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Environment::open(dir.path()).unwrap();
+        let schema_a = StorageSchema::new(optimizer_schema(), env.max_key_size()).unwrap();
+        let schema_b = StorageSchema::new(triangle_schema(), env.max_key_size()).unwrap();
+        let item_query = parse_and_typecheck(
+            schema_a.descriptor(),
+            "find ?item where Item(id: ?item, kind: $kind)",
+        )
+        .unwrap();
+        let edge_query =
+            parse_and_typecheck(schema_b.descriptor(), "find ?a where EdgeAB(a: ?a, b: ?b)")
+                .unwrap();
+
+        let item = env
+            .read(|txn| {
+                txn.execute_query(
+                    &schema_a,
+                    &item_query,
+                    &InputBindings::from_values([("kind", Value::Symbol(1))]),
+                )
+            })
+            .unwrap();
+        let edge = env
+            .read(|txn| txn.execute_query(&schema_b, &edge_query, &InputBindings::new()))
+            .unwrap();
+
+        assert_eq!(item.plan.query_image_cache.builds, 1);
+        assert_eq!(edge.plan.query_image_cache.builds, 2);
+        assert_eq!(edge.plan.query_image_cache.cached_images, 2);
+    }
+
+    #[test]
     fn planner_stats_reuse_shared_relations_across_queries() {
         let (env, schema) = seeded_db();
         let first_query = parse_and_typecheck(
@@ -3485,7 +3582,12 @@ mod tests {
             .read(|txn| {
                 let mut normalized = normalize_query(txn, &schema, &query)?;
                 let image = QueryImageBuilder::new(txn, &schema).build()?;
-                let plan = plan_query(&schema, &mut normalized, &image)?;
+                let plan = plan_query(
+                    &schema,
+                    &mut normalized,
+                    &image,
+                    QueryImageCacheDiagnostics::default(),
+                )?;
                 let t_depth = plan
                     .summary
                     .variable_order

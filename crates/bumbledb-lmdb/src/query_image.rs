@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -537,6 +538,25 @@ fn exact_array<const N: usize>(bytes: &[u8]) -> Result<[u8; N]> {
 #[derive(Default)]
 pub struct QueryImageCache {
     images: RwLock<BTreeMap<QueryImageKey, Arc<QueryImage>>>,
+    hits: AtomicU64,
+    misses: AtomicU64,
+    builds: AtomicU64,
+    build_micros: AtomicU64,
+}
+
+/// Query image cache diagnostics.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct QueryImageCacheDiagnostics {
+    /// Number of cached image entries.
+    pub cached_images: usize,
+    /// Cache hits.
+    pub hits: u64,
+    /// Cache misses.
+    pub misses: u64,
+    /// Images built and inserted.
+    pub builds: u64,
+    /// Total image build time in microseconds.
+    pub build_micros: u64,
 }
 
 impl QueryImageCache {
@@ -557,14 +577,36 @@ impl QueryImageCache {
             .get(&key)
             .cloned()
         {
+            self.hits.fetch_add(1, Ordering::Relaxed);
             return Ok(image);
         }
+        self.misses.fetch_add(1, Ordering::Relaxed);
+        let start = Instant::now();
         let image = Arc::new(QueryImageBuilder::new(txn, schema).build()?);
-        self.images
+        let elapsed = start.elapsed().as_micros() as u64;
+        let mut images = self
+            .images
             .write()
-            .map_err(|_| Error::internal("query image cache write lock poisoned"))?
-            .insert(key, image.clone());
+            .map_err(|_| Error::internal("query image cache write lock poisoned"))?;
+        if let Some(existing) = images.get(&key).cloned() {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+            return Ok(existing);
+        }
+        images.insert(key, image.clone());
+        self.builds.fetch_add(1, Ordering::Relaxed);
+        self.build_micros.fetch_add(elapsed, Ordering::Relaxed);
         Ok(image)
+    }
+
+    /// Returns current query image cache diagnostics.
+    pub fn diagnostics(&self) -> QueryImageCacheDiagnostics {
+        QueryImageCacheDiagnostics {
+            cached_images: self.images.read().map_or(0, |images| images.len()),
+            hits: self.hits.load(Ordering::Relaxed),
+            misses: self.misses.load(Ordering::Relaxed),
+            builds: self.builds.load(Ordering::Relaxed),
+            build_micros: self.build_micros.load(Ordering::Relaxed),
+        }
     }
 }
 

@@ -40,8 +40,8 @@ pub use query::{
 };
 pub use query_image::{
     ColumnImage, EncodedRef, FieldId, FieldImage, FixedColumn, QueryImage, QueryImageCache,
-    QueryImageKey, QueryImageStats, RelationId, RelationImage, RelationStats, RowId, RowRange,
-    RowSetRef,
+    QueryImageCacheDiagnostics, QueryImageKey, QueryImageStats, RelationId, RelationImage,
+    RelationStats, RowId, RowRange, RowSetRef,
 };
 pub use sorted_trie::{
     EncodedOwned, IndexSpec, LinearIter, SortedTrieIndex, SortedTrieIter, TrieFrame, TrieIter,
@@ -313,6 +313,11 @@ impl Environment {
     /// Returns the immutable query image for the latest committed snapshot.
     pub fn query_image(&self, schema: &StorageSchema) -> Result<Arc<QueryImage>> {
         self.read(|txn| self.query_images.get_or_build(txn, schema))
+    }
+
+    /// Returns current query image cache diagnostics.
+    pub fn query_image_cache_diagnostics(&self) -> QueryImageCacheDiagnostics {
+        self.query_images.diagnostics()
     }
 
     /// Runs a closure inside a read-only transaction.
