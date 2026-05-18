@@ -1,0 +1,12 @@
+[package]
+name = "bumbledb-bench"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bumbledb-core.workspace = true
+bumbledb-lmdb.workspace = true
+csv.workspace = true
+rusqlite.workspace = true
+tempfile.workspace = true

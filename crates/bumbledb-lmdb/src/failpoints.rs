@@ -44,11 +44,13 @@ impl Failpoint {
 static ACTIVE: OnceLock<Mutex<Option<Failpoint>>> = OnceLock::new();
 
 /// Sets the active failpoint.
+#[allow(dead_code)]
 pub fn set(failpoint: Failpoint) {
     *active().lock().unwrap() = Some(failpoint);
 }
 
 /// Clears all failpoints.
+#[allow(dead_code)]
 pub fn clear() {
     *active().lock().unwrap() = None;
 }
