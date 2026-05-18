@@ -184,11 +184,7 @@ impl HashTrieIndex {
     }
 
     /// Visits row IDs under any prefix depth for row-retaining tries.
-    pub fn for_each_row(
-        &self,
-        prefix: &[EncodedRef<'_>],
-        mut visit: impl FnMut(RowId) -> bool,
-    ) {
+    pub fn for_each_row(&self, prefix: &[EncodedRef<'_>], mut visit: impl FnMut(RowId) -> bool) {
         let Some(node) = find_node(&self.root, prefix) else {
             return;
         };

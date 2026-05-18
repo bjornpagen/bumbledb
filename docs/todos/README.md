@@ -69,6 +69,20 @@ The rearchitecture suite is the successor to the get-fast experiment. It treats 
 
 This kill list is derived from scale-10000 trace evidence after the v2 cutover. It is ordered by observed time impact and is the next performance execution plan.
 
+**Observability, Lints, And Allocation Hardening**
+- `observability_lints_allocation_hardening/README.md`
+- `observability_lints_allocation_hardening/00_baseline_inventory_and_guardrails.md`
+- `observability_lints_allocation_hardening/00_baseline_results.md`
+- `observability_lints_allocation_hardening/01_workspace_lints_and_clippy_policy.md`
+- `observability_lints_allocation_hardening/02_panic_unwrap_and_smell_cleanup.md`
+- `observability_lints_allocation_hardening/03_query_observability_data_model.md`
+- `observability_lints_allocation_hardening/04_tracing_and_profiling_ux.md`
+- `observability_lints_allocation_hardening/05_allocation_recording_and_heap_observability.md`
+- `observability_lints_allocation_hardening/06_stack_gat_and_hot_path_allocation_cleanup.md`
+- `observability_lints_allocation_hardening/07_verification_and_handoff.md`
+
+This interstitial suite runs after `performance_kill_list/04_real_hash_probe_runtime.md` and before `performance_kill_list/05_direct_selective_query_kernels.md`. It hardens compiler/linter policy, panic cleanup, phase timing, profiling UX, allocation recording, and first-pass stack/GAT allocation cleanup so the next performance PRDs are trace-backed and heap-observable.
+
 **Completion Philosophy**
 - Each stage should leave the project in a coherent state.
 - Tests should pass at every stage boundary.
