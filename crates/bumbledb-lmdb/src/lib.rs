@@ -10,10 +10,12 @@ pub mod failpoints;
 #[cfg(not(feature = "test-failpoints"))]
 mod failpoints;
 mod query;
+mod query_image;
 mod storage;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use heed::types::Bytes;
 use heed::{CompactionOption, Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
@@ -22,6 +24,10 @@ pub use error::*;
 pub use query::{
     InputBindings, MissingIndexRecommendation, PlanCounters, PlannedAtom, QueryOutput, QueryPlan,
     ResultColumn, VariableEstimate,
+};
+pub use query_image::{
+    ColumnImage, FieldId, FieldImage, QueryImage, QueryImageCache, QueryImageKey, QueryImageStats,
+    RelationId, RelationImage, RowId,
 };
 pub use storage::{
     AccessPathDescriptor, BulkLoadReport, EncodedComponent, FieldValues, IndexScan, KeyValues, Row,
@@ -59,6 +65,7 @@ struct Databases {
 pub struct Environment {
     env: Env<WithoutTls>,
     dbs: Databases,
+    query_images: QueryImageCache,
     #[allow(dead_code)]
     path: PathBuf,
 }
@@ -129,6 +136,7 @@ impl Environment {
         Ok(Self {
             env,
             dbs,
+            query_images: QueryImageCache::default(),
             path: path.to_path_buf(),
         })
     }
@@ -281,6 +289,11 @@ impl Environment {
                 relations,
             })
         })
+    }
+
+    /// Returns the immutable query image for the latest committed snapshot.
+    pub fn query_image(&self, schema: &StorageSchema) -> Result<Arc<QueryImage>> {
+        self.read(|txn| self.query_images.get_or_build(txn, schema))
     }
 
     /// Runs a closure inside a read-only transaction.
