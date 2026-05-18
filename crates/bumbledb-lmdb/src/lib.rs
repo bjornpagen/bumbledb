@@ -16,6 +16,7 @@ mod query_image;
 mod sorted_trie;
 mod storage;
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -43,8 +44,9 @@ pub use sorted_trie::{
     TrieLevel, TrieStats,
 };
 pub use storage::{
-    AccessPathDescriptor, BulkLoadReport, EncodedComponent, FieldValues, IndexScan, KeyValues, Row,
-    ScanItem, StorageSchema, Value,
+    AccessPathDescriptor, BulkLoadReport, ColumnSegmentDescriptor, EncodedComponent, FieldValues,
+    IndexScan, IndexSegmentDescriptor, IndexStatsSummary, KeyValues, Row, ScanItem,
+    SegmentDescriptor, StorageSchema, Value,
 };
 
 /// Current on-disk storage format version.
@@ -338,6 +340,8 @@ impl Environment {
             dbs: self.dbs,
             active_tx_id: None,
             history_seq: 0,
+            defer_relation_segments: false,
+            touched_relation_segments: BTreeSet::new(),
         };
 
         match f(&mut write) {
@@ -429,6 +433,8 @@ pub struct WriteTxn<'env> {
     dbs: Databases,
     active_tx_id: Option<u64>,
     history_seq: u32,
+    defer_relation_segments: bool,
+    touched_relation_segments: BTreeSet<u16>,
 }
 
 impl WriteTxn<'_> {
@@ -610,6 +616,8 @@ mod tests {
         let diagnostics = env.storage_diagnostics(&schema).unwrap();
         assert_eq!(diagnostics.storage_tx_id, 0);
         assert_eq!(diagnostics.dictionary_entries, 0);
+        let segments = env.read(|txn| txn.visible_segments(&schema)).unwrap();
+        assert!(segments.is_empty());
         assert!(
             diagnostics
                 .relations

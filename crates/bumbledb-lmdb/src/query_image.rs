@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use bumbledb_core::schema::{RelationDescriptor, SchemaFingerprint, ValueType};
 
-use crate::{Error, ReadTxn, Result, StorageSchema};
+use crate::{Error, ReadTxn, Result, SegmentDescriptor, StorageSchema};
 
 /// Cache key for an immutable query image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -99,6 +99,9 @@ impl QueryImage {
         tx_id: u64,
         relations: Vec<RelationImage>,
         build_micros: u128,
+        segment_count: usize,
+        segment_bytes: usize,
+        built_from_segments: bool,
     ) -> Self {
         let relation_by_name = relations
             .iter()
@@ -122,6 +125,9 @@ impl QueryImage {
                 encoded_column_bytes,
                 sorted_trie_bytes: 0,
                 hash_trie_bytes: 0,
+                segment_count,
+                segment_bytes,
+                built_from_segments,
                 build_micros,
             },
         }
@@ -180,6 +186,12 @@ pub struct QueryImageStats {
     pub sorted_trie_bytes: usize,
     /// Bytes used by hash trie indexes. Zero until the hash-trie PRD lands.
     pub hash_trie_bytes: usize,
+    /// Number of durable relation segments used by this image.
+    pub segment_count: usize,
+    /// Bytes read from durable column/index segments for this image.
+    pub segment_bytes: usize,
+    /// True when every relation image was built from visible segment metadata.
+    pub built_from_segments: bool,
     /// Build elapsed time in microseconds.
     pub build_micros: u128,
 }
@@ -360,6 +372,17 @@ impl ColumnImage {
         })
     }
 
+    pub(crate) fn from_segment_bytes(field: FieldId, width: usize, bytes: Vec<u8>) -> Result<Self> {
+        if width == 0 || !bytes.len().is_multiple_of(width) {
+            return Err(Error::corrupt("segment column byte width mismatch"));
+        }
+        let values = bytes
+            .chunks_exact(width)
+            .map(|chunk| chunk.to_vec())
+            .collect::<Vec<_>>();
+        Self::from_query_image_bytes(field, width, values)
+    }
+
     fn encoded(&self, row: RowId) -> Option<EncodedRef<'_>> {
         match self {
             ColumnImage::Bool(column) => column.get_ref(row).map(EncodedRef::One),
@@ -488,24 +511,38 @@ impl<'a, 'env> QueryImageBuilder<'a, 'env> {
         let start = Instant::now();
         let tx_id = self.txn.last_committed_tx_id()?;
         let mut relations = Vec::new();
+        let mut segment_count = 0usize;
+        let mut segment_bytes = 0usize;
+        let mut built_from_segments = true;
         for (relation_id, relation) in self.schema.descriptor().relations.iter().enumerate() {
-            relations.push(
-                RelationImageBuilder::new(
-                    self.txn,
-                    self.schema,
-                    RelationId(relation_id as u16),
-                    relation,
-                )
-                .build()?,
-            );
+            let built = RelationImageBuilder::new(
+                self.txn,
+                self.schema,
+                RelationId(relation_id as u16),
+                relation,
+            )
+            .build()?;
+            segment_count += usize::from(built.from_segment);
+            segment_bytes += built.segment_bytes;
+            built_from_segments &= built.from_segment;
+            relations.push(built.relation);
         }
         Ok(QueryImage::new(
             self.schema,
             tx_id,
             relations,
             start.elapsed().as_micros(),
+            segment_count,
+            segment_bytes,
+            built_from_segments,
         ))
     }
+}
+
+struct BuiltRelationImage {
+    relation: RelationImage,
+    from_segment: bool,
+    segment_bytes: usize,
 }
 
 struct RelationImageBuilder<'a, 'env, 'schema> {
@@ -530,19 +567,59 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
         }
     }
 
-    fn build(self) -> Result<RelationImage> {
-        let fields = self
-            .relation
-            .fields
+    fn build(self) -> Result<BuiltRelationImage> {
+        if let Some(segment) =
+            self.txn
+                .visible_relation_segment(self.schema, self.relation_id, self.relation)?
+        {
+            return self.build_from_segment(&segment);
+        }
+
+        self.build_from_current_index()
+    }
+
+    fn build_from_segment(self, segment: &SegmentDescriptor) -> Result<BuiltRelationImage> {
+        let fields = self.field_images();
+        let mut segment_bytes = 0usize;
+        let columns = fields
             .iter()
-            .enumerate()
-            .map(|(field_id, field)| FieldImage {
-                id: FieldId(field_id as u16),
-                name: field.name.clone(),
-                value_type: field.value_type.clone(),
-                width: field.value_type.encoded_width(),
+            .map(|field| {
+                let descriptor = segment
+                    .columns
+                    .iter()
+                    .find(|column| column.field == field.id)
+                    .ok_or_else(|| Error::corrupt("segment column descriptor missing"))?;
+                let bytes = self.txn.segment_bytes(&descriptor.lmdb_key)?;
+                segment_bytes += bytes.len();
+                ColumnImage::from_segment_bytes(field.id, field.width, bytes)
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>>>()?;
+        for index in &segment.indexes {
+            segment_bytes += index.byte_len;
+        }
+        let encoded_column_bytes = columns.iter().map(ColumnImage::byte_len).sum();
+        Ok(BuiltRelationImage {
+            relation: RelationImage {
+                id: self.relation_id,
+                name: self.relation.name.clone(),
+                row_count: segment.row_count,
+                fields,
+                columns,
+                sorted_index_count: segment.indexes.len(),
+                hash_index_count: 0,
+                stats: RelationStats {
+                    row_count: segment.row_count,
+                    field_count: self.relation.fields.len(),
+                    encoded_column_bytes,
+                },
+            },
+            from_segment: true,
+            segment_bytes,
+        })
+    }
+
+    fn build_from_current_index(self) -> Result<BuiltRelationImage> {
+        let fields = self.field_images();
         let mut raw_columns = vec![Vec::<Vec<u8>>::new(); fields.len()];
         let layout = self
             .schema
@@ -583,20 +660,38 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
             })
             .collect::<Result<Vec<_>>>()?;
         let encoded_column_bytes = columns.iter().map(ColumnImage::byte_len).sum();
-        Ok(RelationImage {
-            id: self.relation_id,
-            name: self.relation.name.clone(),
-            row_count,
-            fields,
-            columns,
-            sorted_index_count: 0,
-            hash_index_count: 0,
-            stats: RelationStats {
+        Ok(BuiltRelationImage {
+            relation: RelationImage {
+                id: self.relation_id,
+                name: self.relation.name.clone(),
                 row_count,
-                field_count: self.relation.fields.len(),
-                encoded_column_bytes,
+                fields,
+                columns,
+                sorted_index_count: 0,
+                hash_index_count: 0,
+                stats: RelationStats {
+                    row_count,
+                    field_count: self.relation.fields.len(),
+                    encoded_column_bytes,
+                },
             },
+            from_segment: false,
+            segment_bytes: 0,
         })
+    }
+
+    fn field_images(&self) -> Vec<FieldImage> {
+        self.relation
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(field_id, field)| FieldImage {
+                id: FieldId(field_id as u16),
+                name: field.name.clone(),
+                value_type: field.value_type.clone(),
+                width: field.value_type.encoded_width(),
+            })
+            .collect()
     }
 }
 
@@ -610,7 +705,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{Environment, Row, Value};
+    use crate::{Environment, KeyValues, Row, Value};
 
     #[test]
     fn builds_query_image_from_snapshot_and_matches_diagnostics() {
@@ -623,7 +718,17 @@ mod tests {
         assert_eq!(image.stats().row_count, 2);
         assert_eq!(image.stats().sorted_trie_bytes, 0);
         assert_eq!(image.stats().hash_trie_bytes, 0);
+        assert_eq!(image.stats().segment_count, 1);
+        assert!(image.stats().segment_bytes > 0);
+        assert!(image.stats().built_from_segments);
         assert_eq!(diagnostics.relations[0].row_count, 2);
+
+        let segments = env.read(|txn| txn.visible_segments(&schema)).unwrap();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].row_count, 2);
+        assert_eq!(segments[0].columns.len(), 5);
+        assert_eq!(segments[0].columns[0].byte_len, 16);
+        assert!(!segments[0].indexes.is_empty());
 
         let account = image.relation("Account").unwrap();
         assert_eq!(account.row_count, 2);
@@ -768,6 +873,91 @@ mod tests {
     }
 
     #[test]
+    fn reopened_query_image_uses_durable_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.keep();
+        let env = Environment::open(&path).unwrap();
+        let schema = StorageSchema::new(account_schema(true), env.max_key_size()).unwrap();
+        env.bulk_load(
+            &schema,
+            [
+                account_row(1, 840, true, vec![1, 2, 3], "Cash USD"),
+                account_row(2, 978, false, vec![4, 5, 6], "Cash EUR"),
+            ],
+        )
+        .unwrap();
+        drop(env);
+
+        let reopened = Environment::open(&path).unwrap();
+        let image = reopened.query_image(&schema).unwrap();
+
+        assert!(image.stats().built_from_segments);
+        assert_eq!(image.stats().segment_count, 1);
+        assert_eq!(image.relation("Account").unwrap().row_count, 2);
+    }
+
+    #[test]
+    fn read_snapshot_sees_stable_visible_segments() {
+        let (env, schema) = seeded_env();
+
+        env.read(|read| {
+            let before = read.visible_segments(&schema)?;
+            assert_eq!(before[0].row_count, 2);
+
+            env.write(|write| {
+                write.insert(
+                    &schema,
+                    account_row(3, 826, true, vec![7, 8, 9], "Cash GBP"),
+                )?;
+                Ok::<_, crate::Error>(())
+            })?;
+
+            let still_before = read.visible_segments(&schema)?;
+            assert_eq!(still_before[0].row_count, 2);
+            let image = QueryImageBuilder::new(read, &schema).build()?;
+            assert_eq!(image.relation("Account").unwrap().row_count, 2);
+            Ok::<_, crate::Error>(())
+        })
+        .unwrap();
+
+        let after = env.read(|read| read.visible_segments(&schema)).unwrap();
+        assert_eq!(after[0].row_count, 3);
+    }
+
+    #[test]
+    fn replace_and_delete_publish_visible_segments() {
+        let (env, schema) = seeded_env();
+
+        env.write(|txn| {
+            txn.replace(
+                &schema,
+                account_row(2, 826, true, vec![9, 9, 9], "Cash GBP"),
+            )?;
+            txn.delete(&schema, KeyValues::new("Account", [("id", Value::Id(1))]))?;
+            Ok::<_, crate::Error>(())
+        })
+        .unwrap();
+
+        let image = env.query_image(&schema).unwrap();
+        let account = image.relation("Account").unwrap();
+        assert!(image.stats().built_from_segments);
+        assert_eq!(account.row_count, 1);
+
+        env.read(|txn| {
+            let rows = decode_relation_rows(txn, account)?;
+            assert_eq!(
+                rows,
+                vec![account_row(2, 826, true, vec![9, 9, 9], "Cash GBP")]
+            );
+            let segments = txn.visible_segments(&schema)?;
+            assert_eq!(segments[0].row_count, 1);
+            assert!(segments[0].tx_end.is_none());
+            Ok::<_, crate::Error>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn query_image_cache_does_not_reuse_mismatched_schema() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.keep();
@@ -790,29 +980,11 @@ mod tests {
         env.write(|txn| {
             txn.insert(
                 &schema,
-                Row::new(
-                    "Account",
-                    [
-                        ("id", Value::Id(1)),
-                        ("currency", Value::Symbol(840)),
-                        ("active", Value::Bool(true)),
-                        ("payload", Value::Bytes(vec![1, 2, 3])),
-                        ("name", Value::String("Cash USD".to_owned())),
-                    ],
-                ),
+                account_row(1, 840, true, vec![1, 2, 3], "Cash USD"),
             )?;
             txn.insert(
                 &schema,
-                Row::new(
-                    "Account",
-                    [
-                        ("id", Value::Id(2)),
-                        ("currency", Value::Symbol(978)),
-                        ("active", Value::Bool(false)),
-                        ("payload", Value::Bytes(vec![4, 5, 6])),
-                        ("name", Value::String("Cash EUR".to_owned())),
-                    ],
-                ),
+                account_row(2, 978, false, vec![4, 5, 6], "Cash EUR"),
             )?;
             Ok::<_, crate::Error>(())
         })
@@ -849,6 +1021,19 @@ mod tests {
                 fields,
                 PrimaryKeyDescriptor::new(["id"]),
             )],
+        )
+    }
+
+    fn account_row(id: u64, currency: u64, active: bool, payload: Vec<u8>, name: &str) -> Row {
+        Row::new(
+            "Account",
+            [
+                ("id", Value::Id(id)),
+                ("currency", Value::Symbol(currency)),
+                ("active", Value::Bool(active)),
+                ("payload", Value::Bytes(payload)),
+                ("name", Value::String(name.to_owned())),
+            ],
         )
     }
 

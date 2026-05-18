@@ -10,12 +10,18 @@ use bumbledb_core::schema::{
     RelationDescriptor, SchemaDescriptor, ValueType,
 };
 
-use crate::{Error, ReadTxn, Result, WriteTxn};
+use crate::{AccessId, Error, FieldId, ReadTxn, RelationId, Result, WriteTxn};
 
 const NS_CURRENT_TUPLE: u8 = 0x10;
 const NS_CURRENT_ROW: u8 = 0x11;
 const NS_UNIQUE_GUARD: u8 = 0x20;
 const NS_HISTORY: u8 = 0x30;
+
+const SEGMENT_META_PREFIX: &[u8] = b"segment:meta:";
+const SEGMENT_COLUMN_PREFIX: &[u8] = b"segment:column:";
+const SEGMENT_INDEX_PREFIX: &[u8] = b"segment:index:";
+const SEGMENT_VISIBILITY_PREFIX: &[u8] = b"segment:visibility:";
+const SEGMENT_NEXT_PREFIX: &[u8] = b"segment:next:";
 
 const DICT_FWD: u8 = 0x01;
 const DICT_REV: u8 = 0x02;
@@ -40,6 +46,68 @@ pub struct BulkLoadReport {
     pub storage_tx_id: u64,
     /// Number of interned dictionary values after the load committed.
     pub dictionary_entries: usize,
+}
+
+/// Durable relation segment metadata visible to query-image builders.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SegmentDescriptor {
+    /// Relation this segment belongs to.
+    pub relation: RelationId,
+    /// Monotonic segment ID within the relation.
+    pub segment_id: u64,
+    /// Inclusive storage transaction ID where this segment becomes visible.
+    pub tx_start: u64,
+    /// Exclusive storage transaction ID where this segment stops being visible.
+    pub tx_end: Option<u64>,
+    /// Number of rows represented by this segment.
+    pub row_count: usize,
+    /// Encoded fixed-width column chunks.
+    pub columns: Vec<ColumnSegmentDescriptor>,
+    /// Encoded index chunks.
+    pub indexes: Vec<IndexSegmentDescriptor>,
+}
+
+/// Durable encoded column chunk descriptor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ColumnSegmentDescriptor {
+    /// Field represented by this column chunk.
+    pub field: FieldId,
+    /// Logical value type.
+    pub value_type: ValueType,
+    /// Fixed encoded width.
+    pub width: usize,
+    /// LMDB key containing contiguous encoded column bytes.
+    pub lmdb_key: Vec<u8>,
+    /// Stored byte length.
+    pub byte_len: usize,
+}
+
+/// Durable encoded index chunk descriptor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IndexSegmentDescriptor {
+    /// Access path represented by this index chunk.
+    pub access: AccessId,
+    /// Leading fields in index order.
+    pub fields: Vec<FieldId>,
+    /// Index access kind.
+    pub kind: IndexKind,
+    /// LMDB key containing encoded index bytes.
+    pub lmdb_key: Vec<u8>,
+    /// Stored byte length.
+    pub byte_len: usize,
+    /// Lightweight index statistics summary.
+    pub stats: IndexStatsSummary,
+}
+
+/// Durable index segment statistics summary.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IndexStatsSummary {
+    /// Number of encoded entries in the index segment.
+    pub row_count: usize,
+    /// Number of leading fields represented by this index.
+    pub depth: usize,
+    /// Stored index chunk bytes.
+    pub byte_len: usize,
 }
 
 impl StorageSchema {
@@ -463,12 +531,22 @@ impl WriteTxn<'_> {
         tracing::debug!(rows = rows.len(), "bulk load rows sorted by relation order");
         rows.sort_by_key(|row| relation_sort_key(schema, row.relation()));
 
-        let mut inserted = 0;
-        for row in rows {
-            self.insert(schema, row)?;
-            inserted += 1;
-        }
-        Ok(inserted)
+        let previous_defer = self.defer_relation_segments;
+        self.defer_relation_segments = true;
+        let result = (|| {
+            let mut inserted = 0;
+            for row in rows {
+                self.insert(schema, row)?;
+                inserted += 1;
+            }
+            for relation_id in 0..schema.descriptor.relations.len() {
+                self.touched_relation_segments.insert(relation_id as u16);
+            }
+            self.flush_relation_segments(schema)?;
+            Ok(inserted)
+        })();
+        self.defer_relation_segments = previous_defer;
+        result
     }
 
     /// Inserts a primary-keyed relation row.
@@ -516,6 +594,7 @@ impl WriteTxn<'_> {
             Some(&old_payload),
             Some(&new_encoded.payload(relation)?),
         )?;
+        self.record_relation_segment_change(schema, relation_id, relation)?;
         Ok(())
     }
 
@@ -572,6 +651,7 @@ impl WriteTxn<'_> {
             None,
             Some(&encoded.payload(relation)?),
         )?;
+        self.record_relation_segment_change(schema, relation_id, relation)?;
         Ok(())
     }
 
@@ -591,7 +671,183 @@ impl WriteTxn<'_> {
         self.dbs.index.delete(&mut self.txn, row_key.as_slice())?;
         adjust_relation_row_count(self, relation_id, -1)?;
         self.append_history(b'D', relation_id, &primary, Some(&old_payload), None)?;
+        self.record_relation_segment_change(schema, relation_id, relation)?;
         Ok(())
+    }
+
+    fn record_relation_segment_change(
+        &mut self,
+        schema: &StorageSchema,
+        relation_id: u16,
+        relation: &RelationDescriptor,
+    ) -> Result<()> {
+        if self.defer_relation_segments {
+            self.touched_relation_segments.insert(relation_id);
+            Ok(())
+        } else {
+            self.append_relation_segment(schema, relation_id, relation)
+        }
+    }
+
+    fn flush_relation_segments(&mut self, schema: &StorageSchema) -> Result<()> {
+        let touched = std::mem::take(&mut self.touched_relation_segments);
+        for relation_id in touched {
+            let relation = schema
+                .descriptor
+                .relations
+                .get(relation_id as usize)
+                .ok_or_else(|| Error::corrupt("touched relation id missing from schema"))?;
+            self.append_relation_segment(schema, relation_id, relation)?;
+        }
+        Ok(())
+    }
+
+    fn append_relation_segment(
+        &mut self,
+        schema: &StorageSchema,
+        relation_id: u16,
+        relation: &RelationDescriptor,
+    ) -> Result<()> {
+        let tx_id = self.ensure_tx_id()?;
+        let segment_id = self.next_segment_id(relation_id)?;
+        let segment = self.build_relation_segment(schema, relation_id, relation)?;
+
+        self.close_visible_relation_segments(relation_id, tx_id)?;
+
+        for column in &segment.columns {
+            self.dbs.index.put(
+                &mut self.txn,
+                segment_column_key(relation_id, segment_id, column.field.0).as_slice(),
+                column.bytes.as_slice(),
+            )?;
+        }
+        for index in &segment.indexes {
+            self.dbs.index.put(
+                &mut self.txn,
+                segment_index_key(relation_id, segment_id, index.index_id).as_slice(),
+                index.bytes.as_slice(),
+            )?;
+        }
+
+        self.dbs.index.put(
+            &mut self.txn,
+            segment_meta_key(relation_id, segment_id).as_slice(),
+            encode_segment_meta(tx_id, None, segment.row_count).as_slice(),
+        )?;
+        self.dbs.index.put(
+            &mut self.txn,
+            segment_visibility_key(tx_id, relation_id, segment_id).as_slice(),
+            &[],
+        )?;
+        tracing::trace!(
+            relation = %relation.name,
+            segment_id,
+            tx_id,
+            rows = segment.row_count,
+            "relation segment published"
+        );
+        Ok(())
+    }
+
+    fn next_segment_id(&mut self, relation_id: u16) -> Result<u64> {
+        let key = segment_next_key(relation_id);
+        let next = read_u64_meta(self, &key)?.unwrap_or(1);
+        write_u64_meta(self, &key, next + 1)?;
+        Ok(next)
+    }
+
+    fn close_visible_relation_segments(&mut self, relation_id: u16, tx_end: u64) -> Result<()> {
+        let mut active = Vec::new();
+        let prefix = segment_meta_prefix(relation_id);
+        let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
+        while let Some((key, value)) = iter.next().transpose()? {
+            let segment_id = parse_segment_id_from_meta_key(&prefix, key)?;
+            let meta = decode_segment_meta(value)?;
+            if meta.tx_end.is_none() {
+                active.push((segment_id, meta));
+            }
+        }
+        drop(iter);
+
+        for (segment_id, meta) in active {
+            self.dbs.index.put(
+                &mut self.txn,
+                segment_meta_key(relation_id, segment_id).as_slice(),
+                encode_segment_meta(meta.tx_start, Some(tx_end), meta.row_count).as_slice(),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn build_relation_segment(
+        &self,
+        schema: &StorageSchema,
+        relation_id: u16,
+        relation: &RelationDescriptor,
+    ) -> Result<PendingRelationSegment> {
+        let primary_layout = schema
+            .layout(&relation.name, "primary")
+            .ok_or_else(|| Error::unknown_index(&relation.name, "primary"))?;
+        let component_by_field = primary_layout
+            .components
+            .iter()
+            .enumerate()
+            .map(|(index, component)| (component.field_name.as_str(), index))
+            .collect::<BTreeMap<_, _>>();
+        let mut columns = relation
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(field_id, _)| PendingColumnSegment {
+                field: FieldId(field_id as u16),
+                bytes: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+
+        let primary_prefix = current_index_prefix(relation_id, primary_layout.index_id);
+        let mut row_count = 0usize;
+        let mut iter = self
+            .dbs
+            .index
+            .prefix_iter(&self.txn, primary_prefix.as_slice())?;
+        while let Some((key, _)) = iter.next().transpose()? {
+            let item = encoded_index_item(primary_layout, &primary_prefix, key)?;
+            for (field_id, field) in relation.fields.iter().enumerate() {
+                let component_index = *component_by_field
+                    .get(field.name.as_str())
+                    .ok_or_else(|| Error::corrupt("segment missing primary component"))?;
+                let bytes = item
+                    .component(&primary_layout.components, component_index)
+                    .ok_or_else(|| Error::corrupt("segment primary component truncated"))?;
+                columns[field_id].bytes.extend_from_slice(bytes);
+            }
+            row_count += 1;
+        }
+        drop(iter);
+
+        let indexes = schema
+            .layouts_for_relation(relation_id)
+            .map(|layout| self.build_index_segment(layout))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(PendingRelationSegment {
+            row_count,
+            columns,
+            indexes,
+        })
+    }
+
+    fn build_index_segment(&self, layout: &CurrentIndexLayout) -> Result<PendingIndexSegment> {
+        let prefix = current_index_prefix(layout.relation_id, layout.index_id);
+        let mut bytes = Vec::new();
+        let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
+        while let Some((key, _)) = iter.next().transpose()? {
+            bytes.extend_from_slice(key);
+        }
+        Ok(PendingIndexSegment {
+            index_id: layout.index_id,
+            bytes,
+        })
     }
 
     fn encode_row(
@@ -904,6 +1160,29 @@ impl WriteTxn<'_> {
     }
 }
 
+struct PendingRelationSegment {
+    row_count: usize,
+    columns: Vec<PendingColumnSegment>,
+    indexes: Vec<PendingIndexSegment>,
+}
+
+struct PendingColumnSegment {
+    field: FieldId,
+    bytes: Vec<u8>,
+}
+
+struct PendingIndexSegment {
+    index_id: u16,
+    bytes: Vec<u8>,
+}
+
+#[derive(Clone, Copy)]
+struct SegmentMeta {
+    tx_start: u64,
+    tx_end: Option<u64>,
+    row_count: usize,
+}
+
 fn relation_sort_key(schema: &StorageSchema, relation_name: &str) -> usize {
     schema
         .descriptor
@@ -1086,6 +1365,146 @@ impl<'env> ReadTxn<'env> {
             &index_entry_count_key(layout.relation_id, layout.index_id),
         )?
         .unwrap_or(0))
+    }
+
+    /// Returns segment descriptors visible to this read snapshot.
+    pub fn visible_segments(&self, schema: &StorageSchema) -> Result<Vec<SegmentDescriptor>> {
+        let tx_id = self.last_committed_tx_id()?;
+        let mut out = Vec::new();
+        for (relation_id, relation) in schema.descriptor.relations.iter().enumerate() {
+            if let Some(segment) = self.visible_relation_segment_at(
+                schema,
+                RelationId(relation_id as u16),
+                relation,
+                tx_id,
+            )? {
+                out.push(segment);
+            }
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn visible_relation_segment(
+        &self,
+        schema: &StorageSchema,
+        relation: RelationId,
+        descriptor: &RelationDescriptor,
+    ) -> Result<Option<SegmentDescriptor>> {
+        self.visible_relation_segment_at(schema, relation, descriptor, self.last_committed_tx_id()?)
+    }
+
+    fn visible_relation_segment_at(
+        &self,
+        schema: &StorageSchema,
+        relation: RelationId,
+        descriptor: &RelationDescriptor,
+        tx_id: u64,
+    ) -> Result<Option<SegmentDescriptor>> {
+        let relation_id = relation.0;
+        let prefix = segment_meta_prefix(relation_id);
+        let mut visible = Vec::new();
+        let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
+        while let Some((key, value)) = iter.next().transpose()? {
+            let segment_id = parse_segment_id_from_meta_key(&prefix, key)?;
+            let meta = decode_segment_meta(value)?;
+            if meta.tx_start <= tx_id && meta.tx_end.is_none_or(|end| end > tx_id) {
+                visible.push((segment_id, meta));
+            }
+        }
+        drop(iter);
+
+        let Some((segment_id, meta)) = visible
+            .into_iter()
+            .max_by_key(|(segment_id, _)| *segment_id)
+        else {
+            return Ok(None);
+        };
+        self.segment_descriptor_from_meta(schema, relation, descriptor, segment_id, meta)
+            .map(Some)
+    }
+
+    fn segment_descriptor_from_meta(
+        &self,
+        schema: &StorageSchema,
+        relation: RelationId,
+        descriptor: &RelationDescriptor,
+        segment_id: u64,
+        meta: SegmentMeta,
+    ) -> Result<SegmentDescriptor> {
+        let relation_id = relation.0;
+        let columns = descriptor
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(field_id, field)| {
+                let key = segment_column_key(relation_id, segment_id, field_id as u16);
+                let byte_len = self
+                    .dbs
+                    .index
+                    .get(&self.txn, key.as_slice())?
+                    .map_or(0, |bytes| bytes.len());
+                Ok(ColumnSegmentDescriptor {
+                    field: FieldId(field_id as u16),
+                    value_type: field.value_type.clone(),
+                    width: field.value_type.encoded_width(),
+                    lmdb_key: key,
+                    byte_len,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let indexes = schema
+            .layouts_for_relation(relation_id)
+            .map(|layout| {
+                let key = segment_index_key(relation_id, segment_id, layout.index_id);
+                let byte_len = self
+                    .dbs
+                    .index
+                    .get(&self.txn, key.as_slice())?
+                    .map_or(0, |bytes| bytes.len());
+                let fields = layout
+                    .leading_fields
+                    .iter()
+                    .map(|field_name| {
+                        descriptor
+                            .fields
+                            .iter()
+                            .position(|field| &field.name == field_name)
+                            .map(|field_id| FieldId(field_id as u16))
+                            .ok_or_else(|| Error::unknown_field(&descriptor.name, field_name))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let row_count = byte_len.checked_div(layout.encoded_len).unwrap_or(0);
+                Ok(IndexSegmentDescriptor {
+                    access: AccessId(layout.index_id),
+                    fields,
+                    kind: layout.kind,
+                    lmdb_key: key,
+                    byte_len,
+                    stats: IndexStatsSummary {
+                        row_count,
+                        depth: layout.leading_fields.len(),
+                        byte_len,
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(SegmentDescriptor {
+            relation,
+            segment_id,
+            tx_start: meta.tx_start,
+            tx_end: meta.tx_end,
+            row_count: meta.row_count,
+            columns,
+            indexes,
+        })
+    }
+
+    pub(crate) fn segment_bytes(&self, key: &[u8]) -> Result<Vec<u8>> {
+        self.dbs
+            .index
+            .get(&self.txn, key)?
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| Error::corrupt("segment bytes missing"))
     }
 
     /// Counts history entries by scanning the history namespace.
@@ -1528,6 +1947,94 @@ fn current_index_key(
         key.extend_from_slice(row.field(relation, &component.field_name)?);
     }
     Ok(key)
+}
+
+fn segment_meta_prefix(relation_id: u16) -> Vec<u8> {
+    let mut key = SEGMENT_META_PREFIX.to_vec();
+    push_u16(&mut key, relation_id);
+    key
+}
+
+fn segment_meta_key(relation_id: u16, segment_id: u64) -> Vec<u8> {
+    let mut key = segment_meta_prefix(relation_id);
+    push_u64(&mut key, segment_id);
+    key
+}
+
+fn segment_column_key(relation_id: u16, segment_id: u64, field_id: u16) -> Vec<u8> {
+    let mut key = SEGMENT_COLUMN_PREFIX.to_vec();
+    push_u16(&mut key, relation_id);
+    push_u64(&mut key, segment_id);
+    push_u16(&mut key, field_id);
+    key
+}
+
+fn segment_index_key(relation_id: u16, segment_id: u64, index_id: u16) -> Vec<u8> {
+    let mut key = SEGMENT_INDEX_PREFIX.to_vec();
+    push_u16(&mut key, relation_id);
+    push_u64(&mut key, segment_id);
+    push_u16(&mut key, index_id);
+    key
+}
+
+fn segment_visibility_key(tx_id: u64, relation_id: u16, segment_id: u64) -> Vec<u8> {
+    let mut key = SEGMENT_VISIBILITY_PREFIX.to_vec();
+    push_u64(&mut key, tx_id);
+    push_u16(&mut key, relation_id);
+    push_u64(&mut key, segment_id);
+    key
+}
+
+fn segment_next_key(relation_id: u16) -> Vec<u8> {
+    let mut key = SEGMENT_NEXT_PREFIX.to_vec();
+    push_u16(&mut key, relation_id);
+    key
+}
+
+fn parse_segment_id_from_meta_key(prefix: &[u8], key: &[u8]) -> Result<u64> {
+    let bytes = key
+        .get(prefix.len()..prefix.len() + 8)
+        .ok_or_else(|| Error::corrupt("segment metadata key is truncated"))?;
+    let bytes: [u8; 8] = bytes
+        .try_into()
+        .map_err(|_| Error::corrupt("segment id width invalid"))?;
+    Ok(u64::from_be_bytes(bytes))
+}
+
+fn encode_segment_meta(tx_start: u64, tx_end: Option<u64>, row_count: usize) -> Vec<u8> {
+    let mut value = Vec::with_capacity(24);
+    push_u64(&mut value, tx_start);
+    push_u64(&mut value, tx_end.unwrap_or(0));
+    push_u64(&mut value, row_count as u64);
+    value
+}
+
+fn decode_segment_meta(value: &[u8]) -> Result<SegmentMeta> {
+    if value.len() != 24 {
+        return Err(Error::corrupt("segment metadata width invalid"));
+    }
+    let tx_start = u64::from_be_bytes(
+        value[0..8]
+            .try_into()
+            .map_err(|_| Error::corrupt("segment tx_start width invalid"))?,
+    );
+    let raw_tx_end = u64::from_be_bytes(
+        value[8..16]
+            .try_into()
+            .map_err(|_| Error::corrupt("segment tx_end width invalid"))?,
+    );
+    let row_count = u64::from_be_bytes(
+        value[16..24]
+            .try_into()
+            .map_err(|_| Error::corrupt("segment row_count width invalid"))?,
+    );
+    Ok(SegmentMeta {
+        tx_start,
+        tx_end: (raw_tx_end != 0).then_some(raw_tx_end),
+        row_count: row_count
+            .try_into()
+            .map_err(|_| Error::corrupt("segment row_count too large"))?,
+    })
 }
 
 fn unique_guard_key(
