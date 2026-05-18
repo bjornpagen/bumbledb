@@ -47,6 +47,145 @@ impl InputBindings {
     }
 }
 
+/// Dense input ID inside a normalized query.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InputId(pub u16);
+
+/// Dense predicate ID inside a normalized query.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PredicateId(pub u16);
+
+/// Executor-friendly normalized Datalog query.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NormalizedQuery {
+    /// Dense variables used by this query.
+    pub vars: Vec<NormVar>,
+    /// Dense inputs used by this query.
+    pub inputs: Vec<NormInput>,
+    /// Relation atoms in clause order.
+    pub atoms: Vec<NormAtom>,
+    /// Normalized comparison predicates.
+    pub predicates: Vec<NormPredicate>,
+    /// Output plan used by sinks.
+    pub output: OutputPlan,
+    /// Original find-term order after normalization.
+    pub find: Vec<NormFindTerm>,
+}
+
+/// Normalized variable metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NormVar {
+    /// Dense variable ID.
+    pub id: VarId,
+    /// Source variable name without `?`.
+    pub name: String,
+    /// Logical value type.
+    pub value_type: ValueType,
+}
+
+/// Normalized input metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NormInput {
+    /// Dense input ID.
+    pub id: InputId,
+    /// Source input name without `$`.
+    pub name: String,
+    /// Logical value type.
+    pub value_type: ValueType,
+}
+
+/// Normalized relation atom.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NormAtom {
+    /// Dense atom ID in relation-clause order.
+    pub id: AtomId,
+    /// Dense relation ID in schema declaration order.
+    pub relation: crate::RelationId,
+    /// Relation name, retained for diagnostics and image lookup.
+    pub relation_name: String,
+    /// Normalized atom fields.
+    pub fields: Vec<NormAtomField>,
+}
+
+/// Normalized atom field.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NormAtomField {
+    /// Dense field ID in relation declaration order.
+    pub field: FieldId,
+    /// Field name, retained for diagnostics and access-path lookup.
+    pub field_name: String,
+    /// Bound normalized term.
+    pub term: NormTerm,
+    /// Logical field value type.
+    pub value_type: ValueType,
+}
+
+/// Normalized atom term.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NormTerm {
+    /// Variable reference.
+    Var(VarId),
+    /// Input reference.
+    Input(InputId),
+    /// Encoded literal.
+    Literal(EncodedOwned),
+    /// Wildcard.
+    Wildcard,
+}
+
+/// Normalized comparison predicate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NormPredicate {
+    /// Dense predicate ID in comparison-clause order.
+    pub id: PredicateId,
+    /// Binary operands.
+    pub operands: [NormOperand; 2],
+    /// Comparison operation.
+    pub op: ComparisonOperator,
+    /// Logical comparison value type.
+    pub value_type: ValueType,
+    /// Earliest variable-order depth where this predicate can be evaluated.
+    pub earliest_depth: Option<usize>,
+}
+
+/// Normalized comparison operand.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NormOperand {
+    /// Variable reference.
+    Var(VarId),
+    /// Input reference.
+    Input(InputId),
+    /// Encoded literal.
+    Literal(EncodedOwned),
+}
+
+/// Normalized output term in source find order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NormFindTerm {
+    /// Projected variable.
+    Variable { variable: VarId },
+    /// Aggregate over a variable.
+    Aggregate {
+        /// Aggregate function.
+        function: AggregateFunction,
+        /// Aggregated variable.
+        variable: VarId,
+        /// Aggregate operand type.
+        value_type: ValueType,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct EncodedInputs {
+    values: Vec<EncodedOwned>,
+}
+
+impl EncodedInputs {
+    fn get(&self, input: InputId) -> Option<&EncodedOwned> {
+        self.values.get(input.0 as usize)
+    }
+}
+
 /// Query execution output.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryOutput {
@@ -383,6 +522,13 @@ impl EncodedValue {
     fn new(value_type: ValueType, bytes: Vec<u8>) -> Self {
         Self { value_type, bytes }
     }
+
+    fn from_owned(value_type: ValueType, value: &EncodedOwned) -> Self {
+        Self {
+            value_type,
+            bytes: value.as_bytes().to_vec(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -417,10 +563,10 @@ impl EncodedBinding {
 }
 
 #[derive(Clone, Debug)]
-struct ExecutionPlan<'query> {
+struct ExecutionPlan {
     variable_order_ids: Vec<usize>,
-    relation_atoms: Vec<&'query TypedRelationAtom>,
-    comparisons: Vec<&'query TypedComparison>,
+    relation_atoms: Vec<NormAtom>,
+    comparisons: Vec<NormPredicate>,
     summary: QueryPlan,
 }
 
@@ -433,18 +579,19 @@ impl PlannerStats {
     fn collect(
         schema: &StorageSchema,
         image: &crate::QueryImage,
-        atoms: &[&TypedRelationAtom],
+        atoms: &[&NormAtom],
     ) -> Result<Self> {
         let mut relations = BTreeMap::new();
         for atom in atoms {
-            if relations.contains_key(&atom.relation) {
+            if relations.contains_key(&atom.relation_name) {
                 continue;
             }
             let relation = image
-                .relation(&atom.relation)
-                .ok_or_else(|| Error::unknown_relation(&atom.relation))?;
+                .relations()
+                .get(atom.relation.0 as usize)
+                .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
             relations.insert(
-                atom.relation.clone(),
+                atom.relation_name.clone(),
                 OptimizerRelationStats::build(schema, relation)?,
             );
         }
@@ -679,20 +826,25 @@ impl<'env> ReadTxn<'env> {
     ) -> Result<QueryOutput> {
         validate_inputs(query, inputs)?;
 
+        let mut normalized = normalize_query(self, schema, query)?;
+        let encoded_inputs = encode_inputs(self, &normalized, inputs)?;
         let image = QueryImageBuilder::new(self, schema).build()?;
-        let mut plan = plan_query(schema, query, &image)?;
+        let mut plan = plan_query(schema, &mut normalized, &image)?;
         tracing::debug!(variable_order = ?plan.summary.variable_order, nodes = plan.summary.free_join.nodes.len(), "free join query planned");
         let mut sink = OutputSink::new(&plan.summary.free_join.output);
-        execute_lftj(&image, self, query, inputs, &mut plan, &mut sink)?;
+        execute_lftj(
+            &image,
+            self,
+            &normalized,
+            &encoded_inputs,
+            &mut plan,
+            &mut sink,
+        )?;
 
-        let columns = result_columns(query);
-        let rows = sink.finish(self, query, &mut plan.summary.counters)?;
+        let columns = result_columns(&normalized);
+        let rows = sink.finish(self, &normalized, &mut plan.summary.counters)?;
         plan.summary.counters.output_rows = rows.len() as u64;
-        if query
-            .find
-            .iter()
-            .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }))
-        {
+        if has_aggregate(&normalized) {
             plan.summary.counters.aggregate_groups = rows.len() as u64;
         }
         tracing::debug!(?plan.summary.counters, "free join query executed");
@@ -707,9 +859,9 @@ impl<'env> ReadTxn<'env> {
 fn execute_lftj<'txn, 'query, S: TupleSink>(
     image: &crate::QueryImage,
     txn: &ReadTxn<'txn>,
-    query: &'query TypedQuery,
-    inputs: &InputBindings,
-    plan: &mut ExecutionPlan<'query>,
+    query: &'query NormalizedQuery,
+    inputs: &EncodedInputs,
+    plan: &mut ExecutionPlan,
     sink: &mut S,
 ) -> Result<()> {
     let free_join_order = plan
@@ -750,7 +902,7 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
         inputs,
         plan,
         runtime,
-        binding: EncodedBinding::new(query.variables.len()),
+        binding: EncodedBinding::new(query.vars.len()),
         sink,
     };
     executor.execute(0)?;
@@ -759,9 +911,9 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
 
 struct LftjExecutor<'txn, 'input, 'query, 'plan, 'image, S: TupleSink> {
     txn: &'input ReadTxn<'txn>,
-    query: &'query TypedQuery,
-    inputs: &'input InputBindings,
-    plan: &'plan mut ExecutionPlan<'query>,
+    query: &'query NormalizedQuery,
+    inputs: &'input EncodedInputs,
+    plan: &'plan mut ExecutionPlan,
     runtime: LftjRuntime<'image>,
     binding: EncodedBinding,
     sink: &'plan mut S,
@@ -794,7 +946,7 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
         if participants.is_empty() {
             return Err(Error::internal(format!(
                 "variable {} is not constrained by any trie atom",
-                self.query.variables[variable].name
+                self.query.vars[variable].name
             )));
         }
 
@@ -811,7 +963,7 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
             if self.binding.bind(
                 variable,
                 EncodedValue::new(
-                    self.query.variables[variable].value_type.clone(),
+                    self.query.vars[variable].value_type.clone(),
                     value.as_bytes().to_vec(),
                 ),
             ) {
@@ -942,9 +1094,9 @@ fn key_owned(iter: &crate::SortedTrieIter<'_>, counters: &mut PlanCounters) -> E
 
 fn build_lftj_atom_plans(
     image: &crate::QueryImage,
-    query: &TypedQuery,
-    inputs: &InputBindings,
-    atoms: &[&TypedRelationAtom],
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    atoms: &[NormAtom],
     variable_order_ids: &[usize],
 ) -> Result<Vec<LftjAtomPlan>> {
     atoms
@@ -955,23 +1107,24 @@ fn build_lftj_atom_plans(
 
 fn build_lftj_atom_plan(
     image: &crate::QueryImage,
-    query: &TypedQuery,
-    inputs: &InputBindings,
-    atom: &TypedRelationAtom,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    atom: &NormAtom,
     variable_order_ids: &[usize],
 ) -> Result<LftjAtomPlan> {
     let source = image
-        .relation(&atom.relation)
-        .ok_or_else(|| Error::unknown_relation(&atom.relation))?;
+        .relations()
+        .get(atom.relation.0 as usize)
+        .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
     let variables = atom_variables_in_plan_order(atom, variable_order_ids);
     let fields = variables
         .iter()
         .enumerate()
         .map(|(id, variable)| crate::FieldImage {
             id: FieldId(id as u16),
-            name: query.variables[*variable].name.clone(),
-            value_type: query.variables[*variable].value_type.clone(),
-            width: query.variables[*variable].value_type.encoded_width(),
+            name: query.vars[*variable].name.clone(),
+            value_type: query.vars[*variable].value_type.clone(),
+            width: query.vars[*variable].value_type.encoded_width(),
         })
         .collect::<Vec<_>>();
     let mut raw_columns = vec![Vec::<Vec<u8>>::new(); variables.len()];
@@ -1005,7 +1158,7 @@ fn build_lftj_atom_plan(
         .collect::<Result<Vec<_>>>()?;
     let relation = RelationImage {
         id: source.id,
-        name: atom.relation.clone(),
+        name: atom.relation_name.clone(),
         row_count,
         fields,
         columns,
@@ -1020,7 +1173,7 @@ fn build_lftj_atom_plan(
     let trie = SortedTrieIndex::build(
         &relation,
         IndexSpec::new(
-            format!("{}_lftj", atom.relation),
+            format!("{}_lftj", atom.relation_name),
             (0..variables.len()).map(|id| FieldId(id as u16)),
         ),
     )?;
@@ -1031,10 +1184,7 @@ fn build_lftj_atom_plan(
     })
 }
 
-fn atom_variables_in_plan_order(
-    atom: &TypedRelationAtom,
-    variable_order_ids: &[usize],
-) -> Vec<usize> {
+fn atom_variables_in_plan_order(atom: &NormAtom, variable_order_ids: &[usize]) -> Vec<usize> {
     variable_order_ids
         .iter()
         .copied()
@@ -1044,44 +1194,42 @@ fn atom_variables_in_plan_order(
 
 fn atom_row_values(
     relation: &RelationImage,
-    query: &TypedQuery,
-    inputs: &InputBindings,
-    atom: &TypedRelationAtom,
+    _query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    atom: &NormAtom,
     row: RowId,
     variables: &[usize],
 ) -> Result<Option<Vec<Vec<u8>>>> {
     let mut values_by_variable = BTreeMap::<usize, Vec<u8>>::new();
     for field in &atom.fields {
         let bytes = relation
-            .encoded_bytes(row, FieldId(field.field_id as u16))
+            .encoded_bytes(row, field.field)
             .ok_or_else(|| Error::internal("missing atom field in relation image"))?;
         match &field.term {
-            TypedTerm::Variable(variable) => {
-                if let Some(existing) = values_by_variable.get(variable) {
+            NormTerm::Var(variable) => {
+                let variable = variable.0 as usize;
+                if let Some(existing) = values_by_variable.get(&variable) {
                     if existing.as_slice() != bytes {
                         return Ok(None);
                     }
                 } else {
-                    values_by_variable.insert(*variable, bytes.to_vec());
+                    values_by_variable.insert(variable, bytes.to_vec());
                 }
             }
-            TypedTerm::Input(input) => {
-                let input_value = input_value(query, inputs, *input)?;
-                let normalized = normalize_value_for_type(input_value, &field.value_type);
-                // The source row is already encoded by the same field type, so decode-free
-                // comparison is valid after using the query input's logical type check.
-                if !value_matches_encoded_field(&normalized, &field.value_type, bytes) {
+            NormTerm::Input(input) => {
+                let input = inputs
+                    .get(*input)
+                    .ok_or_else(|| Error::internal("missing normalized input"))?;
+                if input.as_bytes() != bytes {
                     return Ok(None);
                 }
             }
-            TypedTerm::Literal(literal) => {
-                let value = literal_to_value(literal)?;
-                let normalized = normalize_value_for_type(&value, &field.value_type);
-                if !value_matches_encoded_field(&normalized, &field.value_type, bytes) {
+            NormTerm::Literal(literal) => {
+                if literal.as_bytes() != bytes {
                     return Ok(None);
                 }
             }
-            TypedTerm::Wildcard => {}
+            NormTerm::Wildcard => {}
         }
     }
     variables
@@ -1096,63 +1244,30 @@ fn atom_row_values(
         .map(Some)
 }
 
-fn value_matches_encoded_field(value: &Value, value_type: &ValueType, encoded: &[u8]) -> bool {
-    // Avoid adding storage-level encode helpers to this cutover. For fixed-width numeric
-    // benchmark/query values, logical decode-free comparisons are handled by existing
-    // primitive encodings. String/bytes literals are not part of current query tests.
-    match (value, value_type) {
-        (Value::Bool(value), ValueType::Bool) => encoded == [u8::from(*value)],
-        (Value::U64(value), ValueType::U64)
-        | (Value::Id(value), ValueType::Id { .. })
-        | (Value::Ref(value), ValueType::Ref { .. })
-        | (Value::Symbol(value), ValueType::Symbol { .. }) => encoded == value.to_be_bytes(),
-        (Value::I64(value), ValueType::I64) => {
-            encoded == ((*value as u64) ^ (1u64 << 63)).to_be_bytes()
-        }
-        (Value::Timestamp(value), ValueType::TimestampMicros) => {
-            encoded == ((value.0 as u64) ^ (1u64 << 63)).to_be_bytes()
-        }
-        (Value::Decimal(value), ValueType::Decimal { .. }) => {
-            encoded == ((value.0 as u128) ^ (1u128 << 127)).to_be_bytes()
-        }
-        _ => false,
-    }
-}
-
-fn plan_query<'query>(
+fn plan_query(
     schema: &StorageSchema,
-    query: &'query TypedQuery,
+    query: &mut NormalizedQuery,
     image: &crate::QueryImage,
-) -> Result<ExecutionPlan<'query>> {
+) -> Result<ExecutionPlan> {
     let _span = tracing::debug_span!("bumbledb.query.plan").entered();
-    let relation_atoms = query
-        .clauses
-        .iter()
-        .filter_map(|clause| match clause {
-            TypedClause::Relation(atom) => Some(atom),
-            TypedClause::Comparison(_) => None,
-        })
-        .collect::<Vec<_>>();
-    let comparisons = query
-        .clauses
-        .iter()
-        .filter_map(|clause| match clause {
-            TypedClause::Comparison(comparison) => Some(comparison),
-            TypedClause::Relation(_) => None,
-        })
-        .collect::<Vec<_>>();
-
-    let stats = PlannerStats::collect(schema, image, &relation_atoms)?;
-    let (variable_order_ids, variable_costs) =
-        choose_variable_order(schema, query, &relation_atoms, &comparisons, &stats)?;
+    let (stats, variable_order_ids, variable_costs) = {
+        let relation_atoms = query.atoms.iter().collect::<Vec<_>>();
+        let comparisons = query.predicates.iter().collect::<Vec<_>>();
+        let stats = PlannerStats::collect(schema, image, &relation_atoms)?;
+        let (variable_order_ids, variable_costs) =
+            choose_variable_order(schema, query, &relation_atoms, &comparisons, &stats)?;
+        (stats, variable_order_ids, variable_costs)
+    };
+    attach_predicate_depths(query, &variable_order_ids);
+    let relation_atoms = query.atoms.iter().collect::<Vec<_>>();
     let variable_order = variable_order_ids
         .iter()
-        .map(|id| query.variables[*id].name.clone())
+        .map(|id| query.vars[*id].name.clone())
         .collect::<Vec<_>>();
     let variable_estimates = variable_costs
         .iter()
         .map(|cost| VariableEstimate {
-            variable: query.variables[cost.variable].name.clone(),
+            variable: query.vars[cost.variable].name.clone(),
             estimated_candidates: cost.estimated_candidates,
             static_constraints: cost.static_constraints,
             bound_constraints: cost.bound_constraints,
@@ -1166,7 +1281,7 @@ fn plan_query<'query>(
         .enumerate()
         .map(|(node_id, variable)| NodeRowEstimate {
             node: NodeId(node_id as u16),
-            variable: query.variables[*variable].name.clone(),
+            variable: query.vars[*variable].name.clone(),
             estimated_rows: variable_costs
                 .get(node_id)
                 .map_or(1, |cost| cost.estimated_candidates),
@@ -1187,8 +1302,8 @@ fn plan_query<'query>(
     let uses_indexed_multiway_join = relation_atoms.len() > 1;
     Ok(ExecutionPlan {
         variable_order_ids,
-        relation_atoms,
-        comparisons,
+        relation_atoms: query.atoms.clone(),
+        comparisons: query.predicates.clone(),
         summary: QueryPlan {
             variable_order,
             variable_estimates,
@@ -1204,12 +1319,12 @@ fn plan_query<'query>(
 
 fn choose_variable_order(
     schema: &StorageSchema,
-    query: &TypedQuery,
-    atoms: &[&TypedRelationAtom],
-    comparisons: &[&TypedComparison],
+    query: &NormalizedQuery,
+    atoms: &[&NormAtom],
+    comparisons: &[&NormPredicate],
     stats: &PlannerStats,
 ) -> Result<(Vec<usize>, Vec<VariableCost>)> {
-    let mut remaining = (0..query.variables.len()).collect::<BTreeSet<_>>();
+    let mut remaining = (0..query.vars.len()).collect::<BTreeSet<_>>();
     let mut bound = BTreeSet::new();
     let mut order = Vec::new();
     let mut costs = Vec::new();
@@ -1228,7 +1343,7 @@ fn choose_variable_order(
                 std::cmp::Reverse(cost.bound_constraints),
                 std::cmp::Reverse(cost.relation_constraints),
                 std::cmp::Reverse(cost.degree),
-                query.variables[cost.variable].name.clone(),
+                query.vars[cost.variable].name.clone(),
             )
         });
         let best = candidates
@@ -1247,8 +1362,8 @@ fn choose_variable_order(
 #[allow(clippy::too_many_arguments)]
 fn estimate_variable_cost(
     schema: &StorageSchema,
-    atoms: &[&TypedRelationAtom],
-    comparisons: &[&TypedComparison],
+    atoms: &[&NormAtom],
+    comparisons: &[&NormPredicate],
     stats: &PlannerStats,
     bound: &BTreeSet<usize>,
     variable: usize,
@@ -1343,18 +1458,18 @@ fn estimate_atom_variable_access(
     schema: &StorageSchema,
     stats: &PlannerStats,
     bound: &BTreeSet<usize>,
-    atom: &TypedRelationAtom,
+    atom: &NormAtom,
     variable: usize,
 ) -> Result<AccessEstimate> {
-    let paths = schema.access_paths(&atom.relation)?;
-    let relation_rows = stats.relation_rows(&atom.relation);
+    let paths = schema.access_paths(&atom.relation_name)?;
+    let relation_rows = stats.relation_rows(&atom.relation_name);
     let mut best: Option<AccessEstimate> = None;
 
     for path in paths {
         if !path.components.iter().any(|component| {
             atom.fields.iter().any(|field| {
-                field.field == component.field_name
-                    && matches!(field.term, TypedTerm::Variable(id) if id == variable)
+                field.field_name == component.field_name
+                    && matches!(field.term, NormTerm::Var(id) if id.0 as usize == variable)
             })
         }) {
             continue;
@@ -1363,10 +1478,14 @@ fn estimate_atom_variable_access(
         let mut prefix_len = 0usize;
         let mut current_is_next = false;
         for field_name in &path.leading_fields {
-            let Some(field) = atom.fields.iter().find(|field| &field.field == field_name) else {
+            let Some(field) = atom
+                .fields
+                .iter()
+                .find(|field| &field.field_name == field_name)
+            else {
                 break;
             };
-            if matches!(field.term, TypedTerm::Variable(id) if id == variable) {
+            if matches!(field.term, NormTerm::Var(id) if id.0 as usize == variable) {
                 current_is_next = true;
                 break;
             }
@@ -1377,7 +1496,7 @@ fn estimate_atom_variable_access(
             }
         }
 
-        let Some(index_stats) = stats.index_stats(&atom.relation, &path.index_name) else {
+        let Some(index_stats) = stats.index_stats(&atom.relation_name, &path.index_name) else {
             continue;
         };
         let mut estimate = if current_is_next {
@@ -1403,15 +1522,15 @@ fn estimate_atom_variable_access(
         let variable_field_stats = atom
             .fields
             .iter()
-            .find(|field| matches!(field.term, TypedTerm::Variable(id) if id == variable))
-            .and_then(|field| stats.field_stats(&atom.relation, &field.field));
+            .find(|field| matches!(field.term, NormTerm::Var(id) if id.0 as usize == variable))
+            .and_then(|field| stats.field_stats(&atom.relation_name, &field.field_name));
         let distinct = index_stats
             .distinct_by_depth
             .get(prefix_len.saturating_sub(1))
             .copied()
             .unwrap_or(1);
         let candidate = AccessEstimate {
-            relation: atom.relation.clone(),
+            relation: atom.relation_name.clone(),
             index: path.index_name,
             access: index_stats.index,
             estimated_rows: estimate.max(1),
@@ -1440,7 +1559,7 @@ fn estimate_atom_variable_access(
     }
 
     Ok(best.unwrap_or_else(|| AccessEstimate {
-        relation: atom.relation.clone(),
+        relation: atom.relation_name.clone(),
         index: "full_scan".to_owned(),
         access: AccessId(0),
         estimated_rows: relation_rows.saturating_mul(4).max(1),
@@ -1463,52 +1582,45 @@ fn divide_ceil(value: u64, divisor: u64) -> u64 {
     }
 }
 
-fn field_is_bound_for_estimate(
-    field: &bumbledb_core::datalog::TypedFieldBinding,
-    bound: &BTreeSet<usize>,
-) -> bool {
+fn field_is_bound_for_estimate(field: &NormAtomField, bound: &BTreeSet<usize>) -> bool {
     match field.term {
-        TypedTerm::Variable(variable) => bound.contains(&variable),
-        TypedTerm::Input(_) | TypedTerm::Literal(_) => true,
-        TypedTerm::Wildcard => false,
+        NormTerm::Var(variable) => bound.contains(&(variable.0 as usize)),
+        NormTerm::Input(_) | NormTerm::Literal(_) => true,
+        NormTerm::Wildcard => false,
     }
 }
 
-fn atom_static_constraint_count(atom: &TypedRelationAtom, variable: usize) -> usize {
+fn atom_static_constraint_count(atom: &NormAtom, variable: usize) -> usize {
     atom.fields
         .iter()
         .filter(|field| {
-            !matches!(field.term, TypedTerm::Variable(id) if id == variable)
-                && matches!(field.term, TypedTerm::Input(_) | TypedTerm::Literal(_))
+            !matches!(field.term, NormTerm::Var(id) if id.0 as usize == variable)
+                && matches!(field.term, NormTerm::Input(_) | NormTerm::Literal(_))
         })
         .count()
 }
 
-fn atom_bound_constraint_count(
-    atom: &TypedRelationAtom,
-    variable: usize,
-    bound: &BTreeSet<usize>,
-) -> usize {
+fn atom_bound_constraint_count(atom: &NormAtom, variable: usize, bound: &BTreeSet<usize>) -> usize {
     atom.fields
         .iter()
         .filter(|field| {
-            matches!(field.term, TypedTerm::Variable(id) if id != variable && bound.contains(&id))
+            matches!(field.term, NormTerm::Var(id) if id.0 as usize != variable && bound.contains(&(id.0 as usize)))
         })
         .count()
 }
 
 fn atom_has_unbound_other_variable_id(
-    atom: &TypedRelationAtom,
+    atom: &NormAtom,
     variable: usize,
     bound: &BTreeSet<usize>,
 ) -> bool {
     atom.fields.iter().any(|field| {
-        matches!(field.term, TypedTerm::Variable(id) if id != variable && !bound.contains(&id))
+        matches!(field.term, NormTerm::Var(id) if id.0 as usize != variable && !bound.contains(&(id.0 as usize)))
     })
 }
 
 fn comparison_static_constraint_count(
-    comparisons: &[&TypedComparison],
+    comparisons: &[&NormPredicate],
     variable: usize,
     bound: &BTreeSet<usize>,
 ) -> usize {
@@ -1519,7 +1631,7 @@ fn comparison_static_constraint_count(
 }
 
 fn comparison_bound_constraint_count(
-    comparisons: &[&TypedComparison],
+    comparisons: &[&NormPredicate],
     variable: usize,
     bound: &BTreeSet<usize>,
 ) -> usize {
@@ -1530,78 +1642,80 @@ fn comparison_bound_constraint_count(
 }
 
 fn comparison_constrains_variable(
-    comparison: &TypedComparison,
+    comparison: &NormPredicate,
     variable: usize,
     bound: &BTreeSet<usize>,
     static_only: bool,
 ) -> bool {
-    let left_is_var = matches!(comparison.left, TypedOperand::Variable(id) if id == variable);
-    let right_is_var = matches!(comparison.right, TypedOperand::Variable(id) if id == variable);
+    let left_is_var =
+        matches!(comparison.operands[0], NormOperand::Var(id) if id.0 as usize == variable);
+    let right_is_var =
+        matches!(comparison.operands[1], NormOperand::Var(id) if id.0 as usize == variable);
     if left_is_var {
-        operand_constrains_for_estimate(&comparison.right, bound, static_only)
+        operand_constrains_for_estimate(&comparison.operands[1], bound, static_only)
     } else if right_is_var {
-        operand_constrains_for_estimate(&comparison.left, bound, static_only)
+        operand_constrains_for_estimate(&comparison.operands[0], bound, static_only)
     } else {
         false
     }
 }
 
 fn operand_constrains_for_estimate(
-    operand: &TypedOperand,
+    operand: &NormOperand,
     bound: &BTreeSet<usize>,
     static_only: bool,
 ) -> bool {
     match operand {
-        TypedOperand::Variable(variable) => !static_only && bound.contains(variable),
-        TypedOperand::Input(_) | TypedOperand::Literal(_) => static_only,
+        NormOperand::Var(variable) => !static_only && bound.contains(&(variable.0 as usize)),
+        NormOperand::Input(_) | NormOperand::Literal(_) => static_only,
     }
 }
 
 fn missing_index_recommendations(
     schema: &StorageSchema,
-    query: &TypedQuery,
-    atoms: &[&TypedRelationAtom],
+    query: &NormalizedQuery,
+    atoms: &[&NormAtom],
 ) -> Result<Vec<MissingIndexRecommendation>> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
-    let mut variable_degree = vec![0usize; query.variables.len()];
+    let mut variable_degree = vec![0usize; query.vars.len()];
     for atom in atoms {
         for variable in atom_variables(atom) {
             variable_degree[variable] += 1;
         }
     }
     for atom in atoms {
-        let (_, relation) = schema.relation(&atom.relation)?;
+        let (_, relation) = schema.relation(&atom.relation_name)?;
         for field in &atom.fields {
             match field.term {
-                TypedTerm::Input(_) | TypedTerm::Literal(_) => {
-                    if has_leading_index(schema, &atom.relation, &field.field)? {
+                NormTerm::Input(_) | NormTerm::Literal(_) => {
+                    if has_leading_index(schema, &atom.relation_name, &field.field_name)? {
                         continue;
                     }
-                    let fields = recommended_index_fields(relation, &field.field);
-                    if seen.insert((atom.relation.clone(), fields.clone())) {
+                    let fields = recommended_index_fields(relation, &field.field_name);
+                    if seen.insert((atom.relation_name.clone(), fields.clone())) {
                         out.push(MissingIndexRecommendation {
-                            relation: atom.relation.clone(),
+                            relation: atom.relation_name.clone(),
                             fields,
                             reason: "StaticPredicate: chosen prefix has no leading index"
                                 .to_owned(),
                         });
                     }
                 }
-                TypedTerm::Variable(variable) if variable_degree[variable] > 1 => {
-                    if has_leading_index(schema, &atom.relation, &field.field)? {
+                NormTerm::Var(variable) if variable_degree[variable.0 as usize] > 1 => {
+                    if has_leading_index(schema, &atom.relation_name, &field.field_name)? {
                         continue;
                     }
-                    let fields = recommended_index_fields(relation, &field.field);
-                    if seen.insert((atom.relation.clone(), fields.clone())) {
+                    let fields = recommended_index_fields(relation, &field.field_name);
+                    if seen.insert((atom.relation_name.clone(), fields.clone())) {
                         out.push(MissingIndexRecommendation {
-                            relation: atom.relation.clone(),
+                            relation: atom.relation_name.clone(),
                             fields,
                             reason: "JoinPrefix: joined variable has no leading index".to_owned(),
                         });
                     }
                 }
-                TypedTerm::Variable(_) | TypedTerm::Wildcard => {}
+                NormTerm::Var(_) | NormTerm::Wildcard => {}
             }
         }
     }
@@ -1631,8 +1745,8 @@ fn recommended_index_fields(
 
 fn optimize_free_join_plan(
     schema: &StorageSchema,
-    query: &TypedQuery,
-    atoms: &[&TypedRelationAtom],
+    query: &NormalizedQuery,
+    atoms: &[&NormAtom],
     variable_order_ids: &[usize],
     variable_costs: &[VariableCost],
     stats: &PlannerStats,
@@ -1679,11 +1793,7 @@ fn optimize_free_join_plan(
         cyclic,
     )?);
 
-    if query
-        .find
-        .iter()
-        .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }))
-    {
+    if has_aggregate(query) {
         candidates.push(build_plan_candidate(
             "aggregate_pushdown",
             schema,
@@ -1745,8 +1855,8 @@ struct OptimizerCandidate {
 fn build_plan_candidate(
     name: &str,
     schema: &StorageSchema,
-    query: &TypedQuery,
-    atoms: &[&TypedRelationAtom],
+    query: &NormalizedQuery,
+    atoms: &[&NormAtom],
     variable_order_ids: &[usize],
     variable_costs: &[VariableCost],
     stats: &PlannerStats,
@@ -1791,8 +1901,8 @@ fn build_plan_candidate(
 
 fn build_free_join_plan(
     schema: &StorageSchema,
-    query: &TypedQuery,
-    atoms: &[&TypedRelationAtom],
+    query: &NormalizedQuery,
+    atoms: &[&NormAtom],
     variable_order_ids: &[usize],
     implementations: &[NodeImpl],
     stats: &PlannerStats,
@@ -1810,9 +1920,9 @@ fn build_free_join_plan(
                     .fields
                     .iter()
                     .filter(
-                        |field| matches!(field.term, TypedTerm::Variable(id) if id == *variable),
+                        |field| matches!(field.term, NormTerm::Var(id) if id.0 as usize == *variable),
                     )
-                    .map(|field| FieldId(field.field_id as u16))
+                    .map(|field| field.field)
                     .collect::<Vec<_>>();
                 if fields.is_empty() {
                     return Ok(None);
@@ -1821,7 +1931,7 @@ fn build_free_join_plan(
                     estimate_atom_variable_access(schema, stats, &bound, atom, *variable)?.access;
                 Ok(Some(SubAtom {
                     atom_id: AtomId(atom_id as u16),
-                    relation: crate::RelationId(atom.relation_id as u16),
+                    relation: atom.relation,
                     vars: vec![var_id; fields.len()],
                     fields,
                     access,
@@ -1853,7 +1963,7 @@ fn build_free_join_plan(
 
 fn estimate_free_join_plan(
     name: &str,
-    query: &TypedQuery,
+    query: &NormalizedQuery,
     variable_costs: &[VariableCost],
     implementations: &[NodeImpl],
     cyclic: bool,
@@ -1910,15 +2020,12 @@ fn estimate_free_join_plan(
     }
 }
 
-fn estimate_output_rows(query: &TypedQuery, variable_costs: &[VariableCost]) -> u64 {
-    let has_aggregate = query
-        .find
-        .iter()
-        .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }));
+fn estimate_output_rows(query: &NormalizedQuery, variable_costs: &[VariableCost]) -> u64 {
+    let has_aggregate = has_aggregate(query);
     let group_vars = query
         .find
         .iter()
-        .filter(|term| matches!(term, TypedFindTerm::Variable { .. }))
+        .filter(|term| matches!(term, NormFindTerm::Variable { .. }))
         .count() as u64;
     if has_aggregate && group_vars == 0 {
         return 1;
@@ -1931,7 +2038,7 @@ fn estimate_output_rows(query: &TypedQuery, variable_costs: &[VariableCost]) -> 
         .max(1)
 }
 
-fn estimate_materialized_values(query: &TypedQuery, output_rows: u64) -> u64 {
+fn estimate_materialized_values(query: &NormalizedQuery, output_rows: u64) -> u64 {
     let projected_values = query.find.len() as u64;
     output_rows
         .saturating_mul(projected_values)
@@ -1940,7 +2047,7 @@ fn estimate_materialized_values(query: &TypedQuery, output_rows: u64) -> u64 {
 
 fn probe_node_impls(
     schema: &StorageSchema,
-    atoms: &[&TypedRelationAtom],
+    atoms: &[&NormAtom],
     variable_order_ids: &[usize],
     stats: &PlannerStats,
     cyclic: bool,
@@ -1962,7 +2069,7 @@ fn probe_node_impls(
 
 fn hybrid_node_impls(
     schema: &StorageSchema,
-    atoms: &[&TypedRelationAtom],
+    atoms: &[&NormAtom],
     variable_order_ids: &[usize],
     stats: &PlannerStats,
     cyclic: bool,
@@ -1984,7 +2091,7 @@ fn hybrid_node_impls(
 
 fn variable_probe_eligible(
     schema: &StorageSchema,
-    atoms: &[&TypedRelationAtom],
+    atoms: &[&NormAtom],
     stats: &PlannerStats,
     bound: &BTreeSet<usize>,
     variable: usize,
@@ -1995,7 +2102,7 @@ fn variable_probe_eligible(
         .filter(|atom| atom_contains_variable(atom, variable))
     {
         let estimate = estimate_atom_variable_access(schema, stats, bound, atom, variable)?;
-        let relation_rows = stats.relation_rows(&atom.relation);
+        let relation_rows = stats.relation_rows(&atom.relation_name);
         if estimate.prefix_len > 0 && estimate.estimated_rows <= relation_rows.max(1).div_ceil(2) {
             return Ok(true);
         }
@@ -2003,11 +2110,11 @@ fn variable_probe_eligible(
     Ok(false)
 }
 
-fn is_cyclic_multiway_query(query: &TypedQuery, atoms: &[&TypedRelationAtom]) -> bool {
+fn is_cyclic_multiway_query(query: &NormalizedQuery, atoms: &[&NormAtom]) -> bool {
     if atoms.len() < 3 {
         return false;
     }
-    let mut degree = vec![0usize; query.variables.len()];
+    let mut degree = vec![0usize; query.vars.len()];
     for atom in atoms {
         for variable in atom_variables(atom) {
             degree[variable] += 1;
@@ -2019,24 +2126,24 @@ fn is_cyclic_multiway_query(query: &TypedQuery, atoms: &[&TypedRelationAtom]) ->
         .all(|count| count >= 2)
 }
 
-fn atom_variables(atom: &TypedRelationAtom) -> BTreeSet<usize> {
+fn atom_variables(atom: &NormAtom) -> BTreeSet<usize> {
     atom.fields
         .iter()
         .filter_map(|field| match field.term {
-            TypedTerm::Variable(variable) => Some(variable),
-            TypedTerm::Input(_) | TypedTerm::Literal(_) | TypedTerm::Wildcard => None,
+            NormTerm::Var(variable) => Some(variable.0 as usize),
+            NormTerm::Input(_) | NormTerm::Literal(_) | NormTerm::Wildcard => None,
         })
         .collect()
 }
 
-fn payload_demand(query: &TypedQuery) -> PayloadDemand {
+fn payload_demand(query: &NormalizedQuery) -> PayloadDemand {
     let mut projected_vars = Vec::new();
     let mut aggregate_vars = Vec::new();
     for term in &query.find {
         match term {
-            TypedFindTerm::Variable { variable } => projected_vars.push(VarId(*variable as u16)),
-            TypedFindTerm::Aggregate { variable, .. } => {
-                aggregate_vars.push(VarId(*variable as u16));
+            NormFindTerm::Variable { variable } => projected_vars.push(*variable),
+            NormFindTerm::Aggregate { variable, .. } => {
+                aggregate_vars.push(*variable);
             }
         }
     }
@@ -2048,24 +2155,27 @@ fn payload_demand(query: &TypedQuery) -> PayloadDemand {
     }
 }
 
-fn output_plan(query: &TypedQuery) -> OutputPlan {
-    let has_aggregate = query
-        .find
+fn output_plan(query: &NormalizedQuery) -> OutputPlan {
+    output_plan_from_find(&query.find)
+}
+
+fn output_plan_from_find(find: &[NormFindTerm]) -> OutputPlan {
+    if find
         .iter()
-        .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }));
-    if has_aggregate {
+        .any(|term| matches!(term, NormFindTerm::Aggregate { .. }))
+    {
         let mut group_vars = Vec::new();
         let mut aggregates = Vec::new();
-        for term in &query.find {
+        for term in find {
             match term {
-                TypedFindTerm::Variable { variable } => group_vars.push(VarId(*variable as u16)),
-                TypedFindTerm::Aggregate {
+                NormFindTerm::Variable { variable } => group_vars.push(*variable),
+                NormFindTerm::Aggregate {
                     function,
                     variable,
                     value_type,
                 } => aggregates.push(AggregateTerm {
                     function: *function,
-                    var: VarId(*variable as u16),
+                    var: *variable,
                     value_type: value_type.clone(),
                 }),
             }
@@ -2076,12 +2186,11 @@ fn output_plan(query: &TypedQuery) -> OutputPlan {
         })
     } else {
         OutputPlan::Project(ProjectPlan {
-            vars: query
-                .find
+            vars: find
                 .iter()
                 .filter_map(|term| match term {
-                    TypedFindTerm::Variable { variable } => Some(VarId(*variable as u16)),
-                    TypedFindTerm::Aggregate { .. } => None,
+                    NormFindTerm::Variable { variable } => Some(*variable),
+                    NormFindTerm::Aggregate { .. } => None,
                 })
                 .collect(),
             set_semantics: true,
@@ -2089,52 +2198,68 @@ fn output_plan(query: &TypedQuery) -> OutputPlan {
     }
 }
 
-fn atom_contains_variable(atom: &TypedRelationAtom, variable: usize) -> bool {
+fn atom_contains_variable(atom: &NormAtom, variable: usize) -> bool {
     atom.fields
         .iter()
-        .any(|field| matches!(field.term, TypedTerm::Variable(id) if id == variable))
+        .any(|field| matches!(field.term, NormTerm::Var(id) if id.0 as usize == variable))
 }
 
 fn comparisons_ready_pass(
     txn: &ReadTxn<'_>,
-    comparisons: &[&TypedComparison],
-    query: &TypedQuery,
-    inputs: &InputBindings,
+    comparisons: &[NormPredicate],
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
     binding: &EncodedBinding,
     counters: &mut PlanCounters,
 ) -> Result<bool> {
     for comparison in comparisons {
-        let Some(left_encoded) =
-            operand_encoded_value(txn, &comparison.left, comparison, query, inputs, binding)?
-        else {
+        let Some(left_encoded) = operand_encoded_value(
+            &comparison.operands[0],
+            &comparison.value_type,
+            inputs,
+            binding,
+        ) else {
             continue;
         };
-        let Some(right_encoded) =
-            operand_encoded_value(txn, &comparison.right, comparison, query, inputs, binding)?
-        else {
+        let Some(right_encoded) = operand_encoded_value(
+            &comparison.operands[1],
+            &comparison.value_type,
+            inputs,
+            binding,
+        ) else {
             continue;
         };
-        if encoded_comparison_supported(comparison.operator, &comparison.value_type) {
+        if encoded_comparison_supported(comparison.op, &comparison.value_type) {
             counters.comparisons_evaluated += 1;
             counters.encoded_comparisons_evaluated += 1;
-            if !compare_encoded_values(
-                &left_encoded.bytes,
-                comparison.operator,
-                &right_encoded.bytes,
-            ) {
+            if !compare_encoded_values(&left_encoded.bytes, comparison.op, &right_encoded.bytes) {
                 counters.comparisons_failed += 1;
                 return Ok(false);
             }
             continue;
         }
 
-        let Some(left) =
-            operand_logical_value(txn, &comparison.left, query, inputs, binding, counters)?
+        let Some(left) = operand_logical_value(
+            txn,
+            &comparison.operands[0],
+            &comparison.value_type,
+            query,
+            inputs,
+            binding,
+            counters,
+        )?
         else {
             continue;
         };
-        let Some(right) =
-            operand_logical_value(txn, &comparison.right, query, inputs, binding, counters)?
+        let Some(right) = operand_logical_value(
+            txn,
+            &comparison.operands[1],
+            &comparison.value_type,
+            query,
+            inputs,
+            binding,
+            counters,
+        )?
         else {
             continue;
         };
@@ -2142,7 +2267,7 @@ fn comparisons_ready_pass(
         counters.decoded_comparisons_evaluated += 1;
         let left = normalize_value_for_type(&left, &comparison.value_type);
         let right = normalize_value_for_type(&right, &comparison.value_type);
-        if !compare_values(&left, comparison.operator, &right) {
+        if !compare_values(&left, comparison.op, &right) {
             counters.comparisons_failed += 1;
             return Ok(false);
         }
@@ -2151,35 +2276,23 @@ fn comparisons_ready_pass(
 }
 
 fn operand_encoded_value(
-    txn: &ReadTxn<'_>,
-    operand: &TypedOperand,
-    comparison: &TypedComparison,
-    query: &TypedQuery,
-    inputs: &InputBindings,
+    operand: &NormOperand,
+    value_type: &ValueType,
+    inputs: &EncodedInputs,
     binding: &EncodedBinding,
-) -> Result<Option<EncodedValue>> {
-    Ok(match operand {
-        TypedOperand::Variable(variable) => binding.get(*variable).map(|value| EncodedValue {
-            value_type: comparison.value_type.clone(),
+) -> Option<EncodedValue> {
+    match operand {
+        NormOperand::Var(variable) => binding.get(variable.0 as usize).map(|value| EncodedValue {
+            value_type: value_type.clone(),
             bytes: value.bytes.clone(),
         }),
-        TypedOperand::Input(input) => {
-            let value = input_value(query, inputs, *input)?;
-            let normalized = normalize_value_for_type(value, &comparison.value_type);
-            Some(EncodedValue::new(
-                comparison.value_type.clone(),
-                txn.encode_query_value(&comparison.value_type, &normalized)?,
-            ))
+        NormOperand::Input(input) => inputs
+            .get(*input)
+            .map(|value| EncodedValue::from_owned(value_type.clone(), value)),
+        NormOperand::Literal(literal) => {
+            Some(EncodedValue::from_owned(value_type.clone(), literal))
         }
-        TypedOperand::Literal(literal) => {
-            let value = literal_to_value(literal)?;
-            let normalized = normalize_value_for_type(&value, &comparison.value_type);
-            Some(EncodedValue::new(
-                comparison.value_type.clone(),
-                txn.encode_query_value(&comparison.value_type, &normalized)?,
-            ))
-        }
-    })
+    }
 }
 
 fn encoded_comparison_supported(operator: ComparisonOperator, value_type: &ValueType) -> bool {
@@ -2216,22 +2329,32 @@ fn compare_values(left: &Value, operator: ComparisonOperator, right: &Value) -> 
 
 fn operand_logical_value(
     txn: &ReadTxn<'_>,
-    operand: &TypedOperand,
-    query: &TypedQuery,
-    inputs: &InputBindings,
+    operand: &NormOperand,
+    value_type: &ValueType,
+    _query: &NormalizedQuery,
+    inputs: &EncodedInputs,
     binding: &EncodedBinding,
     counters: &mut PlanCounters,
 ) -> Result<Option<Value>> {
     Ok(match operand {
-        TypedOperand::Variable(variable) => binding
-            .get(*variable)
+        NormOperand::Var(variable) => binding
+            .get(variable.0 as usize)
             .map(|value| {
-                record_decode(&query.variables[*variable].value_type, counters);
-                txn.decode_query_value(&query.variables[*variable].value_type, &value.bytes)
+                record_decode(value_type, counters);
+                txn.decode_query_value(value_type, &value.bytes)
             })
             .transpose()?,
-        TypedOperand::Input(input) => Some(input_value(query, inputs, *input)?.clone()),
-        TypedOperand::Literal(literal) => Some(literal_to_value(literal)?),
+        NormOperand::Input(input) => inputs
+            .get(*input)
+            .map(|value| {
+                record_decode(value_type, counters);
+                txn.decode_query_value(value_type, value.as_bytes())
+            })
+            .transpose()?,
+        NormOperand::Literal(literal) => {
+            record_decode(value_type, counters);
+            Some(txn.decode_query_value(value_type, literal.as_bytes())?)
+        }
     })
 }
 
@@ -2315,19 +2438,247 @@ fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
     Ok(value)
 }
 
-fn result_columns(query: &TypedQuery) -> Vec<ResultColumn> {
+fn normalize_query(
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    query: &TypedQuery,
+) -> Result<NormalizedQuery> {
+    let vars = query
+        .variables
+        .iter()
+        .map(|variable| NormVar {
+            id: VarId(variable.id as u16),
+            name: variable.name.clone(),
+            value_type: variable.value_type.clone(),
+        })
+        .collect::<Vec<_>>();
+    let inputs = query
+        .inputs
+        .iter()
+        .map(|input| NormInput {
+            id: InputId(input.id as u16),
+            name: input.name.clone(),
+            value_type: input.value_type.clone(),
+        })
+        .collect::<Vec<_>>();
+    let mut atoms = Vec::new();
+    let mut predicates = Vec::new();
+    for clause in &query.clauses {
+        match clause {
+            TypedClause::Relation(atom) => atoms.push(normalize_atom(txn, atom, atoms.len())?),
+            TypedClause::Comparison(comparison) => {
+                predicates.push(normalize_predicate(txn, comparison, predicates.len())?)
+            }
+        }
+    }
+    let find = query
+        .find
+        .iter()
+        .map(|term| match term {
+            TypedFindTerm::Variable { variable } => NormFindTerm::Variable {
+                variable: VarId(*variable as u16),
+            },
+            TypedFindTerm::Aggregate {
+                function,
+                variable,
+                value_type,
+            } => NormFindTerm::Aggregate {
+                function: *function,
+                variable: VarId(*variable as u16),
+                value_type: value_type.clone(),
+            },
+        })
+        .collect::<Vec<_>>();
+    let output = output_plan_from_find(&find);
+    let normalized = NormalizedQuery {
+        vars,
+        inputs,
+        atoms,
+        predicates,
+        output,
+        find,
+    };
+    validate_normalized_query(schema, &normalized)?;
+    Ok(normalized)
+}
+
+fn normalize_atom(txn: &ReadTxn<'_>, atom: &TypedRelationAtom, atom_id: usize) -> Result<NormAtom> {
+    let fields = atom
+        .fields
+        .iter()
+        .map(|field| {
+            Ok(NormAtomField {
+                field: FieldId(field.field_id as u16),
+                field_name: field.field.clone(),
+                term: normalize_term(txn, &field.term)?,
+                value_type: field.value_type.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(NormAtom {
+        id: AtomId(atom_id as u16),
+        relation: crate::RelationId(atom.relation_id as u16),
+        relation_name: atom.relation.clone(),
+        fields,
+    })
+}
+
+fn normalize_term(txn: &ReadTxn<'_>, term: &TypedTerm) -> Result<NormTerm> {
+    Ok(match term {
+        TypedTerm::Variable(variable) => NormTerm::Var(VarId(*variable as u16)),
+        TypedTerm::Input(input) => NormTerm::Input(InputId(*input as u16)),
+        TypedTerm::Literal(literal) => NormTerm::Literal(encode_literal(txn, literal)?),
+        TypedTerm::Wildcard => NormTerm::Wildcard,
+    })
+}
+
+fn normalize_predicate(
+    txn: &ReadTxn<'_>,
+    comparison: &TypedComparison,
+    predicate_id: usize,
+) -> Result<NormPredicate> {
+    Ok(NormPredicate {
+        id: PredicateId(predicate_id as u16),
+        operands: [
+            normalize_operand(txn, &comparison.left, &comparison.value_type)?,
+            normalize_operand(txn, &comparison.right, &comparison.value_type)?,
+        ],
+        op: comparison.operator,
+        value_type: comparison.value_type.clone(),
+        earliest_depth: None,
+    })
+}
+
+fn normalize_operand(
+    txn: &ReadTxn<'_>,
+    operand: &TypedOperand,
+    value_type: &ValueType,
+) -> Result<NormOperand> {
+    Ok(match operand {
+        TypedOperand::Variable(variable) => NormOperand::Var(VarId(*variable as u16)),
+        TypedOperand::Input(input) => NormOperand::Input(InputId(*input as u16)),
+        TypedOperand::Literal(literal) => {
+            let value = literal_to_value(literal)?;
+            let normalized = normalize_value_for_type(&value, value_type);
+            NormOperand::Literal(encode_owned_value(txn, value_type, &normalized)?)
+        }
+    })
+}
+
+fn encode_literal(txn: &ReadTxn<'_>, literal: &TypedLiteral) -> Result<EncodedOwned> {
+    let value = literal_to_value(literal)?;
+    let normalized = normalize_value_for_type(&value, &literal.value_type);
+    encode_owned_value(txn, &literal.value_type, &normalized)
+}
+
+fn encode_owned_value(
+    txn: &ReadTxn<'_>,
+    value_type: &ValueType,
+    value: &Value,
+) -> Result<EncodedOwned> {
+    let bytes = txn.encode_query_value(value_type, value)?;
+    encoded_owned_from_bytes(value_type, bytes)
+}
+
+fn encoded_owned_from_bytes(value_type: &ValueType, bytes: Vec<u8>) -> Result<EncodedOwned> {
+    match value_type.encoded_width() {
+        1 => Ok(EncodedOwned::One(exact_encoded_array::<1>(&bytes)?)),
+        8 => Ok(EncodedOwned::Eight(exact_encoded_array::<8>(&bytes)?)),
+        16 => Ok(EncodedOwned::Sixteen(exact_encoded_array::<16>(&bytes)?)),
+        width => Err(Error::internal(format!(
+            "unsupported normalized encoded width {width}"
+        ))),
+    }
+}
+
+fn exact_encoded_array<const N: usize>(bytes: &[u8]) -> Result<[u8; N]> {
+    bytes
+        .try_into()
+        .map_err(|_| Error::internal("normalized encoded value width mismatch"))
+}
+
+fn encode_inputs(
+    txn: &ReadTxn<'_>,
+    query: &NormalizedQuery,
+    inputs: &InputBindings,
+) -> Result<EncodedInputs> {
+    let values = query
+        .inputs
+        .iter()
+        .map(|input| {
+            let value = inputs
+                .get(&input.name)
+                .ok_or_else(|| Error::missing_input(&input.name))?;
+            if !value_matches_type(value, &input.value_type) {
+                return Err(Error::query_input_type_mismatch(
+                    &input.name,
+                    value_type_name(&input.value_type),
+                    value.kind_name(),
+                ));
+            }
+            let normalized = normalize_value_for_type(value, &input.value_type);
+            encode_owned_value(txn, &input.value_type, &normalized)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(EncodedInputs { values })
+}
+
+fn validate_normalized_query(schema: &StorageSchema, query: &NormalizedQuery) -> Result<()> {
+    for atom in &query.atoms {
+        let (_, relation) = schema.relation(&atom.relation_name)?;
+        if atom.relation.0 as usize >= schema.descriptor().relations.len() {
+            return Err(Error::unknown_relation(&atom.relation_name));
+        }
+        for field in &atom.fields {
+            let descriptor = relation
+                .fields
+                .get(field.field.0 as usize)
+                .ok_or_else(|| Error::unknown_field(&atom.relation_name, &field.field_name))?;
+            if descriptor.name != field.field_name {
+                return Err(Error::unknown_field(&atom.relation_name, &field.field_name));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn attach_predicate_depths(query: &mut NormalizedQuery, variable_order_ids: &[usize]) {
+    let mut depth_by_var = BTreeMap::new();
+    for (depth, variable) in variable_order_ids.iter().enumerate() {
+        depth_by_var.insert(VarId(*variable as u16), depth);
+    }
+    for predicate in &mut query.predicates {
+        predicate.earliest_depth = predicate
+            .operands
+            .iter()
+            .filter_map(|operand| match operand {
+                NormOperand::Var(variable) => depth_by_var.get(variable).copied(),
+                NormOperand::Input(_) | NormOperand::Literal(_) => Some(0),
+            })
+            .max();
+    }
+}
+
+fn has_aggregate(query: &NormalizedQuery) -> bool {
+    query
+        .find
+        .iter()
+        .any(|term| matches!(term, NormFindTerm::Aggregate { .. }))
+}
+
+fn result_columns(query: &NormalizedQuery) -> Vec<ResultColumn> {
     query
         .find
         .iter()
         .map(|term| match term {
-            TypedFindTerm::Variable { variable } => {
-                ResultColumn::Variable(query.variables[*variable].name.clone())
+            NormFindTerm::Variable { variable } => {
+                ResultColumn::Variable(query.vars[variable.0 as usize].name.clone())
             }
-            TypedFindTerm::Aggregate {
+            NormFindTerm::Aggregate {
                 function, variable, ..
             } => ResultColumn::Aggregate {
                 function: *function,
-                variable: query.variables[*variable].name.clone(),
+                variable: query.vars[variable.0 as usize].name.clone(),
             },
         })
         .collect()
@@ -2337,7 +2688,7 @@ trait TupleSink {
     fn emit(
         &mut self,
         txn: &ReadTxn<'_>,
-        query: &TypedQuery,
+        query: &NormalizedQuery,
         binding: &EncodedBinding,
         counters: &mut PlanCounters,
     ) -> Result<()>;
@@ -2345,11 +2696,36 @@ trait TupleSink {
     fn finish(
         self,
         txn: &ReadTxn<'_>,
-        query: &TypedQuery,
+        query: &NormalizedQuery,
         counters: &mut PlanCounters,
     ) -> Result<Vec<Vec<Value>>>
     where
         Self: Sized;
+}
+
+#[allow(dead_code)]
+trait ExecutablePlan {
+    fn execute(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        query: &NormalizedQuery,
+        image: &crate::QueryImage,
+        inputs: &EncodedInputs,
+        sink: &mut dyn TupleSink,
+    ) -> Result<PlanCounters>;
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct InterpretedFreeJoinPlan {
+    query: NormalizedQuery,
+    plan: FreeJoinPlan,
+}
+
+#[allow(dead_code)]
+enum CompiledPlan {
+    Interpreted(Box<InterpretedFreeJoinPlan>),
+    Specialized(Box<dyn ExecutablePlan + Send + Sync>),
 }
 
 #[derive(Clone, Debug)]
@@ -2371,7 +2747,7 @@ impl TupleSink for OutputSink {
     fn emit(
         &mut self,
         txn: &ReadTxn<'_>,
-        query: &TypedQuery,
+        query: &NormalizedQuery,
         binding: &EncodedBinding,
         counters: &mut PlanCounters,
     ) -> Result<()> {
@@ -2384,7 +2760,7 @@ impl TupleSink for OutputSink {
     fn finish(
         self,
         txn: &ReadTxn<'_>,
-        query: &TypedQuery,
+        query: &NormalizedQuery,
         counters: &mut PlanCounters,
     ) -> Result<Vec<Vec<Value>>> {
         match self {
@@ -2413,7 +2789,7 @@ impl TupleSink for EncodedProjectSink {
     fn emit(
         &mut self,
         _txn: &ReadTxn<'_>,
-        _query: &TypedQuery,
+        _query: &NormalizedQuery,
         binding: &EncodedBinding,
         _counters: &mut PlanCounters,
     ) -> Result<()> {
@@ -2429,7 +2805,7 @@ impl TupleSink for EncodedProjectSink {
     fn finish(
         self,
         txn: &ReadTxn<'_>,
-        _query: &TypedQuery,
+        _query: &NormalizedQuery,
         counters: &mut PlanCounters,
     ) -> Result<Vec<Vec<Value>>> {
         let _span =
@@ -2488,7 +2864,7 @@ impl TupleSink for AggregateSink {
     fn emit(
         &mut self,
         txn: &ReadTxn<'_>,
-        query: &TypedQuery,
+        query: &NormalizedQuery,
         binding: &EncodedBinding,
         counters: &mut PlanCounters,
     ) -> Result<()> {
@@ -2507,7 +2883,7 @@ impl TupleSink for AggregateSink {
     fn finish(
         self,
         txn: &ReadTxn<'_>,
-        query: &TypedQuery,
+        query: &NormalizedQuery,
         counters: &mut PlanCounters,
     ) -> Result<Vec<Vec<Value>>> {
         let _span =
@@ -2519,14 +2895,14 @@ impl TupleSink for AggregateSink {
             let mut state_iter = states.into_iter();
             for term in &query.find {
                 match term {
-                    TypedFindTerm::Variable { .. } => {
+                    NormFindTerm::Variable { .. } => {
                         row.push(decode_output_value(
                             txn,
                             key_iter.next().unwrap(),
                             counters,
                         )?);
                     }
-                    TypedFindTerm::Aggregate { .. } => {
+                    NormFindTerm::Aggregate { .. } => {
                         counters.materialized_output_values += 1;
                         row.push(state_iter.next().unwrap().finish_encoded(txn, counters)?);
                     }
@@ -2567,14 +2943,14 @@ fn bound_encoded_variable(binding: &EncodedBinding, variable: usize) -> Result<&
 
 fn decode_bound_variable(
     txn: &ReadTxn<'_>,
-    query: &TypedQuery,
+    query: &NormalizedQuery,
     binding: &EncodedBinding,
     variable: usize,
     counters: &mut PlanCounters,
 ) -> Result<Value> {
     let value = bound_encoded_variable(binding, variable)?;
-    record_decode(&query.variables[variable].value_type, counters);
-    txn.decode_query_value(&query.variables[variable].value_type, &value.bytes)
+    record_decode(&query.vars[variable].value_type, counters);
+    txn.decode_query_value(&query.vars[variable].value_type, &value.bytes)
 }
 
 fn decode_output_value(
@@ -2641,7 +3017,7 @@ impl AggregateState {
     fn apply_encoded(
         &mut self,
         txn: &ReadTxn<'_>,
-        query: &TypedQuery,
+        query: &NormalizedQuery,
         binding: &EncodedBinding,
         term: &AggregateTerm,
         counters: &mut PlanCounters,
@@ -2950,6 +3326,158 @@ mod tests {
         assert!(first.explain().contains("candidate_plan"));
         assert!(first.explain().contains("free_join_estimates"));
         assert!(first.explain().contains("reason=stats"));
+    }
+
+    #[test]
+    fn normalized_query_preserves_typed_query_shape() {
+        let (env, schema) = seeded_db();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?posting ?amount
+            where
+              Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
+              Account(id: ?account, holder: $holder)
+              ?t >= $start
+              ?t < $end
+            "#,
+        )
+        .unwrap();
+
+        let normalized = env
+            .read(|txn| normalize_query(txn, &schema, &query))
+            .unwrap();
+
+        assert_eq!(normalized.vars.len(), query.variables.len());
+        assert_eq!(normalized.inputs.len(), query.inputs.len());
+        assert_eq!(normalized.atoms.len(), 2);
+        assert_eq!(normalized.predicates.len(), 2);
+        assert!(matches!(normalized.output, OutputPlan::Project(_)));
+        assert!(matches!(
+            normalized.atoms[0].fields[0].term,
+            NormTerm::Var(_)
+        ));
+    }
+
+    #[test]
+    fn repeated_variable_atom_matches_equal_encoded_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Environment::open(dir.path()).unwrap();
+        let schema = StorageSchema::new(triangle_schema(), env.max_key_size()).unwrap();
+        env.write(|txn| {
+            txn.insert(&schema, edge_ab_row(1, 1))?;
+            txn.insert(&schema, edge_ab_row(1, 2))?;
+            Ok::<(), Error>(())
+        })
+        .unwrap();
+        let query =
+            parse_and_typecheck(schema.descriptor(), "find ?a where EdgeAB(a: ?a, b: ?a)").unwrap();
+
+        let output = env
+            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
+            .unwrap();
+
+        assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+    }
+
+    #[test]
+    fn predicate_earliest_depth_assignment_is_deterministic() {
+        let (env, schema) = seeded_db();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?posting
+            where
+              Posting(id: ?posting, account: ?account, at: ?t)
+              Account(id: ?account, holder: $holder)
+              ?t >= $start
+            "#,
+        )
+        .unwrap();
+
+        let depths = env
+            .read(|txn| {
+                let mut normalized = normalize_query(txn, &schema, &query)?;
+                let image = QueryImageBuilder::new(txn, &schema).build()?;
+                let plan = plan_query(&schema, &mut normalized, &image)?;
+                let t_depth = plan
+                    .summary
+                    .variable_order
+                    .iter()
+                    .position(|name| name == "t")
+                    .unwrap();
+                Ok::<_, Error>((normalized.predicates[0].earliest_depth, t_depth))
+            })
+            .unwrap();
+
+        assert_eq!(depths.0, Some(depths.1));
+    }
+
+    #[test]
+    fn specialized_mock_plan_matches_interpreted_sink_output() {
+        struct MockSpecializedPlan {
+            bindings: Vec<EncodedBinding>,
+        }
+
+        impl ExecutablePlan for MockSpecializedPlan {
+            fn execute(
+                &mut self,
+                txn: &ReadTxn<'_>,
+                query: &NormalizedQuery,
+                _image: &crate::QueryImage,
+                _inputs: &EncodedInputs,
+                sink: &mut dyn TupleSink,
+            ) -> Result<PlanCounters> {
+                let mut counters = PlanCounters::default();
+                for binding in &self.bindings {
+                    sink.emit(txn, query, binding, &mut counters)?;
+                    counters.bindings_yielded += 1;
+                }
+                Ok(counters)
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let env = Environment::open(dir.path()).unwrap();
+        let schema = StorageSchema::new(optimizer_schema(), env.max_key_size()).unwrap();
+        env.write(|txn| {
+            txn.insert(&schema, item_row(1, 1))?;
+            Ok::<(), Error>(())
+        })
+        .unwrap();
+        let typed = parse_and_typecheck(
+            schema.descriptor(),
+            "find ?item where Item(id: ?item, kind: $kind)",
+        )
+        .unwrap();
+        let inputs = InputBindings::from_values([("kind", Value::Symbol(1))]);
+        let interpreted = env
+            .read(|txn| txn.execute_query(&schema, &typed, &inputs))
+            .unwrap()
+            .rows;
+
+        let specialized = env
+            .read(|txn| {
+                let normalized = normalize_query(txn, &schema, &typed)?;
+                let encoded_inputs = encode_inputs(txn, &normalized, &inputs)?;
+                let image = QueryImageBuilder::new(txn, &schema).build()?;
+                let mut binding = EncodedBinding::new(normalized.vars.len());
+                let encoded =
+                    txn.encode_query_value(&normalized.vars[0].value_type, &Value::Id(1))?;
+                assert!(binding.bind(
+                    0,
+                    EncodedValue::new(normalized.vars[0].value_type.clone(), encoded),
+                ));
+                let mut plan = MockSpecializedPlan {
+                    bindings: vec![binding],
+                };
+                let mut sink = OutputSink::new(&normalized.output);
+                let _ = plan.execute(txn, &normalized, &image, &encoded_inputs, &mut sink)?;
+                sink.finish(txn, &normalized, &mut PlanCounters::default())
+            })
+            .unwrap();
+
+        assert_same_rows(&specialized, &interpreted);
     }
 
     #[test]

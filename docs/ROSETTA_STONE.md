@@ -587,8 +587,19 @@ Projection
 Aggregate
 ```
 
+Typed parser/typechecker IR is not consumed directly by the physical planner or executor. It is normalized first into an executor-friendly IR that resolves dense relation, field, variable, input, atom, and predicate IDs.
+
+**Normalized Query IR**
+- `NormalizedQuery` contains normalized variables, inputs, atoms, predicates, output plan, and find-order terms.
+- Relation names are resolved to `RelationId` and field names to `FieldId`.
+- Literals are encoded before physical planning.
+- Runtime inputs are encoded once into `EncodedInputs` before execution.
+- Repeated variables inside one atom are represented in normalized fields and enforced by encoded equality during atom image construction.
+- Comparison predicates record the earliest variable-order depth where they can run.
+- The normalized IR is the boundary for future monomorphic/generated execution.
+
 **Physical Planning**
-- Planner works over typed logical IR.
+- Planner works over normalized query IR.
 - Planner enumerates access paths per relation atom.
 - Access paths come from generated schema index descriptors.
 - Planner chooses indexes based on bound prefixes.
@@ -1049,7 +1060,7 @@ LMDB Layer
 - Typechecker emits user-facing diagnostics.
 
 **Planner**
-- Planner consumes typed logical IR and stats.
+- Planner consumes normalized query IR and stats.
 - Planner emits physical plan.
 - Planner emits explain metadata.
 - Planner can be deterministic for stable testing.
@@ -1058,7 +1069,7 @@ LMDB Layer
 - Planner should remain inspectable.
 
 **Executor**
-- Executor consumes physical plan and snapshot.
+- Executor consumes normalized query IR, encoded inputs, a Free Join physical plan, and a QueryImage snapshot.
 - Executor emits typed result rows.
 - Executor records counters.
 - Executor performs late materialization.
@@ -1066,6 +1077,12 @@ LMDB Layer
 - Executor owns temporary aggregation state.
 - Executor does not mutate database.
 - Executor is transaction-scoped.
+
+**Runtime Specialization Boundary**
+- `ExecutablePlan` is the internal trait boundary for future generated/specialized execution.
+- The first implementation remains interpreted Free Join.
+- Future specialized plans should replace dynamic field/type lookups with fixed offsets and monomorphic predicate/aggregate code.
+- Specialized plans must emit into the same tuple sinks as interpreted plans.
 
 **Access Path Layer**
 - Access paths expose relation indexes generically.

@@ -31,8 +31,10 @@ pub use free_join::{
 };
 pub use hash_trie::{HashNode, HashTrieIndex, HashTrieStats, LeafMode, PrefixProbe, RowSet};
 pub use query::{
-    CostKey, InputBindings, MissingIndexRecommendation, NodeRowEstimate, OptimizerTrace,
-    PlanCandidate, PlanCounters, QueryOutput, QueryPlan, ResultColumn, VariableEstimate,
+    CostKey, InputBindings, InputId, MissingIndexRecommendation, NodeRowEstimate, NormAtom,
+    NormAtomField, NormFindTerm, NormInput, NormOperand, NormPredicate, NormTerm, NormVar,
+    NormalizedQuery, OptimizerTrace, PlanCandidate, PlanCounters, PredicateId, QueryOutput,
+    QueryPlan, ResultColumn, VariableEstimate,
 };
 pub use query_image::{
     ColumnImage, EncodedRef, FieldId, FieldImage, FixedColumn, QueryImage, QueryImageCache,
