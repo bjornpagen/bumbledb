@@ -435,10 +435,11 @@ impl<'env> ReadTxn<'env> {
 
         let mut plan = plan_query(self, schema, query, inputs)?;
         tracing::debug!(variable_order = ?plan.summary.variable_order, atoms = plan.summary.atoms.len(), "wcoj query planned");
-        let bindings = execute_lftj(self, schema, query, inputs, &mut plan)?;
+        let mut sink = OutputSink::new(&plan.summary.free_join.output);
+        execute_lftj(self, schema, query, inputs, &mut plan, &mut sink)?;
 
         let columns = result_columns(query);
-        let rows = project_results(self, query, &bindings, &mut plan.summary.counters)?;
+        let rows = sink.finish(self, query, &mut plan.summary.counters)?;
         plan.summary.counters.output_rows = rows.len() as u64;
         if query
             .find
@@ -456,13 +457,14 @@ impl<'env> ReadTxn<'env> {
     }
 }
 
-fn execute_lftj<'txn, 'query>(
+fn execute_lftj<'txn, 'query, S: TupleSink>(
     txn: &ReadTxn<'txn>,
     schema: &StorageSchema,
     query: &'query TypedQuery,
     inputs: &InputBindings,
     plan: &mut ExecutionPlan<'query>,
-) -> Result<Vec<EncodedBinding>> {
+    sink: &mut S,
+) -> Result<()> {
     let image = QueryImageBuilder::new(txn, schema).build()?;
     let free_join_order = plan
         .summary
@@ -488,7 +490,7 @@ fn execute_lftj<'txn, 'query>(
         .iter()
         .any(|atom| atom.variables.is_empty() && atom.row_count == 0)
     {
-        return Ok(Vec::new());
+        return Ok(());
     }
     let runtime = LftjRuntime {
         atom_variables: atom_plans
@@ -504,23 +506,23 @@ fn execute_lftj<'txn, 'query>(
         plan,
         runtime,
         binding: EncodedBinding::new(query.variables.len()),
-        output: Vec::new(),
+        sink,
     };
     executor.execute(0)?;
-    Ok(executor.output)
+    Ok(())
 }
 
-struct LftjExecutor<'txn, 'input, 'query, 'plan, 'image> {
+struct LftjExecutor<'txn, 'input, 'query, 'plan, 'image, S: TupleSink> {
     txn: &'input ReadTxn<'txn>,
     query: &'query TypedQuery,
     inputs: &'input InputBindings,
     plan: &'plan mut ExecutionPlan<'query>,
     runtime: LftjRuntime<'image>,
     binding: EncodedBinding,
-    output: Vec<EncodedBinding>,
+    sink: &'plan mut S,
 }
 
-impl LftjExecutor<'_, '_, '_, '_, '_> {
+impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
     fn execute(&mut self, depth: usize) -> Result<()> {
         if depth == self.plan.variable_order_ids.len() {
             if comparisons_ready_pass(
@@ -532,7 +534,12 @@ impl LftjExecutor<'_, '_, '_, '_, '_> {
                 &mut self.plan.summary.counters,
             )? {
                 self.plan.summary.counters.bindings_yielded += 1;
-                self.output.push(self.binding.clone());
+                self.sink.emit(
+                    self.txn,
+                    self.query,
+                    &self.binding,
+                    &mut self.plan.summary.counters,
+                )?;
             }
             return Ok(());
         }
@@ -1698,32 +1705,109 @@ fn result_columns(query: &TypedQuery) -> Vec<ResultColumn> {
         .collect()
 }
 
-fn project_results(
-    txn: &ReadTxn<'_>,
-    query: &TypedQuery,
-    bindings: &[EncodedBinding],
-    counters: &mut PlanCounters,
-) -> Result<Vec<Vec<Value>>> {
-    let _span = tracing::debug_span!("bumbledb.query.project", bindings = bindings.len()).entered();
-    let has_aggregate = query
-        .find
-        .iter()
-        .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }));
-    if has_aggregate {
-        project_aggregates(txn, query, bindings, counters)
-    } else {
-        let mut set = BTreeSet::new();
-        for binding in bindings {
-            let mut row = Vec::new();
-            for term in &query.find {
-                let TypedFindTerm::Variable { variable } = term else {
-                    continue;
-                };
-                row.push(bound_encoded_variable(binding, *variable)?.clone());
-            }
-            set.insert(row);
+trait TupleSink {
+    fn emit(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        query: &TypedQuery,
+        binding: &EncodedBinding,
+        counters: &mut PlanCounters,
+    ) -> Result<()>;
+
+    fn finish(
+        self,
+        txn: &ReadTxn<'_>,
+        query: &TypedQuery,
+        counters: &mut PlanCounters,
+    ) -> Result<Vec<Vec<Value>>>
+    where
+        Self: Sized;
+}
+
+#[derive(Clone, Debug)]
+enum OutputSink {
+    Project(EncodedProjectSink),
+    Aggregate(AggregateSink),
+}
+
+impl OutputSink {
+    fn new(output: &OutputPlan) -> Self {
+        match output {
+            OutputPlan::Project(plan) => OutputSink::Project(EncodedProjectSink::new(plan)),
+            OutputPlan::Aggregate(plan) => OutputSink::Aggregate(AggregateSink::new(plan)),
         }
-        set.into_iter()
+    }
+}
+
+impl TupleSink for OutputSink {
+    fn emit(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        query: &TypedQuery,
+        binding: &EncodedBinding,
+        counters: &mut PlanCounters,
+    ) -> Result<()> {
+        match self {
+            OutputSink::Project(sink) => sink.emit(txn, query, binding, counters),
+            OutputSink::Aggregate(sink) => sink.emit(txn, query, binding, counters),
+        }
+    }
+
+    fn finish(
+        self,
+        txn: &ReadTxn<'_>,
+        query: &TypedQuery,
+        counters: &mut PlanCounters,
+    ) -> Result<Vec<Vec<Value>>> {
+        match self {
+            OutputSink::Project(sink) => sink.finish(txn, query, counters),
+            OutputSink::Aggregate(sink) => sink.finish(txn, query, counters),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct EncodedProjectSink {
+    vars: Vec<VarId>,
+    rows: BTreeSet<Vec<EncodedValue>>,
+}
+
+impl EncodedProjectSink {
+    fn new(plan: &ProjectPlan) -> Self {
+        Self {
+            vars: plan.vars.clone(),
+            rows: BTreeSet::new(),
+        }
+    }
+}
+
+impl TupleSink for EncodedProjectSink {
+    fn emit(
+        &mut self,
+        _txn: &ReadTxn<'_>,
+        _query: &TypedQuery,
+        binding: &EncodedBinding,
+        _counters: &mut PlanCounters,
+    ) -> Result<()> {
+        let row = self
+            .vars
+            .iter()
+            .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
+            .collect::<Result<Vec<_>>>()?;
+        self.rows.insert(row);
+        Ok(())
+    }
+
+    fn finish(
+        self,
+        txn: &ReadTxn<'_>,
+        _query: &TypedQuery,
+        counters: &mut PlanCounters,
+    ) -> Result<Vec<Vec<Value>>> {
+        let _span =
+            tracing::debug_span!("bumbledb.query.project", rows = self.rows.len()).entered();
+        self.rows
+            .into_iter()
             .map(|row| {
                 row.into_iter()
                     .map(|value| decode_output_value(txn, value, counters))
@@ -1733,81 +1817,118 @@ fn project_results(
     }
 }
 
-fn project_aggregates(
-    txn: &ReadTxn<'_>,
-    query: &TypedQuery,
-    bindings: &[EncodedBinding],
-    counters: &mut PlanCounters,
-) -> Result<Vec<Vec<Value>>> {
-    let _span =
-        tracing::debug_span!("bumbledb.query.aggregate", bindings = bindings.len()).entered();
-    let group_terms = query
-        .find
-        .iter()
-        .filter_map(|term| match term {
-            TypedFindTerm::Variable { variable } => Some(*variable),
-            TypedFindTerm::Aggregate { .. } => None,
-        })
-        .collect::<Vec<_>>();
-    let aggregate_terms = query
-        .find
-        .iter()
-        .filter_map(|term| match term {
-            TypedFindTerm::Aggregate {
-                function,
-                variable,
-                value_type,
-            } => Some((*function, *variable, value_type.clone())),
-            TypedFindTerm::Variable { .. } => None,
-        })
-        .collect::<Vec<_>>();
+#[derive(Clone, Debug)]
+struct AggregateSink {
+    group_vars: Vec<VarId>,
+    terms: Vec<AggregateTerm>,
+    groups: BTreeMap<Vec<EncodedValue>, Vec<AggregateState>>,
+}
 
-    let mut groups: BTreeMap<Vec<EncodedValue>, Vec<AggregateState>> = BTreeMap::new();
-    for binding in bindings {
-        let key = group_terms
+impl AggregateSink {
+    fn new(plan: &AggregatePlan) -> Self {
+        Self {
+            group_vars: plan.group_vars.clone(),
+            terms: plan.aggregates.clone(),
+            groups: BTreeMap::new(),
+        }
+    }
+
+    fn group_key(&self, binding: &EncodedBinding) -> Result<Vec<EncodedValue>> {
+        self.group_vars
             .iter()
-            .map(|variable| bound_encoded_variable(binding, *variable).cloned())
-            .collect::<Result<Vec<_>>>()?;
-        let states = groups.entry(key).or_insert_with(|| {
-            aggregate_terms
-                .iter()
-                .map(|(function, _, value_type)| AggregateState::new(*function, value_type.clone()))
-                .collect()
-        });
-        for (state, (function, variable, _)) in states.iter_mut().zip(&aggregate_terms) {
-            if *function == AggregateFunction::Count {
-                state.apply_count()?;
-            } else {
-                let value = decode_bound_variable(txn, query, binding, *variable, counters)?;
-                state.apply(&value)?;
-            }
-        }
+            .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
+            .collect()
     }
 
-    let mut rows = Vec::new();
-    for (key, states) in groups {
-        let mut row = Vec::new();
-        let mut key_iter = key.into_iter();
-        let mut state_iter = states.into_iter();
-        for term in &query.find {
-            match term {
-                TypedFindTerm::Variable { .. } => {
-                    row.push(decode_output_value(
-                        txn,
-                        key_iter.next().unwrap(),
-                        counters,
-                    )?);
-                }
-                TypedFindTerm::Aggregate { .. } => {
-                    counters.materialized_output_values += 1;
-                    row.push(state_iter.next().unwrap().finish()?);
+    fn count_only(&self) -> bool {
+        self.terms
+            .iter()
+            .all(|term| term.function == AggregateFunction::Count)
+    }
+
+    fn emit_count_range(&mut self, binding: &EncodedBinding, count: u64) -> Result<()> {
+        let key = self.group_key(binding)?;
+        let states = ensure_aggregate_group(&mut self.groups, &self.terms, key);
+        for state in states {
+            state.apply_count_by(count)?;
+        }
+        Ok(())
+    }
+}
+
+impl TupleSink for AggregateSink {
+    fn emit(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        query: &TypedQuery,
+        binding: &EncodedBinding,
+        counters: &mut PlanCounters,
+    ) -> Result<()> {
+        if self.count_only() {
+            return self.emit_count_range(binding, 1);
+        }
+
+        let key = self.group_key(binding)?;
+        let states = ensure_aggregate_group(&mut self.groups, &self.terms, key);
+        for (state, term) in states.iter_mut().zip(&self.terms) {
+            state.apply_encoded(txn, query, binding, term, counters)?;
+        }
+        Ok(())
+    }
+
+    fn finish(
+        self,
+        txn: &ReadTxn<'_>,
+        query: &TypedQuery,
+        counters: &mut PlanCounters,
+    ) -> Result<Vec<Vec<Value>>> {
+        let _span =
+            tracing::debug_span!("bumbledb.query.aggregate", groups = self.groups.len()).entered();
+        let mut rows = Vec::new();
+        for (key, states) in self.groups {
+            let mut row = Vec::new();
+            let mut key_iter = key.into_iter();
+            let mut state_iter = states.into_iter();
+            for term in &query.find {
+                match term {
+                    TypedFindTerm::Variable { .. } => {
+                        row.push(decode_output_value(
+                            txn,
+                            key_iter.next().unwrap(),
+                            counters,
+                        )?);
+                    }
+                    TypedFindTerm::Aggregate { .. } => {
+                        counters.materialized_output_values += 1;
+                        row.push(state_iter.next().unwrap().finish_encoded(txn, counters)?);
+                    }
                 }
             }
+            rows.push(row);
         }
-        rows.push(row);
+        rows.sort();
+        Ok(rows)
     }
-    rows.sort();
-    Ok(rows)
+}
+
+fn initial_aggregate_states(terms: &[AggregateTerm]) -> Vec<AggregateState> {
+    terms
+        .iter()
+        .map(|term| AggregateState::new_encoded(term.function, term.value_type.clone()))
+        .collect()
+}
+
+fn ensure_aggregate_group<'a>(
+    groups: &'a mut BTreeMap<Vec<EncodedValue>, Vec<AggregateState>>,
+    terms: &[AggregateTerm],
+    key: Vec<EncodedValue>,
+) -> &'a mut Vec<AggregateState> {
+    match groups.entry(key) {
+        std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(initial_aggregate_states(terms))
+        }
+    }
 }
 
 fn bound_encoded_variable(binding: &EncodedBinding, variable: usize) -> Result<&EncodedValue> {
@@ -1844,6 +1965,8 @@ enum AggregateState {
     SumU64(u64),
     SumI64(i64),
     SumDecimal(i128),
+    EncodedMin(Option<EncodedValue>),
+    EncodedMax(Option<EncodedValue>),
     Min(Option<Value>),
     Max(Option<Value>),
 }
@@ -1861,14 +1984,62 @@ impl AggregateState {
         }
     }
 
+    fn new_encoded(function: AggregateFunction, value_type: ValueType) -> Self {
+        match function {
+            AggregateFunction::Min if encoded_minmax_supported(&value_type) => {
+                AggregateState::EncodedMin(None)
+            }
+            AggregateFunction::Max if encoded_minmax_supported(&value_type) => {
+                AggregateState::EncodedMax(None)
+            }
+            _ => AggregateState::new(function, value_type),
+        }
+    }
+
     fn apply_count(&mut self) -> Result<()> {
+        self.apply_count_by(1)
+    }
+
+    fn apply_count_by(&mut self, value: u64) -> Result<()> {
         let AggregateState::Count(count) = self else {
             return Err(Error::internal("count aggregate state mismatch"));
         };
         *count = count
-            .checked_add(1)
+            .checked_add(value)
             .ok_or_else(|| Error::integer_overflow("count"))?;
         Ok(())
+    }
+
+    fn apply_encoded(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        query: &TypedQuery,
+        binding: &EncodedBinding,
+        term: &AggregateTerm,
+        counters: &mut PlanCounters,
+    ) -> Result<()> {
+        match self {
+            AggregateState::Count(_) => self.apply_count(),
+            AggregateState::EncodedMin(current) => {
+                let value = bound_encoded_variable(binding, term.var.0 as usize)?.clone();
+                if current.as_ref().is_none_or(|existing| &value < existing) {
+                    *current = Some(value);
+                }
+                Ok(())
+            }
+            AggregateState::EncodedMax(current) => {
+                let value = bound_encoded_variable(binding, term.var.0 as usize)?.clone();
+                if current.as_ref().is_none_or(|existing| &value > existing) {
+                    *current = Some(value);
+                }
+                Ok(())
+            }
+            _ => {
+                let value =
+                    decode_bound_variable(txn, query, binding, term.var.0 as usize, counters)?;
+                self.apply(&value)
+            }
+        }
     }
 
     fn apply(&mut self, value: &Value) -> Result<()> {
@@ -1898,6 +2069,11 @@ impl AggregateState {
                     .checked_add(*value)
                     .ok_or_else(|| Error::decimal_overflow("sum"))?;
             }
+            AggregateState::EncodedMin(_) | AggregateState::EncodedMax(_) => {
+                return Err(Error::internal(
+                    "encoded aggregate state cannot apply logical value",
+                ));
+            }
             AggregateState::Min(current) => match current {
                 Some(existing) if &*existing <= value => {}
                 _ => *current = Some(value.clone()),
@@ -1916,10 +2092,30 @@ impl AggregateState {
             AggregateState::SumU64(sum) => Value::U64(sum),
             AggregateState::SumI64(sum) => Value::I64(sum),
             AggregateState::SumDecimal(sum) => Value::Decimal(DecimalRaw(sum)),
+            AggregateState::EncodedMin(_) | AggregateState::EncodedMax(_) => {
+                return Err(Error::internal(
+                    "encoded aggregate state requires output decoder",
+                ));
+            }
             AggregateState::Min(Some(value)) | AggregateState::Max(Some(value)) => value,
             AggregateState::Min(None) | AggregateState::Max(None) => Value::U64(0),
         })
     }
+
+    fn finish_encoded(self, txn: &ReadTxn<'_>, counters: &mut PlanCounters) -> Result<Value> {
+        Ok(match self {
+            AggregateState::EncodedMin(Some(value)) | AggregateState::EncodedMax(Some(value)) => {
+                record_decode(&value.value_type, counters);
+                txn.decode_query_value(&value.value_type, &value.bytes)?
+            }
+            AggregateState::EncodedMin(None) | AggregateState::EncodedMax(None) => Value::U64(0),
+            state => state.finish()?,
+        })
+    }
+}
+
+fn encoded_minmax_supported(value_type: &ValueType) -> bool {
+    !matches!(value_type, ValueType::String | ValueType::Bytes)
 }
 
 fn value_type_name(value_type: &ValueType) -> String {
@@ -2087,6 +2283,106 @@ mod tests {
             .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
             .unwrap();
         assert_eq!(output.rows, vec![vec![Value::Ref(1)], vec![Value::Ref(2)]]);
+        assert_eq!(output.plan.counters.bindings_yielded, 3);
+        assert_eq!(output.plan.counters.materialized_output_values, 2);
+    }
+
+    #[test]
+    fn count_sink_avoids_decoding_counted_variable() {
+        let (env, schema) = seeded_db();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            "find count(?posting) where Posting(id: ?posting)",
+        )
+        .unwrap();
+
+        let output = env
+            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
+            .unwrap();
+
+        assert_eq!(output.rows, vec![vec![Value::U64(3)]]);
+        assert_eq!(output.plan.counters.bindings_yielded, 3);
+        assert_eq!(output.plan.counters.aggregate_groups, 1);
+        assert_eq!(output.plan.counters.decoded_values, 0);
+        assert_eq!(output.plan.counters.materialized_output_values, 1);
+        assert!(
+            output.plan.counters.materialized_output_values < output.plan.counters.bindings_yielded
+        );
+    }
+
+    #[test]
+    fn sum_sink_decodes_only_aggregate_operand_values() {
+        let (env, schema) = seeded_db();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find sum(?amount) count(?posting)
+            where
+              Posting(id: ?posting, amount: ?amount)
+            "#,
+        )
+        .unwrap();
+
+        let output = env
+            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
+            .unwrap();
+
+        assert_eq!(
+            output.rows,
+            vec![vec![Value::Decimal(DecimalRaw(600)), Value::U64(3)]]
+        );
+        assert_eq!(output.plan.counters.bindings_yielded, 3);
+        assert_eq!(output.plan.counters.decoded_values, 3);
+        assert_eq!(output.plan.counters.materialized_output_values, 2);
+    }
+
+    #[test]
+    fn grouped_count_decodes_dictionary_keys_only_at_final_output() {
+        let (env, schema) = seeded_db();
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?holder_name count(?account)
+            where
+              Account(id: ?account, holder: ?holder)
+              Holder(id: ?holder, name: ?holder_name)
+            "#,
+        )
+        .unwrap();
+
+        let output = env
+            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
+            .unwrap();
+
+        assert_same_rows(
+            &output.rows,
+            &[
+                vec![Value::String("Alice".to_owned()), Value::U64(2)],
+                vec![Value::String("Bob".to_owned()), Value::U64(1)],
+            ],
+        );
+        assert_eq!(output.plan.counters.bindings_yielded, 3);
+        assert_eq!(output.plan.counters.decoded_values, 2);
+        assert_eq!(output.plan.counters.dictionary_reverse_lookups, 2);
+        assert_eq!(output.plan.counters.materialized_output_values, 4);
+    }
+
+    #[test]
+    fn aggregate_count_range_uses_multiplicity() {
+        let mut sink = AggregateSink::new(&AggregatePlan {
+            group_vars: Vec::new(),
+            aggregates: vec![AggregateTerm {
+                function: AggregateFunction::Count,
+                var: VarId(0),
+                value_type: ValueType::U64,
+            }],
+        });
+        let binding = EncodedBinding::new(0);
+
+        sink.emit_count_range(&binding, 7).unwrap();
+
+        let states = sink.groups.get(&Vec::new()).unwrap();
+        assert!(matches!(states.as_slice(), [AggregateState::Count(7)]));
     }
 
     #[test]
