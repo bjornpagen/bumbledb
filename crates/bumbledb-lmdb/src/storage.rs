@@ -708,6 +708,11 @@ impl WriteTxn<'_> {
         relation_id: u16,
         relation: &RelationDescriptor,
     ) -> Result<()> {
+        let _span = tracing::trace_span!(
+            "bumbledb.storage.segment_publish",
+            relation = %relation.name,
+        )
+        .entered();
         let tx_id = self.ensure_tx_id()?;
         let segment_id = self.next_segment_id(relation_id)?;
         let segment = self.build_relation_segment(schema, relation_id, relation)?;

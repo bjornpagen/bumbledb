@@ -508,6 +508,7 @@ impl<'a, 'env> QueryImageBuilder<'a, 'env> {
 
     /// Builds the query image.
     pub fn build(self) -> Result<QueryImage> {
+        let _span = tracing::debug_span!("bumbledb.query_image.build").entered();
         let start = Instant::now();
         let tx_id = self.txn.last_committed_tx_id()?;
         let mut relations = Vec::new();
@@ -568,6 +569,11 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
     }
 
     fn build(self) -> Result<BuiltRelationImage> {
+        let _span = tracing::trace_span!(
+            "bumbledb.query_image.relation",
+            relation = %self.relation.name,
+        )
+        .entered();
         if let Some(segment) =
             self.txn
                 .visible_relation_segment(self.schema, self.relation_id, self.relation)?

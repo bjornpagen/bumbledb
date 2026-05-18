@@ -56,16 +56,17 @@ All public error enums are `#[non_exhaustive]`.
 - `bumbledb.commit`
 - `bumbledb.bulk_load`
 - `bumbledb.storage.bulk_load`
+- `bumbledb.storage.segment_publish`
 - `bumbledb.insert`
 - `bumbledb.replace`
 - `bumbledb.delete`
 - `bumbledb.dict_intern`
 - `bumbledb.query.plan`
 - `bumbledb.query.execute`
-- `bumbledb.query.execute_atom`
-- `bumbledb.query.scan`
 - `bumbledb.query.project`
 - `bumbledb.query.aggregate`
+- `bumbledb.query_image.build`
+- `bumbledb.query_image.relation`
 - `bumbledb.backup`
 - `bumbledb.compact_copy`
 

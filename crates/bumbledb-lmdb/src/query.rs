@@ -9,10 +9,10 @@ use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::schema::{IndexKind, ValueType};
 
 use crate::{
-    AccessId, AccessPathDescriptor, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error,
-    FieldId, FreeJoinPlan, IndexSpec, LinearIter, NodeId, NodeImpl, OutputPlan, PayloadDemand,
-    PlanEstimates, PlanNode, ProjectPlan, ReadTxn, RelationImage, RelationStats, Result, RowId,
-    SortedTrieIndex, StorageSchema, SubAtom, TrieIter, Value, VarId,
+    AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FreeJoinPlan,
+    IndexSpec, LinearIter, NodeId, NodeImpl, OutputPlan, PayloadDemand, PlanEstimates, PlanNode,
+    ProjectPlan, ReadTxn, RelationImage, RelationStats, Result, RowId, SortedTrieIndex,
+    StorageSchema, SubAtom, TrieIter, Value, VarId,
 };
 
 /// Query input bindings keyed by input name without `$`.
@@ -86,8 +86,6 @@ pub struct QueryPlan {
     pub variable_order: Vec<String>,
     /// Estimated work for variables in execution order.
     pub variable_estimates: Vec<VariableEstimate>,
-    /// Planned relation atoms in execution order.
-    pub atoms: Vec<PlannedAtom>,
     /// Physical index recommendations for predicates not served by leading indexes.
     pub missing_indexes: Vec<MissingIndexRecommendation>,
     /// Optimizer candidates and chosen cost key.
@@ -123,13 +121,6 @@ impl QueryPlan {
                 estimate.relation_constraints,
                 estimate.access,
                 estimate.reason
-            ));
-        }
-        out.push_str("atoms:\n");
-        for atom in &self.atoms {
-            out.push_str(&format!(
-                "  relation={} index={} kind={:?} prefix_fields={:?}\n",
-                atom.relation, atom.index, atom.kind, atom.prefix_fields
             ));
         }
         if !self.missing_indexes.is_empty() {
@@ -337,20 +328,7 @@ pub struct NodeRowEstimate {
     pub actual_rows: u64,
 }
 
-/// Planned relation atom.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PlannedAtom {
-    /// Relation name.
-    pub relation: String,
-    /// Chosen index name.
-    pub index: String,
-    /// Chosen index kind.
-    pub kind: IndexKind,
-    /// Prefix fields expected to be bound when this atom runs.
-    pub prefix_fields: Vec<String>,
-}
-
-/// Execution counters for the encoded trie/WCOJ executor.
+/// Execution counters for the Free Join query executor.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlanCounters {
     /// Number of encoded index scan openings.
@@ -487,13 +465,6 @@ impl PlannerStats {
 
     fn index_stats(&self, relation: &str, index: &str) -> Option<&OptimizerIndexStats> {
         self.relations.get(relation)?.indexes.get(index)
-    }
-
-    fn index_entries(&self, relation: &str, index: &str) -> u64 {
-        self.index_stats(relation, index)
-            .map(|stats| stats.rows as u64)
-            .unwrap_or_else(|| self.relation_rows(relation))
-            .max(1)
     }
 }
 
@@ -709,8 +680,8 @@ impl<'env> ReadTxn<'env> {
         validate_inputs(query, inputs)?;
 
         let image = QueryImageBuilder::new(self, schema).build()?;
-        let mut plan = plan_query(schema, query, inputs, &image)?;
-        tracing::debug!(variable_order = ?plan.summary.variable_order, atoms = plan.summary.atoms.len(), "wcoj query planned");
+        let mut plan = plan_query(schema, query, &image)?;
+        tracing::debug!(variable_order = ?plan.summary.variable_order, nodes = plan.summary.free_join.nodes.len(), "free join query planned");
         let mut sink = OutputSink::new(&plan.summary.free_join.output);
         execute_lftj(&image, self, query, inputs, &mut plan, &mut sink)?;
 
@@ -724,7 +695,7 @@ impl<'env> ReadTxn<'env> {
         {
             plan.summary.counters.aggregate_groups = rows.len() as u64;
         }
-        tracing::debug!(?plan.summary.counters, "wcoj query executed");
+        tracing::debug!(?plan.summary.counters, "free join query executed");
         Ok(QueryOutput {
             columns,
             rows,
@@ -1151,7 +1122,6 @@ fn value_matches_encoded_field(value: &Value, value_type: &ValueType, encoded: &
 fn plan_query<'query>(
     schema: &StorageSchema,
     query: &'query TypedQuery,
-    inputs: &InputBindings,
     image: &crate::QueryImage,
 ) -> Result<ExecutionPlan<'query>> {
     let _span = tracing::debug_span!("bumbledb.query.plan").entered();
@@ -1214,14 +1184,6 @@ fn plan_query<'query>(
     )?;
     free_join.validate()?;
 
-    let empty = EncodedBinding::new(query.variables.len());
-    let mut atoms = Vec::new();
-    for atom in &relation_atoms {
-        atoms.push(choose_summary_access(
-            schema, &stats, atom, query, inputs, &empty,
-        )?);
-    }
-
     let uses_indexed_multiway_join = relation_atoms.len() > 1;
     Ok(ExecutionPlan {
         variable_order_ids,
@@ -1230,7 +1192,6 @@ fn plan_query<'query>(
         summary: QueryPlan {
             variable_order,
             variable_estimates,
-            atoms,
             missing_indexes,
             optimizer,
             node_rows,
@@ -2128,142 +2089,6 @@ fn output_plan(query: &TypedQuery) -> OutputPlan {
     }
 }
 
-fn choose_summary_access(
-    schema: &StorageSchema,
-    stats: &PlannerStats,
-    atom: &TypedRelationAtom,
-    query: &TypedQuery,
-    inputs: &InputBindings,
-    binding: &EncodedBinding,
-) -> Result<PlannedAtom> {
-    let paths = schema.access_paths(&atom.relation)?;
-    let mut best: Option<(u64, usize, usize, String, AccessPathDescriptor)> = None;
-    for path in paths {
-        let prefix_len = path
-            .leading_fields
-            .iter()
-            .take_while(|field_name| {
-                atom.fields
-                    .iter()
-                    .find(|field| &field.field == *field_name)
-                    .is_some_and(|field| {
-                        matches!(field.term, TypedTerm::Input(_) | TypedTerm::Literal(_))
-                            || matches!(field.term, TypedTerm::Variable(variable) if binding.get(variable).is_some())
-                    })
-            })
-            .count();
-        let mut score = prefix_len;
-        let range_match =
-            score == 0 && range_field_for_atom(&path, atom, query, inputs, binding).is_some();
-        if range_match {
-            score = 1;
-        }
-        let mut estimate = stats
-            .index_stats(&atom.relation, &path.index_name)
-            .map(|index| index.estimated_rows_for_prefix(prefix_len))
-            .unwrap_or_else(|| stats.index_entries(&atom.relation, &path.index_name));
-        if range_match {
-            estimate = divide_ceil(stats.relation_rows(&atom.relation), 4);
-        }
-        if score == 0 {
-            estimate = estimate.saturating_mul(4);
-        }
-        let candidate = (
-            estimate.max(1),
-            score,
-            kind_rank(path.kind),
-            path.index_name.clone(),
-            path,
-        );
-        if best.as_ref().is_none_or(|best| {
-            (
-                candidate.0,
-                std::cmp::Reverse(candidate.1),
-                std::cmp::Reverse(candidate.2),
-                candidate.3.clone(),
-            ) < (
-                best.0,
-                std::cmp::Reverse(best.1),
-                std::cmp::Reverse(best.2),
-                best.3.clone(),
-            )
-        }) {
-            best = Some(candidate);
-        }
-    }
-    let (_, _, _, _, path) = best.ok_or_else(|| Error::internal("relation has no access paths"))?;
-    Ok(PlannedAtom {
-        relation: atom.relation.clone(),
-        index: path.index_name,
-        kind: path.kind,
-        prefix_fields: path.leading_fields,
-    })
-}
-
-fn range_field_for_atom(
-    path: &AccessPathDescriptor,
-    atom: &TypedRelationAtom,
-    query: &TypedQuery,
-    _inputs: &InputBindings,
-    binding: &EncodedBinding,
-) -> Option<String> {
-    if path.kind != IndexKind::Range || path.leading_fields.len() != 1 {
-        return None;
-    }
-    let field_name = &path.leading_fields[0];
-    let field = atom
-        .fields
-        .iter()
-        .find(|field| &field.field == field_name)?;
-    let TypedTerm::Variable(variable) = field.term else {
-        return None;
-    };
-    query.clauses.iter().find_map(|clause| {
-        let TypedClause::Comparison(comparison) = clause else {
-            return None;
-        };
-        if comparison_mentions_bound(comparison, variable, binding) {
-            Some(field_name.clone())
-        } else {
-            None
-        }
-    })
-}
-
-fn comparison_mentions_bound(
-    comparison: &TypedComparison,
-    variable: usize,
-    binding: &EncodedBinding,
-) -> bool {
-    let left_is_var = matches!(comparison.left, TypedOperand::Variable(id) if id == variable);
-    let right_is_var = matches!(comparison.right, TypedOperand::Variable(id) if id == variable);
-    if left_is_var {
-        operand_is_bound(&comparison.right, binding)
-    } else if right_is_var {
-        operand_is_bound(&comparison.left, binding)
-    } else {
-        false
-    }
-}
-
-fn operand_is_bound(operand: &TypedOperand, binding: &EncodedBinding) -> bool {
-    match operand {
-        TypedOperand::Variable(variable) => binding.get(*variable).is_some(),
-        TypedOperand::Input(_) => true,
-        TypedOperand::Literal(_) => true,
-    }
-}
-
-fn kind_rank(kind: IndexKind) -> usize {
-    match kind {
-        IndexKind::Unique => 4,
-        IndexKind::Equality | IndexKind::Permutation => 4,
-        IndexKind::Primary => 3,
-        IndexKind::Ref => 2,
-        IndexKind::Range => 1,
-    }
-}
-
 fn atom_contains_variable(atom: &TypedRelationAtom, variable: usize) -> bool {
     atom.fields
         .iter()
@@ -2966,7 +2791,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(output.rows, vec![vec![Value::Id(1)], vec![Value::Id(2)]]);
-        assert_eq!(output.plan.atoms[0].index, "by_holder");
+        assert!(
+            output
+                .plan
+                .variable_estimates
+                .iter()
+                .any(|estimate| estimate.access == "Account.by_holder")
+        );
     }
 
     #[test]
@@ -3025,8 +2856,13 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(output.plan.atoms[0].index, "by_kind");
-        assert_eq!(output.plan.atoms[0].kind, IndexKind::Equality);
+        assert!(
+            output
+                .plan
+                .variable_estimates
+                .iter()
+                .any(|estimate| estimate.access == "Item.by_kind")
+        );
         assert!(
             output
                 .plan
@@ -3174,7 +3010,13 @@ mod tests {
             })
             .unwrap();
 
-        assert!(output.plan.atoms.iter().any(|atom| atom.index == "by_at"));
+        assert!(
+            output
+                .plan
+                .variable_estimates
+                .iter()
+                .any(|estimate| estimate.access == "Posting.by_at")
+        );
         assert_same_rows(
             &output.rows,
             &[
@@ -3440,7 +3282,10 @@ mod tests {
         assert!(explain.contains("free_join_node"));
         assert!(explain.contains("candidate_plan"));
         assert!(explain.contains("free_join_estimates"));
-        assert!(explain.contains("index="));
+        assert!(explain.contains("node_rows"));
+        assert!(explain.contains("free_join_subatom"));
+        assert!(!explain.contains("atoms:\n"));
+        assert!(!explain.contains("index="));
         assert!(explain.contains("cursor_seeks"));
         assert!(explain.contains("rows_scanned"));
         assert!(explain.contains("bindings_yielded"));

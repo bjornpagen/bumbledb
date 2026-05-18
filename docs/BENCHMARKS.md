@@ -19,11 +19,13 @@ cargo run -p bumbledb-bench --release -- --scale 500 --repeats 5
 scripts/bench-quick.sh
 scripts/bench-extreme.sh
 scripts/bench-focused.sh
+scripts/check-cutover.sh
 ```
 
 `bench-quick.sh` runs tests, clippy, fuzz check, and the generated scale-2000 benchmark gate.
 `bench-extreme.sh` runs the generated scale-10000 benchmark gate.
 `bench-focused.sh` runs the focused ledger/sailors/joinstress/tpch gates at scale 10000 by default.
+`check-cutover.sh` runs the PRD 11 code-deletion search gates for removed query hot paths.
 
 Set `BUMBLED_BENCH_SCALE` or `BUMBLED_BENCH_REPEATS` for `bench-focused.sh` when a smaller local smoke is needed.
 
@@ -182,9 +184,9 @@ RUST_LOG=bumbledb_lmdb=debug cargo run -p bumbledb-bench --release -- --trace --
 The library never initializes a tracing subscriber. The benchmark binary installs one only when `--trace` is passed.
 
 **Current Interpretation**
-Bumbledb currently behaves well for highly selective prefix joins. Broad joins are still slower than the target gates because physical `HashProbe`/`Hybrid` plans are selected and explained, but execution is still routed through the sorted-trie LFTJ substrate until the remaining cutover/deletion PRDs land:
+Bumbledb currently behaves well for highly selective prefix joins. Broad joins are still slower than the final target gates because the v2 executor is cut over to QueryImage/Free Join/sorted-trie execution, while dedicated hash/hybrid runtime kernels remain future optimization work:
 
-- selected hash/hybrid node implementations are not yet separate executors,
+- selected hash/hybrid node implementations are explained but not yet separate runtime kernels,
 - broad joins still perform many sorted-trie operations,
 - full post-rearchitecture latency gates are tracked but not mandatory for local edits.
 

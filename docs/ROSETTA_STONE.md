@@ -24,7 +24,7 @@ This is the normative design for the database unless we explicitly revise it lat
 - Backend: LMDB only.
 - Query language: Datalog only.
 - Logical schema model: BCNF typed n-ary relations.
-- Physical storage model: covering sorted LMDB indexes.
+- Physical storage model: LMDB durable segments plus covering sorted indexes.
 - User-facing schema: fully typed, fully schemaful, hardcoded at compile time.
 - Runtime DDL: forbidden.
 - Migrations: forbidden.
@@ -594,9 +594,9 @@ Aggregate
 - Planner chooses indexes based on bound prefixes.
 - Planner chooses variable order.
 - Planner pushes filters as early as possible.
-- Planner chooses direct indexed walks for simple selective paths.
-- Planner chooses trie/WCOJ execution for many-way joins.
-- Planner can mix strategies.
+- Planner chooses a Free Join physical plan over typed relation atoms.
+- Planner chooses sorted leapfrog, hash probe, hybrid, vector, existence, and aggregate sink node implementations.
+- Planner can mix node strategies inside one Free Join plan.
 - Planner avoids materializing large intermediates.
 - Planner prefers covering indexes.
 - Planner uses stats.
@@ -630,49 +630,47 @@ Aggregate
 - History indexes are not used for current queries.
 
 **Execution Engine**
-- Execution is cursor-first.
-- LMDB cursors implement prefix seek.
-- LMDB cursors implement range scan.
-- LMDB cursors implement next-with-prefix.
-- Trie iterators wrap LMDB cursors.
+- Execution is QueryImage-first.
+- QueryImage is a snapshot-local immutable image keyed by `(schema_fingerprint, tx_id)`.
+- QueryImage is built from durable encoded column/index segments when segment metadata is visible.
+- Sorted trie and hash trie indexes are in-memory structures over QueryImage relation images.
+- Free Join is the single physical plan IR.
 - Join execution compares encoded scalar words when possible.
-- Decoding is lazy.
+- Decoding is lazy and never required for ordinary encoded comparisons.
 - Output decoding happens late.
-- Intermediate materialization is avoided.
-- Temporary hash tables are allowed for aggregation.
-- Temporary sorted sets are allowed for future recursion.
+- Projection and aggregation are tuple sinks inside the execution pipeline.
+- Intermediate full binding materialization is avoided where algebraically valid.
+- LMDB cursors are not opened inside query variable recursion.
 - Large temporary spill to LMDB is not v0.
 
 **Join Algorithms**
-- Direct indexed walk is used for simple paths.
-- Leapfrog/trie-style multiway join is used for complex joins.
+- Sorted leapfrog/trie-style multiway join is used for cyclic and broad joins.
+- Hash probe nodes are used for lookup-heavy selective plans.
+- Hybrid nodes can combine sorted and hash access inside the same Free Join plan.
 - Worst-case-optimal join is a core capability, not the only path.
 - Binary join trees are not the primary execution model.
-- Hash join is not v0.
-- Merge-style intersection is used where sorted streams align.
-- Nested-loop over indexed inner scans is allowed when selective.
-- Planner chooses based on access paths and stats.
+- Planner chooses node implementations based on access paths and stats.
 
-**Cursor Abstraction**
+**Trie Iterator Abstraction**
 ```text
-seek(prefix)
-next()
-next_while_prefix(prefix)
-current_key()
-current_component(level)
 open(level)
-close(level)
+up(level)
+next()
+seek(encoded_value)
+current_key()
+current_range()
+count()
 ```
 
 **Explain Plans**
 - Explain is required from day one.
 - Explain shows typed variables.
-- Explain shows relation atoms.
 - Explain shows chosen variable order.
-- Explain shows chosen index per atom.
+- Explain shows chosen Free Join nodes and subatoms.
+- Explain shows optimizer candidates and stable cost keys.
 - Explain shows estimated cardinalities.
-- Explain shows actual cursor seeks.
-- Explain shows actual scanned keys.
+- Explain shows actual node row/candidate counts.
+- Explain keeps cursor seek/scanned-key counters as zero-regression gates.
 - Explain shows actual yielded rows.
 - Explain shows filtered rows.
 - Explain shows aggregation counts.
@@ -1072,11 +1070,11 @@ LMDB Layer
 **Access Path Layer**
 - Access paths expose relation indexes generically.
 - Access paths hide raw key namespace details from planner.
-- Access paths know how to construct prefix keys.
-- Access paths know how to decode tuple components from index keys.
+- Access paths identify sorted/hash trie field order over QueryImage data.
+- Access paths identify durable segment index chunks by access ID.
 - Access paths know whether index ordering satisfies variable ordering.
 - Access paths provide cardinality estimates.
-- Access paths provide cursor factories.
+- Access paths do not expose LMDB cursor factories to query recursion.
 
 **Encoding Layer**
 - Encoding is centralized.
@@ -1256,7 +1254,7 @@ where
 
 **One-Sentence Architecture**
 ```text
-A hardcoded typed Rust schema generates compact relation/index metadata; writes maintain LMDB-backed covering sorted indexes and an append-only tx log; typed Datalog queries compile into access-path-aware cursor/trie plans over current indexes; schema changes are handled only by full ETL.
+A hardcoded typed Rust schema generates compact relation/index metadata; writes maintain safe LMDB durability plus encoded query-image segments; typed Datalog queries compile into stats-backed Free Join plans over QueryImage sorted/hash tries and late output sinks; schema or storage-layout changes are handled only by full ETL.
 ```
 
 **Final Canonical Decision Set**
@@ -1277,7 +1275,7 @@ A hardcoded typed Rust schema generates compact relation/index metadata; writes 
 - Named-field Datalog over positional syntax.
 - Positive Datalog plus aggregation in v0.
 - Recursion and negation later.
-- WCOJ-capable planner over binary-join-only planner.
+- Free Join planner over binary-join-only planner.
 - Explain plans from day one.
 - Synchronous closure-scoped API over async/global handles.
 - Embedded assumptions over server/database-generalist assumptions.
