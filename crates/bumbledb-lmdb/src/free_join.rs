@@ -249,6 +249,37 @@ mod tests {
     }
 
     #[test]
+    fn validates_manual_hybrid_plan_shape() {
+        let plan = FreeJoinPlan {
+            nodes: vec![PlanNode {
+                id: NodeId(0),
+                bind_vars: vec![VarId(0)],
+                subatoms: vec![SubAtom {
+                    atom_id: AtomId(0),
+                    relation: RelationId(0),
+                    fields: vec![FieldId(0)],
+                    vars: vec![VarId(0)],
+                    access: AccessId(0),
+                }],
+                implementation: NodeImpl::Hybrid,
+                payload: PayloadDemand {
+                    existence_only_relations: vec![RelationId(1)],
+                    row_id_demands: vec![RelationId(0)],
+                    ..PayloadDemand::default()
+                },
+            }],
+            output: OutputPlan::Project(ProjectPlan {
+                vars: vec![VarId(0)],
+                set_semantics: true,
+            }),
+            estimates: PlanEstimates::default(),
+        };
+
+        plan.validate().unwrap();
+        assert!(!plan.is_pure_lftj());
+    }
+
+    #[test]
     fn rejects_subatom_vars_not_bound_by_node() {
         let plan = FreeJoinPlan {
             nodes: vec![PlanNode {

@@ -1,0 +1,410 @@
+use std::collections::HashMap;
+
+use crate::{
+    EncodedOwned, EncodedRef, FieldId, IndexSpec, RelationId, RelationImage, Result, RowId,
+    RowRange, RowSetRef,
+};
+
+/// In-memory hash trie index over one relation image.
+#[derive(Clone, Debug)]
+pub struct HashTrieIndex {
+    /// Relation this index belongs to.
+    pub relation: RelationId,
+    /// Index name.
+    pub name: String,
+    /// Field order for trie levels.
+    pub fields: Vec<FieldId>,
+    /// Root hash node.
+    pub root: HashNode,
+    /// Build and shape statistics.
+    pub stats: HashTrieStats,
+}
+
+impl HashTrieIndex {
+    /// Builds a hash trie retaining row IDs in leaves.
+    pub fn build(relation: &RelationImage, spec: IndexSpec) -> Result<Self> {
+        Self::build_with_mode(relation, spec, LeafMode::Rows)
+    }
+
+    /// Builds a hash trie with a specified leaf mode.
+    pub fn build_with_mode(
+        relation: &RelationImage,
+        spec: IndexSpec,
+        leaf_mode: LeafMode,
+    ) -> Result<Self> {
+        let mut root = HashNode::Inner(HashMap::new());
+        for row in 0..relation.row_count {
+            let row = RowId(row as u32);
+            let keys = spec
+                .fields
+                .iter()
+                .map(|field| {
+                    relation
+                        .encoded(row, *field)
+                        .map(EncodedOwned::from_ref)
+                        .ok_or_else(|| crate::Error::internal("missing hash trie field value"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            insert_row(&mut root, &keys, row, leaf_mode);
+        }
+        let stats = HashTrieStats::from_root(&root, spec.fields.len());
+        Ok(Self {
+            relation: relation.id,
+            name: spec.name,
+            fields: spec.fields,
+            root,
+            stats,
+        })
+    }
+}
+
+/// Leaf storage mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LeafMode {
+    /// Store matching row IDs.
+    Rows,
+    /// Store only matching row counts.
+    CountOnly,
+}
+
+/// Hash trie node.
+#[derive(Clone, Debug)]
+pub enum HashNode {
+    /// Internal hash map from encoded key to next node.
+    Inner(HashMap<EncodedOwned, HashNode>),
+    /// Row set leaf.
+    Leaf(RowSet),
+    /// Count-only leaf for existence-only relations.
+    CountOnly(u32),
+}
+
+/// Owned row-id set used by hash trie leaves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RowSet {
+    /// No rows.
+    Empty,
+    /// One row.
+    One(RowId),
+    /// Small row set.
+    Small(Vec<RowId>),
+    /// Larger row set.
+    Many(Vec<RowId>),
+    /// Contiguous row range.
+    Range(RowRange),
+}
+
+impl RowSet {
+    fn push(&mut self, row: RowId) {
+        match self {
+            RowSet::Empty => *self = RowSet::One(row),
+            RowSet::One(existing) => *self = RowSet::Small(vec![*existing, row]),
+            RowSet::Small(rows) if rows.len() < 4 => rows.push(row),
+            RowSet::Small(rows) => {
+                let mut many = std::mem::take(rows);
+                many.push(row);
+                *self = RowSet::Many(many);
+            }
+            RowSet::Many(rows) => rows.push(row),
+            RowSet::Range(range) => {
+                let mut rows = (range.start.0..range.end.0).map(RowId).collect::<Vec<_>>();
+                rows.push(row);
+                *self = RowSet::Many(rows);
+            }
+        }
+    }
+
+    /// Number of rows represented by this row set.
+    pub fn len(&self) -> usize {
+        match self {
+            RowSet::Empty => 0,
+            RowSet::One(_) => 1,
+            RowSet::Small(rows) | RowSet::Many(rows) => rows.len(),
+            RowSet::Range(range) => range.end.0.saturating_sub(range.start.0) as usize,
+        }
+    }
+
+    /// True when this set has no rows.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn as_ref(&self) -> RowSetRef<'_> {
+        match self {
+            RowSet::Empty => RowSetRef::Empty,
+            RowSet::One(row) => RowSetRef::One(*row),
+            RowSet::Small(rows) | RowSet::Many(rows) => RowSetRef::Slice(rows),
+            RowSet::Range(range) => RowSetRef::Range(*range),
+        }
+    }
+}
+
+/// Hash trie shape statistics.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HashTrieStats {
+    /// Number of trie levels.
+    pub depth: usize,
+    /// Number of stored rows or count-only entries.
+    pub rows: usize,
+    /// Number of internal hash nodes.
+    pub inner_nodes: usize,
+    /// Number of leaves.
+    pub leaves: usize,
+}
+
+impl HashTrieStats {
+    fn from_root(root: &HashNode, depth: usize) -> Self {
+        let mut stats = Self {
+            depth,
+            ..Self::default()
+        };
+        accumulate_stats(root, &mut stats);
+        stats
+    }
+}
+
+/// Prefix probe interface over hash trie indexes.
+pub trait PrefixProbe {
+    /// True when the prefix exists.
+    fn exists(&self, prefix: &[EncodedRef<'_>]) -> bool;
+    /// Number of rows under the prefix.
+    fn count(&self, prefix: &[EncodedRef<'_>]) -> usize;
+    /// Row IDs under the prefix if this trie stores row IDs.
+    fn rows<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> RowSetRef<'a>;
+}
+
+impl PrefixProbe for HashTrieIndex {
+    fn exists(&self, prefix: &[EncodedRef<'_>]) -> bool {
+        find_node(&self.root, prefix).is_some_and(|node| match node {
+            HashNode::Inner(map) => !map.is_empty(),
+            HashNode::Leaf(rows) => !rows.is_empty(),
+            HashNode::CountOnly(count) => *count > 0,
+        })
+    }
+
+    fn count(&self, prefix: &[EncodedRef<'_>]) -> usize {
+        find_node(&self.root, prefix).map_or(0, count_node)
+    }
+
+    fn rows<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> RowSetRef<'a> {
+        match find_node(&self.root, prefix) {
+            Some(HashNode::Leaf(rows)) => rows.as_ref(),
+            _ => RowSetRef::Empty,
+        }
+    }
+}
+
+fn insert_row(node: &mut HashNode, keys: &[EncodedOwned], row: RowId, leaf_mode: LeafMode) {
+    if keys.is_empty() {
+        match leaf_mode {
+            LeafMode::Rows => match node {
+                HashNode::Leaf(rows) => rows.push(row),
+                _ => *node = HashNode::Leaf(RowSet::One(row)),
+            },
+            LeafMode::CountOnly => match node {
+                HashNode::CountOnly(count) => *count += 1,
+                _ => *node = HashNode::CountOnly(1),
+            },
+        }
+        return;
+    }
+    let HashNode::Inner(map) = node else {
+        *node = HashNode::Inner(HashMap::new());
+        let HashNode::Inner(map) = node else {
+            unreachable!()
+        };
+        let child = map
+            .entry(keys[0].clone())
+            .or_insert_with(|| HashNode::Inner(HashMap::new()));
+        insert_row(child, &keys[1..], row, leaf_mode);
+        return;
+    };
+    let child = map
+        .entry(keys[0].clone())
+        .or_insert_with(|| HashNode::Inner(HashMap::new()));
+    insert_row(child, &keys[1..], row, leaf_mode);
+}
+
+fn find_node<'a>(node: &'a HashNode, prefix: &[EncodedRef<'_>]) -> Option<&'a HashNode> {
+    if prefix.is_empty() {
+        return Some(node);
+    }
+    let HashNode::Inner(map) = node else {
+        return None;
+    };
+    let key = EncodedOwned::from_ref(prefix[0]);
+    find_node(map.get(&key)?, &prefix[1..])
+}
+
+fn count_node(node: &HashNode) -> usize {
+    match node {
+        HashNode::Inner(map) => map.values().map(count_node).sum(),
+        HashNode::Leaf(rows) => rows.len(),
+        HashNode::CountOnly(count) => *count as usize,
+    }
+}
+
+fn accumulate_stats(node: &HashNode, stats: &mut HashTrieStats) {
+    match node {
+        HashNode::Inner(map) => {
+            stats.inner_nodes += 1;
+            for child in map.values() {
+                accumulate_stats(child, stats);
+            }
+        }
+        HashNode::Leaf(rows) => {
+            stats.leaves += 1;
+            stats.rows += rows.len();
+        }
+        HashNode::CountOnly(count) => {
+            stats.leaves += 1;
+            stats.rows += *count as usize;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bumbledb_core::schema::{
+        FieldDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind, SchemaDescriptor,
+        ValueType,
+    };
+
+    use super::*;
+    use crate::{Environment, Row, StorageSchema, Value};
+
+    #[test]
+    fn builds_hash_trie_over_primary_key() {
+        let image = account_image();
+        let account = image.relation("Account").unwrap();
+        let index = HashTrieIndex::build(account, IndexSpec::new("primary", [FieldId(0)])).unwrap();
+        let key = EncodedOwned::Eight(2u64.to_be_bytes());
+
+        assert!(index.exists(&[key.as_ref()]));
+        assert_eq!(index.count(&[key.as_ref()]), 1);
+        assert_eq!(index.rows(&[key.as_ref()]), RowSetRef::One(RowId(1)));
+    }
+
+    #[test]
+    fn builds_hash_trie_over_non_unique_field() {
+        let image = account_image();
+        let account = image.relation("Account").unwrap();
+        let index =
+            HashTrieIndex::build(account, IndexSpec::new("by_currency", [FieldId(1)])).unwrap();
+        let key = EncodedOwned::Eight(840u64.to_be_bytes());
+
+        assert!(index.exists(&[key.as_ref()]));
+        assert_eq!(index.count(&[key.as_ref()]), 2);
+        assert_eq!(
+            index.rows(&[key.as_ref()]),
+            RowSetRef::Slice(&[RowId(0), RowId(2)])
+        );
+    }
+
+    #[test]
+    fn count_only_hash_trie_stores_counts_without_rows() {
+        let image = account_image();
+        let account = image.relation("Account").unwrap();
+        let index = HashTrieIndex::build_with_mode(
+            account,
+            IndexSpec::new("exists_currency", [FieldId(1)]),
+            LeafMode::CountOnly,
+        )
+        .unwrap();
+        let key = EncodedOwned::Eight(840u64.to_be_bytes());
+
+        assert!(index.exists(&[key.as_ref()]));
+        assert_eq!(index.count(&[key.as_ref()]), 2);
+        assert_eq!(index.rows(&[key.as_ref()]), RowSetRef::Empty);
+    }
+
+    #[test]
+    fn two_level_hash_trie_probes_prefixes() {
+        let image = account_image();
+        let account = image.relation("Account").unwrap();
+        let index = HashTrieIndex::build(
+            account,
+            IndexSpec::new("currency_active", [FieldId(1), FieldId(2)]),
+        )
+        .unwrap();
+        let currency = EncodedOwned::Eight(840u64.to_be_bytes());
+        let active = EncodedOwned::One([1]);
+
+        assert_eq!(index.count(&[currency.as_ref()]), 2);
+        assert_eq!(index.count(&[currency.as_ref(), active.as_ref()]), 2);
+        assert_eq!(
+            index.rows(&[currency.as_ref(), active.as_ref()]),
+            RowSetRef::Slice(&[RowId(0), RowId(2)])
+        );
+    }
+
+    fn account_image() -> crate::QueryImage {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.keep();
+        let env = Environment::open(path).unwrap();
+        let schema = StorageSchema::new(account_schema(), env.max_key_size()).unwrap();
+        env.write(|txn| {
+            for row in account_rows() {
+                txn.insert(&schema, row)?;
+            }
+            Ok::<_, crate::Error>(())
+        })
+        .unwrap();
+        env.query_image(&schema).unwrap().as_ref().clone()
+    }
+
+    fn account_schema() -> SchemaDescriptor {
+        SchemaDescriptor::new(
+            "Accounts",
+            vec![RelationDescriptor::new(
+                "Account",
+                RelationKind::Entity,
+                vec![
+                    FieldDescriptor::new(
+                        "id",
+                        ValueType::Id {
+                            name: "AccountId".to_owned(),
+                            relation: "Account".to_owned(),
+                        },
+                    ),
+                    FieldDescriptor::new(
+                        "currency",
+                        ValueType::Symbol {
+                            name: "Currency".to_owned(),
+                        },
+                    ),
+                    FieldDescriptor::new("active", ValueType::Bool),
+                ],
+                PrimaryKeyDescriptor::new(["id"]),
+            )],
+        )
+    }
+
+    fn account_rows() -> Vec<Row> {
+        vec![
+            Row::new(
+                "Account",
+                [
+                    ("id", Value::Id(1)),
+                    ("currency", Value::Symbol(840)),
+                    ("active", Value::Bool(true)),
+                ],
+            ),
+            Row::new(
+                "Account",
+                [
+                    ("id", Value::Id(2)),
+                    ("currency", Value::Symbol(978)),
+                    ("active", Value::Bool(false)),
+                ],
+            ),
+            Row::new(
+                "Account",
+                [
+                    ("id", Value::Id(3)),
+                    ("currency", Value::Symbol(840)),
+                    ("active", Value::Bool(true)),
+                ],
+            ),
+        ]
+    }
+}

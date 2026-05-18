@@ -10,6 +10,7 @@ pub mod failpoints;
 #[cfg(not(feature = "test-failpoints"))]
 mod failpoints;
 mod free_join;
+mod hash_trie;
 mod query;
 mod query_image;
 mod sorted_trie;
@@ -27,6 +28,7 @@ pub use free_join::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, FreeJoinPlan, NodeId, NodeImpl, OutputPlan,
     PayloadDemand, PlanEstimates, PlanNode, ProjectPlan, SubAtom, VarId,
 };
+pub use hash_trie::{HashNode, HashTrieIndex, HashTrieStats, LeafMode, PrefixProbe, RowSet};
 pub use query::{
     InputBindings, MissingIndexRecommendation, PlanCounters, PlannedAtom, QueryOutput, QueryPlan,
     ResultColumn, VariableEstimate,
