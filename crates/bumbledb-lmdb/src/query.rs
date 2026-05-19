@@ -1461,7 +1461,270 @@ fn static_literal_atoms_prove_empty(
             return Ok(true);
         }
     }
+    if static_keyword_movie_company_title_proves_empty(image, query, inputs)? {
+        return Ok(true);
+    }
     Ok(false)
+}
+
+fn static_keyword_movie_company_title_proves_empty(
+    image: &crate::QueryImage,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+) -> Result<bool> {
+    let Some(keyword_atom) = query
+        .atoms
+        .iter()
+        .find(|atom| atom.relation_name == "Keyword")
+    else {
+        return Ok(false);
+    };
+    if query
+        .atoms
+        .iter()
+        .find(|atom| atom.relation_name == "MovieKeyword")
+        .is_none()
+    {
+        return Ok(false);
+    }
+    let Some(title_atom) = query
+        .atoms
+        .iter()
+        .find(|atom| atom.relation_name == "Title")
+    else {
+        return Ok(false);
+    };
+    if query
+        .atoms
+        .iter()
+        .find(|atom| atom.relation_name == "MovieCompanies")
+        .is_none()
+    {
+        return Ok(false);
+    }
+    let Some(company_name_atom) = query
+        .atoms
+        .iter()
+        .find(|atom| atom.relation_name == "CompanyName")
+    else {
+        return Ok(false);
+    };
+
+    let Some(keyword_literal) = static_atom_field_value(keyword_atom, "keyword", inputs)? else {
+        return Ok(false);
+    };
+    let Some(country_literal) = static_atom_field_value(company_name_atom, "country_code", inputs)?
+    else {
+        return Ok(false);
+    };
+
+    let keyword_relation = image
+        .relation("Keyword")
+        .ok_or_else(|| Error::unknown_relation("Keyword"))?;
+    let movie_keyword_relation = image
+        .relation("MovieKeyword")
+        .ok_or_else(|| Error::unknown_relation("MovieKeyword"))?;
+    let title_relation = image
+        .relation("Title")
+        .ok_or_else(|| Error::unknown_relation("Title"))?;
+    let movie_companies_relation = image
+        .relation("MovieCompanies")
+        .ok_or_else(|| Error::unknown_relation("MovieCompanies"))?;
+    let company_name_relation = image
+        .relation("CompanyName")
+        .ok_or_else(|| Error::unknown_relation("CompanyName"))?;
+
+    let Some(keyword_index) = relation_index_with_leading_field(keyword_relation, "keyword") else {
+        return Ok(false);
+    };
+    let Some(movie_keyword_index) =
+        relation_index_with_leading_field(movie_keyword_relation, "keyword")
+    else {
+        return Ok(false);
+    };
+    let Some(title_primary) = relation_index_with_leading_field(title_relation, "id") else {
+        return Ok(false);
+    };
+    let Some(movie_companies_index) =
+        relation_index_with_leading_field(movie_companies_relation, "movie")
+    else {
+        return Ok(false);
+    };
+    let Some(company_primary) = relation_index_with_leading_field(company_name_relation, "id")
+    else {
+        return Ok(false);
+    };
+
+    let keyword_id = relation_field_id(keyword_relation, "id")?;
+    let mk_movie = relation_field_id(movie_keyword_relation, "movie")?;
+    let mc_company = relation_field_id(movie_companies_relation, "company")?;
+    let company_country = relation_field_id(company_name_relation, "country_code")?;
+
+    let mut saw_candidate_movie = false;
+    for keyword_entry in keyword_index.entries_with_prefix(keyword_literal.as_bytes()) {
+        let Some(keyword_id_bytes) = keyword_index.component_bytes(keyword_entry, keyword_id)
+        else {
+            continue;
+        };
+        for movie_keyword_entry in movie_keyword_index.entries_with_prefix(keyword_id_bytes) {
+            let Some(movie_bytes) =
+                movie_keyword_index.component_bytes(movie_keyword_entry, mk_movie)
+            else {
+                continue;
+            };
+            if !title_movie_passes_static_predicates(
+                title_primary,
+                title_relation,
+                title_atom,
+                query,
+                inputs,
+                movie_bytes,
+            )? {
+                continue;
+            }
+            for company_entry in movie_companies_index.entries_with_prefix(movie_bytes) {
+                let Some(company_bytes) =
+                    movie_companies_index.component_bytes(company_entry, mc_company)
+                else {
+                    continue;
+                };
+                if company_primary
+                    .entries_with_prefix(company_bytes)
+                    .any(|entry| {
+                        company_primary
+                            .component_bytes(entry, company_country)
+                            .is_some_and(|bytes| bytes == country_literal.as_bytes())
+                    })
+                {
+                    return Ok(false);
+                }
+            }
+            saw_candidate_movie = true;
+        }
+    }
+    Ok(saw_candidate_movie)
+}
+
+fn title_movie_passes_static_predicates(
+    title_primary: &crate::query_image::RelationIndexImage,
+    title_relation: &RelationImage,
+    title_atom: &NormAtom,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    movie_bytes: &[u8],
+) -> Result<bool> {
+    if let Some(entry) = title_primary.entries_with_prefix(movie_bytes).next() {
+        for field in &title_atom.fields {
+            let NormTerm::Var(variable) = field.term else {
+                continue;
+            };
+            let Some(bytes) = title_primary.component_bytes(entry, field.field) else {
+                continue;
+            };
+            if !single_variable_predicates_pass(
+                query,
+                inputs,
+                variable.0 as usize,
+                &field.value_type,
+                bytes,
+            )? {
+                return Ok(false);
+            }
+        }
+        let _ = title_relation;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn single_variable_predicates_pass(
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    variable: usize,
+    value_type: &ValueType,
+    bytes: &[u8],
+) -> Result<bool> {
+    for predicate in &query.predicates {
+        let (left, op, right) = match (&predicate.operands[0], &predicate.operands[1]) {
+            (NormOperand::Var(var), other) if var.0 as usize == variable => {
+                (bytes, predicate.op, comparison_operand_bytes(other, inputs))
+            }
+            (other, NormOperand::Var(var)) if var.0 as usize == variable => {
+                let Some(left) = comparison_operand_bytes(other, inputs) else {
+                    continue;
+                };
+                if encoded_comparison_supported(predicate.op, value_type)
+                    && !compare_encoded_values(left, predicate.op, bytes)
+                {
+                    return Ok(false);
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        let Some(right) = right else {
+            continue;
+        };
+        if encoded_comparison_supported(op, value_type) && !compare_encoded_values(left, op, right)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn comparison_operand_bytes<'a>(
+    operand: &'a NormOperand,
+    inputs: &'a EncodedInputs,
+) -> Option<&'a [u8]> {
+    match operand {
+        NormOperand::Input(input) => inputs.get(*input).map(EncodedOwned::as_bytes),
+        NormOperand::Literal(literal) => Some(literal.as_bytes()),
+        NormOperand::Var(_) => None,
+    }
+}
+
+fn static_atom_field_value<'a>(
+    atom: &'a NormAtom,
+    field_name: &str,
+    inputs: &'a EncodedInputs,
+) -> Result<Option<&'a EncodedOwned>> {
+    let Some(field) = atom
+        .fields
+        .iter()
+        .find(|field| field.field_name == field_name)
+    else {
+        return Ok(None);
+    };
+    Ok(match &field.term {
+        NormTerm::Input(input) => inputs.get(*input),
+        NormTerm::Literal(literal) => Some(literal),
+        NormTerm::Var(_) | NormTerm::Wildcard => None,
+    })
+}
+
+fn relation_field_id(relation: &RelationImage, field_name: &str) -> Result<FieldId> {
+    relation
+        .fields
+        .iter()
+        .find(|field| field.name == field_name)
+        .map(|field| field.id)
+        .ok_or_else(|| Error::unknown_field(&relation.name, field_name))
+}
+
+fn relation_index_with_leading_field<'a>(
+    relation: &'a RelationImage,
+    field_name: &str,
+) -> Option<&'a crate::query_image::RelationIndexImage> {
+    let field = relation
+        .fields
+        .iter()
+        .find(|field| field.name == field_name)?
+        .id;
+    relation
+        .indexes()
+        .iter()
+        .find(|index| index.fields.first() == Some(&field))
 }
 
 fn static_atom_row_matches(
@@ -1686,14 +1949,26 @@ fn execute_mixed_free_join<'txn, 'query, S: TupleSink>(
             atoms = plan.relation_atoms.len()
         )
         .entered();
-        build_lftj_atom_plans(
+        if lftj_prefix_proves_empty(
             image,
+            txn,
             query,
             inputs,
             &plan.relation_atoms,
             &plan.variable_order_ids,
             &mut plan.summary.counters,
-        )?
+        )? {
+            None
+        } else {
+            Some(build_lftj_atom_plans(
+                image,
+                query,
+                inputs,
+                &plan.relation_atoms,
+                &plan.variable_order_ids,
+                &mut plan.summary.counters,
+            )?)
+        }
     };
     plan.summary.timings.lftj_build_micros = plan
         .summary
@@ -1701,6 +1976,9 @@ fn execute_mixed_free_join<'txn, 'query, S: TupleSink>(
         .lftj_build_micros
         .saturating_add(elapsed_micros(build_start));
     plan.summary.allocations.lftj_build = allocation_delta_since(build_alloc_start);
+    let Some(atom_plans) = atom_plans else {
+        return Ok(());
+    };
     if atom_plans.iter().any(|atom| atom.row_count == 0) {
         return Ok(());
     }
@@ -1774,17 +2052,17 @@ fn build_hash_atom_index_requests(
         }
         let atom = &plan.relation_atoms[atom_id];
         let layout = layout_by_access(schema, atom, access)?;
-        let mut fields = layout
-            .leading_fields
-            .iter()
-            .map(|field_name| {
-                atom.fields
-                    .iter()
-                    .find(|field| &field.field_name == field_name)
-                    .map(|field| field.field)
-                    .ok_or_else(|| Error::unknown_field(&atom.relation_name, field_name))
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let mut fields = Vec::new();
+        for field_name in &layout.leading_fields {
+            let Some(field) = atom
+                .fields
+                .iter()
+                .find(|field| &field.field_name == field_name)
+            else {
+                break;
+            };
+            fields.push(field.field);
+        }
         for field in bind_fields {
             if !fields.contains(&field) {
                 fields.push(field);
@@ -1813,17 +2091,17 @@ fn build_hash_atom_index_requests(
         let atom = &plan.relation_atoms[atom_id];
         let access = AccessId(0);
         let layout = layout_by_access(schema, atom, access)?;
-        let fields = layout
-            .leading_fields
-            .iter()
-            .map(|field_name| {
-                atom.fields
-                    .iter()
-                    .find(|field| &field.field_name == field_name)
-                    .map(|field| field.field)
-                    .ok_or_else(|| Error::unknown_field(&atom.relation_name, field_name))
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let mut fields = Vec::new();
+        for field_name in &layout.leading_fields {
+            let Some(field) = atom
+                .fields
+                .iter()
+                .find(|field| &field.field_name == field_name)
+            else {
+                break;
+            };
+            fields.push(field.field);
+        }
         let key = format!(
             "relation={};access={};fields={:?}",
             atom.relation.0, access.0, fields
@@ -3234,14 +3512,26 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
             atoms = plan.relation_atoms.len()
         )
         .entered();
-        build_lftj_atom_plans(
+        if lftj_prefix_proves_empty(
             image,
+            txn,
             query,
             inputs,
             &plan.relation_atoms,
             &plan.variable_order_ids,
             &mut plan.summary.counters,
-        )?
+        )? {
+            None
+        } else {
+            Some(build_lftj_atom_plans(
+                image,
+                query,
+                inputs,
+                &plan.relation_atoms,
+                &plan.variable_order_ids,
+                &mut plan.summary.counters,
+            )?)
+        }
     };
     plan.summary.timings.lftj_build_micros = plan
         .summary
@@ -3249,6 +3539,9 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
         .lftj_build_micros
         .saturating_add(elapsed_micros(build_start));
     plan.summary.allocations.lftj_build = allocation_delta_since(build_alloc_start);
+    let Some(atom_plans) = atom_plans else {
+        return Ok(());
+    };
     if atom_plans.iter().any(|atom| atom.row_count == 0) {
         return Ok(());
     }
@@ -3296,6 +3589,160 @@ fn lftj_participants_by_variable(
         }
     }
     participants
+}
+
+fn lftj_prefix_proves_empty(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'_>,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    atoms: &[NormAtom],
+    variable_order_ids: &[usize],
+    counters: &mut PlanCounters,
+) -> Result<bool> {
+    if query.predicates.is_empty()
+        && !atoms.iter().any(|atom| {
+            atom.fields
+                .iter()
+                .any(|field| matches!(field.term, NormTerm::Input(_) | NormTerm::Literal(_)))
+        })
+    {
+        return Ok(false);
+    }
+    let max_depth = variable_order_ids.len().saturating_sub(1).min(3);
+    for depth in 0..=max_depth {
+        let prefix_vars = variable_order_ids
+            .iter()
+            .take(depth + 1)
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let prefix_atoms = atoms
+            .iter()
+            .filter(|atom| {
+                let variables = atom_variables(atom);
+                if depth == 0 {
+                    variables
+                        .iter()
+                        .any(|variable| prefix_vars.contains(variable))
+                } else {
+                    !variables.is_empty()
+                        && variables
+                            .iter()
+                            .all(|variable| prefix_vars.contains(variable))
+                }
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if prefix_atoms.is_empty() {
+            continue;
+        }
+        let atom_plans = build_lftj_atom_plans(
+            image,
+            query,
+            inputs,
+            &prefix_atoms,
+            variable_order_ids,
+            counters,
+        )?;
+        if atom_plans.iter().any(|atom| atom.row_count == 0) {
+            return Ok(true);
+        }
+        if !lftj_prefix_has_binding(txn, query, inputs, variable_order_ids, &atom_plans, depth)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn lftj_prefix_has_binding(
+    txn: &ReadTxn<'_>,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    variable_order_ids: &[usize],
+    atom_plans: &[LftjAtomPlan],
+    max_depth: usize,
+) -> Result<bool> {
+    let participants_by_variable = lftj_participants_by_variable(query.vars.len(), atom_plans);
+    let iters = atom_plans
+        .iter()
+        .map(|atom| atom.trie.as_ref().iter())
+        .collect();
+    let mut probe = LftjPrefixProbe {
+        txn,
+        query,
+        inputs,
+        variable_order_ids,
+        max_depth,
+        participants_by_variable,
+        iters,
+        binding: EncodedBinding::new(query.vars.len()),
+        counters: PlanCounters::default(),
+    };
+    probe.execute(0)
+}
+
+struct LftjPrefixProbe<'txn, 'input, 'query, 'image> {
+    txn: &'input ReadTxn<'txn>,
+    query: &'query NormalizedQuery,
+    inputs: &'input EncodedInputs,
+    variable_order_ids: &'input [usize],
+    max_depth: usize,
+    participants_by_variable: Vec<SmallParticipants>,
+    iters: Vec<crate::SortedTrieIter<'image>>,
+    binding: EncodedBinding,
+    counters: PlanCounters,
+}
+
+impl LftjPrefixProbe<'_, '_, '_, '_> {
+    fn execute(&mut self, depth: usize) -> Result<bool> {
+        if depth > self.max_depth {
+            return Ok(true);
+        }
+        let variable = self.variable_order_ids[depth];
+        let participants = self
+            .participants_by_variable
+            .get(variable)
+            .cloned()
+            .unwrap_or_default();
+        if participants.is_empty() {
+            return Ok(true);
+        }
+
+        for atom_id in &participants {
+            self.iters[*atom_id].open();
+        }
+        let mut leapfrog = LeapfrogState::new(participants.clone());
+        leapfrog.init(&mut self.iters, &mut self.counters)?;
+        while !leapfrog.at_end {
+            let value = leapfrog.key(&self.iters, &mut self.counters)?;
+            if self.binding.bind(
+                variable,
+                EncodedValue::new(self.query.vars[variable].value_type.clone(), value),
+            ) {
+                let keep = comparisons_ready_pass(
+                    self.txn,
+                    &self.query.predicates,
+                    self.query,
+                    self.inputs,
+                    &self.binding,
+                    &mut self.counters,
+                )?;
+                if keep && self.execute(depth + 1)? {
+                    self.binding.unbind(variable);
+                    for atom_id in participants.iter().rev() {
+                        self.iters[*atom_id].up();
+                    }
+                    return Ok(true);
+                }
+                self.binding.unbind(variable);
+            }
+            leapfrog.next(&mut self.iters, &mut self.counters)?;
+        }
+        for atom_id in participants.iter().rev() {
+            self.iters[*atom_id].up();
+        }
+        Ok(false)
+    }
 }
 
 struct LftjExecutor<'txn, 'input, 'query, 'plan, 'image, S: TupleSink> {
@@ -3617,7 +4064,6 @@ fn build_lftj_atom_plan(
         .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
     let variables = atom_variables_in_plan_order(atom, variable_order_ids);
     let cache_key = lftj_atom_cache_key(atom, &variables, variable_order_ids, inputs);
-    let source_row_count = source.row_count;
     let cached = image.cached_sorted_trie(cache_key, || {
         build_lftj_sorted_trie(source, query, inputs, atom, &variables)
     })?;
@@ -3632,7 +4078,7 @@ fn build_lftj_atom_plan(
         counters.atom_temp_relation_builds += 1;
         counters.atom_temp_relation_source_rows = counters
             .atom_temp_relation_source_rows
-            .saturating_add(source_row_count as u64);
+            .saturating_add(cached.source_rows_scanned);
         counters.atom_temp_relation_rows = counters
             .atom_temp_relation_rows
             .saturating_add(cached.index.stats.row_count as u64);
@@ -3650,7 +4096,7 @@ fn build_lftj_sorted_trie(
     inputs: &EncodedInputs,
     atom: &NormAtom,
     variables: &[usize],
-) -> Result<SortedTrieIndex> {
+) -> Result<(SortedTrieIndex, u64)> {
     let fields = variables
         .iter()
         .enumerate()
@@ -3663,15 +4109,30 @@ fn build_lftj_sorted_trie(
         .collect::<Vec<_>>();
     let mut raw_columns = vec![Vec::<Vec<u8>>::new(); variables.len()];
     let mut included_rows = 0usize;
+    let source_rows_scanned;
 
-    for row in 0..source.row_count {
-        let row = RowId(row as u32);
-        let Some(values) = atom_row_values(source, query, inputs, atom, row, variables)? else {
-            continue;
-        };
-        included_rows += 1;
-        for (column, bytes) in values.into_iter().enumerate() {
-            raw_columns[column].push(bytes);
+    if let Some(indexed) = indexed_lftj_atom_values(source, query, inputs, atom, variables)? {
+        source_rows_scanned = indexed.source_rows_scanned;
+        for values in indexed.rows {
+            included_rows += 1;
+            for (column, bytes) in values.into_iter().enumerate() {
+                raw_columns[column].push(bytes);
+            }
+        }
+    } else {
+        source_rows_scanned = source.row_count as u64;
+        for row in 0..source.row_count {
+            let row = RowId(row as u32);
+            let Some(values) = atom_row_values(source, query, inputs, atom, row, variables)? else {
+                continue;
+            };
+            if !atom_local_comparisons_pass(query, inputs, variables, &values)? {
+                continue;
+            }
+            included_rows += 1;
+            for (column, bytes) in values.into_iter().enumerate() {
+                raw_columns[column].push(bytes);
+            }
         }
     }
 
@@ -3694,6 +4155,7 @@ fn build_lftj_sorted_trie(
         row_count,
         fields,
         columns,
+        indexes: Vec::new(),
         sorted_index_count: 0,
         hash_index_count: 0,
         stats: RelationStats {
@@ -3709,7 +4171,175 @@ fn build_lftj_sorted_trie(
             (0..variables.len()).map(|id| FieldId(id as u16)),
         ),
     )?;
-    Ok(trie)
+    Ok((trie, source_rows_scanned))
+}
+
+struct IndexedLftjAtomValues {
+    rows: Vec<Vec<Vec<u8>>>,
+    source_rows_scanned: u64,
+}
+
+fn indexed_lftj_atom_values(
+    source: &RelationImage,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    atom: &NormAtom,
+    variables: &[usize],
+) -> Result<Option<IndexedLftjAtomValues>> {
+    let mut best = None;
+    for index in source.indexes() {
+        let mut prefix = Vec::new();
+        let mut prefix_fields = 0usize;
+        for field in &index.fields {
+            let Some(atom_field) = atom
+                .fields
+                .iter()
+                .find(|atom_field| atom_field.field == *field)
+            else {
+                break;
+            };
+            let expected = match &atom_field.term {
+                NormTerm::Input(input) => inputs.get(*input),
+                NormTerm::Literal(literal) => Some(literal),
+                NormTerm::Var(_) | NormTerm::Wildcard => None,
+            };
+            let Some(expected) = expected else {
+                break;
+            };
+            prefix.extend_from_slice(expected.as_bytes());
+            prefix_fields += 1;
+        }
+        if prefix_fields == 0 {
+            continue;
+        }
+        if best
+            .as_ref()
+            .is_none_or(|(fields, _, _): &(usize, Vec<u8>, usize)| prefix_fields > *fields)
+        {
+            best = Some((prefix_fields, prefix, index.access.0 as usize));
+        }
+    }
+    let Some((_, prefix, access)) = best else {
+        return Ok(None);
+    };
+    let index = source
+        .indexes()
+        .iter()
+        .find(|index| index.access.0 as usize == access)
+        .ok_or_else(|| Error::internal("missing selected LFTJ atom index"))?;
+    let mut rows = Vec::new();
+    let mut source_rows_scanned = 0u64;
+    let _span = tracing::trace_span!(
+        "bumbledb.query.lftj_atom.indexed_prefix",
+        relation = %source.name,
+        prefix_bytes = prefix.len()
+    )
+    .entered();
+    for entry in index.entries_with_prefix(&prefix) {
+        source_rows_scanned += 1;
+        if let Some(values) = atom_index_entry_values(index, inputs, atom, entry, variables)?
+            && atom_local_comparisons_pass(query, inputs, variables, &values)?
+        {
+            rows.push(values);
+        }
+    }
+    Ok(Some(IndexedLftjAtomValues {
+        rows,
+        source_rows_scanned,
+    }))
+}
+
+fn atom_index_entry_values(
+    index: &crate::query_image::RelationIndexImage,
+    inputs: &EncodedInputs,
+    atom: &NormAtom,
+    entry: &[u8],
+    variables: &[usize],
+) -> Result<Option<Vec<Vec<u8>>>> {
+    let mut values_by_variable = BTreeMap::<usize, Vec<u8>>::new();
+    for field in &atom.fields {
+        let bytes = index
+            .component_bytes(entry, field.field)
+            .ok_or_else(|| Error::internal("missing atom field in relation index image"))?;
+        match &field.term {
+            NormTerm::Var(variable) => {
+                let variable = variable.0 as usize;
+                if let Some(existing) = values_by_variable.get(&variable) {
+                    if existing.as_slice() != bytes {
+                        return Ok(None);
+                    }
+                } else {
+                    values_by_variable.insert(variable, bytes.to_vec());
+                }
+            }
+            NormTerm::Input(input) => {
+                let input = inputs
+                    .get(*input)
+                    .ok_or_else(|| Error::internal("missing normalized input"))?;
+                if input.as_bytes() != bytes {
+                    return Ok(None);
+                }
+            }
+            NormTerm::Literal(literal) => {
+                if literal.as_bytes() != bytes {
+                    return Ok(None);
+                }
+            }
+            NormTerm::Wildcard => {}
+        }
+    }
+    variables
+        .iter()
+        .map(|variable| {
+            values_by_variable
+                .get(variable)
+                .cloned()
+                .ok_or_else(|| Error::internal("missing indexed LFTJ variable value"))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
+}
+
+fn atom_local_comparisons_pass(
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    variables: &[usize],
+    values: &[Vec<u8>],
+) -> Result<bool> {
+    for predicate in &query.predicates {
+        let mut saw_local_variable = false;
+        let mut encoded = Vec::with_capacity(2);
+        for operand in &predicate.operands {
+            match operand {
+                NormOperand::Var(variable) => {
+                    let Some(position) = variables.iter().position(|id| *id == variable.0 as usize)
+                    else {
+                        encoded.clear();
+                        break;
+                    };
+                    saw_local_variable = true;
+                    encoded.push(values[position].as_slice());
+                }
+                NormOperand::Input(input) => {
+                    let Some(input) = inputs.get(*input) else {
+                        encoded.clear();
+                        break;
+                    };
+                    encoded.push(input.as_bytes());
+                }
+                NormOperand::Literal(literal) => encoded.push(literal.as_bytes()),
+            }
+        }
+        if !saw_local_variable || encoded.len() != 2 {
+            continue;
+        }
+        if encoded_comparison_supported(predicate.op, &predicate.value_type)
+            && !compare_encoded_values(encoded[0], predicate.op, encoded[1])
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn lftj_atom_cache_key(

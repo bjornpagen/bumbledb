@@ -7,7 +7,7 @@ use bumbledb_core::schema::{RelationDescriptor, SchemaFingerprint, ValueType};
 
 use crate::planner_stats::{PlannerStatsCache, PlannerStatsCacheDiagnostics};
 use crate::query::ExecutionPlan;
-use crate::{Error, ReadTxn, Result, SegmentDescriptor, SortedTrieIndex, StorageSchema};
+use crate::{AccessId, Error, ReadTxn, Result, SegmentDescriptor, SortedTrieIndex, StorageSchema};
 use crate::{HashTrieIndex, IndexSpec, LeafMode};
 
 /// Cache key for an immutable query image.
@@ -200,7 +200,7 @@ impl QueryImage {
     pub(crate) fn cached_sorted_trie(
         &self,
         key: String,
-        build: impl FnOnce() -> Result<SortedTrieIndex>,
+        build: impl FnOnce() -> Result<(SortedTrieIndex, u64)>,
     ) -> Result<CachedSortedTrie> {
         if let Some(index) = self
             .sorted_trie_cache
@@ -213,11 +213,13 @@ impl QueryImage {
                 index,
                 hit: true,
                 build_micros: 0,
+                source_rows_scanned: 0,
             });
         }
 
         let start = Instant::now();
-        let index = Arc::new(build()?);
+        let (index, source_rows_scanned) = build()?;
+        let index = Arc::new(index);
         let build_micros = start.elapsed().as_micros();
         let mut cache = self
             .sorted_trie_cache
@@ -228,6 +230,7 @@ impl QueryImage {
                 index: existing,
                 hit: true,
                 build_micros: 0,
+                source_rows_scanned: 0,
             });
         }
         cache.insert(key, index.clone());
@@ -235,6 +238,7 @@ impl QueryImage {
             index,
             hit: false,
             build_micros,
+            source_rows_scanned,
         })
     }
 
@@ -381,6 +385,7 @@ pub(crate) struct CachedSortedTrie {
     pub index: Arc<SortedTrieIndex>,
     pub hit: bool,
     pub build_micros: u128,
+    pub source_rows_scanned: u64,
 }
 
 pub(crate) struct CachedHashTrie {
@@ -438,12 +443,111 @@ pub struct RelationImage {
     pub fields: Vec<FieldImage>,
     /// Encoded columns in declaration order.
     pub columns: Vec<ColumnImage>,
+    /// Durable sorted index images in access-path order when available.
+    pub indexes: Vec<RelationIndexImage>,
     /// Placeholder count for sorted indexes built in PRD 03.
     pub sorted_index_count: usize,
     /// Placeholder count for hash indexes built in PRD 06.
     pub hash_index_count: usize,
     /// Relation image statistics.
     pub stats: RelationStats,
+}
+
+/// Immutable durable sorted index bytes for one relation image.
+#[derive(Clone, Debug)]
+pub struct RelationIndexImage {
+    /// Dense storage access ID.
+    pub access: AccessId,
+    /// Leading fields in access-path order.
+    pub fields: Vec<FieldId>,
+    /// Full covering components in encoded key order.
+    pub components: Vec<RelationIndexComponent>,
+    /// Bytes per encoded index entry.
+    pub encoded_len: usize,
+    /// Namespace/relation/access prefix bytes before components.
+    pub prefix_len: usize,
+    /// Concatenated encoded index entries.
+    pub bytes: Vec<u8>,
+}
+
+/// One field component inside a durable relation index image.
+#[derive(Clone, Debug)]
+pub struct RelationIndexComponent {
+    /// Field ID in relation declaration order.
+    pub field: FieldId,
+    /// Offset of this component inside an encoded index entry.
+    pub offset: usize,
+    /// Encoded component width.
+    pub width: usize,
+}
+
+impl RelationIndexImage {
+    /// Returns the encoded field bytes from one encoded index entry.
+    pub fn component_bytes<'a>(&self, entry: &'a [u8], field: FieldId) -> Option<&'a [u8]> {
+        let component = self
+            .components
+            .iter()
+            .find(|component| component.field == field)?;
+        entry.get(component.offset..component.offset + component.width)
+    }
+
+    /// Returns encoded entries matching a leading component prefix.
+    pub fn entries_with_prefix<'a>(&'a self, prefix: &'a [u8]) -> RelationIndexPrefixIter<'a> {
+        let entry_count = self.bytes.len() / self.encoded_len;
+        let mut low = 0usize;
+        let mut high = entry_count;
+        while low < high {
+            let mid = low + (high - low) / 2;
+            let entry = self.entry(mid).unwrap_or(&[]);
+            let key = self.entry_prefix(entry, prefix.len()).unwrap_or(&[]);
+            if key < prefix {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        RelationIndexPrefixIter {
+            index: self,
+            prefix,
+            position: low,
+            end: entry_count,
+        }
+    }
+
+    fn entry(&self, position: usize) -> Option<&[u8]> {
+        let start = position.checked_mul(self.encoded_len)?;
+        self.bytes.get(start..start + self.encoded_len)
+    }
+
+    fn entry_prefix<'a>(&self, entry: &'a [u8], len: usize) -> Option<&'a [u8]> {
+        entry.get(self.prefix_len..self.prefix_len + len)
+    }
+}
+
+/// Iterator over durable index entries matching an encoded prefix.
+pub struct RelationIndexPrefixIter<'a> {
+    index: &'a RelationIndexImage,
+    prefix: &'a [u8],
+    position: usize,
+    end: usize,
+}
+
+impl<'a> Iterator for RelationIndexPrefixIter<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.position >= self.end {
+            return None;
+        }
+        let entry = self.index.entry(self.position)?;
+        let key = self.index.entry_prefix(entry, self.prefix.len())?;
+        if key != self.prefix {
+            self.position = self.end;
+            return None;
+        }
+        self.position += 1;
+        Some(entry)
+    }
 }
 
 impl RelationImage {
@@ -465,6 +569,11 @@ impl RelationImage {
     /// Returns column metadata/data by field ID.
     pub fn column(&self, field: FieldId) -> Option<&ColumnImage> {
         self.columns.get(field.0 as usize)
+    }
+
+    /// Returns durable sorted index images for this relation.
+    pub fn indexes(&self) -> &[RelationIndexImage] {
+        &self.indexes
     }
 
     /// Returns all row IDs in this relation image.
@@ -870,9 +979,66 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
                 ColumnImage::from_segment_bytes(field.id, field.width, bytes)
             })
             .collect::<Result<Vec<_>>>()?;
-        for index in &segment.indexes {
-            segment_bytes += index.byte_len;
-        }
+        let indexes = segment
+            .indexes
+            .iter()
+            .map(|index| {
+                let bytes = self.txn.segment_bytes(&index.lmdb_key)?;
+                let layout = self
+                    .schema
+                    .layouts()
+                    .iter()
+                    .find(|layout| {
+                        layout.relation_id == self.relation_id.0
+                            && layout.index_id == index.access.0
+                    })
+                    .ok_or_else(|| Error::unknown_index(&self.relation.name, "segment"))?;
+                let prefix_len = layout.encoded_len
+                    - layout
+                        .components
+                        .iter()
+                        .map(|component| component.encoded_width)
+                        .sum::<usize>();
+                let mut offset = prefix_len;
+                let components = layout
+                    .components
+                    .iter()
+                    .map(|component| {
+                        let Some(field) = self
+                            .relation
+                            .fields
+                            .iter()
+                            .position(|field| field.name == component.field_name)
+                            .map(|field| FieldId(field as u16))
+                        else {
+                            return Ok(None);
+                        };
+                        let image_component = RelationIndexComponent {
+                            field,
+                            offset,
+                            width: component.encoded_width,
+                        };
+                        offset += component.encoded_width;
+                        Ok(Some(image_component))
+                    })
+                    .collect::<Result<Option<Vec<_>>>>()?;
+                let Some(components) = components else {
+                    return Ok(None);
+                };
+                segment_bytes += bytes.len();
+                Ok(Some(RelationIndexImage {
+                    access: index.access,
+                    fields: index.fields.clone(),
+                    components,
+                    encoded_len: layout.encoded_len,
+                    prefix_len,
+                    bytes,
+                }))
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
         let encoded_column_bytes = columns.iter().map(ColumnImage::byte_len).sum();
         Ok(BuiltRelationImage {
             relation: RelationImage {
@@ -881,6 +1047,7 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
                 row_count: segment.row_count,
                 fields,
                 columns,
+                indexes,
                 sorted_index_count: segment.indexes.len(),
                 hash_index_count: 0,
                 stats: RelationStats {
@@ -943,6 +1110,7 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
                 row_count,
                 fields,
                 columns,
+                indexes: Vec::new(),
                 sorted_index_count: 0,
                 hash_index_count: 0,
                 stats: RelationStats {
@@ -1114,6 +1282,33 @@ mod tests {
             assert_eq!(left.content_fingerprint(), right.content_fingerprint());
             Ok::<_, crate::Error>(())
         })?;
+        Ok(())
+    }
+
+    #[test]
+    fn bulk_loaded_query_image_exposes_segment_index_images() -> TestResult {
+        let dir = tempfile::tempdir().map_err(|error| crate::Error::io("tempdir", error))?;
+        let path = dir.keep();
+        let env = Environment::open(&path)?;
+        let schema = StorageSchema::new(account_schema(true), env.max_key_size())?;
+        env.bulk_load(
+            &schema,
+            vec![
+                account_row(1, 840, true, vec![1, 2, 3], "Cash USD"),
+                account_row(2, 978, false, vec![4, 5, 6], "Cash EUR"),
+            ],
+        )?;
+
+        let image = env.query_image(&schema)?;
+        let account = account_relation(&image)?;
+
+        assert!(!account.indexes().is_empty());
+        let primary = account
+            .indexes()
+            .iter()
+            .find(|index| index.fields == vec![FieldId(0)])
+            .ok_or_else(|| crate::Error::internal("missing primary segment index image"))?;
+        assert_eq!(primary.bytes.len(), primary.encoded_len * account.row_count);
         Ok(())
     }
 

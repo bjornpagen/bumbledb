@@ -45,7 +45,7 @@ pub use query::{
 pub use query_image::{
     ColumnImage, EncodedRef, FieldId, FieldImage, FixedColumn, PreparedPlanCacheDiagnostics,
     QueryImage, QueryImageCache, QueryImageCacheDiagnostics, QueryImageKey, QueryImageStats,
-    RelationId, RelationImage, RelationStats, RowId, RowRange, RowSetRef,
+    RelationId, RelationImage, RelationIndexImage, RelationStats, RowId, RowRange, RowSetRef,
 };
 pub use sorted_trie::{
     EncodedOwned, IndexSpec, LinearIter, SortedTrieIndex, SortedTrieIter, TrieFrame, TrieIter,
