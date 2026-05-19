@@ -20,7 +20,6 @@ const NS_HISTORY: u8 = 0x30;
 const SEGMENT_META_PREFIX: &[u8] = b"segment:meta:";
 const SEGMENT_COLUMN_PREFIX: &[u8] = b"segment:column:";
 const SEGMENT_INDEX_PREFIX: &[u8] = b"segment:index:";
-const SEGMENT_VISIBILITY_PREFIX: &[u8] = b"segment:visibility:";
 const SEGMENT_NEXT_PREFIX: &[u8] = b"segment:next:";
 
 const DICT_FWD: u8 = 0x01;
@@ -747,11 +746,6 @@ impl WriteTxn<'_> {
             segment_meta_key(relation_id, segment_id).as_slice(),
             encode_segment_meta(tx_id, None, segment.row_count).as_slice(),
         )?;
-        self.dbs.index.put(
-            &mut self.txn,
-            segment_visibility_key(tx_id, relation_id, segment_id).as_slice(),
-            &[],
-        )?;
         tracing::trace!(
             relation = %relation.name,
             segment_id,
@@ -1225,29 +1219,21 @@ fn relation_sort_key(schema: &StorageSchema, relation_name: &str) -> usize {
 }
 
 impl<'env> ReadTxn<'env> {
-    /// Looks up a row by primary key using the primary covering index.
+    /// Looks up a row by primary key using the authoritative current row store.
     pub fn get_row(&self, schema: &StorageSchema, key: &KeyValues) -> Result<Option<Row>> {
         let (relation_id, relation) = schema.relation(&key.relation)?;
-        let primary_layout = schema
-            .layout(&key.relation, "primary")
-            .ok_or_else(|| Error::unknown_index(&key.relation, "primary"))?;
         let primary = self.encode_primary_key_existing(relation, &key.values)?;
-        let mut prefix = current_index_prefix(relation_id, primary_layout.index_id);
-        prefix.extend_from_slice(&primary);
-        let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
-
-        let Some((index_key, _)) = iter.next().transpose()? else {
+        let row_key = current_row_key(relation_id, &primary);
+        let Some(payload) = self.dbs.index.get(&self.txn, row_key.as_slice())? else {
             return Ok(None);
         };
-        let item = decode_index_scan_item(
+        let encoded = EncodedRow::from_payload(relation, payload)?;
+        Ok(Some(decode_encoded_row(
             self.dbs.dict,
-            self.dbs.index,
             &self.txn,
             relation,
-            primary_layout,
-            index_key,
-        )?;
-        Ok(Some(item.row))
+            &encoded,
+        )?))
     }
 
     /// Scans a whole relation through the primary covering index.
@@ -2053,14 +2039,6 @@ fn segment_index_key(relation_id: u16, segment_id: u64, index_id: u16) -> Vec<u8
     push_u16(&mut key, relation_id);
     push_u64(&mut key, segment_id);
     push_u16(&mut key, index_id);
-    key
-}
-
-fn segment_visibility_key(tx_id: u64, relation_id: u16, segment_id: u64) -> Vec<u8> {
-    let mut key = SEGMENT_VISIBILITY_PREFIX.to_vec();
-    push_u64(&mut key, tx_id);
-    push_u16(&mut key, relation_id);
-    push_u64(&mut key, segment_id);
     key
 }
 

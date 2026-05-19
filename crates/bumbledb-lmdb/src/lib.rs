@@ -111,6 +111,10 @@ pub struct StorageDiagnostics {
     pub lmdb_num_readers: u32,
     /// Number of reverse dictionary entries.
     pub dictionary_entries: usize,
+    /// Number of visible durable relation segments.
+    pub visible_segments: usize,
+    /// Total bytes stored by visible durable segment columns and indexes.
+    pub visible_segment_bytes: usize,
     /// Relation diagnostics.
     pub relations: Vec<RelationDiagnostics>,
 }
@@ -304,6 +308,23 @@ impl Environment {
                 });
             }
 
+            let segments = txn.visible_segments(schema)?;
+            let visible_segment_bytes = segments
+                .iter()
+                .map(|segment| {
+                    segment
+                        .columns
+                        .iter()
+                        .map(|column| column.byte_len)
+                        .sum::<usize>()
+                        + segment
+                            .indexes
+                            .iter()
+                            .map(|index| index.byte_len)
+                            .sum::<usize>()
+                })
+                .sum();
+
             Ok(StorageDiagnostics {
                 schema_fingerprint: schema.descriptor().fingerprint().to_string(),
                 storage_tx_id: txn.last_committed_tx_id()?,
@@ -312,6 +333,8 @@ impl Environment {
                 lmdb_max_readers: info.maximum_number_of_readers,
                 lmdb_num_readers: info.number_of_readers,
                 dictionary_entries: txn.dictionary_entry_count()?,
+                visible_segments: segments.len(),
+                visible_segment_bytes,
                 relations,
             })
         })
@@ -727,6 +750,8 @@ mod tests {
         let diagnostics = env.storage_diagnostics(&schema)?;
         assert!(diagnostics.lmdb_map_size > 0);
         assert!(diagnostics.storage_tx_id > 0);
+        assert!(diagnostics.visible_segments > 0);
+        assert!(diagnostics.visible_segment_bytes > 0);
         Ok(())
     }
 
