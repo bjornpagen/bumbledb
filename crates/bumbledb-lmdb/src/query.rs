@@ -5,11 +5,11 @@ use std::time::Instant;
 
 use smallvec::SmallVec;
 
-use bumbledb_core::datalog::{
+use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
+use bumbledb_core::query_ir::{
     AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm,
     TypedLiteral, TypedOperand, TypedQuery, TypedRelationAtom, TypedTerm,
 };
-use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::schema::{CurrentIndexLayout, IndexKind, ValueType};
 
 use crate::{

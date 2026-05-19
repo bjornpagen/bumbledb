@@ -5,4 +5,5 @@
 
 pub mod datalog;
 pub mod encoding;
+pub mod query_ir;
 pub mod schema;

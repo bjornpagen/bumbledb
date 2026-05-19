@@ -89,7 +89,7 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
 pub fn execute_sorted(
     env: &Environment,
     schema: &StorageSchema,
-    query: &bumbledb_core::datalog::TypedQuery,
+    query: &bumbledb_core::query_ir::TypedQuery,
     inputs: &InputBindings,
 ) -> Result<Vec<Vec<Value>>> {
     Ok(sorted_rows(

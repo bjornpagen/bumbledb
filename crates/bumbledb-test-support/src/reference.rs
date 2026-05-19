@@ -2,11 +2,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use bumbledb_core::datalog::{
+use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
+use bumbledb_core::query_ir::{
     AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm,
     TypedLiteral, TypedOperand, TypedQuery, TypedTerm,
 };
-use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::schema::ValueType;
 use bumbledb_lmdb::{
     AggregateError, Error, ExecuteError, InputBindings, InternalError, QueryError, Result, Row,
@@ -73,7 +73,7 @@ impl ReferenceDb {
         &self,
         query: &TypedQuery,
         inputs: &InputBindings,
-        atoms: &[&bumbledb_core::datalog::TypedRelationAtom],
+        atoms: &[&bumbledb_core::query_ir::TypedRelationAtom],
         comparisons: &[&TypedComparison],
         depth: usize,
         binding: Binding,
@@ -127,7 +127,7 @@ impl Binding {
 }
 
 fn match_atom(
-    atom: &bumbledb_core::datalog::TypedRelationAtom,
+    atom: &bumbledb_core::query_ir::TypedRelationAtom,
     query: &TypedQuery,
     inputs: &InputBindings,
     binding: &Binding,

@@ -1,4 +1,4 @@
-use bumbledb_core::datalog::AggregateFunction;
+use bumbledb_core::query_ir::AggregateFunction;
 use bumbledb_core::schema::ValueType;
 
 use crate::{Error, FieldId, RelationId, Result};
