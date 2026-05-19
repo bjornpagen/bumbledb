@@ -243,6 +243,8 @@ pub struct QueryPlan {
     pub missing_indexes: Vec<MissingIndexRecommendation>,
     /// Optimizer candidates and chosen cost key.
     pub optimizer: OptimizerTrace,
+    /// Top-level physical runtime family selected by planning/classification.
+    pub plan_family: PlanFamily,
     /// Query image cache diagnostics after acquiring this query image.
     pub query_image_cache: QueryImageCacheDiagnostics,
     /// Planner statistics cache diagnostics after planning.
@@ -276,6 +278,7 @@ impl QueryPlan {
         out.push_str("QueryPlan\n");
         out.push_str(&format!("variable_order: {:?}\n", self.variable_order));
         out.push_str(&format!("runtime_kind: {:?}\n", self.runtime_kind));
+        out.push_str(&format!("plan_family: {:?}\n", self.plan_family));
         out.push_str(&format!(
             "uses_indexed_multiway_join: {}\n",
             self.uses_indexed_multiway_join
@@ -388,10 +391,12 @@ impl QueryPlan {
         out.push_str(&format!("  chosen_plan: {}\n", self.optimizer.chosen));
         for candidate in &self.optimizer.candidates {
             out.push_str(&format!(
-                "  candidate_plan name={} selected={} estimated_micros={} memory_bytes={} materialization_penalty={} tie_breaker={} rejected_reason={} impls={:?}\n",
+                "  candidate_plan name={} family={:?} selected={} estimated_micros={} setup_micros={} memory_bytes={} materialization_penalty={} tie_breaker={} rejected_reason={} impls={:?}\n",
                 candidate.name,
+                candidate.family,
                 candidate.selected,
                 candidate.cost.estimated_micros,
+                candidate.cost.setup_micros,
                 candidate.cost.memory_bytes,
                 candidate.cost.materialization_penalty,
                 candidate.cost.tie_breaker,
@@ -656,6 +661,24 @@ pub enum QueryRuntimeKind {
     DirectKernel,
 }
 
+/// Top-level physical plan family.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlanFamily {
+    /// Runtime not selected yet.
+    #[default]
+    Unknown,
+    /// Direct current-index/storage execution.
+    Direct,
+    /// Hash-probe plan family.
+    HashProbe,
+    /// Mixed hash/sorted join family.
+    Mixed,
+    /// Free Join/LFTJ family.
+    FreeJoinLftj,
+    /// Static empty proof family.
+    StaticEmpty,
+}
+
 /// Coarse query phase timings in microseconds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct QueryTimings {
@@ -901,6 +924,8 @@ pub struct OptimizerTrace {
 pub struct PlanCandidate {
     /// Stable candidate name.
     pub name: String,
+    /// Runtime family for this candidate.
+    pub family: PlanFamily,
     /// Node implementations in plan order.
     pub implementations: Vec<NodeImpl>,
     /// Stable cost key used for ordering.
@@ -916,6 +941,8 @@ pub struct PlanCandidate {
 pub struct CostKey {
     /// Estimated execution time in microseconds.
     pub estimated_micros: u64,
+    /// Estimated setup/build time in microseconds.
+    pub setup_micros: u64,
     /// Estimated extra memory footprint in bytes.
     pub memory_bytes: usize,
     /// Penalty for materializing output values or intermediate payload.
@@ -1540,9 +1567,6 @@ fn allocation_delta_since(start: allocation::AllocationSnapshot) -> AllocationPh
 }
 
 fn prepared_plan_cache_key(query: &NormalizedQuery) -> Option<String> {
-    if !query.inputs.is_empty() {
-        return None;
-    }
     let mut hasher = blake3::Hasher::new();
     hasher.update(format!("{query:?}").as_bytes());
     Some(hasher.finalize().to_hex().to_string())
@@ -2046,6 +2070,7 @@ fn static_empty_plan(
             chosen: "static_empty".to_owned(),
             candidates: Vec::new(),
         },
+        plan_family: PlanFamily::StaticEmpty,
         query_image_cache,
         planner_stats,
         prepared_plan_cache,
@@ -2133,8 +2158,22 @@ fn try_execute_direct_storage_project(
             missing_indexes: Vec::new(),
             optimizer: OptimizerTrace {
                 chosen: "direct_storage".to_owned(),
-                candidates: Vec::new(),
+                candidates: vec![PlanCandidate {
+                    name: "direct_storage".to_owned(),
+                    family: PlanFamily::Direct,
+                    implementations: Vec::new(),
+                    cost: CostKey {
+                        estimated_micros: counters.direct_kernel_rows.max(1),
+                        setup_micros: 0,
+                        memory_bytes: 0,
+                        materialization_penalty: counters.materialized_output_values,
+                        tie_breaker: "direct_storage".to_owned(),
+                    },
+                    selected: true,
+                    rejected_reason: "selected direct shape before query image".to_owned(),
+                }],
             },
+            plan_family: PlanFamily::Direct,
             query_image_cache: txn.query_images.diagnostics(),
             planner_stats: PlannerStatsCacheDiagnostics::default(),
             prepared_plan_cache: PreparedPlanCacheDiagnostics::default(),
@@ -5288,6 +5327,7 @@ fn plan_query(
             variable_estimates,
             missing_indexes,
             optimizer,
+            plan_family: PlanFamily::FreeJoinLftj,
             query_image_cache,
             planner_stats,
             prepared_plan_cache,
@@ -5305,6 +5345,10 @@ fn plan_query(
     if let Some(direct_kernel) = try_direct_kernel(query) {
         execution_plan.summary.direct_kernel = Some(direct_kernel.summary.clone());
         execution_plan.direct_kernel = Some(direct_kernel);
+        execution_plan.summary.plan_family = PlanFamily::Direct;
+    } else {
+        execution_plan.summary.plan_family =
+            plan_family_for_chosen(&execution_plan.summary.optimizer.chosen);
     }
     Ok(execution_plan)
 }
@@ -5328,6 +5372,17 @@ fn query_node_timings(
             }
         })
         .collect()
+}
+
+fn plan_family_for_chosen(chosen: &str) -> PlanFamily {
+    match chosen {
+        "hash_probe" => PlanFamily::HashProbe,
+        "hybrid" => PlanFamily::Mixed,
+        "pure_lftj" | "aggregate_pushdown" => PlanFamily::FreeJoinLftj,
+        "direct_storage" => PlanFamily::Direct,
+        "static_empty" => PlanFamily::StaticEmpty,
+        _ => PlanFamily::Unknown,
+    }
 }
 
 fn choose_variable_order(
@@ -5842,6 +5897,7 @@ fn optimize_free_join_plan(
                 "higher stable cost".to_owned()
             },
             name: candidate.name,
+            family: candidate.family,
             implementations: candidate.implementations,
             cost: candidate.cost,
         })
@@ -5860,6 +5916,7 @@ fn optimize_free_join_plan(
 struct OptimizerCandidate {
     name: String,
     implementations: Vec<NodeImpl>,
+    family: PlanFamily,
     cost: CostKey,
     plan: FreeJoinPlan,
 }
@@ -5895,6 +5952,7 @@ fn build_plan_candidate(
             .saturating_add(estimates.hash_probe_rows)
             .saturating_add(estimates.hash_build_rows / HASH_BUILD_ROWS_PER_MICRO)
             .saturating_add(estimates.materialized_values),
+        setup_micros: estimated_setup_micros(name, &estimates),
         memory_bytes: estimates.memory_bytes,
         materialization_penalty: estimates.materialized_values,
         tie_breaker: format!(
@@ -5919,9 +5977,23 @@ fn build_plan_candidate(
     Ok(OptimizerCandidate {
         name: name.to_owned(),
         implementations,
+        family: plan_family_for_chosen(name),
         cost,
         plan,
     })
+}
+
+fn estimated_setup_micros(name: &str, estimates: &PlanEstimates) -> u64 {
+    let query_image_cost = estimates.output_rows.clamp(1, 1_000);
+    let hash_cost = estimates.hash_build_rows / HASH_BUILD_ROWS_PER_MICRO;
+    let sorted_cost = if name == "pure_lftj" || name == "aggregate_pushdown" {
+        estimates.iterator_ops / 10
+    } else {
+        0
+    };
+    query_image_cost
+        .saturating_add(hash_cost)
+        .saturating_add(sorted_cost)
 }
 
 fn build_free_join_plan(
@@ -7768,9 +7840,36 @@ mod tests {
         let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
         assert_eq!(first.plan.optimizer, second.plan.optimizer);
+        assert!(first.explain().contains("plan_family"));
+        assert!(first.explain().contains("setup_micros"));
         assert!(first.explain().contains("candidate_plan"));
         assert!(first.explain().contains("free_join_estimates"));
         assert!(first.explain().contains("reason=stats"));
+        Ok(())
+    }
+
+    #[test]
+    fn prepared_plan_cache_reuses_parameterized_shape() -> TestResult {
+        let (env, schema) = seeded_db()?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?account ?holder_name
+            where
+              Account(id: ?account, holder: $holder)
+              Holder(id: $holder, name: ?holder_name)
+            "#,
+        )?;
+        let inputs = InputBindings::from_values([("holder", Value::Id(1))]);
+
+        let first = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
+        let second = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
+
+        assert_eq!(first.rows, second.rows);
+        assert_eq!(first.plan.prepared_plan_cache.misses, 1);
+        assert_eq!(first.plan.prepared_plan_cache.builds, 1);
+        assert_eq!(second.plan.prepared_plan_cache.hits, 1);
+        assert_ne!(first.plan.plan_family, PlanFamily::Unknown);
         Ok(())
     }
 
