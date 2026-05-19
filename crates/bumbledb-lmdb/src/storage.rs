@@ -113,6 +113,7 @@ pub struct IndexStatsSummary {
 impl StorageSchema {
     /// Builds storage metadata and validates generated index key lengths.
     pub fn new(descriptor: SchemaDescriptor, max_key_size: usize) -> Result<Self> {
+        descriptor.validate()?;
         let layouts = descriptor.current_index_layouts(max_key_size)?;
         Ok(Self {
             descriptor,

@@ -11,9 +11,107 @@ pub type Result<T> = std::result::Result<T, SchemaError>;
 /// Schema descriptor errors.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SchemaError {
+    /// A schema-level name was empty.
+    #[error("schema name must not be empty")]
+    EmptySchemaName,
+
+    /// A relation name was empty.
+    #[error("relation name must not be empty")]
+    EmptyRelationName,
+
+    /// A relation name was declared more than once.
+    #[error("duplicate relation {relation}")]
+    DuplicateRelation { relation: String },
+
+    /// A field name was empty.
+    #[error("field name must not be empty in relation {relation}")]
+    EmptyFieldName { relation: String },
+
+    /// A relation declared the same field more than once.
+    #[error("duplicate field {relation}.{field}")]
+    DuplicateField { relation: String, field: String },
+
     /// A relation referred to an unknown field.
     #[error("relation {relation} references unknown field {field}")]
     UnknownField { relation: String, field: String },
+
+    /// A primary key had no fields.
+    #[error("relation {relation} primary key must not be empty")]
+    EmptyPrimaryKey { relation: String },
+
+    /// A primary key declared the same field more than once.
+    #[error("relation {relation} primary key declares duplicate field {field}")]
+    DuplicatePrimaryKeyField { relation: String, field: String },
+
+    /// Generated ID metadata was invalid.
+    #[error("invalid generated id for {relation}.{field}: {reason}")]
+    InvalidGeneratedId {
+        relation: String,
+        field: String,
+        reason: String,
+    },
+
+    /// A relation kind was used with an invalid schema shape.
+    #[error("invalid relation kind for {relation}: {reason}")]
+    InvalidRelationKind { relation: String, reason: String },
+
+    /// A foreign-key reference named an unknown target relation.
+    #[error("relation {relation}.{field} references unknown target relation {target_relation}")]
+    UnknownRefTarget {
+        relation: String,
+        field: String,
+        target_relation: String,
+    },
+
+    /// A foreign-key reference did not match its target primary-key type.
+    #[error(
+        "relation {relation}.{field} reference type is incompatible with {target_relation}.{target_field}"
+    )]
+    RefTypeMismatch {
+        relation: String,
+        field: String,
+        target_relation: String,
+        target_field: String,
+    },
+
+    /// A constraint name was empty.
+    #[error("constraint name must not be empty in relation {relation}")]
+    EmptyConstraintName { relation: String },
+
+    /// A constraint name was declared more than once within a relation.
+    #[error("duplicate constraint {relation}.{constraint}")]
+    DuplicateConstraint {
+        relation: String,
+        constraint: String,
+    },
+
+    /// A constraint declaration was invalid.
+    #[error("invalid constraint {relation}.{constraint}: {reason}")]
+    InvalidConstraint {
+        relation: String,
+        constraint: String,
+        reason: String,
+    },
+
+    /// An explicit index name was empty.
+    #[error("index name must not be empty in relation {relation}")]
+    EmptyIndexName { relation: String },
+
+    /// An index name was declared more than once within a relation.
+    #[error("duplicate index {relation}.{index}")]
+    DuplicateIndex { relation: String, index: String },
+
+    /// An explicit index collided with a generated index name.
+    #[error("explicit index {relation}.{index} uses reserved generated index name")]
+    ReservedIndexName { relation: String, index: String },
+
+    /// An index declaration was invalid.
+    #[error("invalid index {relation}.{index}: {reason}")]
+    InvalidIndex {
+        relation: String,
+        index: String,
+        reason: String,
+    },
 
     /// A generated index key would exceed LMDB's max key size.
     #[error("index key too large for {relation}.{index}: {actual} bytes exceeds max {max} bytes")]
@@ -54,6 +152,31 @@ impl SchemaDescriptor {
     /// Computes the deterministic schema fingerprint.
     pub fn fingerprint(&self) -> SchemaFingerprint {
         SchemaFingerprint(*blake3::hash(&self.canonical_bytes()).as_bytes())
+    }
+
+    /// Validates the logical schema before storage layout generation.
+    pub fn validate(&self) -> Result<()> {
+        if self.name.is_empty() {
+            return Err(SchemaError::EmptySchemaName);
+        }
+
+        let mut relation_names = BTreeSet::new();
+        for relation in &self.relations {
+            if relation.name.is_empty() {
+                return Err(SchemaError::EmptyRelationName);
+            }
+            if !relation_names.insert(relation.name.clone()) {
+                return Err(SchemaError::DuplicateRelation {
+                    relation: relation.name.clone(),
+                });
+            }
+        }
+
+        for relation in &self.relations {
+            self.validate_relation(relation)?;
+        }
+
+        Ok(())
     }
 
     /// Computes all current-state index layouts and validates key lengths.
@@ -108,6 +231,297 @@ impl SchemaDescriptor {
             relation.push_canonical(&mut out);
         }
         out
+    }
+
+    fn validate_relation(&self, relation: &RelationDescriptor) -> Result<()> {
+        let mut field_names = BTreeSet::new();
+        for field in &relation.fields {
+            if field.name.is_empty() {
+                return Err(SchemaError::EmptyFieldName {
+                    relation: relation.name.clone(),
+                });
+            }
+            if !field_names.insert(field.name.clone()) {
+                return Err(SchemaError::DuplicateField {
+                    relation: relation.name.clone(),
+                    field: field.name.clone(),
+                });
+            }
+            if field.indexing.range && !field.value_type.supports_range_index() {
+                return Err(SchemaError::InvalidIndex {
+                    relation: relation.name.clone(),
+                    index: format!("by_{}", field.name),
+                    reason: format!("field {} has non-range-indexable type", field.name),
+                });
+            }
+            self.validate_ref_field(relation, field)?;
+        }
+
+        self.validate_primary_key(relation)?;
+        self.validate_generated_id(relation)?;
+        self.validate_constraints(relation)?;
+        self.validate_indexes(relation)?;
+        self.validate_relation_kind(relation)?;
+
+        Ok(())
+    }
+
+    fn validate_primary_key(&self, relation: &RelationDescriptor) -> Result<()> {
+        if relation.primary_key.fields.is_empty() {
+            return Err(SchemaError::EmptyPrimaryKey {
+                relation: relation.name.clone(),
+            });
+        }
+        let mut seen = BTreeSet::new();
+        for field_name in &relation.primary_key.fields {
+            let field = relation
+                .field(field_name)
+                .ok_or_else(|| SchemaError::UnknownField {
+                    relation: relation.name.clone(),
+                    field: field_name.clone(),
+                })?;
+            if !seen.insert(field_name.clone()) {
+                return Err(SchemaError::DuplicatePrimaryKeyField {
+                    relation: relation.name.clone(),
+                    field: field_name.clone(),
+                });
+            }
+            if !field.value_type.is_key_eligible() {
+                return Err(SchemaError::InvalidIndex {
+                    relation: relation.name.clone(),
+                    index: "primary".to_owned(),
+                    reason: format!("field {field_name} is not key-eligible"),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_generated_id(&self, relation: &RelationDescriptor) -> Result<()> {
+        let Some(generated_id) = &relation.generated_id else {
+            return Ok(());
+        };
+        let field =
+            relation
+                .field(&generated_id.field)
+                .ok_or_else(|| SchemaError::InvalidGeneratedId {
+                    relation: relation.name.clone(),
+                    field: generated_id.field.clone(),
+                    reason: "field does not exist".to_owned(),
+                })?;
+        if relation.primary_key.fields.len() != 1
+            || relation.primary_key.fields.first() != Some(&generated_id.field)
+        {
+            return Err(SchemaError::InvalidGeneratedId {
+                relation: relation.name.clone(),
+                field: generated_id.field.clone(),
+                reason: "generated IDs require a single-field primary key on the generated field"
+                    .to_owned(),
+            });
+        }
+        match &field.value_type {
+            ValueType::Id {
+                relation: target, ..
+            } if target == &relation.name => Ok(()),
+            ValueType::Id { .. } => Err(SchemaError::InvalidGeneratedId {
+                relation: relation.name.clone(),
+                field: generated_id.field.clone(),
+                reason: "generated ID field must use an ID type for its owning relation".to_owned(),
+            }),
+            _ => Err(SchemaError::InvalidGeneratedId {
+                relation: relation.name.clone(),
+                field: generated_id.field.clone(),
+                reason: "generated ID field must have an ID type".to_owned(),
+            }),
+        }
+    }
+
+    fn validate_relation_kind(&self, relation: &RelationDescriptor) -> Result<()> {
+        if matches!(relation.kind, RelationKind::Edge | RelationKind::Set)
+            && relation.generated_id.is_some()
+        {
+            return Err(SchemaError::InvalidRelationKind {
+                relation: relation.name.clone(),
+                reason: "edge and set relations must not use generated IDs".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_ref_field(
+        &self,
+        relation: &RelationDescriptor,
+        field: &FieldDescriptor,
+    ) -> Result<()> {
+        let ValueType::Ref {
+            name,
+            target_relation,
+        } = &field.value_type
+        else {
+            return Ok(());
+        };
+
+        let target = self
+            .relations
+            .iter()
+            .find(|candidate| &candidate.name == target_relation)
+            .ok_or_else(|| SchemaError::UnknownRefTarget {
+                relation: relation.name.clone(),
+                field: field.name.clone(),
+                target_relation: target_relation.clone(),
+            })?;
+        if target.primary_key.fields.len() != 1 {
+            return Ok(());
+        }
+        let target_field_name = &target.primary_key.fields[0];
+        let target_field =
+            target
+                .field(target_field_name)
+                .ok_or_else(|| SchemaError::UnknownField {
+                    relation: target.name.clone(),
+                    field: target_field_name.clone(),
+                })?;
+        match &target_field.value_type {
+            ValueType::Id {
+                name: id_name,
+                relation: id_relation,
+            } if id_name == name && id_relation == target_relation => Ok(()),
+            _ => Err(SchemaError::RefTypeMismatch {
+                relation: relation.name.clone(),
+                field: field.name.clone(),
+                target_relation: target.name.clone(),
+                target_field: target_field.name.clone(),
+            }),
+        }
+    }
+
+    fn validate_constraints(&self, relation: &RelationDescriptor) -> Result<()> {
+        let mut names = BTreeSet::new();
+        let mut unique_field_sets = BTreeSet::new();
+        for constraint in &relation.constraints {
+            match constraint {
+                ConstraintDescriptor::Unique { name, fields } => {
+                    if name.is_empty() {
+                        return Err(SchemaError::EmptyConstraintName {
+                            relation: relation.name.clone(),
+                        });
+                    }
+                    if !names.insert(name.clone()) {
+                        return Err(SchemaError::DuplicateConstraint {
+                            relation: relation.name.clone(),
+                            constraint: name.clone(),
+                        });
+                    }
+                    if fields.is_empty() {
+                        return Err(SchemaError::InvalidConstraint {
+                            relation: relation.name.clone(),
+                            constraint: name.clone(),
+                            reason: "unique field list must not be empty".to_owned(),
+                        });
+                    }
+                    let mut seen_fields = BTreeSet::new();
+                    for field_name in fields {
+                        let field = relation.field(field_name).ok_or_else(|| {
+                            SchemaError::UnknownField {
+                                relation: relation.name.clone(),
+                                field: field_name.clone(),
+                            }
+                        })?;
+                        if !seen_fields.insert(field_name.clone()) {
+                            return Err(SchemaError::InvalidConstraint {
+                                relation: relation.name.clone(),
+                                constraint: name.clone(),
+                                reason: format!("duplicate field {field_name}"),
+                            });
+                        }
+                        if !field.value_type.is_key_eligible() {
+                            return Err(SchemaError::InvalidConstraint {
+                                relation: relation.name.clone(),
+                                constraint: name.clone(),
+                                reason: format!("field {field_name} is not key-eligible"),
+                            });
+                        }
+                    }
+                    if !unique_field_sets.insert(fields.clone()) {
+                        return Err(SchemaError::InvalidConstraint {
+                            relation: relation.name.clone(),
+                            constraint: name.clone(),
+                            reason: "duplicate unique field set".to_owned(),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_indexes(&self, relation: &RelationDescriptor) -> Result<()> {
+        let generated_names = generated_index_names(relation);
+        let mut names = BTreeSet::new();
+        for index in &relation.indexes {
+            if index.name.is_empty() {
+                return Err(SchemaError::EmptyIndexName {
+                    relation: relation.name.clone(),
+                });
+            }
+            if !names.insert(index.name.clone()) {
+                return Err(SchemaError::DuplicateIndex {
+                    relation: relation.name.clone(),
+                    index: index.name.clone(),
+                });
+            }
+            if generated_names.contains(&index.name) {
+                return Err(SchemaError::ReservedIndexName {
+                    relation: relation.name.clone(),
+                    index: index.name.clone(),
+                });
+            }
+            if index.fields.is_empty() {
+                return Err(SchemaError::InvalidIndex {
+                    relation: relation.name.clone(),
+                    index: index.name.clone(),
+                    reason: "leading field list must not be empty".to_owned(),
+                });
+            }
+            let mut seen_fields = BTreeSet::new();
+            for field_name in &index.fields {
+                let field =
+                    relation
+                        .field(field_name)
+                        .ok_or_else(|| SchemaError::UnknownField {
+                            relation: relation.name.clone(),
+                            field: field_name.clone(),
+                        })?;
+                if !seen_fields.insert(field_name.clone()) {
+                    return Err(SchemaError::DuplicateIndexField {
+                        relation: relation.name.clone(),
+                        index: index.name.clone(),
+                        field: field_name.clone(),
+                    });
+                }
+                if !field.value_type.is_key_eligible() {
+                    return Err(SchemaError::InvalidIndex {
+                        relation: relation.name.clone(),
+                        index: index.name.clone(),
+                        reason: format!("field {field_name} is not key-eligible"),
+                    });
+                }
+            }
+            if index.kind == IndexKind::Range
+                && index.fields.first().is_none_or(|field_name| {
+                    relation
+                        .field(field_name)
+                        .is_none_or(|field| !field.value_type.supports_range_index())
+                })
+            {
+                return Err(SchemaError::InvalidIndex {
+                    relation: relation.name.clone(),
+                    index: index.name.clone(),
+                    reason: "range index leading field must be orderable".to_owned(),
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -424,6 +838,30 @@ impl ValueType {
         matches!(self, ValueType::String | ValueType::Bytes)
     }
 
+    /// Returns true if this type can appear in primary/unique/index keys.
+    pub fn is_key_eligible(&self) -> bool {
+        true
+    }
+
+    /// Returns true if this type has meaningful ordered range semantics.
+    pub fn is_orderable(&self) -> bool {
+        matches!(
+            self,
+            ValueType::U64
+                | ValueType::I64
+                | ValueType::Id { .. }
+                | ValueType::Ref { .. }
+                | ValueType::TimestampMicros
+                | ValueType::Decimal { .. }
+                | ValueType::Symbol { .. }
+        )
+    }
+
+    /// Returns true if range indexes are allowed for this type.
+    pub fn supports_range_index(&self) -> bool {
+        self.is_orderable()
+    }
+
     fn push_canonical(&self, out: &mut Vec<u8>) {
         match self {
             ValueType::Bool => push_u8(out, 1),
@@ -677,6 +1115,23 @@ struct IndexCandidate {
     fields: Vec<String>,
 }
 
+fn generated_index_names(relation: &RelationDescriptor) -> BTreeSet<String> {
+    let mut names = BTreeSet::from(["primary".to_owned()]);
+    for field in &relation.fields {
+        if matches!(field.value_type, ValueType::Ref { .. }) || field.indexing.range {
+            names.insert(format!("by_{}", field.name));
+        }
+    }
+    for constraint in &relation.constraints {
+        match constraint {
+            ConstraintDescriptor::Unique { name, .. } => {
+                names.insert(format!("unique_{name}"));
+            }
+        }
+    }
+    names
+}
+
 fn push_u8(out: &mut Vec<u8>, value: u8) {
     out.push(value);
 }
@@ -866,6 +1321,138 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn validates_well_formed_schema() {
+        assert_eq!(valid_schema().validate(), Ok(()));
+    }
+
+    #[test]
+    fn validation_rejects_duplicate_relations() {
+        let mut schema = valid_schema();
+        schema.relations.push(schema.relations[0].clone());
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::DuplicateRelation { relation }) if relation == "Parent"
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_duplicate_fields() {
+        let mut schema = valid_schema();
+        let duplicate = schema.relations[0].fields[0].clone();
+        schema.relations[0].fields.push(duplicate);
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::DuplicateField { relation, field }) if relation == "Parent" && field == "id"
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_empty_primary_key() {
+        let mut schema = valid_schema();
+        schema.relations[0].primary_key.fields.clear();
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::EmptyPrimaryKey { relation }) if relation == "Parent"
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_duplicate_primary_key_fields() {
+        let mut schema = valid_schema();
+        schema.relations[1].primary_key.fields = vec!["id".to_owned(), "id".to_owned()];
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::DuplicatePrimaryKeyField { relation, field }) if relation == "Child" && field == "id"
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_invalid_generated_id() {
+        let mut schema = valid_schema();
+        schema.relations[0].generated_id = Some(GeneratedIdDescriptor::new("missing"));
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::InvalidGeneratedId { relation, field, .. }) if relation == "Parent" && field == "missing"
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_unknown_ref_target() {
+        let mut schema = valid_schema();
+        schema.relations[1].fields[1].value_type = ValueType::Ref {
+            name: "MissingId".to_owned(),
+            target_relation: "Missing".to_owned(),
+        };
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::UnknownRefTarget { relation, field, target_relation })
+                if relation == "Child" && field == "parent" && target_relation == "Missing"
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_duplicate_constraint_names() {
+        let mut schema = valid_schema();
+        schema.relations[0]
+            .constraints
+            .push(ConstraintDescriptor::unique("code", ["code"]));
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::DuplicateConstraint { relation, constraint })
+                if relation == "Parent" && constraint == "code"
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_empty_unique_fields() {
+        let mut schema = valid_schema();
+        schema.relations[0].constraints[0] = ConstraintDescriptor::unique("code", [] as [&str; 0]);
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::InvalidConstraint { relation, constraint, .. })
+                if relation == "Parent" && constraint == "code"
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_duplicate_index_names() {
+        let mut schema = valid_schema();
+        schema.relations[0]
+            .indexes
+            .push(IndexDescriptor::equality("by_code_exact", ["code"]));
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::DuplicateIndex { relation, index })
+                if relation == "Parent" && index == "by_code_exact"
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_reserved_generated_index_names() {
+        let mut schema = valid_schema();
+        schema.relations[1]
+            .indexes
+            .push(IndexDescriptor::equality("by_parent", ["parent", "id"]));
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::ReservedIndexName { relation, index })
+                if relation == "Child" && index == "by_parent"
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_non_orderable_range_index() {
+        let mut schema = valid_schema();
+        schema.relations[0].fields[1] =
+            FieldDescriptor::new("code", ValueType::String).range_indexed();
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::InvalidIndex { relation, index, .. })
+                if relation == "Parent" && index == "by_code"
+        ));
+    }
+
     fn ledger_schema() -> SchemaDescriptor {
         SchemaDescriptor::new(
             "LedgerDb",
@@ -995,6 +1582,54 @@ mod tests {
                     ],
                     PrimaryKeyDescriptor::new(["child", "parent"]),
                 ),
+            ],
+        )
+    }
+
+    fn valid_schema() -> SchemaDescriptor {
+        SchemaDescriptor::new(
+            "ValidationDb",
+            vec![
+                RelationDescriptor::new(
+                    "Parent",
+                    RelationKind::Entity,
+                    vec![
+                        FieldDescriptor::new(
+                            "id",
+                            ValueType::Id {
+                                name: "ParentId".to_owned(),
+                                relation: "Parent".to_owned(),
+                            },
+                        ),
+                        FieldDescriptor::new("code", ValueType::U64),
+                    ],
+                    PrimaryKeyDescriptor::new(["id"]),
+                )
+                .with_generated_id(GeneratedIdDescriptor::new("id"))
+                .with_constraint(ConstraintDescriptor::unique("code", ["code"]))
+                .with_index(IndexDescriptor::equality("by_code_exact", ["code", "id"])),
+                RelationDescriptor::new(
+                    "Child",
+                    RelationKind::Entity,
+                    vec![
+                        FieldDescriptor::new(
+                            "id",
+                            ValueType::Id {
+                                name: "ChildId".to_owned(),
+                                relation: "Child".to_owned(),
+                            },
+                        ),
+                        FieldDescriptor::new(
+                            "parent",
+                            ValueType::Ref {
+                                name: "ParentId".to_owned(),
+                                target_relation: "Parent".to_owned(),
+                            },
+                        ),
+                    ],
+                    PrimaryKeyDescriptor::new(["id"]),
+                )
+                .with_generated_id(GeneratedIdDescriptor::new("id")),
             ],
         )
     }

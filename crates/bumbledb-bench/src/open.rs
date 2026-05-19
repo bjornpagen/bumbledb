@@ -507,7 +507,10 @@ fn job_schema() -> SchemaDescriptor {
             ],
             PrimaryKeyDescriptor::new(["id"]),
         )
-        .with_index(IndexDescriptor::permutation("by_person", ["person", "id"])),
+        .with_index(IndexDescriptor::permutation(
+            "by_person_id",
+            ["person", "id"],
+        )),
         RelationDescriptor::new(
             "AkaTitle",
             RelationKind::Entity,
@@ -527,7 +530,7 @@ fn job_schema() -> SchemaDescriptor {
             PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
-            "by_movie",
+            "by_movie_kind",
             ["movie", "kind", "id"],
         )),
         RelationDescriptor::new(
@@ -545,19 +548,19 @@ fn job_schema() -> SchemaDescriptor {
             PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
-            "by_movie",
+            "by_movie_role_person",
             ["movie", "role", "person", "person_role", "id"],
         ))
         .with_index(IndexDescriptor::permutation(
-            "by_person",
+            "by_person_movie",
             ["person", "movie", "role", "id"],
         ))
         .with_index(IndexDescriptor::permutation(
-            "by_person_role",
+            "by_person_role_movie",
             ["person_role", "movie", "person", "id"],
         ))
         .with_index(IndexDescriptor::permutation(
-            "by_role",
+            "by_role_movie",
             ["role", "movie", "person", "id"],
         )),
         RelationDescriptor::new(
@@ -624,7 +627,7 @@ fn job_schema() -> SchemaDescriptor {
             PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
-            "by_movie",
+            "by_movie_subject_status",
             ["movie", "subject", "status", "id"],
         ))
         .with_index(IndexDescriptor::permutation(
@@ -679,15 +682,15 @@ fn job_schema() -> SchemaDescriptor {
             PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
-            "by_movie",
+            "by_movie_company_type",
             ["movie", "company_type", "company", "id"],
         ))
         .with_index(IndexDescriptor::permutation(
-            "by_company",
+            "by_company_movie",
             ["company", "movie", "company_type", "id"],
         ))
         .with_index(IndexDescriptor::permutation(
-            "by_company_type",
+            "by_company_type_movie",
             ["company_type", "movie", "company", "id"],
         )),
         RelationDescriptor::new(
@@ -741,11 +744,11 @@ fn job_schema() -> SchemaDescriptor {
             PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
-            "by_movie",
+            "by_movie_keyword",
             ["movie", "keyword", "id"],
         ))
         .with_index(IndexDescriptor::permutation(
-            "by_keyword",
+            "by_keyword_movie",
             ["keyword", "movie", "id"],
         )),
         RelationDescriptor::new(
@@ -760,7 +763,7 @@ fn job_schema() -> SchemaDescriptor {
             PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
-            "by_movie",
+            "by_movie_linked",
             ["movie", "linked_movie", "link_type", "id"],
         ))
         .with_index(IndexDescriptor::permutation(
@@ -768,7 +771,7 @@ fn job_schema() -> SchemaDescriptor {
             ["linked_movie", "movie", "link_type", "id"],
         ))
         .with_index(IndexDescriptor::permutation(
-            "by_link_type",
+            "by_link_type_movie",
             ["link_type", "movie", "linked_movie", "id"],
         )),
         RelationDescriptor::new(
@@ -801,11 +804,11 @@ fn job_schema() -> SchemaDescriptor {
             PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
-            "by_person",
+            "by_person_info_type",
             ["person", "info_type", "id"],
         ))
         .with_index(IndexDescriptor::permutation(
-            "by_info_type",
+            "by_info_type_person",
             ["info_type", "person", "id"],
         )),
         RelationDescriptor::new(
@@ -1916,7 +1919,7 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                     PrimaryKeyDescriptor::new(["person1", "person2"]),
                 )
                 .with_index(IndexDescriptor::permutation(
-                    "by_person2",
+                    "by_person2_person1",
                     ["person2", "person1"],
                 )),
                 RelationDescriptor::new(
@@ -1929,7 +1932,10 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                     ],
                     PrimaryKeyDescriptor::new(["person", "post"]),
                 )
-                .with_index(IndexDescriptor::permutation("by_post", ["post", "person"])),
+                .with_index(IndexDescriptor::permutation(
+                    "by_post_person",
+                    ["post", "person"],
+                )),
             ],
         ),
         rows,
