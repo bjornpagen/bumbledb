@@ -16,8 +16,8 @@ use crate::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FieldValues,
     FreeJoinPlan, HashTrieIndex, IndexSpec, LinearIter, NodeId, NodeImpl, OutputPlan,
     PayloadDemand, PlanEstimates, PlanNode, PrefixProbe, PrefixRows, ProjectPlan, ReadTxn,
-    RelationImage, RelationStats, Result, RowId, SortedTrieIndex, StorageSchema, SubAtom, TrieIter,
-    Value, VarId,
+    RelationImage, RelationStats, Result, Row, RowId, SortedTrieIndex, StorageSchema, SubAtom,
+    TrieIter, Value, VarId,
 };
 
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
@@ -1337,6 +1337,19 @@ struct DirectChainStep {
     index_name: String,
 }
 
+struct DirectImageRow {
+    fields: SmallVec<[(FieldId, EncodedOwned); 8]>,
+}
+
+impl DirectImageRow {
+    fn get(&self, field: FieldId) -> Option<&EncodedOwned> {
+        self.fields
+            .iter()
+            .find(|(candidate, _)| *candidate == field)
+            .map(|(_, value)| value)
+    }
+}
+
 type SmallParticipants = SmallVec<[usize; 4]>;
 type SmallEncodedPrefix = SmallVec<[EncodedOwned; 8]>;
 type SmallEncodedRefs<'a> = SmallVec<[crate::EncodedRef<'a>; 8]>;
@@ -2435,7 +2448,7 @@ fn execute_free_join<'txn, 'query, S: TupleSink>(
     }
     if plan.direct_kernel.is_some() {
         plan.summary.runtime_kind = QueryRuntimeKind::DirectKernel;
-        return execute_direct_kernel(image, txn, query, inputs, plan, sink);
+        return execute_direct_kernel(image, txn, schema, query, inputs, plan, sink);
     }
     if plan
         .summary
@@ -3187,6 +3200,7 @@ fn direct_index_name(relation: &str, kind: &str) -> String {
 fn execute_direct_kernel<'txn, 'query, S: TupleSink>(
     image: &crate::QueryImage,
     txn: &ReadTxn<'txn>,
+    schema: &StorageSchema,
     query: &'query NormalizedQuery,
     inputs: &EncodedInputs,
     plan: &mut ExecutionPlan,
@@ -3203,6 +3217,7 @@ fn execute_direct_kernel<'txn, 'query, S: TupleSink>(
             let mut executor = DirectChainExecutor {
                 image,
                 txn,
+                schema,
                 query,
                 inputs,
                 plan,
@@ -3285,6 +3300,7 @@ fn execute_direct_prefix_range<'txn, 'query, S: TupleSink>(
 struct DirectChainExecutor<'txn, 'input, 'query, 'plan, S: TupleSink> {
     image: &'input crate::QueryImage,
     txn: &'input ReadTxn<'txn>,
+    schema: &'input StorageSchema,
     query: &'query NormalizedQuery,
     inputs: &'input EncodedInputs,
     plan: &'plan mut ExecutionPlan,
@@ -3296,6 +3312,40 @@ struct DirectChainExecutor<'txn, 'input, 'query, 'plan, S: TupleSink> {
 impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
     fn execute(&mut self) -> Result<()> {
         for check in &self.kernel.existence_checks {
+            if let Some(rows) =
+                self.image_rows_for_terms(check.atom_id, &check.fields, &check.terms)?
+            {
+                if !rows.iter().try_fold(false, |found, row| {
+                    if found {
+                        Ok(true)
+                    } else {
+                        self.image_row_satisfies_atom(&self.plan.relation_atoms[check.atom_id], row)
+                    }
+                })? {
+                    return Ok(());
+                }
+                continue;
+            }
+            if let Some(rows) = self.storage_rows_for_terms(
+                check.relation,
+                check.atom_id,
+                &check.fields,
+                &check.terms,
+            )? {
+                if !rows.iter().try_fold(false, |found, row| {
+                    if found {
+                        Ok(true)
+                    } else {
+                        self.storage_row_satisfies_atom(
+                            &self.plan.relation_atoms[check.atom_id],
+                            row,
+                        )
+                    }
+                })? {
+                    return Ok(());
+                }
+                continue;
+            }
             let index = direct_hash_index(
                 self.image,
                 check.relation,
@@ -3367,6 +3417,74 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             return Ok(());
         }
         let step = &self.kernel.steps[depth];
+        if let Some(rows) =
+            self.image_rows_for_terms(step.atom_id, &step.prefix_fields, &step.prefix_terms)?
+        {
+            for row in rows {
+                let atom = &self.plan.relation_atoms[step.atom_id];
+                if !self.image_row_satisfies_atom(atom, &row)? {
+                    continue;
+                }
+                let Some(value) = row.get(step.bind_field) else {
+                    return Err(Error::internal("missing direct chain image bind field"));
+                };
+                let encoded = EncodedValue::from_bytes(
+                    self.query.vars[step.bind_var].value_type.clone(),
+                    value.as_bytes(),
+                )?;
+                if !self.binding.bind(step.bind_var, encoded) {
+                    continue;
+                }
+                if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
+                    rows.actual_rows = rows.actual_rows.saturating_add(1);
+                }
+                self.execute_step(depth + 1)?;
+                self.binding.unbind(step.bind_var);
+            }
+            return Ok(());
+        }
+        if let Some(rows) = self.storage_rows_for_terms(
+            step.relation,
+            step.atom_id,
+            &step.prefix_fields,
+            &step.prefix_terms,
+        )? {
+            for row in rows {
+                let atom = &self.plan.relation_atoms[step.atom_id];
+                if !self.storage_row_satisfies_atom(atom, &row)? {
+                    continue;
+                }
+                let Some(field_name) = atom
+                    .fields
+                    .iter()
+                    .find(|field| field.field == step.bind_field)
+                    .map(|field| field.field_name.as_str())
+                else {
+                    return Err(Error::internal("missing direct chain storage bind field"));
+                };
+                let value = row
+                    .value(field_name)
+                    .ok_or_else(|| Error::internal("missing direct chain storage row value"))?;
+                let normalized =
+                    normalize_value_for_type(value, &self.query.vars[step.bind_var].value_type);
+                let encoded = self
+                    .txn
+                    .encode_query_value(&self.query.vars[step.bind_var].value_type, &normalized)?;
+                let encoded = EncodedValue::from_bytes(
+                    self.query.vars[step.bind_var].value_type.clone(),
+                    &encoded,
+                )?;
+                if !self.binding.bind(step.bind_var, encoded) {
+                    continue;
+                }
+                if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
+                    rows.actual_rows = rows.actual_rows.saturating_add(1);
+                }
+                self.execute_step(depth + 1)?;
+                self.binding.unbind(step.bind_var);
+            }
+            return Ok(());
+        }
         let index = direct_hash_index(
             self.image,
             step.relation,
@@ -3410,6 +3528,224 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
         }
         Ok(())
     }
+
+    fn storage_rows_for_terms(
+        &mut self,
+        relation_id: crate::RelationId,
+        atom_id: usize,
+        fields: &[FieldId],
+        terms: &[NormTerm],
+    ) -> Result<Option<Vec<Row>>> {
+        let atom = &self.plan.relation_atoms[atom_id];
+        let Some(index_name) = direct_storage_index_for_fields(self.schema, atom, fields)? else {
+            return Ok(None);
+        };
+        let mut values = Vec::new();
+        for (field_id, term) in fields.iter().zip(terms) {
+            let Some(atom_field) = atom.fields.iter().find(|field| field.field == *field_id) else {
+                return Err(Error::internal("missing direct chain prefix field"));
+            };
+            let value = self.storage_term_value(term, &atom_field.value_type)?;
+            values.push((atom_field.field_name.clone(), value));
+        }
+        let scan = self.txn.scan_prefix(
+            self.schema,
+            &atom.relation_name,
+            &index_name,
+            &FieldValues::new(&atom.relation_name, values),
+        )?;
+        let rows = scan
+            .map(|item| item.map(|item| item.row))
+            .collect::<Result<Vec<_>>>()?;
+        self.plan.summary.counters.direct_kernel_probes += 1;
+        self.plan.summary.counters.direct_kernel_rows = self
+            .plan
+            .summary
+            .counters
+            .direct_kernel_rows
+            .saturating_add(rows.len() as u64);
+        let _ = relation_id;
+        Ok(Some(rows))
+    }
+
+    fn image_rows_for_terms(
+        &mut self,
+        atom_id: usize,
+        fields: &[FieldId],
+        terms: &[NormTerm],
+    ) -> Result<Option<Vec<DirectImageRow>>> {
+        let atom = &self.plan.relation_atoms[atom_id];
+        let relation = direct_relation(self.image, atom.relation)?;
+        let Some(index) = direct_image_index_for_fields(relation, atom, fields) else {
+            return Ok(None);
+        };
+        let prefix = direct_prefix(terms, self.inputs, &self.binding)?;
+        let prefix = prefix
+            .iter()
+            .flat_map(|value| value.as_bytes().iter().copied())
+            .collect::<Vec<_>>();
+        let mut rows = Vec::new();
+        for entry in index.entries_with_prefix(&prefix) {
+            let mut row = DirectImageRow {
+                fields: SmallVec::new(),
+            };
+            for field in &atom.fields {
+                let Some(bytes) = index.component_bytes(entry, field.field) else {
+                    return Ok(None);
+                };
+                row.fields.push((
+                    field.field,
+                    encoded_owned_from_slice(&field.value_type, bytes)?,
+                ));
+            }
+            rows.push(row);
+        }
+        self.plan.summary.counters.direct_kernel_probes += 1;
+        self.plan.summary.counters.direct_kernel_rows = self
+            .plan
+            .summary
+            .counters
+            .direct_kernel_rows
+            .saturating_add(rows.len() as u64);
+        Ok(Some(rows))
+    }
+
+    fn image_row_satisfies_atom(&self, atom: &NormAtom, row: &DirectImageRow) -> Result<bool> {
+        for field in &atom.fields {
+            let Some(value) = row.get(field.field) else {
+                return Ok(false);
+            };
+            let bytes = value.as_bytes();
+            match &field.term {
+                NormTerm::Var(variable) => {
+                    if let Some(bound) = self.binding.get(variable.0 as usize)
+                        && bound.as_bytes() != bytes
+                    {
+                        return Ok(false);
+                    }
+                }
+                NormTerm::Input(input) => {
+                    let Some(input) = self.inputs.get(*input) else {
+                        return Ok(false);
+                    };
+                    if input.as_bytes() != bytes {
+                        return Ok(false);
+                    }
+                }
+                NormTerm::Literal(literal) => {
+                    if literal.as_bytes() != bytes {
+                        return Ok(false);
+                    }
+                }
+                NormTerm::Wildcard => {}
+            }
+        }
+        Ok(true)
+    }
+
+    fn storage_term_value(&self, term: &NormTerm, value_type: &ValueType) -> Result<Value> {
+        match term {
+            NormTerm::Var(variable) => {
+                let value = self
+                    .binding
+                    .get(variable.0 as usize)
+                    .ok_or_else(|| Error::internal("missing direct chain bound variable"))?;
+                self.txn.decode_query_value(value_type, value.as_bytes())
+            }
+            NormTerm::Input(input) => {
+                let value = self
+                    .inputs
+                    .get(*input)
+                    .ok_or_else(|| Error::internal("missing direct chain input"))?;
+                self.txn.decode_query_value(value_type, value.as_bytes())
+            }
+            NormTerm::Literal(literal) => {
+                self.txn.decode_query_value(value_type, literal.as_bytes())
+            }
+            NormTerm::Wildcard => Err(Error::internal("wildcard cannot be a direct chain prefix")),
+        }
+    }
+
+    fn storage_row_satisfies_atom(&self, atom: &NormAtom, row: &Row) -> Result<bool> {
+        for field in &atom.fields {
+            let Some(value) = row.value(&field.field_name) else {
+                return Ok(false);
+            };
+            let encoded = self.txn.encode_query_value(&field.value_type, value)?;
+            match &field.term {
+                NormTerm::Var(variable) => {
+                    if let Some(bound) = self.binding.get(variable.0 as usize)
+                        && bound.as_bytes() != encoded.as_slice()
+                    {
+                        return Ok(false);
+                    }
+                }
+                NormTerm::Input(input) => {
+                    let Some(input) = self.inputs.get(*input) else {
+                        return Ok(false);
+                    };
+                    if input.as_bytes() != encoded.as_slice() {
+                        return Ok(false);
+                    }
+                }
+                NormTerm::Literal(literal) => {
+                    if literal.as_bytes() != encoded.as_slice() {
+                        return Ok(false);
+                    }
+                }
+                NormTerm::Wildcard => {}
+            }
+        }
+        Ok(true)
+    }
+}
+
+fn direct_storage_index_for_fields(
+    schema: &StorageSchema,
+    atom: &NormAtom,
+    fields: &[FieldId],
+) -> Result<Option<String>> {
+    let field_names = fields
+        .iter()
+        .map(|field_id| {
+            atom.fields
+                .iter()
+                .find(|field| field.field == *field_id)
+                .map(|field| field.field_name.clone())
+                .ok_or_else(|| Error::internal("missing direct chain field name"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(schema
+        .access_paths(&atom.relation_name)?
+        .into_iter()
+        .find(|path| {
+            path.leading_fields.len() >= field_names.len()
+                && path
+                    .leading_fields
+                    .iter()
+                    .zip(&field_names)
+                    .all(|(leading, field)| leading == field)
+        })
+        .map(|path| path.index_name))
+}
+
+fn direct_image_index_for_fields<'a>(
+    relation: &'a RelationImage,
+    atom: &NormAtom,
+    fields: &[FieldId],
+) -> Option<&'a crate::query_image::RelationIndexImage> {
+    relation.indexes().iter().find(|index| {
+        index.fields.len() >= fields.len()
+            && index
+                .fields
+                .iter()
+                .zip(fields)
+                .all(|(left, right)| left == right)
+            && atom
+                .fields
+                .iter()
+                .all(|field| index.contains_field(field.field))
+    })
 }
 
 fn direct_hash_index(
@@ -6856,10 +7192,14 @@ fn encode_owned_value(
 }
 
 fn encoded_owned_from_bytes(value_type: &ValueType, bytes: Vec<u8>) -> Result<EncodedOwned> {
+    encoded_owned_from_slice(value_type, &bytes)
+}
+
+fn encoded_owned_from_slice(value_type: &ValueType, bytes: &[u8]) -> Result<EncodedOwned> {
     match value_type.encoded_width() {
-        1 => Ok(EncodedOwned::One(exact_encoded_array::<1>(&bytes)?)),
-        8 => Ok(EncodedOwned::Eight(exact_encoded_array::<8>(&bytes)?)),
-        16 => Ok(EncodedOwned::Sixteen(exact_encoded_array::<16>(&bytes)?)),
+        1 => Ok(EncodedOwned::One(exact_encoded_array::<1>(bytes)?)),
+        8 => Ok(EncodedOwned::Eight(exact_encoded_array::<8>(bytes)?)),
+        16 => Ok(EncodedOwned::Sixteen(exact_encoded_array::<16>(bytes)?)),
         width => Err(Error::internal(format!(
             "unsupported normalized encoded width {width}"
         ))),
@@ -7855,7 +8195,9 @@ mod tests {
             Some(DirectKernelKind::ChainProbe)
         ));
         assert_eq!(output.rows, vec![vec![Value::U64(30)]]);
-        assert_eq!(output.plan.counters.direct_kernel_rows, 3);
+        assert_eq!(output.plan.counters.direct_kernel_rows, 4);
+        assert_eq!(output.plan.counters.hash_index_builds, 0);
+        assert_eq!(output.plan.counters.hash_index_build_rows, 0);
         assert_eq!(output.plan.counters.trie_open, 0);
         assert_eq!(output.plan.counters.hash_probe_calls, 0);
         Ok(())

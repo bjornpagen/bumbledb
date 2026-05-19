@@ -950,6 +950,24 @@ fn evaluate_gate(
                 ));
             }
         }
+        if (dataset == "ledger" && query.name == "tag_lookup_join")
+            || (dataset == "joinstress" && query.name == "chain4_from_a")
+        {
+            if output.plan.counters.hash_index_builds != 0 {
+                passed = false;
+                notes.push(format!(
+                    "hash indexes built during direct chain query: {}",
+                    output.plan.counters.hash_index_builds
+                ));
+            }
+            if output.plan.counters.hash_index_build_rows != 0 {
+                passed = false;
+                notes.push(format!(
+                    "hash index build rows during direct chain query: {}",
+                    output.plan.counters.hash_index_build_rows
+                ));
+            }
+        }
     } else {
         notes.push("no performance gate configured for query".to_owned());
     }
