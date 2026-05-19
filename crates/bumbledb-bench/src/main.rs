@@ -2791,6 +2791,17 @@ mod tests {
     }
 
     #[test]
+    fn trace_scripts_exist() -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .ok_or_else(|| bench_error("workspace root missing"))?;
+        assert!(root.join("scripts/bench-trace-nonjob.sh").is_file());
+        assert!(root.join("scripts/summarize-trace-jsonl.sh").is_file());
+        Ok(())
+    }
+
+    #[test]
     fn cli_parser_accepts_trace_output_without_default_subscriber()
     -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::from_args(
