@@ -1,8 +1,8 @@
 //! Reusable schemas for tests.
 
 use bumbledb_core::schema::{
-    FieldDescriptor, GeneratedIdDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
-    SchemaDescriptor, ValueType,
+    EnumDescriptor, FieldDescriptor, GeneratedIdDescriptor, PrimaryKeyDescriptor,
+    RelationDescriptor, RelationKind, SchemaDescriptor, ValueType,
 };
 
 /// Canonical small ledger schema used by most correctness tests.
@@ -38,7 +38,7 @@ pub fn ledger_schema() -> SchemaDescriptor {
                     ),
                     FieldDescriptor::new(
                         "currency",
-                        ValueType::Symbol {
+                        ValueType::Enum {
                             name: "Currency".to_owned(),
                         },
                     ),
@@ -81,7 +81,7 @@ pub fn ledger_schema() -> SchemaDescriptor {
                     ),
                     FieldDescriptor::new(
                         "tag",
-                        ValueType::Symbol {
+                        ValueType::Enum {
                             name: "Tag".to_owned(),
                         },
                     ),
@@ -90,6 +90,8 @@ pub fn ledger_schema() -> SchemaDescriptor {
             ),
         ],
     )
+    .with_enum(EnumDescriptor::codes("Currency", [840, 978, 999]))
+    .with_enum(EnumDescriptor::codes("Tag", [1, 2, 3, 7, 8]))
 }
 
 /// Schema for aggregation overflow tests.

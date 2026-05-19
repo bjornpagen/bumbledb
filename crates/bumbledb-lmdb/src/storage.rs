@@ -293,8 +293,10 @@ pub enum Value {
     Decimal(DecimalRaw),
     /// UUID bytes.
     Uuid(UuidBytes),
-    /// Symbol represented as `u64`.
-    Symbol(u64),
+    /// Closed enum represented as a stable `u64` code.
+    Enum(u64),
+    /// Open numeric code domain represented as `u64`.
+    Code(u64),
     /// String to intern.
     String(String),
     /// Bytes to intern.
@@ -312,7 +314,8 @@ impl Value {
             Value::Timestamp(_) => "timestamp",
             Value::Decimal(_) => "decimal",
             Value::Uuid(_) => "uuid",
-            Value::Symbol(_) => "symbol",
+            Value::Enum(_) => "enum",
+            Value::Code(_) => "code",
             Value::String(_) => "string",
             Value::Bytes(_) => "bytes",
         }
@@ -565,6 +568,7 @@ impl WriteTxn<'_> {
     #[tracing::instrument(name = "bumbledb.replace", skip_all, fields(relation = row.relation()))]
     pub fn replace(&mut self, schema: &StorageSchema, row: Row) -> Result<()> {
         let (relation_id, relation) = schema.relation(&row.relation)?;
+        validate_row_values(schema.descriptor(), relation, &row)?;
         let new_encoded = self.encode_row(relation, &row, InternMode::Create)?;
         let primary = primary_bytes(relation, &new_encoded)?;
         let row_key = current_row_key(relation_id, &primary);
@@ -625,6 +629,7 @@ impl WriteTxn<'_> {
 
     fn insert_inner(&mut self, schema: &StorageSchema, row: Row) -> Result<()> {
         let (relation_id, relation) = schema.relation(&row.relation)?;
+        validate_row_values(schema.descriptor(), relation, &row)?;
         let encoded = self.encode_row(relation, &row, InternMode::Create)?;
         let primary = primary_bytes(relation, &encoded)?;
         let row_key = current_row_key(relation_id, &primary);
@@ -1723,7 +1728,8 @@ fn encode_value_for_type(
         (ValueType::TimestampMicros, Value::Timestamp(value)) => encode_timestamp(*value).to_vec(),
         (ValueType::Decimal { .. }, Value::Decimal(value)) => encode_decimal(*value).to_vec(),
         (ValueType::Uuid, Value::Uuid(value)) => encode_uuid(*value).to_vec(),
-        (ValueType::Symbol { .. }, Value::Symbol(value)) => encode_u64(*value).to_vec(),
+        (ValueType::Enum { .. }, Value::Enum(value))
+        | (ValueType::Code { .. }, Value::Code(value)) => encode_u64(*value).to_vec(),
         (ValueType::String, Value::String(value)) => {
             encode_intern_id(InternId(intern(DICT_STRING, value.as_bytes())?)).to_vec()
         }
@@ -1742,6 +1748,41 @@ fn encode_value_for_type(
     Ok(bytes)
 }
 
+fn validate_row_values(
+    schema: &SchemaDescriptor,
+    relation: &RelationDescriptor,
+    row: &Row,
+) -> Result<()> {
+    for (field_name, value) in row.values() {
+        let Some(field) = relation.field(field_name) else {
+            continue;
+        };
+        validate_enum_value(schema, relation, field, value)?;
+    }
+    Ok(())
+}
+
+fn validate_enum_value(
+    schema: &SchemaDescriptor,
+    relation: &RelationDescriptor,
+    field: &FieldDescriptor,
+    value: &Value,
+) -> Result<()> {
+    let (ValueType::Enum { name }, Value::Enum(code)) = (&field.value_type, value) else {
+        return Ok(());
+    };
+    if schema.enum_contains_code(name, *code) {
+        Ok(())
+    } else {
+        Err(Error::type_mismatch(
+            &relation.name,
+            &field.name,
+            format!("known variant of {name}"),
+            value.kind_name(),
+        ))
+    }
+}
+
 fn storage_value_matches_type(value: &Value, value_type: &ValueType) -> bool {
     matches!(
         (value, value_type),
@@ -1753,7 +1794,8 @@ fn storage_value_matches_type(value: &Value, value_type: &ValueType) -> bool {
             | (Value::Timestamp(_), ValueType::TimestampMicros)
             | (Value::Decimal(_), ValueType::Decimal { .. })
             | (Value::Uuid(_), ValueType::Uuid)
-            | (Value::Symbol(_), ValueType::Symbol { .. })
+            | (Value::Enum(_), ValueType::Enum { .. })
+            | (Value::Code(_), ValueType::Code { .. })
             | (Value::String(_), ValueType::String)
             | (Value::Bytes(_), ValueType::Bytes)
     )
@@ -1885,8 +1927,11 @@ fn decode_value(
         ValueType::Uuid => {
             Value::Uuid(decode_uuid(bytes).map_err(|_| Error::corrupt("uuid width invalid"))?)
         }
-        ValueType::Symbol { .. } => {
-            Value::Symbol(decode_u64(bytes).map_err(|_| Error::corrupt("symbol width invalid"))?)
+        ValueType::Enum { .. } => {
+            Value::Enum(decode_u64(bytes).map_err(|_| Error::corrupt("enum width invalid"))?)
+        }
+        ValueType::Code { .. } => {
+            Value::Code(decode_u64(bytes).map_err(|_| Error::corrupt("code width invalid"))?)
         }
         ValueType::String => {
             let InternId(id) = decode_intern_id(bytes)
@@ -1915,7 +1960,7 @@ fn value_type_name(value_type: &ValueType) -> String {
         ValueType::TimestampMicros => "timestamp".to_owned(),
         ValueType::Decimal { scale } => format!("decimal(scale={scale})"),
         ValueType::Uuid => "uuid".to_owned(),
-        ValueType::Symbol { name } => name.clone(),
+        ValueType::Enum { name } | ValueType::Code { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),
     }
@@ -2332,6 +2377,31 @@ mod tests {
     }
 
     #[test]
+    fn invalid_enum_value_fails_before_insert() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = storage_schema(&env)?;
+
+        env.write(|txn| {
+            txn.insert(&schema, holder_row(1, "Alice"))?;
+            Ok::<(), Error>(())
+        })?;
+
+        let invalid = env.write(|txn| txn.insert(&schema, account_row(1, 1, 12345)));
+        assert!(matches!(
+            invalid,
+            Err(Error::Constraint(ConstraintError::TypeMismatch { .. }))
+        ));
+
+        env.read(|txn| {
+            assert_eq!(txn.relation_row_count(&schema, "Account")?, 0);
+            assert_eq!(txn.history_entry_count()?, 1);
+            Ok::<(), Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
     fn replace_removes_old_current_entries_and_preserves_counts() -> TestResult {
         let dir = tempfile::tempdir()?;
         let env = Environment::open(dir.path())?;
@@ -2605,7 +2675,7 @@ mod tests {
                         ),
                         FieldDescriptor::new(
                             "currency",
-                            ValueType::Symbol {
+                            ValueType::Enum {
                                 name: "Currency".to_owned(),
                             },
                         ),
@@ -2631,7 +2701,7 @@ mod tests {
                         ),
                         FieldDescriptor::new(
                             "tag",
-                            ValueType::Symbol {
+                            ValueType::Enum {
                                 name: "Tag".to_owned(),
                             },
                         ),
@@ -2640,6 +2710,14 @@ mod tests {
                 ),
             ],
         )
+        .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
+            "Currency",
+            [840, 978, 999],
+        ))
+        .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
+            "Tag",
+            [1, 2, 3, 7],
+        ))
     }
 
     fn holder_row(id: u64, name: &str) -> Row {
@@ -2658,7 +2736,7 @@ mod tests {
             [
                 ("id", Value::Id(id)),
                 ("holder", Value::Ref(holder)),
-                ("currency", Value::Symbol(currency)),
+                ("currency", Value::Enum(currency)),
                 (
                     "opened",
                     Value::Timestamp(TimestampMicros((id as i64) * 10)),
@@ -2670,10 +2748,7 @@ mod tests {
     fn tag_row(account: u64, tag: u64) -> Row {
         Row::new(
             "AccountTag",
-            [
-                ("account", Value::Ref(account)),
-                ("tag", Value::Symbol(tag)),
-            ],
+            [("account", Value::Ref(account)), ("tag", Value::Enum(tag))],
         )
     }
 
@@ -2720,7 +2795,7 @@ mod tests {
                     }
                 };
                 let currency = match required_value(row, "currency")? {
-                    Value::Symbol(value) => *value,
+                    Value::Enum(value) => *value,
                     other => {
                         return Err(Error::internal(format!(
                             "unexpected currency value: {other:?}"

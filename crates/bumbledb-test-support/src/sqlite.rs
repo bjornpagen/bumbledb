@@ -102,7 +102,7 @@ fn rf(row: &Row, field: &str) -> Result<i64> {
 
 fn symbol(row: &Row, field: &str) -> Result<i64> {
     match required_value(row, field)? {
-        Value::Symbol(value) => Ok(*value as i64),
+        Value::Enum(value) | Value::Code(value) => Ok(*value as i64),
         other => Err(unexpected_value(field, "symbol", other)),
     }
 }

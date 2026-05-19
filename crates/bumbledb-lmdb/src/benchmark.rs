@@ -65,7 +65,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                     ref_field("HolderId", "holder", "Holder"),
                     FieldDescriptor::new(
                         "currency",
-                        ValueType::Symbol {
+                        ValueType::Enum {
                             name: "Currency".to_owned(),
                         },
                     ),
@@ -105,7 +105,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                     ref_field("PostingId", "posting", "Posting"),
                     FieldDescriptor::new(
                         "tag",
-                        ValueType::Symbol {
+                        ValueType::Enum {
                             name: "Tag".to_owned(),
                         },
                     ),
@@ -130,7 +130,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                     ref_field("OrgId", "object", "Org"),
                     FieldDescriptor::new(
                         "permission",
-                        ValueType::Symbol {
+                        ValueType::Enum {
                             name: "Permission".to_owned(),
                         },
                     ),
@@ -152,6 +152,18 @@ pub fn benchmark_schema() -> SchemaDescriptor {
             .with_generated_id(bumbledb_core::schema::GeneratedIdDescriptor::new("id")),
         ],
     )
+    .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
+        "Currency",
+        [840],
+    ))
+    .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
+        "Tag",
+        [1, 2, 3],
+    ))
+    .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
+        "Permission",
+        [7],
+    ))
 }
 
 /// Generates deterministic benchmark rows.
@@ -199,7 +211,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
             [
                 ("id", Value::Id(id)),
                 ("holder", Value::Ref(id)),
-                ("currency", Value::Symbol(840)),
+                ("currency", Value::Enum(840)),
             ],
         ));
     }
@@ -240,7 +252,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
                 "PostingTag",
                 [
                     ("posting", Value::Ref(posting_id)),
-                    ("tag", Value::Symbol(1 + offset)),
+                    ("tag", Value::Enum(1 + offset)),
                 ],
             ));
             posting_id += 1;
@@ -256,7 +268,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
             [
                 ("subject", Value::Ref(id)),
                 ("object", Value::Ref(1)),
-                ("permission", Value::Symbol(7)),
+                ("permission", Value::Enum(7)),
             ],
         ));
     }
@@ -448,7 +460,7 @@ mod tests {
 
     fn symbol(row: &Row, field: &str) -> Result<i64> {
         match required_value(row, field)? {
-            Value::Symbol(value) => Ok(*value as i64),
+            Value::Enum(value) | Value::Code(value) => Ok(*value as i64),
             other => Err(unexpected_value("symbol", other)),
         }
     }

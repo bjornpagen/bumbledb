@@ -1266,7 +1266,7 @@ impl<'schema> Typechecker<'schema> {
         expected: &ValueType,
         span: Span,
     ) -> Result<TypedLiteral> {
-        if literal_fits_type(&literal, expected) {
+        if literal_fits_type(self.schema, &literal, expected) {
             Ok(TypedLiteral {
                 literal,
                 value_type: expected.clone(),
@@ -1402,16 +1402,18 @@ fn merge_types(existing: &ValueType, incoming: &ValueType) -> Option<ValueType> 
     }
 }
 
-fn literal_fits_type(literal: &Literal, expected: &ValueType) -> bool {
+fn literal_fits_type(schema: &SchemaDescriptor, literal: &Literal, expected: &ValueType) -> bool {
     match (literal, expected) {
         (Literal::Bool(_), ValueType::Bool) => true,
         (Literal::String(_), ValueType::String) => true,
+        (Literal::Integer(value), ValueType::Enum { name }) => {
+            *value >= 0
+                && *value <= u64::MAX as i128
+                && schema.enum_contains_code(name, *value as u64)
+        }
         (
             Literal::Integer(value),
-            ValueType::U64
-            | ValueType::Id { .. }
-            | ValueType::Ref { .. }
-            | ValueType::Symbol { .. },
+            ValueType::U64 | ValueType::Id { .. } | ValueType::Ref { .. } | ValueType::Code { .. },
         ) => *value >= 0 && *value <= u64::MAX as i128,
         (Literal::Integer(value), ValueType::I64 | ValueType::TimestampMicros) => {
             *value >= i64::MIN as i128 && *value <= i64::MAX as i128
@@ -1441,7 +1443,7 @@ fn is_orderable(value_type: &ValueType) -> bool {
             | ValueType::Ref { .. }
             | ValueType::TimestampMicros
             | ValueType::Decimal { .. }
-            | ValueType::Symbol { .. }
+            | ValueType::Code { .. }
     )
 }
 
@@ -1458,7 +1460,7 @@ fn type_name(value_type: &ValueType) -> String {
         ValueType::TimestampMicros => "timestamp".to_owned(),
         ValueType::Decimal { scale } => format!("decimal(scale={scale})"),
         ValueType::Uuid => "uuid".to_owned(),
-        ValueType::Symbol { name } => name.clone(),
+        ValueType::Enum { name } | ValueType::Code { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),
     }
@@ -1694,7 +1696,7 @@ mod tests {
                         ),
                         FieldDescriptor::new(
                             "currency",
-                            ValueType::Symbol {
+                            ValueType::Enum {
                                 name: "Currency".to_owned(),
                             },
                         ),
@@ -1728,6 +1730,7 @@ mod tests {
                 .with_generated_id(GeneratedIdDescriptor::new("id")),
             ],
         )
+        .with_enum(crate::schema::EnumDescriptor::codes("Currency", [840, 978]))
     }
 
     fn holder_id_type() -> ValueType {

@@ -1332,7 +1332,7 @@ impl<'env> ReadTxn<'env> {
         let phase_alloc_start = allocation::snapshot();
         {
             let _span = tracing::debug_span!("bumbledb.query.validate_inputs").entered();
-            validate_inputs(query, inputs)?;
+            validate_inputs(schema, query, inputs)?;
         }
         timings.validate_inputs_micros = elapsed_micros(phase_start);
         allocations.validate_inputs = allocation_delta_since(phase_alloc_start);
@@ -1359,7 +1359,7 @@ impl<'env> ReadTxn<'env> {
                 inputs = normalized.inputs.len()
             )
             .entered();
-            encode_inputs(self, &normalized, inputs)?
+            encode_inputs(self, schema, &normalized, inputs)?
         };
         timings.encode_inputs_micros = elapsed_micros(phase_start);
         allocations.encode_inputs = allocation_delta_since(phase_alloc_start);
@@ -6224,6 +6224,7 @@ fn record_decode(value_type: &ValueType, counters: &mut PlanCounters) {
 }
 
 fn input_value<'a>(
+    schema: &StorageSchema,
     query: &'a TypedQuery,
     inputs: &'a InputBindings,
     input: usize,
@@ -6232,7 +6233,7 @@ fn input_value<'a>(
     let value = inputs
         .get(&input.name)
         .ok_or_else(|| Error::missing_input(&input.name))?;
-    if !value_matches_type(value, &input.value_type) {
+    if !value_matches_type(schema, value, &input.value_type) {
         return Err(Error::query_input_type_mismatch(
             &input.name,
             value_type_name(&input.value_type),
@@ -6242,14 +6243,21 @@ fn input_value<'a>(
     Ok(value)
 }
 
-fn validate_inputs(query: &TypedQuery, inputs: &InputBindings) -> Result<()> {
+fn validate_inputs(
+    schema: &StorageSchema,
+    query: &TypedQuery,
+    inputs: &InputBindings,
+) -> Result<()> {
     for input in &query.inputs {
-        input_value(query, inputs, input.id)?;
+        input_value(schema, query, inputs, input.id)?;
     }
     Ok(())
 }
 
-fn value_matches_type(value: &Value, value_type: &ValueType) -> bool {
+fn value_matches_type(schema: &StorageSchema, value: &Value, value_type: &ValueType) -> bool {
+    if let (Value::Enum(code), ValueType::Enum { name }) = (value, value_type) {
+        return schema.descriptor().enum_contains_code(name, *code);
+    }
     matches!(
         (value, value_type),
         (Value::Bool(_), ValueType::Bool)
@@ -6260,7 +6268,8 @@ fn value_matches_type(value: &Value, value_type: &ValueType) -> bool {
             | (Value::Timestamp(_), ValueType::TimestampMicros)
             | (Value::Decimal(_), ValueType::Decimal { .. })
             | (Value::Uuid(_), ValueType::Uuid)
-            | (Value::Symbol(_), ValueType::Symbol { .. })
+            | (Value::Enum(_), ValueType::Enum { .. })
+            | (Value::Code(_), ValueType::Code { .. })
             | (Value::String(_), ValueType::String)
             | (Value::Bytes(_), ValueType::Bytes)
     )
@@ -6282,7 +6291,8 @@ fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
         (Literal::Integer(value), ValueType::I64) => Value::I64(*value as i64),
         (Literal::Integer(value), ValueType::Id { .. }) => Value::Id(*value as u64),
         (Literal::Integer(value), ValueType::Ref { .. }) => Value::Ref(*value as u64),
-        (Literal::Integer(value), ValueType::Symbol { .. }) => Value::Symbol(*value as u64),
+        (Literal::Integer(value), ValueType::Enum { .. }) => Value::Enum(*value as u64),
+        (Literal::Integer(value), ValueType::Code { .. }) => Value::Code(*value as u64),
         (Literal::Integer(value), ValueType::TimestampMicros) => {
             Value::Timestamp(TimestampMicros(*value as i64))
         }
@@ -6457,6 +6467,7 @@ fn exact_encoded_array<const N: usize>(bytes: &[u8]) -> Result<[u8; N]> {
 
 fn encode_inputs(
     txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
     query: &NormalizedQuery,
     inputs: &InputBindings,
 ) -> Result<EncodedInputs> {
@@ -6467,7 +6478,7 @@ fn encode_inputs(
             let value = inputs
                 .get(&input.name)
                 .ok_or_else(|| Error::missing_input(&input.name))?;
-            if !value_matches_type(value, &input.value_type) {
+            if !value_matches_type(schema, value, &input.value_type) {
                 return Err(Error::query_input_type_mismatch(
                     &input.name,
                     value_type_name(&input.value_type),
@@ -7053,7 +7064,7 @@ fn value_type_name(value_type: &ValueType) -> String {
         ValueType::TimestampMicros => "timestamp".to_owned(),
         ValueType::Decimal { scale } => format!("decimal(scale={scale})"),
         ValueType::Uuid => "uuid".to_owned(),
-        ValueType::Symbol { name } => name.clone(),
+        ValueType::Enum { name } | ValueType::Code { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),
     }
@@ -7128,7 +7139,7 @@ mod tests {
             txn.execute_query(
                 &schema,
                 &query,
-                &InputBindings::from_values([("currency", Value::Symbol(840))]),
+                &InputBindings::from_values([("currency", Value::Enum(840))]),
             )
         })?;
 
@@ -7162,7 +7173,7 @@ mod tests {
             txn.execute_query(
                 &schema,
                 &query,
-                &InputBindings::from_values([("kind", Value::Symbol(1))]),
+                &InputBindings::from_values([("kind", Value::Enum(1))]),
             )
         })?;
 
@@ -7723,7 +7734,7 @@ mod tests {
             txn.execute_query(
                 &schema_a,
                 &item_query,
-                &InputBindings::from_values([("kind", Value::Symbol(1))]),
+                &InputBindings::from_values([("kind", Value::Enum(1))]),
             )
         })?;
         let edge =
@@ -7911,14 +7922,14 @@ mod tests {
             schema.descriptor(),
             "find ?item where Item(id: ?item, kind: $kind)",
         )?;
-        let inputs = InputBindings::from_values([("kind", Value::Symbol(1))]);
+        let inputs = InputBindings::from_values([("kind", Value::Enum(1))]);
         let interpreted = env
             .read(|txn| txn.execute_query(&schema, &typed, &inputs))?
             .rows;
 
         let specialized = env.read(|txn| {
             let normalized = normalize_query(txn, &schema, &typed)?;
-            let encoded_inputs = encode_inputs(txn, &normalized, &inputs)?;
+            let encoded_inputs = encode_inputs(txn, &schema, &normalized, &inputs)?;
             let image = QueryImageBuilder::new(txn, &schema).build()?;
             let mut binding = EncodedBinding::new(normalized.vars.len());
             let encoded = txn.encode_query_value(&normalized.vars[0].value_type, &Value::Id(1))?;
@@ -8220,6 +8231,29 @@ mod tests {
     }
 
     #[test]
+    fn enum_input_value_must_be_declared_variant() -> TestResult {
+        let (env, schema) = seeded_db()?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            "find ?account where Account(id: ?account, currency: $currency)",
+        )?;
+        let result = env.read(|txn| {
+            txn.execute_query(
+                &schema,
+                &query,
+                &InputBindings::from_values([("currency", Value::Enum(12345))]),
+            )
+        });
+        assert!(matches!(
+            result,
+            Err(Error::Query(QueryError::Execute(
+                ExecuteError::InputTypeMismatch { .. }
+            )))
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn explain_and_storage_diagnostics_are_available() -> TestResult {
         let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
@@ -8400,7 +8434,7 @@ mod tests {
                         ),
                         FieldDescriptor::new(
                             "currency",
-                            ValueType::Symbol {
+                            ValueType::Enum {
                                 name: "Currency".to_owned(),
                             },
                         ),
@@ -8434,6 +8468,10 @@ mod tests {
                 .with_generated_id(bumbledb_core::schema::GeneratedIdDescriptor::new("id")),
             ],
         )
+        .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
+            "Currency",
+            [840, 978],
+        ))
     }
 
     fn overflow_schema() -> bumbledb_core::schema::SchemaDescriptor {
@@ -8475,7 +8513,7 @@ mod tests {
                         ),
                         FieldDescriptor::new(
                             "kind",
-                            ValueType::Symbol {
+                            ValueType::Enum {
                                 name: "Kind".to_owned(),
                             },
                         ),
@@ -8485,6 +8523,7 @@ mod tests {
                 .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"])),
             ],
         )
+        .with_enum(bumbledb_core::schema::EnumDescriptor::codes("Kind", [1, 2]))
     }
 
     fn triangle_schema() -> bumbledb_core::schema::SchemaDescriptor {
@@ -8622,7 +8661,7 @@ mod tests {
             [
                 ("id", Value::Id(id)),
                 ("holder", Value::Ref(holder)),
-                ("currency", Value::Symbol(currency)),
+                ("currency", Value::Enum(currency)),
             ],
         )
     }
@@ -8651,10 +8690,7 @@ mod tests {
     }
 
     fn item_row(id: u64, kind: u64) -> Row {
-        Row::new(
-            "Item",
-            [("id", Value::Id(id)), ("kind", Value::Symbol(kind))],
-        )
+        Row::new("Item", [("id", Value::Id(id)), ("kind", Value::Enum(kind))])
     }
 
     fn edge_ab_row(a: u64, b: u64) -> Row {
@@ -8752,7 +8788,6 @@ mod tests {
         }
 
         fn execute(&self, query: &TypedQuery, inputs: &InputBindings) -> Result<Vec<Vec<Value>>> {
-            validate_inputs(query, inputs)?;
             let atoms = query
                 .clauses
                 .iter()
@@ -8849,7 +8884,7 @@ mod tests {
                     }
                 }
                 TypedTerm::Input(input) => {
-                    let input_value = input_value(query, inputs, *input)?;
+                    let input_value = reference_input_value(query, inputs, *input)?;
                     let normalized =
                         normalize_value_for_type(row_value, &query.inputs[*input].value_type);
                     if input_value != &normalized {
@@ -8895,6 +8930,17 @@ mod tests {
         Ok(true)
     }
 
+    fn reference_input_value<'a>(
+        query: &'a TypedQuery,
+        inputs: &'a InputBindings,
+        input: usize,
+    ) -> Result<&'a Value> {
+        let input = &query.inputs[input];
+        inputs
+            .get(&input.name)
+            .ok_or_else(|| Error::missing_input(&input.name))
+    }
+
     fn reference_operand_value(
         operand: &TypedOperand,
         query: &TypedQuery,
@@ -8903,7 +8949,9 @@ mod tests {
     ) -> Result<Option<Value>> {
         Ok(match operand {
             TypedOperand::Variable(variable) => binding.get(*variable).cloned(),
-            TypedOperand::Input(input) => Some(input_value(query, inputs, *input)?.clone()),
+            TypedOperand::Input(input) => {
+                Some(reference_input_value(query, inputs, *input)?.clone())
+            }
             TypedOperand::Literal(literal) => Some(literal_to_value(literal)?),
         })
     }

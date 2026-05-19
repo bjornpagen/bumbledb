@@ -55,6 +55,34 @@ pub enum SchemaError {
     #[error("invalid relation kind for {relation}: {reason}")]
     InvalidRelationKind { relation: String, reason: String },
 
+    /// An enum domain name was empty.
+    #[error("enum name must not be empty")]
+    EmptyEnumName,
+
+    /// An enum domain name was declared more than once.
+    #[error("duplicate enum {enum_name}")]
+    DuplicateEnum { enum_name: String },
+
+    /// An enum variant name was empty.
+    #[error("variant name must not be empty in enum {enum_name}")]
+    EmptyEnumVariantName { enum_name: String },
+
+    /// An enum variant name was declared more than once.
+    #[error("duplicate enum variant {enum_name}.{variant}")]
+    DuplicateEnumVariant { enum_name: String, variant: String },
+
+    /// An enum variant code was declared more than once.
+    #[error("duplicate enum code {code} in enum {enum_name}")]
+    DuplicateEnumCode { enum_name: String, code: u64 },
+
+    /// A field referred to an unknown enum domain.
+    #[error("relation {relation}.{field} references unknown enum {enum_name}")]
+    UnknownEnum {
+        relation: String,
+        field: String,
+        enum_name: String,
+    },
+
     /// A foreign-key reference named an unknown target relation.
     #[error("relation {relation}.{field} references unknown target relation {target_relation}")]
     UnknownRefTarget {
@@ -136,6 +164,8 @@ pub enum SchemaError {
 pub struct SchemaDescriptor {
     /// Database/schema name.
     pub name: String,
+    /// Closed enum domains in declaration order.
+    pub enums: Vec<EnumDescriptor>,
     /// Relations in declaration order.
     pub relations: Vec<RelationDescriptor>,
 }
@@ -145,8 +175,15 @@ impl SchemaDescriptor {
     pub fn new(name: impl Into<String>, relations: Vec<RelationDescriptor>) -> Self {
         Self {
             name: name.into(),
+            enums: Vec::new(),
             relations,
         }
+    }
+
+    /// Adds a closed enum domain.
+    pub fn with_enum(mut self, enum_descriptor: EnumDescriptor) -> Self {
+        self.enums.push(enum_descriptor);
+        self
     }
 
     /// Computes the deterministic schema fingerprint.
@@ -159,6 +196,8 @@ impl SchemaDescriptor {
         if self.name.is_empty() {
             return Err(SchemaError::EmptySchemaName);
         }
+
+        self.validate_enums()?;
 
         let mut relation_names = BTreeSet::new();
         for relation in &self.relations {
@@ -177,6 +216,19 @@ impl SchemaDescriptor {
         }
 
         Ok(())
+    }
+
+    /// Returns an enum domain by name.
+    pub fn enum_descriptor(&self, name: &str) -> Option<&EnumDescriptor> {
+        self.enums
+            .iter()
+            .find(|enum_descriptor| enum_descriptor.name == name)
+    }
+
+    /// Returns true if an enum domain contains an encoded code.
+    pub fn enum_contains_code(&self, name: &str, code: u64) -> bool {
+        self.enum_descriptor(name)
+            .is_some_and(|enum_descriptor| enum_descriptor.contains_code(code))
     }
 
     /// Computes all current-state index layouts and validates key lengths.
@@ -226,11 +278,31 @@ impl SchemaDescriptor {
         let mut out = Vec::new();
         push_str(&mut out, "bumbledb.schema.v1");
         push_str(&mut out, &self.name);
+        push_u32(&mut out, self.enums.len() as u32);
+        for enum_descriptor in &self.enums {
+            enum_descriptor.push_canonical(&mut out);
+        }
         push_u32(&mut out, self.relations.len() as u32);
         for relation in &self.relations {
             relation.push_canonical(&mut out);
         }
         out
+    }
+
+    fn validate_enums(&self) -> Result<()> {
+        let mut names = BTreeSet::new();
+        for enum_descriptor in &self.enums {
+            if enum_descriptor.name.is_empty() {
+                return Err(SchemaError::EmptyEnumName);
+            }
+            if !names.insert(enum_descriptor.name.clone()) {
+                return Err(SchemaError::DuplicateEnum {
+                    enum_name: enum_descriptor.name.clone(),
+                });
+            }
+            enum_descriptor.validate()?;
+        }
+        Ok(())
     }
 
     fn validate_relation(&self, relation: &RelationDescriptor) -> Result<()> {
@@ -254,6 +326,7 @@ impl SchemaDescriptor {
                     reason: format!("field {} has non-range-indexable type", field.name),
                 });
             }
+            self.validate_field_type(relation, field)?;
             self.validate_ref_field(relation, field)?;
         }
 
@@ -263,6 +336,23 @@ impl SchemaDescriptor {
         self.validate_indexes(relation)?;
         self.validate_relation_kind(relation)?;
 
+        Ok(())
+    }
+
+    fn validate_field_type(
+        &self,
+        relation: &RelationDescriptor,
+        field: &FieldDescriptor,
+    ) -> Result<()> {
+        if let ValueType::Enum { name } = &field.value_type
+            && self.enum_descriptor(name).is_none()
+        {
+            return Err(SchemaError::UnknownEnum {
+                relation: relation.name.clone(),
+                field: field.name.clone(),
+                enum_name: name.clone(),
+            });
+        }
         Ok(())
     }
 
@@ -544,6 +634,101 @@ impl fmt::Display for SchemaFingerprint {
     }
 }
 
+/// Closed enum domain descriptor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnumDescriptor {
+    /// Enum domain name.
+    pub name: String,
+    /// Allowed variants in declaration order.
+    pub variants: Vec<EnumVariantDescriptor>,
+}
+
+impl EnumDescriptor {
+    /// Creates an enum domain from named variants.
+    pub fn new(
+        name: impl Into<String>,
+        variants: impl IntoIterator<Item = EnumVariantDescriptor>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            variants: variants.into_iter().collect(),
+        }
+    }
+
+    /// Creates an enum domain from numeric codes with generated variant names.
+    pub fn codes(name: impl Into<String>, codes: impl IntoIterator<Item = u64>) -> Self {
+        Self {
+            name: name.into(),
+            variants: codes
+                .into_iter()
+                .map(|code| EnumVariantDescriptor::new(format!("code_{code}"), code))
+                .collect(),
+        }
+    }
+
+    /// Returns true if this enum contains a variant code.
+    pub fn contains_code(&self, code: u64) -> bool {
+        self.variants.iter().any(|variant| variant.code == code)
+    }
+
+    fn validate(&self) -> Result<()> {
+        let mut names = BTreeSet::new();
+        let mut codes = BTreeSet::new();
+        for variant in &self.variants {
+            if variant.name.is_empty() {
+                return Err(SchemaError::EmptyEnumVariantName {
+                    enum_name: self.name.clone(),
+                });
+            }
+            if !names.insert(variant.name.clone()) {
+                return Err(SchemaError::DuplicateEnumVariant {
+                    enum_name: self.name.clone(),
+                    variant: variant.name.clone(),
+                });
+            }
+            if !codes.insert(variant.code) {
+                return Err(SchemaError::DuplicateEnumCode {
+                    enum_name: self.name.clone(),
+                    code: variant.code,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn push_canonical(&self, out: &mut Vec<u8>) {
+        push_str(out, &self.name);
+        push_u32(out, self.variants.len() as u32);
+        for variant in &self.variants {
+            variant.push_canonical(out);
+        }
+    }
+}
+
+/// Closed enum variant descriptor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnumVariantDescriptor {
+    /// Variant label.
+    pub name: String,
+    /// Stable encoded code.
+    pub code: u64,
+}
+
+impl EnumVariantDescriptor {
+    /// Creates an enum variant.
+    pub fn new(name: impl Into<String>, code: u64) -> Self {
+        Self {
+            name: name.into(),
+            code,
+        }
+    }
+
+    fn push_canonical(&self, out: &mut Vec<u8>) {
+        push_str(out, &self.name);
+        push_u64(out, self.code);
+    }
+}
+
 /// Relation descriptor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationDescriptor {
@@ -808,8 +993,10 @@ pub enum ValueType {
     Decimal { scale: u32 },
     /// UUID.
     Uuid,
-    /// Symbol domain stored as a numeric/interned ID.
-    Symbol { name: String },
+    /// Closed enum domain stored as a stable numeric code.
+    Enum { name: String },
+    /// Open numeric code domain without closed variants.
+    Code { name: String },
     /// Interned UTF-8 string.
     String,
     /// Interned bytes.
@@ -826,7 +1013,8 @@ impl ValueType {
             | ValueType::Id { .. }
             | ValueType::Ref { .. }
             | ValueType::TimestampMicros
-            | ValueType::Symbol { .. }
+            | ValueType::Enum { .. }
+            | ValueType::Code { .. }
             | ValueType::String
             | ValueType::Bytes => 8,
             ValueType::Decimal { .. } | ValueType::Uuid => 16,
@@ -853,7 +1041,7 @@ impl ValueType {
                 | ValueType::Ref { .. }
                 | ValueType::TimestampMicros
                 | ValueType::Decimal { .. }
-                | ValueType::Symbol { .. }
+                | ValueType::Code { .. }
         )
     }
 
@@ -886,12 +1074,16 @@ impl ValueType {
                 push_u32(out, *scale);
             }
             ValueType::Uuid => push_u8(out, 8),
-            ValueType::Symbol { name } => {
+            ValueType::Enum { name } => {
                 push_u8(out, 9);
                 push_str(out, name);
             }
-            ValueType::String => push_u8(out, 10),
-            ValueType::Bytes => push_u8(out, 11),
+            ValueType::Code { name } => {
+                push_u8(out, 10);
+                push_str(out, name);
+            }
+            ValueType::String => push_u8(out, 11),
+            ValueType::Bytes => push_u8(out, 12),
         }
     }
 }
@@ -1140,6 +1332,10 @@ fn push_u32(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_be_bytes());
 }
 
+fn push_u64(out: &mut Vec<u8>, value: u64) {
+    out.extend_from_slice(&value.to_be_bytes());
+}
+
 fn push_str(out: &mut Vec<u8>, value: &str) {
     push_u32(out, value.len() as u32);
     out.extend_from_slice(value.as_bytes());
@@ -1301,7 +1497,7 @@ mod tests {
                         ),
                         FieldDescriptor::new(
                             "currency",
-                            ValueType::Symbol {
+                            ValueType::Enum {
                                 name: "Currency".to_owned(),
                             },
                         ),
@@ -1453,6 +1649,62 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn validation_rejects_duplicate_enum_names() {
+        let schema = valid_schema()
+            .with_enum(EnumDescriptor::codes("Status", [1]))
+            .with_enum(EnumDescriptor::codes("Status", [2]));
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::DuplicateEnum { enum_name }) if enum_name == "Status"
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_duplicate_enum_variants_and_codes() {
+        let duplicate_variant = valid_schema().with_enum(EnumDescriptor::new(
+            "Status",
+            [
+                EnumVariantDescriptor::new("Open", 1),
+                EnumVariantDescriptor::new("Open", 2),
+            ],
+        ));
+        assert!(matches!(
+            duplicate_variant.validate(),
+            Err(SchemaError::DuplicateEnumVariant { enum_name, variant })
+                if enum_name == "Status" && variant == "Open"
+        ));
+
+        let duplicate_code = valid_schema().with_enum(EnumDescriptor::new(
+            "Status",
+            [
+                EnumVariantDescriptor::new("Open", 1),
+                EnumVariantDescriptor::new("Closed", 1),
+            ],
+        ));
+        assert!(matches!(
+            duplicate_code.validate(),
+            Err(SchemaError::DuplicateEnumCode { enum_name, code })
+                if enum_name == "Status" && code == 1
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_unknown_enum_domains() {
+        let mut schema = valid_schema();
+        schema.relations[0].fields[1] = FieldDescriptor::new(
+            "code",
+            ValueType::Enum {
+                name: "Missing".to_owned(),
+            },
+        );
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::UnknownEnum { relation, field, enum_name })
+                if relation == "Parent" && field == "code" && enum_name == "Missing"
+        ));
+    }
+
     fn ledger_schema() -> SchemaDescriptor {
         SchemaDescriptor::new(
             "LedgerDb",
@@ -1477,7 +1729,7 @@ mod tests {
                         ),
                         FieldDescriptor::new(
                             "currency",
-                            ValueType::Symbol {
+                            ValueType::Enum {
                                 name: "Currency".to_owned(),
                             },
                         ),
@@ -1584,6 +1836,7 @@ mod tests {
                 ),
             ],
         )
+        .with_enum(EnumDescriptor::codes("Currency", [840, 978]))
     }
 
     fn valid_schema() -> SchemaDescriptor {

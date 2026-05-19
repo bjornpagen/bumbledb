@@ -412,7 +412,8 @@ fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
         (Literal::Integer(value), ValueType::I64) => Value::I64(*value as i64),
         (Literal::Integer(value), ValueType::Id { .. }) => Value::Id(*value as u64),
         (Literal::Integer(value), ValueType::Ref { .. }) => Value::Ref(*value as u64),
-        (Literal::Integer(value), ValueType::Symbol { .. }) => Value::Symbol(*value as u64),
+        (Literal::Integer(value), ValueType::Enum { .. }) => Value::Enum(*value as u64),
+        (Literal::Integer(value), ValueType::Code { .. }) => Value::Code(*value as u64),
         (Literal::Integer(value), ValueType::TimestampMicros) => {
             Value::Timestamp(TimestampMicros(*value as i64))
         }
@@ -455,7 +456,8 @@ fn value_matches_type(value: &Value, value_type: &ValueType) -> bool {
             | (Value::Timestamp(_), ValueType::TimestampMicros)
             | (Value::Decimal(_), ValueType::Decimal { .. })
             | (Value::Uuid(_), ValueType::Uuid)
-            | (Value::Symbol(_), ValueType::Symbol { .. })
+            | (Value::Enum(_), ValueType::Enum { .. })
+            | (Value::Code(_), ValueType::Code { .. })
             | (Value::String(_), ValueType::String)
             | (Value::Bytes(_), ValueType::Bytes)
     )
@@ -471,7 +473,7 @@ fn value_type_name(value_type: &ValueType) -> String {
         ValueType::TimestampMicros => "timestamp".to_owned(),
         ValueType::Decimal { scale } => format!("decimal(scale={scale})"),
         ValueType::Uuid => "uuid".to_owned(),
-        ValueType::Symbol { name } => name.clone(),
+        ValueType::Enum { name } | ValueType::Code { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),
     }
@@ -487,7 +489,8 @@ fn value_kind_name(value: &Value) -> &'static str {
         Value::Timestamp(_) => "timestamp",
         Value::Decimal(_) => "decimal",
         Value::Uuid(_) => "uuid",
-        Value::Symbol(_) => "symbol",
+        Value::Enum(_) => "enum",
+        Value::Code(_) => "code",
         Value::String(_) => "string",
         Value::Bytes(_) => "bytes",
     }

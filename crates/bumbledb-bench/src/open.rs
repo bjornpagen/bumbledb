@@ -1255,7 +1255,7 @@ fn imdb_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::E
             "Title",
             [
                 ("id", Value::Id(id)),
-                ("title_type", Value::Symbol(symbols.id(get(&record, 1)))),
+                ("title_type", Value::Code(symbols.id(get(&record, 1)))),
                 ("primary_title", Value::String(get(&record, 2).to_owned())),
                 (
                     "start_year",
@@ -1322,7 +1322,7 @@ fn imdb_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::E
             [
                 ("title", Value::Ref(title)),
                 ("name", Value::Ref(name)),
-                ("category", Value::Symbol(category)),
+                ("category", Value::Code(category)),
                 ("ordering", Value::U64(parse_optional_u64(get(&record, 1)))),
             ],
         ));
@@ -1354,7 +1354,7 @@ fn imdb_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::E
                 "#,
                 inputs: vec![
                     ("name", Value::Ref(sample_name)),
-                    ("category", Value::Symbol(sample_category)),
+                    ("category", Value::Code(sample_category)),
                     ("min_rating", Value::I64(70)),
                 ],
                 sqlite: r#"
@@ -1378,7 +1378,7 @@ fn imdb_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::E
                       ?rating >= $min_rating
                 "#,
                 inputs: vec![
-                    ("category", Value::Symbol(sample_category)),
+                    ("category", Value::Code(sample_category)),
                     ("min_rating", Value::I64(80)),
                 ],
                 sqlite: r#"
@@ -1403,7 +1403,7 @@ fn imdb_schema() -> SchemaDescriptor {
                     id_field("TitleId", "Title"),
                     FieldDescriptor::new(
                         "title_type",
-                        ValueType::Symbol {
+                        ValueType::Code {
                             name: "TitleType".to_owned(),
                         },
                     ),
@@ -1440,7 +1440,7 @@ fn imdb_schema() -> SchemaDescriptor {
                     ref_field("NameId", "name", "Name"),
                     FieldDescriptor::new(
                         "category",
-                        ValueType::Symbol {
+                        ValueType::Code {
                             name: "Category".to_owned(),
                         },
                     ),
@@ -1472,7 +1472,7 @@ fn tpch_open_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::err
             "Customer",
             [
                 ("id", Value::Id(id)),
-                ("nation", Value::Symbol(parse_u64(get(&record, 3)))),
+                ("nation", Value::Code(parse_u64(get(&record, 3)))),
             ],
         ));
         Ok(())
@@ -1484,7 +1484,7 @@ fn tpch_open_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::err
             "Supplier",
             [
                 ("id", Value::Id(id)),
-                ("nation", Value::Symbol(parse_u64(get(&record, 3)))),
+                ("nation", Value::Code(parse_u64(get(&record, 3)))),
             ],
         ));
         Ok(())

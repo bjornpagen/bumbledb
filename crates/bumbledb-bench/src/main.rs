@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use bumbledb_core::datalog::parse_and_typecheck;
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::schema::{
-    FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
-    SchemaDescriptor, ValueType,
+    EnumDescriptor, FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor,
+    RelationKind, SchemaDescriptor, ValueType,
 };
 use bumbledb_lmdb::{
     AllocationPhaseStats, Environment, InputBindings, PlanCounters, QueryAllocationStats,
@@ -1544,7 +1544,7 @@ fn ledger_dataset(scale: u64) -> Dataset {
                       PostingTag(posting: ?posting, tag: $tag)
                       Posting(id: ?posting, account: ?account)
                 "#,
-                inputs: vec![("tag", Value::Symbol(1))],
+                inputs: vec![("tag", Value::Enum(1))],
                 sqlite: r#"
                     SELECT p.id, p.account FROM posting_tag t
                     JOIN posting p ON p.id = t.posting
@@ -1582,7 +1582,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
                         FieldDescriptor::new("name", ValueType::String),
                         FieldDescriptor::new(
                             "color",
-                            ValueType::Symbol {
+                            ValueType::Enum {
                                 name: "Color".to_owned(),
                             },
                         ),
@@ -1601,7 +1601,8 @@ fn sailors_dataset(scale: u64) -> Dataset {
                     PrimaryKeyDescriptor::new(["sailor", "boat", "day"]),
                 ),
             ],
-        ),
+        )
+        .with_enum(EnumDescriptor::codes("Color", [1, 2, 3])),
         rows: sailors_rows(sailors),
         sqlite_schema: r#"
             CREATE TABLE sailor (id INTEGER PRIMARY KEY, name TEXT NOT NULL, rating INTEGER NOT NULL, age INTEGER NOT NULL);
@@ -1624,7 +1625,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
                       Boat(id: ?boat, color: $color)
                       Sailor(id: ?sailor, rating: ?rating)
                 "#,
-                inputs: vec![("color", Value::Symbol(1))],
+                inputs: vec![("color", Value::Enum(1))],
                 sqlite: r#"
                     SELECT DISTINCT s.id, s.rating FROM reserve r
                     JOIN boat b ON b.id = r.boat
@@ -1664,7 +1665,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
                       Boat(id: ?boat, color: $color)
                       ?rating >= $min_rating
                 "#,
-                inputs: vec![("color", Value::Symbol(1)), ("min_rating", Value::U64(7))],
+                inputs: vec![("color", Value::Enum(1)), ("min_rating", Value::U64(7))],
                 sqlite: r#"
                     SELECT DISTINCT s.id, b.id FROM sailor s
                     JOIN reserve r ON r.sailor = s.id
@@ -1691,7 +1692,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                         id_field("AId", "A"),
                         FieldDescriptor::new(
                             "k",
-                            ValueType::Symbol {
+                            ValueType::Enum {
                                 name: "K".to_owned(),
                             },
                         ),
@@ -1706,7 +1707,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                         ref_field("AId", "a", "A"),
                         FieldDescriptor::new(
                             "k",
-                            ValueType::Symbol {
+                            ValueType::Enum {
                                 name: "K".to_owned(),
                             },
                         ),
@@ -1721,7 +1722,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                         ref_field("BId", "b", "B"),
                         FieldDescriptor::new(
                             "k",
-                            ValueType::Symbol {
+                            ValueType::Enum {
                                 name: "K".to_owned(),
                             },
                         ),
@@ -1736,7 +1737,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                         ref_field("CId", "c", "C"),
                         FieldDescriptor::new(
                             "k",
-                            ValueType::Symbol {
+                            ValueType::Enum {
                                 name: "K".to_owned(),
                             },
                         ),
@@ -1762,7 +1763,8 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                     PrimaryKeyDescriptor::new(["b", "c"]),
                 ),
             ],
-        ),
+        )
+        .with_enum(EnumDescriptor::codes("K", 0..10)),
         rows: join_stress_rows(n),
         sqlite_schema: r#"
             CREATE TABLE a (id INTEGER PRIMARY KEY, k INTEGER NOT NULL);
@@ -1826,7 +1828,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                         id_field("CustomerId", "Customer"),
                         FieldDescriptor::new(
                             "nation",
-                            ValueType::Symbol {
+                            ValueType::Code {
                                 name: "Nation".to_owned(),
                             },
                         ),
@@ -1841,7 +1843,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                         id_field("SupplierId", "Supplier"),
                         FieldDescriptor::new(
                             "nation",
-                            ValueType::Symbol {
+                            ValueType::Code {
                                 name: "Nation".to_owned(),
                             },
                         ),
@@ -1856,7 +1858,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                         id_field("PartId", "Part"),
                         FieldDescriptor::new(
                             "brand",
-                            ValueType::Symbol {
+                            ValueType::Code {
                                 name: "Brand".to_owned(),
                             },
                         ),
@@ -1918,7 +1920,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                       ?ship < $end
                 "#,
                 inputs: vec![
-                    ("nation", Value::Symbol(1)),
+                    ("nation", Value::Code(1)),
                     ("start", Value::Timestamp(TimestampMicros(0))),
                     ("end", Value::Timestamp(TimestampMicros(1_000_000_000))),
                 ],
@@ -1944,7 +1946,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                       LineItem(id: ?line, order: ?order, supplier: ?supplier)
                       Orders(id: ?order, customer: ?customer)
                 "#,
-                inputs: vec![("nation", Value::Symbol(2))],
+                inputs: vec![("nation", Value::Code(2))],
                 sqlite: r#"
                     SELECT l.id, o.id FROM supplier s
                     JOIN lineitem l ON l.supplier = s.id
@@ -1977,7 +1979,7 @@ fn sailors_rows(sailors: u64) -> Vec<Row> {
             [
                 ("id", Value::Id(bid)),
                 ("name", Value::String(format!("boat-{bid}"))),
-                ("color", Value::Symbol((bid % 3) + 1)),
+                ("color", Value::Enum((bid % 3) + 1)),
             ],
         ));
     }
@@ -2006,14 +2008,14 @@ fn join_stress_rows(n: u64) -> Vec<Row> {
     for id in 1..=n {
         rows.push(Row::new(
             "A",
-            [("id", Value::Id(id)), ("k", Value::Symbol(id % 10))],
+            [("id", Value::Id(id)), ("k", Value::Enum(id % 10))],
         ));
         rows.push(Row::new(
             "B",
             [
                 ("id", Value::Id(id)),
                 ("a", Value::Ref(((id - 1) % n) + 1)),
-                ("k", Value::Symbol(id % 10)),
+                ("k", Value::Enum(id % 10)),
             ],
         ));
         rows.push(Row::new(
@@ -2021,7 +2023,7 @@ fn join_stress_rows(n: u64) -> Vec<Row> {
             [
                 ("id", Value::Id(id)),
                 ("b", Value::Ref(((id - 1) % n) + 1)),
-                ("k", Value::Symbol(id % 10)),
+                ("k", Value::Enum(id % 10)),
             ],
         ));
         rows.push(Row::new(
@@ -2029,7 +2031,7 @@ fn join_stress_rows(n: u64) -> Vec<Row> {
             [
                 ("id", Value::Id(id)),
                 ("c", Value::Ref(((id - 1) % n) + 1)),
-                ("k", Value::Symbol(id % 10)),
+                ("k", Value::Enum(id % 10)),
             ],
         ));
     }
@@ -2068,24 +2070,15 @@ fn tpch_rows(n: u64) -> Vec<Row> {
     for id in 1..=n {
         rows.push(Row::new(
             "Customer",
-            [
-                ("id", Value::Id(id)),
-                ("nation", Value::Symbol((id % 5) + 1)),
-            ],
+            [("id", Value::Id(id)), ("nation", Value::Code((id % 5) + 1))],
         ));
         rows.push(Row::new(
             "Supplier",
-            [
-                ("id", Value::Id(id)),
-                ("nation", Value::Symbol((id % 7) + 1)),
-            ],
+            [("id", Value::Id(id)), ("nation", Value::Code((id % 7) + 1))],
         ));
         rows.push(Row::new(
             "Part",
-            [
-                ("id", Value::Id(id)),
-                ("brand", Value::Symbol((id % 11) + 1)),
-            ],
+            [("id", Value::Id(id)), ("brand", Value::Code((id % 11) + 1))],
         ));
         rows.push(Row::new(
             "Orders",
@@ -2317,7 +2310,7 @@ pub(crate) fn rf(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Erro
 
 pub(crate) fn symbol(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
     match required_value(row, field)? {
-        Value::Symbol(v) => Ok(*v as i64),
+        Value::Enum(v) | Value::Code(v) => Ok(*v as i64),
         other => Err(unexpected_value(field, "symbol", other)),
     }
 }

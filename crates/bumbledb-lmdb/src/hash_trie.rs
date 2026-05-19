@@ -569,7 +569,7 @@ mod tests {
                     ),
                     FieldDescriptor::new(
                         "currency",
-                        ValueType::Symbol {
+                        ValueType::Enum {
                             name: "Currency".to_owned(),
                         },
                     ),
@@ -578,6 +578,10 @@ mod tests {
                 PrimaryKeyDescriptor::new(["id"]),
             )],
         )
+        .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
+            "Currency",
+            [840, 978],
+        ))
     }
 
     fn account_rows() -> Vec<Row> {
@@ -586,7 +590,7 @@ mod tests {
                 "Account",
                 [
                     ("id", Value::Id(1)),
-                    ("currency", Value::Symbol(840)),
+                    ("currency", Value::Enum(840)),
                     ("active", Value::Bool(true)),
                 ],
             ),
@@ -594,7 +598,7 @@ mod tests {
                 "Account",
                 [
                     ("id", Value::Id(2)),
-                    ("currency", Value::Symbol(978)),
+                    ("currency", Value::Enum(978)),
                     ("active", Value::Bool(false)),
                 ],
             ),
@@ -602,7 +606,7 @@ mod tests {
                 "Account",
                 [
                     ("id", Value::Id(3)),
-                    ("currency", Value::Symbol(840)),
+                    ("currency", Value::Enum(840)),
                     ("active", Value::Bool(true)),
                 ],
             ),

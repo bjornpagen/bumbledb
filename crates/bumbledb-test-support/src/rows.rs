@@ -18,7 +18,7 @@ pub fn account(id: u64, holder: u64, currency: u64) -> Row {
         [
             ("id", Value::Id(id)),
             ("holder", Value::Ref(holder)),
-            ("currency", Value::Symbol(currency)),
+            ("currency", Value::Enum(currency)),
         ],
     )
 }
@@ -40,10 +40,7 @@ pub fn posting(id: u64, account: u64, amount: i128, at: i64) -> Row {
 pub fn account_tag(account: u64, tag: u64) -> Row {
     Row::new(
         "AccountTag",
-        [
-            ("account", Value::Ref(account)),
-            ("tag", Value::Symbol(tag)),
-        ],
+        [("account", Value::Ref(account)), ("tag", Value::Enum(tag))],
     )
 }
 
