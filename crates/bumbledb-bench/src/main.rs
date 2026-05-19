@@ -16,6 +16,7 @@ use bumbledb_lmdb::{
     QueryOutput, QueryTimings, ResultColumn, Row, StorageSchema, Value,
 };
 use rusqlite::{Connection, params_from_iter};
+use tracing_subscriber::fmt::format::FmtSpan;
 
 mod open;
 
@@ -296,6 +297,7 @@ fn init_tracing(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
                 tracing_subscriber::fmt()
                     .with_env_filter(filter)
                     .with_target(true)
+                    .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
                     .with_writer(writer)
                     .try_init()
                     .map_err(|error| {
@@ -305,6 +307,7 @@ fn init_tracing(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
                 tracing_subscriber::fmt()
                     .with_env_filter(filter)
                     .with_target(true)
+                    .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
                     .try_init()
                     .map_err(|error| {
                         bench_error(format!("failed to initialize tracing: {error}"))
@@ -318,6 +321,7 @@ fn init_tracing(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
                     .json()
                     .with_env_filter(filter)
                     .with_target(true)
+                    .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
                     .with_writer(writer)
                     .try_init()
                     .map_err(|error| {
@@ -328,6 +332,7 @@ fn init_tracing(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
                     .json()
                     .with_env_filter(filter)
                     .with_target(true)
+                    .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
                     .try_init()
                     .map_err(|error| {
                         bench_error(format!("failed to initialize tracing: {error}"))

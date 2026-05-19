@@ -86,8 +86,11 @@ This kill list is derived from scale-10000 trace evidence after the v2 cutover. 
 - `observability_lints_allocation_hardening/06_stack_gat_and_hot_path_allocation_cleanup.md`
 - `observability_lints_allocation_hardening/06_stack_gat_allocation_results.md`
 - `observability_lints_allocation_hardening/07_verification_and_handoff.md`
+- `observability_lints_allocation_hardening/07_verification_handoff_results.md`
 
 This interstitial suite runs after `performance_kill_list/04_real_hash_probe_runtime.md` and before `performance_kill_list/05_direct_selective_query_kernels.md`. It hardens compiler/linter policy, panic cleanup, phase timing, profiling UX, allocation recording, and first-pass stack/GAT allocation cleanup so the next performance PRDs are trace-backed and heap-observable.
+
+The interstitial suite is complete. Resume with `performance_kill_list/05_direct_selective_query_kernels.md`.
 
 **Completion Philosophy**
 - Each stage should leave the project in a coherent state.

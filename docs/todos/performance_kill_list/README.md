@@ -31,6 +31,7 @@ The old LMDB recursion bottleneck is gone: all generated benchmark queries repor
 **Interstitial Hardening Pass**
 - After `04_real_hash_probe_runtime.md`, run `../observability_lints_allocation_hardening/README.md` before starting `05_direct_selective_query_kernels.md`.
 - This does not change the performance kill-list order. It adds strict linting, panic cleanup, phase timing, profiling UX, allocation recording, and first-pass stack/GAT cleanup so PRD 05 can be implemented with better measurements.
+- Status: complete. See `../observability_lints_allocation_hardening/07_verification_handoff_results.md` for the handoff baseline.
 
 **Global Gates**
 - `cargo check --workspace --all-targets --all-features`

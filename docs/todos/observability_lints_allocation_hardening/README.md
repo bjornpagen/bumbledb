@@ -50,6 +50,10 @@ cargo run -p bumbledb-bench --release -- --scale 10000 --repeats 3 --format mark
 **Return Point**
 - After `07_verification_and_handoff.md`, resume `docs/todos/performance_kill_list/05_direct_selective_query_kernels.md`.
 
+**Handoff Complete**
+- `07_verification_handoff_results.md` records the completed suite verification and the PRD 05 baseline.
+- Next PRD: `docs/todos/performance_kill_list/05_direct_selective_query_kernels.md`.
+
 **Baseline Artifacts**
 - `00_baseline_results.md`
 - `01_workspace_lints_results.md`
@@ -58,3 +62,4 @@ cargo run -p bumbledb-bench --release -- --scale 10000 --repeats 3 --format mark
 - `04_tracing_profiling_ux_results.md`
 - `05_allocation_observability_results.md`
 - `06_stack_gat_allocation_results.md`
+- `07_verification_handoff_results.md`
