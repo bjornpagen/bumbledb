@@ -63,6 +63,7 @@ The rearchitecture suite is the successor to the get-fast experiment. It treats 
 - `performance_kill_list/03_route_queries_through_query_image_cache.md`
 - `performance_kill_list/04_real_hash_probe_runtime.md`
 - `performance_kill_list/05_direct_selective_query_kernels.md`
+- `performance_kill_list/05_direct_selective_query_kernels_results.md`
 - `performance_kill_list/06_optimize_lftj_inner_loop.md`
 - `performance_kill_list/07_improve_cardinality_estimates.md`
 - `performance_kill_list/08_add_phase_timing_and_tracing.md`

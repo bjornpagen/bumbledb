@@ -24,6 +24,7 @@ The old LMDB recursion bottleneck is gone: all generated benchmark queries repor
 3. `03_route_queries_through_query_image_cache.md`
 4. `04_real_hash_probe_runtime.md`
 5. `05_direct_selective_query_kernels.md`
+   - Result: `05_direct_selective_query_kernels_results.md`
 6. `06_optimize_lftj_inner_loop.md`
 7. `07_improve_cardinality_estimates.md`
 8. `08_add_phase_timing_and_tracing.md`

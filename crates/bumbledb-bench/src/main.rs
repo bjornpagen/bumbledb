@@ -481,6 +481,9 @@ struct BenchmarkRunResult {
     hash_probe_misses: u64,
     hash_rows_returned: u64,
     hash_distinct_emits: u64,
+    direct_kernel_probes: u64,
+    direct_kernel_rows: u64,
+    direct_kernel_predicates: u64,
     gate: GateOutcome,
 }
 
@@ -820,6 +823,9 @@ fn benchmark_result(
         hash_probe_misses: output.plan.counters.hash_probe_misses,
         hash_rows_returned: output.plan.counters.hash_rows_returned,
         hash_distinct_emits: output.plan.counters.hash_distinct_emits,
+        direct_kernel_probes: output.plan.counters.direct_kernel_probes,
+        direct_kernel_rows: output.plan.counters.direct_kernel_rows,
+        direct_kernel_predicates: output.plan.counters.direct_kernel_predicates,
         gate,
     }
 }
@@ -978,6 +984,14 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_iterator_ops: Some(2_000_000),
             max_materialized_values: None,
         },
+        ("sailors", "sailor_range_reserves") | ("joinstress", "chain4_from_a") => BenchmarkGate {
+            dataset,
+            query,
+            max_bumbledb_avg_micros: Some(75),
+            max_sqlite_ratio: None,
+            max_iterator_ops: None,
+            max_materialized_values: None,
+        },
         _ => return None,
     };
     Some(gate)
@@ -986,12 +1000,12 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | rows | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | image build us | image segments | image segment bytes | built from segments | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash calls | hash hits | hash misses | hash rows | hash emits | iterator ops | hash build est | hash probe est | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---:|---:|---:|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | rows | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | image build us | image segments | image segment bytes | built from segments | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash calls | hash hits | hash misses | hash rows | hash emits | direct probes | direct rows | direct predicates | iterator ops | hash build est | hash probe est | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---:|---:|---:|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.rows,
@@ -1023,6 +1037,9 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.hash_probe_misses,
             result.hash_rows_returned,
             result.hash_distinct_emits,
+            result.direct_kernel_probes,
+            result.direct_kernel_rows,
+            result.direct_kernel_predicates,
             result.iterator_ops,
             result.hash_build_rows,
             result.hash_probe_rows,
@@ -1293,11 +1310,14 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"direct_kernel_probes\":{},\"direct_kernel_rows\":{},\"direct_kernel_predicates\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.counters.cursor_seeks,
             result.counters.rows_scanned,
             result.dictionary_reverse_lookups,
             result.materialized_values,
+            result.direct_kernel_probes,
+            result.direct_kernel_rows,
+            result.direct_kernel_predicates,
             result.gate.passed,
         );
         for (note_index, note) in result.gate.notes.iter().enumerate() {
@@ -1424,6 +1444,7 @@ fn print_explain(explain: &str) {
             || line.contains("hash_probe")
             || line.contains("hash_rows")
             || line.contains("hash_distinct")
+            || line.contains("direct_kernel")
             || line.contains("output_rows")
         {
             println!("  {line}");
@@ -2424,6 +2445,9 @@ mod tests {
             hash_probe_misses: 0,
             hash_rows_returned: 1,
             hash_distinct_emits: 1,
+            direct_kernel_probes: 0,
+            direct_kernel_rows: 0,
+            direct_kernel_predicates: 0,
             gate: GateOutcome {
                 passed: true,
                 notes: vec!["ok".to_owned()],
@@ -2496,6 +2520,9 @@ mod tests {
             hash_probe_misses: 0,
             hash_rows_returned: 2,
             hash_distinct_emits: 2,
+            direct_kernel_probes: 0,
+            direct_kernel_rows: 0,
+            direct_kernel_predicates: 0,
             gate: GateOutcome {
                 passed: true,
                 notes: vec!["ok".to_owned()],

@@ -220,14 +220,15 @@ impl QueryImage {
 
     pub(crate) fn cached_hash_trie(
         &self,
-        key: String,
+        key: impl AsRef<str>,
         build: impl FnOnce() -> Result<HashTrieIndex>,
     ) -> Result<CachedHashTrie> {
+        let key = key.as_ref();
         if let Some(index) = self
             .hash_trie_cache
             .read()
             .map_err(|_| Error::internal("hash trie cache read lock poisoned"))?
-            .get(&key)
+            .get(key)
             .cloned()
         {
             return Ok(CachedHashTrie { index, hit: true });
@@ -238,13 +239,13 @@ impl QueryImage {
             .hash_trie_cache
             .write()
             .map_err(|_| Error::internal("hash trie cache write lock poisoned"))?;
-        if let Some(existing) = cache.get(&key).cloned() {
+        if let Some(existing) = cache.get(key).cloned() {
             return Ok(CachedHashTrie {
                 index: existing,
                 hit: true,
             });
         }
-        cache.insert(key, index.clone());
+        cache.insert(key.to_owned(), index.clone());
         Ok(CachedHashTrie { index, hit: false })
     }
 

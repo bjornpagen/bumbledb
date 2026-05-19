@@ -249,6 +249,8 @@ pub struct QueryPlan {
     pub node_timings: Vec<QueryNodeTiming>,
     /// Free Join physical plan IR.
     pub free_join: FreeJoinPlan,
+    /// Optional direct kernel selected for a simple hot query shape.
+    pub direct_kernel: Option<DirectKernelSummary>,
     /// Runtime implementation used for this execution.
     pub runtime_kind: QueryRuntimeKind,
     /// Coarse query phase timings.
@@ -389,6 +391,12 @@ impl QueryPlan {
             self.free_join.estimates.memory_bytes,
             self.counters.output_rows
         ));
+        if let Some(direct) = &self.direct_kernel {
+            out.push_str(&format!(
+                "direct_kernel kind={:?} target={} steps={}\n",
+                direct.kind, direct.target, direct.steps
+            ));
+        }
         out.push_str("free_join_plan:\n");
         for node in &self.free_join.nodes {
             out.push_str(&format!(
@@ -540,6 +548,18 @@ impl QueryPlan {
         out.push_str(&format!(
             "  hash_distinct_emits: {}\n",
             self.counters.hash_distinct_emits
+        ));
+        out.push_str(&format!(
+            "  direct_kernel_probes: {}\n",
+            self.counters.direct_kernel_probes
+        ));
+        out.push_str(&format!(
+            "  direct_kernel_rows: {}\n",
+            self.counters.direct_kernel_rows
+        ));
+        out.push_str(&format!(
+            "  direct_kernel_predicates: {}\n",
+            self.counters.direct_kernel_predicates
         ));
         out.push_str(&format!("  output_rows: {}\n", self.counters.output_rows));
         out
@@ -747,6 +767,30 @@ pub struct QueryNodeTiming {
     pub execute_micros: u128,
 }
 
+/// Direct kernel summary for explain/benchmark output.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirectKernelSummary {
+    /// Direct kernel kind.
+    pub kind: DirectKernelKind,
+    /// Human-readable target shape.
+    pub target: String,
+    /// Number of direct probe/scan steps.
+    pub steps: usize,
+}
+
+/// Direct kernel kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirectKernelKind {
+    /// Single point lookup.
+    PointLookup,
+    /// Equality prefix plus range predicates.
+    PrefixRange,
+    /// Acyclic low-fanout chain probe.
+    ChainProbe,
+    /// Count-only direct aggregate.
+    CountOnly,
+}
+
 /// Optimizer estimate for one variable in execution order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VariableEstimate {
@@ -898,6 +942,12 @@ pub struct PlanCounters {
     pub hash_rows_returned: u64,
     /// Number of bindings emitted by hash probe nodes.
     pub hash_distinct_emits: u64,
+    /// Number of direct kernel prefix/point probes.
+    pub direct_kernel_probes: u64,
+    /// Number of relation rows visited by direct kernels.
+    pub direct_kernel_rows: u64,
+    /// Number of predicates evaluated by direct kernels.
+    pub direct_kernel_predicates: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -971,6 +1021,7 @@ struct ExecutionPlan {
     variable_order_ids: Vec<usize>,
     relation_atoms: Vec<NormAtom>,
     comparisons: Vec<NormPredicate>,
+    direct_kernel: Option<DirectKernelPlan>,
     summary: QueryPlan,
 }
 
@@ -1084,6 +1135,56 @@ struct HashAtomIndex {
     atom_id: usize,
     index: Arc<HashTrieIndex>,
     fields: Vec<FieldId>,
+}
+
+#[derive(Clone, Debug)]
+struct DirectKernelPlan {
+    kind: DirectKernel,
+    summary: DirectKernelSummary,
+}
+
+#[derive(Clone, Debug)]
+enum DirectKernel {
+    PrefixRange(DirectPrefixRangePlan),
+    ChainProbe(DirectChainProbePlan),
+}
+
+#[derive(Clone, Debug)]
+struct DirectPrefixRangePlan {
+    atom_id: usize,
+    relation: crate::RelationId,
+    prefix_fields: SmallVec<[FieldId; 4]>,
+    prefix_terms: SmallVec<[NormTerm; 4]>,
+    cache_key: String,
+    index_name: String,
+}
+
+#[derive(Clone, Debug)]
+struct DirectChainProbePlan {
+    existence_checks: Vec<DirectExistenceCheck>,
+    steps: Vec<DirectChainStep>,
+}
+
+#[derive(Clone, Debug)]
+struct DirectExistenceCheck {
+    atom_id: usize,
+    relation: crate::RelationId,
+    fields: SmallVec<[FieldId; 4]>,
+    terms: SmallVec<[NormTerm; 4]>,
+    cache_key: String,
+    index_name: String,
+}
+
+#[derive(Clone, Debug)]
+struct DirectChainStep {
+    atom_id: usize,
+    relation: crate::RelationId,
+    prefix_fields: SmallVec<[FieldId; 4]>,
+    prefix_terms: SmallVec<[NormTerm; 4]>,
+    bind_var: usize,
+    bind_field: FieldId,
+    cache_key: String,
+    index_name: String,
 }
 
 type SmallParticipants = SmallVec<[usize; 4]>;
@@ -1223,6 +1324,10 @@ fn execute_free_join<'txn, 'query, S: TupleSink>(
         nodes = plan.summary.free_join.nodes.len()
     )
     .entered();
+    if plan.direct_kernel.is_some() {
+        plan.summary.runtime_kind = QueryRuntimeKind::DirectKernel;
+        return execute_direct_kernel(image, txn, query, inputs, plan, sink);
+    }
     if plan
         .summary
         .free_join
@@ -1461,6 +1566,535 @@ fn hash_participants_by_variable(
 
 fn encoded_refs(prefix: &[EncodedOwned]) -> SmallEncodedRefs<'_> {
     prefix.iter().map(EncodedOwned::as_ref).collect()
+}
+
+fn try_direct_kernel(query: &NormalizedQuery) -> Option<DirectKernelPlan> {
+    try_direct_prefix_range_kernel(query).or_else(|| try_direct_chain_kernel(query))
+}
+
+fn try_direct_prefix_range_kernel(query: &NormalizedQuery) -> Option<DirectKernelPlan> {
+    if query.atoms.len() != 1 || !matches!(query.output, OutputPlan::Project(_)) {
+        return None;
+    }
+    let atom = &query.atoms[0];
+    let range_variable = direct_range_variable(query)?;
+    if !atom_contains_variable(atom, range_variable) {
+        return None;
+    }
+    let mut prefix_fields = SmallVec::new();
+    let mut prefix_terms = SmallVec::new();
+    for field in &atom.fields {
+        match &field.term {
+            NormTerm::Input(_) | NormTerm::Literal(_) => {
+                prefix_fields.push(field.field);
+                prefix_terms.push(field.term.clone());
+            }
+            NormTerm::Var(variable) if variable.0 as usize == range_variable => {}
+            NormTerm::Var(_) | NormTerm::Wildcard => {}
+        }
+    }
+    if prefix_fields.is_empty() {
+        return None;
+    }
+    Some(DirectKernelPlan {
+        kind: DirectKernel::PrefixRange(DirectPrefixRangePlan {
+            atom_id: atom.id.0 as usize,
+            relation: atom.relation,
+            cache_key: direct_cache_key("prefix_range", atom.relation, &prefix_fields),
+            index_name: direct_index_name(&atom.relation_name, "prefix_range"),
+            prefix_fields,
+            prefix_terms,
+        }),
+        summary: DirectKernelSummary {
+            kind: DirectKernelKind::PrefixRange,
+            target: atom.relation_name.clone(),
+            steps: 1,
+        },
+    })
+}
+
+fn direct_range_variable(query: &NormalizedQuery) -> Option<usize> {
+    let mut range_variable = None;
+    for predicate in &query.predicates {
+        let variable = match (&predicate.operands[0], &predicate.operands[1]) {
+            (NormOperand::Var(variable), NormOperand::Input(_) | NormOperand::Literal(_))
+            | (NormOperand::Input(_) | NormOperand::Literal(_), NormOperand::Var(variable)) => {
+                variable.0 as usize
+            }
+            _ => return None,
+        };
+        if range_variable.is_some_and(|existing| existing != variable) {
+            return None;
+        }
+        range_variable = Some(variable);
+    }
+    range_variable
+}
+
+fn try_direct_chain_kernel(query: &NormalizedQuery) -> Option<DirectKernelPlan> {
+    if query.atoms.len() < 2
+        || !query.predicates.is_empty()
+        || !matches!(query.output, OutputPlan::Project(_))
+    {
+        return None;
+    }
+    let mut bound = BTreeSet::new();
+    let mut existence_checks = Vec::new();
+    let mut steps = Vec::new();
+    for atom in &query.atoms {
+        let variables = atom_variables(atom);
+        let unbound = variables
+            .iter()
+            .copied()
+            .filter(|variable| !bound.contains(variable))
+            .collect::<SmallParticipants>();
+        if unbound.is_empty() {
+            let mut fields = SmallVec::new();
+            let mut terms = SmallVec::new();
+            for field in &atom.fields {
+                if direct_term_is_bound(&field.term, &bound) {
+                    fields.push(field.field);
+                    terms.push(field.term.clone());
+                }
+            }
+            if fields.is_empty() {
+                return None;
+            }
+            existence_checks.push(DirectExistenceCheck {
+                atom_id: atom.id.0 as usize,
+                relation: atom.relation,
+                cache_key: direct_cache_key("chain_exists", atom.relation, &fields),
+                index_name: direct_index_name(&atom.relation_name, "chain_exists"),
+                fields,
+                terms,
+            });
+            continue;
+        }
+        if unbound.len() != 1 {
+            return None;
+        }
+        let bind_var = unbound[0];
+        let bind_field = atom
+            .fields
+            .iter()
+            .find(|field| matches!(field.term, NormTerm::Var(variable) if variable.0 as usize == bind_var))?
+            .field;
+        let mut prefix_fields = SmallVec::new();
+        let mut prefix_terms = SmallVec::new();
+        for field in &atom.fields {
+            if direct_term_is_bound(&field.term, &bound) {
+                prefix_fields.push(field.field);
+                prefix_terms.push(field.term.clone());
+            }
+        }
+        if prefix_fields.is_empty() {
+            return None;
+        }
+        steps.push(DirectChainStep {
+            atom_id: atom.id.0 as usize,
+            relation: atom.relation,
+            cache_key: direct_cache_key("chain_step", atom.relation, &prefix_fields),
+            index_name: direct_index_name(&atom.relation_name, "chain_step"),
+            prefix_fields,
+            prefix_terms,
+            bind_var,
+            bind_field,
+        });
+        bound.insert(bind_var);
+    }
+    if steps.is_empty() {
+        return None;
+    }
+    Some(DirectKernelPlan {
+        kind: DirectKernel::ChainProbe(DirectChainProbePlan {
+            existence_checks,
+            steps,
+        }),
+        summary: DirectKernelSummary {
+            kind: DirectKernelKind::ChainProbe,
+            target: query
+                .atoms
+                .iter()
+                .map(|atom| atom.relation_name.as_str())
+                .collect::<Vec<_>>()
+                .join("->"),
+            steps: query.atoms.len(),
+        },
+    })
+}
+
+fn direct_term_is_bound(term: &NormTerm, bound: &BTreeSet<usize>) -> bool {
+    match term {
+        NormTerm::Var(variable) => bound.contains(&(variable.0 as usize)),
+        NormTerm::Input(_) | NormTerm::Literal(_) => true,
+        NormTerm::Wildcard => false,
+    }
+}
+
+fn direct_cache_key(kind: &str, relation: crate::RelationId, fields: &[FieldId]) -> String {
+    format!("direct={kind};relation={};fields={fields:?}", relation.0)
+}
+
+fn direct_index_name(relation: &str, kind: &str) -> String {
+    format!("{relation}_direct_{kind}")
+}
+
+fn execute_direct_kernel<'txn, 'query, S: TupleSink>(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'txn>,
+    query: &'query NormalizedQuery,
+    inputs: &EncodedInputs,
+    plan: &mut ExecutionPlan,
+    sink: &mut S,
+) -> Result<()> {
+    let Some(direct) = plan.direct_kernel.clone() else {
+        return Err(Error::internal("missing direct kernel plan"));
+    };
+    match direct.kind {
+        DirectKernel::PrefixRange(kernel) => {
+            execute_direct_prefix_range(image, txn, query, inputs, plan, sink, &kernel)
+        }
+        DirectKernel::ChainProbe(kernel) => {
+            let mut executor = DirectChainExecutor {
+                image,
+                txn,
+                query,
+                inputs,
+                plan,
+                sink,
+                kernel: &kernel,
+                binding: EncodedBinding::new(query.vars.len()),
+            };
+            executor.execute()
+        }
+    }
+}
+
+fn execute_direct_prefix_range<'txn, 'query, S: TupleSink>(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'txn>,
+    query: &'query NormalizedQuery,
+    inputs: &EncodedInputs,
+    plan: &mut ExecutionPlan,
+    sink: &mut S,
+    kernel: &DirectPrefixRangePlan,
+) -> Result<()> {
+    let atom = &plan.relation_atoms[kernel.atom_id];
+    let index = direct_hash_index(
+        image,
+        kernel.relation,
+        &kernel.prefix_fields,
+        &kernel.cache_key,
+        &kernel.index_name,
+        &mut plan.summary.counters,
+    )?;
+    let prefix = direct_prefix(
+        &kernel.prefix_terms,
+        inputs,
+        &EncodedBinding::new(query.vars.len()),
+    )?;
+    let refs = encoded_refs(&prefix);
+    let row_count = index.count(&refs);
+    plan.summary.counters.direct_kernel_probes += 1;
+    if row_count == 0 {
+        return Ok(());
+    }
+    let relation = direct_relation(image, kernel.relation)?;
+    let mut binding = EncodedBinding::new(query.vars.len());
+    for row in index.rows_for_prefix(&refs) {
+        plan.summary.counters.direct_kernel_rows += 1;
+        let bound = bind_atom_variables(relation, atom, row, &mut binding)?;
+        if !direct_row_satisfies_atom(relation, atom, row, inputs, &binding)? {
+            unbind_variables(&mut binding, &bound);
+            continue;
+        }
+        let before = plan.summary.counters.comparisons_evaluated;
+        let keep = comparisons_ready_pass(
+            txn,
+            &plan.comparisons,
+            query,
+            inputs,
+            &binding,
+            &mut plan.summary.counters,
+        )?;
+        plan.summary.counters.direct_kernel_predicates = plan
+            .summary
+            .counters
+            .direct_kernel_predicates
+            .saturating_add(
+                plan.summary
+                    .counters
+                    .comparisons_evaluated
+                    .saturating_sub(before),
+            );
+        if keep {
+            plan.summary.counters.bindings_yielded += 1;
+            sink.emit(txn, query, &binding, &mut plan.summary.counters)?;
+        }
+        unbind_variables(&mut binding, &bound);
+    }
+    Ok(())
+}
+
+struct DirectChainExecutor<'txn, 'input, 'query, 'plan, S: TupleSink> {
+    image: &'input crate::QueryImage,
+    txn: &'input ReadTxn<'txn>,
+    query: &'query NormalizedQuery,
+    inputs: &'input EncodedInputs,
+    plan: &'plan mut ExecutionPlan,
+    sink: &'plan mut S,
+    kernel: &'input DirectChainProbePlan,
+    binding: EncodedBinding,
+}
+
+impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
+    fn execute(&mut self) -> Result<()> {
+        for check in &self.kernel.existence_checks {
+            let index = direct_hash_index(
+                self.image,
+                check.relation,
+                &check.fields,
+                &check.cache_key,
+                &check.index_name,
+                &mut self.plan.summary.counters,
+            )?;
+            let prefix = direct_prefix(&check.terms, self.inputs, &self.binding)?;
+            let refs = encoded_refs(&prefix);
+            self.plan.summary.counters.direct_kernel_probes += 1;
+            if index.count(&refs) == 0 {
+                return Ok(());
+            }
+            let relation = direct_relation(self.image, check.relation)?;
+            let mut found = false;
+            for row in index.rows_for_prefix(&refs) {
+                if direct_row_satisfies_atom(
+                    relation,
+                    &self.plan.relation_atoms[check.atom_id],
+                    row,
+                    self.inputs,
+                    &self.binding,
+                )? {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return Ok(());
+            }
+        }
+        self.execute_step(0)
+    }
+
+    fn execute_step(&mut self, depth: usize) -> Result<()> {
+        if depth == self.kernel.steps.len() {
+            let before = self.plan.summary.counters.comparisons_evaluated;
+            let keep = comparisons_ready_pass(
+                self.txn,
+                &self.plan.comparisons,
+                self.query,
+                self.inputs,
+                &self.binding,
+                &mut self.plan.summary.counters,
+            )?;
+            self.plan.summary.counters.direct_kernel_predicates = self
+                .plan
+                .summary
+                .counters
+                .direct_kernel_predicates
+                .saturating_add(
+                    self.plan
+                        .summary
+                        .counters
+                        .comparisons_evaluated
+                        .saturating_sub(before),
+                );
+            if keep {
+                self.plan.summary.counters.bindings_yielded += 1;
+                self.sink.emit(
+                    self.txn,
+                    self.query,
+                    &self.binding,
+                    &mut self.plan.summary.counters,
+                )?;
+            }
+            return Ok(());
+        }
+        let step = &self.kernel.steps[depth];
+        let index = direct_hash_index(
+            self.image,
+            step.relation,
+            &step.prefix_fields,
+            &step.cache_key,
+            &step.index_name,
+            &mut self.plan.summary.counters,
+        )?;
+        let prefix = direct_prefix(&step.prefix_terms, self.inputs, &self.binding)?;
+        let refs = encoded_refs(&prefix);
+        let row_count = index.count(&refs);
+        self.plan.summary.counters.direct_kernel_probes += 1;
+        if row_count == 0 {
+            return Ok(());
+        }
+        let relation = direct_relation(self.image, step.relation)?;
+        for row in index.rows_for_prefix(&refs) {
+            self.plan.summary.counters.direct_kernel_rows += 1;
+            if !direct_row_satisfies_atom(
+                relation,
+                &self.plan.relation_atoms[step.atom_id],
+                row,
+                self.inputs,
+                &self.binding,
+            )? {
+                continue;
+            }
+            let bytes = relation
+                .encoded_bytes(row, step.bind_field)
+                .ok_or_else(|| Error::internal("missing direct chain bind field"))?;
+            let value =
+                EncodedValue::from_bytes(self.query.vars[step.bind_var].value_type.clone(), bytes)?;
+            if !self.binding.bind(step.bind_var, value) {
+                continue;
+            }
+            if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
+                rows.actual_rows = rows.actual_rows.saturating_add(1);
+            }
+            self.execute_step(depth + 1)?;
+            self.binding.unbind(step.bind_var);
+        }
+        Ok(())
+    }
+}
+
+fn direct_hash_index(
+    image: &crate::QueryImage,
+    relation_id: crate::RelationId,
+    fields: &[FieldId],
+    cache_key: &str,
+    index_name: &str,
+    counters: &mut PlanCounters,
+) -> Result<Arc<HashTrieIndex>> {
+    let relation = direct_relation(image, relation_id)?;
+    let cached = image.cached_hash_trie(cache_key, || {
+        crate::query_image::build_hash_trie_index(
+            relation,
+            IndexSpec::new(index_name, fields.iter().copied()),
+        )
+    })?;
+    if !cached.hit {
+        counters.hash_index_builds += 1;
+        counters.hash_index_build_rows = counters
+            .hash_index_build_rows
+            .saturating_add(relation.row_count as u64);
+    }
+    Ok(cached.index)
+}
+
+fn direct_prefix(
+    terms: &[NormTerm],
+    inputs: &EncodedInputs,
+    binding: &EncodedBinding,
+) -> Result<SmallEncodedPrefix> {
+    let mut prefix = SmallVec::new();
+    for term in terms {
+        match term {
+            NormTerm::Input(input) => prefix.push(
+                inputs
+                    .get(*input)
+                    .cloned()
+                    .ok_or_else(|| Error::internal("missing direct input"))?,
+            ),
+            NormTerm::Literal(value) => prefix.push(value.clone()),
+            NormTerm::Var(variable) => prefix.push(encoded_owned_for_value(
+                binding
+                    .get(variable.0 as usize)
+                    .ok_or_else(|| Error::internal("missing direct bound variable"))?,
+            )?),
+            NormTerm::Wildcard => {
+                return Err(Error::internal("wildcard cannot be a direct prefix"));
+            }
+        }
+    }
+    Ok(prefix)
+}
+
+fn direct_relation(
+    image: &crate::QueryImage,
+    relation_id: crate::RelationId,
+) -> Result<&RelationImage> {
+    image
+        .relations()
+        .get(relation_id.0 as usize)
+        .ok_or_else(|| Error::internal(format!("missing direct relation {}", relation_id.0)))
+}
+
+fn bind_atom_variables(
+    relation: &RelationImage,
+    atom: &NormAtom,
+    row: RowId,
+    binding: &mut EncodedBinding,
+) -> Result<SmallParticipants> {
+    let mut bound = SmallParticipants::new();
+    for field in &atom.fields {
+        let NormTerm::Var(variable) = field.term else {
+            continue;
+        };
+        let variable = variable.0 as usize;
+        let bytes = relation
+            .encoded_bytes(row, field.field)
+            .ok_or_else(|| Error::internal("missing direct variable field"))?;
+        let value = EncodedValue::from_bytes(field.value_type.clone(), bytes)?;
+        if !binding.bind(variable, value) {
+            continue;
+        }
+        if !bound.contains(&variable) {
+            bound.push(variable);
+        }
+    }
+    Ok(bound)
+}
+
+fn unbind_variables(binding: &mut EncodedBinding, variables: &[usize]) {
+    for variable in variables {
+        binding.unbind(*variable);
+    }
+}
+
+fn direct_row_satisfies_atom(
+    relation: &RelationImage,
+    atom: &NormAtom,
+    row: RowId,
+    inputs: &EncodedInputs,
+    binding: &EncodedBinding,
+) -> Result<bool> {
+    for field in &atom.fields {
+        let bytes = relation
+            .encoded_bytes(row, field.field)
+            .ok_or_else(|| Error::internal("missing direct atom field"))?;
+        match &field.term {
+            NormTerm::Var(variable) => {
+                if let Some(bound) = binding.get(variable.0 as usize)
+                    && bound.as_bytes() != bytes
+                {
+                    return Ok(false);
+                }
+            }
+            NormTerm::Input(input) => {
+                let Some(input) = inputs.get(*input) else {
+                    return Ok(false);
+                };
+                if input.as_bytes() != bytes {
+                    return Ok(false);
+                }
+            }
+            NormTerm::Literal(value) => {
+                if value.as_bytes() != bytes {
+                    return Ok(false);
+                }
+            }
+            NormTerm::Wildcard => {}
+        }
+    }
+    Ok(true)
 }
 
 struct HashProbeExecutor<'txn, 'input, 'query, 'plan, S: TupleSink> {
@@ -2442,10 +3076,11 @@ fn plan_query(
     let planner_stats = image.planner_stats_diagnostics();
 
     let uses_indexed_multiway_join = relation_atoms.len() > 1;
-    Ok(ExecutionPlan {
+    let mut execution_plan = ExecutionPlan {
         variable_order_ids,
         relation_atoms: query.atoms.clone(),
         comparisons: query.predicates.clone(),
+        direct_kernel: None,
         summary: QueryPlan {
             variable_order,
             variable_estimates,
@@ -2456,13 +3091,19 @@ fn plan_query(
             node_rows,
             node_timings,
             free_join,
+            direct_kernel: None,
             runtime_kind: QueryRuntimeKind::Unknown,
             timings: QueryTimings::default(),
             allocations: QueryAllocationStats::default(),
             counters: PlanCounters::default(),
             uses_indexed_multiway_join,
         },
-    })
+    };
+    if let Some(direct_kernel) = try_direct_kernel(query) {
+        execution_plan.summary.direct_kernel = Some(direct_kernel.summary.clone());
+        execution_plan.direct_kernel = Some(direct_kernel);
+    }
+    Ok(execution_plan)
 }
 
 fn query_node_timings(
@@ -4473,6 +5114,7 @@ mod tests {
             where
               A(id: $a)
               B(id: ?b, a: $a)
+              ?b != 0
             "#,
         )?;
 
@@ -4487,6 +5129,175 @@ mod tests {
         assert!(output.rows.is_empty());
         assert_eq!(output.plan.counters.trie_open, 0);
         assert!(output.plan.counters.hash_probe_calls > 0);
+        Ok(())
+    }
+
+    #[test]
+    fn direct_prefix_range_kernel_selects_and_filters_rows() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(direct_sailors_schema(), env.max_key_size())?;
+        env.write(|txn| {
+            txn.insert(&schema, reserve_row(1, 10, 5))?;
+            txn.insert(&schema, reserve_row(1, 11, 15))?;
+            txn.insert(&schema, reserve_row(2, 12, 5))?;
+            Ok::<_, Error>(())
+        })?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?boat ?day
+            where
+              Reserve(sailor: $sailor, boat: ?boat, day: ?day)
+              ?day >= $start
+              ?day < $end
+            "#,
+        )?;
+
+        let output = env.read(|txn| {
+            txn.execute_query(
+                &schema,
+                &query,
+                &InputBindings::from_values([
+                    ("sailor", Value::U64(1)),
+                    ("start", Value::Timestamp(TimestampMicros(0))),
+                    ("end", Value::Timestamp(TimestampMicros(10))),
+                ]),
+            )
+        })?;
+
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+        assert!(matches!(
+            output.plan.direct_kernel.as_ref().map(|direct| direct.kind),
+            Some(DirectKernelKind::PrefixRange)
+        ));
+        assert_same_rows(
+            &output.rows,
+            &[vec![Value::U64(10), Value::Timestamp(TimestampMicros(5))]],
+        );
+        assert!(output.plan.counters.direct_kernel_probes > 0);
+        assert_eq!(output.plan.counters.direct_kernel_rows, 2);
+        assert_eq!(output.plan.counters.direct_kernel_predicates, 4);
+        assert_eq!(output.plan.counters.trie_open, 0);
+        assert_eq!(output.plan.counters.hash_probe_calls, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn direct_prefix_range_empty_prefix_returns_zero_rows() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(direct_sailors_schema(), env.max_key_size())?;
+        env.write(|txn| {
+            txn.insert(&schema, reserve_row(1, 10, 5))?;
+            Ok::<_, Error>(())
+        })?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?boat ?day
+            where
+              Reserve(sailor: $sailor, boat: ?boat, day: ?day)
+              ?day >= $start
+              ?day < $end
+            "#,
+        )?;
+
+        let output = env.read(|txn| {
+            txn.execute_query(
+                &schema,
+                &query,
+                &InputBindings::from_values([
+                    ("sailor", Value::U64(99)),
+                    ("start", Value::Timestamp(TimestampMicros(0))),
+                    ("end", Value::Timestamp(TimestampMicros(10))),
+                ]),
+            )
+        })?;
+
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+        assert!(output.rows.is_empty());
+        assert_eq!(output.plan.counters.trie_open, 0);
+        assert_eq!(output.plan.counters.hash_probe_calls, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn direct_chain_kernel_selects_and_follows_acyclic_path() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
+        env.write(|txn| {
+            txn.insert(&schema, chain_a_row(1))?;
+            txn.insert(&schema, chain_b_row(10, 1))?;
+            txn.insert(&schema, chain_c_row(20, 10))?;
+            txn.insert(&schema, chain_d_row(30, 20))?;
+            Ok::<_, Error>(())
+        })?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?d
+            where
+              A(id: $a)
+              B(id: ?b, a: $a)
+              C(id: ?c, b: ?b)
+              D(id: ?d, c: ?c)
+            "#,
+        )?;
+
+        let output = env.read(|txn| {
+            txn.execute_query(
+                &schema,
+                &query,
+                &InputBindings::from_values([("a", Value::U64(1))]),
+            )
+        })?;
+
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+        assert!(matches!(
+            output.plan.direct_kernel.as_ref().map(|direct| direct.kind),
+            Some(DirectKernelKind::ChainProbe)
+        ));
+        assert_eq!(output.rows, vec![vec![Value::U64(30)]]);
+        assert_eq!(output.plan.counters.direct_kernel_rows, 3);
+        assert_eq!(output.plan.counters.trie_open, 0);
+        assert_eq!(output.plan.counters.hash_probe_calls, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn direct_chain_broken_path_returns_zero_rows() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
+        env.write(|txn| {
+            txn.insert(&schema, chain_b_row(10, 1))?;
+            Ok::<_, Error>(())
+        })?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?d
+            where
+              A(id: $a)
+              B(id: ?b, a: $a)
+              C(id: ?c, b: ?b)
+              D(id: ?d, c: ?c)
+            "#,
+        )?;
+
+        let output = env.read(|txn| {
+            txn.execute_query(
+                &schema,
+                &query,
+                &InputBindings::from_values([("a", Value::U64(1))]),
+            )
+        })?;
+
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+        assert!(output.rows.is_empty());
+        assert_eq!(output.plan.counters.trie_open, 0);
         Ok(())
     }
 
@@ -4519,6 +5330,7 @@ mod tests {
 
         assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
         assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+        assert!(output.plan.direct_kernel.is_none());
         assert!(
             output
                 .plan
@@ -5476,6 +6288,63 @@ mod tests {
         )
     }
 
+    fn direct_sailors_schema() -> bumbledb_core::schema::SchemaDescriptor {
+        bumbledb_core::schema::SchemaDescriptor::new(
+            "DirectSailorsDb",
+            vec![RelationDescriptor::new(
+                "Reserve",
+                RelationKind::Edge,
+                vec![
+                    FieldDescriptor::new("sailor", ValueType::U64),
+                    FieldDescriptor::new("boat", ValueType::U64),
+                    FieldDescriptor::new("day", ValueType::TimestampMicros).range_indexed(),
+                ],
+                PrimaryKeyDescriptor::new(["sailor", "boat", "day"]),
+            )],
+        )
+    }
+
+    fn direct_chain4_schema() -> bumbledb_core::schema::SchemaDescriptor {
+        bumbledb_core::schema::SchemaDescriptor::new(
+            "DirectChain4Db",
+            vec![
+                RelationDescriptor::new(
+                    "A",
+                    RelationKind::Entity,
+                    vec![FieldDescriptor::new("id", ValueType::U64)],
+                    PrimaryKeyDescriptor::new(["id"]),
+                ),
+                RelationDescriptor::new(
+                    "B",
+                    RelationKind::Entity,
+                    vec![
+                        FieldDescriptor::new("id", ValueType::U64),
+                        FieldDescriptor::new("a", ValueType::U64),
+                    ],
+                    PrimaryKeyDescriptor::new(["id"]),
+                ),
+                RelationDescriptor::new(
+                    "C",
+                    RelationKind::Entity,
+                    vec![
+                        FieldDescriptor::new("id", ValueType::U64),
+                        FieldDescriptor::new("b", ValueType::U64),
+                    ],
+                    PrimaryKeyDescriptor::new(["id"]),
+                ),
+                RelationDescriptor::new(
+                    "D",
+                    RelationKind::Entity,
+                    vec![
+                        FieldDescriptor::new("id", ValueType::U64),
+                        FieldDescriptor::new("c", ValueType::U64),
+                    ],
+                    PrimaryKeyDescriptor::new(["id"]),
+                ),
+            ],
+        )
+    }
+
     fn holder_row(id: u64, name: &str) -> Row {
         Row::new(
             "Holder",
@@ -5541,6 +6410,33 @@ mod tests {
 
     fn b_row(id: u64, a: u64) -> Row {
         Row::new("B", [("id", Value::U64(id)), ("a", Value::U64(a))])
+    }
+
+    fn reserve_row(sailor: u64, boat: u64, day: i64) -> Row {
+        Row::new(
+            "Reserve",
+            [
+                ("sailor", Value::U64(sailor)),
+                ("boat", Value::U64(boat)),
+                ("day", Value::Timestamp(TimestampMicros(day))),
+            ],
+        )
+    }
+
+    fn chain_a_row(id: u64) -> Row {
+        Row::new("A", [("id", Value::U64(id))])
+    }
+
+    fn chain_b_row(id: u64, a: u64) -> Row {
+        Row::new("B", [("id", Value::U64(id)), ("a", Value::U64(a))])
+    }
+
+    fn chain_c_row(id: u64, b: u64) -> Row {
+        Row::new("C", [("id", Value::U64(id)), ("b", Value::U64(b))])
+    }
+
+    fn chain_d_row(id: u64, c: u64) -> Row {
+        Row::new("D", [("id", Value::U64(id)), ("c", Value::U64(c))])
     }
 
     fn assert_same_rows(actual: &[Vec<Value>], expected: &[Vec<Value>]) {
