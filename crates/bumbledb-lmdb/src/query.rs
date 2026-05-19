@@ -594,6 +594,8 @@ pub enum QueryRuntimeKind {
     Lftj,
     /// Hash probe executor.
     HashProbe,
+    /// Mixed executor that runs sorted leapfrog and hash-probe nodes in one plan.
+    Mixed,
     /// Free Join fallback for non-pure or mixed node implementations.
     MixedFallback,
     /// Reserved for direct selective kernels.
@@ -1424,12 +1426,70 @@ fn execute_free_join<'txn, 'query, S: TupleSink>(
         plan.summary.runtime_kind = QueryRuntimeKind::HashProbe;
         return execute_hash_probe(image, txn, schema, query, inputs, plan, sink);
     }
+    if is_mixed_hash_lftj_plan(plan) {
+        plan.summary.runtime_kind = QueryRuntimeKind::Mixed;
+        return execute_mixed_free_join(image, txn, schema, query, inputs, plan, sink);
+    }
     plan.summary.runtime_kind = if plan.summary.free_join.is_pure_lftj() {
         QueryRuntimeKind::Lftj
     } else {
         QueryRuntimeKind::MixedFallback
     };
     execute_lftj(image, txn, query, inputs, plan, sink)
+}
+
+fn is_mixed_hash_lftj_plan(plan: &ExecutionPlan) -> bool {
+    let mut has_hash = false;
+    let mut has_lftj = false;
+    for node in &plan.summary.free_join.nodes {
+        if node.bind_vars.len() != 1 {
+            return false;
+        }
+        match node.implementation {
+            NodeImpl::HashProbe | NodeImpl::Hybrid => has_hash = true,
+            NodeImpl::SortedLeapfrog => has_lftj = true,
+            _ => return false,
+        }
+    }
+    has_hash && has_lftj
+}
+
+fn mixed_lftj_node_is_safe(plan: &ExecutionPlan, depth: usize) -> bool {
+    let Some(node) = plan.summary.free_join.nodes.get(depth) else {
+        return false;
+    };
+    if node.implementation != NodeImpl::SortedLeapfrog {
+        return false;
+    }
+    let Some(variable) = node.bind_vars.first().map(|variable| variable.0 as usize) else {
+        return false;
+    };
+    for atom in &plan.relation_atoms {
+        if !atom_contains_variable(atom, variable) {
+            continue;
+        }
+        for earlier in atom_variables_in_plan_order(atom, &plan.variable_order_ids) {
+            if earlier == variable {
+                break;
+            }
+            let Some(earlier_depth) = plan
+                .variable_order_ids
+                .iter()
+                .position(|candidate| *candidate == earlier)
+            else {
+                return false;
+            };
+            if earlier_depth >= depth {
+                return false;
+            }
+            if plan.summary.free_join.nodes[earlier_depth].implementation
+                != NodeImpl::SortedLeapfrog
+            {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn execute_hash_probe<'txn, 'query, S: TupleSink>(
@@ -1483,6 +1543,83 @@ fn execute_hash_probe<'txn, 'query, S: TupleSink>(
         .hash_execute_micros
         .saturating_add(elapsed_micros(execute_start));
     plan.summary.allocations.hash_execute = allocation_delta_since(execute_alloc_start);
+    result
+}
+
+fn execute_mixed_free_join<'txn, 'query, S: TupleSink>(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'txn>,
+    schema: &StorageSchema,
+    query: &'query NormalizedQuery,
+    inputs: &EncodedInputs,
+    plan: &mut ExecutionPlan,
+    sink: &mut S,
+) -> Result<()> {
+    let build_start = Instant::now();
+    let build_alloc_start = allocation::snapshot();
+    let atom_plans = {
+        let _span = tracing::debug_span!(
+            "bumbledb.query.lftj.build",
+            atoms = plan.relation_atoms.len()
+        )
+        .entered();
+        build_lftj_atom_plans(
+            image,
+            query,
+            inputs,
+            &plan.relation_atoms,
+            &plan.variable_order_ids,
+            &mut plan.summary.counters,
+        )?
+    };
+    plan.summary.timings.lftj_build_micros = plan
+        .summary
+        .timings
+        .lftj_build_micros
+        .saturating_add(elapsed_micros(build_start));
+    plan.summary.allocations.lftj_build = allocation_delta_since(build_alloc_start);
+    if atom_plans.iter().any(|atom| atom.row_count == 0) {
+        return Ok(());
+    }
+
+    let index_requests = build_hash_atom_index_requests(schema, plan)?;
+    let lftj_runtime = LftjRuntime {
+        participants_by_variable: lftj_participants_by_variable(query.vars.len(), &atom_plans),
+        iters: atom_plans
+            .iter()
+            .map(|atom| atom.trie.as_ref().iter())
+            .collect(),
+    };
+    let participants_by_variable =
+        hash_participants_by_variable(query.vars.len(), &plan.relation_atoms);
+
+    let execute_start = Instant::now();
+    let execute_alloc_start = allocation::snapshot();
+    let result = {
+        let _span =
+            tracing::debug_span!("bumbledb.query.mixed.execute", variables = query.vars.len())
+                .entered();
+        let mut executor = MixedExecutor {
+            image,
+            txn,
+            query,
+            inputs,
+            plan,
+            lftj_runtime,
+            index_requests,
+            atom_indexes: Vec::new(),
+            hash_participants_by_variable: participants_by_variable,
+            binding: EncodedBinding::new(query.vars.len()),
+            sink,
+        };
+        executor.execute(0)
+    };
+    plan.summary.timings.lftj_execute_micros = plan
+        .summary
+        .timings
+        .lftj_execute_micros
+        .saturating_add(elapsed_micros(execute_start));
+    plan.summary.allocations.lftj_execute = allocation_delta_since(execute_alloc_start);
     result
 }
 
@@ -2539,6 +2676,400 @@ fn encoded_owned_for_width(width: usize, bytes: &[u8]) -> Result<EncodedOwned> {
         width => Err(Error::internal(format!(
             "unsupported encoded value width {width}"
         ))),
+    }
+}
+
+struct MixedExecutor<'txn, 'input, 'query, 'plan, 'image, S: TupleSink> {
+    image: &'image crate::QueryImage,
+    txn: &'input ReadTxn<'txn>,
+    query: &'query NormalizedQuery,
+    inputs: &'input EncodedInputs,
+    plan: &'plan mut ExecutionPlan,
+    lftj_runtime: LftjRuntime<'image>,
+    index_requests: Vec<HashAtomIndexRequest>,
+    atom_indexes: Vec<HashAtomIndex>,
+    hash_participants_by_variable: Vec<SmallParticipants>,
+    binding: EncodedBinding,
+    sink: &'plan mut S,
+}
+
+impl<S: TupleSink> MixedExecutor<'_, '_, '_, '_, '_, S> {
+    fn execute(&mut self, depth: usize) -> Result<()> {
+        if depth == self.plan.variable_order_ids.len() {
+            if comparisons_ready_pass(
+                self.txn,
+                &self.plan.comparisons,
+                self.query,
+                self.inputs,
+                &self.binding,
+                &mut self.plan.summary.counters,
+            )? {
+                self.plan.summary.counters.bindings_yielded += 1;
+                self.sink.emit(
+                    self.txn,
+                    self.query,
+                    &self.binding,
+                    &mut self.plan.summary.counters,
+                )?;
+            }
+            return Ok(());
+        }
+
+        match self.plan.summary.free_join.nodes[depth].implementation {
+            NodeImpl::SortedLeapfrog if mixed_lftj_node_is_safe(self.plan, depth) => {
+                self.execute_lftj_node(depth)
+            }
+            NodeImpl::SortedLeapfrog => self.execute_hash_node(depth),
+            NodeImpl::HashProbe | NodeImpl::Hybrid => self.execute_hash_node(depth),
+            _ => Err(Error::internal("unsupported mixed node implementation")),
+        }
+    }
+
+    fn execute_lftj_node(&mut self, depth: usize) -> Result<()> {
+        let variable = self.plan.variable_order_ids[depth];
+        let participants = self
+            .lftj_runtime
+            .participants_by_variable
+            .get(variable)
+            .cloned()
+            .unwrap_or_default();
+        if participants.is_empty() {
+            return Err(Error::internal(format!(
+                "variable {} is not constrained by any trie atom",
+                self.query.vars[variable].name
+            )));
+        }
+
+        for atom_id in &participants {
+            self.lftj_runtime.iters[*atom_id].open();
+            self.plan.summary.counters.trie_open += 1;
+        }
+
+        let mut leapfrog = LeapfrogState::new(participants.clone());
+        leapfrog.init(
+            &mut self.lftj_runtime.iters,
+            &mut self.plan.summary.counters,
+        )?;
+        while !leapfrog.at_end {
+            let value = leapfrog.key(&self.lftj_runtime.iters, &mut self.plan.summary.counters)?;
+            self.plan.summary.counters.variable_candidates += 1;
+            if self.binding.bind(
+                variable,
+                EncodedValue::new(self.query.vars[variable].value_type.clone(), value),
+            ) {
+                let keep = comparisons_ready_pass(
+                    self.txn,
+                    &self.plan.comparisons,
+                    self.query,
+                    self.inputs,
+                    &self.binding,
+                    &mut self.plan.summary.counters,
+                )?;
+                if keep {
+                    if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
+                        rows.actual_rows = rows.actual_rows.saturating_add(1);
+                    }
+                    self.execute(depth + 1)?;
+                }
+                self.binding.unbind(variable);
+            }
+            leapfrog.next(
+                &mut self.lftj_runtime.iters,
+                &mut self.plan.summary.counters,
+            )?;
+        }
+
+        for atom_id in participants.iter().rev() {
+            self.lftj_runtime.iters[*atom_id].up();
+            self.plan.summary.counters.trie_up += 1;
+        }
+        Ok(())
+    }
+
+    fn execute_hash_node(&mut self, depth: usize) -> Result<()> {
+        let variable = self.plan.variable_order_ids[depth];
+        let participants = self
+            .hash_participants_by_variable
+            .get(variable)
+            .cloned()
+            .unwrap_or_default();
+        if participants.is_empty() {
+            return Err(Error::internal(format!(
+                "variable {} is not constrained by any hash atom",
+                self.query.vars[variable].name
+            )));
+        }
+        let driver = self.choose_hash_driver(depth, &participants)?;
+        let hash_index = self.hash_index(depth, driver)?;
+        let index = hash_index.index.clone();
+        let prefix = self.hash_prefix(driver, &hash_index.fields)?;
+        let refs = encoded_refs(&prefix);
+        let row_count = index.count(&refs);
+        self.plan.summary.counters.hash_probe_calls += 1;
+        if row_count == 0 {
+            self.plan.summary.counters.hash_probe_misses += 1;
+            return Ok(());
+        }
+        self.plan.summary.counters.hash_probe_hits += 1;
+        self.plan.summary.counters.hash_rows_returned = self
+            .plan
+            .summary
+            .counters
+            .hash_rows_returned
+            .saturating_add(row_count as u64);
+
+        let mut emitted = BTreeSet::new();
+        for row in index.rows_for_prefix(&refs) {
+            self.visit_hash_driver_row(depth, variable, &participants, driver, row, &mut emitted)?;
+        }
+        Ok(())
+    }
+
+    fn visit_hash_driver_row(
+        &mut self,
+        depth: usize,
+        variable: usize,
+        participants: &[usize],
+        driver: usize,
+        row: RowId,
+        emitted: &mut BTreeSet<EncodedOwned>,
+    ) -> Result<()> {
+        if !self.row_satisfies_atom(driver, row)? {
+            return Ok(());
+        }
+        let Some(value) = self.variable_value_from_row(driver, row, variable)? else {
+            return Ok(());
+        };
+        if !emitted.insert(value.encoded.clone()) {
+            return Ok(());
+        }
+        if !self.binding.bind(variable, value) {
+            return Ok(());
+        }
+        let mut keep = true;
+        for atom_id in participants {
+            if *atom_id == driver {
+                continue;
+            }
+            if !self.atom_has_matching_row(depth, *atom_id)? {
+                keep = false;
+                break;
+            }
+        }
+        if keep
+            && comparisons_ready_pass(
+                self.txn,
+                &self.plan.comparisons,
+                self.query,
+                self.inputs,
+                &self.binding,
+                &mut self.plan.summary.counters,
+            )?
+        {
+            if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
+                rows.actual_rows = rows.actual_rows.saturating_add(1);
+            }
+            self.plan.summary.counters.hash_distinct_emits += 1;
+            self.execute(depth + 1)?;
+        }
+        self.binding.unbind(variable);
+        Ok(())
+    }
+
+    fn choose_hash_driver(&mut self, depth: usize, participants: &[usize]) -> Result<usize> {
+        let mut best = None;
+        for atom_id in participants {
+            let count = self.probe_atom_count(depth, *atom_id)?;
+            if best.is_none_or(|(_, best_count)| count < best_count) {
+                best = Some((*atom_id, count));
+            }
+        }
+        best.map(|(atom_id, _)| atom_id)
+            .ok_or_else(|| Error::internal("mixed hash node has no driver"))
+    }
+
+    fn probe_atom_count(&mut self, depth: usize, atom_id: usize) -> Result<usize> {
+        let index = self.hash_index(depth, atom_id)?;
+        let prefix = self.hash_prefix(atom_id, &index.fields)?;
+        let refs = encoded_refs(&prefix);
+        Ok(index.index.count(&refs))
+    }
+
+    fn atom_has_matching_row(&mut self, depth: usize, atom_id: usize) -> Result<bool> {
+        let hash_index = self.hash_index(depth, atom_id)?;
+        let index = hash_index.index.clone();
+        let prefix = self.hash_prefix(atom_id, &hash_index.fields)?;
+        let refs = encoded_refs(&prefix);
+        let row_count = index.count(&refs);
+        self.plan.summary.counters.hash_probe_calls += 1;
+        if row_count == 0 {
+            self.plan.summary.counters.hash_probe_misses += 1;
+            return Ok(false);
+        }
+        self.plan.summary.counters.hash_probe_hits += 1;
+        self.plan.summary.counters.hash_rows_returned = self
+            .plan
+            .summary
+            .counters
+            .hash_rows_returned
+            .saturating_add(row_count as u64);
+        let mut found = false;
+        let mut error = None;
+        index.for_each_row(&refs, |row| match self.row_satisfies_atom(atom_id, row) {
+            Ok(true) => {
+                found = true;
+                false
+            }
+            Ok(false) => true,
+            Err(err) => {
+                error = Some(err);
+                false
+            }
+        });
+        if let Some(error) = error {
+            return Err(error);
+        }
+        Ok(found)
+    }
+
+    fn hash_prefix(&self, atom_id: usize, fields: &[FieldId]) -> Result<SmallEncodedPrefix> {
+        let atom = &self.plan.relation_atoms[atom_id];
+        let mut prefix = SmallVec::new();
+        for field in fields {
+            let Some(atom_field) = atom
+                .fields
+                .iter()
+                .find(|atom_field| atom_field.field == *field)
+            else {
+                break;
+            };
+            match self.term_bound_value(&atom_field.term)? {
+                Some(value) => prefix.push(value),
+                None => break,
+            }
+        }
+        Ok(prefix)
+    }
+
+    fn term_bound_value(&self, term: &NormTerm) -> Result<Option<EncodedOwned>> {
+        Ok(match term {
+            NormTerm::Var(variable) => self
+                .binding
+                .get(variable.0 as usize)
+                .map(encoded_owned_for_value)
+                .transpose()?,
+            NormTerm::Input(input) => self.inputs.get(*input).cloned(),
+            NormTerm::Literal(value) => Some(value.clone()),
+            NormTerm::Wildcard => None,
+        })
+    }
+
+    fn row_satisfies_atom(&self, atom_id: usize, row: RowId) -> Result<bool> {
+        let atom = &self.plan.relation_atoms[atom_id];
+        let relation = self.relation(atom)?;
+        direct_row_satisfies_atom(relation, atom, row, self.inputs, &self.binding)
+    }
+
+    fn variable_value_from_row(
+        &self,
+        atom_id: usize,
+        row: RowId,
+        variable: usize,
+    ) -> Result<Option<EncodedValue>> {
+        let atom = &self.plan.relation_atoms[atom_id];
+        let relation = self.relation(atom)?;
+        let mut out = None;
+        for field in atom
+            .fields
+            .iter()
+            .filter(|field| matches!(field.term, NormTerm::Var(var) if var.0 as usize == variable))
+        {
+            let bytes = relation
+                .encoded_bytes(row, field.field)
+                .ok_or_else(|| Error::internal("missing mixed hash variable field"))?;
+            if let Some(existing) = &out {
+                let existing: &EncodedValue = existing;
+                if existing.as_bytes() != bytes {
+                    return Ok(None);
+                }
+            } else {
+                out = Some(EncodedValue::from_bytes(field.value_type.clone(), bytes)?);
+            }
+        }
+        Ok(out)
+    }
+
+    fn relation(&self, atom: &NormAtom) -> Result<&RelationImage> {
+        self.image
+            .relations()
+            .get(atom.relation.0 as usize)
+            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))
+    }
+
+    fn hash_index(&mut self, depth: usize, atom_id: usize) -> Result<HashAtomIndex> {
+        if let Some(index) = self
+            .atom_indexes
+            .iter()
+            .find(|index| index.node_id == depth && index.atom_id == atom_id)
+            .or_else(|| {
+                self.atom_indexes
+                    .iter()
+                    .find(|index| index.node_id == usize::MAX && index.atom_id == atom_id)
+            })
+            .cloned()
+        {
+            return Ok(index);
+        }
+
+        let request = self
+            .index_requests
+            .iter()
+            .find(|request| request.node_id == depth && request.atom_id == atom_id)
+            .or_else(|| {
+                self.index_requests
+                    .iter()
+                    .find(|request| request.node_id == usize::MAX && request.atom_id == atom_id)
+            })
+            .cloned()
+            .ok_or_else(|| Error::internal("missing mixed hash index request"))?;
+
+        let relation = self
+            .image
+            .relations()
+            .get(request.relation.0 as usize)
+            .ok_or_else(|| Error::internal("missing mixed hash relation"))?;
+        let build_start = Instant::now();
+        let build_alloc_start = allocation::snapshot();
+        let cached = self.image.cached_hash_trie(&request.cache_key, || {
+            crate::query_image::build_hash_trie_index(
+                relation,
+                IndexSpec::new(&request.index_name, request.fields.clone()),
+            )
+        })?;
+        self.plan.summary.timings.hash_index_micros = self
+            .plan
+            .summary
+            .timings
+            .hash_index_micros
+            .saturating_add(elapsed_micros(build_start));
+        self.plan.summary.allocations.hash_index = allocation_delta_since(build_alloc_start);
+        if !cached.hit {
+            self.plan.summary.counters.hash_index_builds += 1;
+            self.plan.summary.counters.hash_index_build_rows = self
+                .plan
+                .summary
+                .counters
+                .hash_index_build_rows
+                .saturating_add(relation.row_count as u64);
+        }
+        let index = HashAtomIndex {
+            node_id: request.node_id,
+            atom_id: request.atom_id,
+            index: cached.index,
+            fields: request.fields,
+        };
+        self.atom_indexes.push(index.clone());
+        Ok(index)
     }
 }
 
@@ -5239,6 +5770,55 @@ mod tests {
     }
 
     #[test]
+    fn mixed_hash_lftj_runtime_executes_hash_nodes() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
+        env.write(|txn| {
+            txn.insert(&schema, chain_a_row(1))?;
+            txn.insert(&schema, chain_b_row(10, 1))?;
+            txn.insert(&schema, chain_c_row(20, 10))?;
+            txn.insert(&schema, chain_c_row(21, 10))?;
+            Ok::<_, Error>(())
+        })?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?c
+            where
+              A(id: ?a)
+              B(id: ?b, a: ?a)
+              C(id: ?c, b: ?b)
+              ?c != 0
+            "#,
+        )?;
+
+        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Mixed);
+        assert!(
+            output
+                .plan
+                .free_join
+                .nodes
+                .iter()
+                .any(|node| node.implementation == NodeImpl::SortedLeapfrog)
+        );
+        assert!(
+            output
+                .plan
+                .free_join
+                .nodes
+                .iter()
+                .any(|node| node.implementation == NodeImpl::HashProbe)
+        );
+        assert!(output.plan.counters.trie_next > 0);
+        assert!(output.plan.counters.hash_probe_calls > 0);
+        assert_same_rows(&output.rows, &[vec![Value::U64(20)], vec![Value::U64(21)]]);
+        Ok(())
+    }
+
+    #[test]
     fn direct_prefix_range_kernel_selects_and_filters_rows() -> TestResult {
         let dir = tempfile::tempdir()?;
         let env = Environment::open(dir.path())?;
@@ -6480,7 +7060,8 @@ mod tests {
                         FieldDescriptor::new("a", ValueType::U64),
                     ],
                     PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_index(IndexDescriptor::equality("by_a", ["a", "id"])),
                 RelationDescriptor::new(
                     "C",
                     RelationKind::Entity,
@@ -6489,7 +7070,8 @@ mod tests {
                         FieldDescriptor::new("b", ValueType::U64),
                     ],
                     PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_index(IndexDescriptor::equality("by_b", ["b", "id"])),
                 RelationDescriptor::new(
                     "D",
                     RelationKind::Entity,
@@ -6498,7 +7080,8 @@ mod tests {
                         FieldDescriptor::new("c", ValueType::U64),
                     ],
                     PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_index(IndexDescriptor::equality("by_c", ["c", "id"])),
             ],
         )
     }
