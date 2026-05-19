@@ -144,7 +144,7 @@ impl OutputFormat {
     }
 
     fn includes_json(self) -> bool {
-        matches!(self, OutputFormat::Json)
+        matches!(self, OutputFormat::Json | OutputFormat::Both)
     }
 
     fn is_json_only(self) -> bool {
@@ -435,6 +435,7 @@ struct BenchmarkGate {
     max_sqlite_ratio: Option<f64>,
     max_iterator_ops: Option<u64>,
     max_materialized_values: Option<u64>,
+    allowed_plan_families: &'static [&'static str],
 }
 
 #[derive(Clone, Debug)]
@@ -453,6 +454,7 @@ struct BenchmarkRunResult {
     sqlite_ratio: f64,
     chosen_plan: String,
     runtime_kind: String,
+    plan_family: String,
     timings: QueryTimings,
     allocations: QueryAllocationStats,
     iterator_ops: u64,
@@ -467,6 +469,7 @@ struct BenchmarkRunResult {
     query_image_segment_count: usize,
     query_image_segment_bytes: usize,
     query_image_built_from_segments: bool,
+    query_image_built_during_query: bool,
     query_image_cache_cached_images: usize,
     query_image_cache_hits: u64,
     query_image_cache_misses: u64,
@@ -795,6 +798,7 @@ fn benchmark_result(
         sqlite_ratio,
         chosen_plan: output.plan.optimizer.chosen.clone(),
         runtime_kind: format!("{:?}", output.plan.runtime_kind),
+        plan_family: format!("{:?}", output.plan.plan_family),
         timings: output.plan.timings,
         allocations: output.plan.allocations,
         iterator_ops: output.plan.free_join.estimates.iterator_ops,
@@ -809,6 +813,7 @@ fn benchmark_result(
         query_image_segment_count: query_image_stats.segment_count,
         query_image_segment_bytes: query_image_stats.segment_bytes,
         query_image_built_from_segments: query_image_stats.built_from_segments,
+        query_image_built_during_query: output.plan.timings.query_image_micros > 0,
         query_image_cache_cached_images: output.plan.query_image_cache.cached_images,
         query_image_cache_hits: output.plan.query_image_cache.hits,
         query_image_cache_misses: output.plan.query_image_cache.misses,
@@ -908,6 +913,20 @@ fn evaluate_gate(
                 output.plan.counters.materialized_output_values
             ));
         }
+        if !gate.allowed_plan_families.is_empty() {
+            let family = format!("{:?}", output.plan.plan_family);
+            if !gate
+                .allowed_plan_families
+                .iter()
+                .any(|allowed| *allowed == family)
+            {
+                passed = false;
+                notes.push(format!(
+                    "plan_family {family} not in {:?}",
+                    gate.allowed_plan_families
+                ));
+            }
+        }
     } else {
         notes.push("no performance gate configured for query".to_owned());
     }
@@ -964,6 +983,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: None,
             max_iterator_ops: Some(1_000_000),
             max_materialized_values: Some(1),
+            allowed_plan_families: &["FreeJoinLftj"],
         },
         ("ledger", "tag_lookup_join") => BenchmarkGate {
             dataset,
@@ -972,6 +992,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: None,
             max_iterator_ops: Some(2_000_000),
             max_materialized_values: None,
+            allowed_plan_families: &[],
         },
         ("sailors", "red_boat_sailors") => BenchmarkGate {
             dataset,
@@ -980,6 +1001,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: None,
             max_iterator_ops: Some(2_000_000),
             max_materialized_values: None,
+            allowed_plan_families: &[],
         },
         ("tpch", "supplier_nation_orders") => BenchmarkGate {
             dataset,
@@ -988,6 +1010,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: None,
             max_iterator_ops: Some(2_000_000),
             max_materialized_values: None,
+            allowed_plan_families: &[],
         },
         ("sailors", "sailor_range_reserves") | ("joinstress", "chain4_from_a") => BenchmarkGate {
             dataset,
@@ -996,6 +1019,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: None,
             max_iterator_ops: None,
             max_materialized_values: None,
+            allowed_plan_families: &["Direct"],
         },
         _ => return None,
     };
@@ -1005,12 +1029,12 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | rows | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | image build us | image segments | image segment bytes | built from segments | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash calls | hash hits | hash misses | hash rows | hash emits | direct probes | direct rows | direct predicates | iterator ops | hash build est | hash probe est | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---:|---:|---:|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | rows | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image segments | image segment bytes | built from segments | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash calls | hash hits | hash misses | hash rows | hash emits | direct probes | direct rows | direct predicates | iterator ops | hash build est | hash probe est | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---:|---:|---:|---|---|---|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.rows,
@@ -1019,10 +1043,12 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.sqlite_ratio,
             markdown_escape(&result.chosen_plan),
             markdown_escape(&result.runtime_kind),
+            markdown_escape(&result.plan_family),
             result.query_image_build_micros,
             result.query_image_segment_count,
             result.query_image_segment_bytes,
             result.query_image_built_from_segments,
+            result.query_image_built_during_query,
             result.query_image_cache_cached_images,
             result.query_image_cache_hits,
             result.query_image_cache_misses,
@@ -1243,12 +1269,14 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",",
+            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"query_image_built_during_query\":{},",
             json_escape(result.dataset),
             json_escape(result.query),
             result.rows,
             json_escape(&result.chosen_plan),
             json_escape(&result.runtime_kind),
+            json_escape(&result.plan_family),
+            result.query_image_built_during_query,
         );
         write_timing_stats(&mut out, "bumbledb", result.bumbledb_samples);
         out.push(',');
@@ -2408,6 +2436,7 @@ mod tests {
             sqlite_ratio: 2.0,
             chosen_plan: "pure_lftj".to_owned(),
             runtime_kind: "Lftj".to_owned(),
+            plan_family: "FreeJoinLftj".to_owned(),
             timings: QueryTimings {
                 total_micros: 10,
                 execute_micros: 4,
@@ -2431,6 +2460,7 @@ mod tests {
             query_image_segment_count: 4,
             query_image_segment_bytes: 128,
             query_image_built_from_segments: true,
+            query_image_built_during_query: true,
             query_image_cache_cached_images: 1,
             query_image_cache_hits: 1,
             query_image_cache_misses: 1,
@@ -2461,6 +2491,7 @@ mod tests {
 
         let markdown = render_markdown_results(&[result]);
         assert!(markdown.contains("| joinstress | triangle_count |"));
+        assert!(markdown.contains("| pure_lftj | Lftj | FreeJoinLftj |"));
         assert!(markdown.contains("## Phase Timing"));
         assert!(markdown.contains("## Allocation Summary"));
         assert!(markdown.contains("## Allocation Phase Detail"));
@@ -2488,6 +2519,7 @@ mod tests {
             sqlite_ratio: 3.0,
             chosen_plan: "hash_probe".to_owned(),
             runtime_kind: "HashProbe".to_owned(),
+            plan_family: "HashProbe".to_owned(),
             timings: QueryTimings {
                 total_micros: 20,
                 hash_execute_micros: 4,
@@ -2506,6 +2538,7 @@ mod tests {
             query_image_segment_count: 1,
             query_image_segment_bytes: 1,
             query_image_built_from_segments: true,
+            query_image_built_during_query: true,
             query_image_cache_cached_images: 1,
             query_image_cache_hits: 1,
             query_image_cache_misses: 0,
@@ -2537,6 +2570,8 @@ mod tests {
         let json = render_json_results(&[result]);
         assert!(json.contains("\"dataset\":\"ledger\""));
         assert!(json.contains("\"runtime\":\"HashProbe\""));
+        assert!(json.contains("\"plan_family\":\"HashProbe\""));
+        assert!(json.contains("\"query_image_built_during_query\":true"));
         assert!(json.contains("\"phase_timing\""));
         assert!(json.contains("\"allocations\""));
         assert!(json.contains("\"phases\""));
@@ -2584,6 +2619,12 @@ mod tests {
     }
 
     #[test]
+    fn output_format_both_includes_json() {
+        assert!(OutputFormat::Both.includes_markdown());
+        assert!(OutputFormat::Both.includes_json());
+    }
+
+    #[test]
     fn cli_parser_accepts_trace_output_without_default_subscriber()
     -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::from_args(
@@ -2620,6 +2661,11 @@ mod tests {
         assert!(benchmark_gate("sailors", "red_boat_sailors").is_some());
         assert!(benchmark_gate("tpch", "supplier_nation_orders").is_some());
         assert!(benchmark_gate("ledger", "unknown").is_none());
+        assert_eq!(
+            benchmark_gate("sailors", "sailor_range_reserves")
+                .map(|gate| gate.allowed_plan_families),
+            Some(&["Direct"][..])
+        );
     }
 
     #[test]
