@@ -15,33 +15,82 @@ use crate::{
     u64v,
 };
 
+#[derive(Clone, Debug)]
+pub(crate) enum RowSource {
+    Job { dir: PathBuf, limit: Option<usize> },
+}
+
+pub(crate) fn stream_rows(
+    source: &RowSource,
+    emit: impl FnMut(Row) -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    match source {
+        RowSource::Job { dir, limit } => stream_job_rows(dir, *limit, emit),
+    }
+}
+
+pub(crate) fn insert_sqlite_streaming(
+    source: &RowSource,
+    conn: &mut Connection,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    match source {
+        RowSource::Job { dir, limit } => {
+            let tx = conn.unchecked_transaction()?;
+            let inserted = stream_job_rows(dir, *limit, |row| {
+                insert_job_sqlite_row(&tx, &row)?;
+                Ok(())
+            })?;
+            tx.commit()?;
+            Ok(inserted)
+        }
+    }
+}
+
 pub(crate) fn open_datasets(config: &Config) -> Result<Vec<Dataset>, Box<dyn std::error::Error>> {
     let mut datasets = Vec::new();
     if let Some(path) = &config.imdb_dir {
-        datasets.push(imdb_dataset(Path::new(path), config.scale)?);
+        datasets.push(imdb_dataset(Path::new(path), config.open_limit)?);
     }
     if let Some(path) = &config.job_dir {
-        datasets.push(job_dataset(Path::new(path), config.scale)?);
+        datasets.push(job_dataset(Path::new(path), config.open_limit)?);
     }
     if let Some(path) = &config.tpch_dir {
-        datasets.push(tpch_open_dataset(Path::new(path), config.scale)?);
+        datasets.push(tpch_open_dataset(Path::new(path), config.open_limit)?);
     }
     if let Some(path) = &config.lahman_dir {
-        datasets.push(lahman_dataset(Path::new(path), config.scale)?);
+        datasets.push(lahman_dataset(Path::new(path), config.open_limit)?);
     }
     if let Some(path) = &config.ldbc_dir {
-        datasets.push(ldbc_dataset(Path::new(path), config.scale)?);
+        datasets.push(ldbc_dataset(Path::new(path), config.open_limit)?);
     }
     Ok(datasets)
 }
 
-fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Error>> {
-    let limit = scale.max(1) as usize;
+fn job_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std::error::Error>> {
+    Ok(Dataset {
+        name: "job",
+        schema: job_schema(),
+        rows: Vec::new(),
+        row_source: Some(RowSource::Job {
+            dir: dir.to_path_buf(),
+            limit,
+        }),
+        sqlite_schema: JOB_SQLITE_SCHEMA,
+        sqlite_insert: insert_job_sqlite,
+        queries: job_queries(),
+    })
+}
+
+fn stream_job_rows(
+    dir: &Path,
+    limit: Option<usize>,
+    mut emit: impl FnMut(Row) -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<usize, Box<dyn std::error::Error>> {
     let dimension_limit = scaled_limit(limit, 20);
     let name_limit = scaled_limit(limit, 10);
     let fact_limit = scaled_limit(limit, 40);
     let cast_limit = scaled_limit(limit, 80);
-    let mut rows = Vec::new();
+    let mut emitted = 0usize;
     let mut comp_cast_types = BTreeSet::new();
     let mut company_types = BTreeSet::new();
     let mut info_types = BTreeSet::new();
@@ -53,6 +102,12 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
     let mut characters = BTreeSet::new();
     let mut names = BTreeSet::new();
     let mut titles = BTreeSet::new();
+    macro_rules! emit_row {
+        ($row:expr) => {{
+            emit($row)?;
+            emitted += 1;
+        }};
+    }
 
     read_job_csv(dir, "comp_cast_type.csv", dimension_limit, |record| {
         let id = parse_u64(get(&record, 0));
@@ -60,13 +115,14 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
             return Ok(false);
         }
         comp_cast_types.insert(id);
-        rows.push(Row::new(
+        emit(Row::new(
             "CompCastType",
             [
                 ("id", Value::Id(id)),
                 ("kind", Value::String(job_text(get(&record, 1)))),
             ],
-        ));
+        ))?;
+        emitted += 1;
         Ok(true)
     })?;
     read_job_csv(dir, "company_type.csv", dimension_limit, |record| {
@@ -75,7 +131,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
             return Ok(false);
         }
         company_types.insert(id);
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "CompanyType",
             [
                 ("id", Value::Id(id)),
@@ -90,7 +146,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
             return Ok(false);
         }
         info_types.insert(id);
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "InfoType",
             [
                 ("id", Value::Id(id)),
@@ -105,7 +161,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
             return Ok(false);
         }
         kind_types.insert(id);
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "KindType",
             [
                 ("id", Value::Id(id)),
@@ -120,7 +176,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
             return Ok(false);
         }
         link_types.insert(id);
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "LinkType",
             [
                 ("id", Value::Id(id)),
@@ -135,7 +191,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
             return Ok(false);
         }
         role_types.insert(id);
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "RoleType",
             [
                 ("id", Value::Id(id)),
@@ -150,7 +206,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
             return Ok(false);
         }
         keywords.insert(id);
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "Keyword",
             [
                 ("id", Value::Id(id)),
@@ -166,7 +222,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
             return Ok(false);
         }
         companies.insert(id);
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "CompanyName",
             [
                 ("id", Value::Id(id)),
@@ -185,7 +241,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
             return Ok(false);
         }
         characters.insert(id);
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "CharName",
             [
                 ("id", Value::Id(id)),
@@ -204,7 +260,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
             return Ok(false);
         }
         names.insert(id);
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "Name",
             [
                 ("id", Value::Id(id)),
@@ -226,7 +282,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
             return Ok(false);
         }
         titles.insert(id);
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "Title",
             [
                 ("id", Value::Id(id)),
@@ -260,7 +316,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
         if id == 0 || !names.contains(&person) {
             return Ok(false);
         }
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "AkaName",
             [
                 ("id", Value::Id(id)),
@@ -281,7 +337,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
         if id == 0 || !(titles.contains(&movie) && kind_types.contains(&kind)) {
             return Ok(false);
         }
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "AkaTitle",
             [
                 ("id", Value::Id(id)),
@@ -322,7 +378,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
         {
             return Ok(false);
         }
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "CastInfo",
             [
                 ("id", Value::Id(id)),
@@ -348,7 +404,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
         {
             return Ok(false);
         }
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "CompleteCast",
             [
                 ("id", Value::Id(id)),
@@ -371,7 +427,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
         {
             return Ok(false);
         }
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "MovieCompanies",
             [
                 ("id", Value::Id(id)),
@@ -390,7 +446,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
         if id == 0 || !(titles.contains(&movie) && info_types.contains(&info_type)) {
             return Ok(false);
         }
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "MovieInfo",
             [
                 ("id", Value::Id(id)),
@@ -409,7 +465,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
         if id == 0 || !(titles.contains(&movie) && info_types.contains(&info_type)) {
             return Ok(false);
         }
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "MovieInfoIdx",
             [
                 ("id", Value::Id(id)),
@@ -428,7 +484,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
         if id == 0 || !(titles.contains(&movie) && keywords.contains(&keyword)) {
             return Ok(false);
         }
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "MovieKeyword",
             [
                 ("id", Value::Id(id)),
@@ -450,7 +506,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
         {
             return Ok(false);
         }
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "MovieLink",
             [
                 ("id", Value::Id(id)),
@@ -468,7 +524,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
         if id == 0 || !(names.contains(&person) && info_types.contains(&info_type)) {
             return Ok(false);
         }
-        rows.push(Row::new(
+        emit_row!(Row::new(
             "PersonInfo",
             [
                 ("id", Value::Id(id)),
@@ -481,14 +537,7 @@ fn job_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Er
         Ok(true)
     })?;
 
-    Ok(Dataset {
-        name: "job",
-        schema: job_schema(),
-        rows,
-        sqlite_schema: JOB_SQLITE_SCHEMA,
-        sqlite_insert: insert_job_sqlite,
-        queries: job_queries(),
-    })
+    Ok(emitted)
 }
 
 fn job_schema() -> SchemaDescriptor {
@@ -1237,8 +1286,7 @@ const JOB_SQLITE_SCHEMA: &str = r#"
     CREATE INDEX title_episode ON title(episode_nr, id);
 "#;
 
-fn imdb_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Error>> {
-    let limit = scale.max(1) as usize;
+fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std::error::Error>> {
     let mut title_ids = BTreeMap::new();
     let mut name_ids = BTreeMap::new();
     let mut symbols = Symbols::default();
@@ -1246,7 +1294,10 @@ fn imdb_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::E
 
     let title_path = require_file(dir, "title.basics.tsv")?;
     let mut title_reader = tsv_reader(&title_path)?;
-    for record in title_reader.records().take(limit) {
+    for (read, record) in title_reader.records().enumerate() {
+        if reached_limit(read, limit) {
+            break;
+        }
         let record = record?;
         let tconst = get(&record, 0);
         let id = (title_ids.len() + 1) as u64;
@@ -1267,7 +1318,10 @@ fn imdb_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::E
 
     let name_path = require_file(dir, "name.basics.tsv")?;
     let mut name_reader = tsv_reader(&name_path)?;
-    for record in name_reader.records().take(limit) {
+    for (read, record) in name_reader.records().enumerate() {
+        if reached_limit(read, limit) {
+            break;
+        }
         let record = record?;
         let nconst = get(&record, 0);
         let id = (name_ids.len() + 1) as u64;
@@ -1332,6 +1386,7 @@ fn imdb_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::E
         name: "imdb",
         schema: imdb_schema(),
         rows,
+        row_source: None,
         sqlite_schema: r#"
             CREATE TABLE title (id INTEGER PRIMARY KEY, title_type INTEGER NOT NULL, primary_title TEXT NOT NULL, start_year INTEGER NOT NULL);
             CREATE TABLE name (id INTEGER PRIMARY KEY, name TEXT NOT NULL, birth_year INTEGER NOT NULL);
@@ -1459,8 +1514,10 @@ fn imdb_schema() -> SchemaDescriptor {
     .with_ref_foreign_keys()
 }
 
-fn tpch_open_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Error>> {
-    let limit = scale.max(1) as usize;
+fn tpch_open_dataset(
+    dir: &Path,
+    limit: Option<usize>,
+) -> Result<Dataset, Box<dyn std::error::Error>> {
     let mut rows = Vec::new();
     let mut customers = BTreeSet::new();
     let mut suppliers = BTreeSet::new();
@@ -1522,7 +1579,7 @@ fn tpch_open_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::err
         ));
         Ok(())
     })?;
-    read_pipe(dir, "lineitem.tbl", limit * 4, |record| {
+    read_pipe(dir, "lineitem.tbl", scaled_limit(limit, 4), |record| {
         let order = parse_u64(get(&record, 0));
         let part = parse_u64(get(&record, 1));
         let supplier = parse_u64(get(&record, 2));
@@ -1553,11 +1610,11 @@ fn tpch_open_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::err
     let mut dataset = super_tpch_dataset();
     dataset.name = "tpch-open";
     dataset.rows = rows;
+    dataset.row_source = None;
     Ok(dataset)
 }
 
-fn lahman_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Error>> {
-    let limit = scale.max(1) as usize;
+fn lahman_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std::error::Error>> {
     let mut player_ids = BTreeMap::new();
     let mut team_ids = BTreeMap::new();
     let mut rows = Vec::new();
@@ -1583,106 +1640,120 @@ fn lahman_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error:
         Ok(())
     })?;
 
-    read_csv(dir, "Teams.csv", limit * 4, |headers, record| {
-        let key = format!(
-            "{}:{}",
-            col(headers, record, &["yearID"]),
-            col(headers, record, &["teamID"])
-        );
-        let id = (team_ids.len() + 1) as u64;
-        team_ids.insert(key, id);
-        rows.push(Row::new(
-            "Team",
-            [
-                ("id", Value::Id(id)),
-                (
-                    "year",
-                    Value::I64(parse_optional_i64(col(headers, record, &["yearID"]))),
-                ),
-                (
-                    "league",
-                    Value::String(col(headers, record, &["lgID"]).to_owned()),
-                ),
-                (
-                    "name",
-                    Value::String(col(headers, record, &["name"]).to_owned()),
-                ),
-            ],
-        ));
-        Ok(())
-    })?;
+    read_csv(
+        dir,
+        "Teams.csv",
+        scaled_limit(limit, 4),
+        |headers, record| {
+            let key = format!(
+                "{}:{}",
+                col(headers, record, &["yearID"]),
+                col(headers, record, &["teamID"])
+            );
+            let id = (team_ids.len() + 1) as u64;
+            team_ids.insert(key, id);
+            rows.push(Row::new(
+                "Team",
+                [
+                    ("id", Value::Id(id)),
+                    (
+                        "year",
+                        Value::I64(parse_optional_i64(col(headers, record, &["yearID"]))),
+                    ),
+                    (
+                        "league",
+                        Value::String(col(headers, record, &["lgID"]).to_owned()),
+                    ),
+                    (
+                        "name",
+                        Value::String(col(headers, record, &["name"]).to_owned()),
+                    ),
+                ],
+            ));
+            Ok(())
+        },
+    )?;
 
-    read_csv(dir, "Batting.csv", limit * 10, |headers, record| {
-        let player_key = col(headers, record, &["playerID"]);
-        let team_key = format!(
-            "{}:{}",
-            col(headers, record, &["yearID"]),
-            col(headers, record, &["teamID"])
-        );
-        let (Some(player), Some(team)) = (
-            player_ids.get(player_key).copied(),
-            team_ids.get(&team_key).copied(),
-        ) else {
-            return Ok(());
-        };
-        rows.push(Row::new(
-            "Batting",
-            [
-                ("player", Value::Ref(player)),
-                ("team", Value::Ref(team)),
-                (
-                    "year",
-                    Value::I64(parse_optional_i64(col(headers, record, &["yearID"]))),
-                ),
-                (
-                    "games",
-                    Value::I64(parse_optional_i64(col(headers, record, &["G"]))),
-                ),
-                (
-                    "hits",
-                    Value::I64(parse_optional_i64(col(headers, record, &["H"]))),
-                ),
-            ],
-        ));
-        Ok(())
-    })?;
+    read_csv(
+        dir,
+        "Batting.csv",
+        scaled_limit(limit, 10),
+        |headers, record| {
+            let player_key = col(headers, record, &["playerID"]);
+            let team_key = format!(
+                "{}:{}",
+                col(headers, record, &["yearID"]),
+                col(headers, record, &["teamID"])
+            );
+            let (Some(player), Some(team)) = (
+                player_ids.get(player_key).copied(),
+                team_ids.get(&team_key).copied(),
+            ) else {
+                return Ok(());
+            };
+            rows.push(Row::new(
+                "Batting",
+                [
+                    ("player", Value::Ref(player)),
+                    ("team", Value::Ref(team)),
+                    (
+                        "year",
+                        Value::I64(parse_optional_i64(col(headers, record, &["yearID"]))),
+                    ),
+                    (
+                        "games",
+                        Value::I64(parse_optional_i64(col(headers, record, &["G"]))),
+                    ),
+                    (
+                        "hits",
+                        Value::I64(parse_optional_i64(col(headers, record, &["H"]))),
+                    ),
+                ],
+            ));
+            Ok(())
+        },
+    )?;
 
-    read_csv(dir, "Salaries.csv", limit * 4, |headers, record| {
-        let player_key = col(headers, record, &["playerID"]);
-        let team_key = format!(
-            "{}:{}",
-            col(headers, record, &["yearID"]),
-            col(headers, record, &["teamID"])
-        );
-        let (Some(player), Some(team)) = (
-            player_ids.get(player_key).copied(),
-            team_ids.get(&team_key).copied(),
-        ) else {
-            return Ok(());
-        };
-        rows.push(Row::new(
-            "Salary",
-            [
-                ("player", Value::Ref(player)),
-                ("team", Value::Ref(team)),
-                (
-                    "year",
-                    Value::I64(parse_optional_i64(col(headers, record, &["yearID"]))),
-                ),
-                (
-                    "salary",
-                    Value::I64(parse_optional_i64(col(headers, record, &["salary"]))),
-                ),
-            ],
-        ));
-        Ok(())
-    })?;
+    read_csv(
+        dir,
+        "Salaries.csv",
+        scaled_limit(limit, 4),
+        |headers, record| {
+            let player_key = col(headers, record, &["playerID"]);
+            let team_key = format!(
+                "{}:{}",
+                col(headers, record, &["yearID"]),
+                col(headers, record, &["teamID"])
+            );
+            let (Some(player), Some(team)) = (
+                player_ids.get(player_key).copied(),
+                team_ids.get(&team_key).copied(),
+            ) else {
+                return Ok(());
+            };
+            rows.push(Row::new(
+                "Salary",
+                [
+                    ("player", Value::Ref(player)),
+                    ("team", Value::Ref(team)),
+                    (
+                        "year",
+                        Value::I64(parse_optional_i64(col(headers, record, &["yearID"]))),
+                    ),
+                    (
+                        "salary",
+                        Value::I64(parse_optional_i64(col(headers, record, &["salary"]))),
+                    ),
+                ],
+            ));
+            Ok(())
+        },
+    )?;
 
     Ok(lahman_from_rows(rows))
 }
 
-fn ldbc_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Error>> {
-    let limit = scale.max(1) as usize;
+fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std::error::Error>> {
     let person_file = find_prefixed(dir, "person")?;
     let post_file = find_prefixed(dir, "post")?;
     let knows_file = find_prefixed(dir, "person_knows_person")?;
@@ -1714,7 +1785,7 @@ fn ldbc_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::E
         ));
         Ok(())
     })?;
-    read_pipe_path(&post_file, limit * 2, |headers, record| {
+    read_pipe_path(&post_file, scaled_limit(limit, 2), |headers, record| {
         let id = parse_u64(col(headers, record, &["id", "Post.id"]));
         let creator = parse_u64(col(
             headers,
@@ -1742,7 +1813,7 @@ fn ldbc_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::E
         ));
         Ok(())
     })?;
-    read_pipe_path(&knows_file, limit * 4, |headers, record| {
+    read_pipe_path(&knows_file, scaled_limit(limit, 4), |headers, record| {
         let p1 = parse_u64(col(headers, record, &["Person.id", "person1Id", "person1"]));
         let p2 = parse_u64(col_n(
             headers,
@@ -1770,7 +1841,7 @@ fn ldbc_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::E
         ));
         Ok(())
     })?;
-    read_pipe_path(&likes_file, limit * 4, |headers, record| {
+    read_pipe_path(&likes_file, scaled_limit(limit, 4), |headers, record| {
         let person = parse_u64(col(headers, record, &["Person.id", "personId"]));
         let post = parse_u64(col(headers, record, &["Post.id", "postId"]));
         if !(people.contains(&person) && posts.contains(&post)) {
@@ -1858,6 +1929,7 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
         )
         .with_ref_foreign_keys(),
         rows,
+        row_source: None,
         sqlite_schema: r#"
             CREATE TABLE player (id INTEGER PRIMARY KEY, first TEXT NOT NULL, last TEXT NOT NULL);
             CREATE TABLE team (id INTEGER PRIMARY KEY, year INTEGER NOT NULL, league TEXT NOT NULL, name TEXT NOT NULL);
@@ -1942,6 +2014,7 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
         )
         .with_ref_foreign_keys(),
         rows,
+        row_source: None,
         sqlite_schema: r#"
             CREATE TABLE person (id INTEGER PRIMARY KEY, first TEXT NOT NULL, created INTEGER NOT NULL);
             CREATE TABLE post (id INTEGER PRIMARY KEY, creator INTEGER NOT NULL, created INTEGER NOT NULL);
@@ -1987,30 +2060,50 @@ fn super_tpch_dataset() -> Dataset {
     crate::tpch_dataset(1)
 }
 
-fn scaled_limit(limit: usize, multiplier: usize) -> usize {
-    limit.saturating_mul(multiplier).max(limit)
+fn scaled_limit(limit: Option<usize>, multiplier: usize) -> Option<usize> {
+    limit.map(|limit| limit.saturating_mul(multiplier).max(limit))
+}
+
+fn reached_limit(count: usize, limit: Option<usize>) -> bool {
+    limit.is_some_and(|limit| count >= limit)
 }
 
 fn read_job_csv(
     dir: &Path,
     file: &str,
-    accepted_limit: usize,
+    accepted_limit: Option<usize>,
     mut f: impl FnMut(StringRecord) -> Result<bool, Box<dyn std::error::Error>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let path = require_file(dir, file)?;
+    eprintln!(
+        "[bench:job] reading {} limit={}",
+        file,
+        accepted_limit
+            .map(|limit| limit.to_string())
+            .unwrap_or_else(|| "full".to_owned())
+    );
     let mut reader = ReaderBuilder::new()
         .has_headers(false)
         .flexible(true)
         .from_path(path)?;
     let mut accepted = 0;
+    let mut read = 0usize;
     for record in reader.records() {
-        if accepted >= accepted_limit {
+        if reached_limit(accepted, accepted_limit) {
             break;
         }
+        read += 1;
         if f(record?)? {
             accepted += 1;
+            if accepted % 100_000 == 0 {
+                eprintln!("[bench:job] {} accepted={} read={}", file, accepted, read);
+            }
         }
     }
+    eprintln!(
+        "[bench:job] finished {} accepted={} read={}",
+        file, accepted, read
+    );
     Ok(())
 }
 
@@ -2025,13 +2118,16 @@ fn job_text(value: &str) -> String {
 fn read_csv(
     dir: &Path,
     file: &str,
-    limit: usize,
+    limit: Option<usize>,
     mut f: impl FnMut(&StringRecord, &StringRecord) -> Result<(), Box<dyn std::error::Error>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let path = require_file(dir, file)?;
     let mut reader = csv::Reader::from_path(path)?;
     let headers = reader.headers()?.clone();
-    for record in reader.records().take(limit) {
+    for (read, record) in reader.records().enumerate() {
+        if reached_limit(read, limit) {
+            break;
+        }
         f(&headers, &record?)?;
     }
     Ok(())
@@ -2040,7 +2136,7 @@ fn read_csv(
 fn read_pipe(
     dir: &Path,
     file: &str,
-    limit: usize,
+    limit: Option<usize>,
     mut f: impl FnMut(StringRecord) -> Result<(), Box<dyn std::error::Error>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let path = require_file(dir, file)?;
@@ -2049,7 +2145,10 @@ fn read_pipe(
         .has_headers(false)
         .flexible(true)
         .from_path(path)?;
-    for record in reader.records().take(limit) {
+    for (read, record) in reader.records().enumerate() {
+        if reached_limit(read, limit) {
+            break;
+        }
         f(record?)?;
     }
     Ok(())
@@ -2057,7 +2156,7 @@ fn read_pipe(
 
 fn read_pipe_path(
     path: &Path,
-    limit: usize,
+    limit: Option<usize>,
     mut f: impl FnMut(&StringRecord, &StringRecord) -> Result<(), Box<dyn std::error::Error>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut reader = ReaderBuilder::new()
@@ -2065,7 +2164,10 @@ fn read_pipe_path(
         .flexible(true)
         .from_path(path)?;
     let headers = reader.headers()?.clone();
-    for record in reader.records().take(limit) {
+    for (read, record) in reader.records().enumerate() {
+        if reached_limit(read, limit) {
+            break;
+        }
         f(&headers, &record?)?;
     }
     Ok(())
@@ -2207,102 +2309,110 @@ impl Symbols {
 fn insert_job_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std::error::Error>> {
     let tx = conn.unchecked_transaction()?;
     for row in rows {
-        match row.relation() {
-            "AkaName" => {
-                tx.execute("INSERT INTO aka_name (id, person_id, name, imdb_index, name_pcode_cf, name_pcode_nf, surname_pcode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", rusqlite::params![id(row, "id")?, rf(row, "person")?, text(row, "name")?, text(row, "imdb_index")?, text(row, "name_pcode_cf")?, text(row, "name_pcode_nf")?, text(row, "surname_pcode")?])?;
-            }
-            "AkaTitle" => {
-                tx.execute("INSERT INTO aka_title (id, movie_id, title, imdb_index, kind_id, production_year, phonetic_code, episode_of_id, season_nr, episode_nr, note) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, text(row, "title")?, text(row, "imdb_index")?, rf(row, "kind")?, i64v(row, "production_year")?, text(row, "phonetic_code")?, u64v(row, "episode_of")?, i64v(row, "season_nr")?, i64v(row, "episode_nr")?, text(row, "note")?])?;
-            }
-            "CastInfo" => {
-                tx.execute("INSERT INTO cast_info (id, person_id, movie_id, person_role_id, note, nr_order, role_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", rusqlite::params![id(row, "id")?, rf(row, "person")?, rf(row, "movie")?, rf(row, "person_role")?, text(row, "note")?, i64v(row, "nr_order")?, rf(row, "role")?])?;
-            }
-            "CharName" => {
-                tx.execute("INSERT INTO char_name (id, name, imdb_index, imdb_id, name_pcode_nf, surname_pcode) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![id(row, "id")?, text(row, "name")?, text(row, "imdb_index")?, i64v(row, "imdb_id")?, text(row, "name_pcode_nf")?, text(row, "surname_pcode")?])?;
-            }
-            "CompCastType" => {
-                tx.execute(
-                    "INSERT INTO comp_cast_type (id, kind) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id")?, text(row, "kind")?],
-                )?;
-            }
-            "CompanyName" => {
-                tx.execute("INSERT INTO company_name (id, name, country_code, imdb_id, name_pcode_nf, name_pcode_sf) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![id(row, "id")?, text(row, "name")?, text(row, "country_code")?, i64v(row, "imdb_id")?, text(row, "name_pcode_nf")?, text(row, "name_pcode_sf")?])?;
-            }
-            "CompanyType" => {
-                tx.execute(
-                    "INSERT INTO company_type (id, kind) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id")?, text(row, "kind")?],
-                )?;
-            }
-            "CompleteCast" => {
-                tx.execute("INSERT INTO complete_cast (id, movie_id, subject_id, status_id) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "subject")?, rf(row, "status")?])?;
-            }
-            "InfoType" => {
-                tx.execute(
-                    "INSERT INTO info_type (id, info) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id")?, text(row, "info")?],
-                )?;
-            }
-            "Keyword" => {
-                tx.execute(
-                    "INSERT INTO keyword (id, keyword, phonetic_code) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![
-                        id(row, "id")?,
-                        text(row, "keyword")?,
-                        text(row, "phonetic_code")?
-                    ],
-                )?;
-            }
-            "KindType" => {
-                tx.execute(
-                    "INSERT INTO kind_type (id, kind) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id")?, text(row, "kind")?],
-                )?;
-            }
-            "LinkType" => {
-                tx.execute(
-                    "INSERT INTO link_type (id, link) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id")?, text(row, "link")?],
-                )?;
-            }
-            "MovieCompanies" => {
-                tx.execute("INSERT INTO movie_companies (id, movie_id, company_id, company_type_id, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "company")?, rf(row, "company_type")?, text(row, "note")?])?;
-            }
-            "MovieInfo" => {
-                tx.execute("INSERT INTO movie_info (id, movie_id, info_type_id, info, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "info_type")?, text(row, "info")?, text(row, "note")?])?;
-            }
-            "MovieInfoIdx" => {
-                tx.execute("INSERT INTO movie_info_idx (id, movie_id, info_type_id, info, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "info_type")?, text(row, "info")?, text(row, "note")?])?;
-            }
-            "MovieKeyword" => {
-                tx.execute(
-                    "INSERT INTO movie_keyword (id, movie_id, keyword_id) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "keyword")?],
-                )?;
-            }
-            "MovieLink" => {
-                tx.execute("INSERT INTO movie_link (id, movie_id, linked_movie_id, link_type_id) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "linked_movie")?, rf(row, "link_type")?])?;
-            }
-            "Name" => {
-                tx.execute("INSERT INTO name (id, name, imdb_index, imdb_id, gender, name_pcode_cf, name_pcode_nf, surname_pcode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", rusqlite::params![id(row, "id")?, text(row, "name")?, text(row, "imdb_index")?, i64v(row, "imdb_id")?, text(row, "gender")?, text(row, "name_pcode_cf")?, text(row, "name_pcode_nf")?, text(row, "surname_pcode")?])?;
-            }
-            "PersonInfo" => {
-                tx.execute("INSERT INTO person_info (id, person_id, info_type_id, info, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(row, "id")?, rf(row, "person")?, rf(row, "info_type")?, text(row, "info")?, text(row, "note")?])?;
-            }
-            "RoleType" => {
-                tx.execute(
-                    "INSERT INTO role_type (id, role) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id")?, text(row, "role")?],
-                )?;
-            }
-            "Title" => {
-                tx.execute("INSERT INTO title (id, title, imdb_index, kind_id, production_year, imdb_id, phonetic_code, episode_of_id, season_nr, episode_nr, series_years) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", rusqlite::params![id(row, "id")?, text(row, "title")?, text(row, "imdb_index")?, rf(row, "kind")?, i64v(row, "production_year")?, i64v(row, "imdb_id")?, text(row, "phonetic_code")?, u64v(row, "episode_of")?, i64v(row, "season_nr")?, i64v(row, "episode_nr")?, text(row, "series_years")?])?;
-            }
-            _ => {}
-        }
+        insert_job_sqlite_row(&tx, row)?;
     }
     tx.commit()?;
+    Ok(())
+}
+
+fn insert_job_sqlite_row(
+    tx: &rusqlite::Transaction<'_>,
+    row: &Row,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match row.relation() {
+        "AkaName" => {
+            tx.execute("INSERT INTO aka_name (id, person_id, name, imdb_index, name_pcode_cf, name_pcode_nf, surname_pcode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", rusqlite::params![id(row, "id")?, rf(row, "person")?, text(row, "name")?, text(row, "imdb_index")?, text(row, "name_pcode_cf")?, text(row, "name_pcode_nf")?, text(row, "surname_pcode")?])?;
+        }
+        "AkaTitle" => {
+            tx.execute("INSERT INTO aka_title (id, movie_id, title, imdb_index, kind_id, production_year, phonetic_code, episode_of_id, season_nr, episode_nr, note) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, text(row, "title")?, text(row, "imdb_index")?, rf(row, "kind")?, i64v(row, "production_year")?, text(row, "phonetic_code")?, u64v(row, "episode_of")?, i64v(row, "season_nr")?, i64v(row, "episode_nr")?, text(row, "note")?])?;
+        }
+        "CastInfo" => {
+            tx.execute("INSERT INTO cast_info (id, person_id, movie_id, person_role_id, note, nr_order, role_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", rusqlite::params![id(row, "id")?, rf(row, "person")?, rf(row, "movie")?, rf(row, "person_role")?, text(row, "note")?, i64v(row, "nr_order")?, rf(row, "role")?])?;
+        }
+        "CharName" => {
+            tx.execute("INSERT INTO char_name (id, name, imdb_index, imdb_id, name_pcode_nf, surname_pcode) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![id(row, "id")?, text(row, "name")?, text(row, "imdb_index")?, i64v(row, "imdb_id")?, text(row, "name_pcode_nf")?, text(row, "surname_pcode")?])?;
+        }
+        "CompCastType" => {
+            tx.execute(
+                "INSERT INTO comp_cast_type (id, kind) VALUES (?1, ?2)",
+                rusqlite::params![id(row, "id")?, text(row, "kind")?],
+            )?;
+        }
+        "CompanyName" => {
+            tx.execute("INSERT INTO company_name (id, name, country_code, imdb_id, name_pcode_nf, name_pcode_sf) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![id(row, "id")?, text(row, "name")?, text(row, "country_code")?, i64v(row, "imdb_id")?, text(row, "name_pcode_nf")?, text(row, "name_pcode_sf")?])?;
+        }
+        "CompanyType" => {
+            tx.execute(
+                "INSERT INTO company_type (id, kind) VALUES (?1, ?2)",
+                rusqlite::params![id(row, "id")?, text(row, "kind")?],
+            )?;
+        }
+        "CompleteCast" => {
+            tx.execute("INSERT INTO complete_cast (id, movie_id, subject_id, status_id) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "subject")?, rf(row, "status")?])?;
+        }
+        "InfoType" => {
+            tx.execute(
+                "INSERT INTO info_type (id, info) VALUES (?1, ?2)",
+                rusqlite::params![id(row, "id")?, text(row, "info")?],
+            )?;
+        }
+        "Keyword" => {
+            tx.execute(
+                "INSERT INTO keyword (id, keyword, phonetic_code) VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    id(row, "id")?,
+                    text(row, "keyword")?,
+                    text(row, "phonetic_code")?
+                ],
+            )?;
+        }
+        "KindType" => {
+            tx.execute(
+                "INSERT INTO kind_type (id, kind) VALUES (?1, ?2)",
+                rusqlite::params![id(row, "id")?, text(row, "kind")?],
+            )?;
+        }
+        "LinkType" => {
+            tx.execute(
+                "INSERT INTO link_type (id, link) VALUES (?1, ?2)",
+                rusqlite::params![id(row, "id")?, text(row, "link")?],
+            )?;
+        }
+        "MovieCompanies" => {
+            tx.execute("INSERT INTO movie_companies (id, movie_id, company_id, company_type_id, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "company")?, rf(row, "company_type")?, text(row, "note")?])?;
+        }
+        "MovieInfo" => {
+            tx.execute("INSERT INTO movie_info (id, movie_id, info_type_id, info, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "info_type")?, text(row, "info")?, text(row, "note")?])?;
+        }
+        "MovieInfoIdx" => {
+            tx.execute("INSERT INTO movie_info_idx (id, movie_id, info_type_id, info, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "info_type")?, text(row, "info")?, text(row, "note")?])?;
+        }
+        "MovieKeyword" => {
+            tx.execute(
+                "INSERT INTO movie_keyword (id, movie_id, keyword_id) VALUES (?1, ?2, ?3)",
+                rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "keyword")?],
+            )?;
+        }
+        "MovieLink" => {
+            tx.execute("INSERT INTO movie_link (id, movie_id, linked_movie_id, link_type_id) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "linked_movie")?, rf(row, "link_type")?])?;
+        }
+        "Name" => {
+            tx.execute("INSERT INTO name (id, name, imdb_index, imdb_id, gender, name_pcode_cf, name_pcode_nf, surname_pcode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", rusqlite::params![id(row, "id")?, text(row, "name")?, text(row, "imdb_index")?, i64v(row, "imdb_id")?, text(row, "gender")?, text(row, "name_pcode_cf")?, text(row, "name_pcode_nf")?, text(row, "surname_pcode")?])?;
+        }
+        "PersonInfo" => {
+            tx.execute("INSERT INTO person_info (id, person_id, info_type_id, info, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(row, "id")?, rf(row, "person")?, rf(row, "info_type")?, text(row, "info")?, text(row, "note")?])?;
+        }
+        "RoleType" => {
+            tx.execute(
+                "INSERT INTO role_type (id, role) VALUES (?1, ?2)",
+                rusqlite::params![id(row, "id")?, text(row, "role")?],
+            )?;
+        }
+        "Title" => {
+            tx.execute("INSERT INTO title (id, title, imdb_index, kind_id, production_year, imdb_id, phonetic_code, episode_of_id, season_nr, episode_nr, series_years) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", rusqlite::params![id(row, "id")?, text(row, "title")?, text(row, "imdb_index")?, rf(row, "kind")?, i64v(row, "production_year")?, i64v(row, "imdb_id")?, text(row, "phonetic_code")?, u64v(row, "episode_of")?, i64v(row, "season_nr")?, i64v(row, "episode_nr")?, text(row, "series_years")?])?;
+        }
+        _ => {}
+    }
     Ok(())
 }
 
@@ -2467,12 +2577,23 @@ mod tests {
             std::fs::write(dir.path().join(file), contents)?;
         }
 
-        let dataset = job_dataset(dir.path(), 10)?;
+        let limited = job_dataset(dir.path(), Some(1))?;
+        let dataset = job_dataset(dir.path(), None)?;
         assert_eq!(dataset.name, "job");
         assert_eq!(dataset.queries.len(), 8);
+        let Some(limited_source) = limited.row_source.as_ref() else {
+            return Err("limited JOB dataset should be streaming".into());
+        };
+        let Some(full_source) = dataset.row_source.as_ref() else {
+            return Err("full JOB dataset should be streaming".into());
+        };
+        let limited_rows = stream_rows(limited_source, |_| Ok(()))?;
+        let full_rows = stream_rows(full_source, |_| Ok(()))?;
+        assert!(limited_rows < full_rows);
 
         let config = crate::Config {
             scale: 10,
+            open_limit: None,
             repeats: 1,
             warmup: 0,
             datasets: vec!["job".to_owned()],
@@ -2482,6 +2603,7 @@ mod tests {
             tpch_dir: None,
             lahman_dir: None,
             ldbc_dir: None,
+            preset: None,
             trace: false,
             trace_output: None,
             trace_format: crate::TraceFormat::Fmt,

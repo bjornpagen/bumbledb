@@ -69,8 +69,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !config.format.is_json_only() {
         println!("BumbleDB benchmark suite");
         println!(
-            "scale={} repeats={} warmup={} datasets={:?} queries={:?} open_datasets={}",
+            "scale={} open_limit={:?} repeats={} warmup={} datasets={:?} queries={:?} open_datasets={}",
             config.scale,
+            config.open_limit,
             config.repeats,
             config.warmup,
             config.datasets,
@@ -178,6 +179,7 @@ impl CompareMode {
 #[derive(Debug)]
 struct Config {
     scale: u64,
+    open_limit: Option<usize>,
     repeats: u64,
     warmup: u64,
     datasets: Vec<String>,
@@ -187,6 +189,7 @@ struct Config {
     tpch_dir: Option<String>,
     lahman_dir: Option<String>,
     ldbc_dir: Option<String>,
+    preset: Option<String>,
     trace: bool,
     trace_output: Option<String>,
     trace_format: TraceFormat,
@@ -204,6 +207,7 @@ impl Config {
         args: impl IntoIterator<Item = String>,
     ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         let mut scale = 200;
+        let mut open_limit = None;
         let mut repeats = 10;
         let mut warmup = 0;
         let mut datasets = Vec::new();
@@ -213,6 +217,7 @@ impl Config {
         let mut tpch_dir = None;
         let mut lahman_dir = None;
         let mut ldbc_dir = None;
+        let mut preset = None;
         let mut trace = false;
         let mut trace_output = None;
         let mut trace_format = TraceFormat::Fmt;
@@ -226,6 +231,15 @@ impl Config {
                     scale = next_arg(&mut args, "--scale")?
                         .parse()
                         .map_err(|error| bench_error(format!("invalid --scale: {error}")))?
+                }
+                "--open-limit" => {
+                    open_limit = Some(
+                        next_arg(&mut args, "--open-limit")?
+                            .parse()
+                            .map_err(|error| {
+                                bench_error(format!("invalid --open-limit: {error}"))
+                            })?,
+                    )
                 }
                 "--repeats" => {
                     repeats = next_arg(&mut args, "--repeats")?
@@ -244,6 +258,7 @@ impl Config {
                 "--tpch-dir" => tpch_dir = Some(next_arg(&mut args, "--tpch-dir")?),
                 "--lahman-dir" => lahman_dir = Some(next_arg(&mut args, "--lahman-dir")?),
                 "--ldbc-dir" => ldbc_dir = Some(next_arg(&mut args, "--ldbc-dir")?),
+                "--preset" => preset = Some(next_arg(&mut args, "--preset")?),
                 "--trace" => trace = true,
                 "--trace-output" => {
                     trace = true;
@@ -284,15 +299,16 @@ impl Config {
                 "--fail-gates" => fail_gates = true,
                 "--help" | "-h" => {
                     println!(
-                        "usage: cargo run -p bumbledb-bench --release -- [--scale N] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--compare-mode materialized|rows] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
+                        "usage: cargo run -p bumbledb-bench --release -- [--preset quick|nonjob|job|job-sample] [--scale N] [--open-limit N] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--compare-mode materialized|rows] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
                     );
                     return Ok(None);
                 }
                 other => return Err(bench_error(format!("unknown arg {other}"))),
             }
         }
-        Ok(Some(Self {
+        let mut config = Self {
             scale,
+            open_limit,
             repeats,
             warmup,
             datasets,
@@ -302,13 +318,70 @@ impl Config {
             tpch_dir,
             lahman_dir,
             ldbc_dir,
+            preset,
             trace,
             trace_output,
             trace_format,
             format,
             compare_mode,
             fail_gates,
-        }))
+        };
+        config.apply_preset()?;
+        Ok(Some(config))
+    }
+
+    fn apply_preset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let Some(preset) = self.preset.as_deref() else {
+            return Ok(());
+        };
+        match preset {
+            "quick" => {
+                self.scale = 2000;
+                self.repeats = 10;
+                self.warmup = 0;
+                self.datasets = vec![
+                    "ledger".to_owned(),
+                    "sailors".to_owned(),
+                    "joinstress".to_owned(),
+                    "tpch".to_owned(),
+                ];
+                self.format = OutputFormat::Markdown;
+            }
+            "nonjob" => {
+                self.scale = 10000;
+                self.repeats = 30;
+                self.warmup = 2;
+                self.datasets = vec![
+                    "ledger".to_owned(),
+                    "sailors".to_owned(),
+                    "joinstress".to_owned(),
+                    "tpch".to_owned(),
+                ];
+                self.format = OutputFormat::Json;
+            }
+            "job" => {
+                self.repeats = 30;
+                self.warmup = 2;
+                self.datasets = vec!["job".to_owned()];
+                self.open_limit = None;
+                self.format = OutputFormat::Json;
+                if self.job_dir.is_none() {
+                    self.job_dir = std::env::var("BUMBLED_JOB_DIR").ok();
+                }
+            }
+            "job-sample" => {
+                self.repeats = 30;
+                self.warmup = 2;
+                self.datasets = vec!["job".to_owned()];
+                self.open_limit = Some(self.open_limit.unwrap_or(10_000));
+                self.format = OutputFormat::Json;
+                if self.job_dir.is_none() {
+                    self.job_dir = std::env::var("BUMBLED_JOB_DIR").ok();
+                }
+            }
+            other => return Err(bench_error(format!("unknown --preset {other}"))),
+        }
+        Ok(())
     }
 
     fn has_open_datasets(&self) -> bool {
@@ -439,6 +512,7 @@ pub(crate) struct Dataset {
     name: &'static str,
     schema: SchemaDescriptor,
     rows: Vec<Row>,
+    row_source: Option<open::RowSource>,
     sqlite_schema: &'static str,
     sqlite_insert: SqliteInsert,
     queries: Vec<BenchQuery>,
@@ -576,6 +650,17 @@ struct QueryImageBenchStats {
     built_from_segments: bool,
 }
 
+impl QueryImageBenchStats {
+    fn empty() -> Self {
+        Self {
+            build_micros: 0,
+            segment_count: 0,
+            segment_bytes: 0,
+            built_from_segments: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct GateOutcome {
     passed: bool,
@@ -613,7 +698,10 @@ fn run_dataset(
     let format = config.format;
     if format.includes_text() {
         println!("== {} ==", dataset.name);
-        println!("rows={}", dataset.rows.len());
+        match &dataset.row_source {
+            Some(_) => println!("rows=streaming"),
+            None => println!("rows={}", dataset.rows.len()),
+        }
         println!("queries={}", selected_queries.len());
     }
 
@@ -621,35 +709,85 @@ fn run_dataset(
     let bumble_env = Environment::open(bumble_dir.path())?;
     let bumble_schema = StorageSchema::new(dataset.schema.clone(), bumble_env.max_key_size())?;
 
-    let bumble_load = timed(|| bumble_env.bulk_load(&bumble_schema, dataset.rows.clone()))?;
+    if dataset.row_source.is_some() {
+        eprintln!(
+            "[bench:{}] loading bumbledb from streaming source",
+            dataset.name
+        );
+    }
+    let bumble_load = timed(|| match &dataset.row_source {
+        Some(source) => bumble_env.write(|txn| {
+            txn.bulk_load_streaming(&bumble_schema, |txn| {
+                open::stream_rows(source, |row| {
+                    txn.insert(&bumble_schema, row)?;
+                    Ok(())
+                })
+            })
+        }),
+        None => bumble_env
+            .bulk_load(&bumble_schema, dataset.rows.clone())
+            .map(|report| report.rows_inserted)
+            .map_err(Into::into),
+    })?;
     if format.includes_text() {
         println!("load.bumbledb={:?}", bumble_load.elapsed);
     }
-    let query_image = bumble_env.query_image(&bumble_schema)?;
-    let query_image_stats = QueryImageBenchStats {
-        build_micros: query_image.stats().build_micros,
-        segment_count: query_image.stats().segment_count,
-        segment_bytes: query_image.stats().segment_bytes,
-        built_from_segments: query_image.stats().built_from_segments,
-    };
-    if format.includes_text() {
-        println!(
-            "query_image relation_count={} row_count={} encoded_column_bytes={} segment_count={} segment_bytes={} built_from_segments={} build_micros={}",
-            query_image.stats().relation_count,
-            query_image.stats().row_count,
-            query_image.stats().encoded_column_bytes,
-            query_image.stats().segment_count,
-            query_image.stats().segment_bytes,
-            query_image.stats().built_from_segments,
-            query_image.stats().build_micros,
+    if dataset.row_source.is_some() {
+        eprintln!(
+            "[bench:{}] bumbledb load complete rows={} elapsed={:?}",
+            dataset.name, bumble_load.value, bumble_load.elapsed
         );
     }
+    let query_image_stats = if dataset.row_source.is_some() {
+        QueryImageBenchStats::empty()
+    } else {
+        let query_image = bumble_env.query_image(&bumble_schema)?;
+        QueryImageBenchStats {
+            build_micros: query_image.stats().build_micros,
+            segment_count: query_image.stats().segment_count,
+            segment_bytes: query_image.stats().segment_bytes,
+            built_from_segments: query_image.stats().built_from_segments,
+        }
+    };
+    if format.includes_text() {
+        if dataset.row_source.is_some() {
+            println!("query_image eager_build=skipped_for_streaming_dataset");
+        } else {
+            println!(
+                "query_image segment_count={} segment_bytes={} built_from_segments={} build_micros={}",
+                query_image_stats.segment_count,
+                query_image_stats.segment_bytes,
+                query_image_stats.built_from_segments,
+                query_image_stats.build_micros,
+            );
+        }
+    }
 
-    let mut sqlite = Connection::open_in_memory()?;
+    let sqlite_dir = tempfile::tempdir()?;
+    let mut sqlite = if dataset.row_source.is_some() {
+        Connection::open(sqlite_dir.path().join("sqlite-bench.db"))?
+    } else {
+        Connection::open_in_memory()?
+    };
     sqlite.execute_batch(dataset.sqlite_schema)?;
-    let sqlite_load = timed(|| (dataset.sqlite_insert)(&sqlite, &dataset.rows))?;
+    if dataset.row_source.is_some() {
+        eprintln!(
+            "[bench:{}] loading sqlite from streaming source",
+            dataset.name
+        );
+    }
+    let sqlite_load = timed(|| match &dataset.row_source {
+        Some(source) => open::insert_sqlite_streaming(source, &mut sqlite),
+        None => (dataset.sqlite_insert)(&sqlite, &dataset.rows).map(|()| dataset.rows.len()),
+    })?;
     if format.includes_text() {
         println!("load.sqlite={:?}", sqlite_load.elapsed);
+    }
+    if dataset.row_source.is_some() {
+        eprintln!(
+            "[bench:{}] sqlite load complete rows={} elapsed={:?}",
+            dataset.name, sqlite_load.value, sqlite_load.elapsed
+        );
     }
 
     let mut results = Vec::new();
@@ -1657,6 +1795,7 @@ fn ledger_dataset(scale: u64) -> Dataset {
         name: "ledger",
         schema: bumbledb_lmdb::benchmark::benchmark_schema(),
         rows: bumbledb_lmdb::benchmark::benchmark_rows(scale),
+        row_source: None,
         sqlite_schema: r#"
             CREATE TABLE holder (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
             CREATE TABLE account (id INTEGER PRIMARY KEY, holder INTEGER NOT NULL, currency INTEGER NOT NULL);
@@ -1787,6 +1926,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
         .with_enum(EnumDescriptor::codes("Color", [1, 2, 3]))
         .with_ref_foreign_keys(),
         rows: sailors_rows(sailors),
+        row_source: None,
         sqlite_schema: r#"
             CREATE TABLE sailor (id INTEGER PRIMARY KEY, name TEXT NOT NULL, rating INTEGER NOT NULL, age INTEGER NOT NULL);
             CREATE TABLE boat (id INTEGER PRIMARY KEY, name TEXT NOT NULL, color INTEGER NOT NULL);
@@ -1950,6 +2090,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
         .with_enum(EnumDescriptor::codes("K", 0..10))
         .with_ref_foreign_keys(),
         rows: join_stress_rows(n),
+        row_source: None,
         sqlite_schema: r#"
             CREATE TABLE a (id INTEGER PRIMARY KEY, k INTEGER NOT NULL);
             CREATE TABLE b (id INTEGER PRIMARY KEY, a INTEGER NOT NULL, k INTEGER NOT NULL);
@@ -2079,6 +2220,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
         )
         .with_ref_foreign_keys(),
         rows: tpch_rows(n),
+        row_source: None,
         sqlite_schema: r#"
             CREATE TABLE customer (id INTEGER PRIMARY KEY, nation INTEGER NOT NULL);
             CREATE TABLE supplier (id INTEGER PRIMARY KEY, nation INTEGER NOT NULL);
@@ -2756,6 +2898,8 @@ mod tests {
                 "balances_by_instrument",
                 "--warmup",
                 "2",
+                "--open-limit",
+                "123",
                 "--job-dir",
                 "/tmp/job",
                 "--format",
@@ -2771,10 +2915,28 @@ mod tests {
             config.queries,
             vec!["tag_lookup_join", "balances_by_instrument"]
         );
+        assert_eq!(config.open_limit, Some(123));
         assert_eq!(config.warmup, 2);
         assert_eq!(config.job_dir.as_deref(), Some("/tmp/job"));
         assert!(config.has_open_datasets());
         assert_eq!(config.format, OutputFormat::Json);
+        Ok(())
+    }
+
+    #[test]
+    fn cli_preset_job_sample_is_obvious() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::from_args(
+            ["--preset", "job-sample", "--job-dir", "/tmp/job"]
+                .into_iter()
+                .map(str::to_owned),
+        )?
+        .ok_or_else(|| bench_error("expected config"))?;
+
+        assert_eq!(config.datasets, vec!["job"]);
+        assert_eq!(config.open_limit, Some(10_000));
+        assert_eq!(config.job_dir.as_deref(), Some("/tmp/job"));
+        assert_eq!(config.repeats, 30);
+        assert_eq!(config.warmup, 2);
         Ok(())
     }
 

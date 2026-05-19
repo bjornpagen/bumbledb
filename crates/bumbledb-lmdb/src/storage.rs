@@ -397,6 +397,34 @@ impl WriteTxn<'_> {
         result
     }
 
+    /// Runs a streaming bulk load with relation segment publication deferred.
+    pub fn bulk_load_streaming<T, E>(
+        &mut self,
+        schema: &StorageSchema,
+        load: impl FnOnce(&mut Self) -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E>
+    where
+        E: From<Error>,
+    {
+        let previous_defer = self.defer_relation_segments;
+        self.defer_relation_segments = true;
+        let result = load(self);
+        match result {
+            Ok(value) => {
+                for relation_id in 0..schema.descriptor.relations.len() {
+                    self.touched_relation_segments.insert(relation_id as u16);
+                }
+                self.flush_relation_segments(schema).map_err(E::from)?;
+                self.defer_relation_segments = previous_defer;
+                Ok(value)
+            }
+            Err(error) => {
+                self.defer_relation_segments = previous_defer;
+                Err(error)
+            }
+        }
+    }
+
     /// Inserts a primary-keyed relation row.
     #[tracing::instrument(name = "bumbledb.insert", skip_all, fields(relation = row.relation()))]
     pub fn insert(&mut self, schema: &StorageSchema, row: Row) -> Result<()> {
