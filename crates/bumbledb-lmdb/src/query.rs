@@ -1164,6 +1164,17 @@ struct LftjRuntime<'a> {
     iters: Vec<crate::SortedTrieIter<'a>>,
 }
 
+#[derive(Clone, Debug)]
+struct HashAtomIndexRequest {
+    node_id: usize,
+    atom_id: usize,
+    relation: crate::RelationId,
+    cache_key: String,
+    index_name: String,
+    fields: Vec<FieldId>,
+}
+
+#[derive(Clone)]
 struct HashAtomIndex {
     node_id: usize,
     atom_id: usize,
@@ -1430,22 +1441,14 @@ fn execute_hash_probe<'txn, 'query, S: TupleSink>(
     plan: &mut ExecutionPlan,
     sink: &mut S,
 ) -> Result<()> {
-    let build_start = Instant::now();
-    let build_alloc_start = allocation::snapshot();
-    let atom_indexes = {
+    let index_requests = {
         let _span = tracing::debug_span!(
             "bumbledb.query.hash.build_indexes",
             atoms = plan.relation_atoms.len()
         )
         .entered();
-        build_hash_atom_indexes(image, schema, plan)?
+        build_hash_atom_index_requests(schema, plan)?
     };
-    plan.summary.timings.hash_index_micros = plan
-        .summary
-        .timings
-        .hash_index_micros
-        .saturating_add(elapsed_micros(build_start));
-    plan.summary.allocations.hash_index = allocation_delta_since(build_alloc_start);
 
     let execute_start = Instant::now();
     let execute_alloc_start = allocation::snapshot();
@@ -1462,7 +1465,8 @@ fn execute_hash_probe<'txn, 'query, S: TupleSink>(
             query,
             inputs,
             plan,
-            atom_indexes,
+            index_requests,
+            atom_indexes: Vec::new(),
             participants_by_variable,
             binding: EncodedBinding::new(query.vars.len()),
             sink,
@@ -1482,11 +1486,10 @@ fn execute_hash_probe<'txn, 'query, S: TupleSink>(
     result
 }
 
-fn build_hash_atom_indexes(
-    image: &crate::QueryImage,
+fn build_hash_atom_index_requests(
     schema: &StorageSchema,
     plan: &mut ExecutionPlan,
-) -> Result<Vec<HashAtomIndex>> {
+) -> Result<Vec<HashAtomIndexRequest>> {
     let mut out = Vec::new();
     let mut requested = BTreeSet::new();
     let subatoms = plan
@@ -1527,32 +1530,16 @@ fn build_hash_atom_indexes(
                 fields.push(field);
             }
         }
-        let relation = image
-            .relations()
-            .get(atom.relation.0 as usize)
-            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
         let key = format!(
             "relation={};access={};fields={:?}",
             atom.relation.0, access.0, fields
         );
-        let cached = image.cached_hash_trie(key, || {
-            crate::query_image::build_hash_trie_index(
-                relation,
-                IndexSpec::new(format!("{}_hash", atom.relation_name), fields.clone()),
-            )
-        })?;
-        if !cached.hit {
-            plan.summary.counters.hash_index_builds += 1;
-            plan.summary.counters.hash_index_build_rows = plan
-                .summary
-                .counters
-                .hash_index_build_rows
-                .saturating_add(relation.row_count as u64);
-        }
-        out.push(HashAtomIndex {
+        out.push(HashAtomIndexRequest {
             node_id,
             atom_id,
-            index: cached.index,
+            relation: atom.relation,
+            cache_key: key,
+            index_name: format!("{}_hash", atom.relation_name),
             fields,
         });
     }
@@ -1577,32 +1564,16 @@ fn build_hash_atom_indexes(
                     .ok_or_else(|| Error::unknown_field(&atom.relation_name, field_name))
             })
             .collect::<Result<Vec<_>>>()?;
-        let relation = image
-            .relations()
-            .get(atom.relation.0 as usize)
-            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
         let key = format!(
             "relation={};access={};fields={:?}",
             atom.relation.0, access.0, fields
         );
-        let cached = image.cached_hash_trie(key, || {
-            crate::query_image::build_hash_trie_index(
-                relation,
-                IndexSpec::new(format!("{}_hash", atom.relation_name), fields.clone()),
-            )
-        })?;
-        if !cached.hit {
-            plan.summary.counters.hash_index_builds += 1;
-            plan.summary.counters.hash_index_build_rows = plan
-                .summary
-                .counters
-                .hash_index_build_rows
-                .saturating_add(relation.row_count as u64);
-        }
-        out.push(HashAtomIndex {
+        out.push(HashAtomIndexRequest {
             node_id: usize::MAX,
             atom_id,
-            index: cached.index,
+            relation: atom.relation,
+            cache_key: key,
+            index_name: format!("{}_hash", atom.relation_name),
             fields,
         });
     }
@@ -2178,6 +2149,7 @@ struct HashProbeExecutor<'txn, 'input, 'query, 'plan, S: TupleSink> {
     query: &'query NormalizedQuery,
     inputs: &'input EncodedInputs,
     plan: &'plan mut ExecutionPlan,
+    index_requests: Vec<HashAtomIndexRequest>,
     atom_indexes: Vec<HashAtomIndex>,
     participants_by_variable: Vec<SmallParticipants>,
     binding: EncodedBinding,
@@ -2231,8 +2203,9 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
             )));
         }
         let driver = self.choose_driver(depth, &participants)?;
-        let index = self.hash_index(depth, driver)?.index.clone();
-        let prefix = self.hash_prefix(depth, driver)?;
+        let hash_index = self.hash_index(depth, driver)?;
+        let index = hash_index.index.clone();
+        let prefix = self.hash_prefix(driver, &hash_index.fields)?;
         let refs = encoded_refs(&prefix);
         let row_count = index.count(&refs);
         self.plan.summary.counters.hash_probe_calls += 1;
@@ -2313,7 +2286,7 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
             .unwrap_or_default()
     }
 
-    fn choose_driver(&self, depth: usize, participants: &[usize]) -> Result<usize> {
+    fn choose_driver(&mut self, depth: usize, participants: &[usize]) -> Result<usize> {
         let mut best = None;
         for atom_id in participants {
             let count = self.probe_atom_count(depth, *atom_id)?;
@@ -2325,16 +2298,17 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
             .ok_or_else(|| Error::internal("hash probe node has no driver"))
     }
 
-    fn probe_atom_count(&self, depth: usize, atom_id: usize) -> Result<usize> {
+    fn probe_atom_count(&mut self, depth: usize, atom_id: usize) -> Result<usize> {
         let index = self.hash_index(depth, atom_id)?;
-        let prefix = self.hash_prefix(depth, atom_id)?;
+        let prefix = self.hash_prefix(atom_id, &index.fields)?;
         let refs = encoded_refs(&prefix);
         Ok(index.index.count(&refs))
     }
 
     fn atom_has_matching_row(&mut self, depth: usize, atom_id: usize) -> Result<bool> {
-        let index = self.hash_index(depth, atom_id)?.index.clone();
-        let prefix = self.hash_prefix(depth, atom_id)?;
+        let hash_index = self.hash_index(depth, atom_id)?;
+        let index = hash_index.index.clone();
+        let prefix = self.hash_prefix(atom_id, &hash_index.fields)?;
         let refs = encoded_refs(&prefix);
         let row_count = index.count(&refs);
         self.plan.summary.counters.hash_probe_calls += 1;
@@ -2368,11 +2342,10 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
         Ok(found)
     }
 
-    fn hash_prefix(&self, depth: usize, atom_id: usize) -> Result<SmallEncodedPrefix> {
+    fn hash_prefix(&self, atom_id: usize, fields: &[FieldId]) -> Result<SmallEncodedPrefix> {
         let atom = &self.plan.relation_atoms[atom_id];
-        let index = self.hash_index(depth, atom_id)?;
         let mut prefix = SmallVec::new();
-        for field in &index.fields {
+        for field in fields {
             let Some(atom_field) = atom
                 .fields
                 .iter()
@@ -2475,8 +2448,9 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
             .ok_or_else(|| Error::unknown_relation(&atom.relation_name))
     }
 
-    fn hash_index(&self, depth: usize, atom_id: usize) -> Result<&HashAtomIndex> {
-        self.atom_indexes
+    fn hash_index(&mut self, depth: usize, atom_id: usize) -> Result<HashAtomIndex> {
+        if let Some(index) = self
+            .atom_indexes
             .iter()
             .find(|index| index.node_id == depth && index.atom_id == atom_id)
             .or_else(|| {
@@ -2484,7 +2458,60 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
                     .iter()
                     .find(|index| index.node_id == usize::MAX && index.atom_id == atom_id)
             })
-            .ok_or_else(|| Error::internal("missing hash atom index"))
+            .cloned()
+        {
+            return Ok(index);
+        }
+
+        let request = self
+            .index_requests
+            .iter()
+            .find(|request| request.node_id == depth && request.atom_id == atom_id)
+            .or_else(|| {
+                self.index_requests
+                    .iter()
+                    .find(|request| request.node_id == usize::MAX && request.atom_id == atom_id)
+            })
+            .cloned()
+            .ok_or_else(|| Error::internal("missing hash atom index request"))?;
+
+        let relation = self
+            .image
+            .relations()
+            .get(request.relation.0 as usize)
+            .ok_or_else(|| Error::internal("missing lazy hash relation"))?;
+        let build_start = Instant::now();
+        let build_alloc_start = allocation::snapshot();
+        let cached = self.image.cached_hash_trie(&request.cache_key, || {
+            crate::query_image::build_hash_trie_index(
+                relation,
+                IndexSpec::new(&request.index_name, request.fields.clone()),
+            )
+        })?;
+        self.plan.summary.timings.hash_index_micros = self
+            .plan
+            .summary
+            .timings
+            .hash_index_micros
+            .saturating_add(elapsed_micros(build_start));
+        self.plan.summary.allocations.hash_index = allocation_delta_since(build_alloc_start);
+        if !cached.hit {
+            self.plan.summary.counters.hash_index_builds += 1;
+            self.plan.summary.counters.hash_index_build_rows = self
+                .plan
+                .summary
+                .counters
+                .hash_index_build_rows
+                .saturating_add(relation.row_count as u64);
+        }
+        let index = HashAtomIndex {
+            node_id: request.node_id,
+            atom_id: request.atom_id,
+            index: cached.index,
+            fields: request.fields,
+        };
+        self.atom_indexes.push(index.clone());
+        Ok(index)
     }
 }
 
@@ -5206,6 +5233,8 @@ mod tests {
         assert!(output.rows.is_empty());
         assert_eq!(output.plan.counters.trie_open, 0);
         assert!(output.plan.counters.hash_probe_calls > 0);
+        assert_eq!(output.plan.counters.hash_index_builds, 1);
+        assert_eq!(output.plan.counters.hash_index_build_rows, 0);
         Ok(())
     }
 
