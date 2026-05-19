@@ -80,6 +80,7 @@ This kill list is derived from scale-10000 trace evidence after the v2 cutover. 
 - `observability_lints_allocation_hardening/03_query_observability_data_model.md`
 - `observability_lints_allocation_hardening/03_query_observability_results.md`
 - `observability_lints_allocation_hardening/04_tracing_and_profiling_ux.md`
+- `observability_lints_allocation_hardening/04_tracing_profiling_ux_results.md`
 - `observability_lints_allocation_hardening/05_allocation_recording_and_heap_observability.md`
 - `observability_lints_allocation_hardening/06_stack_gat_and_hot_path_allocation_cleanup.md`
 - `observability_lints_allocation_hardening/07_verification_and_handoff.md`

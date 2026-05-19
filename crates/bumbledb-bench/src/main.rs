@@ -1,5 +1,8 @@
 use std::fmt::Write as _;
+use std::fs::File;
 use std::hint::black_box;
+use std::io::Write as IoWrite;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use bumbledb_core::datalog::parse_and_typecheck;
@@ -21,23 +24,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     };
     if config.trace {
-        let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "bumbledb_lmdb=debug".to_owned());
-        drop(
-            tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .with_target(true)
-                .try_init(),
-        );
+        init_tracing(&config)?;
     }
-    println!("BumbleDB benchmark suite");
-    println!(
-        "scale={} repeats={} datasets={:?} open_datasets={}",
-        config.scale,
-        config.repeats,
-        config.datasets,
-        config.has_open_datasets()
-    );
-    println!();
+    if !config.format.is_json_only() {
+        println!("BumbleDB benchmark suite");
+        println!(
+            "scale={} repeats={} warmup={} datasets={:?} queries={:?} open_datasets={}",
+            config.scale,
+            config.repeats,
+            config.warmup,
+            config.datasets,
+            config.queries,
+            config.has_open_datasets()
+        );
+        println!();
+    }
 
     let mut datasets = all_datasets(config.scale);
     datasets.extend(open::open_datasets(&config)?);
@@ -55,12 +56,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut results = Vec::new();
     for dataset in datasets {
-        results.extend(run_dataset(dataset, config.repeats, config.format)?);
-        println!();
+        results.extend(run_dataset(dataset, &config)?);
+        if !config.format.is_json_only() {
+            println!();
+        }
+    }
+
+    if results.is_empty() {
+        return Err(bench_error("no matching queries"));
     }
 
     if config.format.includes_markdown() {
         println!("{}", render_markdown_results(&results));
+    }
+    if config.format.includes_json() {
+        println!("{}", render_json_results(&results));
     }
 
     if config.fail_gates {
@@ -80,6 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 enum OutputFormat {
     Text,
     Markdown,
+    Json,
     Both,
 }
 
@@ -91,35 +102,65 @@ impl OutputFormat {
     fn includes_markdown(self) -> bool {
         matches!(self, OutputFormat::Markdown | OutputFormat::Both)
     }
+
+    fn includes_json(self) -> bool {
+        matches!(self, OutputFormat::Json)
+    }
+
+    fn is_json_only(self) -> bool {
+        self == OutputFormat::Json
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TraceFormat {
+    Fmt,
+    Json,
+    Chrome,
+    Flame,
 }
 
 #[derive(Debug)]
 struct Config {
     scale: u64,
     repeats: u64,
+    warmup: u64,
     datasets: Vec<String>,
+    queries: Vec<String>,
     imdb_dir: Option<String>,
     tpch_dir: Option<String>,
     lahman_dir: Option<String>,
     ldbc_dir: Option<String>,
     trace: bool,
+    trace_output: Option<String>,
+    trace_format: TraceFormat,
     format: OutputFormat,
     fail_gates: bool,
 }
 
 impl Config {
     fn from_env() -> Result<Option<Self>, Box<dyn std::error::Error>> {
+        Self::from_args(std::env::args().skip(1))
+    }
+
+    fn from_args(
+        args: impl IntoIterator<Item = String>,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         let mut scale = 200;
         let mut repeats = 10;
+        let mut warmup = 0;
         let mut datasets = Vec::new();
+        let mut queries = Vec::new();
         let mut imdb_dir = None;
         let mut tpch_dir = None;
         let mut lahman_dir = None;
         let mut ldbc_dir = None;
         let mut trace = false;
+        let mut trace_output = None;
+        let mut trace_format = TraceFormat::Fmt;
         let mut format = OutputFormat::Text;
         let mut fail_gates = false;
-        let mut args = std::env::args().skip(1);
+        let mut args = args.into_iter();
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--scale" => {
@@ -132,25 +173,49 @@ impl Config {
                         .parse()
                         .map_err(|error| bench_error(format!("invalid --repeats: {error}")))?
                 }
+                "--warmup" => {
+                    warmup = next_arg(&mut args, "--warmup")?
+                        .parse()
+                        .map_err(|error| bench_error(format!("invalid --warmup: {error}")))?
+                }
                 "--dataset" => datasets.push(next_arg(&mut args, "--dataset")?),
+                "--query" => queries.push(next_arg(&mut args, "--query")?),
                 "--imdb-dir" => imdb_dir = Some(next_arg(&mut args, "--imdb-dir")?),
                 "--tpch-dir" => tpch_dir = Some(next_arg(&mut args, "--tpch-dir")?),
                 "--lahman-dir" => lahman_dir = Some(next_arg(&mut args, "--lahman-dir")?),
                 "--ldbc-dir" => ldbc_dir = Some(next_arg(&mut args, "--ldbc-dir")?),
                 "--trace" => trace = true,
+                "--trace-output" => {
+                    trace = true;
+                    trace_output = Some(next_arg(&mut args, "--trace-output")?);
+                }
+                "--trace-format" => {
+                    trace = true;
+                    trace_format = match next_arg(&mut args, "--trace-format")?.as_str() {
+                        "fmt" => TraceFormat::Fmt,
+                        "json" => TraceFormat::Json,
+                        "chrome" => TraceFormat::Chrome,
+                        "flame" => TraceFormat::Flame,
+                        other => {
+                            return Err(bench_error(format!("unknown --trace-format {other}")));
+                        }
+                    };
+                }
                 "--format" => {
                     format = match next_arg(&mut args, "--format")?.as_str() {
                         "text" => OutputFormat::Text,
                         "markdown" => OutputFormat::Markdown,
+                        "json" => OutputFormat::Json,
                         "both" => OutputFormat::Both,
                         other => return Err(bench_error(format!("unknown --format {other}"))),
                     }
                 }
                 "--markdown" => format = OutputFormat::Markdown,
+                "--json" => format = OutputFormat::Json,
                 "--fail-gates" => fail_gates = true,
                 "--help" | "-h" => {
                     println!(
-                        "usage: cargo run -p bumbledb-bench --release -- [--scale N] [--repeats N] [--trace] [--format text|markdown|both] [--markdown] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
+                        "usage: cargo run -p bumbledb-bench --release -- [--scale N] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
                     );
                     return Ok(None);
                 }
@@ -160,12 +225,16 @@ impl Config {
         Ok(Some(Self {
             scale,
             repeats,
+            warmup,
             datasets,
+            queries,
             imdb_dir,
             tpch_dir,
             lahman_dir,
             ldbc_dir,
             trace,
+            trace_output,
+            trace_format,
             format,
             fail_gates,
         }))
@@ -176,6 +245,102 @@ impl Config {
             || self.tpch_dir.is_some()
             || self.lahman_dir.is_some()
             || self.ldbc_dir.is_some()
+    }
+}
+
+fn init_tracing(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+    let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "bumbledb_lmdb=debug".to_owned());
+    match config.trace_format {
+        TraceFormat::Fmt => {
+            if let Some(path) = &config.trace_output {
+                let writer = SharedTraceWriter::create(path)?;
+                tracing_subscriber::fmt()
+                    .with_env_filter(filter)
+                    .with_target(true)
+                    .with_writer(writer)
+                    .try_init()
+                    .map_err(|error| {
+                        bench_error(format!("failed to initialize tracing: {error}"))
+                    })?;
+            } else {
+                tracing_subscriber::fmt()
+                    .with_env_filter(filter)
+                    .with_target(true)
+                    .try_init()
+                    .map_err(|error| {
+                        bench_error(format!("failed to initialize tracing: {error}"))
+                    })?;
+            }
+        }
+        TraceFormat::Json => {
+            if let Some(path) = &config.trace_output {
+                let writer = SharedTraceWriter::create(path)?;
+                tracing_subscriber::fmt()
+                    .json()
+                    .with_env_filter(filter)
+                    .with_target(true)
+                    .with_writer(writer)
+                    .try_init()
+                    .map_err(|error| {
+                        bench_error(format!("failed to initialize tracing: {error}"))
+                    })?;
+            } else {
+                tracing_subscriber::fmt()
+                    .json()
+                    .with_env_filter(filter)
+                    .with_target(true)
+                    .try_init()
+                    .map_err(|error| {
+                        bench_error(format!("failed to initialize tracing: {error}"))
+                    })?;
+            }
+        }
+        TraceFormat::Chrome | TraceFormat::Flame => {
+            return Err(bench_error(
+                "trace format requires an optional profiler dependency that is not enabled",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
+struct SharedTraceWriter {
+    file: Arc<Mutex<File>>,
+}
+
+impl SharedTraceWriter {
+    fn create(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
+            file: Arc::new(Mutex::new(File::create(path)?)),
+        })
+    }
+}
+
+struct SharedTraceWriterGuard<'a> {
+    file: MutexGuard<'a, File>,
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SharedTraceWriter {
+    type Writer = SharedTraceWriterGuard<'a>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        SharedTraceWriterGuard {
+            file: self
+                .file
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        }
+    }
+}
+
+impl IoWrite for SharedTraceWriterGuard<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.file.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
     }
 }
 
@@ -228,6 +393,12 @@ struct BenchmarkRunResult {
     dataset: &'static str,
     query: &'static str,
     rows: usize,
+    bumbledb_prepare: Duration,
+    sqlite_prepare: Duration,
+    bumbledb_warmup: TimingStats,
+    sqlite_warmup: TimingStats,
+    bumbledb_samples: TimingStats,
+    sqlite_samples: TimingStats,
     bumbledb_avg: Duration,
     sqlite_avg: Duration,
     sqlite_ratio: f64,
@@ -269,6 +440,47 @@ struct BenchmarkRunResult {
     gate: GateOutcome,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct TimingStats {
+    samples: u64,
+    total: Duration,
+    avg: Duration,
+    min: Duration,
+    p50: Duration,
+    p95: Duration,
+    max: Duration,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct QueryTimingSamples {
+    bumbledb_prepare: Duration,
+    sqlite_prepare: Duration,
+    bumbledb_warmup: TimingStats,
+    sqlite_warmup: TimingStats,
+    bumbledb_samples: TimingStats,
+    sqlite_samples: TimingStats,
+}
+
+impl TimingStats {
+    fn from_samples(mut samples: Vec<Duration>) -> Self {
+        if samples.is_empty() {
+            return Self::default();
+        }
+        samples.sort();
+        let total = samples.iter().copied().sum::<Duration>();
+        let sample_count = samples.len() as u64;
+        Self {
+            samples: sample_count,
+            total,
+            avg: duration_avg(total, sample_count),
+            min: samples[0],
+            p50: percentile(&samples, 50),
+            p95: percentile(&samples, 95),
+            max: samples[samples.len() - 1],
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct QueryImageBenchStats {
     build_micros: u128,
@@ -298,12 +510,24 @@ impl rusqlite::ToSql for SqlParam {
 
 fn run_dataset(
     dataset: Dataset,
-    repeats: u64,
-    format: OutputFormat,
+    config: &Config,
 ) -> Result<Vec<BenchmarkRunResult>, Box<dyn std::error::Error>> {
+    let selected_queries = dataset
+        .queries
+        .into_iter()
+        .filter(|query| {
+            config.queries.is_empty() || config.queries.iter().any(|name| name == query.name)
+        })
+        .collect::<Vec<_>>();
+    if selected_queries.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let format = config.format;
     if format.includes_text() {
         println!("== {} ==", dataset.name);
         println!("rows={}", dataset.rows.len());
+        println!("queries={}", selected_queries.len());
     }
 
     let bumble_dir = tempfile::tempdir()?;
@@ -342,60 +566,84 @@ fn run_dataset(
     }
 
     let mut results = Vec::new();
-    for query in dataset.queries {
+    for query in selected_queries {
         let typed = parse_and_typecheck(bumble_schema.descriptor(), query.datalog)?;
         let inputs = InputBindings::from_values(query.inputs.clone());
         let params = query.sqlite_params.clone();
 
         let bumble_once =
-            bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?;
-        let sqlite_once = sqlite_count(&mut sqlite, query.sqlite, &params)?;
-        if bumble_once.rows.len() != sqlite_once {
+            timed(|| bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs)))?;
+        let bumble_prepare = bumble_once.elapsed;
+        let bumble_output = bumble_once.value;
+        let sqlite_once = timed(|| sqlite_count(&mut sqlite, query.sqlite, &params))?;
+        let sqlite_prepare = sqlite_once.elapsed;
+        let sqlite_once = sqlite_once.value;
+        if bumble_output.rows.len() != sqlite_once {
             return Err(format!(
                 "{}:{} row mismatch bumbledb={} sqlite={}",
                 dataset.name,
                 query.name,
-                bumble_once.rows.len(),
+                bumble_output.rows.len(),
                 sqlite_once
             )
             .into());
         }
 
-        let bumble_time = timed_repeated(repeats, || {
+        let bumble_warmup = timed_samples(config.warmup, || {
             let rows = bumble_env
                 .read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?
                 .rows;
             black_box(rows.len());
             Ok::<_, bumbledb_lmdb::Error>(())
         })?;
-        let sqlite_time = timed_repeated(repeats, || {
+        let sqlite_warmup = timed_samples(config.warmup, || {
             let rows = sqlite_count(&mut sqlite, query.sqlite, &params)?;
             black_box(rows);
             Ok::<_, Box<dyn std::error::Error>>(())
         })?;
 
-        let bumbledb_avg = avg(bumble_time, repeats);
-        let sqlite_avg = avg(sqlite_time, repeats);
+        let bumble_samples = timed_samples(config.repeats, || {
+            let rows = bumble_env
+                .read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?
+                .rows;
+            black_box(rows.len());
+            Ok::<_, bumbledb_lmdb::Error>(())
+        })?;
+        let sqlite_samples = timed_samples(config.repeats, || {
+            let rows = sqlite_count(&mut sqlite, query.sqlite, &params)?;
+            black_box(rows);
+            Ok::<_, Box<dyn std::error::Error>>(())
+        })?;
+
         let result = benchmark_result(
             dataset.name,
             &query,
-            &bumble_once,
-            bumbledb_avg,
-            sqlite_avg,
+            &bumble_output,
+            QueryTimingSamples {
+                bumbledb_prepare: bumble_prepare,
+                sqlite_prepare,
+                bumbledb_warmup: bumble_warmup,
+                sqlite_warmup,
+                bumbledb_samples: bumble_samples,
+                sqlite_samples,
+            },
             query_image_stats,
         );
+        emit_profile_summary(dataset.name, query.name, &bumble_output);
         if format.includes_text() {
             println!(
-                "query={} rows={} bumbledb_total={:?} bumbledb_avg={:?} sqlite_total={:?} sqlite_avg={:?} gate={}",
+                "query={} rows={} bumbledb_prepare={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_prepare={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
                 query.name,
-                bumble_once.rows.len(),
-                bumble_time,
-                bumbledb_avg,
-                sqlite_time,
-                sqlite_avg,
+                bumble_output.rows.len(),
+                bumble_prepare,
+                result.bumbledb_samples.samples,
+                result.bumbledb_avg,
+                sqlite_prepare,
+                result.sqlite_samples.samples,
+                result.sqlite_avg,
                 if result.gate.passed { "pass" } else { "fail" },
             );
-            print_explain(&bumble_once.explain());
+            print_explain(&bumble_output.explain());
             for note in &result.gate.notes {
                 println!("  gate_note: {note}");
             }
@@ -407,7 +655,7 @@ fn run_dataset(
 }
 
 struct Timed<T> {
-    _value: T,
+    value: T,
     elapsed: Duration,
 }
 
@@ -415,25 +663,32 @@ fn timed<T, E>(f: impl FnOnce() -> Result<T, E>) -> Result<Timed<T>, E> {
     let start = Instant::now();
     let value = f()?;
     Ok(Timed {
-        _value: value,
+        value,
         elapsed: start.elapsed(),
     })
 }
 
-fn timed_repeated<E>(repeats: u64, mut f: impl FnMut() -> Result<(), E>) -> Result<Duration, E> {
-    let start = Instant::now();
-    for _ in 0..repeats {
+fn timed_samples<E>(samples: u64, mut f: impl FnMut() -> Result<(), E>) -> Result<TimingStats, E> {
+    let mut durations = Vec::with_capacity(samples.min(usize::MAX as u64) as usize);
+    for _ in 0..samples {
+        let start = Instant::now();
         f()?;
+        durations.push(start.elapsed());
     }
-    Ok(start.elapsed())
+    Ok(TimingStats::from_samples(durations))
 }
 
-fn avg(duration: Duration, repeats: u64) -> Duration {
-    if repeats == 0 {
-        duration
-    } else {
-        duration / repeats as u32
+fn duration_avg(duration: Duration, samples: u64) -> Duration {
+    if samples == 0 {
+        return Duration::ZERO;
     }
+    let nanos = duration.as_nanos() / u128::from(samples);
+    Duration::from_nanos(nanos.min(u128::from(u64::MAX)) as u64)
+}
+
+fn percentile(samples: &[Duration], percentile: u64) -> Duration {
+    let index = ((samples.len() as u64 - 1) * percentile).div_ceil(100) as usize;
+    samples[index]
 }
 
 fn sqlite_count(
@@ -452,8 +707,7 @@ fn benchmark_result(
     dataset: &'static str,
     query: &BenchQuery,
     output: &QueryOutput,
-    bumbledb_avg: Duration,
-    sqlite_avg: Duration,
+    timing: QueryTimingSamples,
     query_image_stats: QueryImageBenchStats,
 ) -> BenchmarkRunResult {
     let final_output_values = (output.rows.len() * output.columns.len()) as u64;
@@ -462,6 +716,8 @@ fn benchmark_result(
         .iter()
         .flatten()
         .any(|value| matches!(value, Value::String(_) | Value::Bytes(_)));
+    let bumbledb_avg = timing.bumbledb_samples.avg;
+    let sqlite_avg = timing.sqlite_samples.avg;
     let sqlite_ratio = duration_ratio(bumbledb_avg, sqlite_avg);
     let gate = evaluate_gate(
         dataset,
@@ -476,6 +732,12 @@ fn benchmark_result(
         dataset,
         query: query.name,
         rows: output.rows.len(),
+        bumbledb_prepare: timing.bumbledb_prepare,
+        sqlite_prepare: timing.sqlite_prepare,
+        bumbledb_warmup: timing.bumbledb_warmup,
+        sqlite_warmup: timing.sqlite_warmup,
+        bumbledb_samples: timing.bumbledb_samples,
+        sqlite_samples: timing.sqlite_samples,
         bumbledb_avg,
         sqlite_avg,
         sqlite_ratio,
@@ -515,6 +777,35 @@ fn benchmark_result(
         hash_rows_returned: output.plan.counters.hash_rows_returned,
         hash_distinct_emits: output.plan.counters.hash_distinct_emits,
         gate,
+    }
+}
+
+fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
+    let plan = &output.plan;
+    let timings = plan.timings;
+    tracing::debug!(
+        dataset,
+        query,
+        rows = output.rows.len(),
+        runtime = ?plan.runtime_kind,
+        total_micros = timings.total_micros,
+        plan_micros = timings.plan_micros,
+        execute_micros = timings.execute_micros,
+        sink_finish_micros = timings.sink_finish_micros,
+        allocations_enabled = plan.allocations.enabled,
+        "benchmark query profile"
+    );
+    for node in &plan.node_timings {
+        tracing::debug!(
+            dataset,
+            query,
+            node = node.node.0,
+            implementation = ?node.implementation,
+            estimated_rows = node.estimated_rows,
+            actual_rows = node.actual_rows,
+            execute_micros = node.execute_micros,
+            "benchmark node profile"
+        );
     }
 }
 
@@ -745,6 +1036,50 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             allocations.peak_live_bytes,
         );
     }
+    out.push_str("\n## Distribution\n\n");
+    out.push_str("| dataset | query | bumbledb prepare us | bumbledb warmup samples | bumbledb warmup avg us | bumbledb samples | bumbledb min us | bumbledb p50 us | bumbledb p95 us | bumbledb max us | sqlite prepare us | sqlite warmup samples | sqlite warmup avg us | sqlite samples | sqlite min us | sqlite p50 us | sqlite p95 us | sqlite max us |\n");
+    out.push_str("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    for result in results {
+        let bumble = result.bumbledb_samples;
+        let sqlite = result.sqlite_samples;
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            markdown_escape(result.dataset),
+            markdown_escape(result.query),
+            duration_micros(result.bumbledb_prepare),
+            result.bumbledb_warmup.samples,
+            duration_micros(result.bumbledb_warmup.avg),
+            bumble.samples,
+            duration_micros(bumble.min),
+            duration_micros(bumble.p50),
+            duration_micros(bumble.p95),
+            duration_micros(bumble.max),
+            duration_micros(result.sqlite_prepare),
+            result.sqlite_warmup.samples,
+            duration_micros(result.sqlite_warmup.avg),
+            sqlite.samples,
+            duration_micros(sqlite.min),
+            duration_micros(sqlite.p50),
+            duration_micros(sqlite.p95),
+            duration_micros(sqlite.max),
+        );
+    }
+    out.push_str("\n## Interpretation Notes\n\n");
+    out.push_str("| signal | interpretation |\n");
+    out.push_str("|---|---|\n");
+    out.push_str("| high image us | QueryImage acquisition or segment build bottleneck |\n");
+    out.push_str(
+        "| high plan us | stats, variable ordering, or Free Join optimization bottleneck |\n",
+    );
+    out.push_str("| high lftj/hash build us | cached index lookup/build or atom relation preparation bottleneck |\n");
+    out.push_str("| high execute us | runtime traversal/probe bottleneck |\n");
+    out.push_str(
+        "| high sink finish us | projection, aggregation, sorting, or decode bottleneck |\n",
+    );
+    out.push_str(
+        "| high allocation counts | heap profiling should be enabled once PRD 05 lands |\n",
+    );
     out.push_str("\n## Counter Gates\n\n");
     out.push_str("| dataset | query | cursor seeks | rows scanned | final values | materialized values | dictionary output | dictionary lookups | notes |\n");
     out.push_str("|---|---|---:|---:|---:|---:|---|---:|---|\n");
@@ -766,6 +1101,91 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     out
 }
 
+fn render_json_results(results: &[BenchmarkRunResult]) -> String {
+    let mut out = String::new();
+    out.push_str("{\"results\":[");
+    for (index, result) in results.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let _ = write!(
+            out,
+            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",",
+            json_escape(result.dataset),
+            json_escape(result.query),
+            result.rows,
+            json_escape(&result.chosen_plan),
+            json_escape(&result.runtime_kind),
+        );
+        write_timing_stats(&mut out, "bumbledb", result.bumbledb_samples);
+        out.push(',');
+        write_timing_stats(&mut out, "sqlite", result.sqlite_samples);
+        let timings = result.timings;
+        let allocations = result.allocations;
+        let _ = write!(
+            out,
+            ",\"prepare\":{{\"bumbledb_us\":{},\"sqlite_us\":{}}},\"warmup\":{{\"bumbledb_samples\":{},\"bumbledb_avg_us\":{},\"sqlite_samples\":{},\"sqlite_avg_us\":{}}},\"phase_timing\":{{\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"hash_index_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"hash_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{}}},\"allocations\":{{\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"peak_live_bytes\":{}}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            duration_micros(result.bumbledb_prepare),
+            duration_micros(result.sqlite_prepare),
+            result.bumbledb_warmup.samples,
+            duration_micros(result.bumbledb_warmup.avg),
+            result.sqlite_warmup.samples,
+            duration_micros(result.sqlite_warmup.avg),
+            timings.total_micros,
+            timings.validate_inputs_micros,
+            timings.normalize_micros,
+            timings.encode_inputs_micros,
+            timings.query_image_micros,
+            timings.plan_micros,
+            timings.lftj_build_micros,
+            timings.hash_index_micros,
+            timings.execute_micros,
+            timings.lftj_execute_micros,
+            timings.hash_execute_micros,
+            timings.sink_emit_micros,
+            timings.sink_finish_micros,
+            timings.decode_micros,
+            allocations.enabled,
+            allocations.alloc_calls,
+            allocations.dealloc_calls,
+            allocations.realloc_calls,
+            allocations.bytes_allocated,
+            allocations.bytes_deallocated,
+            allocations.net_bytes,
+            allocations.peak_live_bytes,
+            result.counters.cursor_seeks,
+            result.counters.rows_scanned,
+            result.dictionary_reverse_lookups,
+            result.materialized_values,
+            result.gate.passed,
+        );
+        for (note_index, note) in result.gate.notes.iter().enumerate() {
+            if note_index > 0 {
+                out.push(',');
+            }
+            let _ = write!(out, "\"{}\"", json_escape(note));
+        }
+        out.push_str("]}}");
+    }
+    out.push_str("]}");
+    out
+}
+
+fn write_timing_stats(out: &mut String, name: &str, stats: TimingStats) {
+    let _ = write!(
+        out,
+        "\"{}\":{{\"samples\":{},\"total_us\":{},\"avg_us\":{},\"min_us\":{},\"p50_us\":{},\"p95_us\":{},\"max_us\":{}}}",
+        name,
+        stats.samples,
+        duration_micros(stats.total),
+        duration_micros(stats.avg),
+        duration_micros(stats.min),
+        duration_micros(stats.p50),
+        duration_micros(stats.p95),
+        duration_micros(stats.max),
+    );
+}
+
 fn duration_ratio(left: Duration, right: Duration) -> f64 {
     let right = right.as_nanos();
     if right == 0 {
@@ -780,6 +1200,24 @@ fn duration_micros(duration: Duration) -> u128 {
 
 fn markdown_escape(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
+}
+
+fn json_escape(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch.is_control() => {
+                let _ = write!(out, "\\u{:04x}", ch as u32);
+            }
+            ch => out.push(ch),
+        }
+    }
+    out
 }
 
 fn print_explain(explain: &str) {
@@ -1758,10 +2196,21 @@ mod tests {
 
     #[test]
     fn markdown_renderer_emits_gate_tables() {
+        let sample_stats = TimingStats::from_samples(vec![
+            Duration::from_micros(9),
+            Duration::from_micros(10),
+            Duration::from_micros(11),
+        ]);
         let result = BenchmarkRunResult {
             dataset: "joinstress",
             query: "triangle_count",
             rows: 1,
+            bumbledb_prepare: Duration::from_micros(20),
+            sqlite_prepare: Duration::from_micros(12),
+            bumbledb_warmup: TimingStats::from_samples(vec![Duration::from_micros(13)]),
+            sqlite_warmup: TimingStats::from_samples(vec![Duration::from_micros(8)]),
+            bumbledb_samples: sample_stats,
+            sqlite_samples: sample_stats,
             bumbledb_avg: Duration::from_micros(10),
             sqlite_avg: Duration::from_micros(5),
             sqlite_ratio: 2.0,
@@ -1819,10 +2268,130 @@ mod tests {
         assert!(markdown.contains("| joinstress | triangle_count |"));
         assert!(markdown.contains("## Phase Timing"));
         assert!(markdown.contains("## Allocation Summary"));
+        assert!(markdown.contains("## Distribution"));
         assert!(markdown.contains("| dataset | query | cursor seeks |"));
         assert!(
             markdown.contains("| joinstress | triangle_count | 0 | 0 | 1 | 1 | false | 0 | ok |")
         );
+    }
+
+    #[test]
+    fn json_renderer_emits_structured_results() {
+        let result = BenchmarkRunResult {
+            dataset: "ledger",
+            query: "tag_lookup_join",
+            rows: 2,
+            bumbledb_prepare: Duration::from_micros(20),
+            sqlite_prepare: Duration::from_micros(10),
+            bumbledb_warmup: TimingStats::from_samples(vec![Duration::from_micros(11)]),
+            sqlite_warmup: TimingStats::from_samples(vec![Duration::from_micros(7)]),
+            bumbledb_samples: TimingStats::from_samples(vec![Duration::from_micros(9)]),
+            sqlite_samples: TimingStats::from_samples(vec![Duration::from_micros(3)]),
+            bumbledb_avg: Duration::from_micros(9),
+            sqlite_avg: Duration::from_micros(3),
+            sqlite_ratio: 3.0,
+            chosen_plan: "hash_probe".to_owned(),
+            runtime_kind: "HashProbe".to_owned(),
+            timings: QueryTimings {
+                total_micros: 20,
+                hash_execute_micros: 4,
+                ..QueryTimings::default()
+            },
+            allocations: QueryAllocationStats::default(),
+            iterator_ops: 1,
+            hash_build_rows: 1,
+            hash_probe_rows: 1,
+            materialized_values: 2,
+            dictionary_reverse_lookups: 0,
+            counters: PlanCounters::default(),
+            final_output_values: 2,
+            output_contains_dictionary_values: false,
+            query_image_build_micros: 1,
+            query_image_segment_count: 1,
+            query_image_segment_bytes: 1,
+            query_image_built_from_segments: true,
+            query_image_cache_cached_images: 1,
+            query_image_cache_hits: 1,
+            query_image_cache_misses: 0,
+            query_image_cache_builds: 1,
+            query_image_cache_build_micros: 1,
+            planner_stats_cached_relations: 1,
+            planner_stats_hits: 1,
+            planner_stats_misses: 0,
+            planner_stats_builds: 1,
+            planner_stats_build_micros: 1,
+            sorted_trie_cache_hits: 0,
+            sorted_trie_cache_misses: 0,
+            sorted_trie_builds: 0,
+            atom_temp_relation_builds: 0,
+            hash_probe_calls: 1,
+            hash_probe_hits: 1,
+            hash_probe_misses: 0,
+            hash_rows_returned: 2,
+            hash_distinct_emits: 2,
+            gate: GateOutcome {
+                passed: true,
+                notes: vec!["ok".to_owned()],
+            },
+        };
+
+        let json = render_json_results(&[result]);
+        assert!(json.contains("\"dataset\":\"ledger\""));
+        assert!(json.contains("\"runtime\":\"HashProbe\""));
+        assert!(json.contains("\"phase_timing\""));
+        assert!(json.contains("\"allocations\""));
+    }
+
+    #[test]
+    fn cli_parser_accepts_repeated_query_filters() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::from_args(
+            [
+                "--dataset",
+                "ledger",
+                "--query",
+                "tag_lookup_join",
+                "--query",
+                "balances_by_instrument",
+                "--warmup",
+                "2",
+                "--format",
+                "json",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        )?
+        .ok_or_else(|| bench_error("expected config"))?;
+
+        assert_eq!(config.datasets, vec!["ledger"]);
+        assert_eq!(
+            config.queries,
+            vec!["tag_lookup_join", "balances_by_instrument"]
+        );
+        assert_eq!(config.warmup, 2);
+        assert_eq!(config.format, OutputFormat::Json);
+        Ok(())
+    }
+
+    #[test]
+    fn cli_parser_rejects_invalid_numbers() {
+        let result = Config::from_args(["--repeats", "nope"].into_iter().map(str::to_owned));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_parser_accepts_trace_output_without_default_subscriber()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::from_args(
+            ["--trace-output", "trace.log", "--trace-format", "json"]
+                .into_iter()
+                .map(str::to_owned),
+        )?
+        .ok_or_else(|| bench_error("expected config"))?;
+
+        assert!(config.trace);
+        assert_eq!(config.trace_output.as_deref(), Some("trace.log"));
+        assert_eq!(config.trace_format, TraceFormat::Json);
+        Ok(())
     }
 
     #[test]

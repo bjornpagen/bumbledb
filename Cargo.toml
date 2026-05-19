@@ -23,7 +23,7 @@ rusqlite = { version = "0.37.0", features = ["bundled"] }
 tempfile = "3.23.0"
 thiserror = "2.0.17"
 tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "json"] }
 trybuild = "1.0.114"
 
 [workspace.lints.rust]

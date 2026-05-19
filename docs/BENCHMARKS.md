@@ -36,6 +36,22 @@ cargo run -p bumbledb-bench --release -- --scale 2000 --repeats 10 --format mark
 
 Markdown output includes result, phase timing, allocation summary, and counter-gate tables with QueryImage segment/build stats, runtime kind, chosen Free Join plan, iterator estimates, hash build/probe estimates, materialized values, dictionary reverse lookups, and gate status.
 
+`--repeats` is the measured sample count. `--warmup N` runs additional cached warmup executions before measured samples and reports warmup timing separately from measured distributions.
+
+**Focused Query Run**
+```sh
+cargo run -p bumbledb-bench --release -- --dataset sailors --query sailor_range_reserves --scale 10000 --repeats 10 --warmup 2 --format markdown
+```
+
+`--query NAME` is repeatable and filters benchmark query names after dataset selection.
+
+**JSON Output**
+```sh
+cargo run -p bumbledb-bench --release -- --dataset joinstress --query chain4_from_a --scale 10000 --repeats 10 --format json
+```
+
+JSON output is machine-readable and includes timing distributions, phase timings, allocation summaries, counters, and gate notes.
+
 **Run One Generated Dataset**
 ```sh
 cargo run -p bumbledb-bench --release -- --dataset ledger --scale 2000 --repeats 10
@@ -155,6 +171,8 @@ The markdown table additionally prints:
 - runtime kind.
 - QueryPlan phase timings.
 - allocation summary fields, disabled and zero until allocation profiling is enabled.
+- timing distribution stats: sample count, min, p50, p95, max.
+- warmup timing stats.
 - chosen Free Join candidate.
 - estimated iterator operations.
 - estimated hash build/probe rows.
@@ -182,9 +200,11 @@ Known current-stage regressions are expected while PRDs 10 and earlier still rou
 **Tracing Benchmarks**
 ```sh
 RUST_LOG=bumbledb_lmdb=debug cargo run -p bumbledb-bench --release -- --trace --dataset joinstress --scale 2000 --repeats 10
+RUST_LOG=bumbledb_lmdb=debug cargo run -p bumbledb-bench --release -- --trace-output trace.jsonl --trace-format json --dataset joinstress --query chain4_from_a --scale 2000 --repeats 10 --format json
 ```
 
 The library never initializes a tracing subscriber. The benchmark binary installs one only when `--trace` is passed.
+`--trace-format fmt` and `--trace-format json` are supported by default. `chrome` and `flame` are reserved for future optional profiling dependencies.
 
 **Current Interpretation**
 Bumbledb currently behaves well for highly selective prefix joins. Broad joins are still slower than the final target gates because the v2 executor is cut over to QueryImage/Free Join/sorted-trie/hash-probe execution, while direct selective kernels and deeper LFTJ loop optimization remain future work:

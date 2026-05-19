@@ -55,3 +55,4 @@ cargo run -p bumbledb-bench --release -- --scale 10000 --repeats 3 --format mark
 - `01_workspace_lints_results.md`
 - `02_panic_unwrap_results.md`
 - `03_query_observability_results.md`
+- `04_tracing_profiling_ux_results.md`
