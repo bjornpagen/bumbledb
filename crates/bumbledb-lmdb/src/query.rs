@@ -581,6 +581,22 @@ impl QueryPlan {
             "  direct_kernel_predicates: {}\n",
             self.counters.direct_kernel_predicates
         ));
+        out.push_str(&format!(
+            "  static_empty_atoms_checked: {}\n",
+            self.counters.static_empty_atoms_checked
+        ));
+        out.push_str(&format!(
+            "  static_empty_rows_scanned: {}\n",
+            self.counters.static_empty_rows_scanned
+        ));
+        out.push_str(&format!(
+            "  static_empty_cache_hits: {}\n",
+            self.counters.static_empty_cache_hits
+        ));
+        out.push_str(&format!(
+            "  static_empty_cache_misses: {}\n",
+            self.counters.static_empty_cache_misses
+        ));
         out.push_str(&format!("  output_rows: {}\n", self.counters.output_rows));
         out
     }
@@ -974,6 +990,14 @@ pub struct PlanCounters {
     pub direct_kernel_rows: u64,
     /// Number of predicates evaluated by direct kernels.
     pub direct_kernel_predicates: u64,
+    /// Number of static-empty proof atoms checked.
+    pub static_empty_atoms_checked: u64,
+    /// Number of relation/index rows inspected by static-empty proof.
+    pub static_empty_rows_scanned: u64,
+    /// Number of static-empty proof cache hits.
+    pub static_empty_cache_hits: u64,
+    /// Number of static-empty proof cache misses.
+    pub static_empty_cache_misses: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1326,6 +1350,7 @@ impl<'env> ReadTxn<'env> {
             plan.timings = timings;
             plan.allocations = allocations;
             plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
+            plan.counters.static_empty_cache_hits = 1;
             plan.timings.total_micros = elapsed_micros(total_start);
             let total_alloc = allocation_delta_since(total_alloc_start);
             plan.allocations = plan.allocations.with_total(total_alloc);
@@ -1335,9 +1360,16 @@ impl<'env> ReadTxn<'env> {
                 plan,
             });
         }
-        if normalized.inputs.is_empty()
-            && static_literal_atoms_prove_empty(image.as_ref(), &normalized, &encoded_inputs)?
-        {
+        let static_empty_proof = if normalized.inputs.is_empty() {
+            Some(static_literal_atoms_prove_empty(
+                image.as_ref(),
+                &normalized,
+                &encoded_inputs,
+            )?)
+        } else {
+            None
+        };
+        if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
             if let Some(cache_key) = &prepared_cache_key {
                 image.insert_static_empty(cache_key.clone())?;
             }
@@ -1350,6 +1382,11 @@ impl<'env> ReadTxn<'env> {
             plan.timings = timings;
             plan.allocations = allocations;
             plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
+            if let Some(proof) = static_empty_proof {
+                plan.counters.static_empty_cache_misses = 1;
+                plan.counters.static_empty_atoms_checked = proof.atoms_checked;
+                plan.counters.static_empty_rows_scanned = proof.rows_scanned;
+            }
             plan.timings.total_micros = elapsed_micros(total_start);
             let total_alloc = allocation_delta_since(total_alloc_start);
             plan.allocations = plan.allocations.with_total(total_alloc);
@@ -1458,11 +1495,23 @@ fn prepared_plan_cache_key(query: &NormalizedQuery) -> Option<String> {
     Some(hasher.finalize().to_hex().to_string())
 }
 
+struct StaticEmptyProof {
+    empty: bool,
+    atoms_checked: u64,
+    rows_scanned: u64,
+}
+
 fn static_literal_atoms_prove_empty(
     image: &crate::QueryImage,
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
-) -> Result<bool> {
+) -> Result<StaticEmptyProof> {
+    let mut proof = StaticEmptyProof {
+        empty: false,
+        atoms_checked: 0,
+        rows_scanned: 0,
+    };
+    let _span = tracing::debug_span!("bumbledb.query.static_empty.prove").entered();
     for atom in &query.atoms {
         if !atom
             .fields
@@ -1471,48 +1520,70 @@ fn static_literal_atoms_prove_empty(
         {
             continue;
         }
+        proof.atoms_checked += 1;
         let relation = image
             .relations()
             .get(atom.relation.0 as usize)
             .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
         let mut matched = false;
         for row in 0..relation.row_count {
+            proof.rows_scanned += 1;
             if static_atom_row_matches(relation, atom, RowId(row as u32), inputs)? {
                 matched = true;
                 break;
             }
         }
         if !matched {
-            return Ok(true);
+            proof.empty = true;
+            return Ok(proof);
         }
     }
-    if static_keyword_movie_company_title_proves_empty(image, query, inputs)? {
-        return Ok(true);
+    let keyword_movie = static_keyword_movie_company_title_proves_empty(image, query, inputs)?;
+    proof.atoms_checked = proof
+        .atoms_checked
+        .saturating_add(keyword_movie.atoms_checked);
+    proof.rows_scanned = proof
+        .rows_scanned
+        .saturating_add(keyword_movie.rows_scanned);
+    if keyword_movie.empty {
+        proof.empty = true;
+        return Ok(proof);
     }
-    if static_company_info_movie_intersection_proves_empty(image, query, inputs)? {
-        return Ok(true);
+    let company_info = static_company_info_movie_intersection_proves_empty(image, query, inputs)?;
+    proof.atoms_checked = proof
+        .atoms_checked
+        .saturating_add(company_info.atoms_checked);
+    proof.rows_scanned = proof.rows_scanned.saturating_add(company_info.rows_scanned);
+    if company_info.empty {
+        proof.empty = true;
+        return Ok(proof);
     }
-    Ok(false)
+    Ok(proof)
 }
 
 fn static_company_info_movie_intersection_proves_empty(
     image: &crate::QueryImage,
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
-) -> Result<bool> {
+) -> Result<StaticEmptyProof> {
+    let mut proof = StaticEmptyProof {
+        empty: false,
+        atoms_checked: 0,
+        rows_scanned: 0,
+    };
     let Some(company_type_atom) = query
         .atoms
         .iter()
         .find(|atom| atom.relation_name == "CompanyType")
     else {
-        return Ok(false);
+        return Ok(proof);
     };
     let Some(info_type_atom) = query
         .atoms
         .iter()
         .find(|atom| atom.relation_name == "InfoType")
     else {
-        return Ok(false);
+        return Ok(proof);
     };
     if query
         .atoms
@@ -1525,13 +1596,13 @@ fn static_company_info_movie_intersection_proves_empty(
             .find(|atom| atom.relation_name == "MovieInfoIdx")
             .is_none()
     {
-        return Ok(false);
+        return Ok(proof);
     }
     let Some(company_kind) = static_atom_field_value(company_type_atom, "kind", inputs)? else {
-        return Ok(false);
+        return Ok(proof);
     };
     let Some(info_name) = static_atom_field_value(info_type_atom, "info", inputs)? else {
-        return Ok(false);
+        return Ok(proof);
     };
 
     let company_type = image
@@ -1548,19 +1619,19 @@ fn static_company_info_movie_intersection_proves_empty(
         .ok_or_else(|| Error::unknown_relation("MovieInfoIdx"))?;
 
     let Some(company_type_by_kind) = relation_index_with_leading_field(company_type, "kind") else {
-        return Ok(false);
+        return Ok(proof);
     };
     let Some(info_type_by_info) = relation_index_with_leading_field(info_type, "info") else {
-        return Ok(false);
+        return Ok(proof);
     };
     let Some(movie_companies_by_type) =
         relation_index_with_leading_field(movie_companies, "company_type")
     else {
-        return Ok(false);
+        return Ok(proof);
     };
     let Some(movie_info_by_type) = relation_index_with_leading_field(movie_info_idx, "info_type")
     else {
-        return Ok(false);
+        return Ok(proof);
     };
 
     let company_type_id = relation_field_id(company_type, "id")?;
@@ -1569,13 +1640,16 @@ fn static_company_info_movie_intersection_proves_empty(
     let mii_movie = relation_field_id(movie_info_idx, "movie")?;
 
     let mut company_movies = BTreeSet::new();
+    proof.atoms_checked += 4;
     for company_type_entry in company_type_by_kind.entries_with_prefix(company_kind.as_bytes()) {
+        proof.rows_scanned += 1;
         let Some(company_type_bytes) =
             company_type_by_kind.component_bytes(company_type_entry, company_type_id)
         else {
             continue;
         };
         for movie_company_entry in movie_companies_by_type.entries_with_prefix(company_type_bytes) {
+            proof.rows_scanned += 1;
             if let Some(movie) =
                 movie_companies_by_type.component_bytes(movie_company_entry, mc_movie)
             {
@@ -1584,37 +1658,46 @@ fn static_company_info_movie_intersection_proves_empty(
         }
     }
     if company_movies.is_empty() {
-        return Ok(true);
+        proof.empty = true;
+        return Ok(proof);
     }
 
     for info_type_entry in info_type_by_info.entries_with_prefix(info_name.as_bytes()) {
+        proof.rows_scanned += 1;
         let Some(info_type_bytes) =
             info_type_by_info.component_bytes(info_type_entry, info_type_id)
         else {
             continue;
         };
         for movie_info_entry in movie_info_by_type.entries_with_prefix(info_type_bytes) {
+            proof.rows_scanned += 1;
             if let Some(movie) = movie_info_by_type.component_bytes(movie_info_entry, mii_movie)
                 && company_movies.contains(movie)
             {
-                return Ok(false);
+                return Ok(proof);
             }
         }
     }
-    Ok(true)
+    proof.empty = true;
+    Ok(proof)
 }
 
 fn static_keyword_movie_company_title_proves_empty(
     image: &crate::QueryImage,
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
-) -> Result<bool> {
+) -> Result<StaticEmptyProof> {
+    let mut proof = StaticEmptyProof {
+        empty: false,
+        atoms_checked: 0,
+        rows_scanned: 0,
+    };
     let Some(keyword_atom) = query
         .atoms
         .iter()
         .find(|atom| atom.relation_name == "Keyword")
     else {
-        return Ok(false);
+        return Ok(proof);
     };
     if query
         .atoms
@@ -1622,14 +1705,14 @@ fn static_keyword_movie_company_title_proves_empty(
         .find(|atom| atom.relation_name == "MovieKeyword")
         .is_none()
     {
-        return Ok(false);
+        return Ok(proof);
     }
     let Some(title_atom) = query
         .atoms
         .iter()
         .find(|atom| atom.relation_name == "Title")
     else {
-        return Ok(false);
+        return Ok(proof);
     };
     if query
         .atoms
@@ -1637,22 +1720,22 @@ fn static_keyword_movie_company_title_proves_empty(
         .find(|atom| atom.relation_name == "MovieCompanies")
         .is_none()
     {
-        return Ok(false);
+        return Ok(proof);
     }
     let Some(company_name_atom) = query
         .atoms
         .iter()
         .find(|atom| atom.relation_name == "CompanyName")
     else {
-        return Ok(false);
+        return Ok(proof);
     };
 
     let Some(keyword_literal) = static_atom_field_value(keyword_atom, "keyword", inputs)? else {
-        return Ok(false);
+        return Ok(proof);
     };
     let Some(country_literal) = static_atom_field_value(company_name_atom, "country_code", inputs)?
     else {
-        return Ok(false);
+        return Ok(proof);
     };
 
     let keyword_relation = image
@@ -1672,24 +1755,24 @@ fn static_keyword_movie_company_title_proves_empty(
         .ok_or_else(|| Error::unknown_relation("CompanyName"))?;
 
     let Some(keyword_index) = relation_index_with_leading_field(keyword_relation, "keyword") else {
-        return Ok(false);
+        return Ok(proof);
     };
     let Some(movie_keyword_index) =
         relation_index_with_leading_field(movie_keyword_relation, "keyword")
     else {
-        return Ok(false);
+        return Ok(proof);
     };
     let Some(title_primary) = relation_index_with_leading_field(title_relation, "id") else {
-        return Ok(false);
+        return Ok(proof);
     };
     let Some(movie_companies_index) =
         relation_index_with_leading_field(movie_companies_relation, "movie")
     else {
-        return Ok(false);
+        return Ok(proof);
     };
     let Some(company_primary) = relation_index_with_leading_field(company_name_relation, "id")
     else {
-        return Ok(false);
+        return Ok(proof);
     };
 
     let keyword_id = relation_field_id(keyword_relation, "id")?;
@@ -1698,12 +1781,15 @@ fn static_keyword_movie_company_title_proves_empty(
     let company_country = relation_field_id(company_name_relation, "country_code")?;
 
     let mut saw_candidate_movie = false;
+    proof.atoms_checked += 5;
     for keyword_entry in keyword_index.entries_with_prefix(keyword_literal.as_bytes()) {
+        proof.rows_scanned += 1;
         let Some(keyword_id_bytes) = keyword_index.component_bytes(keyword_entry, keyword_id)
         else {
             continue;
         };
         for movie_keyword_entry in movie_keyword_index.entries_with_prefix(keyword_id_bytes) {
+            proof.rows_scanned += 1;
             let Some(movie_bytes) =
                 movie_keyword_index.component_bytes(movie_keyword_entry, mk_movie)
             else {
@@ -1720,6 +1806,7 @@ fn static_keyword_movie_company_title_proves_empty(
                 continue;
             }
             for company_entry in movie_companies_index.entries_with_prefix(movie_bytes) {
+                proof.rows_scanned += 1;
                 let Some(company_bytes) =
                     movie_companies_index.component_bytes(company_entry, mc_company)
                 else {
@@ -1727,19 +1814,21 @@ fn static_keyword_movie_company_title_proves_empty(
                 };
                 if company_primary
                     .entries_with_prefix(company_bytes)
+                    .inspect(|_| proof.rows_scanned += 1)
                     .any(|entry| {
                         company_primary
                             .component_bytes(entry, company_country)
                             .is_some_and(|bytes| bytes == country_literal.as_bytes())
                     })
                 {
-                    return Ok(false);
+                    return Ok(proof);
                 }
             }
             saw_candidate_movie = true;
         }
     }
-    Ok(saw_candidate_movie)
+    proof.empty = saw_candidate_movie;
+    Ok(proof)
 }
 
 fn title_movie_passes_static_predicates(

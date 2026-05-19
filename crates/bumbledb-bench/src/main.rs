@@ -1315,7 +1315,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"direct_kernel_probes\":{},\"direct_kernel_rows\":{},\"direct_kernel_predicates\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"direct_kernel_probes\":{},\"direct_kernel_rows\":{},\"direct_kernel_predicates\":{},\"static_empty_atoms_checked\":{},\"static_empty_rows_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.counters.cursor_seeks,
             result.counters.rows_scanned,
             result.dictionary_reverse_lookups,
@@ -1323,6 +1323,10 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.direct_kernel_probes,
             result.direct_kernel_rows,
             result.direct_kernel_predicates,
+            result.counters.static_empty_atoms_checked,
+            result.counters.static_empty_rows_scanned,
+            result.counters.static_empty_cache_hits,
+            result.counters.static_empty_cache_misses,
             result.gate.passed,
         );
         for (note_index, note) in result.gate.notes.iter().enumerate() {
