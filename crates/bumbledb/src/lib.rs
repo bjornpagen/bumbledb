@@ -97,22 +97,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn facade_opens_and_reopens_database() {
-        let dir = tempfile::tempdir().unwrap();
+    fn facade_opens_and_reopens_database() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
 
-        let db = Database::open(dir.path()).unwrap();
+        let db = Database::open(dir.path())?;
         assert_eq!(
-            db.storage_format_version().unwrap(),
+            db.storage_format_version()?,
             bumbledb_lmdb::STORAGE_FORMAT_VERSION
         );
-        db.read(|_| Ok(())).unwrap();
-        db.write(|_| Ok(())).unwrap();
+        db.read(|_| Ok(()))?;
+        db.write(|_| Ok(()))?;
         drop(db);
 
-        let db = Database::open(dir.path()).unwrap();
+        let db = Database::open(dir.path())?;
         assert_eq!(
-            db.storage_format_version().unwrap(),
+            db.storage_format_version()?,
             bumbledb_lmdb::STORAGE_FORMAT_VERSION
         );
+        Ok(())
     }
 }

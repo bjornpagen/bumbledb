@@ -1,5 +1,6 @@
 //! Test-only storage failpoints.
 
+#[cfg(feature = "test-failpoints")]
 use std::sync::{Mutex, OnceLock};
 
 use crate::Result;
@@ -29,6 +30,7 @@ pub enum Failpoint {
 
 impl Failpoint {
     /// Stable failpoint name.
+    #[cfg(feature = "test-failpoints")]
     pub fn name(self) -> &'static str {
         match self {
             Failpoint::BeforeDictionaryPut => "before_dictionary_put",
@@ -43,24 +45,25 @@ impl Failpoint {
     }
 }
 
+#[cfg(feature = "test-failpoints")]
 static ACTIVE: OnceLock<Mutex<Option<Failpoint>>> = OnceLock::new();
 
 /// Sets the active failpoint.
-#[allow(dead_code)]
+#[cfg(feature = "test-failpoints")]
 pub fn set(failpoint: Failpoint) {
-    *active().lock().unwrap() = Some(failpoint);
+    *lock_active() = Some(failpoint);
 }
 
 /// Clears all failpoints.
-#[allow(dead_code)]
+#[cfg(feature = "test-failpoints")]
 pub fn clear() {
-    *active().lock().unwrap() = None;
+    *lock_active() = None;
 }
 
 pub(crate) fn check(failpoint: Failpoint) -> Result<()> {
     #[cfg(feature = "test-failpoints")]
     {
-        if *active().lock().unwrap() == Some(failpoint) {
+        if *lock_active() == Some(failpoint) {
             Err(TestError::InjectedFailpoint {
                 name: failpoint.name(),
             }
@@ -76,6 +79,14 @@ pub(crate) fn check(failpoint: Failpoint) -> Result<()> {
     }
 }
 
+#[cfg(feature = "test-failpoints")]
 fn active() -> &'static Mutex<Option<Failpoint>> {
     ACTIVE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(feature = "test-failpoints")]
+fn lock_active() -> std::sync::MutexGuard<'static, Option<Failpoint>> {
+    active()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }

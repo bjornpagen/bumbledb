@@ -128,34 +128,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn primitive_encodings_round_trip() {
-        assert!(!decode_bool(&encode_bool(false)).unwrap());
-        assert!(decode_bool(&encode_bool(true)).unwrap());
+    fn primitive_encodings_round_trip() -> Result<(), EncodingError> {
+        assert!(!decode_bool(&encode_bool(false))?);
+        assert!(decode_bool(&encode_bool(true))?);
 
         for value in [0, 1, u64::MAX / 2, u64::MAX] {
-            assert_eq!(decode_u64(&encode_u64(value)).unwrap(), value);
+            assert_eq!(decode_u64(&encode_u64(value))?, value);
         }
 
         for value in [i64::MIN, -1, 0, 1, i64::MAX] {
-            assert_eq!(decode_i64(&encode_i64(value)).unwrap(), value);
+            assert_eq!(decode_i64(&encode_i64(value))?, value);
             let timestamp = TimestampMicros(value);
-            assert_eq!(
-                decode_timestamp(&encode_timestamp(timestamp)).unwrap(),
-                timestamp
-            );
+            assert_eq!(decode_timestamp(&encode_timestamp(timestamp))?, timestamp);
         }
 
         for value in [i128::MIN, -1, 0, 1, i128::MAX] {
-            assert_eq!(decode_i128(&encode_i128(value)).unwrap(), value);
+            assert_eq!(decode_i128(&encode_i128(value))?, value);
             let decimal = DecimalRaw(value);
-            assert_eq!(decode_decimal(&encode_decimal(decimal)).unwrap(), decimal);
+            assert_eq!(decode_decimal(&encode_decimal(decimal))?, decimal);
         }
 
         let uuid = UuidBytes([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-        assert_eq!(decode_uuid(&encode_uuid(uuid)).unwrap(), uuid);
+        assert_eq!(decode_uuid(&encode_uuid(uuid))?, uuid);
 
         let intern = InternId(42);
-        assert_eq!(decode_intern_id(&encode_intern_id(intern)).unwrap(), intern);
+        assert_eq!(decode_intern_id(&encode_intern_id(intern))?, intern);
+        Ok(())
     }
 
     #[test]

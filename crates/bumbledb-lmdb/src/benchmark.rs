@@ -338,10 +338,11 @@ mod tests {
     use crate::{Environment, InputBindings, Result, StorageSchema};
 
     #[test]
-    fn benchmark_schema_loads_and_sqlite_comparison_runs() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
-        let schema = StorageSchema::new(benchmark_schema(), env.max_key_size()).unwrap();
+    fn benchmark_schema_loads_and_sqlite_comparison_runs()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(benchmark_schema(), env.max_key_size())?;
         let rows = benchmark_rows(4);
 
         env.write(|txn| {
@@ -349,26 +350,23 @@ mod tests {
                 txn.insert(&schema, row.clone())?;
             }
             Ok::<(), crate::Error>(())
-        })
-        .unwrap();
+        })?;
 
         let query = &benchmark_queries()[0];
-        let typed = parse_and_typecheck(schema.descriptor(), query.datalog).unwrap();
-        let bumbledb = env
-            .read(|txn| {
-                txn.execute_query(
-                    &schema,
-                    &typed,
-                    &InputBindings::from_values([
-                        ("holder", Value::Ref(1)),
-                        ("start", Value::Timestamp(TimestampMicros(0))),
-                        ("end", Value::Timestamp(TimestampMicros(1000))),
-                    ]),
-                )
-            })
-            .unwrap();
+        let typed = parse_and_typecheck(schema.descriptor(), query.datalog)?;
+        let bumbledb = env.read(|txn| {
+            txn.execute_query(
+                &schema,
+                &typed,
+                &InputBindings::from_values([
+                    ("holder", Value::Ref(1)),
+                    ("start", Value::Timestamp(TimestampMicros(0))),
+                    ("end", Value::Timestamp(TimestampMicros(1000))),
+                ]),
+            )
+        })?;
 
-        let sqlite_rows = run_sqlite_query(&rows, query.sqlite, 1, 0, 1000).unwrap();
+        let sqlite_rows = run_sqlite_query(&rows, query.sqlite, 1, 0, 1000)?;
         let comparison = BenchmarkComparison {
             query: query.name.to_owned(),
             bumbledb_rows: bumbledb.rows.len(),
@@ -380,6 +378,7 @@ mod tests {
         assert!(comparison.bumbledb_rows > 0);
         assert!(comparison.explain.contains("rows_scanned"));
         assert!(comparison.explain.contains("by_at") || comparison.explain.contains("by_holder"));
+        Ok(())
     }
 
     fn run_sqlite_query(
@@ -406,14 +405,14 @@ mod tests {
                 "Account" => {
                     conn.execute(
                         "INSERT INTO account (id, holder, currency) VALUES (?1, ?2, ?3)",
-                        params![id(row, "id"), rf(row, "holder"), symbol(row, "currency")],
+                        params![id(row, "id")?, rf(row, "holder")?, symbol(row, "currency")?],
                     )
                     .map_err(sqlite_error)?;
                 }
                 "Posting" => {
                     conn.execute(
                         "INSERT INTO posting (id, entry, account, instrument, amount, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                        params![id(row, "id"), rf(row, "entry"), rf(row, "account"), rf(row, "instrument"), decimal(row, "amount"), ts(row, "at")],
+                        params![id(row, "id")?, rf(row, "entry")?, rf(row, "account")?, rf(row, "instrument")?, decimal(row, "amount")?, ts(row, "at")?],
                     )
                     .map_err(sqlite_error)?;
                 }
@@ -433,38 +432,47 @@ mod tests {
         crate::Error::internal(format!("sqlite benchmark error: {error}"))
     }
 
-    fn id(row: &Row, field: &str) -> i64 {
-        match row.value(field).unwrap() {
-            Value::Id(value) => *value as i64,
-            other => panic!("expected id, got {other:?}"),
+    fn id(row: &Row, field: &str) -> Result<i64> {
+        match required_value(row, field)? {
+            Value::Id(value) => Ok(*value as i64),
+            other => Err(unexpected_value("id", other)),
         }
     }
 
-    fn rf(row: &Row, field: &str) -> i64 {
-        match row.value(field).unwrap() {
-            Value::Ref(value) => *value as i64,
-            other => panic!("expected ref, got {other:?}"),
+    fn rf(row: &Row, field: &str) -> Result<i64> {
+        match required_value(row, field)? {
+            Value::Ref(value) => Ok(*value as i64),
+            other => Err(unexpected_value("ref", other)),
         }
     }
 
-    fn symbol(row: &Row, field: &str) -> i64 {
-        match row.value(field).unwrap() {
-            Value::Symbol(value) => *value as i64,
-            other => panic!("expected symbol, got {other:?}"),
+    fn symbol(row: &Row, field: &str) -> Result<i64> {
+        match required_value(row, field)? {
+            Value::Symbol(value) => Ok(*value as i64),
+            other => Err(unexpected_value("symbol", other)),
         }
     }
 
-    fn decimal(row: &Row, field: &str) -> i64 {
-        match row.value(field).unwrap() {
-            Value::Decimal(DecimalRaw(value)) => *value as i64,
-            other => panic!("expected decimal, got {other:?}"),
+    fn decimal(row: &Row, field: &str) -> Result<i64> {
+        match required_value(row, field)? {
+            Value::Decimal(DecimalRaw(value)) => Ok(*value as i64),
+            other => Err(unexpected_value("decimal", other)),
         }
     }
 
-    fn ts(row: &Row, field: &str) -> i64 {
-        match row.value(field).unwrap() {
-            Value::Timestamp(TimestampMicros(value)) => *value,
-            other => panic!("expected timestamp, got {other:?}"),
+    fn ts(row: &Row, field: &str) -> Result<i64> {
+        match required_value(row, field)? {
+            Value::Timestamp(TimestampMicros(value)) => Ok(*value),
+            other => Err(unexpected_value("timestamp", other)),
         }
+    }
+
+    fn required_value<'a>(row: &'a Row, field: &str) -> Result<&'a Value> {
+        row.value(field)
+            .ok_or_else(|| crate::Error::internal(format!("missing field {field}")))
+    }
+
+    fn unexpected_value(expected: &str, actual: &Value) -> crate::Error {
+        crate::Error::internal(format!("expected {expected}, got {actual:?}"))
     }
 }

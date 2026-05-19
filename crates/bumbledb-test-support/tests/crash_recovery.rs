@@ -8,38 +8,40 @@ use bumbledb_test_support::schemas::ledger_schema;
 #[test]
 #[ignore]
 fn subprocess_crash_before_commit_leaves_no_rows() {
-    crash_parent("subprocess_crash_before_commit_leaves_no_rows", "precommit");
+    assert!(crash_parent("subprocess_crash_before_commit_leaves_no_rows", "precommit").is_ok());
 }
 
 #[test]
 #[ignore]
 fn subprocess_crash_after_commit_leaves_committed_rows() {
-    crash_parent(
-        "subprocess_crash_after_commit_leaves_committed_rows",
-        "postcommit",
+    assert!(
+        crash_parent(
+            "subprocess_crash_after_commit_leaves_committed_rows",
+            "postcommit",
+        )
+        .is_ok()
     );
 }
 
-fn crash_parent(test_name: &str, mode: &str) {
+fn crash_parent(test_name: &str, mode: &str) -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var("BUMBLEDB_CRASH_CHILD").ok().as_deref() == Some(mode) {
         crash_child(mode);
     }
 
-    let dir = tempfile::tempdir().unwrap();
-    let status = Command::new(std::env::current_exe().unwrap())
+    let dir = tempfile::tempdir()?;
+    let status = Command::new(std::env::current_exe()?)
         .arg("--ignored")
         .arg("--exact")
         .arg(test_name)
         .env("BUMBLEDB_CRASH_CHILD", mode)
         .env("BUMBLEDB_CRASH_PATH", dir.path())
-        .status()
-        .unwrap();
+        .status()?;
     assert!(!status.success());
 
-    let env = Environment::open(dir.path()).unwrap();
-    let schema = StorageSchema::new(ledger_schema(), env.max_key_size()).unwrap();
-    assert_invariants(&env, &schema).unwrap();
-    let diagnostics = env.storage_diagnostics(&schema).unwrap();
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(ledger_schema(), env.max_key_size())?;
+    assert_invariants(&env, &schema)?;
+    let diagnostics = env.storage_diagnostics(&schema)?;
     if mode == "precommit" {
         assert!(
             diagnostics
@@ -55,25 +57,35 @@ fn crash_parent(test_name: &str, mode: &str) {
                 .any(|relation| relation.relation == "Holder" && relation.row_count == 1)
         );
     }
+    Ok(())
 }
 
 fn crash_child(mode: &str) -> ! {
-    let path = std::env::var("BUMBLEDB_CRASH_PATH").unwrap();
-    let env = Environment::open(path).unwrap();
-    let schema = StorageSchema::new(ledger_schema(), env.max_key_size()).unwrap();
+    let Ok(path) = std::env::var("BUMBLEDB_CRASH_PATH") else {
+        std::process::abort();
+    };
+    let Ok(env) = Environment::open(path) else {
+        std::process::abort();
+    };
+    let Ok(schema) = StorageSchema::new(ledger_schema(), env.max_key_size()) else {
+        std::process::abort();
+    };
     if mode == "precommit" {
-        env.write(|txn| -> bumbledb_lmdb::Result<()> {
+        let _ = env.write(|txn| -> bumbledb_lmdb::Result<()> {
             txn.insert(&schema, holder(1, "crash"))?;
             std::process::abort();
-        })
-        .unwrap();
+        });
+        std::process::abort();
     } else {
-        env.write(|txn| {
-            txn.insert(&schema, holder(1, "crash"))?;
-            Ok::<(), bumbledb_lmdb::Error>(())
-        })
-        .unwrap();
+        if env
+            .write(|txn| {
+                txn.insert(&schema, holder(1, "crash"))?;
+                Ok::<(), bumbledb_lmdb::Error>(())
+            })
+            .is_err()
+        {
+            std::process::abort();
+        }
         std::process::abort();
     }
-    unreachable!()
 }

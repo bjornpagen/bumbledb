@@ -4,8 +4,10 @@ The v0 engine is protected by layered correctness, differential, concurrency, fa
 
 **Fast Checks**
 - `cargo fmt --all --check`
-- `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace`
+- `cargo check --workspace --all-targets --all-features`
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- `cargo test --workspace --all-features`
+- `cargo check --manifest-path fuzz/Cargo.toml`
 
 **Expensive Checks**
 - `cargo test --workspace --release`

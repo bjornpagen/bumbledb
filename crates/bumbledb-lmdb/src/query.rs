@@ -1469,7 +1469,7 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
         }
 
         let mut leapfrog = LeapfrogState::new(participants.clone());
-        leapfrog.init(&mut self.runtime.iters, &mut self.plan.summary.counters);
+        leapfrog.init(&mut self.runtime.iters, &mut self.plan.summary.counters)?;
         while !leapfrog.at_end {
             let value = leapfrog.key(&self.runtime.iters, &mut self.plan.summary.counters)?;
             self.plan.summary.counters.variable_candidates += 1;
@@ -1496,7 +1496,7 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
                 }
                 self.binding.unbind(variable);
             }
-            leapfrog.next(&mut self.runtime.iters, &mut self.plan.summary.counters);
+            leapfrog.next(&mut self.runtime.iters, &mut self.plan.summary.counters)?;
         }
 
         for atom_id in participants.iter().rev() {
@@ -1531,18 +1531,24 @@ impl LeapfrogState {
         }
     }
 
-    fn init(&mut self, iters: &mut [crate::SortedTrieIter<'_>], counters: &mut PlanCounters) {
+    fn init(
+        &mut self,
+        iters: &mut [crate::SortedTrieIter<'_>],
+        counters: &mut PlanCounters,
+    ) -> Result<()> {
         if self.iter_ids.iter().any(|id| iters[*id].at_end()) {
             self.at_end = true;
-            return;
+            return Ok(());
         }
-        self.iter_ids.sort_by(|left, right| {
-            let left = key_owned(&iters[*left], counters);
-            let right = key_owned(&iters[*right], counters);
-            left.cmp(&right)
-        });
+        let mut keys = self
+            .iter_ids
+            .iter()
+            .map(|id| key_owned(&iters[*id], counters).map(|key| (*id, key)))
+            .collect::<Result<Vec<_>>>()?;
+        keys.sort_by(|left, right| left.1.cmp(&right.1));
+        self.iter_ids = keys.into_iter().map(|(id, _)| id).collect();
         self.p = 0;
-        self.search(iters, counters);
+        self.search(iters, counters)
     }
 
     fn key(
@@ -1553,56 +1559,70 @@ impl LeapfrogState {
         self.iter_ids
             .first()
             .map(|id| key_owned(&iters[*id], counters))
+            .transpose()?
             .ok_or_else(|| Error::internal("leapfrog join has no iterators"))
     }
 
-    fn next(&mut self, iters: &mut [crate::SortedTrieIter<'_>], counters: &mut PlanCounters) {
+    fn next(
+        &mut self,
+        iters: &mut [crate::SortedTrieIter<'_>],
+        counters: &mut PlanCounters,
+    ) -> Result<()> {
         if self.at_end {
-            return;
+            return Ok(());
         }
         let id = self.iter_ids[self.p];
         iters[id].next();
         counters.trie_next += 1;
         if iters[id].at_end() {
             self.at_end = true;
-            return;
+            return Ok(());
         }
         self.p = (self.p + 1) % self.iter_ids.len();
-        self.search(iters, counters);
+        self.search(iters, counters)
     }
 
-    fn search(&mut self, iters: &mut [crate::SortedTrieIter<'_>], counters: &mut PlanCounters) {
+    fn search(
+        &mut self,
+        iters: &mut [crate::SortedTrieIter<'_>],
+        counters: &mut PlanCounters,
+    ) -> Result<()> {
         if self.iter_ids.is_empty() || self.at_end {
-            return;
+            return Ok(());
         }
         if self.iter_ids.len() == 1 {
-            return;
+            return Ok(());
         }
         let mut max = key_owned(
             &iters[self.iter_ids[(self.p + self.iter_ids.len() - 1) % self.iter_ids.len()]],
             counters,
-        );
+        )?;
         loop {
             let id = self.iter_ids[self.p];
-            let current = key_owned(&iters[id], counters);
+            let current = key_owned(&iters[id], counters)?;
             if current == max {
-                return;
+                return Ok(());
             }
             iters[id].seek(max.as_ref());
             counters.trie_seek += 1;
             if iters[id].at_end() {
                 self.at_end = true;
-                return;
+                return Ok(());
             }
-            max = key_owned(&iters[id], counters);
+            max = key_owned(&iters[id], counters)?;
             self.p = (self.p + 1) % self.iter_ids.len();
         }
     }
 }
 
-fn key_owned(iter: &crate::SortedTrieIter<'_>, counters: &mut PlanCounters) -> EncodedOwned {
+fn key_owned(
+    iter: &crate::SortedTrieIter<'_>,
+    counters: &mut PlanCounters,
+) -> Result<EncodedOwned> {
     counters.trie_key_reads += 1;
-    EncodedOwned::from_ref(iter.key())
+    iter.key()
+        .map(EncodedOwned::from_ref)
+        .ok_or_else(|| Error::internal("trie key requested for exhausted iterator"))
 }
 
 fn build_lftj_atom_plans(
@@ -1952,7 +1972,6 @@ fn choose_variable_order(
     Ok((order, costs))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn estimate_variable_cost(
     schema: &StorageSchema,
     atoms: &[&NormAtom],
@@ -2441,7 +2460,10 @@ struct OptimizerCandidate {
     plan: FreeJoinPlan,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "optimizer candidate builder mirrors the full planning context"
+)]
 fn build_plan_candidate(
     name: &str,
     schema: &StorageSchema,
@@ -3293,7 +3315,13 @@ trait TupleSink {
         Self: Sized;
 }
 
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "compiled plan trait is reserved for specialization work"
+    )
+)]
 trait ExecutablePlan {
     fn execute(
         &mut self,
@@ -3305,14 +3333,20 @@ trait ExecutablePlan {
     ) -> Result<PlanCounters>;
 }
 
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "compiled plan scaffold is reserved for specialization work"
+)]
 #[derive(Clone, Debug)]
 struct InterpretedFreeJoinPlan {
     query: NormalizedQuery,
     plan: FreeJoinPlan,
 }
 
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "compiled plan enum is reserved for specialization work"
+)]
 enum CompiledPlan {
     Interpreted(Box<InterpretedFreeJoinPlan>),
     Specialized(Box<dyn ExecutablePlan + Send + Sync>),
@@ -3486,15 +3520,17 @@ impl TupleSink for AggregateSink {
             for term in &query.find {
                 match term {
                     NormFindTerm::Variable { .. } => {
-                        row.push(decode_output_value(
-                            txn,
-                            key_iter.next().unwrap(),
-                            counters,
-                        )?);
+                        let value = key_iter
+                            .next()
+                            .ok_or_else(|| Error::internal("aggregate group key is missing"))?;
+                        row.push(decode_output_value(txn, value, counters)?);
                     }
                     NormFindTerm::Aggregate { .. } => {
                         counters.materialized_output_values += 1;
-                        row.push(state_iter.next().unwrap().finish_encoded(txn, counters)?);
+                        let state = state_iter
+                            .next()
+                            .ok_or_else(|| Error::internal("aggregate state is missing"))?;
+                        row.push(state.finish_encoded(txn, counters)?);
                     }
                 }
             }
@@ -3738,24 +3774,23 @@ mod tests {
         FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
     };
 
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
     #[test]
-    fn executes_single_relation_query() {
-        let (env, schema) = seeded_db();
+    fn executes_single_relation_query() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             "find ?account where Account(id: ?account, holder: $holder)",
-        )
-        .unwrap();
+        )?;
 
-        let output = env
-            .read(|txn| {
-                txn.execute_query(
-                    &schema,
-                    &query,
-                    &InputBindings::from_values([("holder", Value::Ref(1))]),
-                )
-            })
-            .unwrap();
+        let output = env.read(|txn| {
+            txn.execute_query(
+                &schema,
+                &query,
+                &InputBindings::from_values([("holder", Value::Ref(1))]),
+            )
+        })?;
 
         assert_eq!(output.rows, vec![vec![Value::Id(1)], vec![Value::Id(2)]]);
         assert!(
@@ -3765,26 +3800,24 @@ mod tests {
                 .iter()
                 .any(|estimate| estimate.access == "Account.by_holder")
         );
+        Ok(())
     }
 
     #[test]
-    fn planner_recommends_missing_static_predicate_index() {
-        let (env, schema) = seeded_db();
+    fn planner_recommends_missing_static_predicate_index() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             "find ?account where Account(id: ?account, currency: $currency)",
-        )
-        .unwrap();
+        )?;
 
-        let output = env
-            .read(|txn| {
-                txn.execute_query(
-                    &schema,
-                    &query,
-                    &InputBindings::from_values([("currency", Value::Symbol(840))]),
-                )
-            })
-            .unwrap();
+        let output = env.read(|txn| {
+            txn.execute_query(
+                &schema,
+                &query,
+                &InputBindings::from_values([("currency", Value::Symbol(840))]),
+            )
+        })?;
 
         assert_same_rows(&output.rows, &[vec![Value::Id(1)], vec![Value::Id(3)]]);
         let expected_fields = vec!["currency".to_owned(), "id".to_owned()];
@@ -3793,35 +3826,32 @@ mod tests {
                 && missing.fields == expected_fields
                 && missing.reason.contains("StaticPredicate")
         }));
+        Ok(())
     }
 
     #[test]
-    fn optimizer_selects_equality_index_and_hash_probe_for_static_lookup() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
-        let schema = StorageSchema::new(optimizer_schema(), env.max_key_size()).unwrap();
+    fn optimizer_selects_equality_index_and_hash_probe_for_static_lookup() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(optimizer_schema(), env.max_key_size())?;
         env.write(|txn| {
             txn.insert(&schema, item_row(1, 1))?;
             txn.insert(&schema, item_row(2, 1))?;
             txn.insert(&schema, item_row(3, 2))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             "find ?item where Item(id: ?item, kind: $kind)",
-        )
-        .unwrap();
+        )?;
 
-        let output = env
-            .read(|txn| {
-                txn.execute_query(
-                    &schema,
-                    &query,
-                    &InputBindings::from_values([("kind", Value::Symbol(1))]),
-                )
-            })
-            .unwrap();
+        let output = env.read(|txn| {
+            txn.execute_query(
+                &schema,
+                &query,
+                &InputBindings::from_values([("kind", Value::Symbol(1))]),
+            )
+        })?;
 
         assert!(
             output
@@ -3845,18 +3875,18 @@ mod tests {
         assert_eq!(output.plan.counters.trie_seek, 0);
         assert_eq!(output.plan.counters.trie_key_reads, 0);
         assert_same_rows(&output.rows, &[vec![Value::Id(1)], vec![Value::Id(2)]]);
+        Ok(())
     }
 
     #[test]
-    fn hash_probe_runtime_checks_static_existence_atoms() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
-        let schema = StorageSchema::new(chain_schema(), env.max_key_size()).unwrap();
+    fn hash_probe_runtime_checks_static_existence_atoms() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
         env.write(|txn| {
             txn.insert(&schema, b_row(1, 99))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             r#"
@@ -3865,29 +3895,27 @@ mod tests {
               A(id: $a)
               B(id: ?b, a: $a)
             "#,
-        )
-        .unwrap();
+        )?;
 
-        let output = env
-            .read(|txn| {
-                txn.execute_query(
-                    &schema,
-                    &query,
-                    &InputBindings::from_values([("a", Value::U64(99))]),
-                )
-            })
-            .unwrap();
+        let output = env.read(|txn| {
+            txn.execute_query(
+                &schema,
+                &query,
+                &InputBindings::from_values([("a", Value::U64(99))]),
+            )
+        })?;
 
         assert!(output.rows.is_empty());
         assert_eq!(output.plan.counters.trie_open, 0);
         assert!(output.plan.counters.hash_probe_calls > 0);
+        Ok(())
     }
 
     #[test]
-    fn optimizer_keeps_cyclic_triangle_on_lftj() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
-        let schema = StorageSchema::new(triangle_schema(), env.max_key_size()).unwrap();
+    fn optimizer_keeps_cyclic_triangle_on_lftj() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
         env.write(|txn| {
             txn.insert(&schema, edge_ab_row(1, 10))?;
             txn.insert(&schema, edge_ac_row(1, 20))?;
@@ -3896,8 +3924,7 @@ mod tests {
             txn.insert(&schema, edge_ac_row(2, 30))?;
             txn.insert(&schema, edge_bc_row(10, 40))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             r#"
@@ -3907,12 +3934,9 @@ mod tests {
               EdgeAC(a: ?a, c: ?c)
               EdgeBC(b: ?b, c: ?c)
             "#,
-        )
-        .unwrap();
+        )?;
 
-        let output = env
-            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
-            .unwrap();
+        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
         assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
         assert!(
@@ -3931,11 +3955,12 @@ mod tests {
                 .iter()
                 .any(|candidate| candidate.name == "pure_lftj")
         );
+        Ok(())
     }
 
     #[test]
-    fn optimizer_trace_and_cost_tiebreak_are_stable() {
-        let (env, schema) = seeded_db();
+    fn optimizer_trace_and_cost_tiebreak_are_stable() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             r#"
@@ -3944,38 +3969,29 @@ mod tests {
               Account(id: ?account, holder: ?holder)
               Holder(id: ?holder, name: ?holder_name)
             "#,
-        )
-        .unwrap();
+        )?;
 
-        let first = env
-            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
-            .unwrap();
-        let second = env
-            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
-            .unwrap();
+        let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+        let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
         assert_eq!(first.plan.optimizer, second.plan.optimizer);
         assert!(first.explain().contains("candidate_plan"));
         assert!(first.explain().contains("free_join_estimates"));
         assert!(first.explain().contains("reason=stats"));
+        Ok(())
     }
 
     #[test]
-    fn planner_stats_are_cached_per_query_image() {
-        let (env, schema) = seeded_db();
+    fn planner_stats_are_cached_per_query_image() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             "find ?account where Account(id: ?account, holder: $holder)",
-        )
-        .unwrap();
+        )?;
         let inputs = InputBindings::from_values([("holder", Value::Ref(1))]);
 
-        let first = env
-            .read(|txn| txn.execute_query(&schema, &query, &inputs))
-            .unwrap();
-        let second = env
-            .read(|txn| txn.execute_query(&schema, &query, &inputs))
-            .unwrap();
+        let first = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
+        let second = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
 
         assert_eq!(first.rows, second.rows);
         assert_eq!(first.plan.planner_stats.builds, 1);
@@ -3997,23 +4013,21 @@ mod tests {
             assert_eq!(second.plan.counters.atom_temp_relation_builds, 0);
             assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
         }
+        Ok(())
     }
 
     #[test]
-    fn execute_query_uses_warmed_query_image_cache() {
-        let (env, schema) = seeded_db();
+    fn execute_query_uses_warmed_query_image_cache() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             "find ?account where Account(id: ?account, holder: $holder)",
-        )
-        .unwrap();
+        )?;
         let inputs = InputBindings::from_values([("holder", Value::Ref(1))]);
 
-        let _warm = env.query_image(&schema).unwrap();
+        let _warm = env.query_image(&schema)?;
         let before = env.query_image_cache_diagnostics();
-        let output = env
-            .read(|txn| txn.execute_query(&schema, &query, &inputs))
-            .unwrap();
+        let output = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
         let after = env.query_image_cache_diagnostics();
 
         assert_eq!(before.builds, 1);
@@ -4021,70 +4035,62 @@ mod tests {
         assert_eq!(output.plan.query_image_cache.builds, 1);
         assert!(output.plan.query_image_cache.hits > before.hits);
         assert_eq!(output.rows, vec![vec![Value::Id(1)], vec![Value::Id(2)]]);
+        Ok(())
     }
 
     #[test]
-    fn execute_query_cache_misses_after_write_commit() {
-        let (env, schema) = seeded_db();
+    fn execute_query_cache_misses_after_write_commit() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             "find ?account where Account(id: ?account, holder: ?holder)",
-        )
-        .unwrap();
+        )?;
 
-        let before = env
-            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
-            .unwrap();
+        let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
         env.write(|txn| {
             txn.insert(&schema, account_row(4, 2, 978))?;
             Ok::<_, Error>(())
-        })
-        .unwrap();
-        let after = env
-            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
-            .unwrap();
+        })?;
+        let after = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
         assert_eq!(before.plan.query_image_cache.builds, 1);
         assert_eq!(after.plan.query_image_cache.builds, 2);
         assert_eq!(after.rows.len(), before.rows.len() + 1);
+        Ok(())
     }
 
     #[test]
-    fn execute_query_cache_is_schema_fingerprint_scoped() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
-        let schema_a = StorageSchema::new(optimizer_schema(), env.max_key_size()).unwrap();
-        let schema_b = StorageSchema::new(triangle_schema(), env.max_key_size()).unwrap();
+    fn execute_query_cache_is_schema_fingerprint_scoped() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema_a = StorageSchema::new(optimizer_schema(), env.max_key_size())?;
+        let schema_b = StorageSchema::new(triangle_schema(), env.max_key_size())?;
         let item_query = parse_and_typecheck(
             schema_a.descriptor(),
             "find ?item where Item(id: ?item, kind: $kind)",
-        )
-        .unwrap();
+        )?;
         let edge_query =
-            parse_and_typecheck(schema_b.descriptor(), "find ?a where EdgeAB(a: ?a, b: ?b)")
-                .unwrap();
+            parse_and_typecheck(schema_b.descriptor(), "find ?a where EdgeAB(a: ?a, b: ?b)")?;
 
-        let item = env
-            .read(|txn| {
-                txn.execute_query(
-                    &schema_a,
-                    &item_query,
-                    &InputBindings::from_values([("kind", Value::Symbol(1))]),
-                )
-            })
-            .unwrap();
-        let edge = env
-            .read(|txn| txn.execute_query(&schema_b, &edge_query, &InputBindings::new()))
-            .unwrap();
+        let item = env.read(|txn| {
+            txn.execute_query(
+                &schema_a,
+                &item_query,
+                &InputBindings::from_values([("kind", Value::Symbol(1))]),
+            )
+        })?;
+        let edge =
+            env.read(|txn| txn.execute_query(&schema_b, &edge_query, &InputBindings::new()))?;
 
         assert_eq!(item.plan.query_image_cache.builds, 1);
         assert_eq!(edge.plan.query_image_cache.builds, 2);
         assert_eq!(edge.plan.query_image_cache.cached_images, 2);
+        Ok(())
     }
 
     #[test]
-    fn planner_stats_reuse_shared_relations_across_queries() {
-        let (env, schema) = seeded_db();
+    fn planner_stats_reuse_shared_relations_across_queries() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let first_query = parse_and_typecheck(
             schema.descriptor(),
             r#"
@@ -4093,8 +4099,7 @@ mod tests {
               Posting(id: ?posting, account: ?account)
               Account(id: ?account, holder: $holder)
             "#,
-        )
-        .unwrap();
+        )?;
         let second_query = parse_and_typecheck(
             schema.descriptor(),
             r#"
@@ -4103,55 +4108,46 @@ mod tests {
               Posting(id: ?posting, account: ?account, at: ?t)
               ?t >= $start
             "#,
-        )
-        .unwrap();
+        )?;
 
         let inputs = InputBindings::from_values([
             ("holder", Value::Ref(1)),
             ("start", Value::Timestamp(TimestampMicros(0))),
         ]);
 
-        let first = env
-            .read(|txn| txn.execute_query(&schema, &first_query, &inputs))
-            .unwrap();
-        let second = env
-            .read(|txn| txn.execute_query(&schema, &second_query, &inputs))
-            .unwrap();
+        let first = env.read(|txn| txn.execute_query(&schema, &first_query, &inputs))?;
+        let second = env.read(|txn| txn.execute_query(&schema, &second_query, &inputs))?;
 
         assert_eq!(first.plan.planner_stats.builds, 2);
         assert_eq!(second.plan.planner_stats.builds, 2);
         assert!(second.plan.planner_stats.hits >= 1);
+        Ok(())
     }
 
     #[test]
-    fn planner_stats_cache_is_snapshot_scoped() {
-        let (env, schema) = seeded_db();
+    fn planner_stats_cache_is_snapshot_scoped() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             "find ?account where Account(id: ?account, holder: ?holder)",
-        )
-        .unwrap();
+        )?;
 
-        let before = env
-            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
-            .unwrap();
+        let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
         env.write(|txn| {
             txn.insert(&schema, account_row(4, 2, 978))?;
             Ok::<_, Error>(())
-        })
-        .unwrap();
-        let after = env
-            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
-            .unwrap();
+        })?;
+        let after = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
         assert_eq!(before.plan.planner_stats.builds, 1);
         assert_eq!(after.plan.planner_stats.builds, 1);
         assert_eq!(after.rows.len(), before.rows.len() + 1);
+        Ok(())
     }
 
     #[test]
-    fn normalized_query_preserves_typed_query_shape() {
-        let (env, schema) = seeded_db();
+    fn normalized_query_preserves_typed_query_shape() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             r#"
@@ -4162,12 +4158,9 @@ mod tests {
               ?t >= $start
               ?t < $end
             "#,
-        )
-        .unwrap();
+        )?;
 
-        let normalized = env
-            .read(|txn| normalize_query(txn, &schema, &query))
-            .unwrap();
+        let normalized = env.read(|txn| normalize_query(txn, &schema, &query))?;
 
         assert_eq!(normalized.vars.len(), query.variables.len());
         assert_eq!(normalized.inputs.len(), query.inputs.len());
@@ -4178,32 +4171,30 @@ mod tests {
             normalized.atoms[0].fields[0].term,
             NormTerm::Var(_)
         ));
+        Ok(())
     }
 
     #[test]
-    fn repeated_variable_atom_matches_equal_encoded_fields() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
-        let schema = StorageSchema::new(triangle_schema(), env.max_key_size()).unwrap();
+    fn repeated_variable_atom_matches_equal_encoded_fields() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
         env.write(|txn| {
             txn.insert(&schema, edge_ab_row(1, 1))?;
             txn.insert(&schema, edge_ab_row(1, 2))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
-        let query =
-            parse_and_typecheck(schema.descriptor(), "find ?a where EdgeAB(a: ?a, b: ?a)").unwrap();
+        })?;
+        let query = parse_and_typecheck(schema.descriptor(), "find ?a where EdgeAB(a: ?a, b: ?a)")?;
 
-        let output = env
-            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
-            .unwrap();
+        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
         assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+        Ok(())
     }
 
     #[test]
-    fn predicate_earliest_depth_assignment_is_deterministic() {
-        let (env, schema) = seeded_db();
+    fn predicate_earliest_depth_assignment_is_deterministic() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             r#"
@@ -4213,34 +4204,32 @@ mod tests {
               Account(id: ?account, holder: $holder)
               ?t >= $start
             "#,
-        )
-        .unwrap();
+        )?;
 
-        let depths = env
-            .read(|txn| {
-                let mut normalized = normalize_query(txn, &schema, &query)?;
-                let image = QueryImageBuilder::new(txn, &schema).build()?;
-                let plan = plan_query(
-                    &schema,
-                    &mut normalized,
-                    &image,
-                    QueryImageCacheDiagnostics::default(),
-                )?;
-                let t_depth = plan
-                    .summary
-                    .variable_order
-                    .iter()
-                    .position(|name| name == "t")
-                    .unwrap();
-                Ok::<_, Error>((normalized.predicates[0].earliest_depth, t_depth))
-            })
-            .unwrap();
+        let depths = env.read(|txn| {
+            let mut normalized = normalize_query(txn, &schema, &query)?;
+            let image = QueryImageBuilder::new(txn, &schema).build()?;
+            let plan = plan_query(
+                &schema,
+                &mut normalized,
+                &image,
+                QueryImageCacheDiagnostics::default(),
+            )?;
+            let t_depth = plan
+                .summary
+                .variable_order
+                .iter()
+                .position(|name| name == "t")
+                .ok_or_else(|| Error::internal("missing t variable in plan"))?;
+            Ok::<_, Error>((normalized.predicates[0].earliest_depth, t_depth))
+        })?;
 
         assert_eq!(depths.0, Some(depths.1));
+        Ok(())
     }
 
     #[test]
-    fn specialized_mock_plan_matches_interpreted_sink_output() {
+    fn specialized_mock_plan_matches_interpreted_sink_output() -> TestResult {
         struct MockSpecializedPlan {
             bindings: Vec<EncodedBinding>,
         }
@@ -4263,52 +4252,47 @@ mod tests {
             }
         }
 
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
-        let schema = StorageSchema::new(optimizer_schema(), env.max_key_size()).unwrap();
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(optimizer_schema(), env.max_key_size())?;
         env.write(|txn| {
             txn.insert(&schema, item_row(1, 1))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
         let typed = parse_and_typecheck(
             schema.descriptor(),
             "find ?item where Item(id: ?item, kind: $kind)",
-        )
-        .unwrap();
+        )?;
         let inputs = InputBindings::from_values([("kind", Value::Symbol(1))]);
         let interpreted = env
-            .read(|txn| txn.execute_query(&schema, &typed, &inputs))
-            .unwrap()
+            .read(|txn| txn.execute_query(&schema, &typed, &inputs))?
             .rows;
 
-        let specialized = env
-            .read(|txn| {
-                let normalized = normalize_query(txn, &schema, &typed)?;
-                let encoded_inputs = encode_inputs(txn, &normalized, &inputs)?;
-                let image = QueryImageBuilder::new(txn, &schema).build()?;
-                let mut binding = EncodedBinding::new(normalized.vars.len());
-                let encoded =
-                    txn.encode_query_value(&normalized.vars[0].value_type, &Value::Id(1))?;
-                assert!(binding.bind(
-                    0,
-                    EncodedValue::new(normalized.vars[0].value_type.clone(), encoded),
-                ));
-                let mut plan = MockSpecializedPlan {
-                    bindings: vec![binding],
-                };
-                let mut sink = OutputSink::new(&normalized.output);
-                let _ = plan.execute(txn, &normalized, &image, &encoded_inputs, &mut sink)?;
-                sink.finish(txn, &normalized, &mut PlanCounters::default())
-            })
-            .unwrap();
+        let specialized = env.read(|txn| {
+            let normalized = normalize_query(txn, &schema, &typed)?;
+            let encoded_inputs = encode_inputs(txn, &normalized, &inputs)?;
+            let image = QueryImageBuilder::new(txn, &schema).build()?;
+            let mut binding = EncodedBinding::new(normalized.vars.len());
+            let encoded = txn.encode_query_value(&normalized.vars[0].value_type, &Value::Id(1))?;
+            assert!(binding.bind(
+                0,
+                EncodedValue::new(normalized.vars[0].value_type.clone(), encoded),
+            ));
+            let mut plan = MockSpecializedPlan {
+                bindings: vec![binding],
+            };
+            let mut sink = OutputSink::new(&normalized.output);
+            let _ = plan.execute(txn, &normalized, &image, &encoded_inputs, &mut sink)?;
+            sink.finish(txn, &normalized, &mut PlanCounters::default())
+        })?;
 
         assert_same_rows(&specialized, &interpreted);
+        Ok(())
     }
 
     #[test]
-    fn executes_two_relation_join() {
-        let (env, schema) = seeded_db();
+    fn executes_two_relation_join() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             r#"
@@ -4317,12 +4301,9 @@ mod tests {
               Account(id: ?account, holder: ?holder)
               Holder(id: ?holder, name: ?holder_name)
             "#,
-        )
-        .unwrap();
+        )?;
 
-        let output = env
-            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
-            .unwrap();
+        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
         assert!(output.plan.uses_indexed_multiway_join);
         assert_same_rows(
             &output.rows,
@@ -4332,11 +4313,12 @@ mod tests {
                 vec![Value::Id(3), Value::String("Bob".to_owned())],
             ],
         );
+        Ok(())
     }
 
     #[test]
-    fn executes_many_relation_join_and_range_filter() {
-        let (env, schema) = seeded_db();
+    fn executes_many_relation_join_and_range_filter() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             r#"
@@ -4348,21 +4330,18 @@ mod tests {
               ?t >= $start
               ?t < $end
             "#,
-        )
-        .unwrap();
+        )?;
 
-        let output = env
-            .read(|txn| {
-                txn.execute_query(
-                    &schema,
-                    &query,
-                    &InputBindings::from_values([
-                        ("start", Value::Timestamp(TimestampMicros(15))),
-                        ("end", Value::Timestamp(TimestampMicros(35))),
-                    ]),
-                )
-            })
-            .unwrap();
+        let output = env.read(|txn| {
+            txn.execute_query(
+                &schema,
+                &query,
+                &InputBindings::from_values([
+                    ("start", Value::Timestamp(TimestampMicros(15))),
+                    ("end", Value::Timestamp(TimestampMicros(35))),
+                ]),
+            )
+        })?;
 
         assert!(
             output
@@ -4386,37 +4365,33 @@ mod tests {
                 ],
             ],
         );
+        Ok(())
     }
 
     #[test]
-    fn projection_uses_set_semantics() {
-        let (env, schema) = seeded_db();
+    fn projection_uses_set_semantics() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             "find ?holder where Account(id: ?account, holder: ?holder)",
-        )
-        .unwrap();
+        )?;
 
-        let output = env
-            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
-            .unwrap();
+        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
         assert_eq!(output.rows, vec![vec![Value::Ref(1)], vec![Value::Ref(2)]]);
         assert_eq!(output.plan.counters.bindings_yielded, 3);
         assert_eq!(output.plan.counters.materialized_output_values, 2);
+        Ok(())
     }
 
     #[test]
-    fn count_sink_avoids_decoding_counted_variable() {
-        let (env, schema) = seeded_db();
+    fn count_sink_avoids_decoding_counted_variable() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             "find count(?posting) where Posting(id: ?posting)",
-        )
-        .unwrap();
+        )?;
 
-        let output = env
-            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
-            .unwrap();
+        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
         assert_eq!(output.rows, vec![vec![Value::U64(3)]]);
         assert_eq!(output.plan.counters.bindings_yielded, 3);
@@ -4426,11 +4401,12 @@ mod tests {
         assert!(
             output.plan.counters.materialized_output_values < output.plan.counters.bindings_yielded
         );
+        Ok(())
     }
 
     #[test]
-    fn sum_sink_decodes_only_aggregate_operand_values() {
-        let (env, schema) = seeded_db();
+    fn sum_sink_decodes_only_aggregate_operand_values() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             r#"
@@ -4438,12 +4414,9 @@ mod tests {
             where
               Posting(id: ?posting, amount: ?amount)
             "#,
-        )
-        .unwrap();
+        )?;
 
-        let output = env
-            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
-            .unwrap();
+        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
         assert_eq!(
             output.rows,
@@ -4452,11 +4425,12 @@ mod tests {
         assert_eq!(output.plan.counters.bindings_yielded, 3);
         assert_eq!(output.plan.counters.decoded_values, 3);
         assert_eq!(output.plan.counters.materialized_output_values, 2);
+        Ok(())
     }
 
     #[test]
-    fn grouped_count_decodes_dictionary_keys_only_at_final_output() {
-        let (env, schema) = seeded_db();
+    fn grouped_count_decodes_dictionary_keys_only_at_final_output() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             r#"
@@ -4465,12 +4439,9 @@ mod tests {
               Account(id: ?account, holder: ?holder)
               Holder(id: ?holder, name: ?holder_name)
             "#,
-        )
-        .unwrap();
+        )?;
 
-        let output = env
-            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
-            .unwrap();
+        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
         assert_same_rows(
             &output.rows,
@@ -4483,10 +4454,11 @@ mod tests {
         assert_eq!(output.plan.counters.decoded_values, 2);
         assert_eq!(output.plan.counters.dictionary_reverse_lookups, 2);
         assert_eq!(output.plan.counters.materialized_output_values, 4);
+        Ok(())
     }
 
     #[test]
-    fn aggregate_count_range_uses_multiplicity() {
+    fn aggregate_count_range_uses_multiplicity() -> TestResult {
         let mut sink = AggregateSink::new(&AggregatePlan {
             group_vars: Vec::new(),
             aggregates: vec![AggregateTerm {
@@ -4497,15 +4469,19 @@ mod tests {
         });
         let binding = EncodedBinding::new(0);
 
-        sink.emit_count_range(&binding, 7).unwrap();
+        sink.emit_count_range(&binding, 7)?;
 
-        let states = sink.groups.get(&Vec::new()).unwrap();
+        let states = sink
+            .groups
+            .get(&Vec::new())
+            .ok_or_else(|| Error::internal("missing aggregate state group"))?;
         assert!(matches!(states.as_slice(), [AggregateState::Count(7)]));
+        Ok(())
     }
 
     #[test]
-    fn aggregation_groups_and_sums_decimal_values() {
-        let (env, schema) = seeded_db();
+    fn aggregation_groups_and_sums_decimal_values() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             r#"
@@ -4513,12 +4489,9 @@ mod tests {
             where
               Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
             "#,
-        )
-        .unwrap();
+        )?;
 
-        let output = env
-            .read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))
-            .unwrap();
+        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
         assert_same_rows(
             &output.rows,
@@ -4539,71 +4512,66 @@ mod tests {
                 ],
             ],
         );
+        Ok(())
     }
 
     #[test]
-    fn detects_integer_and_decimal_aggregation_overflow() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
-        let schema = StorageSchema::new(overflow_schema(), env.max_key_size()).unwrap();
+    fn detects_integer_and_decimal_aggregation_overflow() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(overflow_schema(), env.max_key_size())?;
         env.write(|txn| {
             txn.insert(&schema, number_row(1, i64::MAX, i128::MAX))?;
             txn.insert(&schema, number_row(2, 1, 1))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
         let int_query =
-            parse_and_typecheck(schema.descriptor(), "find sum(?n) where Number(n: ?n)").unwrap();
-        let int_error = env
-            .read(|txn| txn.execute_query(&schema, &int_query, &InputBindings::new()))
-            .unwrap_err();
+            parse_and_typecheck(schema.descriptor(), "find sum(?n) where Number(n: ?n)")?;
         assert!(matches!(
-            int_error,
-            Error::Query(QueryError::Aggregate(
+            env.read(|txn| txn.execute_query(&schema, &int_query, &InputBindings::new())),
+            Err(Error::Query(QueryError::Aggregate(
                 AggregateError::IntegerOverflow { .. }
-            ))
+            )))
         ));
 
         let decimal_query =
-            parse_and_typecheck(schema.descriptor(), "find sum(?d) where Number(d: ?d)").unwrap();
-        let decimal_error = env
-            .read(|txn| txn.execute_query(&schema, &decimal_query, &InputBindings::new()))
-            .unwrap_err();
+            parse_and_typecheck(schema.descriptor(), "find sum(?d) where Number(d: ?d)")?;
         assert!(matches!(
-            decimal_error,
-            Error::Query(QueryError::Aggregate(
+            env.read(|txn| txn.execute_query(&schema, &decimal_query, &InputBindings::new())),
+            Err(Error::Query(QueryError::Aggregate(
                 AggregateError::DecimalOverflow { .. }
-            ))
+            )))
         ));
+        Ok(())
     }
 
     #[test]
-    fn input_type_mismatch_is_rejected_at_execution() {
-        let (env, schema) = seeded_db();
+    fn input_type_mismatch_is_rejected_at_execution() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             "find ?account where Account(id: ?account, holder: $holder)",
-        )
-        .unwrap();
-        let error = env
-            .read(|txn| {
-                txn.execute_query(
-                    &schema,
-                    &query,
-                    &InputBindings::from_values([("holder", Value::String("bad".to_owned()))]),
-                )
-            })
-            .unwrap_err();
+        )?;
+        let result = env.read(|txn| {
+            txn.execute_query(
+                &schema,
+                &query,
+                &InputBindings::from_values([("holder", Value::String("bad".to_owned()))]),
+            )
+        });
         assert!(matches!(
-            error,
-            Error::Query(QueryError::Execute(ExecuteError::InputTypeMismatch { .. }))
+            result,
+            Err(Error::Query(QueryError::Execute(
+                ExecuteError::InputTypeMismatch { .. }
+            )))
         ));
+        Ok(())
     }
 
     #[test]
-    fn explain_and_storage_diagnostics_are_available() {
-        let (env, schema) = seeded_db();
+    fn explain_and_storage_diagnostics_are_available() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
             r#"
@@ -4614,22 +4582,19 @@ mod tests {
               ?t >= $start
               ?t < $end
             "#,
-        )
-        .unwrap();
+        )?;
 
-        let output = env
-            .read(|txn| {
-                txn.execute_query(
-                    &schema,
-                    &query,
-                    &InputBindings::from_values([
-                        ("holder", Value::Ref(1)),
-                        ("start", Value::Timestamp(TimestampMicros(0))),
-                        ("end", Value::Timestamp(TimestampMicros(100))),
-                    ]),
-                )
-            })
-            .unwrap();
+        let output = env.read(|txn| {
+            txn.execute_query(
+                &schema,
+                &query,
+                &InputBindings::from_values([
+                    ("holder", Value::Ref(1)),
+                    ("start", Value::Timestamp(TimestampMicros(0))),
+                    ("end", Value::Timestamp(TimestampMicros(100))),
+                ]),
+            )
+        })?;
         let explain = output.explain();
         assert!(explain.contains("variable_order"));
         assert!(explain.contains("variable_estimate"));
@@ -4650,7 +4615,7 @@ mod tests {
         assert!(explain.contains("trie_seek"));
         assert!(explain.contains("output_rows"));
 
-        let diagnostics = env.storage_diagnostics(&schema).unwrap();
+        let diagnostics = env.storage_diagnostics(&schema)?;
         assert_eq!(diagnostics.storage_tx_id, 1);
         assert!(diagnostics.lmdb_map_size > 0);
         assert!(diagnostics.dictionary_entries > 0);
@@ -4664,11 +4629,12 @@ mod tests {
             diagnostics.schema_fingerprint,
             schema.descriptor().fingerprint().to_string()
         );
+        Ok(())
     }
 
     #[test]
-    fn differential_reference_evaluator_matches_lmdb() {
-        let (env, schema) = seeded_db();
+    fn differential_reference_evaluator_matches_lmdb() -> TestResult {
+        let (env, schema) = seeded_db()?;
         let reference = ReferenceDb::from_rows(seeded_rows());
         let cases = [
             (
@@ -4700,30 +4666,29 @@ mod tests {
         ];
 
         for (source, inputs) in cases {
-            let query = parse_and_typecheck(schema.descriptor(), source).unwrap();
+            let query = parse_and_typecheck(schema.descriptor(), source)?;
             let lmdb_rows = env
-                .read(|txn| txn.execute_query(&schema, &query, &inputs))
-                .unwrap()
+                .read(|txn| txn.execute_query(&schema, &query, &inputs))?
                 .rows;
-            let reference_rows = reference.execute(&query, &inputs).unwrap();
+            let reference_rows = reference.execute(&query, &inputs)?;
             assert_same_rows(&lmdb_rows, &reference_rows);
         }
+        Ok(())
     }
 
-    fn seeded_db() -> (Environment, StorageSchema) {
-        let dir = tempfile::tempdir().unwrap();
+    fn seeded_db() -> Result<(Environment, StorageSchema)> {
+        let dir = tempfile::tempdir().map_err(|error| Error::io("tempdir", error))?;
         let path = dir.keep();
-        let env = Environment::open(&path).unwrap();
-        let schema = StorageSchema::new(ledger_schema(), env.max_key_size()).unwrap();
+        let env = Environment::open(&path)?;
+        let schema = StorageSchema::new(ledger_schema(), env.max_key_size())?;
         let rows = seeded_rows();
         env.write(|txn| {
             for row in &rows {
                 txn.insert(&schema, row.clone())?;
             }
             Ok::<(), Error>(())
-        })
-        .unwrap();
-        (env, schema)
+        })?;
+        Ok((env, schema))
     }
 
     fn seeded_rows() -> Vec<Row> {
@@ -5076,7 +5041,10 @@ mod tests {
             reference_project_results(query, &output)
         }
 
-        #[allow(clippy::too_many_arguments)]
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "test reference recursion carries explicit evaluator state"
+        )]
         fn recurse(
             &self,
             query: &TypedQuery,
@@ -5274,9 +5242,16 @@ mod tests {
             let mut state_iter = states.into_iter();
             for term in &query.find {
                 match term {
-                    TypedFindTerm::Variable { .. } => row.push(key_iter.next().unwrap()),
+                    TypedFindTerm::Variable { .. } => {
+                        row.push(key_iter.next().ok_or_else(|| {
+                            Error::internal("missing reference aggregate group key")
+                        })?)
+                    }
                     TypedFindTerm::Aggregate { .. } => {
-                        row.push(state_iter.next().unwrap().finish()?)
+                        let state = state_iter
+                            .next()
+                            .ok_or_else(|| Error::internal("missing reference aggregate state"))?;
+                        row.push(state.finish()?)
                     }
                 }
             }

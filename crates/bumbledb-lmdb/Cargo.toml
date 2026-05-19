@@ -17,3 +17,6 @@ test-failpoints = []
 [dev-dependencies]
 rusqlite.workspace = true
 tempfile.workspace = true
+
+[lints]
+workspace = true

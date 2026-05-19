@@ -65,7 +65,10 @@ impl ReferenceDb {
         project_results(query, &bindings)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "reference recursion carries explicit query state"
+    )]
     fn recurse(
         &self,
         query: &TypedQuery,
@@ -295,8 +298,19 @@ fn project_aggregates(query: &TypedQuery, bindings: &[Binding]) -> Result<Vec<Ve
         let mut row = Vec::new();
         for term in &query.find {
             match term {
-                TypedFindTerm::Variable { .. } => row.push(key_iter.next().unwrap()),
-                TypedFindTerm::Aggregate { .. } => row.push(state_iter.next().unwrap().finish()?),
+                TypedFindTerm::Variable { .. } => row.push(key_iter.next().ok_or_else(|| {
+                    Error::Internal(InternalError::Invariant {
+                        message: "missing aggregate group key".to_owned(),
+                    })
+                })?),
+                TypedFindTerm::Aggregate { .. } => {
+                    let state = state_iter.next().ok_or_else(|| {
+                        Error::Internal(InternalError::Invariant {
+                            message: "missing aggregate state".to_owned(),
+                        })
+                    })?;
+                    row.push(state.finish()?);
+                }
             }
         }
         rows.push(row);

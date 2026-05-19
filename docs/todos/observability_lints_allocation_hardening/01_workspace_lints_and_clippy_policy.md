@@ -27,11 +27,12 @@ undocumented_unsafe_blocks = "deny"
 redundant_clone = "warn"
 unnecessary_to_owned = "warn"
 needless_collect = "warn"
-large_heap_arrays = "warn"
 large_stack_arrays = "warn"
 box_collection = "warn"
 vec_box = "warn"
 ```
+
+`large_heap_arrays` was requested in the original policy, but the pinned nightly Clippy does not expose that lint. Keep `large_stack_arrays` and revisit heap-specific lint coverage when Clippy supports an equivalent lint.
 
 Add this to each normal workspace package manifest:
 

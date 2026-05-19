@@ -16,14 +16,17 @@ use rusqlite::{Connection, params_from_iter};
 mod open;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = Config::from_env();
+    let Some(config) = Config::from_env()? else {
+        return Ok(());
+    };
     if config.trace {
         let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "bumbledb_lmdb=debug".to_owned());
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_target(true)
-            .try_init()
-            .ok();
+        drop(
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_target(true)
+                .try_init(),
+        );
     }
     println!("BumbleDB benchmark suite");
     println!(
@@ -104,7 +107,7 @@ struct Config {
 }
 
 impl Config {
-    fn from_env() -> Self {
+    fn from_env() -> Result<Option<Self>, Box<dyn std::error::Error>> {
         let mut scale = 200;
         let mut repeats = 10;
         let mut datasets = Vec::new();
@@ -119,31 +122,27 @@ impl Config {
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--scale" => {
-                    scale = args
-                        .next()
-                        .expect("--scale value")
+                    scale = next_arg(&mut args, "--scale")?
                         .parse()
-                        .expect("numeric scale")
+                        .map_err(|error| bench_error(format!("invalid --scale: {error}")))?
                 }
                 "--repeats" => {
-                    repeats = args
-                        .next()
-                        .expect("--repeats value")
+                    repeats = next_arg(&mut args, "--repeats")?
                         .parse()
-                        .expect("numeric repeats")
+                        .map_err(|error| bench_error(format!("invalid --repeats: {error}")))?
                 }
-                "--dataset" => datasets.push(args.next().expect("--dataset value")),
-                "--imdb-dir" => imdb_dir = Some(args.next().expect("--imdb-dir value")),
-                "--tpch-dir" => tpch_dir = Some(args.next().expect("--tpch-dir value")),
-                "--lahman-dir" => lahman_dir = Some(args.next().expect("--lahman-dir value")),
-                "--ldbc-dir" => ldbc_dir = Some(args.next().expect("--ldbc-dir value")),
+                "--dataset" => datasets.push(next_arg(&mut args, "--dataset")?),
+                "--imdb-dir" => imdb_dir = Some(next_arg(&mut args, "--imdb-dir")?),
+                "--tpch-dir" => tpch_dir = Some(next_arg(&mut args, "--tpch-dir")?),
+                "--lahman-dir" => lahman_dir = Some(next_arg(&mut args, "--lahman-dir")?),
+                "--ldbc-dir" => ldbc_dir = Some(next_arg(&mut args, "--ldbc-dir")?),
                 "--trace" => trace = true,
                 "--format" => {
-                    format = match args.next().expect("--format value").as_str() {
+                    format = match next_arg(&mut args, "--format")?.as_str() {
                         "text" => OutputFormat::Text,
                         "markdown" => OutputFormat::Markdown,
                         "both" => OutputFormat::Both,
-                        other => panic!("unknown --format {other}"),
+                        other => return Err(bench_error(format!("unknown --format {other}"))),
                     }
                 }
                 "--markdown" => format = OutputFormat::Markdown,
@@ -152,12 +151,12 @@ impl Config {
                     println!(
                         "usage: cargo run -p bumbledb-bench --release -- [--scale N] [--repeats N] [--trace] [--format text|markdown|both] [--markdown] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
                     );
-                    std::process::exit(0);
+                    return Ok(None);
                 }
-                other => panic!("unknown arg {other}"),
+                other => return Err(bench_error(format!("unknown arg {other}"))),
             }
         }
-        Self {
+        Ok(Some(Self {
             scale,
             repeats,
             datasets,
@@ -168,7 +167,7 @@ impl Config {
             trace,
             format,
             fail_gates,
-        }
+        }))
     }
 
     fn has_open_datasets(&self) -> bool {
@@ -177,6 +176,21 @@ impl Config {
             || self.lahman_dir.is_some()
             || self.ldbc_dir.is_some()
     }
+}
+
+fn next_arg(
+    args: &mut impl Iterator<Item = String>,
+    flag: &'static str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    args.next()
+        .ok_or_else(|| bench_error(format!("missing value for {flag}")))
+}
+
+pub(crate) fn bench_error(message: impl Into<String>) -> Box<dyn std::error::Error> {
+    Box::new(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        message.into(),
+    ))
 }
 
 pub(crate) struct Dataset {
@@ -1424,34 +1438,34 @@ fn insert_ledger_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn s
             "Holder" => {
                 tx.execute(
                     "INSERT INTO holder (id, name) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id"), text(row, "name")],
+                    rusqlite::params![id(row, "id")?, text(row, "name")?],
                 )?;
             }
             "Account" => {
                 tx.execute(
                     "INSERT INTO account (id, holder, currency) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id"), rf(row, "holder"), symbol(row, "currency")],
+                    rusqlite::params![id(row, "id")?, rf(row, "holder")?, symbol(row, "currency")?],
                 )?;
             }
             "Instrument" => {
                 tx.execute(
                     "INSERT INTO instrument (id, symbol) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id"), text(row, "symbol")],
+                    rusqlite::params![id(row, "id")?, text(row, "symbol")?],
                 )?;
             }
             "JournalEntry" => {
                 tx.execute(
                     "INSERT INTO journal_entry (id, source, created_at) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id"), rf(row, "source"), ts(row, "created_at")],
+                    rusqlite::params![id(row, "id")?, rf(row, "source")?, ts(row, "created_at")?],
                 )?;
             }
             "Posting" => {
-                tx.execute("INSERT INTO posting (id, entry, account, instrument, amount, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![id(row, "id"), rf(row, "entry"), rf(row, "account"), rf(row, "instrument"), dec(row, "amount"), ts(row, "at")])?;
+                tx.execute("INSERT INTO posting (id, entry, account, instrument, amount, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![id(row, "id")?, rf(row, "entry")?, rf(row, "account")?, rf(row, "instrument")?, dec(row, "amount")?, ts(row, "at")?])?;
             }
             "PostingTag" => {
                 tx.execute(
                     "INSERT INTO posting_tag (posting, tag) VALUES (?1, ?2)",
-                    rusqlite::params![rf(row, "posting"), symbol(row, "tag")],
+                    rusqlite::params![rf(row, "posting")?, symbol(row, "tag")?],
                 )?;
             }
             _ => {}
@@ -1472,23 +1486,23 @@ fn insert_sailors_sqlite(
                 tx.execute(
                     "INSERT INTO sailor (id, name, rating, age) VALUES (?1, ?2, ?3, ?4)",
                     rusqlite::params![
-                        id(row, "id"),
-                        text(row, "name"),
-                        u64v(row, "rating"),
-                        i64v(row, "age")
+                        id(row, "id")?,
+                        text(row, "name")?,
+                        u64v(row, "rating")?,
+                        i64v(row, "age")?
                     ],
                 )?;
             }
             "Boat" => {
                 tx.execute(
                     "INSERT INTO boat (id, name, color) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id"), text(row, "name"), symbol(row, "color")],
+                    rusqlite::params![id(row, "id")?, text(row, "name")?, symbol(row, "color")?],
                 )?;
             }
             "Reserve" => {
                 tx.execute(
                     "INSERT INTO reserve (sailor, boat, day) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![rf(row, "sailor"), rf(row, "boat"), ts(row, "day")],
+                    rusqlite::params![rf(row, "sailor")?, rf(row, "boat")?, ts(row, "day")?],
                 )?;
             }
             _ => {}
@@ -1508,43 +1522,43 @@ fn insert_join_stress_sqlite(
             "A" => {
                 tx.execute(
                     "INSERT INTO a (id, k) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id"), symbol(row, "k")],
+                    rusqlite::params![id(row, "id")?, symbol(row, "k")?],
                 )?;
             }
             "B" => {
                 tx.execute(
                     "INSERT INTO b (id, a, k) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id"), rf(row, "a"), symbol(row, "k")],
+                    rusqlite::params![id(row, "id")?, rf(row, "a")?, symbol(row, "k")?],
                 )?;
             }
             "C" => {
                 tx.execute(
                     "INSERT INTO c (id, b, k) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id"), rf(row, "b"), symbol(row, "k")],
+                    rusqlite::params![id(row, "id")?, rf(row, "b")?, symbol(row, "k")?],
                 )?;
             }
             "D" => {
                 tx.execute(
                     "INSERT INTO d (id, c, k) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id"), rf(row, "c"), symbol(row, "k")],
+                    rusqlite::params![id(row, "id")?, rf(row, "c")?, symbol(row, "k")?],
                 )?;
             }
             "EdgeAB" => {
                 tx.execute(
                     "INSERT INTO edge_ab (a, b) VALUES (?1, ?2)",
-                    rusqlite::params![rf(row, "a"), rf(row, "b")],
+                    rusqlite::params![rf(row, "a")?, rf(row, "b")?],
                 )?;
             }
             "EdgeAC" => {
                 tx.execute(
                     "INSERT INTO edge_ac (a, c) VALUES (?1, ?2)",
-                    rusqlite::params![rf(row, "a"), rf(row, "c")],
+                    rusqlite::params![rf(row, "a")?, rf(row, "c")?],
                 )?;
             }
             "EdgeBC" => {
                 tx.execute(
                     "INSERT INTO edge_bc (b, c) VALUES (?1, ?2)",
-                    rusqlite::params![rf(row, "b"), rf(row, "c")],
+                    rusqlite::params![rf(row, "b")?, rf(row, "c")?],
                 )?;
             }
             _ => {}
@@ -1561,29 +1575,29 @@ fn insert_tpch_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std
             "Customer" => {
                 tx.execute(
                     "INSERT INTO customer (id, nation) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id"), symbol(row, "nation")],
+                    rusqlite::params![id(row, "id")?, symbol(row, "nation")?],
                 )?;
             }
             "Supplier" => {
                 tx.execute(
                     "INSERT INTO supplier (id, nation) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id"), symbol(row, "nation")],
+                    rusqlite::params![id(row, "id")?, symbol(row, "nation")?],
                 )?;
             }
             "Part" => {
                 tx.execute(
                     "INSERT INTO part (id, brand) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id"), symbol(row, "brand")],
+                    rusqlite::params![id(row, "id")?, symbol(row, "brand")?],
                 )?;
             }
             "Orders" => {
                 tx.execute(
                     "INSERT INTO orders (id, customer, order_date) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id"), rf(row, "customer"), ts(row, "order_date")],
+                    rusqlite::params![id(row, "id")?, rf(row, "customer")?, ts(row, "order_date")?],
                 )?;
             }
             "LineItem" => {
-                tx.execute("INSERT INTO lineitem (id, ord, part, supplier, quantity, extended_price, ship_date) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", rusqlite::params![id(row, "id"), rf(row, "order"), rf(row, "part"), rf(row, "supplier"), i64v(row, "quantity"), dec(row, "extended_price"), ts(row, "ship_date")])?;
+                tx.execute("INSERT INTO lineitem (id, ord, part, supplier, quantity, extended_price, ship_date) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", rusqlite::params![id(row, "id")?, rf(row, "order")?, rf(row, "part")?, rf(row, "supplier")?, i64v(row, "quantity")?, dec(row, "extended_price")?, ts(row, "ship_date")?])?;
             }
             _ => {}
         }
@@ -1592,53 +1606,69 @@ fn insert_tpch_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std
     Ok(())
 }
 
-pub(crate) fn id(row: &Row, field: &str) -> i64 {
-    match row.value(field).unwrap() {
-        Value::Id(v) => *v as i64,
-        other => panic!("expected id {field}, got {other:?}"),
+pub(crate) fn id(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    match required_value(row, field)? {
+        Value::Id(v) => Ok(*v as i64),
+        other => Err(unexpected_value(field, "id", other)),
     }
 }
-pub(crate) fn rf(row: &Row, field: &str) -> i64 {
-    match row.value(field).unwrap() {
-        Value::Ref(v) => *v as i64,
-        other => panic!("expected ref {field}, got {other:?}"),
+
+pub(crate) fn rf(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    match required_value(row, field)? {
+        Value::Ref(v) => Ok(*v as i64),
+        other => Err(unexpected_value(field, "ref", other)),
     }
 }
-pub(crate) fn symbol(row: &Row, field: &str) -> i64 {
-    match row.value(field).unwrap() {
-        Value::Symbol(v) => *v as i64,
-        other => panic!("expected symbol {field}, got {other:?}"),
+
+pub(crate) fn symbol(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    match required_value(row, field)? {
+        Value::Symbol(v) => Ok(*v as i64),
+        other => Err(unexpected_value(field, "symbol", other)),
     }
 }
-pub(crate) fn dec(row: &Row, field: &str) -> i64 {
-    match row.value(field).unwrap() {
-        Value::Decimal(DecimalRaw(v)) => *v as i64,
-        other => panic!("expected decimal {field}, got {other:?}"),
+
+pub(crate) fn dec(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    match required_value(row, field)? {
+        Value::Decimal(DecimalRaw(v)) => Ok(*v as i64),
+        other => Err(unexpected_value(field, "decimal", other)),
     }
 }
-pub(crate) fn ts(row: &Row, field: &str) -> i64 {
-    match row.value(field).unwrap() {
-        Value::Timestamp(TimestampMicros(v)) => *v,
-        other => panic!("expected timestamp {field}, got {other:?}"),
+
+pub(crate) fn ts(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    match required_value(row, field)? {
+        Value::Timestamp(TimestampMicros(v)) => Ok(*v),
+        other => Err(unexpected_value(field, "timestamp", other)),
     }
 }
-pub(crate) fn u64v(row: &Row, field: &str) -> i64 {
-    match row.value(field).unwrap() {
-        Value::U64(v) => *v as i64,
-        other => panic!("expected u64 {field}, got {other:?}"),
+
+pub(crate) fn u64v(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    match required_value(row, field)? {
+        Value::U64(v) => Ok(*v as i64),
+        other => Err(unexpected_value(field, "u64", other)),
     }
 }
-pub(crate) fn i64v(row: &Row, field: &str) -> i64 {
-    match row.value(field).unwrap() {
-        Value::I64(v) => *v,
-        other => panic!("expected i64 {field}, got {other:?}"),
+
+pub(crate) fn i64v(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    match required_value(row, field)? {
+        Value::I64(v) => Ok(*v),
+        other => Err(unexpected_value(field, "i64", other)),
     }
 }
-pub(crate) fn text(row: &Row, field: &str) -> String {
-    match row.value(field).unwrap() {
-        Value::String(v) => v.clone(),
-        other => panic!("expected string {field}, got {other:?}"),
+
+pub(crate) fn text(row: &Row, field: &str) -> Result<String, Box<dyn std::error::Error>> {
+    match required_value(row, field)? {
+        Value::String(v) => Ok(v.clone()),
+        other => Err(unexpected_value(field, "string", other)),
     }
+}
+
+fn required_value<'a>(row: &'a Row, field: &str) -> Result<&'a Value, Box<dyn std::error::Error>> {
+    row.value(field)
+        .ok_or_else(|| bench_error(format!("missing field {field}")))
+}
+
+fn unexpected_value(field: &str, expected: &str, actual: &Value) -> Box<dyn std::error::Error> {
+    bench_error(format!("expected {expected} {field}, got {actual:?}"))
 }
 
 pub(crate) fn id_field(id_type: &str, relation: &str) -> FieldDescriptor {

@@ -33,8 +33,9 @@ The old LMDB recursion bottleneck is gone: all generated benchmark queries repor
 - This does not change the performance kill-list order. It adds strict linting, panic cleanup, phase timing, profiling UX, allocation recording, and first-pass stack/GAT cleanup so PRD 05 can be implemented with better measurements.
 
 **Global Gates**
-- `cargo test --workspace`
-- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo check --workspace --all-targets --all-features`
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- `cargo test --workspace --all-features`
 - `cargo check --manifest-path fuzz/Cargo.toml`
 - `scripts/check-cutover.sh`
 - `scripts/check-prd-map.sh`

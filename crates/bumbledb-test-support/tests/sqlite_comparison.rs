@@ -7,13 +7,13 @@ use bumbledb_test_support::schemas::ledger_schema;
 use bumbledb_test_support::sqlite::{load_ledger, query_i64_rows};
 
 #[test]
-fn sqlite_comparison_queries_match_bumbledb() {
+fn sqlite_comparison_queries_match_bumbledb() -> Result<(), Box<dyn std::error::Error>> {
     let rows = seeded_ledger_rows();
-    let sqlite = load_ledger(&rows).unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let env = Environment::open(dir.path()).unwrap();
-    let schema = StorageSchema::new(ledger_schema(), env.max_key_size()).unwrap();
-    env.bulk_load(&schema, rows).unwrap();
+    let sqlite = load_ledger(&rows)?;
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(ledger_schema(), env.max_key_size())?;
+    env.bulk_load(&schema, rows)?;
 
     let query = parse_and_typecheck(
         schema.descriptor(),
@@ -25,9 +25,8 @@ fn sqlite_comparison_queries_match_bumbledb() {
           ?t >= $start
           ?t < $end
         "#,
-    )
-    .unwrap();
-    let bumbledb_rows = execute_sorted(&env, &schema, &query, &inputs()).unwrap();
+    )?;
+    let bumbledb_rows = execute_sorted(&env, &schema, &query, &inputs())?;
     let sqlite_rows = query_i64_rows(
         &sqlite,
         r#"
@@ -36,10 +35,10 @@ fn sqlite_comparison_queries_match_bumbledb() {
         WHERE a.holder = ?1 AND p.at >= ?2 AND p.at < ?3
         "#,
         &[1, 0, 1_000_000],
-    )
-    .unwrap();
+    )?;
 
     assert_eq!(bumbledb_rows.len(), sqlite_rows.len());
+    Ok(())
 }
 
 fn inputs() -> InputBindings {

@@ -13,6 +13,28 @@ cargo-fuzz = true
 bumbledb-core = { path = "../crates/bumbledb-core" }
 libfuzzer-sys = "0.4"
 
+[lints.rust]
+unused = "deny"
+unused_must_use = "deny"
+unfulfilled_lint_expectations = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+undocumented_unsafe_blocks = "deny"
+redundant_clone = "warn"
+unnecessary_to_owned = "warn"
+needless_collect = "warn"
+large_stack_arrays = "warn"
+box_collection = "warn"
+vec_box = "warn"
+
 [[bin]]
 name = "fuzz_encoding_decode"
 path = "fuzz_targets/fuzz_encoding_decode.rs"

@@ -625,7 +625,9 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 _ => {
-                    let ch = self.source[self.pos..].chars().next().unwrap();
+                    let Some(ch) = self.source[self.pos..].chars().next() else {
+                        break;
+                    };
                     out.push(ch);
                     self.pos += ch.len_utf8();
                 }
@@ -1475,7 +1477,7 @@ mod tests {
     };
 
     #[test]
-    fn parses_and_typechecks_single_relation_query() {
+    fn parses_and_typechecks_single_relation_query() -> Result<()> {
         let typed = parse_and_typecheck(
             &schema(),
             r#"
@@ -1483,17 +1485,17 @@ mod tests {
             where
               Account(id: ?account, holder: $holder, currency: ?currency)
             "#,
-        )
-        .unwrap();
+        )?;
 
         assert_eq!(typed.variables.len(), 2);
         assert_eq!(typed.inputs.len(), 1);
         assert_eq!(typed.find.len(), 2);
         assert_eq!(typed.clauses.len(), 1);
+        Ok(())
     }
 
     #[test]
-    fn parses_and_typechecks_multi_relation_join() {
+    fn parses_and_typechecks_multi_relation_join() -> Result<()> {
         let typed = parse_and_typecheck(
             &schema(),
             r#"
@@ -1502,20 +1504,23 @@ mod tests {
               Account(id: ?account, holder: ?holder, currency: ?currency)
               Holder(id: ?holder, name: ?holder_name)
             "#,
-        )
-        .unwrap();
+        )?;
 
         let holder = typed
             .variables
             .iter()
             .find(|var| var.name == "holder")
-            .unwrap();
+            .ok_or_else(|| DatalogError::Parse {
+                span: Span { start: 0, end: 0 },
+                message: "missing holder var".to_owned(),
+            })?;
         assert_eq!(holder.value_type, holder_id_type());
         assert_eq!(typed.clauses.len(), 2);
+        Ok(())
     }
 
     #[test]
-    fn parses_comparisons_ranges_and_inputs() {
+    fn parses_comparisons_ranges_and_inputs() -> Result<()> {
         let typed = parse_and_typecheck(
             &schema(),
             r#"
@@ -1526,8 +1531,7 @@ mod tests {
               ?t < $end
               ?amount != 0
             "#,
-        )
-        .unwrap();
+        )?;
 
         assert!(typed.inputs.iter().any(|input| input.name == "start"));
         assert!(typed.inputs.iter().any(|input| input.name == "end"));
@@ -1539,10 +1543,11 @@ mod tests {
                 .count(),
             3
         );
+        Ok(())
     }
 
     #[test]
-    fn parses_aggregate_projection() {
+    fn parses_aggregate_projection() -> Result<()> {
         let typed = parse_and_typecheck(
             &schema(),
             r#"
@@ -1550,8 +1555,7 @@ mod tests {
             where
               Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
             "#,
-        )
-        .unwrap();
+        )?;
 
         assert!(matches!(
             typed.find[1],
@@ -1567,25 +1571,27 @@ mod tests {
                 ..
             }
         ));
+        Ok(())
     }
 
     #[test]
     fn unknown_relation_is_clear() {
-        let error = parse_and_typecheck(&schema(), "find ?x where Missing(id: ?x)").unwrap_err();
         assert!(
-            matches!(error, DatalogError::UnknownRelation { relation, .. } if relation == "Missing")
+            matches!(parse_and_typecheck(&schema(), "find ?x where Missing(id: ?x)"), Err(DatalogError::UnknownRelation { relation, .. }) if relation == "Missing")
         );
     }
 
     #[test]
     fn unknown_field_is_clear() {
-        let error = parse_and_typecheck(&schema(), "find ?x where Account(nope: ?x)").unwrap_err();
-        assert!(matches!(error, DatalogError::UnknownField { field, .. } if field == "nope"));
+        assert!(matches!(
+            parse_and_typecheck(&schema(), "find ?x where Account(nope: ?x)"),
+            Err(DatalogError::UnknownField { field, .. }) if field == "nope"
+        ));
     }
 
     #[test]
     fn incompatible_variable_unification_is_rejected() {
-        let error = parse_and_typecheck(
+        let result = parse_and_typecheck(
             &schema(),
             r#"
             find ?x
@@ -1593,16 +1599,15 @@ mod tests {
               Account(id: ?x)
               Holder(name: ?x)
             "#,
-        )
-        .unwrap_err();
+        );
         assert!(
-            matches!(error, DatalogError::VariableTypeConflict { variable, .. } if variable == "x")
+            matches!(result, Err(DatalogError::VariableTypeConflict { variable, .. }) if variable == "x")
         );
     }
 
     #[test]
     fn incompatible_input_reuse_is_rejected() {
-        let error = parse_and_typecheck(
+        let result = parse_and_typecheck(
             &schema(),
             r#"
             find ?account
@@ -1610,17 +1615,16 @@ mod tests {
               Account(id: ?account, holder: $x)
               Holder(name: $x)
             "#,
-        )
-        .unwrap_err();
-        assert!(matches!(error, DatalogError::InputTypeConflict { input, .. } if input == "x"));
+        );
+        assert!(
+            matches!(result, Err(DatalogError::InputTypeConflict { input, .. }) if input == "x")
+        );
     }
 
     #[test]
     fn unbound_projection_is_rejected() {
-        let error =
-            parse_and_typecheck(&schema(), "find ?x where Holder(id: ?holder)").unwrap_err();
         assert!(
-            matches!(error, DatalogError::UnboundProjectionVariable { variable, .. } if variable == "x")
+            matches!(parse_and_typecheck(&schema(), "find ?x where Holder(id: ?holder)"), Err(DatalogError::UnboundProjectionVariable { variable, .. }) if variable == "x")
         );
     }
 
@@ -1636,24 +1640,22 @@ mod tests {
             "find ?x where Holder(?x)",
             "find ?x where lower(?x)",
         ] {
-            let error = parse_and_typecheck(&schema(), query).unwrap_err();
+            let result = parse_and_typecheck(&schema(), query);
             assert!(
-                matches!(error, DatalogError::UnsupportedFeature { .. }),
-                "{query}: {error:?}"
+                matches!(result, Err(DatalogError::UnsupportedFeature { .. })),
+                "{query}: {result:?}"
             );
         }
     }
 
     #[test]
     fn aggregate_type_validation_is_enforced() {
-        let error = parse_and_typecheck(&schema(), "find sum(?name) where Holder(name: ?name)")
-            .unwrap_err();
         assert!(matches!(
-            error,
-            DatalogError::InvalidAggregateType {
+            parse_and_typecheck(&schema(), "find sum(?name) where Holder(name: ?name)"),
+            Err(DatalogError::InvalidAggregateType {
                 function: AggregateFunction::Sum,
                 ..
-            }
+            })
         ));
     }
 

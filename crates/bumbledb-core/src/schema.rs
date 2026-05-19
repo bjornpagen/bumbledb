@@ -747,14 +747,14 @@ mod tests {
     }
 
     #[test]
-    fn computes_current_index_layouts() {
-        let layouts = ledger_schema().current_index_layouts(511).unwrap();
+    fn computes_current_index_layouts() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let layouts = ledger_schema().current_index_layouts(511)?;
 
-        let account_primary = find_layout(&layouts, "Account", "primary");
+        let account_primary = find_layout(&layouts, "Account", "primary")?;
         assert_eq!(account_primary.leading_fields, ["id"]);
         assert_eq!(field_names(account_primary), ["id", "holder", "currency"]);
 
-        let posting_account = find_layout(&layouts, "Posting", "by_account");
+        let posting_account = find_layout(&layouts, "Posting", "by_account")?;
         assert_eq!(posting_account.kind, IndexKind::Ref);
         assert_eq!(posting_account.leading_fields, ["account"]);
         assert_eq!(
@@ -762,15 +762,15 @@ mod tests {
             ["account", "id", "entry", "instrument", "amount", "at"]
         );
 
-        let posting_at = find_layout(&layouts, "Posting", "by_at");
+        let posting_at = find_layout(&layouts, "Posting", "by_at")?;
         assert_eq!(posting_at.kind, IndexKind::Range);
         assert_eq!(posting_at.leading_fields, ["at"]);
 
-        let holder_unique = find_layout(&layouts, "Holder", "unique_name");
+        let holder_unique = find_layout(&layouts, "Holder", "unique_name")?;
         assert_eq!(holder_unique.kind, IndexKind::Unique);
         assert_eq!(holder_unique.leading_fields, ["name"]);
 
-        let account_currency = find_layout(&layouts, "Account", "by_currency");
+        let account_currency = find_layout(&layouts, "Account", "by_currency")?;
         assert_eq!(account_currency.kind, IndexKind::Equality);
         assert_eq!(account_currency.leading_fields, ["currency", "id"]);
         assert_eq!(field_names(account_currency), ["currency", "id", "holder"]);
@@ -780,29 +780,32 @@ mod tests {
                 .iter()
                 .all(|layout| !layout.needs_runtime_type_tags())
         );
+        Ok(())
     }
 
     #[test]
-    fn string_and_bytes_fields_use_interned_placeholders() {
+    fn string_and_bytes_fields_use_interned_placeholders()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
         let schema = ledger_schema();
-        let layouts = schema.current_index_layouts(511).unwrap();
-        let holder_unique = find_layout(&layouts, "Holder", "unique_name");
+        let layouts = schema.current_index_layouts(511)?;
+        let holder_unique = find_layout(&layouts, "Holder", "unique_name")?;
         let name = holder_unique
             .components
             .iter()
             .find(|component| component.field_name == "name")
-            .unwrap();
+            .ok_or_else(|| std::io::Error::other("missing Holder.name component"))?;
         assert!(name.value_type.is_interned_placeholder());
         assert_eq!(name.encoded_width, 8);
 
-        let source_primary = find_layout(&layouts, "SourceDocument", "primary");
+        let source_primary = find_layout(&layouts, "SourceDocument", "primary")?;
         let payload = source_primary
             .components
             .iter()
             .find(|component| component.field_name == "payload")
-            .unwrap();
+            .ok_or_else(|| std::io::Error::other("missing SourceDocument.payload component"))?;
         assert!(payload.value_type.is_interned_placeholder());
         assert_eq!(payload.encoded_width, 8);
+        Ok(())
     }
 
     #[test]
@@ -819,8 +822,10 @@ mod tests {
             )],
         );
 
-        let error = schema.current_index_layouts(511).unwrap_err();
-        assert!(matches!(error, SchemaError::KeyLayoutTooLarge { .. }));
+        assert!(matches!(
+            schema.current_index_layouts(511),
+            Err(SchemaError::KeyLayoutTooLarge { .. })
+        ));
     }
 
     #[test]
@@ -855,10 +860,9 @@ mod tests {
             ],
         );
 
-        let error = schema.current_index_layouts(511).unwrap_err();
         assert!(matches!(
-            error,
-            SchemaError::DuplicateIndexField { field, .. } if field == "currency"
+            schema.current_index_layouts(511),
+            Err(SchemaError::DuplicateIndexField { field, .. }) if field == "currency"
         ));
     }
 
@@ -999,11 +1003,12 @@ mod tests {
         layouts: &'a [CurrentIndexLayout],
         relation: &str,
         index: &str,
-    ) -> &'a CurrentIndexLayout {
+    ) -> std::result::Result<&'a CurrentIndexLayout, Box<dyn std::error::Error>> {
         layouts
             .iter()
             .find(|layout| layout.relation_name == relation && layout.index_name == index)
-            .unwrap_or_else(|| panic!("missing layout {relation}.{index}"))
+            .ok_or_else(|| std::io::Error::other(format!("missing layout {relation}.{index}")))
+            .map_err(Into::into)
     }
 
     fn field_names(layout: &CurrentIndexLayout) -> Vec<&str> {

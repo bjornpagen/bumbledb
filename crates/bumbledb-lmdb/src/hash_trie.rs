@@ -227,21 +227,18 @@ fn insert_row(node: &mut HashNode, keys: &[EncodedOwned], row: RowId, leaf_mode:
         }
         return;
     }
-    let HashNode::Inner(map) = node else {
-        *node = HashNode::Inner(HashMap::new());
-        let HashNode::Inner(map) = node else {
-            unreachable!()
-        };
-        let child = map
-            .entry(keys[0].clone())
-            .or_insert_with(|| HashNode::Inner(HashMap::new()));
-        insert_row(child, &keys[1..], row, leaf_mode);
-        return;
-    };
-    let child = map
-        .entry(keys[0].clone())
-        .or_insert_with(|| HashNode::Inner(HashMap::new()));
-    insert_row(child, &keys[1..], row, leaf_mode);
+    match node {
+        HashNode::Inner(map) => {
+            let child = map
+                .entry(keys[0].clone())
+                .or_insert_with(|| HashNode::Inner(HashMap::new()));
+            insert_row(child, &keys[1..], row, leaf_mode);
+        }
+        HashNode::Leaf(_) | HashNode::CountOnly(_) => {
+            *node = HashNode::Inner(HashMap::new());
+            insert_row(node, keys, row, leaf_mode);
+        }
+    }
 }
 
 fn find_node<'a>(node: &'a HashNode, prefix: &[EncodedRef<'_>]) -> Option<&'a HashNode> {
@@ -344,23 +341,23 @@ mod tests {
     use crate::{Environment, Row, StorageSchema, Value};
 
     #[test]
-    fn builds_hash_trie_over_primary_key() {
-        let image = account_image();
-        let account = image.relation("Account").unwrap();
-        let index = HashTrieIndex::build(account, IndexSpec::new("primary", [FieldId(0)])).unwrap();
+    fn builds_hash_trie_over_primary_key() -> Result<()> {
+        let image = account_image()?;
+        let account = account_relation(&image)?;
+        let index = HashTrieIndex::build(account, IndexSpec::new("primary", [FieldId(0)]))?;
         let key = EncodedOwned::Eight(2u64.to_be_bytes());
 
         assert!(index.exists(&[key.as_ref()]));
         assert_eq!(index.count(&[key.as_ref()]), 1);
         assert_eq!(index.rows(&[key.as_ref()]), RowSetRef::One(RowId(1)));
+        Ok(())
     }
 
     #[test]
-    fn builds_hash_trie_over_non_unique_field() {
-        let image = account_image();
-        let account = image.relation("Account").unwrap();
-        let index =
-            HashTrieIndex::build(account, IndexSpec::new("by_currency", [FieldId(1)])).unwrap();
+    fn builds_hash_trie_over_non_unique_field() -> Result<()> {
+        let image = account_image()?;
+        let account = account_relation(&image)?;
+        let index = HashTrieIndex::build(account, IndexSpec::new("by_currency", [FieldId(1)]))?;
         let key = EncodedOwned::Eight(840u64.to_be_bytes());
 
         assert!(index.exists(&[key.as_ref()]));
@@ -369,34 +366,34 @@ mod tests {
             index.rows(&[key.as_ref()]),
             RowSetRef::Slice(&[RowId(0), RowId(2)])
         );
+        Ok(())
     }
 
     #[test]
-    fn count_only_hash_trie_stores_counts_without_rows() {
-        let image = account_image();
-        let account = image.relation("Account").unwrap();
+    fn count_only_hash_trie_stores_counts_without_rows() -> Result<()> {
+        let image = account_image()?;
+        let account = account_relation(&image)?;
         let index = HashTrieIndex::build_with_mode(
             account,
             IndexSpec::new("exists_currency", [FieldId(1)]),
             LeafMode::CountOnly,
-        )
-        .unwrap();
+        )?;
         let key = EncodedOwned::Eight(840u64.to_be_bytes());
 
         assert!(index.exists(&[key.as_ref()]));
         assert_eq!(index.count(&[key.as_ref()]), 2);
         assert_eq!(index.rows(&[key.as_ref()]), RowSetRef::Empty);
+        Ok(())
     }
 
     #[test]
-    fn two_level_hash_trie_probes_prefixes() {
-        let image = account_image();
-        let account = image.relation("Account").unwrap();
+    fn two_level_hash_trie_probes_prefixes() -> Result<()> {
+        let image = account_image()?;
+        let account = account_relation(&image)?;
         let index = HashTrieIndex::build(
             account,
             IndexSpec::new("currency_active", [FieldId(1), FieldId(2)]),
-        )
-        .unwrap();
+        )?;
         let currency = EncodedOwned::Eight(840u64.to_be_bytes());
         let active = EncodedOwned::One([1]);
 
@@ -406,21 +403,27 @@ mod tests {
             index.rows(&[currency.as_ref(), active.as_ref()]),
             RowSetRef::Slice(&[RowId(0), RowId(2)])
         );
+        Ok(())
     }
 
-    fn account_image() -> crate::QueryImage {
-        let dir = tempfile::tempdir().unwrap();
+    fn account_relation(image: &crate::QueryImage) -> Result<&crate::RelationImage> {
+        image
+            .relation("Account")
+            .ok_or_else(|| crate::Error::internal("missing Account relation"))
+    }
+
+    fn account_image() -> Result<crate::QueryImage> {
+        let dir = tempfile::tempdir().map_err(|error| crate::Error::io("tempdir", error))?;
         let path = dir.keep();
-        let env = Environment::open(path).unwrap();
-        let schema = StorageSchema::new(account_schema(), env.max_key_size()).unwrap();
+        let env = Environment::open(path)?;
+        let schema = StorageSchema::new(account_schema(), env.max_key_size())?;
         env.write(|txn| {
             for row in account_rows() {
                 txn.insert(&schema, row)?;
             }
             Ok::<_, crate::Error>(())
-        })
-        .unwrap();
-        env.query_image(&schema).unwrap().as_ref().clone()
+        })?;
+        Ok(env.query_image(&schema)?.as_ref().clone())
     }
 
     fn account_schema() -> SchemaDescriptor {

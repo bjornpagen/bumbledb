@@ -74,9 +74,7 @@ type RawDatabase = Database<Bytes, Bytes>;
 #[derive(Clone, Copy)]
 struct Databases {
     meta: RawDatabase,
-    #[allow(dead_code)]
     index: RawDatabase,
-    #[allow(dead_code)]
     dict: RawDatabase,
 }
 
@@ -85,7 +83,10 @@ pub struct Environment {
     env: Env<WithoutTls>,
     dbs: Databases,
     query_images: QueryImageCache,
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "environment path is retained for diagnostics/debugging"
+    )]
     path: PathBuf,
 }
 
@@ -144,6 +145,8 @@ impl Environment {
             .max_dbs(FIXED_DATABASE_COUNT)
             .max_readers(DEFAULT_MAX_READERS);
 
+        // SAFETY: LMDB environment options are fully initialized above and the
+        // target directory exists. The returned environment owns the LMDB handle.
         let env = unsafe { options.open(path)? };
         let dbs = Self::open_fixed_databases(&env, had_data_file)?;
         tracing::info!(
@@ -443,7 +446,6 @@ impl ReadTxn<'_> {
 /// Opaque write transaction wrapper.
 pub struct WriteTxn<'env> {
     txn: RwTxn<'env>,
-    #[allow(dead_code)]
     dbs: Databases,
     active_tx_id: Option<u64>,
     history_seq: u32,
@@ -482,46 +484,42 @@ mod tests {
     use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, RelationKind, ValueType};
 
     const MARKER_KEY: &[u8] = b"test_marker";
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     #[test]
-    fn opens_initializes_and_reopens_metadata() {
-        let dir = tempfile::tempdir().unwrap();
+    fn opens_initializes_and_reopens_metadata() -> TestResult {
+        let dir = tempfile::tempdir()?;
 
-        let env = Environment::open(dir.path()).unwrap();
-        assert_eq!(
-            env.storage_format_version().unwrap(),
-            STORAGE_FORMAT_VERSION
-        );
+        let env = Environment::open(dir.path())?;
+        assert_eq!(env.storage_format_version()?, STORAGE_FORMAT_VERSION);
         assert_eq!(env.max_readers(), DEFAULT_MAX_READERS);
         assert!(env.max_key_size() > 0);
         drop(env);
 
-        let env = Environment::open(dir.path()).unwrap();
-        assert_eq!(
-            env.storage_format_version().unwrap(),
-            STORAGE_FORMAT_VERSION
-        );
+        let env = Environment::open(dir.path())?;
+        assert_eq!(env.storage_format_version()?, STORAGE_FORMAT_VERSION);
+        Ok(())
     }
 
     #[test]
-    fn write_commits_on_success() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
+    fn write_commits_on_success() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
 
         env.write(|txn| {
             txn.put_meta_bytes(MARKER_KEY, b"committed")?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
-        let marker = env.read(|txn| txn.get_meta_bytes(MARKER_KEY)).unwrap();
+        let marker = env.read(|txn| txn.get_meta_bytes(MARKER_KEY))?;
         assert_eq!(marker.as_deref(), Some(&b"committed"[..]));
+        Ok(())
     }
 
     #[test]
-    fn write_aborts_on_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
+    fn write_aborts_on_error() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
 
         let result: Result<()> = env.write(|txn| {
             txn.put_meta_bytes(MARKER_KEY, b"aborted")?;
@@ -529,20 +527,20 @@ mod tests {
         });
 
         assert!(result.is_err());
-        let marker = env.read(|txn| txn.get_meta_bytes(MARKER_KEY)).unwrap();
+        let marker = env.read(|txn| txn.get_meta_bytes(MARKER_KEY))?;
         assert_eq!(marker, None);
+        Ok(())
     }
 
     #[test]
-    fn read_snapshot_is_stable_across_later_commit() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
+    fn read_snapshot_is_stable_across_later_commit() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
 
         env.write(|txn| {
             txn.put_meta_bytes(MARKER_KEY, b"before")?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
         env.read(|read| {
             assert_eq!(
@@ -560,37 +558,33 @@ mod tests {
                 Some(&b"before"[..])
             );
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
-        let marker = env.read(|txn| txn.get_meta_bytes(MARKER_KEY)).unwrap();
+        let marker = env.read(|txn| txn.get_meta_bytes(MARKER_KEY))?;
         assert_eq!(marker.as_deref(), Some(&b"after"[..]));
+        Ok(())
     }
 
     #[test]
-    fn bulk_load_new_matches_row_by_row_results() {
+    fn bulk_load_new_matches_row_by_row_results() -> TestResult {
         let rows = benchmark_rows(5);
-        let schema = StorageSchema::new(benchmark_schema(), 511).unwrap();
+        let schema = StorageSchema::new(benchmark_schema(), 511)?;
 
-        let row_dir = tempfile::tempdir().unwrap();
-        let row_env = Environment::open_with_schema(row_dir.path(), &schema).unwrap();
-        row_env
-            .write(|txn| {
-                for row in &rows {
-                    txn.insert(&schema, row.clone())?;
-                }
-                Ok::<(), Error>(())
-            })
-            .unwrap();
+        let row_dir = tempfile::tempdir()?;
+        let row_env = Environment::open_with_schema(row_dir.path(), &schema)?;
+        row_env.write(|txn| {
+            for row in &rows {
+                txn.insert(&schema, row.clone())?;
+            }
+            Ok::<(), Error>(())
+        })?;
 
-        let bulk_dir = tempfile::tempdir().unwrap();
-        let (bulk_env, report) =
-            Environment::bulk_load_new(bulk_dir.path(), &schema, rows).unwrap();
+        let bulk_dir = tempfile::tempdir()?;
+        let (bulk_env, report) = Environment::bulk_load_new(bulk_dir.path(), &schema, rows)?;
         assert_eq!(report.rows_inserted, benchmark_rows(5).len());
         assert!(report.dictionary_entries > 0);
 
-        let query =
-            parse_and_typecheck(schema.descriptor(), benchmark_queries()[0].datalog).unwrap();
+        let query = parse_and_typecheck(schema.descriptor(), benchmark_queries()[0].datalog)?;
         let inputs = InputBindings::from_values([
             ("holder", Value::Ref(1)),
             (
@@ -603,21 +597,20 @@ mod tests {
             ),
         ]);
         let row_result = row_env
-            .read(|txn| txn.execute_query(&schema, &query, &inputs))
-            .unwrap()
+            .read(|txn| txn.execute_query(&schema, &query, &inputs))?
             .rows;
         let bulk_result = bulk_env
-            .read(|txn| txn.execute_query(&schema, &query, &inputs))
-            .unwrap()
+            .read(|txn| txn.execute_query(&schema, &query, &inputs))?
             .rows;
         assert_eq!(sorted_rows(row_result), sorted_rows(bulk_result));
+        Ok(())
     }
 
     #[test]
-    fn bulk_load_failure_is_atomic() {
-        let schema = StorageSchema::new(benchmark_schema(), 511).unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open_with_schema(dir.path(), &schema).unwrap();
+    fn bulk_load_failure_is_atomic() -> TestResult {
+        let schema = StorageSchema::new(benchmark_schema(), 511)?;
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open_with_schema(dir.path(), &schema)?;
         let mut rows = benchmark_rows(2);
         rows.push(rows[0].clone());
 
@@ -627,10 +620,10 @@ mod tests {
             Err(Error::Constraint(ConstraintError::DuplicateTuple { .. }))
         ));
 
-        let diagnostics = env.storage_diagnostics(&schema).unwrap();
+        let diagnostics = env.storage_diagnostics(&schema)?;
         assert_eq!(diagnostics.storage_tx_id, 0);
         assert_eq!(diagnostics.dictionary_entries, 0);
-        let segments = env.read(|txn| txn.visible_segments(&schema)).unwrap();
+        let segments = env.read(|txn| txn.visible_segments(&schema))?;
         assert!(segments.is_empty());
         assert!(
             diagnostics
@@ -638,56 +631,53 @@ mod tests {
                 .iter()
                 .all(|relation| relation.row_count == 0)
         );
+        Ok(())
     }
 
     #[test]
-    fn schema_mismatch_fails_without_destroying_data() {
-        let schema = StorageSchema::new(benchmark_schema(), 511).unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open_with_schema(dir.path(), &schema).unwrap();
-        env.bulk_load(&schema, benchmark_rows(2)).unwrap();
+    fn schema_mismatch_fails_without_destroying_data() -> TestResult {
+        let schema = StorageSchema::new(benchmark_schema(), 511)?;
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open_with_schema(dir.path(), &schema)?;
+        env.bulk_load(&schema, benchmark_rows(2))?;
         drop(env);
 
-        let changed = StorageSchema::new(changed_schema(), 511).unwrap();
-        let mismatch = match Environment::open_with_schema(dir.path(), &changed) {
-            Ok(_) => panic!("schema mismatch unexpectedly opened"),
-            Err(error) => error,
-        };
+        let changed = StorageSchema::new(changed_schema(), 511)?;
         assert!(matches!(
-            mismatch,
-            Error::Schema(SchemaError::SchemaMismatch { .. })
+            Environment::open_with_schema(dir.path(), &changed),
+            Err(Error::Schema(SchemaError::SchemaMismatch { .. }))
         ));
 
-        let env = Environment::open_with_schema(dir.path(), &schema).unwrap();
-        let diagnostics = env.storage_diagnostics(&schema).unwrap();
+        let env = Environment::open_with_schema(dir.path(), &schema)?;
+        let diagnostics = env.storage_diagnostics(&schema)?;
         assert!(
             diagnostics
                 .relations
                 .iter()
                 .any(|relation| relation.relation == "Posting" && relation.row_count > 0)
         );
+        Ok(())
     }
 
     #[test]
-    fn backup_and_compact_copy_create_usable_databases() {
-        let schema = StorageSchema::new(benchmark_schema(), 511).unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open_with_schema(dir.path(), &schema).unwrap();
-        env.bulk_load(&schema, benchmark_rows(4)).unwrap();
+    fn backup_and_compact_copy_create_usable_databases() -> TestResult {
+        let schema = StorageSchema::new(benchmark_schema(), 511)?;
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open_with_schema(dir.path(), &schema)?;
+        env.bulk_load(&schema, benchmark_rows(4))?;
 
         let failed = env.bulk_load(&schema, vec![benchmark_rows(1)[0].clone()]);
         assert!(failed.is_err());
 
-        let backup_dir = tempfile::tempdir().unwrap();
-        env.backup_to_path(backup_dir.path()).unwrap();
-        let backup = Environment::open_with_schema(backup_dir.path(), &schema).unwrap();
+        let backup_dir = tempfile::tempdir()?;
+        env.backup_to_path(backup_dir.path())?;
+        let backup = Environment::open_with_schema(backup_dir.path(), &schema)?;
 
-        let compact_dir = tempfile::tempdir().unwrap();
-        env.compact_copy_to_path(compact_dir.path()).unwrap();
-        let compact = Environment::open_with_schema(compact_dir.path(), &schema).unwrap();
+        let compact_dir = tempfile::tempdir()?;
+        env.compact_copy_to_path(compact_dir.path())?;
+        let compact = Environment::open_with_schema(compact_dir.path(), &schema)?;
 
-        let query =
-            parse_and_typecheck(schema.descriptor(), benchmark_queries()[0].datalog).unwrap();
+        let query = parse_and_typecheck(schema.descriptor(), benchmark_queries()[0].datalog)?;
         let inputs = InputBindings::from_values([
             ("holder", Value::Ref(1)),
             (
@@ -701,45 +691,39 @@ mod tests {
         ]);
 
         let original = env
-            .read(|txn| txn.execute_query(&schema, &query, &inputs))
-            .unwrap()
+            .read(|txn| txn.execute_query(&schema, &query, &inputs))?
             .rows;
         let backup_rows = backup
-            .read(|txn| txn.execute_query(&schema, &query, &inputs))
-            .unwrap()
+            .read(|txn| txn.execute_query(&schema, &query, &inputs))?
             .rows;
         let compact_rows = compact
-            .read(|txn| txn.execute_query(&schema, &query, &inputs))
-            .unwrap()
+            .read(|txn| txn.execute_query(&schema, &query, &inputs))?
             .rows;
 
         assert_eq!(sorted_rows(original.clone()), sorted_rows(backup_rows));
         assert_eq!(sorted_rows(original), sorted_rows(compact_rows));
+        Ok(())
     }
 
     #[test]
-    fn bulk_load_target_must_be_new_and_large_fixture_reopens() {
-        let schema = StorageSchema::new(benchmark_schema(), 511).unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let (env, report) =
-            Environment::bulk_load_new(dir.path(), &schema, benchmark_rows(12)).unwrap();
+    fn bulk_load_target_must_be_new_and_large_fixture_reopens() -> TestResult {
+        let schema = StorageSchema::new(benchmark_schema(), 511)?;
+        let dir = tempfile::tempdir()?;
+        let (env, report) = Environment::bulk_load_new(dir.path(), &schema, benchmark_rows(12))?;
         assert!(report.rows_inserted > 50);
         assert!(report.dictionary_entries >= 12);
         drop(env);
 
-        let existing = match Environment::bulk_load_new(dir.path(), &schema, benchmark_rows(1)) {
-            Ok(_) => panic!("bulk load unexpectedly targeted an existing database"),
-            Err(error) => error,
-        };
         assert!(matches!(
-            existing,
-            Error::Storage(StorageError::BulkLoadTargetExists { .. })
+            Environment::bulk_load_new(dir.path(), &schema, benchmark_rows(1)),
+            Err(Error::Storage(StorageError::BulkLoadTargetExists { .. }))
         ));
 
-        let env = Environment::open_with_schema(dir.path(), &schema).unwrap();
-        let diagnostics = env.storage_diagnostics(&schema).unwrap();
+        let env = Environment::open_with_schema(dir.path(), &schema)?;
+        let diagnostics = env.storage_diagnostics(&schema)?;
         assert!(diagnostics.lmdb_map_size > 0);
         assert!(diagnostics.storage_tx_id > 0);
+        Ok(())
     }
 
     fn sorted_rows(mut rows: Vec<Vec<Value>>) -> Vec<Vec<Value>> {

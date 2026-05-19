@@ -963,22 +963,22 @@ fn insert_imdb_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std
     for row in rows {
         match row.relation() {
             "Title" => {
-                tx.execute("INSERT INTO title (id, title_type, primary_title, start_year) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![id(row, "id"), symbol(row, "title_type"), text(row, "primary_title"), i64v(row, "start_year")])?;
+                tx.execute("INSERT INTO title (id, title_type, primary_title, start_year) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![id(row, "id")?, symbol(row, "title_type")?, text(row, "primary_title")?, i64v(row, "start_year")?])?;
             }
             "Name" => {
                 tx.execute(
                     "INSERT INTO name (id, name, birth_year) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id"), text(row, "name"), i64v(row, "birth_year")],
+                    rusqlite::params![id(row, "id")?, text(row, "name")?, i64v(row, "birth_year")?],
                 )?;
             }
             "TitleRating" => {
                 tx.execute(
                     "INSERT INTO title_rating (title, rating, votes) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![rf(row, "title"), i64v(row, "rating"), i64v(row, "votes")],
+                    rusqlite::params![rf(row, "title")?, i64v(row, "rating")?, i64v(row, "votes")?],
                 )?;
             }
             "Principal" => {
-                tx.execute("INSERT INTO principal (title, name, category, ordering) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![rf(row, "title"), rf(row, "name"), symbol(row, "category"), u64v(row, "ordering")])?;
+                tx.execute("INSERT INTO principal (title, name, category, ordering) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![rf(row, "title")?, rf(row, "name")?, symbol(row, "category")?, u64v(row, "ordering")?])?;
             }
             _ => {}
         }
@@ -994,31 +994,31 @@ fn insert_lahman_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn s
             "Player" => {
                 tx.execute(
                     "INSERT INTO player (id, first, last) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id"), text(row, "first"), text(row, "last")],
+                    rusqlite::params![id(row, "id")?, text(row, "first")?, text(row, "last")?],
                 )?;
             }
             "Team" => {
                 tx.execute(
                     "INSERT INTO team (id, year, league, name) VALUES (?1, ?2, ?3, ?4)",
                     rusqlite::params![
-                        id(row, "id"),
-                        i64v(row, "year"),
-                        text(row, "league"),
-                        text(row, "name")
+                        id(row, "id")?,
+                        i64v(row, "year")?,
+                        text(row, "league")?,
+                        text(row, "name")?
                     ],
                 )?;
             }
             "Batting" => {
-                tx.execute("INSERT INTO batting (player, team, year, games, hits) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![rf(row, "player"), rf(row, "team"), i64v(row, "year"), i64v(row, "games"), i64v(row, "hits")])?;
+                tx.execute("INSERT INTO batting (player, team, year, games, hits) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![rf(row, "player")?, rf(row, "team")?, i64v(row, "year")?, i64v(row, "games")?, i64v(row, "hits")?])?;
             }
             "Salary" => {
                 tx.execute(
                     "INSERT INTO salary (player, team, year, salary) VALUES (?1, ?2, ?3, ?4)",
                     rusqlite::params![
-                        rf(row, "player"),
-                        rf(row, "team"),
-                        i64v(row, "year"),
-                        i64v(row, "salary")
+                        rf(row, "player")?,
+                        rf(row, "team")?,
+                        i64v(row, "year")?,
+                        i64v(row, "salary")?
                     ],
                 )?;
             }
@@ -1036,25 +1036,29 @@ fn insert_ldbc_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std
             "Person" => {
                 tx.execute(
                     "INSERT INTO person (id, first, created) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id"), text(row, "first"), ts(row, "created")],
+                    rusqlite::params![id(row, "id")?, text(row, "first")?, ts(row, "created")?],
                 )?;
             }
             "Post" => {
                 tx.execute(
                     "INSERT INTO post (id, creator, created) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id"), rf(row, "creator"), ts(row, "created")],
+                    rusqlite::params![id(row, "id")?, rf(row, "creator")?, ts(row, "created")?],
                 )?;
             }
             "Knows" => {
                 tx.execute(
                     "INSERT OR IGNORE INTO knows (person1, person2, created) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![rf(row, "person1"), rf(row, "person2"), ts(row, "created")],
+                    rusqlite::params![
+                        rf(row, "person1")?,
+                        rf(row, "person2")?,
+                        ts(row, "created")?
+                    ],
                 )?;
             }
             "Likes" => {
                 tx.execute(
                     "INSERT OR IGNORE INTO likes (person, post, created) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![rf(row, "person"), rf(row, "post"), ts(row, "created")],
+                    rusqlite::params![rf(row, "person")?, rf(row, "post")?, ts(row, "created")?],
                 )?;
             }
             _ => {}

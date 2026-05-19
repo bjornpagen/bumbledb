@@ -873,12 +873,14 @@ mod tests {
     use super::*;
     use crate::{Environment, KeyValues, Row, Value};
 
-    #[test]
-    fn builds_query_image_from_snapshot_and_matches_diagnostics() {
-        let (env, schema) = seeded_env();
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
-        let image = env.query_image(&schema).unwrap();
-        let diagnostics = env.storage_diagnostics(&schema).unwrap();
+    #[test]
+    fn builds_query_image_from_snapshot_and_matches_diagnostics() -> TestResult {
+        let (env, schema) = seeded_env()?;
+
+        let image = env.query_image(&schema)?;
+        let diagnostics = env.storage_diagnostics(&schema)?;
 
         assert_eq!(image.stats().relation_count, 1);
         assert_eq!(image.stats().row_count, 2);
@@ -889,14 +891,14 @@ mod tests {
         assert!(image.stats().built_from_segments);
         assert_eq!(diagnostics.relations[0].row_count, 2);
 
-        let segments = env.read(|txn| txn.visible_segments(&schema)).unwrap();
+        let segments = env.read(|txn| txn.visible_segments(&schema))?;
         assert_eq!(segments.len(), 1);
         assert_eq!(segments[0].row_count, 2);
         assert_eq!(segments[0].columns.len(), 5);
         assert_eq!(segments[0].columns[0].byte_len, 16);
         assert!(!segments[0].indexes.is_empty());
 
-        let account = image.relation("Account").unwrap();
+        let account = account_relation(&image)?;
         assert_eq!(account.row_count, 2);
         assert_eq!(account.fields.len(), 5);
         assert_eq!(account.encoded_column_bytes(), 2 * (8 + 8 + 1 + 8 + 8));
@@ -906,13 +908,14 @@ mod tests {
             account.stats.encoded_column_bytes,
             account.encoded_column_bytes()
         );
+        Ok(())
     }
 
     #[test]
-    fn relation_image_columns_expose_widths_and_stable_row_ids() {
-        let (env, schema) = seeded_env();
-        let image = env.query_image(&schema).unwrap();
-        let account = image.relation("Account").unwrap();
+    fn relation_image_columns_expose_widths_and_stable_row_ids() -> TestResult {
+        let (env, schema) = seeded_env()?;
+        let image = env.query_image(&schema)?;
+        let account = account_relation(&image)?;
 
         assert_eq!(
             account.all_rows(),
@@ -921,38 +924,36 @@ mod tests {
                 end: RowId(2)
             }
         );
-        assert_eq!(account.field(FieldId(0)).unwrap().encoded_width(), 8);
-        assert_eq!(account.field(FieldId(2)).unwrap().encoded_width(), 1);
-        assert_eq!(account.column(FieldId(0)).unwrap().len(), 2);
-        assert_eq!(account.column(FieldId(0)).unwrap().field(), FieldId(0));
-        assert_eq!(account.column(FieldId(2)).unwrap().width(), 1);
-        assert!(matches!(
-            account.column(FieldId(2)).unwrap(),
-            ColumnImage::Bool(_)
-        ));
+        assert_eq!(field(account, FieldId(0))?.encoded_width(), 8);
+        assert_eq!(field(account, FieldId(2))?.encoded_width(), 1);
+        assert_eq!(column(account, FieldId(0))?.len(), 2);
+        assert_eq!(column(account, FieldId(0))?.field(), FieldId(0));
+        assert_eq!(column(account, FieldId(2))?.width(), 1);
+        assert!(matches!(column(account, FieldId(2))?, ColumnImage::Bool(_)));
 
         assert_eq!(
-            account.encoded_bytes(RowId(0), FieldId(0)).unwrap(),
+            encoded_bytes(account, RowId(0), FieldId(0))?,
             1u64.to_be_bytes().as_slice()
         );
         assert_eq!(
-            account.encoded_bytes(RowId(1), FieldId(0)).unwrap(),
+            encoded_bytes(account, RowId(1), FieldId(0))?,
             2u64.to_be_bytes().as_slice()
         );
         assert!(matches!(
-            account.encoded(RowId(0), FieldId(2)).unwrap(),
+            encoded(account, RowId(0), FieldId(2))?,
             EncodedRef::One(_)
         ));
+        Ok(())
     }
 
     #[test]
-    fn string_and_bytes_columns_store_intern_ids_not_raw_values() {
-        let (env, schema) = seeded_env();
-        let image = env.query_image(&schema).unwrap();
-        let account = image.relation("Account").unwrap();
+    fn string_and_bytes_columns_store_intern_ids_not_raw_values() -> TestResult {
+        let (env, schema) = seeded_env()?;
+        let image = env.query_image(&schema)?;
+        let account = account_relation(&image)?;
 
-        let payload = account.encoded_bytes(RowId(0), FieldId(3)).unwrap();
-        let name = account.encoded_bytes(RowId(0), FieldId(4)).unwrap();
+        let payload = encoded_bytes(account, RowId(0), FieldId(3))?;
+        let name = encoded_bytes(account, RowId(0), FieldId(4))?;
 
         assert_eq!(payload.len(), 8);
         assert_eq!(name.len(), 8);
@@ -961,57 +962,57 @@ mod tests {
 
         env.read(|txn| {
             assert_eq!(
-                txn.decode_query_value(&account.field(FieldId(3)).unwrap().value_type, payload)?,
+                txn.decode_query_value(&field(account, FieldId(3))?.value_type, payload)?,
                 Value::Bytes(vec![1, 2, 3])
             );
             assert_eq!(
-                txn.decode_query_value(&account.field(FieldId(4)).unwrap().value_type, name)?,
+                txn.decode_query_value(&field(account, FieldId(4))?.value_type, name)?,
                 Value::String("Cash USD".to_owned())
             );
             Ok::<_, crate::Error>(())
-        })
-        .unwrap();
+        })?;
+        Ok(())
     }
 
     #[test]
-    fn query_image_encoded_columns_decode_to_public_scan_rows() {
-        let (env, schema) = seeded_env();
-        let image = env.query_image(&schema).unwrap();
+    fn query_image_encoded_columns_decode_to_public_scan_rows() -> TestResult {
+        let (env, schema) = seeded_env()?;
+        let image = env.query_image(&schema)?;
 
         env.read(|txn| {
             let mut scanned = txn
                 .scan_relation(&schema, "Account")?
                 .map(|item| item.map(|item| item.row))
                 .collect::<Result<Vec<_>>>()?;
-            let account = image.relation("Account").unwrap();
+            let account = account_relation(&image)?;
             let mut imaged = decode_relation_rows(txn, account)?;
             scanned.sort();
             imaged.sort();
             assert_eq!(imaged, scanned);
             Ok::<_, crate::Error>(())
-        })
-        .unwrap();
+        })?;
+        Ok(())
     }
 
     #[test]
-    fn query_image_build_is_deterministic_for_same_snapshot() {
-        let (env, schema) = seeded_env();
+    fn query_image_build_is_deterministic_for_same_snapshot() -> TestResult {
+        let (env, schema) = seeded_env()?;
 
         env.read(|txn| {
             let left = QueryImageBuilder::new(txn, &schema).build()?;
             let right = QueryImageBuilder::new(txn, &schema).build()?;
             assert_eq!(left.content_fingerprint(), right.content_fingerprint());
             Ok::<_, crate::Error>(())
-        })
-        .unwrap();
+        })?;
+        Ok(())
     }
 
     #[test]
-    fn query_image_cache_hits_until_transaction_id_changes() {
-        let (env, schema) = seeded_env();
+    fn query_image_cache_hits_until_transaction_id_changes() -> TestResult {
+        let (env, schema) = seeded_env()?;
 
-        let first = env.query_image(&schema).unwrap();
-        let second = env.query_image(&schema).unwrap();
+        let first = env.query_image(&schema)?;
+        let second = env.query_image(&schema)?;
         assert!(Arc::ptr_eq(&first, &second));
 
         env.write(|txn| {
@@ -1029,42 +1030,42 @@ mod tests {
                 ),
             )?;
             Ok::<_, crate::Error>(())
-        })
-        .unwrap();
+        })?;
 
-        let third = env.query_image(&schema).unwrap();
+        let third = env.query_image(&schema)?;
         assert!(!Arc::ptr_eq(&first, &third));
         assert!(third.key().tx_id > first.key().tx_id);
-        assert_eq!(third.relation("Account").unwrap().row_count, 3);
+        assert_eq!(account_relation(&third)?.row_count, 3);
+        Ok(())
     }
 
     #[test]
-    fn reopened_query_image_uses_durable_segments() {
-        let dir = tempfile::tempdir().unwrap();
+    fn reopened_query_image_uses_durable_segments() -> TestResult {
+        let dir = tempfile::tempdir()?;
         let path = dir.keep();
-        let env = Environment::open(&path).unwrap();
-        let schema = StorageSchema::new(account_schema(true), env.max_key_size()).unwrap();
+        let env = Environment::open(&path)?;
+        let schema = StorageSchema::new(account_schema(true), env.max_key_size())?;
         env.bulk_load(
             &schema,
             [
                 account_row(1, 840, true, vec![1, 2, 3], "Cash USD"),
                 account_row(2, 978, false, vec![4, 5, 6], "Cash EUR"),
             ],
-        )
-        .unwrap();
+        )?;
         drop(env);
 
-        let reopened = Environment::open(&path).unwrap();
-        let image = reopened.query_image(&schema).unwrap();
+        let reopened = Environment::open(&path)?;
+        let image = reopened.query_image(&schema)?;
 
         assert!(image.stats().built_from_segments);
         assert_eq!(image.stats().segment_count, 1);
-        assert_eq!(image.relation("Account").unwrap().row_count, 2);
+        assert_eq!(account_relation(&image)?.row_count, 2);
+        Ok(())
     }
 
     #[test]
-    fn read_snapshot_sees_stable_visible_segments() {
-        let (env, schema) = seeded_env();
+    fn read_snapshot_sees_stable_visible_segments() -> TestResult {
+        let (env, schema) = seeded_env()?;
 
         env.read(|read| {
             let before = read.visible_segments(&schema)?;
@@ -1081,18 +1082,18 @@ mod tests {
             let still_before = read.visible_segments(&schema)?;
             assert_eq!(still_before[0].row_count, 2);
             let image = QueryImageBuilder::new(read, &schema).build()?;
-            assert_eq!(image.relation("Account").unwrap().row_count, 2);
+            assert_eq!(account_relation(&image)?.row_count, 2);
             Ok::<_, crate::Error>(())
-        })
-        .unwrap();
+        })?;
 
-        let after = env.read(|read| read.visible_segments(&schema)).unwrap();
+        let after = env.read(|read| read.visible_segments(&schema))?;
         assert_eq!(after[0].row_count, 3);
+        Ok(())
     }
 
     #[test]
-    fn replace_and_delete_publish_visible_segments() {
-        let (env, schema) = seeded_env();
+    fn replace_and_delete_publish_visible_segments() -> TestResult {
+        let (env, schema) = seeded_env()?;
 
         env.write(|txn| {
             txn.replace(
@@ -1101,11 +1102,10 @@ mod tests {
             )?;
             txn.delete(&schema, KeyValues::new("Account", [("id", Value::Id(1))]))?;
             Ok::<_, crate::Error>(())
-        })
-        .unwrap();
+        })?;
 
-        let image = env.query_image(&schema).unwrap();
-        let account = image.relation("Account").unwrap();
+        let image = env.query_image(&schema)?;
+        let account = account_relation(&image)?;
         assert!(image.stats().built_from_segments);
         assert_eq!(account.row_count, 1);
 
@@ -1119,30 +1119,31 @@ mod tests {
             assert_eq!(segments[0].row_count, 1);
             assert!(segments[0].tx_end.is_none());
             Ok::<_, crate::Error>(())
-        })
-        .unwrap();
+        })?;
+        Ok(())
     }
 
     #[test]
-    fn query_image_cache_does_not_reuse_mismatched_schema() {
-        let dir = tempfile::tempdir().unwrap();
+    fn query_image_cache_does_not_reuse_mismatched_schema() -> TestResult {
+        let dir = tempfile::tempdir()?;
         let path = dir.keep();
-        let env = Environment::open(&path).unwrap();
-        let schema_a = StorageSchema::new(account_schema(false), env.max_key_size()).unwrap();
-        let schema_b = StorageSchema::new(account_schema(true), env.max_key_size()).unwrap();
+        let env = Environment::open(&path)?;
+        let schema_a = StorageSchema::new(account_schema(false), env.max_key_size())?;
+        let schema_b = StorageSchema::new(account_schema(true), env.max_key_size())?;
 
-        let image_a = env.query_image(&schema_a).unwrap();
-        let image_b = env.query_image(&schema_b).unwrap();
+        let image_a = env.query_image(&schema_a)?;
+        let image_b = env.query_image(&schema_b)?;
 
         assert_ne!(image_a.key().schema, image_b.key().schema);
         assert!(!Arc::ptr_eq(&image_a, &image_b));
+        Ok(())
     }
 
-    fn seeded_env() -> (Environment, StorageSchema) {
-        let dir = tempfile::tempdir().unwrap();
+    fn seeded_env() -> Result<(Environment, StorageSchema)> {
+        let dir = tempfile::tempdir().map_err(|error| crate::Error::io("tempdir", error))?;
         let path = dir.keep();
-        let env = Environment::open(&path).unwrap();
-        let schema = StorageSchema::new(account_schema(true), env.max_key_size()).unwrap();
+        let env = Environment::open(&path)?;
+        let schema = StorageSchema::new(account_schema(true), env.max_key_size())?;
         env.write(|txn| {
             txn.insert(
                 &schema,
@@ -1153,9 +1154,48 @@ mod tests {
                 account_row(2, 978, false, vec![4, 5, 6], "Cash EUR"),
             )?;
             Ok::<_, crate::Error>(())
+        })?;
+        Ok((env, schema))
+    }
+
+    fn account_relation(image: &QueryImage) -> Result<&RelationImage> {
+        image
+            .relation("Account")
+            .ok_or_else(|| crate::Error::internal("missing Account relation"))
+    }
+
+    fn field(relation: &RelationImage, field: FieldId) -> Result<&FieldImage> {
+        relation
+            .field(field)
+            .ok_or_else(|| crate::Error::internal(format!("missing field {}", field.0)))
+    }
+
+    fn column(relation: &RelationImage, field: FieldId) -> Result<&ColumnImage> {
+        relation
+            .column(field)
+            .ok_or_else(|| crate::Error::internal(format!("missing column {}", field.0)))
+    }
+
+    fn encoded<'a>(
+        relation: &'a RelationImage,
+        row: RowId,
+        field: FieldId,
+    ) -> Result<EncodedRef<'a>> {
+        relation.encoded(row, field).ok_or_else(|| {
+            crate::Error::internal(format!(
+                "missing encoded value row={} field={}",
+                row.0, field.0
+            ))
         })
-        .unwrap();
-        (env, schema)
+    }
+
+    fn encoded_bytes(relation: &RelationImage, row: RowId, field: FieldId) -> Result<&[u8]> {
+        relation.encoded_bytes(row, field).ok_or_else(|| {
+            crate::Error::internal(format!(
+                "missing encoded bytes row={} field={}",
+                row.0, field.0
+            ))
+        })
     }
 
     fn account_schema(with_name: bool) -> SchemaDescriptor {

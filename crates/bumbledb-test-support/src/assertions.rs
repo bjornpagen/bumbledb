@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use bumbledb_lmdb::{Environment, InputBindings, Result, Row, StorageSchema, Value};
+use bumbledb_lmdb::{Environment, InputBindings, InternalError, Result, Row, StorageSchema, Value};
 
 /// Sorts query result rows deterministically.
 pub fn sorted_rows(mut rows: Vec<Vec<Value>>) -> Vec<Vec<Value>> {
@@ -29,7 +29,11 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
                 .relations
                 .iter()
                 .find(|diag| diag.relation == relation.name)
-                .unwrap();
+                .ok_or_else(|| {
+                    bumbledb_lmdb::Error::Internal(InternalError::Invariant {
+                        message: format!("missing diagnostics for relation {}", relation.name),
+                    })
+                })?;
             assert_eq!(
                 relation_diag.row_count as usize,
                 primary_rows.len(),
@@ -60,7 +64,14 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
                     .indexes
                     .iter()
                     .find(|diag| diag.index == path.index_name)
-                    .unwrap();
+                    .ok_or_else(|| {
+                        bumbledb_lmdb::Error::Internal(InternalError::Invariant {
+                            message: format!(
+                                "missing diagnostics for index {}.{}",
+                                relation.name, path.index_name
+                            ),
+                        })
+                    })?;
                 assert_eq!(
                     index_diag.entry_count as usize,
                     rows.len(),

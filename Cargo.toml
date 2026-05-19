@@ -25,3 +25,25 @@ thiserror = "2.0.17"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
 trybuild = "1.0.114"
+
+[workspace.lints.rust]
+unused = "deny"
+unused_must_use = "deny"
+unfulfilled_lint_expectations = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+undocumented_unsafe_blocks = "deny"
+redundant_clone = "warn"
+unnecessary_to_owned = "warn"
+needless_collect = "warn"
+large_stack_arrays = "warn"
+box_collection = "warn"
+vec_box = "warn"

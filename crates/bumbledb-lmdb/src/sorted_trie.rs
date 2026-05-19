@@ -202,7 +202,7 @@ impl TrieStats {
 /// Linear iterator interface used by leapfrog join.
 pub trait LinearIter {
     /// Current encoded key.
-    fn key(&self) -> EncodedRef<'_>;
+    fn key(&self) -> Option<EncodedRef<'_>>;
     /// Advances to the next key.
     fn next(&mut self);
     /// Seeks to the least key greater than or equal to `target`.
@@ -270,11 +270,12 @@ impl<'a> SortedTrieIter<'a> {
 }
 
 impl LinearIter for SortedTrieIter<'_> {
-    fn key(&self) -> EncodedRef<'_> {
-        let frame = self
-            .current_frame()
-            .expect("sorted trie key requested before open");
-        self.index.levels[frame.depth].keys[frame.pos].as_ref()
+    fn key(&self) -> Option<EncodedRef<'_>> {
+        let frame = self.current_frame()?;
+        if frame.pos >= frame.end {
+            return None;
+        }
+        Some(self.index.levels[frame.depth].keys[frame.pos].as_ref())
     }
 
     fn next(&mut self) {
@@ -429,11 +430,12 @@ mod tests {
     use crate::{Environment, Row, StorageSchema, Value};
 
     #[test]
-    fn builds_one_level_trie_and_collapses_duplicate_keys() {
-        let image = account_image();
-        let account = image.relation("Account").unwrap();
-        let index =
-            SortedTrieIndex::build(account, IndexSpec::new("by_currency", [FieldId(1)])).unwrap();
+    fn builds_one_level_trie_and_collapses_duplicate_keys() -> Result<()> {
+        let image = account_image()?;
+        let account = image
+            .relation("Account")
+            .ok_or_else(|| crate::Error::internal("missing Account relation"))?;
+        let index = SortedTrieIndex::build(account, IndexSpec::new("by_currency", [FieldId(1)]))?;
 
         assert_eq!(index.order, vec![RowId(0), RowId(2), RowId(1)]);
         assert_eq!(index.stats.row_count, 3);
@@ -442,81 +444,81 @@ mod tests {
 
         let mut iter = index.iter();
         iter.open();
-        assert_eq!(iter.key().as_bytes(), 840u64.to_be_bytes().as_slice());
+        assert_eq!(key_bytes(&iter)?, 840u64.to_be_bytes().as_slice());
         assert_eq!(iter.count(), 2);
         assert_eq!(iter.current_rows(), &[RowId(0), RowId(2)]);
         iter.next();
-        assert_eq!(iter.key().as_bytes(), 978u64.to_be_bytes().as_slice());
+        assert_eq!(key_bytes(&iter)?, 978u64.to_be_bytes().as_slice());
         assert_eq!(iter.count(), 1);
         assert_eq!(iter.current_rows(), &[RowId(1)]);
         iter.next();
         assert!(iter.at_end());
+        Ok(())
     }
 
     #[test]
-    fn seek_lands_on_least_upper_bound() {
-        let image = account_image();
-        let account = image.relation("Account").unwrap();
-        let index =
-            SortedTrieIndex::build(account, IndexSpec::new("by_currency", [FieldId(1)])).unwrap();
+    fn seek_lands_on_least_upper_bound() -> Result<()> {
+        let image = account_image()?;
+        let account = image
+            .relation("Account")
+            .ok_or_else(|| crate::Error::internal("missing Account relation"))?;
+        let index = SortedTrieIndex::build(account, IndexSpec::new("by_currency", [FieldId(1)]))?;
         let target = EncodedOwned::Eight(900u64.to_be_bytes());
 
         let mut iter = index.iter();
         iter.open();
         iter.seek(target.as_ref());
-        assert_eq!(iter.key().as_bytes(), 978u64.to_be_bytes().as_slice());
-        iter.seek(
-            999u64
-                .to_be_bytes()
-                .as_slice()
-                .try_into()
-                .map(EncodedRef::Eight)
-                .unwrap(),
-        );
+        assert_eq!(key_bytes(&iter)?, 978u64.to_be_bytes().as_slice());
+        let target = EncodedOwned::Eight(999u64.to_be_bytes());
+        iter.seek(target.as_ref());
         assert!(iter.at_end());
+        Ok(())
     }
 
     #[test]
-    fn open_and_up_preserve_parent_cursor_state() {
-        let image = account_image();
-        let account = image.relation("Account").unwrap();
+    fn open_and_up_preserve_parent_cursor_state() -> Result<()> {
+        let image = account_image()?;
+        let account = image
+            .relation("Account")
+            .ok_or_else(|| crate::Error::internal("missing Account relation"))?;
         let index = SortedTrieIndex::build(
             account,
             IndexSpec::new("currency_active_id", [FieldId(1), FieldId(2), FieldId(0)]),
-        )
-        .unwrap();
+        )?;
 
         let mut iter = index.iter();
         iter.open();
-        assert_eq!(iter.key().as_bytes(), 840u64.to_be_bytes().as_slice());
+        assert_eq!(key_bytes(&iter)?, 840u64.to_be_bytes().as_slice());
         iter.open();
         assert_eq!(iter.depth(), 1);
-        assert_eq!(iter.key().as_bytes(), &[1]);
+        assert_eq!(key_bytes(&iter)?, &[1]);
         assert_eq!(iter.count(), 2);
         iter.open();
         assert_eq!(iter.depth(), 2);
-        assert_eq!(iter.key().as_bytes(), 1u64.to_be_bytes().as_slice());
+        assert_eq!(key_bytes(&iter)?, 1u64.to_be_bytes().as_slice());
         iter.next();
-        assert_eq!(iter.key().as_bytes(), 3u64.to_be_bytes().as_slice());
+        assert_eq!(key_bytes(&iter)?, 3u64.to_be_bytes().as_slice());
         iter.up();
         assert_eq!(iter.depth(), 1);
-        assert_eq!(iter.key().as_bytes(), &[1]);
+        assert_eq!(key_bytes(&iter)?, &[1]);
         iter.up();
         assert_eq!(iter.depth(), 0);
-        assert_eq!(iter.key().as_bytes(), 840u64.to_be_bytes().as_slice());
+        assert_eq!(key_bytes(&iter)?, 840u64.to_be_bytes().as_slice());
         iter.next();
-        assert_eq!(iter.key().as_bytes(), 978u64.to_be_bytes().as_slice());
+        assert_eq!(key_bytes(&iter)?, 978u64.to_be_bytes().as_slice());
+        Ok(())
     }
 
     #[test]
-    fn three_level_ranges_map_to_expected_rows() {
-        let image = account_image();
-        let account = image.relation("Account").unwrap();
+    fn three_level_ranges_map_to_expected_rows() -> Result<()> {
+        let image = account_image()?;
+        let account = image
+            .relation("Account")
+            .ok_or_else(|| crate::Error::internal("missing Account relation"))?;
         let index = SortedTrieIndex::build(
             account,
             IndexSpec::new("currency_active_id", [FieldId(1), FieldId(2), FieldId(0)]),
-        )
-        .unwrap();
+        )?;
 
         let mut iter = index.iter();
         iter.open();
@@ -539,21 +541,27 @@ mod tests {
             }
         );
         assert_eq!(iter.current_rows(), &[RowId(2)]);
+        Ok(())
     }
 
-    fn account_image() -> crate::QueryImage {
-        let dir = tempfile::tempdir().unwrap();
+    fn key_bytes(iter: &SortedTrieIter<'_>) -> Result<Vec<u8>> {
+        iter.key()
+            .map(|key| key.as_bytes().to_vec())
+            .ok_or_else(|| crate::Error::internal("missing iterator key"))
+    }
+
+    fn account_image() -> Result<crate::QueryImage> {
+        let dir = tempfile::tempdir().map_err(|error| crate::Error::io("tempdir", error))?;
         let path = dir.keep();
-        let env = Environment::open(path).unwrap();
-        let schema = StorageSchema::new(account_schema(), env.max_key_size()).unwrap();
+        let env = Environment::open(path)?;
+        let schema = StorageSchema::new(account_schema(), env.max_key_size())?;
         env.write(|txn| {
             for row in account_rows() {
                 txn.insert(&schema, row)?;
             }
             Ok::<_, crate::Error>(())
-        })
-        .unwrap();
-        env.query_image(&schema).unwrap().as_ref().clone()
+        })?;
+        Ok(env.query_image(&schema)?.as_ref().clone())
     }
 
     fn account_schema() -> SchemaDescriptor {

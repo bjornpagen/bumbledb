@@ -2225,11 +2225,13 @@ mod tests {
         RelationKind,
     };
 
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
     #[test]
-    fn inserts_rows_indexes_history_stats_and_reopens() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
-        let schema = storage_schema(&env);
+    fn inserts_rows_indexes_history_stats_and_reopens() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = storage_schema(&env)?;
 
         env.write(|txn| {
             let holder = txn.alloc_id(&schema, "Holder")?;
@@ -2240,8 +2242,7 @@ mod tests {
             txn.insert(&schema, holder_row(holder, "Alice"))?;
             txn.insert(&schema, account_row(account, holder, 840))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 1);
@@ -2264,39 +2265,39 @@ mod tests {
             )?);
             assert!(txn.dictionary_string_id("Alice")?.is_some());
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
         drop(env);
-        let env = Environment::open(dir.path()).unwrap();
-        let schema = storage_schema(&env);
+        let env = Environment::open(dir.path())?;
+        let schema = storage_schema(&env)?;
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 1);
             assert_eq!(txn.relation_row_count(&schema, "Holder")?, 1);
             assert!(txn.row_exists(&schema, &holder_key(1))?);
             assert!(txn.dictionary_string_id("Alice")?.is_some());
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
-        env.write(|txn| {
-            assert_eq!(txn.alloc_id(&schema, "Holder")?, 2);
-            Err::<(), Error>(Error::internal("rollback counter check"))
-        })
-        .unwrap_err();
+        assert!(
+            env.write(|txn| {
+                assert_eq!(txn.alloc_id(&schema, "Holder")?, 2);
+                Err::<(), Error>(Error::internal("rollback counter check"))
+            })
+            .is_err()
+        );
+        Ok(())
     }
 
     #[test]
-    fn duplicate_unique_and_foreign_key_failures_abort_cleanly() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
-        let schema = storage_schema(&env);
+    fn duplicate_unique_and_foreign_key_failures_abort_cleanly() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = storage_schema(&env)?;
 
         env.write(|txn| {
             txn.insert(&schema, holder_row(1, "Alice"))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
         let duplicate = env.write(|txn| txn.insert(&schema, holder_row(1, "Bob")));
         assert!(matches!(
@@ -2325,28 +2326,26 @@ mod tests {
             assert_eq!(txn.relation_row_count(&schema, "Account")?, 0);
             assert_eq!(txn.dictionary_string_id("Bob")?, None);
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
+        Ok(())
     }
 
     #[test]
-    fn replace_removes_old_current_entries_and_preserves_counts() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
-        let schema = storage_schema(&env);
+    fn replace_removes_old_current_entries_and_preserves_counts() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = storage_schema(&env)?;
 
         env.write(|txn| {
             txn.insert(&schema, holder_row(1, "Alice"))?;
             txn.insert(&schema, account_row(1, 1, 840))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
         env.write(|txn| {
             txn.replace(&schema, account_row(1, 1, 978))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 2);
@@ -2360,28 +2359,26 @@ mod tests {
             )?);
             assert!(txn.current_index_entry_exists(&schema, &account_row(1, 1, 978), "primary")?);
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
         env.write(|txn| {
             txn.insert(&schema, account_row(2, 1, 840))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
+        Ok(())
     }
 
     #[test]
-    fn deletes_restrict_then_remove_indexes_and_rows() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
-        let schema = storage_schema(&env);
+    fn deletes_restrict_then_remove_indexes_and_rows() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = storage_schema(&env)?;
 
         env.write(|txn| {
             txn.insert(&schema, holder_row(1, "Alice"))?;
             txn.insert(&schema, account_row(1, 1, 840))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
         let restricted = env.write(|txn| txn.delete(&schema, holder_key(1)));
         assert!(matches!(
@@ -2393,8 +2390,7 @@ mod tests {
             txn.delete(&schema, account_key(1))?;
             txn.delete(&schema, holder_key(1))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 2);
@@ -2404,23 +2400,22 @@ mod tests {
             assert!(!txn.row_exists(&schema, &holder_key(1))?);
             assert_eq!(txn.index_entry_count(&schema, "Account", "by_holder")?, 0);
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
+        Ok(())
     }
 
     #[test]
-    fn composite_tuples_insert_duplicate_and_delete() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
-        let schema = storage_schema(&env);
+    fn composite_tuples_insert_duplicate_and_delete() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = storage_schema(&env)?;
 
         env.write(|txn| {
             txn.insert(&schema, holder_row(1, "Alice"))?;
             txn.insert(&schema, account_row(1, 1, 840))?;
             txn.insert_tuple(&schema, tag_row(1, 7))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
         let duplicate = env.write(|txn| txn.insert_tuple(&schema, tag_row(1, 7)));
         assert!(matches!(
@@ -2431,8 +2426,7 @@ mod tests {
         env.write(|txn| {
             txn.delete_tuple(&schema, tag_row(1, 7))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
         env.read(|txn| {
             assert_eq!(txn.relation_row_count(&schema, "AccountTag")?, 0);
@@ -2442,15 +2436,15 @@ mod tests {
                 0
             );
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
+        Ok(())
     }
 
     #[test]
-    fn read_access_paths_decode_rows_and_preserve_snapshots() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment::open(dir.path()).unwrap();
-        let schema = storage_schema(&env);
+    fn read_access_paths_decode_rows_and_preserve_snapshots() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = storage_schema(&env)?;
 
         env.write(|txn| {
             txn.insert(&schema, holder_row(1, "Alice"))?;
@@ -2458,8 +2452,7 @@ mod tests {
             txn.insert(&schema, account_row(1, 1, 840))?;
             txn.insert(&schema, account_row(2, 1, 978))?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
         env.read(|txn| {
             assert_eq!(
@@ -2490,7 +2483,7 @@ mod tests {
             );
 
             let full = collect_rows(txn.scan_relation(&schema, "Account")?)?;
-            assert_same_rows(&full, &[account_row(1, 1, 840), account_row(2, 1, 978)]);
+            assert_same_rows(&full, &[account_row(1, 1, 840), account_row(2, 1, 978)])?;
 
             let by_holder_items = collect_items(txn.scan_prefix(
                 &schema,
@@ -2504,7 +2497,7 @@ mod tests {
                     .map(|item| item.row.clone())
                     .collect::<Vec<_>>(),
                 &[account_row(1, 1, 840), account_row(2, 1, 978)],
-            );
+            )?;
             assert!(
                 by_holder_items
                     .iter()
@@ -2526,7 +2519,7 @@ mod tests {
                 Some(Value::Timestamp(TimestampMicros(15))),
                 Some(Value::Timestamp(TimestampMicros(31))),
             )?)?;
-            assert_same_rows(&ranged, &[account_row(2, 1, 978)]);
+            assert_same_rows(&ranged, &[account_row(2, 1, 978)])?;
 
             for path in access_paths {
                 let rows = collect_rows(txn.scan_prefix(
@@ -2535,7 +2528,7 @@ mod tests {
                     &path.index_name,
                     &FieldValues::new("Account", std::iter::empty::<(&str, Value)>()),
                 )?)?;
-                assert_same_rows(&rows, &[account_row(1, 1, 840), account_row(2, 1, 978)]);
+                assert_same_rows(&rows, &[account_row(1, 1, 840), account_row(2, 1, 978)])?;
             }
 
             env.write(|write| {
@@ -2547,10 +2540,9 @@ mod tests {
             assert_same_rows(
                 &still_two,
                 &[account_row(1, 1, 840), account_row(2, 1, 978)],
-            );
+            )?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
 
         env.read(|txn| {
             let now_three = collect_rows(txn.scan_relation(&schema, "Account")?)?;
@@ -2561,14 +2553,14 @@ mod tests {
                     account_row(2, 1, 978),
                     account_row(3, 2, 840),
                 ],
-            );
+            )?;
             Ok::<(), Error>(())
-        })
-        .unwrap();
+        })?;
+        Ok(())
     }
 
-    fn storage_schema(env: &Environment) -> StorageSchema {
-        StorageSchema::new(ledger_schema(), env.max_key_size()).unwrap()
+    fn storage_schema(env: &Environment) -> Result<StorageSchema> {
+        StorageSchema::new(ledger_schema(), env.max_key_size())
     }
 
     fn ledger_schema() -> SchemaDescriptor {
@@ -2700,35 +2692,55 @@ mod tests {
         scan.map(|item| item.map(|item| item.row)).collect()
     }
 
-    fn assert_same_rows(actual: &[Row], expected: &[Row]) {
-        let mut actual = row_keys(actual);
-        let mut expected = row_keys(expected);
+    fn assert_same_rows(actual: &[Row], expected: &[Row]) -> Result<()> {
+        let mut actual = row_keys(actual)?;
+        let mut expected = row_keys(expected)?;
         actual.sort();
         expected.sort();
         assert_eq!(actual, expected);
+        Ok(())
     }
 
-    fn row_keys(rows: &[Row]) -> Vec<(u64, u64, u64, i64)> {
+    fn row_keys(rows: &[Row]) -> Result<Vec<(u64, u64, u64, i64)>> {
         rows.iter()
             .map(|row| {
-                let id = match row.value("id").unwrap() {
+                let id = match required_value(row, "id")? {
                     Value::Id(value) => *value,
-                    other => panic!("unexpected id value: {other:?}"),
+                    other => {
+                        return Err(Error::internal(format!("unexpected id value: {other:?}")));
+                    }
                 };
-                let holder = match row.value("holder").unwrap() {
+                let holder = match required_value(row, "holder")? {
                     Value::Ref(value) => *value,
-                    other => panic!("unexpected holder value: {other:?}"),
+                    other => {
+                        return Err(Error::internal(format!(
+                            "unexpected holder value: {other:?}"
+                        )));
+                    }
                 };
-                let currency = match row.value("currency").unwrap() {
+                let currency = match required_value(row, "currency")? {
                     Value::Symbol(value) => *value,
-                    other => panic!("unexpected currency value: {other:?}"),
+                    other => {
+                        return Err(Error::internal(format!(
+                            "unexpected currency value: {other:?}"
+                        )));
+                    }
                 };
-                let opened = match row.value("opened").unwrap() {
+                let opened = match required_value(row, "opened")? {
                     Value::Timestamp(value) => value.0,
-                    other => panic!("unexpected opened value: {other:?}"),
+                    other => {
+                        return Err(Error::internal(format!(
+                            "unexpected opened value: {other:?}"
+                        )));
+                    }
                 };
-                (id, holder, currency, opened)
+                Ok((id, holder, currency, opened))
             })
             .collect()
+    }
+
+    fn required_value<'a>(row: &'a Row, field: &str) -> Result<&'a Value> {
+        row.value(field)
+            .ok_or_else(|| Error::internal(format!("missing field {field}")))
     }
 }

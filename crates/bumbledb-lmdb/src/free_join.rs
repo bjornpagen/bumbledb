@@ -192,7 +192,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn validates_manual_lftj_plan() {
+    fn validates_manual_lftj_plan() -> Result<()> {
         let plan = FreeJoinPlan {
             nodes: vec![PlanNode {
                 id: NodeId(0),
@@ -214,12 +214,13 @@ mod tests {
             estimates: PlanEstimates::default(),
         };
 
-        plan.validate().unwrap();
+        plan.validate()?;
         assert!(plan.is_pure_lftj());
+        Ok(())
     }
 
     #[test]
-    fn validates_manual_probe_plan_shape() {
+    fn validates_manual_probe_plan_shape() -> Result<()> {
         let plan = FreeJoinPlan {
             nodes: vec![PlanNode {
                 id: NodeId(0),
@@ -244,12 +245,13 @@ mod tests {
             estimates: PlanEstimates::default(),
         };
 
-        plan.validate().unwrap();
+        plan.validate()?;
         assert!(!plan.is_pure_lftj());
+        Ok(())
     }
 
     #[test]
-    fn validates_manual_hybrid_plan_shape() {
+    fn validates_manual_hybrid_plan_shape() -> Result<()> {
         let plan = FreeJoinPlan {
             nodes: vec![PlanNode {
                 id: NodeId(0),
@@ -275,8 +277,9 @@ mod tests {
             estimates: PlanEstimates::default(),
         };
 
-        plan.validate().unwrap();
+        plan.validate()?;
         assert!(!plan.is_pure_lftj());
+        Ok(())
     }
 
     #[test]
