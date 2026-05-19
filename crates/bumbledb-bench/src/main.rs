@@ -13,7 +13,7 @@ use bumbledb_core::schema::{
 };
 use bumbledb_lmdb::{
     AllocationPhaseStats, Environment, InputBindings, PlanCounters, QueryAllocationStats,
-    QueryOutput, QueryTimings, ResultColumn, Row, StorageSchema, Value,
+    QueryOutput, QueryPlan, QueryTimings, ResultColumn, Row, StorageSchema, Value,
 };
 use rusqlite::{Connection, params_from_iter};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -160,6 +160,21 @@ enum TraceFormat {
     Flame,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CompareMode {
+    Materialized,
+    Rows,
+}
+
+impl CompareMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            CompareMode::Materialized => "materialized",
+            CompareMode::Rows => "rows",
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Config {
     scale: u64,
@@ -176,6 +191,7 @@ struct Config {
     trace_output: Option<String>,
     trace_format: TraceFormat,
     format: OutputFormat,
+    compare_mode: CompareMode,
     fail_gates: bool,
 }
 
@@ -201,6 +217,7 @@ impl Config {
         let mut trace_output = None;
         let mut trace_format = TraceFormat::Fmt;
         let mut format = OutputFormat::Text;
+        let mut compare_mode = CompareMode::Materialized;
         let mut fail_gates = false;
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -253,12 +270,21 @@ impl Config {
                         other => return Err(bench_error(format!("unknown --format {other}"))),
                     }
                 }
+                "--compare-mode" => {
+                    compare_mode = match next_arg(&mut args, "--compare-mode")?.as_str() {
+                        "materialized" => CompareMode::Materialized,
+                        "rows" => CompareMode::Rows,
+                        other => {
+                            return Err(bench_error(format!("unknown --compare-mode {other}")));
+                        }
+                    }
+                }
                 "--markdown" => format = OutputFormat::Markdown,
                 "--json" => format = OutputFormat::Json,
                 "--fail-gates" => fail_gates = true,
                 "--help" | "-h" => {
                     println!(
-                        "usage: cargo run -p bumbledb-bench --release -- [--scale N] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
+                        "usage: cargo run -p bumbledb-bench --release -- [--scale N] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--compare-mode materialized|rows] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
                     );
                     return Ok(None);
                 }
@@ -280,6 +306,7 @@ impl Config {
             trace_output,
             trace_format,
             format,
+            compare_mode,
             fail_gates,
         }))
     }
@@ -455,6 +482,11 @@ struct BenchmarkRunResult {
     chosen_plan: String,
     runtime_kind: String,
     plan_family: String,
+    compare_mode: String,
+    bumbledb_materialized_rows: bool,
+    sqlite_materialized_rows: bool,
+    count_only_supported: bool,
+    count_only_fallback_reason: String,
     timings: QueryTimings,
     allocations: QueryAllocationStats,
     iterator_ops: u64,
@@ -626,30 +658,55 @@ fn run_dataset(
         let inputs = InputBindings::from_values(query.inputs.clone());
         let params = query.sqlite_params.clone();
 
-        let bumble_once =
+        let materialized_once =
             timed(|| bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs)))?;
-        let bumble_prepare = bumble_once.elapsed;
-        let bumble_output = bumble_once.value;
+        let materialized_output = materialized_once.value;
+        let (bumble_prepare, bumble_output) = match config.compare_mode {
+            CompareMode::Materialized => (materialized_once.elapsed, materialized_output.clone()),
+            CompareMode::Rows => {
+                let count_once = timed(|| {
+                    bumble_env
+                        .read(|txn| txn.execute_query_count_only(&bumble_schema, &typed, &inputs))
+                })?;
+                (
+                    count_once.elapsed,
+                    count_output_as_query_output(
+                        materialized_output.columns.clone(),
+                        count_once.value.rows,
+                        count_once.value.plan,
+                    ),
+                )
+            }
+        };
         let sqlite_once = timed(|| sqlite_count(&mut sqlite, query.sqlite, &params))?;
         let sqlite_prepare = sqlite_once.elapsed;
         let sqlite_once = sqlite_once.value;
-        if bumble_output.rows.len() != sqlite_once {
+        if materialized_output.rows.len() != sqlite_once {
             return Err(format!(
                 "{}:{} row mismatch bumbledb={} sqlite={}",
                 dataset.name,
                 query.name,
-                bumble_output.rows.len(),
+                materialized_output.rows.len(),
                 sqlite_once
             )
             .into());
         }
 
-        let bumble_warmup = timed_samples(config.warmup, || {
-            let rows = bumble_env
-                .read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?
-                .rows;
-            black_box(rows.len());
-            Ok::<_, bumbledb_lmdb::Error>(())
+        let bumble_warmup = timed_samples(config.warmup, || match config.compare_mode {
+            CompareMode::Materialized => {
+                let rows = bumble_env
+                    .read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?
+                    .rows;
+                black_box(rows.len());
+                Ok::<_, bumbledb_lmdb::Error>(())
+            }
+            CompareMode::Rows => {
+                let rows = bumble_env
+                    .read(|txn| txn.execute_query_count_only(&bumble_schema, &typed, &inputs))?
+                    .rows;
+                black_box(rows);
+                Ok::<_, bumbledb_lmdb::Error>(())
+            }
         })?;
         let sqlite_warmup = timed_samples(config.warmup, || {
             let rows = sqlite_count(&mut sqlite, query.sqlite, &params)?;
@@ -657,12 +714,21 @@ fn run_dataset(
             Ok::<_, Box<dyn std::error::Error>>(())
         })?;
 
-        let bumble_samples = timed_samples(config.repeats, || {
-            let rows = bumble_env
-                .read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?
-                .rows;
-            black_box(rows.len());
-            Ok::<_, bumbledb_lmdb::Error>(())
+        let bumble_samples = timed_samples(config.repeats, || match config.compare_mode {
+            CompareMode::Materialized => {
+                let rows = bumble_env
+                    .read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?
+                    .rows;
+                black_box(rows.len());
+                Ok::<_, bumbledb_lmdb::Error>(())
+            }
+            CompareMode::Rows => {
+                let rows = bumble_env
+                    .read(|txn| txn.execute_query_count_only(&bumble_schema, &typed, &inputs))?
+                    .rows;
+                black_box(rows);
+                Ok::<_, bumbledb_lmdb::Error>(())
+            }
         })?;
         let sqlite_samples = timed_samples(config.repeats, || {
             let rows = sqlite_count(&mut sqlite, query.sqlite, &params)?;
@@ -674,6 +740,7 @@ fn run_dataset(
             dataset.name,
             &query,
             &bumble_output,
+            config.compare_mode,
             QueryTimingSamples {
                 bumbledb_prepare: bumble_prepare,
                 sqlite_prepare,
@@ -762,6 +829,7 @@ fn benchmark_result(
     dataset: &'static str,
     query: &BenchQuery,
     output: &QueryOutput,
+    compare_mode: CompareMode,
     timing: QueryTimingSamples,
     query_image_stats: QueryImageBenchStats,
 ) -> BenchmarkRunResult {
@@ -778,6 +846,7 @@ fn benchmark_result(
         dataset,
         query,
         output,
+        compare_mode,
         bumbledb_avg,
         sqlite_ratio,
         final_output_values,
@@ -799,6 +868,11 @@ fn benchmark_result(
         chosen_plan: output.plan.optimizer.chosen.clone(),
         runtime_kind: format!("{:?}", output.plan.runtime_kind),
         plan_family: format!("{:?}", output.plan.plan_family),
+        compare_mode: compare_mode.as_str().to_owned(),
+        bumbledb_materialized_rows: compare_mode == CompareMode::Materialized,
+        sqlite_materialized_rows: false,
+        count_only_supported: compare_mode == CompareMode::Rows,
+        count_only_fallback_reason: String::new(),
         timings: output.plan.timings,
         allocations: output.plan.allocations,
         iterator_ops: output.plan.free_join.estimates.iterator_ops,
@@ -840,6 +914,18 @@ fn benchmark_result(
     }
 }
 
+fn count_output_as_query_output(
+    columns: Vec<ResultColumn>,
+    rows: usize,
+    plan: QueryPlan,
+) -> QueryOutput {
+    QueryOutput {
+        columns,
+        rows: (0..rows).map(|_| Vec::new()).collect(),
+        plan,
+    }
+}
+
 fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
     let plan = &output.plan;
     let timings = plan.timings;
@@ -869,10 +955,15 @@ fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "benchmark gates need result context without building a heap object"
+)]
 fn evaluate_gate(
     dataset: &'static str,
     query: &BenchQuery,
     output: &QueryOutput,
+    compare_mode: CompareMode,
     bumbledb_avg: Duration,
     sqlite_ratio: f64,
     final_output_values: u64,
@@ -991,14 +1082,18 @@ fn evaluate_gate(
         .columns
         .iter()
         .any(|column| matches!(column, ResultColumn::Aggregate { .. }));
-    if !has_aggregate && counters.materialized_output_values != final_output_values {
+    if compare_mode == CompareMode::Materialized
+        && !has_aggregate
+        && counters.materialized_output_values != final_output_values
+    {
         passed = false;
         notes.push(format!(
             "materialized_output_values {} != final output values {}",
             counters.materialized_output_values, final_output_values
         ));
     }
-    if has_aggregate
+    if compare_mode == CompareMode::Materialized
+        && has_aggregate
         && query.datalog.contains("count(")
         && counters.materialized_output_values > final_output_values
     {
@@ -1070,15 +1165,19 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | rows | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image segments | image segment bytes | built from segments | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash calls | hash hits | hash misses | hash rows | hash emits | direct probes | direct rows | direct predicates | iterator ops | hash build est | hash probe est | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---:|---:|---:|---|---|---|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | rows | compare mode | bumbledb materialized | sqlite materialized | count-only | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image segments | image segment bytes | built from segments | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash calls | hash hits | hash misses | hash rows | hash emits | direct probes | direct rows | direct predicates | iterator ops | hash build est | hash probe est | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---|---|---|---|---:|---:|---:|---|---|---|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.rows,
+            markdown_escape(&result.compare_mode),
+            result.bumbledb_materialized_rows,
+            result.sqlite_materialized_rows,
+            result.count_only_supported,
             duration_micros(result.bumbledb_avg),
             duration_micros(result.sqlite_avg),
             result.sqlite_ratio,
@@ -1310,13 +1409,18 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"query_image_built_during_query\":{},",
+            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"bumbledb_materialized_rows\":{},\"sqlite_materialized_rows\":{},\"count_only_supported\":{},\"count_only_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},",
             json_escape(result.dataset),
             json_escape(result.query),
             result.rows,
             json_escape(&result.chosen_plan),
             json_escape(&result.runtime_kind),
             json_escape(&result.plan_family),
+            json_escape(&result.compare_mode),
+            result.bumbledb_materialized_rows,
+            result.sqlite_materialized_rows,
+            result.count_only_supported,
+            json_escape(&result.count_only_fallback_reason),
             result.query_image_built_during_query,
         );
         write_timing_stats(&mut out, "bumbledb", result.bumbledb_samples);
@@ -2478,6 +2582,11 @@ mod tests {
             chosen_plan: "pure_lftj".to_owned(),
             runtime_kind: "Lftj".to_owned(),
             plan_family: "FreeJoinLftj".to_owned(),
+            compare_mode: "materialized".to_owned(),
+            bumbledb_materialized_rows: true,
+            sqlite_materialized_rows: false,
+            count_only_supported: false,
+            count_only_fallback_reason: String::new(),
             timings: QueryTimings {
                 total_micros: 10,
                 execute_micros: 4,
@@ -2561,6 +2670,11 @@ mod tests {
             chosen_plan: "hash_probe".to_owned(),
             runtime_kind: "HashProbe".to_owned(),
             plan_family: "HashProbe".to_owned(),
+            compare_mode: "rows".to_owned(),
+            bumbledb_materialized_rows: false,
+            sqlite_materialized_rows: false,
+            count_only_supported: true,
+            count_only_fallback_reason: String::new(),
             timings: QueryTimings {
                 total_micros: 20,
                 hash_execute_micros: 4,
@@ -2612,6 +2726,8 @@ mod tests {
         assert!(json.contains("\"dataset\":\"ledger\""));
         assert!(json.contains("\"runtime\":\"HashProbe\""));
         assert!(json.contains("\"plan_family\":\"HashProbe\""));
+        assert!(json.contains("\"compare_mode\":\"rows\""));
+        assert!(json.contains("\"count_only_supported\":true"));
         assert!(json.contains("\"query_image_built_during_query\":true"));
         assert!(json.contains("\"phase_timing\""));
         assert!(json.contains("\"allocations\""));

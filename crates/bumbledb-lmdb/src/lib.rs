@@ -40,8 +40,8 @@ pub use query::{
     AllocationPhaseStats, CostKey, InputBindings, InputId, MissingIndexRecommendation,
     NodeRowEstimate, NormAtom, NormAtomField, NormFindTerm, NormInput, NormOperand, NormPredicate,
     NormTerm, NormVar, NormalizedQuery, OptimizerTrace, PlanCandidate, PlanCounters, PlanFamily,
-    PredicateId, QueryAllocationStats, QueryNodeTiming, QueryOutput, QueryPlan, QueryRuntimeKind,
-    QueryTimings, ResultColumn, VariableEstimate,
+    PredicateId, QueryAllocationStats, QueryCountOutput, QueryNodeTiming, QueryOutput, QueryPlan,
+    QueryRuntimeKind, QueryTimings, ResultColumn, VariableEstimate,
 };
 pub use query_image::{
     ColumnImage, EncodedRef, FieldId, FieldImage, FixedColumn, PreparedPlanCacheDiagnostics,

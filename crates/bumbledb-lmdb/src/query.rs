@@ -211,6 +211,15 @@ pub struct QueryOutput {
     pub plan: QueryPlan,
 }
 
+/// Count-only query output used by benchmark row-count comparisons.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueryCountOutput {
+    /// Number of logical output rows.
+    pub rows: usize,
+    /// Physical plan and counters.
+    pub plan: QueryPlan,
+}
+
 impl QueryOutput {
     /// Renders a human-readable explain plan for this executed query.
     pub fn explain(&self) -> String {
@@ -1576,6 +1585,171 @@ impl<'env> ReadTxn<'env> {
         tracing::debug!(?plan.summary.counters, "free join query executed");
         Ok(QueryOutput {
             columns,
+            rows,
+            plan: plan.summary,
+        })
+    }
+
+    /// Executes a typed query and returns only the output row count.
+    #[tracing::instrument(name = "bumbledb.query.execute_count", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
+    pub fn execute_query_count_only(
+        &self,
+        schema: &StorageSchema,
+        query: &TypedQuery,
+        inputs: &InputBindings,
+    ) -> Result<QueryCountOutput> {
+        let total_start = Instant::now();
+        let total_alloc_start = allocation::snapshot();
+        let mut timings = QueryTimings::default();
+        let mut allocations = QueryAllocationStats::default();
+
+        let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
+        validate_inputs(schema, query, inputs)?;
+        timings.validate_inputs_micros = elapsed_micros(phase_start);
+        allocations.validate_inputs = allocation_delta_since(phase_alloc_start);
+
+        let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
+        let mut normalized = normalize_query(self, schema, query)?;
+        timings.normalize_micros = elapsed_micros(phase_start);
+        allocations.normalize = allocation_delta_since(phase_alloc_start);
+
+        let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
+        let encoded_inputs = encode_inputs(self, schema, &normalized, inputs)?;
+        timings.encode_inputs_micros = elapsed_micros(phase_start);
+        allocations.encode_inputs = allocation_delta_since(phase_alloc_start);
+
+        let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
+        let image = self.query_images.get_or_build(self, schema)?;
+        timings.query_image_micros = elapsed_micros(phase_start);
+        allocations.query_image = allocation_delta_since(phase_alloc_start);
+
+        let query_image_cache = self.query_images.diagnostics();
+        let prepared_cache_key = prepared_plan_cache_key(&normalized);
+        if let Some(cache_key) = &prepared_cache_key
+            && image.static_empty_cached(cache_key)?
+        {
+            let mut plan = static_empty_plan(
+                &normalized,
+                query_image_cache,
+                image.planner_stats_diagnostics(),
+                image.prepared_plan_diagnostics(),
+            );
+            plan.timings = timings;
+            plan.allocations = allocations;
+            plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
+            plan.counters.static_empty_cache_hits = 1;
+            plan.timings.total_micros = elapsed_micros(total_start);
+            plan.allocations = plan
+                .allocations
+                .with_total(allocation_delta_since(total_alloc_start));
+            return Ok(QueryCountOutput { rows: 0, plan });
+        }
+
+        let static_empty_proof = if normalized.inputs.is_empty() {
+            Some(static_literal_atoms_prove_empty(
+                image.as_ref(),
+                &normalized,
+                &encoded_inputs,
+            )?)
+        } else {
+            None
+        };
+        if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
+            if let Some(cache_key) = &prepared_cache_key {
+                image.insert_static_empty(cache_key.clone())?;
+            }
+            let mut plan = static_empty_plan(
+                &normalized,
+                query_image_cache,
+                image.planner_stats_diagnostics(),
+                image.prepared_plan_diagnostics(),
+            );
+            plan.timings = timings;
+            plan.allocations = allocations;
+            plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
+            if let Some(proof) = static_empty_proof {
+                plan.counters.static_empty_cache_misses = 1;
+                plan.counters.static_empty_atoms_checked = proof.atoms_checked;
+                plan.counters.static_empty_rows_scanned = proof.rows_scanned;
+            }
+            plan.timings.total_micros = elapsed_micros(total_start);
+            plan.allocations = plan
+                .allocations
+                .with_total(allocation_delta_since(total_alloc_start));
+            return Ok(QueryCountOutput { rows: 0, plan });
+        }
+
+        let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
+        let mut plan = if let Some(cache_key) = prepared_cache_key {
+            if let Some(cached) = image.cached_prepared_plan(&cache_key)? {
+                cached.instantiate(
+                    query_image_cache,
+                    image.planner_stats_diagnostics(),
+                    image.prepared_plan_diagnostics(),
+                )
+            } else {
+                let prepared_plan_cache = image.prepared_plan_diagnostics();
+                let planned = plan_query(
+                    schema,
+                    &mut normalized,
+                    image.as_ref(),
+                    query_image_cache,
+                    prepared_plan_cache,
+                )?;
+                let build_micros = elapsed_micros(phase_start).min(u128::from(u64::MAX)) as u64;
+                let cached = image.insert_prepared_plan(cache_key, planned, build_micros)?;
+                cached.instantiate(
+                    query_image_cache,
+                    image.planner_stats_diagnostics(),
+                    image.prepared_plan_diagnostics(),
+                )
+            }
+        } else {
+            plan_query(
+                schema,
+                &mut normalized,
+                image.as_ref(),
+                query_image_cache,
+                image.prepared_plan_diagnostics(),
+            )?
+        };
+        timings.plan_micros = elapsed_micros(phase_start);
+        allocations.plan = allocation_delta_since(phase_alloc_start);
+        plan.summary.timings = timings;
+        plan.summary.allocations = allocations;
+
+        let mut sink = CountOnlySink::new(&plan.summary.free_join.output);
+        let execute_start = Instant::now();
+        let execute_alloc_start = allocation::snapshot();
+        execute_free_join(
+            image.as_ref(),
+            self,
+            schema,
+            &normalized,
+            &encoded_inputs,
+            &mut plan,
+            &mut sink,
+        )?;
+        plan.summary.timings.execute_micros = elapsed_micros(execute_start);
+        plan.summary.allocations.execute = allocation_delta_since(execute_alloc_start);
+
+        let rows = sink.finish_count();
+        plan.summary.counters.output_rows = rows as u64;
+        if has_aggregate(&normalized) {
+            plan.summary.counters.aggregate_groups = rows as u64;
+        }
+        plan.summary.timings.total_micros = elapsed_micros(total_start);
+        plan.summary.allocations = plan
+            .summary
+            .allocations
+            .with_total(allocation_delta_since(total_alloc_start));
+        plan.summary.refresh_node_timings();
+        Ok(QueryCountOutput {
             rows,
             plan: plan.summary,
         })
@@ -7482,6 +7656,88 @@ impl TupleSink for EncodedProjectSink {
 }
 
 #[derive(Clone, Debug)]
+struct CountOnlySink {
+    output: OutputPlan,
+    project_rows: BTreeSet<SmallEncodedRow>,
+    aggregate_groups: BTreeSet<SmallEncodedRow>,
+}
+
+impl CountOnlySink {
+    fn new(output: &OutputPlan) -> Self {
+        Self {
+            output: output.clone(),
+            project_rows: BTreeSet::new(),
+            aggregate_groups: BTreeSet::new(),
+        }
+    }
+
+    fn finish_count(self) -> usize {
+        match self.output {
+            OutputPlan::Project(_) => self.project_rows.len(),
+            OutputPlan::Aggregate(_) => self.aggregate_groups.len(),
+        }
+    }
+}
+
+impl TupleSink for CountOnlySink {
+    fn emit(
+        &mut self,
+        _txn: &ReadTxn<'_>,
+        _query: &NormalizedQuery,
+        binding: &EncodedBinding,
+        _counters: &mut PlanCounters,
+    ) -> Result<()> {
+        match &self.output {
+            OutputPlan::Project(plan) => {
+                let row = plan
+                    .vars
+                    .iter()
+                    .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
+                    .collect::<Result<SmallEncodedRow>>()?;
+                self.project_rows.insert(row);
+            }
+            OutputPlan::Aggregate(plan) => {
+                let key = plan
+                    .group_vars
+                    .iter()
+                    .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
+                    .collect::<Result<SmallEncodedRow>>()?;
+                self.aggregate_groups.insert(key);
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_count_range(
+        &mut self,
+        _txn: &ReadTxn<'_>,
+        _query: &NormalizedQuery,
+        binding: &EncodedBinding,
+        _count: u64,
+        _counters: &mut PlanCounters,
+    ) -> Result<()> {
+        if let OutputPlan::Aggregate(plan) = &self.output {
+            let key = plan
+                .group_vars
+                .iter()
+                .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
+                .collect::<Result<SmallEncodedRow>>()?;
+            self.aggregate_groups.insert(key);
+        }
+        Ok(())
+    }
+
+    fn finish(
+        self,
+        _txn: &ReadTxn<'_>,
+        _query: &NormalizedQuery,
+        _counters: &mut PlanCounters,
+    ) -> Result<Vec<Vec<Value>>> {
+        Ok(Vec::new())
+    }
+}
+
+#[derive(Clone, Debug)]
 struct AggregateSink {
     group_vars: Vec<VarId>,
     terms: Vec<AggregateTerm>,
@@ -8200,6 +8456,40 @@ mod tests {
         assert_eq!(output.plan.counters.hash_index_build_rows, 0);
         assert_eq!(output.plan.counters.trie_open, 0);
         assert_eq!(output.plan.counters.hash_probe_calls, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn count_only_matches_materialized_projection_without_decoding_output() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
+        env.write(|txn| {
+            txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
+            txn.insert(&schema, chain_b_row(10, 1))?;
+            txn.insert(&schema, chain_c_row(20, 10))?;
+            txn.insert(&schema, chain_d_row(30, 20))?;
+            Ok::<_, Error>(())
+        })?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?d
+            where
+              A(id: $a)
+              B(id: ?b, a: $a)
+              C(id: ?c, b: ?b)
+              D(id: ?d, c: ?c)
+            "#,
+        )?;
+        let inputs = InputBindings::from_values([("a", Value::U64(1))]);
+
+        let materialized = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
+        let count_only = env.read(|txn| txn.execute_query_count_only(&schema, &query, &inputs))?;
+
+        assert_eq!(count_only.rows, materialized.rows.len());
+        assert_eq!(count_only.plan.runtime_kind, materialized.plan.runtime_kind);
+        assert_eq!(count_only.plan.counters.materialized_output_values, 0);
         Ok(())
     }
 
