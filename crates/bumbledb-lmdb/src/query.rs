@@ -456,6 +456,10 @@ impl QueryPlan {
             self.counters.bindings_yielded
         ));
         out.push_str(&format!(
+            "  factorized_counted_bindings: {}\n",
+            self.counters.factorized_counted_bindings
+        ));
+        out.push_str(&format!(
             "  comparisons_evaluated: {}\n",
             self.counters.comparisons_evaluated
         ));
@@ -894,6 +898,8 @@ pub struct PlanCounters {
     pub rows_matched: u64,
     /// Number of complete encoded bindings yielded before projection/aggregation.
     pub bindings_yielded: u64,
+    /// Number of bindings counted by an aggregate without leaf materialization.
+    pub factorized_counted_bindings: u64,
     /// Number of comparison predicates evaluated.
     pub comparisons_evaluated: u64,
     /// Number of comparison predicate failures.
@@ -3214,6 +3220,29 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
 
         let mut leapfrog = LeapfrogState::new(participants.clone());
         leapfrog.init(&mut self.runtime.iters, &mut self.plan.summary.counters)?;
+        if self.can_count_current_suffix(depth) {
+            let count = self.count_current_suffix(&mut leapfrog)?;
+            for atom_id in participants.iter().rev() {
+                self.runtime.iters[*atom_id].up();
+                self.plan.summary.counters.trie_up += 1;
+            }
+            if count > 0 {
+                self.plan.summary.counters.factorized_counted_bindings = self
+                    .plan
+                    .summary
+                    .counters
+                    .factorized_counted_bindings
+                    .saturating_add(count);
+                self.sink.emit_count_range(
+                    self.txn,
+                    self.query,
+                    &self.binding,
+                    count,
+                    &mut self.plan.summary.counters,
+                )?;
+            }
+            return Ok(());
+        }
         while !leapfrog.at_end {
             let value = leapfrog.key(&self.runtime.iters, &mut self.plan.summary.counters)?;
             self.plan.summary.counters.variable_candidates += 1;
@@ -3245,6 +3274,37 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
             self.plan.summary.counters.trie_up += 1;
         }
         Ok(())
+    }
+
+    fn can_count_current_suffix(&self, depth: usize) -> bool {
+        if depth + 1 != self.plan.variable_order_ids.len() || !self.plan.comparisons.is_empty() {
+            return false;
+        }
+        let OutputPlan::Aggregate(plan) = &self.plan.summary.free_join.output else {
+            return false;
+        };
+        if !plan
+            .aggregates
+            .iter()
+            .all(|term| term.function == AggregateFunction::Count)
+        {
+            return false;
+        }
+        let current = self.plan.variable_order_ids[depth];
+        plan.group_vars.iter().all(|variable| {
+            variable.0 as usize != current && self.binding.get(variable.0 as usize).is_some()
+        })
+    }
+
+    fn count_current_suffix(&mut self, leapfrog: &mut LeapfrogState) -> Result<u64> {
+        let mut count = 0u64;
+        while !leapfrog.at_end {
+            let _ = leapfrog.key(&self.runtime.iters, &mut self.plan.summary.counters)?;
+            self.plan.summary.counters.variable_candidates += 1;
+            count = count.saturating_add(1);
+            leapfrog.next(&mut self.runtime.iters, &mut self.plan.summary.counters)?;
+        }
+        Ok(count)
     }
 
     fn participants(&self, variable: usize) -> SmallParticipants {
@@ -5148,6 +5208,20 @@ trait TupleSink {
         counters: &mut PlanCounters,
     ) -> Result<()>;
 
+    fn emit_count_range(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        query: &NormalizedQuery,
+        binding: &EncodedBinding,
+        count: u64,
+        counters: &mut PlanCounters,
+    ) -> Result<()> {
+        for _ in 0..count {
+            self.emit(txn, query, binding, counters)?;
+        }
+        Ok(())
+    }
+
     fn finish(
         self,
         txn: &ReadTxn<'_>,
@@ -5233,6 +5307,24 @@ impl TupleSink for OutputSink {
         match self {
             OutputSink::Project(sink) => sink.finish(txn, query, counters),
             OutputSink::Aggregate(sink) => sink.finish(txn, query, counters),
+        }
+    }
+
+    fn emit_count_range(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        query: &NormalizedQuery,
+        binding: &EncodedBinding,
+        count: u64,
+        counters: &mut PlanCounters,
+    ) -> Result<()> {
+        match self {
+            OutputSink::Project(sink) => {
+                sink.emit_count_range(txn, query, binding, count, counters)
+            }
+            OutputSink::Aggregate(sink) => <AggregateSink as TupleSink>::emit_count_range(
+                sink, txn, query, binding, count, counters,
+            ),
         }
     }
 }
@@ -5343,6 +5435,23 @@ impl TupleSink for AggregateSink {
         let states = ensure_aggregate_group(&mut self.groups, &self.terms, key);
         for (state, term) in states.iter_mut().zip(&self.terms) {
             state.apply_encoded(txn, query, binding, term, counters)?;
+        }
+        Ok(())
+    }
+
+    fn emit_count_range(
+        &mut self,
+        _txn: &ReadTxn<'_>,
+        _query: &NormalizedQuery,
+        binding: &EncodedBinding,
+        count: u64,
+        _counters: &mut PlanCounters,
+    ) -> Result<()> {
+        if self.count_only() {
+            return self.emit_count_range(binding, count);
+        }
+        for _ in 0..count {
+            self.emit(_txn, _query, binding, _counters)?;
         }
         Ok(())
     }
@@ -6591,12 +6700,14 @@ mod tests {
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
         assert_eq!(output.rows, vec![vec![Value::U64(3)]]);
-        assert_eq!(output.plan.counters.bindings_yielded, 3);
+        assert_eq!(output.plan.counters.bindings_yielded, 0);
+        assert_eq!(output.plan.counters.factorized_counted_bindings, 3);
         assert_eq!(output.plan.counters.aggregate_groups, 1);
         assert_eq!(output.plan.counters.decoded_values, 0);
         assert_eq!(output.plan.counters.materialized_output_values, 1);
         assert!(
-            output.plan.counters.materialized_output_values < output.plan.counters.bindings_yielded
+            output.plan.counters.materialized_output_values
+                < output.plan.counters.factorized_counted_bindings
         );
         Ok(())
     }
