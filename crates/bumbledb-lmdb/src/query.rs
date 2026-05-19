@@ -5570,7 +5570,7 @@ fn estimate_atom_variable_access(
         let mut estimate = if current_is_next {
             if prefix_len == 0 {
                 if path.kind == IndexKind::Range {
-                    index_stats.estimated_rows_for_prefix(1)
+                    relation_rows.max(1).div_ceil(4)
                 } else {
                     index_stats
                         .distinct_by_depth
