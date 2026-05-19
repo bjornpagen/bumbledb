@@ -5,9 +5,10 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use crate::{
-    AccessId, EncodedOwned, Error, FieldId, IndexSpec, RelationId, RelationImage, Result, RowId,
-    SortedTrieIndex, StorageSchema,
+    AccessId, EncodedOwned, Error, FieldId, RelationId, RelationImage, Result, RowId, StorageSchema,
 };
+
+const FIELD_STATS_SAMPLE_ROWS: usize = 4096;
 
 /// Snapshot-scoped cache for optimizer/planner relation statistics.
 #[derive(Clone, Default)]
@@ -22,6 +23,10 @@ struct PlannerStatsCacheInner {
     misses: AtomicU64,
     builds: AtomicU64,
     build_micros: AtomicU64,
+    field_stats_built: AtomicU64,
+    index_stats_built: AtomicU64,
+    stats_from_segments: AtomicU64,
+    stats_exact_scans: AtomicU64,
 }
 
 impl fmt::Debug for PlannerStatsCache {
@@ -70,6 +75,15 @@ impl PlannerStatsCache {
         self.inner
             .build_micros
             .fetch_add(elapsed, Ordering::Relaxed);
+        self.inner
+            .field_stats_built
+            .fetch_add(built.fields.len() as u64, Ordering::Relaxed);
+        self.inner
+            .index_stats_built
+            .fetch_add(built.indexes.len() as u64, Ordering::Relaxed);
+        self.inner
+            .stats_from_segments
+            .fetch_add(built.indexes.len() as u64, Ordering::Relaxed);
         Ok(built)
     }
 
@@ -85,6 +99,10 @@ impl PlannerStatsCache {
             misses: self.inner.misses.load(Ordering::Relaxed),
             builds: self.inner.builds.load(Ordering::Relaxed),
             build_micros: self.inner.build_micros.load(Ordering::Relaxed),
+            field_stats_built: self.inner.field_stats_built.load(Ordering::Relaxed),
+            index_stats_built: self.inner.index_stats_built.load(Ordering::Relaxed),
+            stats_from_segments: self.inner.stats_from_segments.load(Ordering::Relaxed),
+            stats_exact_scans: self.inner.stats_exact_scans.load(Ordering::Relaxed),
         }
     }
 }
@@ -102,6 +120,14 @@ pub struct PlannerStatsCacheDiagnostics {
     pub builds: u64,
     /// Total relation stats build time in microseconds.
     pub build_micros: u64,
+    /// Field-stat descriptors built without exact scans.
+    pub field_stats_built: u64,
+    /// Access-path/index-stat descriptors built without exact trie construction.
+    pub index_stats_built: u64,
+    /// Access-path stats derived from relation/access metadata.
+    pub stats_from_segments: u64,
+    /// Exact field/index scans performed during planning.
+    pub stats_exact_scans: u64,
 }
 
 /// Optimizer relation statistics derived from one relation image.
@@ -121,40 +147,23 @@ impl OptimizerRelationStats {
         for field in &relation.fields {
             fields.insert(
                 field.name.clone(),
-                OptimizerFieldStats::build(relation, field.id)?,
+                OptimizerFieldStats::sample(relation, field.id)?,
             );
         }
 
         let mut indexes = BTreeMap::new();
         for path in schema.access_paths(&relation.name)? {
-            let field_ids = path
-                .leading_fields
-                .iter()
-                .map(|field_name| {
-                    relation
-                        .fields
-                        .iter()
-                        .find(|field| &field.name == field_name)
-                        .map(|field| field.id)
-                        .ok_or_else(|| Error::unknown_field(&relation.name, field_name))
-                })
-                .collect::<Result<Vec<_>>>()?;
             let layout = schema
                 .layout(&relation.name, &path.index_name)
                 .ok_or_else(|| Error::unknown_index(&relation.name, &path.index_name))?;
-            let trie = SortedTrieIndex::build(
-                relation,
-                IndexSpec::new(format!("{}_stats", path.index_name), field_ids),
-            )?;
             indexes.insert(
                 path.index_name,
-                OptimizerIndexStats {
-                    index: AccessId(layout.index_id),
-                    rows: relation.row_count,
-                    distinct_by_depth: trie.stats.distinct_by_depth,
-                    avg_fanout_by_depth: trie.stats.avg_fanout_by_depth,
-                    max_fanout_by_depth: trie.stats.max_fanout_by_depth,
-                },
+                OptimizerIndexStats::cheap(
+                    AccessId(layout.index_id),
+                    relation.row_count,
+                    &path.leading_fields,
+                    &fields,
+                ),
             );
         }
 
@@ -180,19 +189,28 @@ pub(crate) struct OptimizerFieldStats {
 }
 
 impl OptimizerFieldStats {
-    fn build(relation: &RelationImage, field: FieldId) -> Result<Self> {
+    fn sample(relation: &RelationImage, field: FieldId) -> Result<Self> {
+        let sample_rows = relation.row_count.min(FIELD_STATS_SAMPLE_ROWS);
         let mut frequencies = BTreeMap::<EncodedOwned, usize>::new();
-        for row in 0..relation.row_count {
+        for row in 0..sample_rows {
             let value = relation
                 .encoded(RowId(row as u32), field)
                 .map(EncodedOwned::from_ref)
-                .ok_or_else(|| Error::internal("missing optimizer field value"))?;
+                .ok_or_else(|| Error::internal("missing optimizer sample field value"))?;
             *frequencies.entry(value).or_insert(0) += 1;
         }
-        let distinct = frequencies.len();
+        let sample_distinct = frequencies.len().max(1);
+        let distinct = if sample_rows == relation.row_count || sample_distinct <= sample_rows / 16 {
+            sample_distinct
+        } else {
+            sample_distinct
+                .saturating_mul(relation.row_count.max(1))
+                .div_ceil(sample_rows.max(1))
+                .min(relation.row_count.max(1))
+        };
         let min = frequencies.keys().next().cloned();
         let max = frequencies.keys().next_back().cloned();
-        let heavy_hitter_floor = (relation.row_count / 10).max(2);
+        let heavy_hitter_floor = (sample_rows / 10).max(2);
         let mut heavy_hitters = frequencies
             .iter()
             .filter(|(_, count)| **count >= heavy_hitter_floor)
@@ -229,6 +247,44 @@ pub(crate) struct OptimizerIndexStats {
 }
 
 impl OptimizerIndexStats {
+    fn cheap(
+        index: AccessId,
+        rows: usize,
+        leading_fields: &[String],
+        fields: &BTreeMap<String, OptimizerFieldStats>,
+    ) -> Self {
+        let rows = rows.max(1);
+        let depth = leading_fields.len().max(1);
+        let mut distinct_by_depth = Vec::with_capacity(depth);
+        let mut avg_fanout_by_depth = Vec::with_capacity(depth);
+        let mut max_fanout_by_depth = Vec::with_capacity(depth);
+        for level in 0..depth {
+            let distinct = leading_fields
+                .get(level)
+                .and_then(|field| fields.get(field))
+                .map_or(rows, |stats| stats.distinct)
+                .max(1)
+                .min(rows);
+            let depth_distinct = if level + 1 == depth { rows } else { distinct };
+            distinct_by_depth.push(depth_distinct);
+            let parent_distinct = if level == 0 {
+                1
+            } else {
+                distinct_by_depth[level - 1].max(1)
+            };
+            let fanout = depth_distinct as f64 / parent_distinct as f64;
+            avg_fanout_by_depth.push(fanout.max(1.0));
+            max_fanout_by_depth.push(fanout.ceil().max(1.0) as usize);
+        }
+        Self {
+            index,
+            rows,
+            distinct_by_depth,
+            avg_fanout_by_depth,
+            max_fanout_by_depth,
+        }
+    }
+
     pub(crate) fn estimated_rows_for_prefix(&self, prefix_len: usize) -> u64 {
         if prefix_len == 0 {
             return self.rows.max(1) as u64;

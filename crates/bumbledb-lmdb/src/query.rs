@@ -364,12 +364,16 @@ impl QueryPlan {
             self.query_image_cache.build_micros
         ));
         out.push_str(&format!(
-            "  planner_stats cached_relations={} hits={} misses={} builds={} build_micros={}\n",
+            "  planner_stats cached_relations={} hits={} misses={} builds={} build_micros={} field_stats_built={} index_stats_built={} stats_from_segments={} stats_exact_scans={}\n",
             self.planner_stats.cached_relations,
             self.planner_stats.hits,
             self.planner_stats.misses,
             self.planner_stats.builds,
-            self.planner_stats.build_micros
+            self.planner_stats.build_micros,
+            self.planner_stats.field_stats_built,
+            self.planner_stats.index_stats_built,
+            self.planner_stats.stats_from_segments,
+            self.planner_stats.stats_exact_scans
         ));
         out.push_str(&format!(
             "  prepared_plan_cache cached_plans={} hits={} misses={} builds={} build_micros={}\n",
@@ -2690,7 +2694,10 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
                     return Ok(None);
                 }
             } else {
-                out = Some(EncodedValue::from_bytes(field.value_type.clone(), bytes)?);
+                out = Some(EncodedValue::from_bytes(
+                    self.query.vars[variable].value_type.clone(),
+                    bytes,
+                )?);
             }
         }
         Ok(out)
@@ -3116,7 +3123,10 @@ impl<S: TupleSink> MixedExecutor<'_, '_, '_, '_, '_, S> {
                     return Ok(None);
                 }
             } else {
-                out = Some(EncodedValue::from_bytes(field.value_type.clone(), bytes)?);
+                out = Some(EncodedValue::from_bytes(
+                    self.query.vars[variable].value_type.clone(),
+                    bytes,
+                )?);
             }
         }
         Ok(out)
@@ -4130,12 +4140,16 @@ fn estimate_atom_variable_access(
         };
         let mut estimate = if current_is_next {
             if prefix_len == 0 {
-                index_stats
-                    .distinct_by_depth
-                    .first()
-                    .copied()
-                    .unwrap_or(index_stats.rows)
-                    .max(1) as u64
+                if path.kind == IndexKind::Range {
+                    index_stats.estimated_rows_for_prefix(1)
+                } else {
+                    index_stats
+                        .distinct_by_depth
+                        .first()
+                        .copied()
+                        .unwrap_or(index_stats.rows)
+                        .max(1) as u64
+                }
             } else {
                 index_stats.fanout_after_prefix(prefix_len)
             }
