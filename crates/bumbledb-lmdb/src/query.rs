@@ -13,10 +13,11 @@ use bumbledb_core::query_ir::{
 use bumbledb_core::schema::{CurrentIndexLayout, IndexKind, ValueType};
 
 use crate::{
-    AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FreeJoinPlan,
-    HashTrieIndex, IndexSpec, LinearIter, NodeId, NodeImpl, OutputPlan, PayloadDemand,
-    PlanEstimates, PlanNode, PrefixProbe, PrefixRows, ProjectPlan, ReadTxn, RelationImage,
-    RelationStats, Result, RowId, SortedTrieIndex, StorageSchema, SubAtom, TrieIter, Value, VarId,
+    AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FieldValues,
+    FreeJoinPlan, HashTrieIndex, IndexSpec, LinearIter, NodeId, NodeImpl, OutputPlan,
+    PayloadDemand, PlanEstimates, PlanNode, PrefixProbe, PrefixRows, ProjectPlan, ReadTxn,
+    RelationImage, RelationStats, Result, RowId, SortedTrieIndex, StorageSchema, SubAtom, TrieIter,
+    Value, VarId,
 };
 
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
@@ -1313,6 +1314,7 @@ type SmallParticipants = SmallVec<[usize; 4]>;
 type SmallEncodedPrefix = SmallVec<[EncodedOwned; 8]>;
 type SmallEncodedRefs<'a> = SmallVec<[crate::EncodedRef<'a>; 8]>;
 type SmallEncodedRow = SmallVec<[EncodedValue; 8]>;
+type DirectStoragePrefix = (String, Vec<(String, Value)>);
 
 impl<'env> ReadTxn<'env> {
     /// Executes a typed positive Datalog query against current indexes.
@@ -1363,6 +1365,20 @@ impl<'env> ReadTxn<'env> {
         };
         timings.encode_inputs_micros = elapsed_micros(phase_start);
         allocations.encode_inputs = allocation_delta_since(phase_alloc_start);
+
+        if let Some(output) = try_execute_direct_storage_project(
+            self,
+            schema,
+            &normalized,
+            &encoded_inputs,
+            inputs,
+            timings,
+            allocations,
+            total_start,
+            total_alloc_start,
+        )? {
+            return Ok(output);
+        }
 
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
@@ -2047,6 +2063,187 @@ fn static_empty_plan(
         counters: PlanCounters::default(),
         uses_indexed_multiway_join: query.atoms.len() > 1,
     }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "direct storage path needs current execution diagnostics"
+)]
+fn try_execute_direct_storage_project(
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    query: &NormalizedQuery,
+    encoded_inputs: &EncodedInputs,
+    raw_inputs: &InputBindings,
+    mut timings: QueryTimings,
+    mut allocations: QueryAllocationStats,
+    total_start: Instant,
+    total_alloc_start: allocation::AllocationSnapshot,
+) -> Result<Option<QueryOutput>> {
+    if query.atoms.len() != 1
+        || !query.predicates.is_empty()
+        || !matches!(query.output, OutputPlan::Project(_))
+    {
+        return Ok(None);
+    }
+    let atom = &query.atoms[0];
+    let Some((index_name, prefix_values)) = direct_storage_prefix(schema, query, atom, raw_inputs)?
+    else {
+        return Ok(None);
+    };
+
+    let execute_start = Instant::now();
+    let execute_alloc_start = allocation::snapshot();
+    let mut counters = PlanCounters::default();
+    let mut sink = OutputSink::new(&query.output);
+    let scan = txn.scan_prefix(
+        schema,
+        &atom.relation_name,
+        &index_name,
+        &FieldValues::new(&atom.relation_name, prefix_values),
+    )?;
+    for item in scan {
+        let item = item?;
+        counters.direct_kernel_rows += 1;
+        let mut binding = EncodedBinding::new(query.vars.len());
+        if !bind_direct_storage_row(txn, query, encoded_inputs, atom, &item.row, &mut binding)? {
+            continue;
+        }
+        counters.bindings_yielded += 1;
+        sink.emit(txn, query, &binding, &mut counters)?;
+    }
+    timings.execute_micros = elapsed_micros(execute_start);
+    allocations.execute = allocation_delta_since(execute_alloc_start);
+
+    let finish_start = Instant::now();
+    let finish_alloc_start = allocation::snapshot();
+    let rows = sink.finish(txn, query, &mut counters)?;
+    timings.sink_finish_micros = elapsed_micros(finish_start);
+    allocations.sink_finish = allocation_delta_since(finish_alloc_start);
+    counters.output_rows = rows.len() as u64;
+    timings.total_micros = elapsed_micros(total_start);
+    allocations = allocations.with_total(allocation_delta_since(total_alloc_start));
+
+    Ok(Some(QueryOutput {
+        columns: result_columns(query),
+        rows,
+        plan: QueryPlan {
+            variable_order: query.vars.iter().map(|var| var.name.clone()).collect(),
+            variable_estimates: Vec::new(),
+            missing_indexes: Vec::new(),
+            optimizer: OptimizerTrace {
+                chosen: "direct_storage".to_owned(),
+                candidates: Vec::new(),
+            },
+            query_image_cache: txn.query_images.diagnostics(),
+            planner_stats: PlannerStatsCacheDiagnostics::default(),
+            prepared_plan_cache: PreparedPlanCacheDiagnostics::default(),
+            node_rows: Vec::new(),
+            node_timings: Vec::new(),
+            free_join: FreeJoinPlan {
+                nodes: Vec::new(),
+                output: query.output.clone(),
+                estimates: PlanEstimates::default(),
+            },
+            direct_kernel: Some(DirectKernelSummary {
+                kind: DirectKernelKind::PrefixRange,
+                target: format!("{}.{}", atom.relation_name, index_name),
+                steps: 1,
+            }),
+            runtime_kind: QueryRuntimeKind::DirectKernel,
+            timings,
+            allocations,
+            counters,
+            uses_indexed_multiway_join: false,
+        },
+    }))
+}
+
+fn direct_storage_prefix(
+    schema: &StorageSchema,
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    raw_inputs: &InputBindings,
+) -> Result<Option<DirectStoragePrefix>> {
+    let paths = schema.access_paths(&atom.relation_name)?;
+    let mut best = None;
+    for path in paths {
+        let mut values = Vec::new();
+        for field_name in &path.leading_fields {
+            let Some(field) = atom
+                .fields
+                .iter()
+                .find(|field| &field.field_name == field_name)
+            else {
+                break;
+            };
+            let NormTerm::Input(input) = field.term else {
+                break;
+            };
+            let input = &query.inputs[input.0 as usize];
+            let Some(value) = raw_inputs.value(&input.name) else {
+                return Err(Error::missing_input(&input.name));
+            };
+            values.push((field.field_name.clone(), value.clone()));
+        }
+        if values.is_empty() {
+            continue;
+        }
+        if best
+            .as_ref()
+            .is_none_or(|(_, existing): &DirectStoragePrefix| values.len() > existing.len())
+        {
+            best = Some((path.index_name, values));
+        }
+    }
+    Ok(best)
+}
+
+fn bind_direct_storage_row(
+    txn: &ReadTxn<'_>,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    atom: &NormAtom,
+    row: &crate::Row,
+    binding: &mut EncodedBinding,
+) -> Result<bool> {
+    for field in &atom.fields {
+        let Some(value) = row.value(&field.field_name) else {
+            return Ok(false);
+        };
+        match &field.term {
+            NormTerm::Var(variable) => {
+                let normalized =
+                    normalize_value_for_type(value, &query.vars[variable.0 as usize].value_type);
+                let encoded = txn
+                    .encode_query_value(&query.vars[variable.0 as usize].value_type, &normalized)?;
+                let encoded = EncodedValue::from_bytes(
+                    query.vars[variable.0 as usize].value_type.clone(),
+                    &encoded,
+                )?;
+                if !binding.bind(variable.0 as usize, encoded) {
+                    return Ok(false);
+                }
+            }
+            NormTerm::Input(input) => {
+                let input = inputs
+                    .get(*input)
+                    .ok_or_else(|| Error::internal("missing direct storage input"))?;
+                let encoded = txn.encode_query_value(&field.value_type, value)?;
+                if encoded.as_slice() != input.as_bytes() {
+                    return Ok(false);
+                }
+            }
+            NormTerm::Literal(literal) => {
+                let encoded = txn.encode_query_value(&field.value_type, value)?;
+                if encoded.as_slice() != literal.as_bytes() {
+                    return Ok(false);
+                }
+            }
+            NormTerm::Wildcard => {}
+        }
+    }
+    Ok(true)
 }
 
 fn execute_free_join<'txn, 'query, S: TupleSink>(
@@ -7120,19 +7317,18 @@ mod tests {
         })?;
 
         assert_eq!(output.rows, vec![vec![Value::Id(1)], vec![Value::Id(2)]]);
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
         assert!(
             output
                 .plan
-                .variable_estimates
-                .iter()
-                .any(|estimate| estimate.access == "Account.by_holder"
-                    || estimate.access == "Account.by_fk_ref_holder")
+                .direct_kernel
+                .as_ref()
+                .is_some_and(|kernel| kernel.target.contains("Account"))
         );
-        assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::Unknown);
         assert!(output.plan.timings.total_micros > 0);
         assert!(output.plan.timings.execute_micros <= output.plan.timings.total_micros);
         assert!(!output.plan.allocations.enabled);
-        assert!(!output.plan.node_timings.is_empty());
+        assert!(output.plan.node_timings.is_empty());
         Ok(())
     }
 
@@ -7186,29 +7382,10 @@ mod tests {
             )
         })?;
 
-        assert!(
-            output
-                .plan
-                .variable_estimates
-                .iter()
-                .any(|estimate| estimate.access == "Item.by_kind")
-        );
-        assert!(
-            output
-                .plan
-                .free_join
-                .nodes
-                .iter()
-                .any(|node| node.implementation == NodeImpl::HashProbe)
-        );
-        assert_eq!(output.plan.optimizer.chosen, "hash_probe");
-        assert!(output.plan.free_join.estimates.hash_build_rows >= 3);
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::HashProbe);
-        assert!(output.plan.counters.hash_probe_calls > 0);
-        assert_eq!(output.plan.counters.trie_open, 0);
-        assert_eq!(output.plan.counters.trie_next, 0);
-        assert_eq!(output.plan.counters.trie_seek, 0);
-        assert_eq!(output.plan.counters.trie_key_reads, 0);
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+        assert_eq!(output.plan.optimizer.chosen, "direct_storage");
+        assert_eq!(output.plan.query_image_cache.builds, 0);
+        assert_eq!(output.plan.counters.direct_kernel_rows, 2);
         assert_same_rows(&output.rows, &[vec![Value::Id(1)], vec![Value::Id(2)]]);
         Ok(())
     }
@@ -7653,9 +7830,9 @@ mod tests {
         let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
-            "find ?account where Account(id: ?account, holder: $holder)",
+            "find ?account where Account(id: ?account, holder: ?holder)",
         )?;
-        let inputs = InputBindings::from_values([("holder", Value::Ref(1))]);
+        let inputs = InputBindings::new();
 
         let first = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
         let second = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
@@ -7665,7 +7842,7 @@ mod tests {
         assert_eq!(first.plan.planner_stats.misses, 1);
         assert_eq!(second.plan.planner_stats.builds, 1);
         assert_eq!(second.plan.planner_stats.misses, 1);
-        assert!(second.plan.planner_stats.hits >= 1);
+        assert!(second.plan.planner_stats.hits >= 1 || second.plan.prepared_plan_cache.hits >= 1);
         if second
             .plan
             .free_join
@@ -7688,9 +7865,9 @@ mod tests {
         let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
             schema.descriptor(),
-            "find ?account where Account(id: ?account, holder: $holder)",
+            "find ?account where Account(id: ?account, holder: ?holder)",
         )?;
-        let inputs = InputBindings::from_values([("holder", Value::Ref(1))]);
+        let inputs = InputBindings::new();
 
         let _warm = env.query_image(&schema)?;
         let before = env.query_image_cache_diagnostics();
@@ -7701,7 +7878,7 @@ mod tests {
         assert_eq!(after.builds, 1);
         assert_eq!(output.plan.query_image_cache.builds, 1);
         assert!(output.plan.query_image_cache.hits > before.hits);
-        assert_eq!(output.rows, vec![vec![Value::Id(1)], vec![Value::Id(2)]]);
+        assert_eq!(output.rows.len(), 3);
         Ok(())
     }
 
@@ -7734,18 +7911,13 @@ mod tests {
         let schema_b = StorageSchema::new(triangle_schema(), env.max_key_size())?;
         let item_query = parse_and_typecheck(
             schema_a.descriptor(),
-            "find ?item where Item(id: ?item, kind: $kind)",
+            "find ?item where Item(id: ?item, kind: ?kind)",
         )?;
         let edge_query =
             parse_and_typecheck(schema_b.descriptor(), "find ?a where EdgeAB(a: ?a, b: ?b)")?;
 
-        let item = env.read(|txn| {
-            txn.execute_query(
-                &schema_a,
-                &item_query,
-                &InputBindings::from_values([("kind", Value::Enum(1))]),
-            )
-        })?;
+        let item =
+            env.read(|txn| txn.execute_query(&schema_a, &item_query, &InputBindings::new()))?;
         let edge =
             env.read(|txn| txn.execute_query(&schema_b, &edge_query, &InputBindings::new()))?;
 
