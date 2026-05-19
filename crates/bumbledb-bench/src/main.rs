@@ -1148,7 +1148,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_materialized_values: None,
             allowed_plan_families: &[],
         },
-        ("sailors", "sailor_range_reserves") | ("joinstress", "chain4_from_a") => BenchmarkGate {
+        ("sailors", "sailor_range_reserves") => BenchmarkGate {
             dataset,
             query,
             max_bumbledb_avg_micros: Some(75),
@@ -1156,6 +1156,15 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_iterator_ops: None,
             max_materialized_values: None,
             allowed_plan_families: &["Direct"],
+        },
+        ("joinstress", "chain4_from_a") => BenchmarkGate {
+            dataset,
+            query,
+            max_bumbledb_avg_micros: Some(75),
+            max_sqlite_ratio: None,
+            max_iterator_ops: None,
+            max_materialized_values: None,
+            allowed_plan_families: &["IndexNestedLoop"],
         },
         _ => return None,
     };
@@ -2822,6 +2831,10 @@ mod tests {
             benchmark_gate("sailors", "sailor_range_reserves")
                 .map(|gate| gate.allowed_plan_families),
             Some(&["Direct"][..])
+        );
+        assert_eq!(
+            benchmark_gate("joinstress", "chain4_from_a").map(|gate| gate.allowed_plan_families),
+            Some(&["IndexNestedLoop"][..])
         );
     }
 

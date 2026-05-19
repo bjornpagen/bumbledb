@@ -662,6 +662,8 @@ pub enum QueryRuntimeKind {
     HashProbe,
     /// Mixed executor that runs sorted leapfrog and hash-probe nodes in one plan.
     Mixed,
+    /// Acyclic index nested-loop executor.
+    IndexNestedLoop,
     /// Query was proven empty by static literal atom analysis before planning.
     StaticEmpty,
     /// Free Join fallback for non-pure or mixed node implementations.
@@ -682,6 +684,8 @@ pub enum PlanFamily {
     HashProbe,
     /// Mixed hash/sorted join family.
     Mixed,
+    /// Acyclic index nested-loop family.
+    IndexNestedLoop,
     /// Free Join/LFTJ family.
     FreeJoinLftj,
     /// Static empty proof family.
@@ -3385,9 +3389,11 @@ fn execute_direct_kernel<'txn, 'query, S: TupleSink>(
     };
     match direct.kind {
         DirectKernel::PrefixRange(kernel) => {
+            plan.summary.runtime_kind = QueryRuntimeKind::DirectKernel;
             execute_direct_prefix_range(image, txn, query, inputs, plan, sink, &kernel)
         }
         DirectKernel::ChainProbe(kernel) => {
+            plan.summary.runtime_kind = QueryRuntimeKind::IndexNestedLoop;
             let mut executor = DirectChainExecutor {
                 image,
                 txn,
@@ -5983,9 +5989,12 @@ fn plan_query(
         },
     };
     if let Some(direct_kernel) = try_direct_kernel(query) {
+        execution_plan.summary.plan_family = match direct_kernel.kind {
+            DirectKernel::ChainProbe(_) => PlanFamily::IndexNestedLoop,
+            DirectKernel::PrefixRange(_) => PlanFamily::Direct,
+        };
         execution_plan.summary.direct_kernel = Some(direct_kernel.summary.clone());
         execution_plan.direct_kernel = Some(direct_kernel);
-        execution_plan.summary.plan_family = PlanFamily::Direct;
     } else {
         execution_plan.summary.plan_family =
             plan_family_for_chosen(&execution_plan.summary.optimizer.chosen);
@@ -6018,6 +6027,7 @@ fn plan_family_for_chosen(chosen: &str) -> PlanFamily {
     match chosen {
         "hash_probe" => PlanFamily::HashProbe,
         "hybrid" => PlanFamily::Mixed,
+        "index_nested_loop" => PlanFamily::IndexNestedLoop,
         "pure_lftj" | "aggregate_pushdown" => PlanFamily::FreeJoinLftj,
         "direct_storage" => PlanFamily::Direct,
         "static_empty" => PlanFamily::StaticEmpty,
@@ -8116,6 +8126,7 @@ mod tests {
 
         assert_eq!(output.rows, vec![vec![Value::Id(1)], vec![Value::Id(2)]]);
         assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+        assert_eq!(output.plan.plan_family, PlanFamily::Direct);
         assert!(
             output
                 .plan
@@ -8181,6 +8192,7 @@ mod tests {
         })?;
 
         assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+        assert_eq!(output.plan.plan_family, PlanFamily::Direct);
         assert_eq!(output.plan.optimizer.chosen, "direct_storage");
         assert_eq!(output.plan.query_image_cache.builds, 0);
         assert_eq!(output.plan.counters.direct_kernel_rows, 2);
@@ -8308,6 +8320,7 @@ mod tests {
         })?;
 
         assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+        assert_eq!(output.plan.plan_family, PlanFamily::Direct);
         assert!(matches!(
             output.plan.direct_kernel.as_ref().map(|direct| direct.kind),
             Some(DirectKernelKind::PrefixRange)
@@ -8361,6 +8374,7 @@ mod tests {
         })?;
 
         assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+        assert_eq!(output.plan.plan_family, PlanFamily::Direct);
         assert_eq!(output.plan.query_image_cache.builds, 0);
         assert_eq!(output.plan.counters.hash_index_builds, 0);
         assert_eq!(output.plan.counters.sorted_trie_builds, 0);
@@ -8445,7 +8459,8 @@ mod tests {
             )
         })?;
 
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::IndexNestedLoop);
+        assert_eq!(output.plan.plan_family, PlanFamily::IndexNestedLoop);
         assert!(matches!(
             output.plan.direct_kernel.as_ref().map(|direct| direct.kind),
             Some(DirectKernelKind::ChainProbe)
@@ -8522,7 +8537,8 @@ mod tests {
             )
         })?;
 
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::IndexNestedLoop);
+        assert_eq!(output.plan.plan_family, PlanFamily::IndexNestedLoop);
         assert!(output.rows.is_empty());
         assert_eq!(output.plan.counters.trie_open, 0);
         Ok(())
