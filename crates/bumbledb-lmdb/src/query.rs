@@ -602,6 +602,8 @@ pub enum QueryRuntimeKind {
     HashProbe,
     /// Mixed executor that runs sorted leapfrog and hash-probe nodes in one plan.
     Mixed,
+    /// Query was proven empty by static literal atom analysis before planning.
+    StaticEmpty,
     /// Free Join fallback for non-pure or mixed node implementations.
     MixedFallback,
     /// Reserved for direct selective kernels.
@@ -1307,6 +1309,27 @@ impl<'env> ReadTxn<'env> {
         allocations.query_image = allocation_delta_since(phase_alloc_start);
 
         let query_image_cache = self.query_images.diagnostics();
+        if normalized.inputs.is_empty()
+            && static_literal_atoms_prove_empty(image.as_ref(), &normalized, &encoded_inputs)?
+        {
+            let mut plan = static_empty_plan(
+                &normalized,
+                query_image_cache,
+                image.planner_stats_diagnostics(),
+                image.prepared_plan_diagnostics(),
+            );
+            plan.timings = timings;
+            plan.allocations = allocations;
+            plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
+            plan.timings.total_micros = elapsed_micros(total_start);
+            let total_alloc = allocation_delta_since(total_alloc_start);
+            plan.allocations = plan.allocations.with_total(total_alloc);
+            return Ok(QueryOutput {
+                columns: result_columns(&normalized),
+                rows: Vec::new(),
+                plan,
+            });
+        }
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
         let mut plan = if let Some(cache_key) = prepared_plan_cache_key(&normalized) {
@@ -1404,6 +1427,95 @@ fn prepared_plan_cache_key(query: &NormalizedQuery) -> Option<String> {
     let mut hasher = blake3::Hasher::new();
     hasher.update(format!("{query:?}").as_bytes());
     Some(hasher.finalize().to_hex().to_string())
+}
+
+fn static_literal_atoms_prove_empty(
+    image: &crate::QueryImage,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+) -> Result<bool> {
+    for atom in &query.atoms {
+        if !atom
+            .fields
+            .iter()
+            .any(|field| matches!(field.term, NormTerm::Input(_) | NormTerm::Literal(_)))
+        {
+            continue;
+        }
+        let relation = image
+            .relations()
+            .get(atom.relation.0 as usize)
+            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
+        let mut matched = false;
+        for row in 0..relation.row_count {
+            if static_atom_row_matches(relation, atom, RowId(row as u32), inputs)? {
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn static_atom_row_matches(
+    relation: &RelationImage,
+    atom: &NormAtom,
+    row: RowId,
+    inputs: &EncodedInputs,
+) -> Result<bool> {
+    for field in &atom.fields {
+        let expected = match &field.term {
+            NormTerm::Input(input) => inputs.get(*input),
+            NormTerm::Literal(literal) => Some(literal),
+            NormTerm::Var(_) | NormTerm::Wildcard => None,
+        };
+        let Some(expected) = expected else {
+            continue;
+        };
+        let bytes = relation
+            .encoded_bytes(row, field.field)
+            .ok_or_else(|| Error::internal("missing static atom field"))?;
+        if expected.as_bytes() != bytes {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn static_empty_plan(
+    query: &NormalizedQuery,
+    query_image_cache: QueryImageCacheDiagnostics,
+    planner_stats: PlannerStatsCacheDiagnostics,
+    prepared_plan_cache: PreparedPlanCacheDiagnostics,
+) -> QueryPlan {
+    QueryPlan {
+        variable_order: Vec::new(),
+        variable_estimates: Vec::new(),
+        missing_indexes: Vec::new(),
+        optimizer: OptimizerTrace {
+            chosen: "static_empty".to_owned(),
+            candidates: Vec::new(),
+        },
+        query_image_cache,
+        planner_stats,
+        prepared_plan_cache,
+        node_rows: Vec::new(),
+        node_timings: Vec::new(),
+        free_join: FreeJoinPlan {
+            nodes: Vec::new(),
+            output: query.output.clone(),
+            estimates: PlanEstimates::default(),
+        },
+        direct_kernel: None,
+        runtime_kind: QueryRuntimeKind::StaticEmpty,
+        timings: QueryTimings::default(),
+        allocations: QueryAllocationStats::default(),
+        counters: PlanCounters::default(),
+        uses_indexed_multiway_join: query.atoms.len() > 1,
+    }
 }
 
 fn execute_free_join<'txn, 'query, S: TupleSink>(
@@ -6249,10 +6361,8 @@ mod tests {
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
         assert!(output.rows.is_empty());
-        assert!(matches!(
-            output.plan.runtime_kind,
-            QueryRuntimeKind::Lftj | QueryRuntimeKind::Mixed
-        ));
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+        assert_eq!(output.plan.optimizer.chosen, "static_empty");
         assert_eq!(output.plan.counters.trie_open, 0);
         assert_eq!(output.plan.counters.variable_candidates, 0);
         Ok(())
