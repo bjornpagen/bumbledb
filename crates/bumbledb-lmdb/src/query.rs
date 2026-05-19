@@ -1636,7 +1636,6 @@ fn execute_hash_probe<'txn, 'query, S: TupleSink>(
         let _span =
             tracing::debug_span!("bumbledb.query.hash.execute", variables = query.vars.len())
                 .entered();
-        let _sink_emit_span = tracing::debug_span!("bumbledb.query.sink.emit").entered();
         let participants_by_variable =
             hash_participants_by_variable(query.vars.len(), &plan.relation_atoms);
         let mut executor = HashProbeExecutor {
@@ -2132,6 +2131,7 @@ fn execute_direct_prefix_range<'txn, 'query, S: TupleSink>(
             );
         if keep {
             plan.summary.counters.bindings_yielded += 1;
+            let _span = tracing::trace_span!("bumbledb.query.sink.emit").entered();
             sink.emit(txn, query, &binding, &mut plan.summary.counters)?;
         }
         unbind_variables(&mut binding, &bound);
@@ -2213,6 +2213,7 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 );
             if keep {
                 self.plan.summary.counters.bindings_yielded += 1;
+                let _span = tracing::trace_span!("bumbledb.query.sink.emit").entered();
                 self.sink.emit(
                     self.txn,
                     self.query,
@@ -2441,6 +2442,7 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
                 &mut self.plan.summary.counters,
             )? {
                 self.plan.summary.counters.bindings_yielded += 1;
+                let _span = tracing::trace_span!("bumbledb.query.sink.emit").entered();
                 self.sink.emit(
                     self.txn,
                     self.query,
@@ -2825,6 +2827,7 @@ impl<S: TupleSink> MixedExecutor<'_, '_, '_, '_, '_, S> {
                 &mut self.plan.summary.counters,
             )? {
                 self.plan.summary.counters.bindings_yielded += 1;
+                let _span = tracing::trace_span!("bumbledb.query.sink.emit").entered();
                 self.sink.emit(
                     self.txn,
                     self.query,
@@ -3252,7 +3255,6 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
         let _span =
             tracing::debug_span!("bumbledb.query.lftj.execute", variables = query.vars.len())
                 .entered();
-        let _sink_emit_span = tracing::debug_span!("bumbledb.query.sink.emit").entered();
         let mut executor = LftjExecutor {
             txn,
             query,
@@ -3308,6 +3310,7 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
                 &mut self.plan.summary.counters,
             )? {
                 self.plan.summary.counters.bindings_yielded += 1;
+                let _span = tracing::trace_span!("bumbledb.query.sink.emit").entered();
                 self.sink.emit(
                     self.txn,
                     self.query,

@@ -47,20 +47,11 @@ Trace volume:
 
 | Priority | Item | Spec |
 |---:|---|---|
-| P1 | Trace instrumentation cleanup | [`08_trace_instrumentation_cleanup.md`](08_trace_instrumentation_cleanup.md) |
+All kill-list implementation specs have been completed and removed from this folder per the execution loop.
 
 ## Cross-Query Priority Map
 
-| Query | Trace Cleanup |
-|---|---|
-| `job_broad_cast_keyword_company` | Medium |
-| `job_broad_movie_info_star` | Medium |
-| `job_q01_top_production` | Medium |
-| `job_q09_voice_us_actor` | Medium |
-| `job_q16_character_title_us` | Medium |
-| `job_q24_voice_keyword_actor` | Medium |
-| `job_movie_link_bridge` | Medium |
-| `job_q33_linked_series_companies` | Medium |
+All per-query priority items from the trace report have been processed.
 
 ## Shared Source Hotspots
 
