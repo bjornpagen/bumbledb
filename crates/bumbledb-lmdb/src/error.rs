@@ -153,12 +153,12 @@ impl Error {
 
     pub(crate) fn foreign_key_violation(
         relation: impl Into<String>,
-        field: impl Into<String>,
+        constraint: impl Into<String>,
         target_relation: impl Into<String>,
     ) -> Self {
         ConstraintError::ForeignKeyViolation {
             relation: relation.into(),
-            field: field.into(),
+            constraint: constraint.into(),
             target_relation: target_relation.into(),
         }
         .into()
@@ -167,19 +167,12 @@ impl Error {
     pub(crate) fn restrict_violation(
         relation: impl Into<String>,
         referenced_by: impl Into<String>,
-        field: impl Into<String>,
+        constraint: impl Into<String>,
     ) -> Self {
         ConstraintError::RestrictViolation {
             relation: relation.into(),
             referenced_by: referenced_by.into(),
-            field: field.into(),
-        }
-        .into()
-    }
-
-    pub(crate) fn unsupported_composite_foreign_key(target_relation: impl Into<String>) -> Self {
-        ConstraintError::UnsupportedCompositeForeignKey {
-            target_relation: target_relation.into(),
+            constraint: constraint.into(),
         }
         .into()
     }
@@ -381,19 +374,19 @@ pub enum ConstraintError {
     },
 
     /// Foreign key violation.
-    #[error("foreign key {relation}.{field} references missing {target_relation}")]
+    #[error("foreign key {relation}.{constraint} references missing {target_relation}")]
     ForeignKeyViolation {
         relation: String,
-        field: String,
+        constraint: String,
         target_relation: String,
     },
 
     /// Restrict-delete violation.
-    #[error("cannot delete {relation}; referenced by {referenced_by}.{field}")]
+    #[error("cannot delete {relation}; referenced by {referenced_by}.{constraint}")]
     RestrictViolation {
         relation: String,
         referenced_by: String,
-        field: String,
+        constraint: String,
     },
 
     /// Missing row field.
@@ -412,10 +405,6 @@ pub enum ConstraintError {
         expected: String,
         actual: &'static str,
     },
-
-    /// Unsupported composite foreign-key target.
-    #[error("foreign key target {target_relation} must have a single-field primary key")]
-    UnsupportedCompositeForeignKey { target_relation: String },
 }
 
 /// Query failures.

@@ -7117,7 +7117,8 @@ mod tests {
                 .plan
                 .variable_estimates
                 .iter()
-                .any(|estimate| estimate.access == "Account.by_holder")
+                .any(|estimate| estimate.access == "Account.by_holder"
+                    || estimate.access == "Account.by_fk_ref_holder")
         );
         assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::Unknown);
         assert!(output.plan.timings.total_micros > 0);
@@ -8472,6 +8473,7 @@ mod tests {
             "Currency",
             [840, 978],
         ))
+        .with_ref_foreign_keys()
     }
 
     fn overflow_schema() -> bumbledb_core::schema::SchemaDescriptor {
@@ -8524,6 +8526,7 @@ mod tests {
             ],
         )
         .with_enum(bumbledb_core::schema::EnumDescriptor::codes("Kind", [1, 2]))
+        .with_ref_foreign_keys()
     }
 
     fn triangle_schema() -> bumbledb_core::schema::SchemaDescriptor {

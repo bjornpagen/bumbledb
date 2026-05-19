@@ -186,6 +186,16 @@ impl SchemaDescriptor {
         self
     }
 
+    /// Adds explicit single-field FK constraints for scalar `Ref` fields in every relation.
+    pub fn with_ref_foreign_keys(mut self) -> Self {
+        self.relations = self
+            .relations
+            .into_iter()
+            .map(RelationDescriptor::with_ref_foreign_keys)
+            .collect();
+        self
+    }
+
     /// Computes the deterministic schema fingerprint.
     pub fn fingerprint(&self) -> SchemaFingerprint {
         SchemaFingerprint(*blake3::hash(&self.canonical_bytes()).as_bytes())
@@ -489,19 +499,20 @@ impl SchemaDescriptor {
         let mut names = BTreeSet::new();
         let mut unique_field_sets = BTreeSet::new();
         for constraint in &relation.constraints {
+            let constraint_name = constraint.name();
+            if constraint_name.is_empty() {
+                return Err(SchemaError::EmptyConstraintName {
+                    relation: relation.name.clone(),
+                });
+            }
+            if !names.insert(constraint_name.to_owned()) {
+                return Err(SchemaError::DuplicateConstraint {
+                    relation: relation.name.clone(),
+                    constraint: constraint_name.to_owned(),
+                });
+            }
             match constraint {
                 ConstraintDescriptor::Unique { name, fields } => {
-                    if name.is_empty() {
-                        return Err(SchemaError::EmptyConstraintName {
-                            relation: relation.name.clone(),
-                        });
-                    }
-                    if !names.insert(name.clone()) {
-                        return Err(SchemaError::DuplicateConstraint {
-                            relation: relation.name.clone(),
-                            constraint: name.clone(),
-                        });
-                    }
                     if fields.is_empty() {
                         return Err(SchemaError::InvalidConstraint {
                             relation: relation.name.clone(),
@@ -540,6 +551,121 @@ impl SchemaDescriptor {
                         });
                     }
                 }
+                ConstraintDescriptor::ForeignKey {
+                    name,
+                    fields,
+                    target_relation,
+                    target_fields,
+                    on_delete,
+                    on_update,
+                } => {
+                    if *on_delete != ForeignKeyAction::Restrict
+                        || *on_update != ForeignKeyAction::Restrict
+                    {
+                        return Err(SchemaError::InvalidConstraint {
+                            relation: relation.name.clone(),
+                            constraint: name.clone(),
+                            reason: "only restrict foreign-key actions are supported".to_owned(),
+                        });
+                    }
+                    self.validate_foreign_key_constraint(
+                        relation,
+                        name,
+                        fields,
+                        target_relation,
+                        target_fields,
+                    )?;
+                }
+                ConstraintDescriptor::Check { name } => {
+                    return Err(SchemaError::InvalidConstraint {
+                        relation: relation.name.clone(),
+                        constraint: name.clone(),
+                        reason: "check constraints are reserved but not implemented".to_owned(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_foreign_key_constraint(
+        &self,
+        relation: &RelationDescriptor,
+        name: &str,
+        fields: &[String],
+        target_relation: &str,
+        target_fields: &[String],
+    ) -> Result<()> {
+        if fields.is_empty() {
+            return Err(SchemaError::InvalidConstraint {
+                relation: relation.name.clone(),
+                constraint: name.to_owned(),
+                reason: "foreign-key field list must not be empty".to_owned(),
+            });
+        }
+        if fields.len() != target_fields.len() {
+            return Err(SchemaError::InvalidConstraint {
+                relation: relation.name.clone(),
+                constraint: name.to_owned(),
+                reason: "foreign-key source and target field counts must match".to_owned(),
+            });
+        }
+        let target = self
+            .relations
+            .iter()
+            .find(|candidate| candidate.name == target_relation)
+            .ok_or_else(|| SchemaError::InvalidConstraint {
+                relation: relation.name.clone(),
+                constraint: name.to_owned(),
+                reason: format!("unknown target relation {target_relation}"),
+            })?;
+        if target.primary_key.fields.as_slice() != target_fields {
+            return Err(SchemaError::InvalidConstraint {
+                relation: relation.name.clone(),
+                constraint: name.to_owned(),
+                reason: "foreign keys must target the target primary key".to_owned(),
+            });
+        }
+
+        let mut source_seen = BTreeSet::new();
+        let mut target_seen = BTreeSet::new();
+        for (source_field_name, target_field_name) in fields.iter().zip(target_fields) {
+            if !source_seen.insert(source_field_name.clone()) {
+                return Err(SchemaError::InvalidConstraint {
+                    relation: relation.name.clone(),
+                    constraint: name.to_owned(),
+                    reason: format!("duplicate source field {source_field_name}"),
+                });
+            }
+            if !target_seen.insert(target_field_name.clone()) {
+                return Err(SchemaError::InvalidConstraint {
+                    relation: relation.name.clone(),
+                    constraint: name.to_owned(),
+                    reason: format!("duplicate target field {target_field_name}"),
+                });
+            }
+            let source_field =
+                relation
+                    .field(source_field_name)
+                    .ok_or_else(|| SchemaError::UnknownField {
+                        relation: relation.name.clone(),
+                        field: source_field_name.clone(),
+                    })?;
+            let target_field =
+                target
+                    .field(target_field_name)
+                    .ok_or_else(|| SchemaError::UnknownField {
+                        relation: target.name.clone(),
+                        field: target_field_name.clone(),
+                    })?;
+            if !foreign_key_types_compatible(&source_field.value_type, &target_field.value_type) {
+                return Err(SchemaError::InvalidConstraint {
+                    relation: relation.name.clone(),
+                    constraint: name.to_owned(),
+                    reason: format!(
+                        "field {source_field_name} is incompatible with {target_relation}.{target_field_name}"
+                    ),
+                });
             }
         }
         Ok(())
@@ -785,6 +911,25 @@ impl RelationDescriptor {
         self
     }
 
+    /// Adds one explicit foreign-key constraint for each scalar `Ref` field.
+    pub fn with_ref_foreign_keys(mut self) -> Self {
+        for field in &self.fields {
+            let ValueType::Ref {
+                target_relation, ..
+            } = &field.value_type
+            else {
+                continue;
+            };
+            self.constraints.push(ConstraintDescriptor::foreign_key(
+                format!("ref_{}", field.name),
+                [field.name.clone()],
+                target_relation.clone(),
+                ["id".to_owned()],
+            ));
+        }
+        self
+    }
+
     /// Returns a field by name.
     pub fn field(&self, name: &str) -> Option<&FieldDescriptor> {
         self.fields.iter().find(|field| field.name == name)
@@ -835,6 +980,14 @@ impl RelationDescriptor {
                         });
                     }
                 }
+                ConstraintDescriptor::ForeignKey { name, fields, .. } => {
+                    candidates.push(IndexCandidate {
+                        name: format!("by_fk_{name}"),
+                        kind: IndexKind::ForeignKey,
+                        fields: fields.clone(),
+                    });
+                }
+                ConstraintDescriptor::Check { .. } => {}
             }
         }
 
@@ -1133,6 +1286,24 @@ impl GeneratedIdDescriptor {
 pub enum ConstraintDescriptor {
     /// Unique key constraint.
     Unique { name: String, fields: Vec<String> },
+    /// Foreign key constraint.
+    ForeignKey {
+        name: String,
+        fields: Vec<String>,
+        target_relation: String,
+        target_fields: Vec<String>,
+        on_delete: ForeignKeyAction,
+        on_update: ForeignKeyAction,
+    },
+    /// Reserved check constraint descriptor.
+    Check { name: String },
+}
+
+/// Foreign-key referential action.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForeignKeyAction {
+    /// Reject source-breaking target changes.
+    Restrict,
 }
 
 impl ConstraintDescriptor {
@@ -1147,6 +1318,36 @@ impl ConstraintDescriptor {
         }
     }
 
+    /// Creates a foreign-key constraint targeting explicit fields.
+    pub fn foreign_key(
+        name: impl Into<String>,
+        fields: impl IntoIterator<Item = impl Into<String>>,
+        target_relation: impl Into<String>,
+        target_fields: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self::ForeignKey {
+            name: name.into(),
+            fields: fields.into_iter().map(Into::into).collect(),
+            target_relation: target_relation.into(),
+            target_fields: target_fields.into_iter().map(Into::into).collect(),
+            on_delete: ForeignKeyAction::Restrict,
+            on_update: ForeignKeyAction::Restrict,
+        }
+    }
+
+    /// Creates a reserved check constraint descriptor.
+    pub fn check(name: impl Into<String>) -> Self {
+        Self::Check { name: name.into() }
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            ConstraintDescriptor::Unique { name, .. }
+            | ConstraintDescriptor::ForeignKey { name, .. }
+            | ConstraintDescriptor::Check { name } => name,
+        }
+    }
+
     fn push_canonical(&self, out: &mut Vec<u8>) {
         match self {
             ConstraintDescriptor::Unique { name, fields } => {
@@ -1154,6 +1355,34 @@ impl ConstraintDescriptor {
                 push_str(out, name);
                 push_string_list(out, fields);
             }
+            ConstraintDescriptor::ForeignKey {
+                name,
+                fields,
+                target_relation,
+                target_fields,
+                on_delete,
+                on_update,
+            } => {
+                push_u8(out, 2);
+                push_str(out, name);
+                push_string_list(out, fields);
+                push_str(out, target_relation);
+                push_string_list(out, target_fields);
+                on_delete.push_canonical(out);
+                on_update.push_canonical(out);
+            }
+            ConstraintDescriptor::Check { name } => {
+                push_u8(out, 3);
+                push_str(out, name);
+            }
+        }
+    }
+}
+
+impl ForeignKeyAction {
+    fn push_canonical(self, out: &mut Vec<u8>) {
+        match self {
+            ForeignKeyAction::Restrict => push_u8(out, 1),
         }
     }
 }
@@ -1215,6 +1444,8 @@ pub enum IndexKind {
     Ref,
     /// Unique leading covering index.
     Unique,
+    /// Foreign-key leading covering index.
+    ForeignKey,
     /// Range leading covering index.
     Range,
     /// Equality leading covering index.
@@ -1231,9 +1462,10 @@ impl IndexKind {
                 IndexKind::Primary => 1,
                 IndexKind::Ref => 2,
                 IndexKind::Unique => 3,
-                IndexKind::Range => 4,
-                IndexKind::Equality => 5,
-                IndexKind::Permutation => 6,
+                IndexKind::ForeignKey => 4,
+                IndexKind::Range => 5,
+                IndexKind::Equality => 6,
+                IndexKind::Permutation => 7,
             },
         );
     }
@@ -1319,9 +1551,29 @@ fn generated_index_names(relation: &RelationDescriptor) -> BTreeSet<String> {
             ConstraintDescriptor::Unique { name, .. } => {
                 names.insert(format!("unique_{name}"));
             }
+            ConstraintDescriptor::ForeignKey { name, .. } => {
+                names.insert(format!("by_fk_{name}"));
+            }
+            ConstraintDescriptor::Check { .. } => {}
         }
     }
     names
+}
+
+fn foreign_key_types_compatible(source: &ValueType, target: &ValueType) -> bool {
+    if source == target {
+        return true;
+    }
+    matches!(
+        (source, target),
+        (
+            ValueType::Ref {
+                name: ref_name,
+                target_relation,
+            },
+            ValueType::Id { name, relation },
+        ) if ref_name == name && target_relation == relation
+    )
 }
 
 fn push_u8(out: &mut Vec<u8>, value: u8) {
@@ -1705,6 +1957,34 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn validation_accepts_compound_foreign_key() {
+        assert_eq!(compound_fk_schema().validate(), Ok(()));
+    }
+
+    #[test]
+    fn validation_rejects_foreign_key_arity_mismatch() {
+        let mut schema = compound_fk_schema();
+        schema.relations[1].constraints[0] =
+            ConstraintDescriptor::foreign_key("parent", ["parent_a"], "Parent", ["a", "b"]);
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::InvalidConstraint { relation, constraint, .. })
+                if relation == "Child" && constraint == "parent"
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_foreign_key_type_mismatch() {
+        let mut schema = compound_fk_schema();
+        schema.relations[1].fields[1] = FieldDescriptor::new("parent_a", ValueType::String);
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::InvalidConstraint { relation, constraint, .. })
+                if relation == "Child" && constraint == "parent"
+        ));
+    }
+
     fn ledger_schema() -> SchemaDescriptor {
         SchemaDescriptor::new(
             "LedgerDb",
@@ -1883,6 +2163,39 @@ mod tests {
                     PrimaryKeyDescriptor::new(["id"]),
                 )
                 .with_generated_id(GeneratedIdDescriptor::new("id")),
+            ],
+        )
+    }
+
+    fn compound_fk_schema() -> SchemaDescriptor {
+        SchemaDescriptor::new(
+            "CompoundFkDb",
+            vec![
+                RelationDescriptor::new(
+                    "Parent",
+                    RelationKind::Entity,
+                    vec![
+                        FieldDescriptor::new("a", ValueType::U64),
+                        FieldDescriptor::new("b", ValueType::U64),
+                    ],
+                    PrimaryKeyDescriptor::new(["a", "b"]),
+                ),
+                RelationDescriptor::new(
+                    "Child",
+                    RelationKind::Entity,
+                    vec![
+                        FieldDescriptor::new("id", ValueType::U64),
+                        FieldDescriptor::new("parent_a", ValueType::U64),
+                        FieldDescriptor::new("parent_b", ValueType::U64),
+                    ],
+                    PrimaryKeyDescriptor::new(["id"]),
+                )
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "parent",
+                    ["parent_a", "parent_b"],
+                    "Parent",
+                    ["a", "b"],
+                )),
             ],
         )
     }

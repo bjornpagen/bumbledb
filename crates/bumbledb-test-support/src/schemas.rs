@@ -92,6 +92,7 @@ pub fn ledger_schema() -> SchemaDescriptor {
     )
     .with_enum(EnumDescriptor::codes("Currency", [840, 978, 999]))
     .with_enum(EnumDescriptor::codes("Tag", [1, 2, 3, 7, 8]))
+    .with_ref_foreign_keys()
 }
 
 /// Schema for aggregation overflow tests.

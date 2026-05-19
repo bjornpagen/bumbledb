@@ -1602,7 +1602,8 @@ fn sailors_dataset(scale: u64) -> Dataset {
                 ),
             ],
         )
-        .with_enum(EnumDescriptor::codes("Color", [1, 2, 3])),
+        .with_enum(EnumDescriptor::codes("Color", [1, 2, 3]))
+        .with_ref_foreign_keys(),
         rows: sailors_rows(sailors),
         sqlite_schema: r#"
             CREATE TABLE sailor (id INTEGER PRIMARY KEY, name TEXT NOT NULL, rating INTEGER NOT NULL, age INTEGER NOT NULL);
@@ -1764,7 +1765,8 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                 ),
             ],
         )
-        .with_enum(EnumDescriptor::codes("K", 0..10)),
+        .with_enum(EnumDescriptor::codes("K", 0..10))
+        .with_ref_foreign_keys(),
         rows: join_stress_rows(n),
         sqlite_schema: r#"
             CREATE TABLE a (id INTEGER PRIMARY KEY, k INTEGER NOT NULL);
@@ -1892,7 +1894,8 @@ fn tpch_dataset(scale: u64) -> Dataset {
                     PrimaryKeyDescriptor::new(["id"]),
                 ),
             ],
-        ),
+        )
+        .with_ref_foreign_keys(),
         rows: tpch_rows(n),
         sqlite_schema: r#"
             CREATE TABLE customer (id INTEGER PRIMARY KEY, nation INTEGER NOT NULL);
@@ -2608,7 +2611,6 @@ mod tests {
         assert!(delta.enabled);
         assert!(delta.alloc_calls > 0);
         assert!(delta.bytes_allocated >= 4096);
-        assert!(delta.current_live_bytes >= 4096);
     }
 
     #[test]

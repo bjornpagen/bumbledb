@@ -932,24 +932,33 @@ impl WriteTxn<'_> {
         relation: &RelationDescriptor,
         row: &EncodedRow,
     ) -> Result<()> {
-        for field in &relation.fields {
-            let ValueType::Ref {
-                target_relation, ..
-            } = &field.value_type
+        for constraint in &relation.constraints {
+            let ConstraintDescriptor::ForeignKey {
+                name,
+                fields,
+                target_relation,
+                target_fields,
+                ..
+            } = constraint
             else {
                 continue;
             };
             let (target_relation_id, target) = schema.relation(target_relation)?;
-            if target.primary_key.fields.len() != 1 {
-                return Err(Error::unsupported_composite_foreign_key(&target.name));
+            if target.primary_key.fields.as_slice() != target_fields.as_slice() {
+                return Err(Error::internal(
+                    "foreign key target fields must be primary key",
+                ));
             }
-
-            let target_primary = row.field(relation, &field.name)?.to_vec();
+            let target_primary = fields
+                .iter()
+                .map(|field| row.field(relation, field))
+                .collect::<Result<Vec<_>>>()?
+                .concat();
             let key = current_row_key(target_relation_id, &target_primary);
             if self.dbs.index.get(&self.txn, key.as_slice())?.is_none() {
                 return Err(Error::foreign_key_violation(
                     &relation.name,
-                    &field.name,
+                    name,
                     &target.name,
                 ));
             }
@@ -965,7 +974,9 @@ impl WriteTxn<'_> {
         primary: &[u8],
     ) -> Result<()> {
         for (constraint_id, constraint) in relation.constraints.iter().enumerate() {
-            let ConstraintDescriptor::Unique { name, fields } = constraint;
+            let ConstraintDescriptor::Unique { name, fields } = constraint else {
+                continue;
+            };
             let key = unique_guard_key(relation_id, constraint_id as u16, relation, row, fields)?;
             if let Some(existing_primary) = self.dbs.index.get(&self.txn, key.as_slice())?
                 && existing_primary != primary
@@ -982,12 +993,6 @@ impl WriteTxn<'_> {
         relation: &RelationDescriptor,
         row: &EncodedRow,
     ) -> Result<()> {
-        if relation.primary_key.fields.len() != 1 {
-            return Ok(());
-        }
-        let primary_field = &relation.primary_key.fields[0];
-        let target_primary = row.field(relation, primary_field)?.to_vec();
-
         for (source_relation_id, source_relation) in schema
             .descriptor
             .relations
@@ -995,19 +1000,29 @@ impl WriteTxn<'_> {
             .enumerate()
             .map(|(id, relation)| (id as u16, relation))
         {
-            for field in &source_relation.fields {
-                let ValueType::Ref {
-                    target_relation, ..
-                } = &field.value_type
+            for constraint in &source_relation.constraints {
+                let ConstraintDescriptor::ForeignKey {
+                    name,
+                    target_relation,
+                    target_fields,
+                    ..
+                } = constraint
                 else {
                     continue;
                 };
                 if target_relation != &relation.name {
                     continue;
                 }
+                if target_fields.as_slice() != relation.primary_key.fields.as_slice() {
+                    continue;
+                }
+                let target_primary = target_fields
+                    .iter()
+                    .map(|field| row.field(relation, field))
+                    .collect::<Result<Vec<_>>>()?
+                    .concat();
 
-                let Some(layout) =
-                    schema.layout(&source_relation.name, &format!("by_{}", field.name))
+                let Some(layout) = schema.layout(&source_relation.name, &format!("by_fk_{name}"))
                 else {
                     continue;
                 };
@@ -1018,7 +1033,7 @@ impl WriteTxn<'_> {
                     return Err(Error::restrict_violation(
                         &relation.name,
                         &source_relation.name,
-                        &field.name,
+                        name,
                     ));
                 }
             }
@@ -1067,7 +1082,9 @@ impl WriteTxn<'_> {
         primary: &[u8],
     ) -> Result<()> {
         for (constraint_id, constraint) in relation.constraints.iter().enumerate() {
-            let ConstraintDescriptor::Unique { fields, .. } = constraint;
+            let ConstraintDescriptor::Unique { fields, .. } = constraint else {
+                continue;
+            };
             let key = unique_guard_key(relation_id, constraint_id as u16, relation, row, fields)?;
             self.dbs.index.put(&mut self.txn, key.as_slice(), primary)?;
             crate::failpoints::check(crate::failpoints::Failpoint::AfterUniqueGuardPut)?;
@@ -1082,7 +1099,9 @@ impl WriteTxn<'_> {
         row: &EncodedRow,
     ) -> Result<()> {
         for (constraint_id, constraint) in relation.constraints.iter().enumerate() {
-            let ConstraintDescriptor::Unique { fields, .. } = constraint;
+            let ConstraintDescriptor::Unique { fields, .. } = constraint else {
+                continue;
+            };
             let key = unique_guard_key(relation_id, constraint_id as u16, relation, row, fields)?;
             self.dbs.index.delete(&mut self.txn, key.as_slice())?;
         }
@@ -2402,6 +2421,85 @@ mod tests {
     }
 
     #[test]
+    fn compound_foreign_key_insert_and_restrict_delete() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = compound_fk_schema(&env)?;
+
+        let missing_parent = env.write(|txn| {
+            txn.insert(
+                &schema,
+                Row::new(
+                    "Child",
+                    [
+                        ("id", Value::U64(1)),
+                        ("parent_a", Value::U64(10)),
+                        ("parent_b", Value::U64(20)),
+                    ],
+                ),
+            )
+        });
+        assert!(matches!(
+            missing_parent,
+            Err(Error::Constraint(
+                ConstraintError::ForeignKeyViolation { .. }
+            ))
+        ));
+
+        env.write(|txn| {
+            txn.insert(
+                &schema,
+                Row::new("Parent", [("a", Value::U64(10)), ("b", Value::U64(20))]),
+            )?;
+            txn.insert(
+                &schema,
+                Row::new(
+                    "Child",
+                    [
+                        ("id", Value::U64(1)),
+                        ("parent_a", Value::U64(10)),
+                        ("parent_b", Value::U64(20)),
+                    ],
+                ),
+            )?;
+            Ok::<(), Error>(())
+        })?;
+
+        let restricted = env.write(|txn| {
+            txn.delete(
+                &schema,
+                KeyValues::new("Parent", [("a", Value::U64(10)), ("b", Value::U64(20))]),
+            )
+        });
+        assert!(matches!(
+            restricted,
+            Err(Error::Constraint(ConstraintError::RestrictViolation { .. }))
+        ));
+
+        env.write(|txn| {
+            txn.delete(&schema, KeyValues::new("Child", [("id", Value::U64(1))]))?;
+            txn.delete(
+                &schema,
+                KeyValues::new("Parent", [("a", Value::U64(10)), ("b", Value::U64(20))]),
+            )?;
+            Ok::<(), Error>(())
+        })?;
+
+        env.read(|txn| {
+            assert_eq!(txn.relation_row_count(&schema, "Parent")?, 0);
+            assert_eq!(txn.relation_row_count(&schema, "Child")?, 0);
+            assert!(
+                schema
+                    .access_paths("Child")?
+                    .iter()
+                    .any(|path| path.index_name == "by_fk_parent")
+            );
+            Ok::<(), Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
     fn replace_removes_old_current_entries_and_preserves_counts() -> TestResult {
         let dir = tempfile::tempdir()?;
         let env = Environment::open(dir.path())?;
@@ -2634,6 +2732,42 @@ mod tests {
         StorageSchema::new(ledger_schema(), env.max_key_size())
     }
 
+    fn compound_fk_schema(env: &Environment) -> Result<StorageSchema> {
+        StorageSchema::new(
+            SchemaDescriptor::new(
+                "CompoundFkDb",
+                vec![
+                    RelationDescriptor::new(
+                        "Parent",
+                        RelationKind::Entity,
+                        vec![
+                            FieldDescriptor::new("a", ValueType::U64),
+                            FieldDescriptor::new("b", ValueType::U64),
+                        ],
+                        PrimaryKeyDescriptor::new(["a", "b"]),
+                    ),
+                    RelationDescriptor::new(
+                        "Child",
+                        RelationKind::Entity,
+                        vec![
+                            FieldDescriptor::new("id", ValueType::U64),
+                            FieldDescriptor::new("parent_a", ValueType::U64),
+                            FieldDescriptor::new("parent_b", ValueType::U64),
+                        ],
+                        PrimaryKeyDescriptor::new(["id"]),
+                    )
+                    .with_constraint(ConstraintDescriptor::foreign_key(
+                        "parent",
+                        ["parent_a", "parent_b"],
+                        "Parent",
+                        ["a", "b"],
+                    )),
+                ],
+            ),
+            env.max_key_size(),
+        )
+    }
+
     fn ledger_schema() -> SchemaDescriptor {
         SchemaDescriptor::new(
             "LedgerDb",
@@ -2718,6 +2852,7 @@ mod tests {
             "Tag",
             [1, 2, 3, 7],
         ))
+        .with_ref_foreign_keys()
     }
 
     fn holder_row(id: u64, name: &str) -> Row {

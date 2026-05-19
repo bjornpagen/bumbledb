@@ -164,6 +164,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
         "Permission",
         [7],
     ))
+    .with_ref_foreign_keys()
 }
 
 /// Generates deterministic benchmark rows.

@@ -850,7 +850,7 @@ fn job_schema() -> SchemaDescriptor {
         )),
     ];
     relations.sort_by_key(|relation| job_relation_order(&relation.name));
-    SchemaDescriptor::new("JoinOrderBenchmarkDb", relations)
+    SchemaDescriptor::new("JoinOrderBenchmarkDb", relations).with_ref_foreign_keys()
 }
 
 fn job_relation_order(name: &str) -> usize {
@@ -1456,6 +1456,7 @@ fn imdb_schema() -> SchemaDescriptor {
             )),
         ],
     )
+    .with_ref_foreign_keys()
 }
 
 fn tpch_open_dataset(dir: &Path, scale: u64) -> Result<Dataset, Box<dyn std::error::Error>> {
@@ -1854,7 +1855,8 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                     ["year", "player", "team"],
                 )),
             ],
-        ),
+        )
+        .with_ref_foreign_keys(),
         rows,
         sqlite_schema: r#"
             CREATE TABLE player (id INTEGER PRIMARY KEY, first TEXT NOT NULL, last TEXT NOT NULL);
@@ -1937,7 +1939,8 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                     ["post", "person"],
                 )),
             ],
-        ),
+        )
+        .with_ref_foreign_keys(),
         rows,
         sqlite_schema: r#"
             CREATE TABLE person (id INTEGER PRIMARY KEY, first TEXT NOT NULL, created INTEGER NOT NULL);

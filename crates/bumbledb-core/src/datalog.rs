@@ -1731,6 +1731,7 @@ mod tests {
             ],
         )
         .with_enum(crate::schema::EnumDescriptor::codes("Currency", [840, 978]))
+        .with_ref_foreign_keys()
     }
 
     fn holder_id_type() -> ValueType {
