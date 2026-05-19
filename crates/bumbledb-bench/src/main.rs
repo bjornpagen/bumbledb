@@ -168,6 +168,7 @@ struct Config {
     datasets: Vec<String>,
     queries: Vec<String>,
     imdb_dir: Option<String>,
+    job_dir: Option<String>,
     tpch_dir: Option<String>,
     lahman_dir: Option<String>,
     ldbc_dir: Option<String>,
@@ -192,6 +193,7 @@ impl Config {
         let mut datasets = Vec::new();
         let mut queries = Vec::new();
         let mut imdb_dir = None;
+        let mut job_dir = None;
         let mut tpch_dir = None;
         let mut lahman_dir = None;
         let mut ldbc_dir = None;
@@ -221,6 +223,7 @@ impl Config {
                 "--dataset" => datasets.push(next_arg(&mut args, "--dataset")?),
                 "--query" => queries.push(next_arg(&mut args, "--query")?),
                 "--imdb-dir" => imdb_dir = Some(next_arg(&mut args, "--imdb-dir")?),
+                "--job-dir" => job_dir = Some(next_arg(&mut args, "--job-dir")?),
                 "--tpch-dir" => tpch_dir = Some(next_arg(&mut args, "--tpch-dir")?),
                 "--lahman-dir" => lahman_dir = Some(next_arg(&mut args, "--lahman-dir")?),
                 "--ldbc-dir" => ldbc_dir = Some(next_arg(&mut args, "--ldbc-dir")?),
@@ -255,7 +258,7 @@ impl Config {
                 "--fail-gates" => fail_gates = true,
                 "--help" | "-h" => {
                     println!(
-                        "usage: cargo run -p bumbledb-bench --release -- [--scale N] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
+                        "usage: cargo run -p bumbledb-bench --release -- [--scale N] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
                     );
                     return Ok(None);
                 }
@@ -269,6 +272,7 @@ impl Config {
             datasets,
             queries,
             imdb_dir,
+            job_dir,
             tpch_dir,
             lahman_dir,
             ldbc_dir,
@@ -282,6 +286,7 @@ impl Config {
 
     fn has_open_datasets(&self) -> bool {
         self.imdb_dir.is_some()
+            || self.job_dir.is_some()
             || self.tpch_dir.is_some()
             || self.lahman_dir.is_some()
             || self.ldbc_dir.is_some()
@@ -2550,6 +2555,8 @@ mod tests {
                 "balances_by_instrument",
                 "--warmup",
                 "2",
+                "--job-dir",
+                "/tmp/job",
                 "--format",
                 "json",
             ]
@@ -2564,6 +2571,8 @@ mod tests {
             vec!["tag_lookup_join", "balances_by_instrument"]
         );
         assert_eq!(config.warmup, 2);
+        assert_eq!(config.job_dir.as_deref(), Some("/tmp/job"));
+        assert!(config.has_open_datasets());
         assert_eq!(config.format, OutputFormat::Json);
         Ok(())
     }

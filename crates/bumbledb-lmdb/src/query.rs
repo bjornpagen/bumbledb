@@ -19,11 +19,11 @@ use crate::{
     RelationStats, Result, RowId, SortedTrieIndex, StorageSchema, SubAtom, TrieIter, Value, VarId,
 };
 
-use crate::QueryImageCacheDiagnostics;
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
 use crate::planner_stats::{
     OptimizerFieldStats, OptimizerIndexStats, OptimizerRelationStats, PlannerStatsCacheDiagnostics,
 };
+use crate::{PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics};
 
 /// Query input bindings keyed by input name without `$`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -243,6 +243,8 @@ pub struct QueryPlan {
     pub query_image_cache: QueryImageCacheDiagnostics,
     /// Planner statistics cache diagnostics after planning.
     pub planner_stats: PlannerStatsCacheDiagnostics,
+    /// Prepared physical plan cache diagnostics after planning.
+    pub prepared_plan_cache: PreparedPlanCacheDiagnostics,
     /// Node-level estimated and observed row/candidate counts.
     pub node_rows: Vec<NodeRowEstimate>,
     /// Node-level execution summaries.
@@ -366,6 +368,14 @@ impl QueryPlan {
             self.planner_stats.misses,
             self.planner_stats.builds,
             self.planner_stats.build_micros
+        ));
+        out.push_str(&format!(
+            "  prepared_plan_cache cached_plans={} hits={} misses={} builds={} build_micros={}\n",
+            self.prepared_plan_cache.cached_plans,
+            self.prepared_plan_cache.hits,
+            self.prepared_plan_cache.misses,
+            self.prepared_plan_cache.builds,
+            self.prepared_plan_cache.build_micros
         ));
         out.push_str(&format!("  chosen_plan: {}\n", self.optimizer.chosen));
         for candidate in &self.optimizer.candidates {
@@ -1017,12 +1027,36 @@ impl EncodedBinding {
 }
 
 #[derive(Clone, Debug)]
-struct ExecutionPlan {
+pub(crate) struct ExecutionPlan {
     variable_order_ids: Vec<usize>,
     relation_atoms: Vec<NormAtom>,
     comparisons: Vec<NormPredicate>,
     direct_kernel: Option<DirectKernelPlan>,
     summary: QueryPlan,
+}
+
+impl ExecutionPlan {
+    fn instantiate(
+        &self,
+        query_image_cache: QueryImageCacheDiagnostics,
+        planner_stats: PlannerStatsCacheDiagnostics,
+        prepared_plan_cache: PreparedPlanCacheDiagnostics,
+    ) -> Self {
+        let mut plan = self.clone();
+        plan.summary.query_image_cache = query_image_cache;
+        plan.summary.planner_stats = planner_stats;
+        plan.summary.prepared_plan_cache = prepared_plan_cache;
+        plan.summary.runtime_kind = QueryRuntimeKind::Unknown;
+        plan.summary.timings = QueryTimings::default();
+        plan.summary.allocations = QueryAllocationStats::default();
+        plan.summary.counters = PlanCounters::default();
+        for rows in &mut plan.summary.node_rows {
+            rows.actual_rows = 0;
+        }
+        plan.summary.node_timings =
+            query_node_timings(&plan.summary.free_join, &plan.summary.node_rows);
+        plan
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1254,7 +1288,39 @@ impl<'env> ReadTxn<'env> {
         let query_image_cache = self.query_images.diagnostics();
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
-        let mut plan = plan_query(schema, &mut normalized, image.as_ref(), query_image_cache)?;
+        let mut plan = if let Some(cache_key) = prepared_plan_cache_key(&normalized) {
+            if let Some(cached) = image.cached_prepared_plan(&cache_key)? {
+                cached.instantiate(
+                    query_image_cache,
+                    image.planner_stats_diagnostics(),
+                    image.prepared_plan_diagnostics(),
+                )
+            } else {
+                let prepared_plan_cache = image.prepared_plan_diagnostics();
+                let planned = plan_query(
+                    schema,
+                    &mut normalized,
+                    image.as_ref(),
+                    query_image_cache,
+                    prepared_plan_cache,
+                )?;
+                let build_micros = elapsed_micros(phase_start).min(u128::from(u64::MAX)) as u64;
+                let cached = image.insert_prepared_plan(cache_key, planned, build_micros)?;
+                cached.instantiate(
+                    query_image_cache,
+                    image.planner_stats_diagnostics(),
+                    image.prepared_plan_diagnostics(),
+                )
+            }
+        } else {
+            plan_query(
+                schema,
+                &mut normalized,
+                image.as_ref(),
+                query_image_cache,
+                image.prepared_plan_diagnostics(),
+            )?
+        };
         timings.plan_micros = elapsed_micros(phase_start);
         allocations.plan = allocation_delta_since(phase_alloc_start);
         plan.summary.timings = timings;
@@ -1308,6 +1374,15 @@ fn elapsed_micros(start: Instant) -> u128 {
 
 fn allocation_delta_since(start: allocation::AllocationSnapshot) -> AllocationPhaseStats {
     allocation::delta(start, allocation::snapshot()).into()
+}
+
+fn prepared_plan_cache_key(query: &NormalizedQuery) -> Option<String> {
+    if !query.inputs.is_empty() {
+        return None;
+    }
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(format!("{query:?}").as_bytes());
+    Some(hasher.finalize().to_hex().to_string())
 }
 
 fn execute_free_join<'txn, 'query, S: TupleSink>(
@@ -3003,6 +3078,7 @@ fn plan_query(
     query: &mut NormalizedQuery,
     image: &crate::QueryImage,
     query_image_cache: QueryImageCacheDiagnostics,
+    prepared_plan_cache: PreparedPlanCacheDiagnostics,
 ) -> Result<ExecutionPlan> {
     let _span = tracing::debug_span!("bumbledb.query.plan").entered();
     let (stats, variable_order_ids, variable_costs) = {
@@ -3088,6 +3164,7 @@ fn plan_query(
             optimizer,
             query_image_cache,
             planner_stats,
+            prepared_plan_cache,
             node_rows,
             node_timings,
             free_join,
@@ -5374,6 +5451,57 @@ mod tests {
     }
 
     #[test]
+    fn prepared_plan_cache_reuses_no_input_physical_plan() -> TestResult {
+        let (env, schema) = seeded_db()?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            "find ?account ?holder where Account(id: ?account, holder: ?holder)",
+        )?;
+
+        let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+        let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+        assert_eq!(first.rows, second.rows);
+        assert_eq!(first.plan.prepared_plan_cache.cached_plans, 1);
+        assert_eq!(first.plan.prepared_plan_cache.misses, 1);
+        assert_eq!(first.plan.prepared_plan_cache.builds, 1);
+        assert_eq!(first.plan.prepared_plan_cache.hits, 0);
+        assert_eq!(second.plan.prepared_plan_cache.cached_plans, 1);
+        assert_eq!(second.plan.prepared_plan_cache.misses, 1);
+        assert_eq!(second.plan.prepared_plan_cache.builds, 1);
+        assert_eq!(second.plan.prepared_plan_cache.hits, 1);
+        assert_eq!(first.plan.optimizer, second.plan.optimizer);
+        assert_eq!(first.plan.free_join, second.plan.free_join);
+        assert!(second.plan.timings.plan_micros <= first.plan.timings.plan_micros);
+        assert!(second.explain().contains("prepared_plan_cache"));
+        Ok(())
+    }
+
+    #[test]
+    fn prepared_plan_cache_is_snapshot_scoped() -> TestResult {
+        let (env, schema) = seeded_db()?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            "find ?account ?holder where Account(id: ?account, holder: ?holder)",
+        )?;
+
+        let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+        env.write(|txn| {
+            txn.insert(&schema, account_row(4, 2, 978))?;
+            Ok::<_, Error>(())
+        })?;
+        let after = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+        assert_eq!(before.plan.prepared_plan_cache.misses, 1);
+        assert_eq!(before.plan.prepared_plan_cache.builds, 1);
+        assert_eq!(after.plan.prepared_plan_cache.misses, 1);
+        assert_eq!(after.plan.prepared_plan_cache.builds, 1);
+        assert_eq!(after.plan.prepared_plan_cache.hits, 0);
+        assert_eq!(after.rows.len(), before.rows.len() + 1);
+        Ok(())
+    }
+
+    #[test]
     fn planner_stats_are_cached_per_query_image() -> TestResult {
         let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
@@ -5606,6 +5734,7 @@ mod tests {
                 &mut normalized,
                 &image,
                 QueryImageCacheDiagnostics::default(),
+                PreparedPlanCacheDiagnostics::default(),
             )?;
             let t_depth = plan
                 .summary
