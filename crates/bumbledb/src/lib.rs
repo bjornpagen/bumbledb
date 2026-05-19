@@ -1,7 +1,7 @@
 //! Public facade for Bumbledb.
 //!
-//! Stage 01 intentionally exposes only the embedded open/read/write shell. Schema,
-//! relations, and Datalog are added in later stages.
+//! This facade exposes the embedded database shell while the lower-level crates
+//! carry the experimental schema, storage, and query internals.
 
 use std::marker::PhantomData;
 use std::path::Path;

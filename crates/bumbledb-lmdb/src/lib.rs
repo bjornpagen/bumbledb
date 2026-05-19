@@ -17,6 +17,7 @@ mod query;
 mod query_image;
 mod sorted_trie;
 mod storage;
+mod storage_schema;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -51,10 +52,10 @@ pub use sorted_trie::{
     EncodedOwned, IndexSpec, LinearIter, SortedTrieIndex, SortedTrieIter, TrieFrame, TrieIter,
     TrieLevel, TrieStats,
 };
-pub use storage::{
-    AccessPathDescriptor, BulkLoadReport, ColumnSegmentDescriptor, EncodedComponent, FieldValues,
-    IndexScan, IndexSegmentDescriptor, IndexStatsSummary, KeyValues, Row, ScanItem,
-    SegmentDescriptor, StorageSchema, Value,
+pub use storage::{EncodedComponent, FieldValues, IndexScan, KeyValues, Row, ScanItem, Value};
+pub use storage_schema::{
+    AccessPathDescriptor, BulkLoadReport, ColumnSegmentDescriptor, IndexSegmentDescriptor,
+    IndexStatsSummary, SegmentDescriptor, StorageSchema,
 };
 
 /// Current on-disk storage format version.
