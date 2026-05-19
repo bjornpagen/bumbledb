@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::sync::Arc;
+use std::time::Instant;
 
 use bumbledb_core::datalog::{
     AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm,
@@ -241,8 +242,16 @@ pub struct QueryPlan {
     pub planner_stats: PlannerStatsCacheDiagnostics,
     /// Node-level estimated and observed row/candidate counts.
     pub node_rows: Vec<NodeRowEstimate>,
+    /// Node-level execution summaries.
+    pub node_timings: Vec<QueryNodeTiming>,
     /// Free Join physical plan IR.
     pub free_join: FreeJoinPlan,
+    /// Runtime implementation used for this execution.
+    pub runtime_kind: QueryRuntimeKind,
+    /// Coarse query phase timings.
+    pub timings: QueryTimings,
+    /// Allocation summary for this query, disabled by default.
+    pub allocations: QueryAllocationStats,
     /// Execution counters.
     pub counters: PlanCounters,
     /// True when multiple relation atoms are evaluated as one indexed multiway search.
@@ -255,9 +264,40 @@ impl QueryPlan {
         let mut out = String::new();
         out.push_str("QueryPlan\n");
         out.push_str(&format!("variable_order: {:?}\n", self.variable_order));
+        out.push_str(&format!("runtime_kind: {:?}\n", self.runtime_kind));
         out.push_str(&format!(
             "uses_indexed_multiway_join: {}\n",
             self.uses_indexed_multiway_join
+        ));
+        out.push_str("timings:\n");
+        out.push_str(&format!(
+            "  query_timing total_micros={} validate_inputs_micros={} normalize_micros={} encode_inputs_micros={} query_image_micros={} plan_micros={} lftj_build_micros={} hash_index_micros={} execute_micros={} lftj_execute_micros={} hash_execute_micros={} sink_emit_micros={} sink_finish_micros={} decode_micros={}\n",
+            self.timings.total_micros,
+            self.timings.validate_inputs_micros,
+            self.timings.normalize_micros,
+            self.timings.encode_inputs_micros,
+            self.timings.query_image_micros,
+            self.timings.plan_micros,
+            self.timings.lftj_build_micros,
+            self.timings.hash_index_micros,
+            self.timings.execute_micros,
+            self.timings.lftj_execute_micros,
+            self.timings.hash_execute_micros,
+            self.timings.sink_emit_micros,
+            self.timings.sink_finish_micros,
+            self.timings.decode_micros
+        ));
+        out.push_str("allocations:\n");
+        out.push_str(&format!(
+            "  allocation_summary enabled={} alloc_calls={} dealloc_calls={} realloc_calls={} bytes_allocated={} bytes_deallocated={} net_bytes={} peak_live_bytes={}\n",
+            self.allocations.enabled,
+            self.allocations.alloc_calls,
+            self.allocations.dealloc_calls,
+            self.allocations.realloc_calls,
+            self.allocations.bytes_allocated,
+            self.allocations.bytes_deallocated,
+            self.allocations.net_bytes,
+            self.allocations.peak_live_bytes
         ));
         out.push_str("variable_estimates:\n");
         for estimate in &self.variable_estimates {
@@ -335,6 +375,16 @@ impl QueryPlan {
                 out.push_str(&format!(
                     "    node_rows variable={} estimated_rows={} actual_rows={}\n",
                     rows.variable, rows.estimated_rows, rows.actual_rows
+                ));
+            }
+            if let Some(timing) = self.node_timings.get(node.id.0 as usize) {
+                out.push_str(&format!(
+                    "    node_timing node={} impl={:?} estimated_rows={} actual_rows={} execute_micros={}\n",
+                    timing.node.0,
+                    timing.implementation,
+                    timing.estimated_rows,
+                    timing.actual_rows,
+                    timing.execute_micros
                 ));
             }
             for subatom in &node.subatoms {
@@ -467,6 +517,101 @@ impl QueryPlan {
         out.push_str(&format!("  output_rows: {}\n", self.counters.output_rows));
         out
     }
+
+    fn refresh_node_timings(&mut self) {
+        for timing in &mut self.node_timings {
+            if let Some(rows) = self.node_rows.get(timing.node.0 as usize) {
+                timing.actual_rows = rows.actual_rows;
+            }
+        }
+    }
+}
+
+/// Runtime implementation used by one query execution.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum QueryRuntimeKind {
+    /// Runtime has not executed yet.
+    #[default]
+    Unknown,
+    /// Sorted trie leapfrog executor.
+    Lftj,
+    /// Hash probe executor.
+    HashProbe,
+    /// Free Join fallback for non-pure or mixed node implementations.
+    MixedFallback,
+    /// Reserved for direct selective kernels.
+    DirectKernel,
+}
+
+/// Coarse query phase timings in microseconds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct QueryTimings {
+    /// Inclusive total query execution time.
+    pub total_micros: u128,
+    /// Input validation time.
+    pub validate_inputs_micros: u128,
+    /// Query normalization time.
+    pub normalize_micros: u128,
+    /// Input encoding time.
+    pub encode_inputs_micros: u128,
+    /// QueryImage acquisition time.
+    pub query_image_micros: u128,
+    /// Planning time.
+    pub plan_micros: u128,
+    /// LFTJ atom plan/index preparation time.
+    pub lftj_build_micros: u128,
+    /// Hash index lookup/build preparation time.
+    pub hash_index_micros: u128,
+    /// Runtime execution time before sink finish.
+    pub execute_micros: u128,
+    /// LFTJ recursive execution time.
+    pub lftj_execute_micros: u128,
+    /// Hash probe execution time.
+    pub hash_execute_micros: u128,
+    /// Sink emit timing, zero until per-sink emit timing is enabled.
+    pub sink_emit_micros: u128,
+    /// Sink finalization/materialization time.
+    pub sink_finish_micros: u128,
+    /// Decode timing, zero until per-decode timing is enabled.
+    pub decode_micros: u128,
+}
+
+/// Allocation summary for one query execution.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct QueryAllocationStats {
+    /// True when allocation profiling was enabled.
+    pub enabled: bool,
+    /// Allocation calls observed.
+    pub alloc_calls: u64,
+    /// Deallocation calls observed.
+    pub dealloc_calls: u64,
+    /// Reallocation calls observed.
+    pub realloc_calls: u64,
+    /// Bytes allocated.
+    pub bytes_allocated: u64,
+    /// Bytes deallocated.
+    pub bytes_deallocated: u64,
+    /// Net bytes allocated minus deallocated.
+    pub net_bytes: i128,
+    /// Peak live bytes observed.
+    pub peak_live_bytes: u64,
+}
+
+/// Node-level execution timing and counter summary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueryNodeTiming {
+    /// Dense Free Join node ID.
+    pub node: NodeId,
+    /// Runtime implementation selected for the node.
+    pub implementation: NodeImpl,
+    /// Variables bound by this node.
+    pub bind_vars: Vec<VarId>,
+    /// Estimated rows/candidates for this node.
+    pub estimated_rows: u64,
+    /// Observed accepted candidates for this node.
+    pub actual_rows: u64,
+    /// Coarse node execution time, zero until node-level timing is enabled.
+    pub execute_micros: u128,
 }
 
 /// Optimizer estimate for one variable in execution order.
@@ -801,15 +946,55 @@ impl<'env> ReadTxn<'env> {
         query: &TypedQuery,
         inputs: &InputBindings,
     ) -> Result<QueryOutput> {
-        validate_inputs(query, inputs)?;
+        let total_start = Instant::now();
+        let mut timings = QueryTimings::default();
 
-        let mut normalized = normalize_query(self, schema, query)?;
-        let encoded_inputs = encode_inputs(self, &normalized, inputs)?;
-        let image = self.query_images.get_or_build(self, schema)?;
+        let phase_start = Instant::now();
+        {
+            let _span = tracing::debug_span!("bumbledb.query.validate_inputs").entered();
+            validate_inputs(query, inputs)?;
+        }
+        timings.validate_inputs_micros = elapsed_micros(phase_start);
+
+        let phase_start = Instant::now();
+        let mut normalized = {
+            let _span = tracing::debug_span!(
+                "bumbledb.query.normalize",
+                vars = query.variables.len(),
+                clauses = query.clauses.len()
+            )
+            .entered();
+            normalize_query(self, schema, query)?
+        };
+        timings.normalize_micros = elapsed_micros(phase_start);
+
+        let phase_start = Instant::now();
+        let encoded_inputs = {
+            let _span = tracing::debug_span!(
+                "bumbledb.query.encode_inputs",
+                inputs = normalized.inputs.len()
+            )
+            .entered();
+            encode_inputs(self, &normalized, inputs)?
+        };
+        timings.encode_inputs_micros = elapsed_micros(phase_start);
+
+        let phase_start = Instant::now();
+        let image = {
+            let _span = tracing::debug_span!("bumbledb.query.image").entered();
+            self.query_images.get_or_build(self, schema)?
+        };
+        timings.query_image_micros = elapsed_micros(phase_start);
+
         let query_image_cache = self.query_images.diagnostics();
+        let phase_start = Instant::now();
         let mut plan = plan_query(schema, &mut normalized, image.as_ref(), query_image_cache)?;
+        timings.plan_micros = elapsed_micros(phase_start);
+        plan.summary.timings = timings;
         tracing::debug!(variable_order = ?plan.summary.variable_order, nodes = plan.summary.free_join.nodes.len(), "free join query planned");
         let mut sink = OutputSink::new(&plan.summary.free_join.output);
+
+        let execute_start = Instant::now();
         execute_free_join(
             image.as_ref(),
             self,
@@ -819,13 +1004,21 @@ impl<'env> ReadTxn<'env> {
             &mut plan,
             &mut sink,
         )?;
+        plan.summary.timings.execute_micros = elapsed_micros(execute_start);
 
         let columns = result_columns(&normalized);
-        let rows = sink.finish(self, &normalized, &mut plan.summary.counters)?;
+        let sink_finish_start = Instant::now();
+        let rows = {
+            let _span = tracing::debug_span!("bumbledb.query.sink.finish").entered();
+            sink.finish(self, &normalized, &mut plan.summary.counters)?
+        };
+        plan.summary.timings.sink_finish_micros = elapsed_micros(sink_finish_start);
         plan.summary.counters.output_rows = rows.len() as u64;
         if has_aggregate(&normalized) {
             plan.summary.counters.aggregate_groups = rows.len() as u64;
         }
+        plan.summary.timings.total_micros = elapsed_micros(total_start);
+        plan.summary.refresh_node_timings();
         tracing::debug!(?plan.summary.counters, "free join query executed");
         Ok(QueryOutput {
             columns,
@@ -833,6 +1026,10 @@ impl<'env> ReadTxn<'env> {
             plan: plan.summary,
         })
     }
+}
+
+fn elapsed_micros(start: Instant) -> u128 {
+    start.elapsed().as_micros()
 }
 
 fn execute_free_join<'txn, 'query, S: TupleSink>(
@@ -844,6 +1041,11 @@ fn execute_free_join<'txn, 'query, S: TupleSink>(
     plan: &mut ExecutionPlan,
     sink: &mut S,
 ) -> Result<()> {
+    let _span = tracing::debug_span!(
+        "bumbledb.query.free_join.dispatch",
+        nodes = plan.summary.free_join.nodes.len()
+    )
+    .entered();
     if plan
         .summary
         .free_join
@@ -851,8 +1053,14 @@ fn execute_free_join<'txn, 'query, S: TupleSink>(
         .iter()
         .all(|node| node.implementation == NodeImpl::HashProbe && node.bind_vars.len() == 1)
     {
+        plan.summary.runtime_kind = QueryRuntimeKind::HashProbe;
         return execute_hash_probe(image, txn, schema, query, inputs, plan, sink);
     }
+    plan.summary.runtime_kind = if plan.summary.free_join.is_pure_lftj() {
+        QueryRuntimeKind::Lftj
+    } else {
+        QueryRuntimeKind::MixedFallback
+    };
     execute_lftj(image, txn, query, inputs, plan, sink)
 }
 
@@ -865,21 +1073,49 @@ fn execute_hash_probe<'txn, 'query, S: TupleSink>(
     plan: &mut ExecutionPlan,
     sink: &mut S,
 ) -> Result<()> {
-    let atom_indexes = build_hash_atom_indexes(image, schema, plan)?;
-    let mut executor = HashProbeExecutor {
-        image,
-        txn,
-        query,
-        inputs,
-        plan,
-        atom_indexes,
-        binding: EncodedBinding::new(query.vars.len()),
-        sink,
+    let build_start = Instant::now();
+    let atom_indexes = {
+        let _span = tracing::debug_span!(
+            "bumbledb.query.hash.build_indexes",
+            atoms = plan.relation_atoms.len()
+        )
+        .entered();
+        build_hash_atom_indexes(image, schema, plan)?
     };
-    if !executor.static_atoms_pass()? {
-        return Ok(());
-    }
-    executor.execute(0)
+    plan.summary.timings.hash_index_micros = plan
+        .summary
+        .timings
+        .hash_index_micros
+        .saturating_add(elapsed_micros(build_start));
+
+    let execute_start = Instant::now();
+    let result = {
+        let _span =
+            tracing::debug_span!("bumbledb.query.hash.execute", variables = query.vars.len())
+                .entered();
+        let _sink_emit_span = tracing::debug_span!("bumbledb.query.sink.emit").entered();
+        let mut executor = HashProbeExecutor {
+            image,
+            txn,
+            query,
+            inputs,
+            plan,
+            atom_indexes,
+            binding: EncodedBinding::new(query.vars.len()),
+            sink,
+        };
+        if !executor.static_atoms_pass()? {
+            Ok(())
+        } else {
+            executor.execute(0)
+        }
+    };
+    plan.summary.timings.hash_execute_micros = plan
+        .summary
+        .timings
+        .hash_execute_micros
+        .saturating_add(elapsed_micros(execute_start));
+    result
 }
 
 fn build_hash_atom_indexes(
@@ -1383,14 +1619,27 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
             "free join node order does not match variable order",
         ));
     }
-    let atom_plans = build_lftj_atom_plans(
-        image,
-        query,
-        inputs,
-        &plan.relation_atoms,
-        &plan.variable_order_ids,
-        &mut plan.summary.counters,
-    )?;
+    let build_start = Instant::now();
+    let atom_plans = {
+        let _span = tracing::debug_span!(
+            "bumbledb.query.lftj.build",
+            atoms = plan.relation_atoms.len()
+        )
+        .entered();
+        build_lftj_atom_plans(
+            image,
+            query,
+            inputs,
+            &plan.relation_atoms,
+            &plan.variable_order_ids,
+            &mut plan.summary.counters,
+        )?
+    };
+    plan.summary.timings.lftj_build_micros = plan
+        .summary
+        .timings
+        .lftj_build_micros
+        .saturating_add(elapsed_micros(build_start));
     if atom_plans
         .iter()
         .any(|atom| atom.variables.is_empty() && atom.row_count == 0)
@@ -1407,17 +1656,29 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
             .map(|atom| atom.trie.as_ref().iter())
             .collect(),
     };
-    let mut executor = LftjExecutor {
-        txn,
-        query,
-        inputs,
-        plan,
-        runtime,
-        binding: EncodedBinding::new(query.vars.len()),
-        sink,
+    let execute_start = Instant::now();
+    let result = {
+        let _span =
+            tracing::debug_span!("bumbledb.query.lftj.execute", variables = query.vars.len())
+                .entered();
+        let _sink_emit_span = tracing::debug_span!("bumbledb.query.sink.emit").entered();
+        let mut executor = LftjExecutor {
+            txn,
+            query,
+            inputs,
+            plan,
+            runtime,
+            binding: EncodedBinding::new(query.vars.len()),
+            sink,
+        };
+        executor.execute(0)
     };
-    executor.execute(0)?;
-    Ok(())
+    plan.summary.timings.lftj_execute_micros = plan
+        .summary
+        .timings
+        .lftj_execute_micros
+        .saturating_add(elapsed_micros(execute_start));
+    result
 }
 
 struct LftjExecutor<'txn, 'input, 'query, 'plan, 'image, S: TupleSink> {
@@ -1898,9 +2159,20 @@ fn plan_query(
     let (stats, variable_order_ids, variable_costs) = {
         let relation_atoms = query.atoms.iter().collect::<Vec<_>>();
         let comparisons = query.predicates.iter().collect::<Vec<_>>();
-        let stats = PlannerStats::collect(schema, image, &relation_atoms)?;
-        let (variable_order_ids, variable_costs) =
-            choose_variable_order(schema, query, &relation_atoms, &comparisons, &stats)?;
+        let stats = {
+            let _span =
+                tracing::debug_span!("bumbledb.query.plan.stats", atoms = relation_atoms.len())
+                    .entered();
+            PlannerStats::collect(schema, image, &relation_atoms)?
+        };
+        let (variable_order_ids, variable_costs) = {
+            let _span = tracing::debug_span!(
+                "bumbledb.query.plan.variable_order",
+                variables = query.vars.len()
+            )
+            .entered();
+            choose_variable_order(schema, query, &relation_atoms, &comparisons, &stats)?
+        };
         (stats, variable_order_ids, variable_costs)
     };
     attach_predicate_depths(query, &variable_order_ids);
@@ -1934,15 +2206,24 @@ fn plan_query(
         })
         .collect::<Vec<_>>();
     let missing_indexes = missing_index_recommendations(schema, query, &relation_atoms)?;
-    let (free_join, optimizer) = optimize_free_join_plan(
-        schema,
-        query,
-        &relation_atoms,
-        &variable_order_ids,
-        &variable_costs,
-        &stats,
-    )?;
+    let (free_join, optimizer) = {
+        let _span = tracing::debug_span!(
+            "bumbledb.query.plan.optimize_free_join",
+            atoms = relation_atoms.len(),
+            variables = variable_order_ids.len()
+        )
+        .entered();
+        optimize_free_join_plan(
+            schema,
+            query,
+            &relation_atoms,
+            &variable_order_ids,
+            &variable_costs,
+            &stats,
+        )?
+    };
     free_join.validate()?;
+    let node_timings = query_node_timings(&free_join, &node_rows);
     let planner_stats = image.planner_stats_diagnostics();
 
     let uses_indexed_multiway_join = relation_atoms.len() > 1;
@@ -1958,11 +2239,36 @@ fn plan_query(
             query_image_cache,
             planner_stats,
             node_rows,
+            node_timings,
             free_join,
+            runtime_kind: QueryRuntimeKind::Unknown,
+            timings: QueryTimings::default(),
+            allocations: QueryAllocationStats::default(),
             counters: PlanCounters::default(),
             uses_indexed_multiway_join,
         },
     })
+}
+
+fn query_node_timings(
+    free_join: &FreeJoinPlan,
+    node_rows: &[NodeRowEstimate],
+) -> Vec<QueryNodeTiming> {
+    free_join
+        .nodes
+        .iter()
+        .map(|node| {
+            let rows = node_rows.get(node.id.0 as usize);
+            QueryNodeTiming {
+                node: node.id,
+                implementation: node.implementation,
+                bind_vars: node.bind_vars.clone(),
+                estimated_rows: rows.map_or(0, |rows| rows.estimated_rows),
+                actual_rows: rows.map_or(0, |rows| rows.actual_rows),
+                execute_micros: 0,
+            }
+        })
+        .collect()
 }
 
 fn choose_variable_order(
@@ -3812,6 +4118,19 @@ mod tests {
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     #[test]
+    fn query_observability_defaults_are_zero() {
+        let timings = QueryTimings::default();
+        assert_eq!(timings.total_micros, 0);
+        assert_eq!(timings.execute_micros, 0);
+        assert_eq!(QueryRuntimeKind::default(), QueryRuntimeKind::Unknown);
+
+        let allocations = QueryAllocationStats::default();
+        assert!(!allocations.enabled);
+        assert_eq!(allocations.alloc_calls, 0);
+        assert_eq!(allocations.net_bytes, 0);
+    }
+
+    #[test]
     fn executes_single_relation_query() -> TestResult {
         let (env, schema) = seeded_db()?;
         let query = parse_and_typecheck(
@@ -3835,6 +4154,11 @@ mod tests {
                 .iter()
                 .any(|estimate| estimate.access == "Account.by_holder")
         );
+        assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::Unknown);
+        assert!(output.plan.timings.total_micros > 0);
+        assert!(output.plan.timings.execute_micros <= output.plan.timings.total_micros);
+        assert!(!output.plan.allocations.enabled);
+        assert!(!output.plan.node_timings.is_empty());
         Ok(())
     }
 
@@ -3904,6 +4228,7 @@ mod tests {
                 .any(|node| node.implementation == NodeImpl::HashProbe)
         );
         assert_eq!(output.plan.optimizer.chosen, "hash_probe");
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::HashProbe);
         assert!(output.plan.counters.hash_probe_calls > 0);
         assert_eq!(output.plan.counters.trie_open, 0);
         assert_eq!(output.plan.counters.trie_next, 0);
@@ -3974,6 +4299,7 @@ mod tests {
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
         assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
         assert!(
             output
                 .plan
@@ -4632,6 +4958,12 @@ mod tests {
         })?;
         let explain = output.explain();
         assert!(explain.contains("variable_order"));
+        assert!(explain.contains("runtime_kind"));
+        assert!(explain.contains("timings:"));
+        assert!(explain.contains("query_timing"));
+        assert!(explain.contains("allocations:"));
+        assert!(explain.contains("allocation_summary"));
+        assert!(explain.contains("node_timing"));
         assert!(explain.contains("variable_estimate"));
         assert!(explain.contains("free_join_node"));
         assert!(explain.contains("candidate_plan"));

@@ -32,6 +32,13 @@ impl HashTrieIndex {
         spec: IndexSpec,
         leaf_mode: LeafMode,
     ) -> Result<Self> {
+        let _span = tracing::debug_span!(
+            "bumbledb.hash_trie.build",
+            relation = relation.id.0,
+            rows = relation.row_count,
+            fields = spec.fields.len()
+        )
+        .entered();
         let mut root = HashNode::Inner(HashMap::new());
         for row in 0..relation.row_count {
             let row = RowId(row as u32);

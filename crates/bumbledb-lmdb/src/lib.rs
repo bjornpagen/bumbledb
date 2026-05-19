@@ -35,8 +35,9 @@ pub use planner_stats::PlannerStatsCacheDiagnostics;
 pub use query::{
     CostKey, InputBindings, InputId, MissingIndexRecommendation, NodeRowEstimate, NormAtom,
     NormAtomField, NormFindTerm, NormInput, NormOperand, NormPredicate, NormTerm, NormVar,
-    NormalizedQuery, OptimizerTrace, PlanCandidate, PlanCounters, PredicateId, QueryOutput,
-    QueryPlan, ResultColumn, VariableEstimate,
+    NormalizedQuery, OptimizerTrace, PlanCandidate, PlanCounters, PredicateId,
+    QueryAllocationStats, QueryNodeTiming, QueryOutput, QueryPlan, QueryRuntimeKind, QueryTimings,
+    ResultColumn, VariableEstimate,
 };
 pub use query_image::{
     ColumnImage, EncodedRef, FieldId, FieldImage, FixedColumn, QueryImage, QueryImageCache,

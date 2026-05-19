@@ -34,7 +34,7 @@ Set `BUMBLED_BENCH_SCALE` or `BUMBLED_BENCH_REPEATS` for `bench-focused.sh` when
 cargo run -p bumbledb-bench --release -- --scale 2000 --repeats 10 --format markdown
 ```
 
-Markdown output includes result and counter-gate tables with QueryImage segment/build stats, chosen Free Join plan, iterator estimates, hash build/probe estimates, materialized values, dictionary reverse lookups, and gate status.
+Markdown output includes result, phase timing, allocation summary, and counter-gate tables with QueryImage segment/build stats, runtime kind, chosen Free Join plan, iterator estimates, hash build/probe estimates, materialized values, dictionary reverse lookups, and gate status.
 
 **Run One Generated Dataset**
 ```sh
@@ -152,6 +152,9 @@ Each query prints:
 The markdown table additionally prints:
 
 - QueryImage build time and durable segment usage.
+- runtime kind.
+- QueryPlan phase timings.
+- allocation summary fields, disabled and zero until allocation profiling is enabled.
 - chosen Free Join candidate.
 - estimated iterator operations.
 - estimated hash build/probe rows.
@@ -184,10 +187,10 @@ RUST_LOG=bumbledb_lmdb=debug cargo run -p bumbledb-bench --release -- --trace --
 The library never initializes a tracing subscriber. The benchmark binary installs one only when `--trace` is passed.
 
 **Current Interpretation**
-Bumbledb currently behaves well for highly selective prefix joins. Broad joins are still slower than the final target gates because the v2 executor is cut over to QueryImage/Free Join/sorted-trie execution, while dedicated hash/hybrid runtime kernels remain future optimization work:
+Bumbledb currently behaves well for highly selective prefix joins. Broad joins are still slower than the final target gates because the v2 executor is cut over to QueryImage/Free Join/sorted-trie/hash-probe execution, while direct selective kernels and deeper LFTJ loop optimization remain future work:
 
-- selected hash/hybrid node implementations are explained but not yet separate runtime kernels,
-- broad joins still perform many sorted-trie operations,
+- all-hash plans use the real hash probe runtime,
+- mixed fallback plans can still perform many sorted-trie operations,
 - full post-rearchitecture latency gates are tracked but not mandatory for local edits.
 
 Do not treat the current benchmark results as the final design limit. They are a planner baseline.

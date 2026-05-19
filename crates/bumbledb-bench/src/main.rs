@@ -9,7 +9,8 @@ use bumbledb_core::schema::{
     SchemaDescriptor, ValueType,
 };
 use bumbledb_lmdb::{
-    Environment, InputBindings, PlanCounters, QueryOutput, ResultColumn, Row, StorageSchema, Value,
+    Environment, InputBindings, PlanCounters, QueryAllocationStats, QueryOutput, QueryTimings,
+    ResultColumn, Row, StorageSchema, Value,
 };
 use rusqlite::{Connection, params_from_iter};
 
@@ -231,6 +232,9 @@ struct BenchmarkRunResult {
     sqlite_avg: Duration,
     sqlite_ratio: f64,
     chosen_plan: String,
+    runtime_kind: String,
+    timings: QueryTimings,
+    allocations: QueryAllocationStats,
     iterator_ops: u64,
     hash_build_rows: u64,
     hash_probe_rows: u64,
@@ -476,6 +480,9 @@ fn benchmark_result(
         sqlite_avg,
         sqlite_ratio,
         chosen_plan: output.plan.optimizer.chosen.clone(),
+        runtime_kind: format!("{:?}", output.plan.runtime_kind),
+        timings: output.plan.timings,
+        allocations: output.plan.allocations,
         iterator_ops: output.plan.free_join.estimates.iterator_ops,
         hash_build_rows: output.plan.free_join.estimates.hash_build_rows,
         hash_probe_rows: output.plan.free_join.estimates.hash_probe_rows,
@@ -644,12 +651,12 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | rows | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | image build us | image segments | image segment bytes | built from segments | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash calls | hash hits | hash misses | hash rows | hash emits | iterator ops | hash build est | hash probe est | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---:|---:|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | rows | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | image build us | image segments | image segment bytes | built from segments | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash calls | hash hits | hash misses | hash rows | hash emits | iterator ops | hash build est | hash probe est | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---:|---:|---:|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.rows,
@@ -657,6 +664,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             duration_micros(result.sqlite_avg),
             result.sqlite_ratio,
             markdown_escape(&result.chosen_plan),
+            markdown_escape(&result.runtime_kind),
             result.query_image_build_micros,
             result.query_image_segment_count,
             result.query_image_segment_bytes,
@@ -686,6 +694,55 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.materialized_values,
             result.dictionary_reverse_lookups,
             if result.gate.passed { "pass" } else { "fail" },
+        );
+    }
+    out.push_str("\n## Phase Timing\n\n");
+    out.push_str("| dataset | query | runtime | total us | validate us | normalize us | encode us | image us | plan us | lftj build us | hash index us | execute us | lftj exec us | hash exec us | sink emit us | sink finish us | decode us |\n");
+    out.push_str(
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
+    );
+    for result in results {
+        let timings = result.timings;
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            markdown_escape(result.dataset),
+            markdown_escape(result.query),
+            markdown_escape(&result.runtime_kind),
+            timings.total_micros,
+            timings.validate_inputs_micros,
+            timings.normalize_micros,
+            timings.encode_inputs_micros,
+            timings.query_image_micros,
+            timings.plan_micros,
+            timings.lftj_build_micros,
+            timings.hash_index_micros,
+            timings.execute_micros,
+            timings.lftj_execute_micros,
+            timings.hash_execute_micros,
+            timings.sink_emit_micros,
+            timings.sink_finish_micros,
+            timings.decode_micros,
+        );
+    }
+    out.push_str("\n## Allocation Summary\n\n");
+    out.push_str("| dataset | query | enabled | alloc calls | dealloc calls | realloc calls | bytes allocated | bytes deallocated | net bytes | peak live bytes |\n");
+    out.push_str("|---|---|---|---:|---:|---:|---:|---:|---:|---:|\n");
+    for result in results {
+        let allocations = result.allocations;
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            markdown_escape(result.dataset),
+            markdown_escape(result.query),
+            allocations.enabled,
+            allocations.alloc_calls,
+            allocations.dealloc_calls,
+            allocations.realloc_calls,
+            allocations.bytes_allocated,
+            allocations.bytes_deallocated,
+            allocations.net_bytes,
+            allocations.peak_live_bytes,
         );
     }
     out.push_str("\n## Counter Gates\n\n");
@@ -728,6 +785,9 @@ fn markdown_escape(value: &str) -> String {
 fn print_explain(explain: &str) {
     for line in explain.lines() {
         if line.contains("relation=")
+            || line.contains("runtime_kind")
+            || line.contains("query_timing")
+            || line.contains("allocation_summary")
             || line.contains("variable_estimate")
             || line.contains("missing_index")
             || line.contains("query_image_cache")
@@ -737,6 +797,7 @@ fn print_explain(explain: &str) {
             || line.contains("free_join_estimates")
             || line.contains("free_join_node")
             || line.contains("node_rows")
+            || line.contains("node_timing")
             || line.contains("free_join_subatom")
             || line.contains("rows_scanned")
             || line.contains("cursor_seeks")
@@ -1705,6 +1766,14 @@ mod tests {
             sqlite_avg: Duration::from_micros(5),
             sqlite_ratio: 2.0,
             chosen_plan: "pure_lftj".to_owned(),
+            runtime_kind: "Lftj".to_owned(),
+            timings: QueryTimings {
+                total_micros: 10,
+                execute_micros: 4,
+                sink_finish_micros: 1,
+                ..QueryTimings::default()
+            },
+            allocations: QueryAllocationStats::default(),
             iterator_ops: 7,
             hash_build_rows: 0,
             hash_probe_rows: 0,
@@ -1748,6 +1817,8 @@ mod tests {
 
         let markdown = render_markdown_results(&[result]);
         assert!(markdown.contains("| joinstress | triangle_count |"));
+        assert!(markdown.contains("## Phase Timing"));
+        assert!(markdown.contains("## Allocation Summary"));
         assert!(markdown.contains("| dataset | query | cursor seeks |"));
         assert!(
             markdown.contains("| joinstress | triangle_count | 0 | 0 | 1 | 1 | false | 0 | ok |")

@@ -81,6 +81,13 @@ pub struct SortedTrieIndex {
 impl SortedTrieIndex {
     /// Builds a sorted trie index from an immutable relation image.
     pub fn build(relation: &RelationImage, spec: IndexSpec) -> Result<Self> {
+        let _span = tracing::debug_span!(
+            "bumbledb.sorted_trie.build",
+            relation = relation.id.0,
+            rows = relation.row_count,
+            fields = spec.fields.len()
+        )
+        .entered();
         let start = Instant::now();
         let mut order = (0..relation.row_count)
             .map(|row| RowId(row as u32))
