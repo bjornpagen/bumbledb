@@ -76,6 +76,7 @@ This kill list is derived from scale-10000 trace evidence after the v2 cutover. 
 - `observability_lints_allocation_hardening/01_workspace_lints_and_clippy_policy.md`
 - `observability_lints_allocation_hardening/01_workspace_lints_results.md`
 - `observability_lints_allocation_hardening/02_panic_unwrap_and_smell_cleanup.md`
+- `observability_lints_allocation_hardening/02_panic_unwrap_results.md`
 - `observability_lints_allocation_hardening/03_query_observability_data_model.md`
 - `observability_lints_allocation_hardening/04_tracing_and_profiling_ux.md`
 - `observability_lints_allocation_hardening/05_allocation_recording_and_heap_observability.md`

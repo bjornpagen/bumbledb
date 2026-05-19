@@ -865,7 +865,7 @@ fn execute_hash_probe<'txn, 'query, S: TupleSink>(
     plan: &mut ExecutionPlan,
     sink: &mut S,
 ) -> Result<()> {
-    let atom_indexes = build_hash_atom_indexes(image, schema, query, plan)?;
+    let atom_indexes = build_hash_atom_indexes(image, schema, plan)?;
     let mut executor = HashProbeExecutor {
         image,
         txn,
@@ -885,7 +885,6 @@ fn execute_hash_probe<'txn, 'query, S: TupleSink>(
 fn build_hash_atom_indexes(
     image: &crate::QueryImage,
     schema: &StorageSchema,
-    query: &NormalizedQuery,
     plan: &mut ExecutionPlan,
 ) -> Result<Vec<HashAtomIndex>> {
     let mut out = Vec::new();
@@ -950,7 +949,6 @@ fn build_hash_atom_indexes(
                 .hash_index_build_rows
                 .saturating_add(relation.row_count as u64);
         }
-        let _ = query;
         out.push(HashAtomIndex {
             node_id,
             atom_id,
@@ -1540,15 +1538,35 @@ impl LeapfrogState {
             self.at_end = true;
             return Ok(());
         }
-        let mut keys = self
-            .iter_ids
-            .iter()
-            .map(|id| key_owned(&iters[*id], counters).map(|key| (*id, key)))
-            .collect::<Result<Vec<_>>>()?;
-        keys.sort_by(|left, right| left.1.cmp(&right.1));
-        self.iter_ids = keys.into_iter().map(|(id, _)| id).collect();
+        self.sort_iter_ids(iters, counters)?;
         self.p = 0;
         self.search(iters, counters)
+    }
+
+    fn sort_iter_ids(
+        &mut self,
+        iters: &[crate::SortedTrieIter<'_>],
+        counters: &mut PlanCounters,
+    ) -> Result<()> {
+        let mut error = None;
+        self.iter_ids.sort_by(|left, right| {
+            if error.is_some() {
+                return std::cmp::Ordering::Equal;
+            }
+            let Some(left) = key_owned_opt(&iters[*left], counters) else {
+                error = Some(missing_trie_key_error());
+                return std::cmp::Ordering::Equal;
+            };
+            let Some(right) = key_owned_opt(&iters[*right], counters) else {
+                error = Some(missing_trie_key_error());
+                return std::cmp::Ordering::Equal;
+            };
+            left.cmp(&right)
+        });
+        if let Some(error) = error {
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn key(
@@ -1593,13 +1611,17 @@ impl LeapfrogState {
         if self.iter_ids.len() == 1 {
             return Ok(());
         }
-        let mut max = key_owned(
+        let Some(mut max) = key_owned_opt(
             &iters[self.iter_ids[(self.p + self.iter_ids.len() - 1) % self.iter_ids.len()]],
             counters,
-        )?;
+        ) else {
+            return Err(missing_trie_key_error());
+        };
         loop {
             let id = self.iter_ids[self.p];
-            let current = key_owned(&iters[id], counters)?;
+            let Some(current) = key_owned_opt(&iters[id], counters) else {
+                return Err(missing_trie_key_error());
+            };
             if current == max {
                 return Ok(());
             }
@@ -1609,7 +1631,10 @@ impl LeapfrogState {
                 self.at_end = true;
                 return Ok(());
             }
-            max = key_owned(&iters[id], counters)?;
+            let Some(next_max) = key_owned_opt(&iters[id], counters) else {
+                return Err(missing_trie_key_error());
+            };
+            max = next_max;
             self.p = (self.p + 1) % self.iter_ids.len();
         }
     }
@@ -1619,10 +1644,20 @@ fn key_owned(
     iter: &crate::SortedTrieIter<'_>,
     counters: &mut PlanCounters,
 ) -> Result<EncodedOwned> {
+    key_owned_opt(iter, counters).ok_or_else(missing_trie_key_error)
+}
+
+fn key_owned_opt(
+    iter: &crate::SortedTrieIter<'_>,
+    counters: &mut PlanCounters,
+) -> Option<EncodedOwned> {
+    let key = iter.key()?;
     counters.trie_key_reads += 1;
-    iter.key()
-        .map(EncodedOwned::from_ref)
-        .ok_or_else(|| Error::internal("trie key requested for exhausted iterator"))
+    Some(EncodedOwned::from_ref(key))
+}
+
+fn missing_trie_key_error() -> Error {
+    Error::internal("trie key requested for exhausted iterator")
 }
 
 fn build_lftj_atom_plans(

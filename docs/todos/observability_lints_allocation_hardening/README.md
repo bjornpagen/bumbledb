@@ -53,3 +53,4 @@ cargo run -p bumbledb-bench --release -- --scale 10000 --repeats 3 --format mark
 **Baseline Artifacts**
 - `00_baseline_results.md`
 - `01_workspace_lints_results.md`
+- `02_panic_unwrap_results.md`
