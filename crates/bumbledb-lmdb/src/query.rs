@@ -3116,10 +3116,7 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
         .lftj_build_micros
         .saturating_add(elapsed_micros(build_start));
     plan.summary.allocations.lftj_build = allocation_delta_since(build_alloc_start);
-    if atom_plans
-        .iter()
-        .any(|atom| atom.variables.is_empty() && atom.row_count == 0)
-    {
+    if atom_plans.iter().any(|atom| atom.row_count == 0) {
         return Ok(());
     }
     let runtime = LftjRuntime {
@@ -3531,20 +3528,30 @@ fn build_lftj_sorted_trie(
 fn lftj_atom_cache_key(
     atom: &NormAtom,
     variables: &[usize],
-    variable_order_ids: &[usize],
+    _variable_order_ids: &[usize],
     inputs: &EncodedInputs,
 ) -> String {
     let mut key = String::new();
-    let _ = write!(
-        key,
-        "relation={};atom={};vars={:?};order={:?};fields=",
-        atom.relation.0, atom.id.0, variables, variable_order_ids
-    );
+    let _ = write!(key, "relation={};vars=", atom.relation.0);
+    for variable in variables {
+        let field = atom
+            .fields
+            .iter()
+            .find(|field| matches!(field.term, NormTerm::Var(id) if id.0 as usize == *variable))
+            .map(|field| field.field.0)
+            .unwrap_or(u16::MAX);
+        let _ = write!(key, "{field},");
+    }
+    key.push_str(";fields=");
     for field in &atom.fields {
         let _ = write!(key, "{}:", field.field.0);
         match &field.term {
             NormTerm::Var(variable) => {
-                let _ = write!(key, "v{}", variable.0);
+                let ordinal = variables
+                    .iter()
+                    .position(|candidate| *candidate == variable.0 as usize)
+                    .unwrap_or(usize::MAX);
+                let _ = write!(key, "v{ordinal}");
             }
             NormTerm::Input(input) => {
                 let _ = write!(key, "i{}=", input.0);
@@ -6033,6 +6040,66 @@ mod tests {
                 .iter()
                 .any(|candidate| candidate.name == "pure_lftj")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn lftj_atom_cache_reuses_equivalent_relation_aliases() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
+        env.write(|txn| {
+            txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
+            txn.insert(&schema, Row::new("A", [("id", Value::U64(2))]))?;
+            Ok::<_, Error>(())
+        })?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?left ?right
+            where
+              A(id: ?left)
+              A(id: ?right)
+            "#,
+        )?;
+
+        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+        assert_eq!(output.plan.counters.sorted_trie_builds, 1);
+        assert_eq!(output.plan.counters.sorted_trie_cache_hits, 1);
+        assert_eq!(output.rows.len(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn lftj_empty_variable_atom_short_circuits_execution() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
+        env.write(|txn| {
+            txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
+            Ok::<_, Error>(())
+        })?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?a ?b
+            where
+              A(id: ?a)
+              B(id: ?b, a: 99)
+            "#,
+        )?;
+
+        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+        assert!(output.rows.is_empty());
+        assert!(matches!(
+            output.plan.runtime_kind,
+            QueryRuntimeKind::Lftj | QueryRuntimeKind::Mixed
+        ));
+        assert_eq!(output.plan.counters.trie_open, 0);
+        assert_eq!(output.plan.counters.variable_candidates, 0);
         Ok(())
     }
 

@@ -47,7 +47,6 @@ Trace volume:
 
 | Priority | Item | Spec |
 |---:|---|---|
-| P0 | LFTJ atom index reuse and lazy construction | [`04_lftj_atom_index_reuse.md`](04_lftj_atom_index_reuse.md) |
 | P0 | True count aggregate pushdown | [`05_count_aggregate_pushdown.md`](05_count_aggregate_pushdown.md) |
 | P1 | Optimizer build-cost model and stats fixes | [`06_optimizer_cost_model.md`](06_optimizer_cost_model.md) |
 | P1 | Static atom pre-resolution and FK atom elimination | [`07_static_atom_simplification.md`](07_static_atom_simplification.md) |
@@ -55,16 +54,16 @@ Trace volume:
 
 ## Cross-Query Priority Map
 
-| Query | LFTJ Reuse/Lazy Build | Count Pushdown | Cost Model | Static Simplification | Trace Cleanup |
-|---|---|---|---|---|---|
-| `job_broad_cast_keyword_company` | Medium | High | High | Medium | Medium |
-| `job_broad_movie_info_star` | Medium | Critical | Medium | High | Medium |
-| `job_q01_top_production` | Critical | Low | Medium | Critical | Medium |
-| `job_q09_voice_us_actor` | Medium | Medium | High | Medium | Medium |
-| `job_q16_character_title_us` | Low | Low | Critical | Medium | Medium |
-| `job_q24_voice_keyword_actor` | Low | Low | Critical | Medium | Medium |
-| `job_movie_link_bridge` | Critical | Medium | Medium | Medium | Medium |
-| `job_q33_linked_series_companies` | Low | Low | Critical | High | Medium |
+| Query | Count Pushdown | Cost Model | Static Simplification | Trace Cleanup |
+|---|---|---|---|---|
+| `job_broad_cast_keyword_company` | High | High | Medium | Medium |
+| `job_broad_movie_info_star` | Critical | Medium | High | Medium |
+| `job_q01_top_production` | Low | Medium | Critical | Medium |
+| `job_q09_voice_us_actor` | Medium | High | Medium | Medium |
+| `job_q16_character_title_us` | Low | Critical | Medium | Medium |
+| `job_q24_voice_keyword_actor` | Low | Critical | Medium | Medium |
+| `job_movie_link_bridge` | Medium | Medium | Medium | Medium |
+| `job_q33_linked_series_companies` | Low | Critical | High | Medium |
 
 ## Shared Source Hotspots
 
