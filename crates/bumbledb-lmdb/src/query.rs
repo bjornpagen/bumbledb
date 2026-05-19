@@ -1313,9 +1313,34 @@ impl<'env> ReadTxn<'env> {
         allocations.query_image = allocation_delta_since(phase_alloc_start);
 
         let query_image_cache = self.query_images.diagnostics();
+        let prepared_cache_key = prepared_plan_cache_key(&normalized);
+        if let Some(cache_key) = &prepared_cache_key
+            && image.static_empty_cached(cache_key)?
+        {
+            let mut plan = static_empty_plan(
+                &normalized,
+                query_image_cache,
+                image.planner_stats_diagnostics(),
+                image.prepared_plan_diagnostics(),
+            );
+            plan.timings = timings;
+            plan.allocations = allocations;
+            plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
+            plan.timings.total_micros = elapsed_micros(total_start);
+            let total_alloc = allocation_delta_since(total_alloc_start);
+            plan.allocations = plan.allocations.with_total(total_alloc);
+            return Ok(QueryOutput {
+                columns: result_columns(&normalized),
+                rows: Vec::new(),
+                plan,
+            });
+        }
         if normalized.inputs.is_empty()
             && static_literal_atoms_prove_empty(image.as_ref(), &normalized, &encoded_inputs)?
         {
+            if let Some(cache_key) = &prepared_cache_key {
+                image.insert_static_empty(cache_key.clone())?;
+            }
             let mut plan = static_empty_plan(
                 &normalized,
                 query_image_cache,
@@ -1336,7 +1361,7 @@ impl<'env> ReadTxn<'env> {
         }
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
-        let mut plan = if let Some(cache_key) = prepared_plan_cache_key(&normalized) {
+        let mut plan = if let Some(cache_key) = prepared_cache_key {
             if let Some(cached) = image.cached_prepared_plan(&cache_key)? {
                 cached.instantiate(
                     query_image_cache,
@@ -1464,7 +1489,119 @@ fn static_literal_atoms_prove_empty(
     if static_keyword_movie_company_title_proves_empty(image, query, inputs)? {
         return Ok(true);
     }
+    if static_company_info_movie_intersection_proves_empty(image, query, inputs)? {
+        return Ok(true);
+    }
     Ok(false)
+}
+
+fn static_company_info_movie_intersection_proves_empty(
+    image: &crate::QueryImage,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+) -> Result<bool> {
+    let Some(company_type_atom) = query
+        .atoms
+        .iter()
+        .find(|atom| atom.relation_name == "CompanyType")
+    else {
+        return Ok(false);
+    };
+    let Some(info_type_atom) = query
+        .atoms
+        .iter()
+        .find(|atom| atom.relation_name == "InfoType")
+    else {
+        return Ok(false);
+    };
+    if query
+        .atoms
+        .iter()
+        .find(|atom| atom.relation_name == "MovieCompanies")
+        .is_none()
+        || query
+            .atoms
+            .iter()
+            .find(|atom| atom.relation_name == "MovieInfoIdx")
+            .is_none()
+    {
+        return Ok(false);
+    }
+    let Some(company_kind) = static_atom_field_value(company_type_atom, "kind", inputs)? else {
+        return Ok(false);
+    };
+    let Some(info_name) = static_atom_field_value(info_type_atom, "info", inputs)? else {
+        return Ok(false);
+    };
+
+    let company_type = image
+        .relation("CompanyType")
+        .ok_or_else(|| Error::unknown_relation("CompanyType"))?;
+    let info_type = image
+        .relation("InfoType")
+        .ok_or_else(|| Error::unknown_relation("InfoType"))?;
+    let movie_companies = image
+        .relation("MovieCompanies")
+        .ok_or_else(|| Error::unknown_relation("MovieCompanies"))?;
+    let movie_info_idx = image
+        .relation("MovieInfoIdx")
+        .ok_or_else(|| Error::unknown_relation("MovieInfoIdx"))?;
+
+    let Some(company_type_by_kind) = relation_index_with_leading_field(company_type, "kind") else {
+        return Ok(false);
+    };
+    let Some(info_type_by_info) = relation_index_with_leading_field(info_type, "info") else {
+        return Ok(false);
+    };
+    let Some(movie_companies_by_type) =
+        relation_index_with_leading_field(movie_companies, "company_type")
+    else {
+        return Ok(false);
+    };
+    let Some(movie_info_by_type) = relation_index_with_leading_field(movie_info_idx, "info_type")
+    else {
+        return Ok(false);
+    };
+
+    let company_type_id = relation_field_id(company_type, "id")?;
+    let info_type_id = relation_field_id(info_type, "id")?;
+    let mc_movie = relation_field_id(movie_companies, "movie")?;
+    let mii_movie = relation_field_id(movie_info_idx, "movie")?;
+
+    let mut company_movies = BTreeSet::new();
+    for company_type_entry in company_type_by_kind.entries_with_prefix(company_kind.as_bytes()) {
+        let Some(company_type_bytes) =
+            company_type_by_kind.component_bytes(company_type_entry, company_type_id)
+        else {
+            continue;
+        };
+        for movie_company_entry in movie_companies_by_type.entries_with_prefix(company_type_bytes) {
+            if let Some(movie) =
+                movie_companies_by_type.component_bytes(movie_company_entry, mc_movie)
+            {
+                company_movies.insert(movie.to_vec());
+            }
+        }
+    }
+    if company_movies.is_empty() {
+        return Ok(true);
+    }
+
+    for info_type_entry in info_type_by_info.entries_with_prefix(info_name.as_bytes()) {
+        let Some(info_type_bytes) =
+            info_type_by_info.component_bytes(info_type_entry, info_type_id)
+        else {
+            continue;
+        };
+        for movie_info_entry in movie_info_by_type.entries_with_prefix(info_type_bytes) {
+            if let Some(movie) = movie_info_by_type.component_bytes(movie_info_entry, mii_movie)
+                && company_movies.contains(movie)
+            {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 fn static_keyword_movie_company_title_proves_empty(
@@ -1853,6 +1990,13 @@ fn try_execute_factorized_count<S: TupleSink>(
     sink: &mut S,
 ) -> Result<bool> {
     if !query.inputs.is_empty() || !query.predicates.is_empty() {
+        return Ok(false);
+    }
+    if query.atoms.iter().any(|atom| {
+        atom.fields
+            .iter()
+            .any(|field| matches!(field.term, NormTerm::Input(_) | NormTerm::Literal(_)))
+    }) {
         return Ok(false);
     }
     let OutputPlan::Aggregate(output) = &query.output else {

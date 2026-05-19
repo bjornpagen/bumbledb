@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -97,6 +97,7 @@ pub struct QueryImage {
     stats: QueryImageStats,
     planner_stats: PlannerStatsCache,
     prepared_plans: PreparedPlanCache,
+    static_empty_queries: Arc<RwLock<BTreeSet<String>>>,
     sorted_trie_cache: Arc<RwLock<BTreeMap<String, Arc<SortedTrieIndex>>>>,
     hash_trie_cache: Arc<RwLock<BTreeMap<String, Arc<HashTrieIndex>>>>,
 }
@@ -141,6 +142,7 @@ impl QueryImage {
             },
             planner_stats: PlannerStatsCache::default(),
             prepared_plans: PreparedPlanCache::default(),
+            static_empty_queries: Arc::default(),
             sorted_trie_cache: Arc::default(),
             hash_trie_cache: Arc::default(),
         }
@@ -195,6 +197,22 @@ impl QueryImage {
         build_micros: u64,
     ) -> Result<Arc<ExecutionPlan>> {
         self.prepared_plans.insert(key, plan, build_micros)
+    }
+
+    pub(crate) fn static_empty_cached(&self, key: &str) -> Result<bool> {
+        Ok(self
+            .static_empty_queries
+            .read()
+            .map_err(|_| Error::internal("static-empty cache read lock poisoned"))?
+            .contains(key))
+    }
+
+    pub(crate) fn insert_static_empty(&self, key: String) -> Result<()> {
+        self.static_empty_queries
+            .write()
+            .map_err(|_| Error::internal("static-empty cache write lock poisoned"))?
+            .insert(key);
+        Ok(())
     }
 
     pub(crate) fn cached_sorted_trie(
