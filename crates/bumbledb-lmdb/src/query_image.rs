@@ -218,7 +218,7 @@ impl QueryImage {
     pub(crate) fn cached_sorted_trie(
         &self,
         key: String,
-        build: impl FnOnce() -> Result<(SortedTrieIndex, u64)>,
+        build: impl FnOnce() -> Result<SortedTrieBuild>,
     ) -> Result<CachedSortedTrie> {
         if let Some(index) = self
             .sorted_trie_cache
@@ -232,12 +232,17 @@ impl QueryImage {
                 hit: true,
                 build_micros: 0,
                 source_rows_scanned: 0,
+                rows_retained: 0,
+                bytes_copied: 0,
+                scan_micros: 0,
+                column_micros: 0,
+                sort_micros: 0,
             });
         }
 
         let start = Instant::now();
-        let (index, source_rows_scanned) = build()?;
-        let index = Arc::new(index);
+        let built = build()?;
+        let index = Arc::new(built.index);
         let build_micros = start.elapsed().as_micros();
         let mut cache = self
             .sorted_trie_cache
@@ -249,6 +254,11 @@ impl QueryImage {
                 hit: true,
                 build_micros: 0,
                 source_rows_scanned: 0,
+                rows_retained: 0,
+                bytes_copied: 0,
+                scan_micros: 0,
+                column_micros: 0,
+                sort_micros: 0,
             });
         }
         cache.insert(key, index.clone());
@@ -256,7 +266,12 @@ impl QueryImage {
             index,
             hit: false,
             build_micros,
-            source_rows_scanned,
+            source_rows_scanned: built.source_rows_scanned,
+            rows_retained: built.rows_retained,
+            bytes_copied: built.bytes_copied,
+            scan_micros: built.scan_micros,
+            column_micros: built.column_micros,
+            sort_micros: built.sort_micros,
         })
     }
 
@@ -404,6 +419,21 @@ pub(crate) struct CachedSortedTrie {
     pub hit: bool,
     pub build_micros: u128,
     pub source_rows_scanned: u64,
+    pub rows_retained: u64,
+    pub bytes_copied: u64,
+    pub scan_micros: u64,
+    pub column_micros: u64,
+    pub sort_micros: u64,
+}
+
+pub(crate) struct SortedTrieBuild {
+    pub index: SortedTrieIndex,
+    pub source_rows_scanned: u64,
+    pub rows_retained: u64,
+    pub bytes_copied: u64,
+    pub scan_micros: u64,
+    pub column_micros: u64,
+    pub sort_micros: u64,
 }
 
 pub(crate) struct CachedHashTrie {

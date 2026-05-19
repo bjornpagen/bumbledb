@@ -23,6 +23,7 @@ use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
 use crate::planner_stats::{
     OptimizerFieldStats, OptimizerIndexStats, OptimizerRelationStats, PlannerStatsCacheDiagnostics,
 };
+use crate::query_image::SortedTrieBuild;
 use crate::{PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics};
 
 const HASH_BUILD_ROWS_PER_MICRO: u64 = 5;
@@ -542,6 +543,30 @@ impl QueryPlan {
             self.counters.atom_temp_relation_rows
         ));
         out.push_str(&format!(
+            "  lftj_atom_source_rows_scanned: {}\n",
+            self.counters.lftj_atom_source_rows_scanned
+        ));
+        out.push_str(&format!(
+            "  lftj_atom_rows_retained: {}\n",
+            self.counters.lftj_atom_rows_retained
+        ));
+        out.push_str(&format!(
+            "  lftj_atom_bytes_copied: {}\n",
+            self.counters.lftj_atom_bytes_copied
+        ));
+        out.push_str(&format!(
+            "  lftj_atom_scan_micros: {}\n",
+            self.counters.lftj_atom_scan_micros
+        ));
+        out.push_str(&format!(
+            "  lftj_atom_column_micros: {}\n",
+            self.counters.lftj_atom_column_micros
+        ));
+        out.push_str(&format!(
+            "  lftj_atom_sort_micros: {}\n",
+            self.counters.lftj_atom_sort_micros
+        ));
+        out.push_str(&format!(
             "  hash_index_builds: {}\n",
             self.counters.hash_index_builds
         ));
@@ -970,6 +995,18 @@ pub struct PlanCounters {
     pub atom_temp_relation_source_rows: u64,
     /// Number of rows retained in temporary atom relations.
     pub atom_temp_relation_rows: u64,
+    /// Number of source rows inspected by LFTJ atom build subphase tracing.
+    pub lftj_atom_source_rows_scanned: u64,
+    /// Number of rows retained by LFTJ atom build subphase tracing.
+    pub lftj_atom_rows_retained: u64,
+    /// Number of encoded bytes copied by LFTJ atom build subphase tracing.
+    pub lftj_atom_bytes_copied: u64,
+    /// LFTJ atom scan/filter/copy microseconds.
+    pub lftj_atom_scan_micros: u64,
+    /// LFTJ atom temporary column construction microseconds.
+    pub lftj_atom_column_micros: u64,
+    /// LFTJ atom sorted trie construction microseconds.
+    pub lftj_atom_sort_micros: u64,
     /// Number of hash trie indexes built for hash probe execution.
     pub hash_index_builds: u64,
     /// Number of source rows used to build hash indexes.
@@ -4539,6 +4576,24 @@ fn build_lftj_atom_plan(
         counters.atom_temp_relation_rows = counters
             .atom_temp_relation_rows
             .saturating_add(cached.index.stats.row_count as u64);
+        counters.lftj_atom_source_rows_scanned = counters
+            .lftj_atom_source_rows_scanned
+            .saturating_add(cached.source_rows_scanned);
+        counters.lftj_atom_rows_retained = counters
+            .lftj_atom_rows_retained
+            .saturating_add(cached.rows_retained);
+        counters.lftj_atom_bytes_copied = counters
+            .lftj_atom_bytes_copied
+            .saturating_add(cached.bytes_copied);
+        counters.lftj_atom_scan_micros = counters
+            .lftj_atom_scan_micros
+            .saturating_add(cached.scan_micros);
+        counters.lftj_atom_column_micros = counters
+            .lftj_atom_column_micros
+            .saturating_add(cached.column_micros);
+        counters.lftj_atom_sort_micros = counters
+            .lftj_atom_sort_micros
+            .saturating_add(cached.sort_micros);
     }
     Ok(LftjAtomPlan {
         variables,
@@ -4553,7 +4608,7 @@ fn build_lftj_sorted_trie(
     inputs: &EncodedInputs,
     atom: &NormAtom,
     variables: &[usize],
-) -> Result<(SortedTrieIndex, u64)> {
+) -> Result<SortedTrieBuild> {
     let fields = variables
         .iter()
         .enumerate()
@@ -4568,30 +4623,39 @@ fn build_lftj_sorted_trie(
     let mut included_rows = 0usize;
     let source_rows_scanned;
 
-    if let Some(indexed) = indexed_lftj_atom_values(source, query, inputs, atom, variables)? {
-        source_rows_scanned = indexed.source_rows_scanned;
-        for values in indexed.rows {
-            included_rows += 1;
-            for (column, bytes) in values.into_iter().enumerate() {
-                raw_columns[column].push(bytes);
+    let mut bytes_copied = 0u64;
+    let scan_start = Instant::now();
+    {
+        let _span = tracing::debug_span!("bumbledb.query.lftj.build.scan_filter_copy").entered();
+        if let Some(indexed) = indexed_lftj_atom_values(source, query, inputs, atom, variables)? {
+            source_rows_scanned = indexed.source_rows_scanned;
+            for values in indexed.rows {
+                included_rows += 1;
+                for (column, bytes) in values.into_iter().enumerate() {
+                    bytes_copied = bytes_copied.saturating_add(bytes.len() as u64);
+                    raw_columns[column].push(bytes);
+                }
             }
-        }
-    } else {
-        source_rows_scanned = source.row_count as u64;
-        for row in 0..source.row_count {
-            let row = RowId(row as u32);
-            let Some(values) = atom_row_values(source, query, inputs, atom, row, variables)? else {
-                continue;
-            };
-            if !atom_local_comparisons_pass(query, inputs, variables, &values)? {
-                continue;
-            }
-            included_rows += 1;
-            for (column, bytes) in values.into_iter().enumerate() {
-                raw_columns[column].push(bytes);
+        } else {
+            source_rows_scanned = source.row_count as u64;
+            for row in 0..source.row_count {
+                let row = RowId(row as u32);
+                let Some(values) = atom_row_values(source, query, inputs, atom, row, variables)?
+                else {
+                    continue;
+                };
+                if !atom_local_comparisons_pass(query, inputs, variables, &values)? {
+                    continue;
+                }
+                included_rows += 1;
+                for (column, bytes) in values.into_iter().enumerate() {
+                    bytes_copied = bytes_copied.saturating_add(bytes.len() as u64);
+                    raw_columns[column].push(bytes);
+                }
             }
         }
     }
+    let scan_micros = elapsed_micros(scan_start).min(u128::from(u64::MAX)) as u64;
 
     let row_count = if variables.is_empty() {
         included_rows
@@ -4599,13 +4663,18 @@ fn build_lftj_sorted_trie(
         raw_columns[0].len()
     };
     let encoded_column_bytes = raw_columns.iter().flatten().map(Vec::len).sum::<usize>();
-    let columns = fields
-        .iter()
-        .zip(raw_columns)
-        .map(|(field, raw_column)| {
-            crate::ColumnImage::from_query_image_bytes(field.id, field.width, raw_column)
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let column_start = Instant::now();
+    let columns = {
+        let _span = tracing::debug_span!("bumbledb.query.lftj.build.column_image").entered();
+        fields
+            .iter()
+            .zip(raw_columns)
+            .map(|(field, raw_column)| {
+                crate::ColumnImage::from_query_image_bytes(field.id, field.width, raw_column)
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
+    let column_micros = elapsed_micros(column_start).min(u128::from(u64::MAX)) as u64;
     let relation = RelationImage {
         id: source.id,
         name: atom.relation_name.clone(),
@@ -4621,14 +4690,27 @@ fn build_lftj_sorted_trie(
             encoded_column_bytes,
         },
     };
-    let trie = crate::query_image::build_sorted_trie_index(
-        &relation,
-        IndexSpec::new(
-            format!("{}_lftj", atom.relation_name),
-            (0..variables.len()).map(|id| FieldId(id as u16)),
-        ),
-    )?;
-    Ok((trie, source_rows_scanned))
+    let sort_start = Instant::now();
+    let trie = {
+        let _span = tracing::debug_span!("bumbledb.query.lftj.build.sorted_trie").entered();
+        crate::query_image::build_sorted_trie_index(
+            &relation,
+            IndexSpec::new(
+                format!("{}_lftj", atom.relation_name),
+                (0..variables.len()).map(|id| FieldId(id as u16)),
+            ),
+        )?
+    };
+    let sort_micros = elapsed_micros(sort_start).min(u128::from(u64::MAX)) as u64;
+    Ok(SortedTrieBuild {
+        index: trie,
+        source_rows_scanned,
+        rows_retained: row_count as u64,
+        bytes_copied,
+        scan_micros,
+        column_micros,
+        sort_micros,
+    })
 }
 
 struct IndexedLftjAtomValues {
