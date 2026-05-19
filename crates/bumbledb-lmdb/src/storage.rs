@@ -373,6 +373,7 @@ impl EncodedIndexItem {
 pub struct IndexScan<'borrow, 'env, 'schema> {
     iter: heed::RoPrefix<'borrow, heed::types::Bytes, heed::types::Bytes>,
     txn: &'borrow heed::RoTxn<'env, heed::WithoutTls>,
+    index_db: crate::RawDatabase,
     dict: crate::RawDatabase,
     relation: &'schema RelationDescriptor,
     layout: &'schema CurrentIndexLayout,
@@ -411,6 +412,7 @@ impl Iterator for IndexScan<'_, '_, '_> {
 
             return Some(decode_index_scan_item(
                 self.dict,
+                self.index_db,
                 self.txn,
                 self.relation,
                 self.layout,
@@ -1239,6 +1241,7 @@ impl<'env> ReadTxn<'env> {
         };
         let item = decode_index_scan_item(
             self.dbs.dict,
+            self.dbs.index,
             &self.txn,
             relation,
             primary_layout,
@@ -1617,6 +1620,7 @@ impl<'env> ReadTxn<'env> {
         Ok(IndexScan {
             iter,
             txn: &self.txn,
+            index_db: self.dbs.index,
             dict: self.dbs.dict,
             relation,
             layout,
@@ -1822,13 +1826,24 @@ fn storage_value_matches_type(value: &Value, value_type: &ValueType) -> bool {
 
 fn decode_index_scan_item(
     dict: crate::RawDatabase,
+    index_db: crate::RawDatabase,
     txn: &heed::RoTxn,
     relation: &RelationDescriptor,
     layout: &CurrentIndexLayout,
     key: &[u8],
 ) -> Result<ScanItem> {
     let (encoded, encoded_components) = decode_index_key(relation, layout, key)?;
-    let row = decode_encoded_row(dict, txn, relation, &encoded)?;
+    let row = if layout.covers_full_row {
+        decode_encoded_row(dict, txn, relation, &encoded)?
+    } else {
+        let primary = primary_bytes(relation, &encoded)?;
+        let row_key = current_row_key(layout.relation_id, &primary);
+        let payload = index_db
+            .get(txn, row_key.as_slice())?
+            .ok_or_else(|| Error::corrupt("index entry points to missing current row"))?;
+        let encoded = EncodedRow::from_payload(relation, payload)?;
+        decode_encoded_row(dict, txn, relation, &encoded)?
+    };
     Ok(ScanItem {
         row,
         encoded_components,
@@ -1836,7 +1851,7 @@ fn decode_index_scan_item(
 }
 
 fn decode_index_key(
-    relation: &RelationDescriptor,
+    _relation: &RelationDescriptor,
     layout: &CurrentIndexLayout,
     key: &[u8],
 ) -> Result<(EncodedRow, Vec<EncodedComponent>)> {
@@ -1866,12 +1881,6 @@ fn decode_index_key(
             bytes,
         });
         offset = end;
-    }
-
-    if fields.len() != relation.fields.len() {
-        return Err(Error::corrupt(
-            "index key does not cover every relation field",
-        ));
     }
 
     Ok((EncodedRow { fields }, components))

@@ -530,6 +530,18 @@ pub struct RelationIndexComponent {
 }
 
 impl RelationIndexImage {
+    /// Number of encoded components in one index entry.
+    pub fn component_count(&self) -> usize {
+        self.components.len()
+    }
+
+    /// Returns true when this encoded index entry layout contains `field`.
+    pub fn contains_field(&self, field: FieldId) -> bool {
+        self.components
+            .iter()
+            .any(|component| component.field == field)
+    }
+
     /// Returns the encoded field bytes from one encoded index entry.
     pub fn component_bytes<'a>(&self, entry: &'a [u8], field: FieldId) -> Option<&'a [u8]> {
         let component = self

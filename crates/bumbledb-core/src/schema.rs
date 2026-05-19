@@ -251,8 +251,12 @@ impl SchemaDescriptor {
 
             for (index_id, candidate) in candidates.into_iter().enumerate() {
                 let index_id = index_id as u16;
-                let components =
-                    relation.covering_components(&candidate.name, &candidate.fields)?;
+                let components = relation.index_components(
+                    &candidate.name,
+                    candidate.kind,
+                    &candidate.fields,
+                )?;
+                let covers_full_row = relation.index_covers_full_row(&components);
                 let encoded_len = INDEX_KEY_OVERHEAD_BYTES
                     + components
                         .iter()
@@ -276,6 +280,7 @@ impl SchemaDescriptor {
                     kind: candidate.kind,
                     leading_fields: candidate.fields,
                     components,
+                    covers_full_row,
                     encoded_len,
                 });
             }
@@ -1004,9 +1009,10 @@ impl RelationDescriptor {
         candidates
     }
 
-    fn covering_components(
+    fn index_components(
         &self,
         index_name: &str,
+        kind: IndexKind,
         leading_fields: &[String],
     ) -> Result<Vec<IndexComponent>> {
         let mut components = Vec::with_capacity(self.fields.len());
@@ -1030,13 +1036,45 @@ impl RelationDescriptor {
             components.push(IndexComponent::new(field, ComponentRole::Leading));
         }
 
-        for field in &self.fields {
-            if seen.insert(field.name.clone()) {
-                components.push(IndexComponent::new(field, ComponentRole::Covering));
+        match kind {
+            IndexKind::Primary => {
+                for field in &self.fields {
+                    if seen.insert(field.name.clone()) {
+                        components.push(IndexComponent::new(field, ComponentRole::Covering));
+                    }
+                }
+            }
+            IndexKind::Ref
+            | IndexKind::Unique
+            | IndexKind::ForeignKey
+            | IndexKind::Range
+            | IndexKind::Equality
+            | IndexKind::Permutation => {
+                for field_name in &self.primary_key.fields {
+                    let field =
+                        self.field(field_name)
+                            .ok_or_else(|| SchemaError::UnknownField {
+                                relation: self.name.clone(),
+                                field: field_name.clone(),
+                            })?;
+                    if seen.insert(field.name.clone()) {
+                        components.push(IndexComponent::new(field, ComponentRole::Identity));
+                    }
+                }
             }
         }
 
         Ok(components)
+    }
+
+    fn index_covers_full_row(&self, components: &[IndexComponent]) -> bool {
+        let names = components
+            .iter()
+            .map(|component| component.field_name.as_str())
+            .collect::<BTreeSet<_>>();
+        self.fields
+            .iter()
+            .all(|field| names.contains(field.name.as_str()))
     }
 
     fn push_canonical(&self, out: &mut Vec<u8>) {
@@ -1488,6 +1526,8 @@ pub struct CurrentIndexLayout {
     pub leading_fields: Vec<String>,
     /// Full covering components in encoded order.
     pub components: Vec<IndexComponent>,
+    /// True when the index key contains every relation field.
+    pub covers_full_row: bool,
     /// Total encoded key length including namespace/relation/index overhead.
     pub encoded_len: usize,
 }
@@ -1506,6 +1546,8 @@ pub enum ComponentRole {
     Leading,
     /// Covering payload component inside the key.
     Covering,
+    /// Primary identity component used to fetch the row payload.
+    Identity,
 }
 
 /// A field component inside an index key.
@@ -1660,10 +1702,8 @@ mod tests {
         let posting_account = find_layout(&layouts, "Posting", "by_account")?;
         assert_eq!(posting_account.kind, IndexKind::Ref);
         assert_eq!(posting_account.leading_fields, ["account"]);
-        assert_eq!(
-            field_names(posting_account),
-            ["account", "id", "entry", "instrument", "amount", "at"]
-        );
+        assert_eq!(field_names(posting_account), ["account", "id"]);
+        assert!(!posting_account.covers_full_row);
 
         let posting_at = find_layout(&layouts, "Posting", "by_at")?;
         assert_eq!(posting_at.kind, IndexKind::Range);
@@ -1676,7 +1716,8 @@ mod tests {
         let account_currency = find_layout(&layouts, "Account", "by_currency")?;
         assert_eq!(account_currency.kind, IndexKind::Equality);
         assert_eq!(account_currency.leading_fields, ["currency", "id"]);
-        assert_eq!(field_names(account_currency), ["currency", "id", "holder"]);
+        assert_eq!(field_names(account_currency), ["currency", "id"]);
+        assert!(!account_currency.covers_full_row);
 
         assert!(
             layouts

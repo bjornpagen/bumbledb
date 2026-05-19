@@ -1987,7 +1987,8 @@ fn relation_index_with_leading_field<'a>(
     relation
         .indexes()
         .iter()
-        .find(|index| index.fields.first() == Some(&field))
+        .filter(|index| index.fields.first() == Some(&field))
+        .max_by_key(|index| index.component_count())
 }
 
 fn static_atom_row_matches(
@@ -4727,6 +4728,13 @@ fn indexed_lftj_atom_values(
 ) -> Result<Option<IndexedLftjAtomValues>> {
     let mut best = None;
     for index in source.indexes() {
+        if !atom
+            .fields
+            .iter()
+            .all(|field| index.contains_field(field.field))
+        {
+            continue;
+        }
         let mut prefix = Vec::new();
         let mut prefix_fields = 0usize;
         for field in &index.fields {
