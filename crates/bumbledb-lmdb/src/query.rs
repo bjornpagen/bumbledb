@@ -1799,6 +1799,10 @@ fn execute_free_join<'txn, 'query, S: TupleSink>(
         nodes = plan.summary.free_join.nodes.len()
     )
     .entered();
+    if try_execute_factorized_count(image, txn, query, plan, sink)? {
+        plan.summary.runtime_kind = QueryRuntimeKind::DirectKernel;
+        return Ok(());
+    }
     if plan.direct_kernel.is_some() {
         plan.summary.runtime_kind = QueryRuntimeKind::DirectKernel;
         return execute_direct_kernel(image, txn, query, inputs, plan, sink);
@@ -1839,6 +1843,121 @@ fn is_mixed_hash_lftj_plan(plan: &ExecutionPlan) -> bool {
         }
     }
     has_hash && has_lftj
+}
+
+fn try_execute_factorized_count<S: TupleSink>(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'_>,
+    query: &NormalizedQuery,
+    plan: &mut ExecutionPlan,
+    sink: &mut S,
+) -> Result<bool> {
+    if !query.inputs.is_empty() || !query.predicates.is_empty() {
+        return Ok(false);
+    }
+    let OutputPlan::Aggregate(output) = &query.output else {
+        return Ok(false);
+    };
+    if !output.group_vars.is_empty()
+        || output.aggregates.len() != 1
+        || output.aggregates[0].function != AggregateFunction::Count
+    {
+        return Ok(false);
+    }
+    let central = output.aggregates[0].var.0 as usize;
+    let mut fact_indexes = Vec::new();
+    for atom in &query.atoms {
+        let Some(central_field) = atom.fields.iter().find_map(|field| {
+            matches!(field.term, NormTerm::Var(var) if var.0 as usize == central)
+                .then_some(field.field)
+        }) else {
+            if atom_variables(atom).len() > 1 {
+                return Ok(false);
+            }
+            continue;
+        };
+        if atom.fields.iter().any(|field| {
+            matches!(field.term, NormTerm::Input(_) | NormTerm::Literal(_))
+                || matches!(field.term, NormTerm::Var(var) if var.0 as usize != central && atom_variable_degree(query, var.0 as usize) > 2)
+        }) {
+            return Ok(false);
+        }
+        let relation = image
+            .relations()
+            .get(atom.relation.0 as usize)
+            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
+        let Some(index) = relation
+            .indexes()
+            .iter()
+            .find(|index| index.fields.first() == Some(&central_field))
+        else {
+            return Ok(false);
+        };
+        if atom.fields.len() == 1 && atom.fields[0].field == central_field {
+            continue;
+        }
+        fact_indexes.push((relation.name.as_str(), index, central_field));
+    }
+    if fact_indexes.len() < 2 {
+        return Ok(false);
+    }
+    fact_indexes.sort_by_key(|(_, index, _)| index.bytes.len());
+    let (_, driver, driver_field) = fact_indexes[0];
+    let mut central_values = BTreeSet::<Vec<u8>>::new();
+    for entry in driver.bytes.chunks(driver.encoded_len) {
+        if let Some(bytes) = driver.component_bytes(entry, driver_field) {
+            central_values.insert(bytes.to_vec());
+        }
+    }
+
+    let mut total = 0u64;
+    for central_value in central_values {
+        let mut product = 1u64;
+        for (_, index, _) in &fact_indexes {
+            plan.summary.counters.direct_kernel_probes += 1;
+            let count = index.entries_with_prefix(&central_value).count() as u64;
+            if count == 0 {
+                product = 0;
+                break;
+            }
+            product = product
+                .checked_mul(count)
+                .ok_or_else(|| Error::integer_overflow("factorized count"))?;
+        }
+        total = total
+            .checked_add(product)
+            .ok_or_else(|| Error::integer_overflow("factorized count"))?;
+    }
+    if total == 0 {
+        return Ok(true);
+    }
+    plan.summary.counters.factorized_counted_bindings = plan
+        .summary
+        .counters
+        .factorized_counted_bindings
+        .saturating_add(total);
+    plan.summary.counters.direct_kernel_rows = total;
+    plan.summary.direct_kernel = Some(DirectKernelSummary {
+        kind: DirectKernelKind::CountOnly,
+        target: "factorized_count".to_owned(),
+        steps: fact_indexes.len(),
+    });
+    sink.emit_count_range(
+        txn,
+        query,
+        &EncodedBinding::new(query.vars.len()),
+        total,
+        &mut plan.summary.counters,
+    )?;
+    Ok(true)
+}
+
+fn atom_variable_degree(query: &NormalizedQuery, variable: usize) -> usize {
+    query
+        .atoms
+        .iter()
+        .filter(|atom| atom_contains_variable(atom, variable))
+        .count()
 }
 
 fn mixed_lftj_node_is_safe(plan: &ExecutionPlan, depth: usize) -> bool {

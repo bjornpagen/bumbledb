@@ -49,7 +49,6 @@ Trace volume:
 
 | Priority | Item | Spec | Primary Metric Targets |
 |---:|---|---|---|
-| P0 | Factorized star-count kernels | [`03_factorized_star_count_kernels.md`](03_factorized_star_count_kernels.md) | Cut broad star steady LFTJ key reads by `>80%` |
 | P0 | Join-level static-empty proof | [`04_join_level_static_empty.md`](04_join_level_static_empty.md) | Make q01 `StaticEmpty`; keep q33 below `40us` |
 | P1 | Direct aggregate count kernels | [`05_direct_aggregate_count_kernels.md`](05_direct_aggregate_count_kernels.md) | Make `job_movie_link_bridge` consistently faster than SQLite |
 | P1 | LFTJ inner-loop borrowed-key optimization | [`06_lftj_inner_loop_key_reads.md`](06_lftj_inner_loop_key_reads.md) | Cut key-read overhead for remaining LFTJ workloads by `30%+` |
@@ -58,16 +57,16 @@ Trace volume:
 
 ## Cross-Query Priority Map
 
-| Query | Factorized Count | Join Static Empty | Direct Count Kernel | LFTJ Key Reads | Frontend Cache | Build Tracing |
-|---|---|---|---|---|---|---|
-| `job_broad_cast_keyword_company` | High | Low | Low | High | Low | Medium |
-| `job_broad_movie_info_star` | Critical | Low | Low | Critical | Low | Medium |
-| `job_q01_top_production` | Low | Critical | Medium | Low | Medium | Low |
-| `job_q09_voice_us_actor` | Medium | Low | Low | High | Low | High |
-| `job_q16_character_title_us` | Low | Low | Low | Low | Low | Critical |
-| `job_q24_voice_keyword_actor` | Low | Low | Low | Low | Low | Critical |
-| `job_movie_link_bridge` | Medium | Low | Critical | Medium | Low | Low |
-| `job_q33_linked_series_companies` | Low | Medium | Low | Low | Critical | Low |
+| Query | Join Static Empty | Direct Count Kernel | LFTJ Key Reads | Frontend Cache | Build Tracing |
+|---|---|---|---|---|---|
+| `job_broad_cast_keyword_company` | Low | Low | High | Low | Medium |
+| `job_broad_movie_info_star` | Low | Low | Critical | Low | Medium |
+| `job_q01_top_production` | Critical | Medium | Low | Medium | Low |
+| `job_q09_voice_us_actor` | Low | Low | High | Low | High |
+| `job_q16_character_title_us` | Low | Low | Low | Low | Critical |
+| `job_q24_voice_keyword_actor` | Low | Low | Low | Low | Critical |
+| `job_movie_link_bridge` | Low | Critical | Medium | Low | Low |
+| `job_q33_linked_series_companies` | Medium | Low | Low | Critical | Low |
 
 ## Shared Source Hotspots
 
