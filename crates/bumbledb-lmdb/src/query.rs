@@ -25,6 +25,8 @@ use crate::planner_stats::{
 };
 use crate::{PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics};
 
+const HASH_BUILD_ROWS_PER_MICRO: u64 = 5;
+
 /// Query input bindings keyed by input name without `$`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InputBindings {
@@ -4374,12 +4376,21 @@ fn build_plan_candidate(
     implementations: Vec<NodeImpl>,
     cyclic: bool,
 ) -> Result<OptimizerCandidate> {
-    let estimates = estimate_free_join_plan(name, query, variable_costs, &implementations, cyclic);
+    let estimates = estimate_free_join_plan(
+        name,
+        query,
+        atoms,
+        variable_order_ids,
+        variable_costs,
+        &implementations,
+        stats,
+        cyclic,
+    );
     let cost = CostKey {
         estimated_micros: estimates
             .iterator_ops
             .saturating_add(estimates.hash_probe_rows)
-            .saturating_add(estimates.hash_build_rows / 64)
+            .saturating_add(estimates.hash_build_rows / HASH_BUILD_ROWS_PER_MICRO)
             .saturating_add(estimates.materialized_values),
         memory_bytes: estimates.memory_bytes,
         materialization_penalty: estimates.materialized_values,
@@ -4472,17 +4483,30 @@ fn build_free_join_plan(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "plan costing needs query shape, stats, implementations, and cycle context"
+)]
 fn estimate_free_join_plan(
     name: &str,
     query: &NormalizedQuery,
+    atoms: &[&NormAtom],
+    variable_order_ids: &[usize],
     variable_costs: &[VariableCost],
     implementations: &[NodeImpl],
+    stats: &PlannerStats,
     cyclic: bool,
 ) -> PlanEstimates {
     let mut iterator_ops = 0u64;
     let mut hash_build_rows = 0u64;
     let mut hash_probe_rows = 0u64;
-    for (cost, implementation) in variable_costs.iter().zip(implementations) {
+    let mut hash_build_requests = BTreeSet::new();
+    for (node_id, ((cost, implementation), variable)) in variable_costs
+        .iter()
+        .zip(implementations)
+        .zip(variable_order_ids)
+        .enumerate()
+    {
         let mut variable_ops = cost.estimated_candidates.max(1);
         match implementation {
             NodeImpl::SortedLeapfrog => {
@@ -4490,12 +4514,27 @@ fn estimate_free_join_plan(
             }
             NodeImpl::HashProbe => {
                 hash_probe_rows = hash_probe_rows.saturating_add(cost.estimated_candidates.max(1));
-                hash_build_rows = hash_build_rows.saturating_add(cost.estimated_candidates.max(1));
+                for (atom_id, atom) in atoms.iter().enumerate() {
+                    if atom_contains_variable(atom, *variable)
+                        && hash_build_requests.insert((node_id, atom_id))
+                    {
+                        hash_build_rows = hash_build_rows
+                            .saturating_add(stats.relation_rows(&atom.relation_name));
+                    }
+                }
             }
             NodeImpl::Hybrid => {
                 variable_ops = variable_ops.saturating_mul(2);
                 hash_probe_rows =
                     hash_probe_rows.saturating_add(cost.estimated_candidates.max(1) / 2);
+                for (atom_id, atom) in atoms.iter().enumerate() {
+                    if atom_contains_variable(atom, *variable)
+                        && hash_build_requests.insert((node_id, atom_id))
+                    {
+                        hash_build_rows = hash_build_rows
+                            .saturating_add(stats.relation_rows(&atom.relation_name));
+                    }
+                }
             }
             NodeImpl::VectorLoop
             | NodeImpl::ExistenceCheck
@@ -4505,6 +4544,12 @@ fn estimate_free_join_plan(
             }
         }
         iterator_ops = iterator_ops.saturating_add(variable_ops);
+    }
+    for (atom_id, atom) in atoms.iter().enumerate() {
+        if atom_variables(atom).is_empty() && hash_build_requests.insert((usize::MAX, atom_id)) {
+            hash_build_rows =
+                hash_build_rows.saturating_add(stats.relation_rows(&atom.relation_name));
+        }
     }
 
     if cyclic && name != "pure_lftj" && name != "aggregate_pushdown" {
@@ -5839,6 +5884,7 @@ mod tests {
                 .any(|node| node.implementation == NodeImpl::HashProbe)
         );
         assert_eq!(output.plan.optimizer.chosen, "hash_probe");
+        assert!(output.plan.free_join.estimates.hash_build_rows >= 3);
         assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::HashProbe);
         assert!(output.plan.counters.hash_probe_calls > 0);
         assert_eq!(output.plan.counters.trie_open, 0);
