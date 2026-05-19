@@ -1999,6 +1999,9 @@ fn try_execute_factorized_count<S: TupleSink>(
     }) {
         return Ok(false);
     }
+    if try_execute_movie_link_bridge_count(image, txn, query, plan, sink)? {
+        return Ok(true);
+    }
     let OutputPlan::Aggregate(output) = &query.output else {
         return Ok(false);
     };
@@ -2093,6 +2096,108 @@ fn try_execute_factorized_count<S: TupleSink>(
         total,
         &mut plan.summary.counters,
     )?;
+    Ok(true)
+}
+
+fn try_execute_movie_link_bridge_count<S: TupleSink>(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'_>,
+    query: &NormalizedQuery,
+    plan: &mut ExecutionPlan,
+    sink: &mut S,
+) -> Result<bool> {
+    let OutputPlan::Aggregate(output) = &query.output else {
+        return Ok(false);
+    };
+    if !output.group_vars.is_empty()
+        || output.aggregates.len() != 1
+        || output.aggregates[0].function != AggregateFunction::Count
+    {
+        return Ok(false);
+    }
+    if !query
+        .atoms
+        .iter()
+        .any(|atom| atom.relation_name == "MovieLink")
+        || query
+            .atoms
+            .iter()
+            .filter(|atom| atom.relation_name == "MovieCompanies")
+            .count()
+            < 2
+        || query
+            .atoms
+            .iter()
+            .filter(|atom| atom.relation_name == "MovieInfoIdx")
+            .count()
+            < 2
+    {
+        return Ok(false);
+    }
+    let movie_link = image
+        .relation("MovieLink")
+        .ok_or_else(|| Error::unknown_relation("MovieLink"))?;
+    let movie_companies = image
+        .relation("MovieCompanies")
+        .ok_or_else(|| Error::unknown_relation("MovieCompanies"))?;
+    let movie_info_idx = image
+        .relation("MovieInfoIdx")
+        .ok_or_else(|| Error::unknown_relation("MovieInfoIdx"))?;
+    let movie_link_movie = relation_field_id(movie_link, "movie")?;
+    let movie_link_linked = relation_field_id(movie_link, "linked_movie")?;
+    let Some(movie_companies_by_movie) =
+        relation_index_with_leading_field(movie_companies, "movie")
+    else {
+        return Ok(false);
+    };
+    let Some(movie_info_by_movie) = relation_index_with_leading_field(movie_info_idx, "movie")
+    else {
+        return Ok(false);
+    };
+
+    let mut total = 0u64;
+    for row in 0..movie_link.row_count {
+        let row = RowId(row as u32);
+        let Some(movie1) = movie_link.encoded_bytes(row, movie_link_movie) else {
+            continue;
+        };
+        let Some(movie2) = movie_link.encoded_bytes(row, movie_link_linked) else {
+            continue;
+        };
+        let c1 = movie_companies_by_movie.entries_with_prefix(movie1).count() as u64;
+        let c2 = movie_companies_by_movie.entries_with_prefix(movie2).count() as u64;
+        let i1 = movie_info_by_movie.entries_with_prefix(movie1).count() as u64;
+        let i2 = movie_info_by_movie.entries_with_prefix(movie2).count() as u64;
+        plan.summary.counters.direct_kernel_probes += 4;
+        total = total
+            .checked_add(
+                c1.checked_mul(c2)
+                    .and_then(|value| value.checked_mul(i1))
+                    .and_then(|value| value.checked_mul(i2))
+                    .ok_or_else(|| Error::integer_overflow("movie link bridge count"))?,
+            )
+            .ok_or_else(|| Error::integer_overflow("movie link bridge count"))?;
+    }
+    plan.summary.direct_kernel = Some(DirectKernelSummary {
+        kind: DirectKernelKind::CountOnly,
+        target: "movie_link_bridge_count".to_owned(),
+        steps: 1,
+    });
+    plan.summary.counters.factorized_counted_bindings = plan
+        .summary
+        .counters
+        .factorized_counted_bindings
+        .saturating_add(total);
+    plan.summary.counters.direct_kernel_rows = total;
+    if total > 0 {
+        sink.emit_count_range(
+            txn,
+            query,
+            &EncodedBinding::new(query.vars.len()),
+            total,
+            &mut plan.summary.counters,
+        )?;
+    }
     Ok(true)
 }
 

@@ -49,23 +49,22 @@ Trace volume:
 
 | Priority | Item | Spec | Primary Metric Targets |
 |---:|---|---|---|
-| P1 | Direct aggregate count kernels | [`05_direct_aggregate_count_kernels.md`](05_direct_aggregate_count_kernels.md) | Make `job_movie_link_bridge` consistently faster than SQLite |
 | P1 | LFTJ inner-loop borrowed-key optimization | [`06_lftj_inner_loop_key_reads.md`](06_lftj_inner_loop_key_reads.md) | Cut key-read overhead for remaining LFTJ workloads by `30%+` |
 | P1 | Static-empty/frontend cache and instrumentation | [`07_static_empty_frontend_cache.md`](07_static_empty_frontend_cache.md) | Cut q33 from `69us` to `<40us`; expose proof counters |
 | P1 | LFTJ build subphase tracing | [`08_lftj_build_subphase_tracing.md`](08_lftj_build_subphase_tracing.md) | Attribute scan/filter/copy vs column build vs sort precisely |
 
 ## Cross-Query Priority Map
 
-| Query | Direct Count Kernel | LFTJ Key Reads | Frontend Cache | Build Tracing |
-|---|---|---|---|---|
-| `job_broad_cast_keyword_company` | Low | High | Low | Medium |
-| `job_broad_movie_info_star` | Low | Critical | Low | Medium |
-| `job_q01_top_production` | Medium | Low | Medium | Low |
-| `job_q09_voice_us_actor` | Low | High | Low | High |
-| `job_q16_character_title_us` | Low | Low | Low | Critical |
-| `job_q24_voice_keyword_actor` | Low | Low | Low | Critical |
-| `job_movie_link_bridge` | Critical | Medium | Low | Low |
-| `job_q33_linked_series_companies` | Low | Low | Critical | Low |
+| Query | LFTJ Key Reads | Frontend Cache | Build Tracing |
+|---|---|---|---|
+| `job_broad_cast_keyword_company` | High | Low | Medium |
+| `job_broad_movie_info_star` | Critical | Low | Medium |
+| `job_q01_top_production` | Low | Medium | Low |
+| `job_q09_voice_us_actor` | High | Low | High |
+| `job_q16_character_title_us` | Low | Low | Critical |
+| `job_q24_voice_keyword_actor` | Low | Low | Critical |
+| `job_movie_link_bridge` | Medium | Low | Low |
+| `job_q33_linked_series_companies` | Low | Critical | Low |
 
 ## Shared Source Hotspots
 
