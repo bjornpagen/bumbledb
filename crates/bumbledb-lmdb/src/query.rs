@@ -1341,7 +1341,18 @@ type SmallParticipants = SmallVec<[usize; 4]>;
 type SmallEncodedPrefix = SmallVec<[EncodedOwned; 8]>;
 type SmallEncodedRefs<'a> = SmallVec<[crate::EncodedRef<'a>; 8]>;
 type SmallEncodedRow = SmallVec<[EncodedValue; 8]>;
-type DirectStoragePrefix = (String, Vec<(String, Value)>);
+type DirectRangeBounds = (usize, Option<Value>, Option<Value>);
+enum DirectStorageAccess {
+    Prefix {
+        index_name: String,
+        values: Vec<(String, Value)>,
+    },
+    Range {
+        index_name: String,
+        start: Option<Value>,
+        end: Option<Value>,
+    },
+}
 
 impl<'env> ReadTxn<'env> {
     /// Executes a typed positive Datalog query against current indexes.
@@ -2105,15 +2116,11 @@ fn try_execute_direct_storage_project(
     total_start: Instant,
     total_alloc_start: allocation::AllocationSnapshot,
 ) -> Result<Option<QueryOutput>> {
-    if query.atoms.len() != 1
-        || !query.predicates.is_empty()
-        || !matches!(query.output, OutputPlan::Project(_))
-    {
+    if query.atoms.len() != 1 || !matches!(query.output, OutputPlan::Project(_)) {
         return Ok(None);
     }
     let atom = &query.atoms[0];
-    let Some((index_name, prefix_values)) = direct_storage_prefix(schema, query, atom, raw_inputs)?
-    else {
+    let Some(access) = direct_storage_access(schema, query, atom, raw_inputs)? else {
         return Ok(None);
     };
 
@@ -2121,12 +2128,22 @@ fn try_execute_direct_storage_project(
     let execute_alloc_start = allocation::snapshot();
     let mut counters = PlanCounters::default();
     let mut sink = OutputSink::new(&query.output);
-    let scan = txn.scan_prefix(
-        schema,
-        &atom.relation_name,
-        &index_name,
-        &FieldValues::new(&atom.relation_name, prefix_values),
-    )?;
+    counters.direct_kernel_probes += 1;
+    let index_name = match &access {
+        DirectStorageAccess::Prefix { index_name, .. }
+        | DirectStorageAccess::Range { index_name, .. } => index_name.clone(),
+    };
+    let scan = match access {
+        DirectStorageAccess::Prefix { values, .. } => txn.scan_prefix(
+            schema,
+            &atom.relation_name,
+            &index_name,
+            &FieldValues::new(&atom.relation_name, values),
+        )?,
+        DirectStorageAccess::Range { start, end, .. } => {
+            txn.scan_range(schema, &atom.relation_name, &index_name, start, end)?
+        }
+    };
     for item in scan {
         let item = item?;
         counters.direct_kernel_rows += 1;
@@ -2134,6 +2151,23 @@ fn try_execute_direct_storage_project(
         if !bind_direct_storage_row(txn, query, encoded_inputs, atom, &item.row, &mut binding)? {
             continue;
         }
+        let before = counters.comparisons_evaluated;
+        if !comparisons_ready_pass(
+            txn,
+            &query.predicates,
+            query,
+            encoded_inputs,
+            &binding,
+            &mut counters,
+        )? {
+            counters.direct_kernel_predicates = counters
+                .direct_kernel_predicates
+                .saturating_add(counters.comparisons_evaluated.saturating_sub(before));
+            continue;
+        }
+        counters.direct_kernel_predicates = counters
+            .direct_kernel_predicates
+            .saturating_add(counters.comparisons_evaluated.saturating_sub(before));
         counters.bindings_yielded += 1;
         sink.emit(txn, query, &binding, &mut counters)?;
     }
@@ -2198,12 +2232,24 @@ fn try_execute_direct_storage_project(
     }))
 }
 
+fn direct_storage_access(
+    schema: &StorageSchema,
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    raw_inputs: &InputBindings,
+) -> Result<Option<DirectStorageAccess>> {
+    if let Some(access) = direct_storage_prefix(schema, query, atom, raw_inputs)? {
+        return Ok(Some(access));
+    }
+    direct_storage_range(schema, query, atom, raw_inputs)
+}
+
 fn direct_storage_prefix(
     schema: &StorageSchema,
     query: &NormalizedQuery,
     atom: &NormAtom,
     raw_inputs: &InputBindings,
-) -> Result<Option<DirectStoragePrefix>> {
+) -> Result<Option<DirectStorageAccess>> {
     let paths = schema.access_paths(&atom.relation_name)?;
     let mut best = None;
     for path in paths {
@@ -2230,12 +2276,96 @@ fn direct_storage_prefix(
         }
         if best
             .as_ref()
-            .is_none_or(|(_, existing): &DirectStoragePrefix| values.len() > existing.len())
+            .is_none_or(|(_, existing): &(String, Vec<(String, Value)>)| {
+                values.len() > existing.len()
+            })
         {
             best = Some((path.index_name, values));
         }
     }
-    Ok(best)
+    Ok(best.map(|(index_name, values)| DirectStorageAccess::Prefix { index_name, values }))
+}
+
+fn direct_storage_range(
+    schema: &StorageSchema,
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    raw_inputs: &InputBindings,
+) -> Result<Option<DirectStorageAccess>> {
+    let Some((variable, start, end)) = direct_storage_range_bounds(query, raw_inputs)? else {
+        return Ok(None);
+    };
+    let Some(field) = atom
+        .fields
+        .iter()
+        .find(|field| matches!(field.term, NormTerm::Var(var) if var.0 as usize == variable))
+    else {
+        return Ok(None);
+    };
+    let Some(path) = schema
+        .access_paths(&atom.relation_name)?
+        .into_iter()
+        .find(|path| {
+            path.kind == IndexKind::Range
+                && path
+                    .leading_fields
+                    .first()
+                    .is_some_and(|leading| leading == &field.field_name)
+        })
+    else {
+        return Ok(None);
+    };
+    Ok(Some(DirectStorageAccess::Range {
+        index_name: path.index_name,
+        start,
+        end,
+    }))
+}
+
+fn direct_storage_range_bounds(
+    query: &NormalizedQuery,
+    raw_inputs: &InputBindings,
+) -> Result<Option<DirectRangeBounds>> {
+    if query.predicates.is_empty() {
+        return Ok(None);
+    }
+    let mut variable = None;
+    let mut start = None;
+    let mut end = None;
+    for predicate in &query.predicates {
+        let (candidate, bound, var_is_left) = match (&predicate.operands[0], &predicate.operands[1])
+        {
+            (NormOperand::Var(var), NormOperand::Input(input)) => {
+                let input = &query.inputs[input.0 as usize];
+                let value = raw_inputs
+                    .value(&input.name)
+                    .ok_or_else(|| Error::missing_input(&input.name))?
+                    .clone();
+                (var.0 as usize, value, true)
+            }
+            (NormOperand::Input(input), NormOperand::Var(var)) => {
+                let input = &query.inputs[input.0 as usize];
+                let value = raw_inputs
+                    .value(&input.name)
+                    .ok_or_else(|| Error::missing_input(&input.name))?
+                    .clone();
+                (var.0 as usize, value, false)
+            }
+            _ => return Ok(None),
+        };
+        if variable.is_some_and(|existing| existing != candidate) {
+            return Ok(None);
+        }
+        variable = Some(candidate);
+        match (predicate.op, var_is_left) {
+            (ComparisonOperator::Gte, true) | (ComparisonOperator::Lte, false) => {
+                start = Some(bound)
+            }
+            (ComparisonOperator::Lt, true) | (ComparisonOperator::Gt, false) => end = Some(bound),
+            _ => return Ok(None),
+        }
+    }
+    Ok(variable.map(|variable| (variable, start, end)))
 }
 
 fn bind_direct_storage_row(
@@ -7593,8 +7723,58 @@ mod tests {
         assert!(output.plan.counters.direct_kernel_probes > 0);
         assert_eq!(output.plan.counters.direct_kernel_rows, 2);
         assert_eq!(output.plan.counters.direct_kernel_predicates, 4);
+        assert_eq!(output.plan.query_image_cache.builds, 0);
+        assert_eq!(output.plan.counters.hash_index_builds, 0);
+        assert_eq!(output.plan.counters.sorted_trie_builds, 0);
         assert_eq!(output.plan.counters.trie_open, 0);
         assert_eq!(output.plan.counters.hash_probe_calls, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn direct_storage_no_prefix_range_scan_selects_rows() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(direct_sailors_schema(), env.max_key_size())?;
+        env.write(|txn| {
+            txn.insert(&schema, reserve_row(1, 10, 5))?;
+            txn.insert(&schema, reserve_row(1, 11, 15))?;
+            txn.insert(&schema, reserve_row(2, 12, 25))?;
+            Ok::<_, Error>(())
+        })?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?sailor ?boat
+            where
+              Reserve(sailor: ?sailor, boat: ?boat, day: ?day)
+              ?day >= $start
+              ?day < $end
+            "#,
+        )?;
+
+        let output = env.read(|txn| {
+            txn.execute_query(
+                &schema,
+                &query,
+                &InputBindings::from_values([
+                    ("start", Value::Timestamp(TimestampMicros(10))),
+                    ("end", Value::Timestamp(TimestampMicros(30))),
+                ]),
+            )
+        })?;
+
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+        assert_eq!(output.plan.query_image_cache.builds, 0);
+        assert_eq!(output.plan.counters.hash_index_builds, 0);
+        assert_eq!(output.plan.counters.sorted_trie_builds, 0);
+        assert_same_rows(
+            &output.rows,
+            &[
+                vec![Value::U64(1), Value::U64(11)],
+                vec![Value::U64(2), Value::U64(12)],
+            ],
+        );
         Ok(())
     }
 
@@ -7856,7 +8036,7 @@ mod tests {
             r#"
             find ?account ?holder_name
             where
-              Account(id: ?account, holder: $holder)
+              Account(id: ?account, holder: ?holder)
               Holder(id: $holder, name: ?holder_name)
             "#,
         )?;
@@ -8035,7 +8215,7 @@ mod tests {
             find ?posting
             where
               Posting(id: ?posting, account: ?account)
-              Account(id: ?account, holder: $holder)
+              Account(id: ?account, holder: ?holder)
             "#,
         )?;
         let second_query = parse_and_typecheck(
@@ -8044,14 +8224,11 @@ mod tests {
             find ?posting
             where
               Posting(id: ?posting, account: ?account, at: ?t)
-              ?t >= $start
+              ?t >= 0
             "#,
         )?;
 
-        let inputs = InputBindings::from_values([
-            ("holder", Value::Ref(1)),
-            ("start", Value::Timestamp(TimestampMicros(0))),
-        ]);
+        let inputs = InputBindings::new();
 
         let first = env.read(|txn| txn.execute_query(&schema, &first_query, &inputs))?;
         let second = env.read(|txn| txn.execute_query(&schema, &second_query, &inputs))?;

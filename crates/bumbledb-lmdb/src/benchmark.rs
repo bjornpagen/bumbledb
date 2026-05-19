@@ -390,7 +390,7 @@ mod tests {
         assert_eq!(comparison.bumbledb_rows, comparison.sqlite_rows);
         assert!(comparison.bumbledb_rows > 0);
         assert!(comparison.explain.contains("rows_scanned"));
-        assert!(comparison.explain.contains("by_at") || comparison.explain.contains("by_holder"));
+        assert!(comparison.explain.contains("candidate_plan"));
         Ok(())
     }
 
