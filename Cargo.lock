@@ -112,6 +112,7 @@ dependencies = [
  "bumbledb-core",
  "heed",
  "rusqlite",
+ "smallvec",
  "tempfile",
  "thiserror",
  "tracing",

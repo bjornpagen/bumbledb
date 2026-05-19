@@ -8,6 +8,7 @@ rust-version.workspace = true
 bumbledb-core.workspace = true
 blake3.workspace = true
 heed.workspace = true
+smallvec.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

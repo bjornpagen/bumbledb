@@ -2570,7 +2570,7 @@ mod tests {
         assert!(delta.enabled);
         assert!(delta.alloc_calls > 0);
         assert!(delta.bytes_allocated >= 4096);
-        assert!(delta.peak_live_bytes >= 4096);
+        assert!(delta.current_live_bytes >= 4096);
     }
 
     #[test]

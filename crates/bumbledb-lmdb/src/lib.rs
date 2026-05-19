@@ -31,7 +31,9 @@ pub use free_join::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, FreeJoinPlan, NodeId, NodeImpl, OutputPlan,
     PayloadDemand, PlanEstimates, PlanNode, ProjectPlan, SubAtom, VarId,
 };
-pub use hash_trie::{HashNode, HashTrieIndex, HashTrieStats, LeafMode, PrefixProbe, RowSet};
+pub use hash_trie::{
+    HashNode, HashTrieIndex, HashTrieStats, LeafMode, PrefixProbe, PrefixRows, RowSet,
+};
 pub use planner_stats::PlannerStatsCacheDiagnostics;
 pub use query::{
     AllocationPhaseStats, CostKey, InputBindings, InputId, MissingIndexRecommendation,

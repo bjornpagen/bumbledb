@@ -3,6 +3,8 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::Instant;
 
+use smallvec::SmallVec;
+
 use bumbledb_core::datalog::{
     AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm,
     TypedLiteral, TypedOperand, TypedQuery, TypedRelationAtom, TypedTerm,
@@ -13,8 +15,8 @@ use bumbledb_core::schema::{CurrentIndexLayout, IndexKind, ValueType};
 use crate::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FreeJoinPlan,
     HashTrieIndex, IndexSpec, LinearIter, NodeId, NodeImpl, OutputPlan, PayloadDemand,
-    PlanEstimates, PlanNode, PrefixProbe, ProjectPlan, ReadTxn, RelationImage, RelationStats,
-    Result, RowId, SortedTrieIndex, StorageSchema, SubAtom, TrieIter, Value, VarId,
+    PlanEstimates, PlanNode, PrefixProbe, PrefixRows, ProjectPlan, ReadTxn, RelationImage,
+    RelationStats, Result, RowId, SortedTrieIndex, StorageSchema, SubAtom, TrieIter, Value, VarId,
 };
 
 use crate::QueryImageCacheDiagnostics;
@@ -901,31 +903,47 @@ pub struct PlanCounters {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct EncodedValue {
     value_type: ValueType,
-    bytes: Vec<u8>,
+    encoded: EncodedOwned,
 }
 
 impl EncodedValue {
-    fn new(value_type: ValueType, bytes: Vec<u8>) -> Self {
-        Self { value_type, bytes }
+    fn new(value_type: ValueType, encoded: EncodedOwned) -> Self {
+        Self {
+            value_type,
+            encoded,
+        }
     }
 
     fn from_owned(value_type: ValueType, value: &EncodedOwned) -> Self {
         Self {
             value_type,
-            bytes: value.as_bytes().to_vec(),
+            encoded: value.clone(),
         }
+    }
+
+    fn from_bytes(value_type: ValueType, bytes: &[u8]) -> Result<Self> {
+        Ok(Self {
+            encoded: encoded_owned_for_width(value_type.encoded_width(), bytes)?,
+            value_type,
+        })
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        self.encoded.as_bytes()
     }
 }
 
 #[derive(Clone, Debug)]
 struct EncodedBinding {
-    values: Vec<Option<EncodedValue>>,
+    values: SmallVec<[Option<EncodedValue>; 8]>,
 }
 
 impl EncodedBinding {
     fn new(variable_count: usize) -> Self {
         Self {
-            values: vec![None; variable_count],
+            values: std::iter::repeat_with(|| None)
+                .take(variable_count)
+                .collect(),
         }
     }
 
@@ -935,7 +953,7 @@ impl EncodedBinding {
 
     fn bind(&mut self, variable: usize, value: EncodedValue) -> bool {
         match &self.values[variable] {
-            Some(existing) => existing.bytes == value.bytes,
+            Some(existing) => existing.encoded == value.encoded,
             None => {
                 self.values[variable] = Some(value);
                 true
@@ -1057,7 +1075,7 @@ struct LftjAtomPlan {
 }
 
 struct LftjRuntime<'a> {
-    atom_variables: Vec<Vec<usize>>,
+    participants_by_variable: Vec<SmallParticipants>,
     iters: Vec<crate::SortedTrieIter<'a>>,
 }
 
@@ -1067,6 +1085,11 @@ struct HashAtomIndex {
     index: Arc<HashTrieIndex>,
     fields: Vec<FieldId>,
 }
+
+type SmallParticipants = SmallVec<[usize; 4]>;
+type SmallEncodedPrefix = SmallVec<[EncodedOwned; 8]>;
+type SmallEncodedRefs<'a> = SmallVec<[crate::EncodedRef<'a>; 8]>;
+type SmallEncodedRow = SmallVec<[EncodedValue; 8]>;
 
 impl<'env> ReadTxn<'env> {
     /// Executes a typed positive Datalog query against current indexes.
@@ -1251,6 +1274,8 @@ fn execute_hash_probe<'txn, 'query, S: TupleSink>(
             tracing::debug_span!("bumbledb.query.hash.execute", variables = query.vars.len())
                 .entered();
         let _sink_emit_span = tracing::debug_span!("bumbledb.query.sink.emit").entered();
+        let participants_by_variable =
+            hash_participants_by_variable(query.vars.len(), &plan.relation_atoms);
         let mut executor = HashProbeExecutor {
             image,
             txn,
@@ -1258,6 +1283,7 @@ fn execute_hash_probe<'txn, 'query, S: TupleSink>(
             inputs,
             plan,
             atom_indexes,
+            participants_by_variable,
             binding: EncodedBinding::new(query.vars.len()),
             sink,
         };
@@ -1420,6 +1446,23 @@ fn layout_by_access<'a>(
         })
 }
 
+fn hash_participants_by_variable(
+    variable_count: usize,
+    atoms: &[NormAtom],
+) -> Vec<SmallParticipants> {
+    let mut participants = vec![SmallParticipants::new(); variable_count];
+    for (atom_id, atom) in atoms.iter().enumerate() {
+        for variable in atom_variables(atom) {
+            participants[variable].push(atom_id);
+        }
+    }
+    participants
+}
+
+fn encoded_refs(prefix: &[EncodedOwned]) -> SmallEncodedRefs<'_> {
+    prefix.iter().map(EncodedOwned::as_ref).collect()
+}
+
 struct HashProbeExecutor<'txn, 'input, 'query, 'plan, S: TupleSink> {
     image: &'input crate::QueryImage,
     txn: &'input ReadTxn<'txn>,
@@ -1427,6 +1470,7 @@ struct HashProbeExecutor<'txn, 'input, 'query, 'plan, S: TupleSink> {
     inputs: &'input EncodedInputs,
     plan: &'plan mut ExecutionPlan,
     atom_indexes: Vec<HashAtomIndex>,
+    participants_by_variable: Vec<SmallParticipants>,
     binding: EncodedBinding,
     sink: &'plan mut S,
 }
@@ -1439,7 +1483,7 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
             .iter()
             .enumerate()
             .filter_map(|(atom_id, atom)| atom_variables(atom).is_empty().then_some(atom_id))
-            .collect::<Vec<_>>();
+            .collect::<SmallParticipants>();
         for atom_id in static_atoms {
             if !self.atom_has_matching_row(usize::MAX, atom_id)? {
                 return Ok(false);
@@ -1478,9 +1522,12 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
             )));
         }
         let driver = self.choose_driver(depth, &participants)?;
-        let rows = self.probe_atom_rows(depth, driver)?;
+        let index = self.hash_index(depth, driver)?.index.clone();
+        let prefix = self.hash_prefix(depth, driver)?;
+        let refs = encoded_refs(&prefix);
+        let row_count = index.count(&refs);
         self.plan.summary.counters.hash_probe_calls += 1;
-        if rows.is_empty() {
+        if row_count == 0 {
             self.plan.summary.counters.hash_probe_misses += 1;
             return Ok(());
         }
@@ -1490,60 +1537,71 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
             .summary
             .counters
             .hash_rows_returned
-            .saturating_add(rows.len() as u64);
+            .saturating_add(row_count as u64);
 
         let mut emitted = BTreeSet::new();
-        for row in rows {
-            if !self.row_satisfies_atom(driver, row)? {
-                continue;
-            }
-            let Some(value) = self.variable_value_from_row(driver, row, variable)? else {
-                continue;
-            };
-            if !emitted.insert(value.bytes.clone()) {
-                continue;
-            }
-            if !self.binding.bind(variable, value) {
-                continue;
-            }
-            let mut keep = true;
-            for atom_id in &participants {
-                if *atom_id == driver {
-                    continue;
-                }
-                if !self.atom_has_matching_row(depth, *atom_id)? {
-                    keep = false;
-                    break;
-                }
-            }
-            if keep
-                && comparisons_ready_pass(
-                    self.txn,
-                    &self.plan.comparisons,
-                    self.query,
-                    self.inputs,
-                    &self.binding,
-                    &mut self.plan.summary.counters,
-                )?
-            {
-                if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
-                    rows.actual_rows = rows.actual_rows.saturating_add(1);
-                }
-                self.plan.summary.counters.hash_distinct_emits += 1;
-                self.execute(depth + 1)?;
-            }
-            self.binding.unbind(variable);
+        for row in index.rows_for_prefix(&refs) {
+            self.visit_driver_row(depth, variable, &participants, driver, row, &mut emitted)?;
         }
         Ok(())
     }
 
-    fn participants(&self, variable: usize) -> Vec<usize> {
-        self.plan
-            .relation_atoms
-            .iter()
-            .enumerate()
-            .filter_map(|(atom_id, atom)| atom_contains_variable(atom, variable).then_some(atom_id))
-            .collect()
+    fn visit_driver_row(
+        &mut self,
+        depth: usize,
+        variable: usize,
+        participants: &[usize],
+        driver: usize,
+        row: RowId,
+        emitted: &mut BTreeSet<EncodedOwned>,
+    ) -> Result<()> {
+        if !self.row_satisfies_atom(driver, row)? {
+            return Ok(());
+        }
+        let Some(value) = self.variable_value_from_row(driver, row, variable)? else {
+            return Ok(());
+        };
+        if !emitted.insert(value.encoded.clone()) {
+            return Ok(());
+        }
+        if !self.binding.bind(variable, value) {
+            return Ok(());
+        }
+        let mut keep = true;
+        for atom_id in participants {
+            if *atom_id == driver {
+                continue;
+            }
+            if !self.atom_has_matching_row(depth, *atom_id)? {
+                keep = false;
+                break;
+            }
+        }
+        if keep
+            && comparisons_ready_pass(
+                self.txn,
+                &self.plan.comparisons,
+                self.query,
+                self.inputs,
+                &self.binding,
+                &mut self.plan.summary.counters,
+            )?
+        {
+            if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
+                rows.actual_rows = rows.actual_rows.saturating_add(1);
+            }
+            self.plan.summary.counters.hash_distinct_emits += 1;
+            self.execute(depth + 1)?;
+        }
+        self.binding.unbind(variable);
+        Ok(())
+    }
+
+    fn participants(&self, variable: usize) -> SmallParticipants {
+        self.participants_by_variable
+            .get(variable)
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn choose_driver(&self, depth: usize, participants: &[usize]) -> Result<usize> {
@@ -1561,21 +1619,14 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
     fn probe_atom_count(&self, depth: usize, atom_id: usize) -> Result<usize> {
         let index = self.hash_index(depth, atom_id)?;
         let prefix = self.hash_prefix(depth, atom_id)?;
-        let refs = prefix.iter().map(EncodedOwned::as_ref).collect::<Vec<_>>();
+        let refs = encoded_refs(&prefix);
         Ok(index.index.count(&refs))
-    }
-
-    fn probe_atom_rows(&self, depth: usize, atom_id: usize) -> Result<Vec<RowId>> {
-        let index = self.hash_index(depth, atom_id)?;
-        let prefix = self.hash_prefix(depth, atom_id)?;
-        let refs = prefix.iter().map(EncodedOwned::as_ref).collect::<Vec<_>>();
-        Ok(index.index.rows_owned(&refs))
     }
 
     fn atom_has_matching_row(&mut self, depth: usize, atom_id: usize) -> Result<bool> {
         let index = self.hash_index(depth, atom_id)?.index.clone();
         let prefix = self.hash_prefix(depth, atom_id)?;
-        let refs = prefix.iter().map(EncodedOwned::as_ref).collect::<Vec<_>>();
+        let refs = encoded_refs(&prefix);
         let row_count = index.count(&refs);
         self.plan.summary.counters.hash_probe_calls += 1;
         if row_count == 0 {
@@ -1608,10 +1659,10 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
         Ok(found)
     }
 
-    fn hash_prefix(&self, depth: usize, atom_id: usize) -> Result<Vec<EncodedOwned>> {
+    fn hash_prefix(&self, depth: usize, atom_id: usize) -> Result<SmallEncodedPrefix> {
         let atom = &self.plan.relation_atoms[atom_id];
         let index = self.hash_index(depth, atom_id)?;
-        let mut prefix = Vec::new();
+        let mut prefix = SmallVec::new();
         for field in &index.fields {
             let Some(atom_field) = atom
                 .fields
@@ -1651,7 +1702,7 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
             match &field.term {
                 NormTerm::Var(variable) => {
                     if let Some(bound) = self.binding.get(variable.0 as usize)
-                        && bound.bytes.as_slice() != bytes
+                        && bound.as_bytes() != bytes
                     {
                         return Ok(false);
                     }
@@ -1694,11 +1745,11 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
                 .ok_or_else(|| Error::internal("missing hash probe variable field"))?;
             if let Some(existing) = &out {
                 let existing: &EncodedValue = existing;
-                if existing.bytes.as_slice() != bytes {
+                if existing.as_bytes() != bytes {
                     return Ok(None);
                 }
             } else {
-                out = Some(EncodedValue::new(field.value_type.clone(), bytes.to_vec()));
+                out = Some(EncodedValue::from_bytes(field.value_type.clone(), bytes)?);
             }
         }
         Ok(out)
@@ -1729,28 +1780,26 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
 }
 
 fn encoded_owned_for_value(value: &EncodedValue) -> Result<EncodedOwned> {
-    match value.value_type.encoded_width() {
-        1 => Ok(EncodedOwned::One(
-            value
-                .bytes
-                .as_slice()
-                .try_into()
-                .map_err(|_| Error::internal("encoded value width mismatch"))?,
-        )),
-        8 => Ok(EncodedOwned::Eight(
-            value
-                .bytes
-                .as_slice()
-                .try_into()
-                .map_err(|_| Error::internal("encoded value width mismatch"))?,
-        )),
-        16 => Ok(EncodedOwned::Sixteen(
-            value
-                .bytes
-                .as_slice()
-                .try_into()
-                .map_err(|_| Error::internal("encoded value width mismatch"))?,
-        )),
+    Ok(value.encoded.clone())
+}
+
+fn encoded_owned_for_width(width: usize, bytes: &[u8]) -> Result<EncodedOwned> {
+    match width {
+        1 => {
+            Ok(EncodedOwned::One(bytes.try_into().map_err(|_| {
+                Error::internal("encoded value width mismatch")
+            })?))
+        }
+        8 => {
+            Ok(EncodedOwned::Eight(bytes.try_into().map_err(|_| {
+                Error::internal("encoded value width mismatch")
+            })?))
+        }
+        16 => {
+            Ok(EncodedOwned::Sixteen(bytes.try_into().map_err(|_| {
+                Error::internal("encoded value width mismatch")
+            })?))
+        }
         width => Err(Error::internal(format!(
             "unsupported encoded value width {width}"
         ))),
@@ -1807,10 +1856,7 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
         return Ok(());
     }
     let runtime = LftjRuntime {
-        atom_variables: atom_plans
-            .iter()
-            .map(|atom| atom.variables.clone())
-            .collect(),
+        participants_by_variable: lftj_participants_by_variable(query.vars.len(), &atom_plans),
         iters: atom_plans
             .iter()
             .map(|atom| atom.trie.as_ref().iter())
@@ -1841,6 +1887,19 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
         .saturating_add(elapsed_micros(execute_start));
     plan.summary.allocations.lftj_execute = allocation_delta_since(execute_alloc_start);
     result
+}
+
+fn lftj_participants_by_variable(
+    variable_count: usize,
+    atom_plans: &[LftjAtomPlan],
+) -> Vec<SmallParticipants> {
+    let mut participants = vec![SmallParticipants::new(); variable_count];
+    for (atom_id, atom) in atom_plans.iter().enumerate() {
+        for variable in &atom.variables {
+            participants[*variable].push(atom_id);
+        }
+    }
+    participants
 }
 
 struct LftjExecutor<'txn, 'input, 'query, 'plan, 'image, S: TupleSink> {
@@ -1896,10 +1955,7 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
             self.plan.summary.counters.variable_candidates += 1;
             if self.binding.bind(
                 variable,
-                EncodedValue::new(
-                    self.query.vars[variable].value_type.clone(),
-                    value.as_bytes().to_vec(),
-                ),
+                EncodedValue::new(self.query.vars[variable].value_type.clone(), value),
             ) {
                 let keep = comparisons_ready_pass(
                     self.txn,
@@ -1927,24 +1983,23 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
         Ok(())
     }
 
-    fn participants(&self, variable: usize) -> Vec<usize> {
+    fn participants(&self, variable: usize) -> SmallParticipants {
         self.runtime
-            .atom_variables
-            .iter()
-            .enumerate()
-            .filter_map(|(atom_id, variables)| variables.contains(&variable).then_some(atom_id))
-            .collect()
+            .participants_by_variable
+            .get(variable)
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
 struct LeapfrogState {
-    iter_ids: Vec<usize>,
+    iter_ids: SmallParticipants,
     p: usize,
     at_end: bool,
 }
 
 impl LeapfrogState {
-    fn new(iter_ids: Vec<usize>) -> Self {
+    fn new(iter_ids: SmallParticipants) -> Self {
         Self {
             iter_ids,
             p: 0,
@@ -2174,14 +2229,12 @@ fn build_lftj_sorted_trie(
     } else {
         raw_columns[0].len()
     };
+    let encoded_column_bytes = raw_columns.iter().flatten().map(Vec::len).sum::<usize>();
     let columns = fields
         .iter()
-        .map(|field| {
-            crate::ColumnImage::from_query_image_bytes(
-                field.id,
-                field.width,
-                raw_columns[field.id.0 as usize].clone(),
-            )
+        .zip(raw_columns)
+        .map(|(field, raw_column)| {
+            crate::ColumnImage::from_query_image_bytes(field.id, field.width, raw_column)
         })
         .collect::<Result<Vec<_>>>()?;
     let relation = RelationImage {
@@ -2195,7 +2248,7 @@ fn build_lftj_sorted_trie(
         stats: RelationStats {
             row_count,
             field_count: variables.len(),
-            encoded_column_bytes: raw_columns.iter().flatten().map(Vec::len).sum::<usize>(),
+            encoded_column_bytes,
         },
     };
     let trie = crate::query_image::build_sorted_trie_index(
@@ -3347,7 +3400,11 @@ fn comparisons_ready_pass(
         if encoded_comparison_supported(comparison.op, &comparison.value_type) {
             counters.comparisons_evaluated += 1;
             counters.encoded_comparisons_evaluated += 1;
-            if !compare_encoded_values(&left_encoded.bytes, comparison.op, &right_encoded.bytes) {
+            if !compare_encoded_values(
+                left_encoded.as_bytes(),
+                comparison.op,
+                right_encoded.as_bytes(),
+            ) {
                 counters.comparisons_failed += 1;
                 return Ok(false);
             }
@@ -3399,7 +3456,7 @@ fn operand_encoded_value(
     match operand {
         NormOperand::Var(variable) => binding.get(variable.0 as usize).map(|value| EncodedValue {
             value_type: value_type.clone(),
-            bytes: value.bytes.clone(),
+            encoded: value.encoded.clone(),
         }),
         NormOperand::Input(input) => inputs
             .get(*input)
@@ -3456,7 +3513,7 @@ fn operand_logical_value(
             .get(variable.0 as usize)
             .map(|value| {
                 record_decode(value_type, counters);
-                txn.decode_query_value(value_type, &value.bytes)
+                txn.decode_query_value(value_type, value.as_bytes())
             })
             .transpose()?,
         NormOperand::Input(input) => inputs
@@ -3900,7 +3957,7 @@ impl TupleSink for OutputSink {
 #[derive(Clone, Debug)]
 struct EncodedProjectSink {
     vars: Vec<VarId>,
-    rows: BTreeSet<Vec<EncodedValue>>,
+    rows: BTreeSet<SmallEncodedRow>,
 }
 
 impl EncodedProjectSink {
@@ -3924,7 +3981,7 @@ impl TupleSink for EncodedProjectSink {
             .vars
             .iter()
             .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Result<SmallEncodedRow>>()?;
         self.rows.insert(row);
         Ok(())
     }
@@ -3952,7 +4009,7 @@ impl TupleSink for EncodedProjectSink {
 struct AggregateSink {
     group_vars: Vec<VarId>,
     terms: Vec<AggregateTerm>,
-    groups: BTreeMap<Vec<EncodedValue>, Vec<AggregateState>>,
+    groups: BTreeMap<SmallEncodedRow, Vec<AggregateState>>,
 }
 
 impl AggregateSink {
@@ -3964,7 +4021,7 @@ impl AggregateSink {
         }
     }
 
-    fn group_key(&self, binding: &EncodedBinding) -> Result<Vec<EncodedValue>> {
+    fn group_key(&self, binding: &EncodedBinding) -> Result<SmallEncodedRow> {
         self.group_vars
             .iter()
             .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
@@ -4052,9 +4109,9 @@ fn initial_aggregate_states(terms: &[AggregateTerm]) -> Vec<AggregateState> {
 }
 
 fn ensure_aggregate_group<'a>(
-    groups: &'a mut BTreeMap<Vec<EncodedValue>, Vec<AggregateState>>,
+    groups: &'a mut BTreeMap<SmallEncodedRow, Vec<AggregateState>>,
     terms: &[AggregateTerm],
-    key: Vec<EncodedValue>,
+    key: SmallEncodedRow,
 ) -> &'a mut Vec<AggregateState> {
     match groups.entry(key) {
         std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
@@ -4079,7 +4136,7 @@ fn decode_bound_variable(
 ) -> Result<Value> {
     let value = bound_encoded_variable(binding, variable)?;
     record_decode(&query.vars[variable].value_type, counters);
-    txn.decode_query_value(&query.vars[variable].value_type, &value.bytes)
+    txn.decode_query_value(&query.vars[variable].value_type, value.as_bytes())
 }
 
 fn decode_output_value(
@@ -4089,7 +4146,7 @@ fn decode_output_value(
 ) -> Result<Value> {
     counters.materialized_output_values += 1;
     record_decode(&value.value_type, counters);
-    txn.decode_query_value(&value.value_type, &value.bytes)
+    txn.decode_query_value(&value.value_type, value.as_bytes())
 }
 
 #[derive(Clone, Debug)]
@@ -4239,7 +4296,7 @@ impl AggregateState {
         Ok(match self {
             AggregateState::EncodedMin(Some(value)) | AggregateState::EncodedMax(Some(value)) => {
                 record_decode(&value.value_type, counters);
-                txn.decode_query_value(&value.value_type, &value.bytes)?
+                txn.decode_query_value(&value.value_type, value.as_bytes())?
             }
             AggregateState::EncodedMin(None) | AggregateState::EncodedMax(None) => Value::U64(0),
             state => state.finish()?,
@@ -4799,7 +4856,7 @@ mod tests {
             let encoded = txn.encode_query_value(&normalized.vars[0].value_type, &Value::Id(1))?;
             assert!(binding.bind(
                 0,
-                EncodedValue::new(normalized.vars[0].value_type.clone(), encoded),
+                EncodedValue::from_bytes(normalized.vars[0].value_type.clone(), &encoded)?,
             ));
             let mut plan = MockSpecializedPlan {
                 bindings: vec![binding],
@@ -4996,7 +5053,7 @@ mod tests {
 
         let states = sink
             .groups
-            .get(&Vec::new())
+            .get(&SmallEncodedRow::new())
             .ok_or_else(|| Error::internal("missing aggregate state group"))?;
         assert!(matches!(states.as_slice(), [AggregateState::Count(7)]));
         Ok(())

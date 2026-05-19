@@ -1,9 +1,15 @@
 use std::collections::HashMap;
+use std::ops::Range;
+
+use smallvec::SmallVec;
 
 use crate::{
     EncodedOwned, EncodedRef, FieldId, IndexSpec, RelationId, RelationImage, Result, RowId,
     RowRange, RowSetRef,
 };
+
+type NodeStack<'a> = SmallVec<[&'a HashNode; 8]>;
+type KeyStack = SmallVec<[EncodedOwned; 8]>;
 
 /// In-memory hash trie index over one relation image.
 #[derive(Clone, Debug)]
@@ -51,7 +57,7 @@ impl HashTrieIndex {
                         .map(EncodedOwned::from_ref)
                         .ok_or_else(|| crate::Error::internal("missing hash trie field value"))
                 })
-                .collect::<Result<Vec<_>>>()?;
+                .collect::<Result<KeyStack>>()?;
             insert_row(&mut root, &keys, row, leaf_mode);
         }
         let stats = HashTrieStats::from_root(&root, spec.fields.len());
@@ -179,15 +185,21 @@ pub trait PrefixProbe {
     fn rows<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> RowSetRef<'a>;
 }
 
+/// Streaming row iterator interface over hash trie prefixes.
+pub trait PrefixRows {
+    /// Borrowed row iterator type tied to the borrowed index.
+    type Rows<'a>: Iterator<Item = RowId> + 'a
+    where
+        Self: 'a;
+
+    /// Returns row IDs under a prefix without materializing a row vector.
+    fn rows_for_prefix<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> Self::Rows<'a>;
+}
+
 impl HashTrieIndex {
     /// Collects row IDs under any prefix depth for row-retaining tries.
     pub fn rows_owned(&self, prefix: &[EncodedRef<'_>]) -> Vec<RowId> {
-        let Some(node) = find_node(&self.root, prefix) else {
-            return Vec::new();
-        };
-        let mut rows = Vec::new();
-        collect_rows(node, &mut rows);
-        rows
+        self.rows_for_prefix(prefix).collect()
     }
 
     /// Visits row IDs under any prefix depth for row-retaining tries.
@@ -216,6 +228,82 @@ impl PrefixProbe for HashTrieIndex {
         match find_node(&self.root, prefix) {
             Some(HashNode::Leaf(rows)) => rows.as_ref(),
             _ => RowSetRef::Empty,
+        }
+    }
+}
+
+impl PrefixRows for HashTrieIndex {
+    type Rows<'a> = PrefixRowIter<'a>;
+
+    fn rows_for_prefix<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> Self::Rows<'a> {
+        PrefixRowIter::new(find_node(&self.root, prefix))
+    }
+}
+
+/// Concrete streaming row iterator for hash prefix traversal.
+pub struct PrefixRowIter<'a> {
+    stack: NodeStack<'a>,
+    current: RowSetIter<'a>,
+}
+
+impl<'a> PrefixRowIter<'a> {
+    fn new(node: Option<&'a HashNode>) -> Self {
+        let mut stack = SmallVec::new();
+        if let Some(node) = node {
+            stack.push(node);
+        }
+        Self {
+            stack,
+            current: RowSetIter::Empty,
+        }
+    }
+}
+
+impl Iterator for PrefixRowIter<'_> {
+    type Item = RowId;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(row) = self.current.next() {
+                return Some(row);
+            }
+            let node = self.stack.pop()?;
+            match node {
+                HashNode::Inner(map) => self.stack.extend(map.values()),
+                HashNode::Leaf(rows) => self.current = RowSetIter::from(rows),
+                HashNode::CountOnly(_) => {}
+            }
+        }
+    }
+}
+
+enum RowSetIter<'a> {
+    Empty,
+    One(Option<RowId>),
+    Slice(std::slice::Iter<'a, RowId>),
+    Range(Range<u32>),
+}
+
+impl<'a> From<&'a RowSet> for RowSetIter<'a> {
+    fn from(rows: &'a RowSet) -> Self {
+        match rows {
+            RowSet::Empty => RowSetIter::Empty,
+            RowSet::One(row) => RowSetIter::One(Some(*row)),
+            RowSet::Small(rows) | RowSet::Many(rows) => RowSetIter::Slice(rows.iter()),
+            RowSet::Range(range) => RowSetIter::Range(range.start.0..range.end.0),
+        }
+    }
+}
+
+impl Iterator for RowSetIter<'_> {
+    type Item = RowId;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            RowSetIter::Empty => None,
+            RowSetIter::One(row) => row.take(),
+            RowSetIter::Slice(rows) => rows.next().copied(),
+            RowSetIter::Range(rows) => rows.next().map(RowId),
         }
     }
 }
@@ -264,23 +352,6 @@ fn count_node(node: &HashNode) -> usize {
         HashNode::Inner(map) => map.values().map(count_node).sum(),
         HashNode::Leaf(rows) => rows.len(),
         HashNode::CountOnly(count) => *count as usize,
-    }
-}
-
-fn collect_rows(node: &HashNode, out: &mut Vec<RowId>) {
-    match node {
-        HashNode::Inner(map) => {
-            for child in map.values() {
-                collect_rows(child, out);
-            }
-        }
-        HashNode::Leaf(rows) => match rows {
-            RowSet::Empty => {}
-            RowSet::One(row) => out.push(*row),
-            RowSet::Small(rows) | RowSet::Many(rows) => out.extend_from_slice(rows),
-            RowSet::Range(range) => out.extend((range.start.0..range.end.0).map(RowId)),
-        },
-        HashNode::CountOnly(_) => {}
     }
 }
 
@@ -409,6 +480,55 @@ mod tests {
         assert_eq!(
             index.rows(&[currency.as_ref(), active.as_ref()]),
             RowSetRef::Slice(&[RowId(0), RowId(2)])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn prefix_rows_streams_empty_one_slice_and_nested_prefixes() -> Result<()> {
+        let image = account_image()?;
+        let account = account_relation(&image)?;
+        let primary = HashTrieIndex::build(account, IndexSpec::new("primary", [FieldId(0)]))?;
+        let missing = EncodedOwned::Eight(99u64.to_be_bytes());
+        assert_eq!(
+            primary
+                .rows_for_prefix(&[missing.as_ref()])
+                .collect::<Vec<_>>(),
+            []
+        );
+
+        let one = EncodedOwned::Eight(2u64.to_be_bytes());
+        assert_eq!(
+            primary.rows_for_prefix(&[one.as_ref()]).collect::<Vec<_>>(),
+            [RowId(1)]
+        );
+
+        let by_currency =
+            HashTrieIndex::build(account, IndexSpec::new("by_currency", [FieldId(1)]))?;
+        let currency = EncodedOwned::Eight(840u64.to_be_bytes());
+        assert_eq!(
+            by_currency
+                .rows_for_prefix(&[currency.as_ref()])
+                .collect::<Vec<_>>(),
+            [RowId(0), RowId(2)]
+        );
+
+        let nested = HashTrieIndex::build(
+            account,
+            IndexSpec::new("currency_active", [FieldId(1), FieldId(2)]),
+        )?;
+        let active = EncodedOwned::One([1]);
+        assert_eq!(
+            nested
+                .rows_for_prefix(&[currency.as_ref()])
+                .collect::<Vec<_>>(),
+            [RowId(0), RowId(2)]
+        );
+        assert_eq!(
+            nested
+                .rows_for_prefix(&[currency.as_ref(), active.as_ref()])
+                .collect::<Vec<_>>(),
+            [RowId(0), RowId(2)]
         );
         Ok(())
     }
