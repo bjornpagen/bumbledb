@@ -12,12 +12,51 @@ use bumbledb_core::schema::{
     SchemaDescriptor, ValueType,
 };
 use bumbledb_lmdb::{
-    Environment, InputBindings, PlanCounters, QueryAllocationStats, QueryOutput, QueryTimings,
-    ResultColumn, Row, StorageSchema, Value,
+    AllocationPhaseStats, Environment, InputBindings, PlanCounters, QueryAllocationStats,
+    QueryOutput, QueryTimings, ResultColumn, Row, StorageSchema, Value,
 };
 use rusqlite::{Connection, params_from_iter};
 
 mod open;
+
+#[cfg(feature = "alloc-profile")]
+mod alloc_profile {
+    use std::alloc::{GlobalAlloc, Layout, System};
+
+    pub struct CountingAllocator;
+
+    // SAFETY: this allocator forwards all operations to the standard system
+    // allocator and only records successful operations with lock-free atomics.
+    unsafe impl GlobalAlloc for CountingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            // SAFETY: forwarding the exact layout to the system allocator.
+            let ptr = unsafe { System.alloc(layout) };
+            if !ptr.is_null() {
+                bumbledb_lmdb::allocation::record_alloc(layout.size());
+            }
+            ptr
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            bumbledb_lmdb::allocation::record_dealloc(layout.size());
+            // SAFETY: forwarding the original pointer and layout to the system allocator.
+            unsafe { System.dealloc(ptr, layout) };
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            // SAFETY: forwarding the original pointer, layout, and requested new size.
+            let new_ptr = unsafe { System.realloc(ptr, layout, new_size) };
+            if !new_ptr.is_null() {
+                bumbledb_lmdb::allocation::record_realloc(layout.size(), new_size);
+            }
+            new_ptr
+        }
+    }
+}
+
+#[cfg(feature = "alloc-profile")]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: alloc_profile::CountingAllocator = alloc_profile::CountingAllocator;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Some(config) = Config::from_env()? else {
@@ -1017,13 +1056,13 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Allocation Summary\n\n");
-    out.push_str("| dataset | query | enabled | alloc calls | dealloc calls | realloc calls | bytes allocated | bytes deallocated | net bytes | peak live bytes |\n");
-    out.push_str("|---|---|---|---:|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("| dataset | query | enabled | alloc calls | dealloc calls | realloc calls | bytes allocated | bytes deallocated | net bytes | current live bytes | peak live bytes |\n");
+    out.push_str("|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     for result in results {
         let allocations = result.allocations;
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             allocations.enabled,
@@ -1033,7 +1072,53 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             allocations.bytes_allocated,
             allocations.bytes_deallocated,
             allocations.net_bytes,
+            allocations.current_live_bytes,
             allocations.peak_live_bytes,
+        );
+    }
+    out.push_str("\n## Allocation Phase Detail\n\n");
+    out.push_str("| dataset | query | phase | enabled | alloc calls | bytes allocated | net bytes | current live bytes | peak live bytes |\n");
+    out.push_str("|---|---|---|---|---:|---:|---:|---:|---:|\n");
+    for result in results {
+        write_allocation_phase_row(&mut out, result, "total", result.allocations.total);
+        write_allocation_phase_row(
+            &mut out,
+            result,
+            "validate_inputs",
+            result.allocations.validate_inputs,
+        );
+        write_allocation_phase_row(&mut out, result, "normalize", result.allocations.normalize);
+        write_allocation_phase_row(
+            &mut out,
+            result,
+            "encode_inputs",
+            result.allocations.encode_inputs,
+        );
+        write_allocation_phase_row(
+            &mut out,
+            result,
+            "query_image",
+            result.allocations.query_image,
+        );
+        write_allocation_phase_row(&mut out, result, "plan", result.allocations.plan);
+        write_allocation_phase_row(
+            &mut out,
+            result,
+            "lftj_build",
+            result.allocations.lftj_build,
+        );
+        write_allocation_phase_row(
+            &mut out,
+            result,
+            "hash_index",
+            result.allocations.hash_index,
+        );
+        write_allocation_phase_row(&mut out, result, "execute", result.allocations.execute);
+        write_allocation_phase_row(
+            &mut out,
+            result,
+            "sink_finish",
+            result.allocations.sink_finish,
         );
     }
     out.push_str("\n## Distribution\n\n");
@@ -1078,7 +1163,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         "| high sink finish us | projection, aggregation, sorting, or decode bottleneck |\n",
     );
     out.push_str(
-        "| high allocation counts | heap profiling should be enabled once PRD 05 lands |\n",
+        "| high allocation counts | rerun with alloc-profile and then use a deep heap profiler for callsites |\n",
     );
     out.push_str("\n## Counter Gates\n\n");
     out.push_str("| dataset | query | cursor seeks | rows scanned | final values | materialized values | dictionary output | dictionary lookups | notes |\n");
@@ -1099,6 +1184,27 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out
+}
+
+fn write_allocation_phase_row(
+    out: &mut String,
+    result: &BenchmarkRunResult,
+    phase: &str,
+    stats: AllocationPhaseStats,
+) {
+    let _ = writeln!(
+        out,
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+        markdown_escape(result.dataset),
+        markdown_escape(result.query),
+        markdown_escape(phase),
+        stats.enabled,
+        stats.alloc_calls,
+        stats.bytes_allocated,
+        stats.net_bytes,
+        stats.current_live_bytes,
+        stats.peak_live_bytes,
+    );
 }
 
 fn render_json_results(results: &[BenchmarkRunResult]) -> String {
@@ -1124,7 +1230,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         let allocations = result.allocations;
         let _ = write!(
             out,
-            ",\"prepare\":{{\"bumbledb_us\":{},\"sqlite_us\":{}}},\"warmup\":{{\"bumbledb_samples\":{},\"bumbledb_avg_us\":{},\"sqlite_samples\":{},\"sqlite_avg_us\":{}}},\"phase_timing\":{{\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"hash_index_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"hash_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{}}},\"allocations\":{{\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"peak_live_bytes\":{}}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            ",\"prepare\":{{\"bumbledb_us\":{},\"sqlite_us\":{}}},\"warmup\":{{\"bumbledb_samples\":{},\"bumbledb_avg_us\":{},\"sqlite_samples\":{},\"sqlite_avg_us\":{}}},\"phase_timing\":{{\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"hash_index_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"hash_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{}}},\"allocations\":{{\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
             duration_micros(result.bumbledb_prepare),
             duration_micros(result.sqlite_prepare),
             result.bumbledb_warmup.samples,
@@ -1152,7 +1258,37 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             allocations.bytes_allocated,
             allocations.bytes_deallocated,
             allocations.net_bytes,
+            allocations.current_live_bytes,
             allocations.peak_live_bytes,
+        );
+        out.push_str(",\"phases\":{");
+        write_allocation_phase_json(&mut out, "total", allocations.total, true);
+        write_allocation_phase_json(
+            &mut out,
+            "validate_inputs",
+            allocations.validate_inputs,
+            false,
+        );
+        write_allocation_phase_json(&mut out, "normalize", allocations.normalize, false);
+        write_allocation_phase_json(&mut out, "encode_inputs", allocations.encode_inputs, false);
+        write_allocation_phase_json(&mut out, "query_image", allocations.query_image, false);
+        write_allocation_phase_json(&mut out, "plan", allocations.plan, false);
+        write_allocation_phase_json(&mut out, "lftj_build", allocations.lftj_build, false);
+        write_allocation_phase_json(&mut out, "hash_index", allocations.hash_index, false);
+        write_allocation_phase_json(&mut out, "execute", allocations.execute, false);
+        write_allocation_phase_json(&mut out, "lftj_execute", allocations.lftj_execute, false);
+        write_allocation_phase_json(&mut out, "hash_execute", allocations.hash_execute, false);
+        write_allocation_phase_json(&mut out, "sink_finish", allocations.sink_finish, false);
+        out.push_str("},\"size_class_allocs\":[");
+        for (index, count) in allocations.size_class_allocs.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let _ = write!(out, "{}", count);
+        }
+        let _ = write!(
+            out,
+            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.counters.cursor_seeks,
             result.counters.rows_scanned,
             result.dictionary_reverse_lookups,
@@ -1183,6 +1319,31 @@ fn write_timing_stats(out: &mut String, name: &str, stats: TimingStats) {
         duration_micros(stats.p50),
         duration_micros(stats.p95),
         duration_micros(stats.max),
+    );
+}
+
+fn write_allocation_phase_json(
+    out: &mut String,
+    name: &str,
+    stats: AllocationPhaseStats,
+    first: bool,
+) {
+    if !first {
+        out.push(',');
+    }
+    let _ = write!(
+        out,
+        "\"{}\":{{\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}}}",
+        json_escape(name),
+        stats.enabled,
+        stats.alloc_calls,
+        stats.dealloc_calls,
+        stats.realloc_calls,
+        stats.bytes_allocated,
+        stats.bytes_deallocated,
+        stats.net_bytes,
+        stats.current_live_bytes,
+        stats.peak_live_bytes,
     );
 }
 
@@ -2268,6 +2429,7 @@ mod tests {
         assert!(markdown.contains("| joinstress | triangle_count |"));
         assert!(markdown.contains("## Phase Timing"));
         assert!(markdown.contains("## Allocation Summary"));
+        assert!(markdown.contains("## Allocation Phase Detail"));
         assert!(markdown.contains("## Distribution"));
         assert!(markdown.contains("| dataset | query | cursor seeks |"));
         assert!(
@@ -2340,6 +2502,8 @@ mod tests {
         assert!(json.contains("\"runtime\":\"HashProbe\""));
         assert!(json.contains("\"phase_timing\""));
         assert!(json.contains("\"allocations\""));
+        assert!(json.contains("\"phases\""));
+        assert!(json.contains("\"size_class_allocs\""));
     }
 
     #[test]
@@ -2392,6 +2556,21 @@ mod tests {
         assert_eq!(config.trace_output.as_deref(), Some("trace.log"));
         assert_eq!(config.trace_format, TraceFormat::Json);
         Ok(())
+    }
+
+    #[cfg(feature = "alloc-profile")]
+    #[test]
+    fn allocation_profile_records_known_vector() {
+        let before = bumbledb_lmdb::allocation::snapshot();
+        let values = vec![42u8; 4096];
+        black_box(&values);
+        let after = bumbledb_lmdb::allocation::snapshot();
+        let delta = bumbledb_lmdb::allocation::delta(before, after);
+
+        assert!(delta.enabled);
+        assert!(delta.alloc_calls > 0);
+        assert!(delta.bytes_allocated >= 4096);
+        assert!(delta.peak_live_bytes >= 4096);
     }
 
     #[test]

@@ -13,5 +13,8 @@ tempfile.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[features]
+alloc-profile = ["bumbledb-lmdb/allocation-telemetry"]
+
 [lints]
 workspace = true

@@ -52,6 +52,15 @@ cargo run -p bumbledb-bench --release -- --dataset joinstress --query chain4_fro
 
 JSON output is machine-readable and includes timing distributions, phase timings, allocation summaries, counters, and gate notes.
 
+**Allocation Profiling**
+```sh
+cargo run -p bumbledb-bench --features alloc-profile --release -- --dataset joinstress --query chain4_from_a --scale 10000 --repeats 10 --format markdown
+```
+
+`alloc-profile` installs a benchmark-binary global allocator wrapper. Normal library users do not get a custom allocator. The wrapper records allocation calls, deallocation calls, reallocation calls, allocated/deallocated bytes, net bytes, current live byte deltas, peak live byte deltas, per-phase allocation deltas, and a size-class histogram exposed in JSON.
+
+For callsite attribution after counters identify a problem, use a deeper heap profiler separately from normal gates. Good options are `dhat` for Rust-oriented heap profiling or jemalloc profiling on supported platforms.
+
 **Run One Generated Dataset**
 ```sh
 cargo run -p bumbledb-bench --release -- --dataset ledger --scale 2000 --repeats 10
@@ -171,6 +180,7 @@ The markdown table additionally prints:
 - runtime kind.
 - QueryPlan phase timings.
 - allocation summary fields, disabled and zero until allocation profiling is enabled.
+- allocation phase detail when allocation profiling is enabled.
 - timing distribution stats: sample count, min, p50, p95, max.
 - warmup timing stats.
 - chosen Free Join candidate.

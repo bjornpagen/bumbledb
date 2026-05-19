@@ -3,6 +3,7 @@
 //! This crate intentionally keeps all LMDB details behind opaque environment and
 //! transaction types. Higher layers should not depend on raw LMDB handles.
 
+pub mod allocation;
 pub mod benchmark;
 mod error;
 #[cfg(feature = "test-failpoints")]
@@ -33,9 +34,9 @@ pub use free_join::{
 pub use hash_trie::{HashNode, HashTrieIndex, HashTrieStats, LeafMode, PrefixProbe, RowSet};
 pub use planner_stats::PlannerStatsCacheDiagnostics;
 pub use query::{
-    CostKey, InputBindings, InputId, MissingIndexRecommendation, NodeRowEstimate, NormAtom,
-    NormAtomField, NormFindTerm, NormInput, NormOperand, NormPredicate, NormTerm, NormVar,
-    NormalizedQuery, OptimizerTrace, PlanCandidate, PlanCounters, PredicateId,
+    AllocationPhaseStats, CostKey, InputBindings, InputId, MissingIndexRecommendation,
+    NodeRowEstimate, NormAtom, NormAtomField, NormFindTerm, NormInput, NormOperand, NormPredicate,
+    NormTerm, NormVar, NormalizedQuery, OptimizerTrace, PlanCandidate, PlanCounters, PredicateId,
     QueryAllocationStats, QueryNodeTiming, QueryOutput, QueryPlan, QueryRuntimeKind, QueryTimings,
     ResultColumn, VariableEstimate,
 };

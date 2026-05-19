@@ -18,6 +18,7 @@ use crate::{
 };
 
 use crate::QueryImageCacheDiagnostics;
+use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
 use crate::planner_stats::{
     OptimizerFieldStats, OptimizerIndexStats, OptimizerRelationStats, PlannerStatsCacheDiagnostics,
 };
@@ -289,7 +290,7 @@ impl QueryPlan {
         ));
         out.push_str("allocations:\n");
         out.push_str(&format!(
-            "  allocation_summary enabled={} alloc_calls={} dealloc_calls={} realloc_calls={} bytes_allocated={} bytes_deallocated={} net_bytes={} peak_live_bytes={}\n",
+            "  allocation_summary enabled={} alloc_calls={} dealloc_calls={} realloc_calls={} bytes_allocated={} bytes_deallocated={} net_bytes={} current_live_bytes={} peak_live_bytes={}\n",
             self.allocations.enabled,
             self.allocations.alloc_calls,
             self.allocations.dealloc_calls,
@@ -297,8 +298,32 @@ impl QueryPlan {
             self.allocations.bytes_allocated,
             self.allocations.bytes_deallocated,
             self.allocations.net_bytes,
+            self.allocations.current_live_bytes,
             self.allocations.peak_live_bytes
         ));
+        self.allocations
+            .validate_inputs
+            .write_explain(&mut out, "validate_inputs");
+        self.allocations
+            .normalize
+            .write_explain(&mut out, "normalize");
+        self.allocations
+            .encode_inputs
+            .write_explain(&mut out, "encode_inputs");
+        self.allocations
+            .query_image
+            .write_explain(&mut out, "query_image");
+        self.allocations.plan.write_explain(&mut out, "plan");
+        self.allocations
+            .lftj_build
+            .write_explain(&mut out, "lftj_build");
+        self.allocations
+            .hash_index
+            .write_explain(&mut out, "hash_index");
+        self.allocations.execute.write_explain(&mut out, "execute");
+        self.allocations
+            .sink_finish
+            .write_explain(&mut out, "sink_finish");
         out.push_str("variable_estimates:\n");
         for estimate in &self.variable_estimates {
             out.push_str(&format!(
@@ -576,6 +601,67 @@ pub struct QueryTimings {
     pub decode_micros: u128,
 }
 
+/// Allocation counters for one query phase.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AllocationPhaseStats {
+    /// True when allocation profiling was enabled.
+    pub enabled: bool,
+    /// Allocation calls observed.
+    pub alloc_calls: u64,
+    /// Deallocation calls observed.
+    pub dealloc_calls: u64,
+    /// Reallocation calls observed.
+    pub realloc_calls: u64,
+    /// Bytes allocated.
+    pub bytes_allocated: u64,
+    /// Bytes deallocated.
+    pub bytes_deallocated: u64,
+    /// Net bytes allocated minus deallocated.
+    pub net_bytes: i128,
+    /// Current live byte delta after the phase.
+    pub current_live_bytes: u64,
+    /// Peak live bytes observed.
+    pub peak_live_bytes: u64,
+    /// Allocation calls by size class.
+    pub size_class_allocs: [u64; ALLOCATION_SIZE_CLASS_COUNT],
+}
+
+impl From<AllocationDelta> for AllocationPhaseStats {
+    fn from(delta: AllocationDelta) -> Self {
+        Self {
+            enabled: delta.enabled,
+            alloc_calls: delta.alloc_calls,
+            dealloc_calls: delta.dealloc_calls,
+            realloc_calls: delta.realloc_calls,
+            bytes_allocated: delta.bytes_allocated,
+            bytes_deallocated: delta.bytes_deallocated,
+            net_bytes: delta.net_bytes,
+            current_live_bytes: delta.current_live_bytes,
+            peak_live_bytes: delta.peak_live_bytes,
+            size_class_allocs: delta.size_class_allocs,
+        }
+    }
+}
+
+impl AllocationPhaseStats {
+    fn write_explain(self, out: &mut String, phase: &str) {
+        let _ = writeln!(
+            out,
+            "  allocation_phase phase={} enabled={} alloc_calls={} dealloc_calls={} realloc_calls={} bytes_allocated={} bytes_deallocated={} net_bytes={} current_live_bytes={} peak_live_bytes={}",
+            phase,
+            self.enabled,
+            self.alloc_calls,
+            self.dealloc_calls,
+            self.realloc_calls,
+            self.bytes_allocated,
+            self.bytes_deallocated,
+            self.net_bytes,
+            self.current_live_bytes,
+            self.peak_live_bytes
+        );
+    }
+}
+
 /// Allocation summary for one query execution.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct QueryAllocationStats {
@@ -593,8 +679,53 @@ pub struct QueryAllocationStats {
     pub bytes_deallocated: u64,
     /// Net bytes allocated minus deallocated.
     pub net_bytes: i128,
+    /// Current live byte delta after the query.
+    pub current_live_bytes: u64,
     /// Peak live bytes observed.
     pub peak_live_bytes: u64,
+    /// Allocation calls by size class.
+    pub size_class_allocs: [u64; ALLOCATION_SIZE_CLASS_COUNT],
+    /// Total query allocation delta.
+    pub total: AllocationPhaseStats,
+    /// Input validation allocation delta.
+    pub validate_inputs: AllocationPhaseStats,
+    /// Query normalization allocation delta.
+    pub normalize: AllocationPhaseStats,
+    /// Input encoding allocation delta.
+    pub encode_inputs: AllocationPhaseStats,
+    /// QueryImage acquisition allocation delta.
+    pub query_image: AllocationPhaseStats,
+    /// Planning allocation delta.
+    pub plan: AllocationPhaseStats,
+    /// LFTJ build allocation delta.
+    pub lftj_build: AllocationPhaseStats,
+    /// Hash index allocation delta.
+    pub hash_index: AllocationPhaseStats,
+    /// Runtime execution allocation delta.
+    pub execute: AllocationPhaseStats,
+    /// LFTJ execution allocation delta.
+    pub lftj_execute: AllocationPhaseStats,
+    /// Hash execution allocation delta.
+    pub hash_execute: AllocationPhaseStats,
+    /// Sink finalization allocation delta.
+    pub sink_finish: AllocationPhaseStats,
+}
+
+impl QueryAllocationStats {
+    fn with_total(mut self, total: AllocationPhaseStats) -> Self {
+        self.enabled = total.enabled;
+        self.alloc_calls = total.alloc_calls;
+        self.dealloc_calls = total.dealloc_calls;
+        self.realloc_calls = total.realloc_calls;
+        self.bytes_allocated = total.bytes_allocated;
+        self.bytes_deallocated = total.bytes_deallocated;
+        self.net_bytes = total.net_bytes;
+        self.current_live_bytes = total.current_live_bytes;
+        self.peak_live_bytes = total.peak_live_bytes;
+        self.size_class_allocs = total.size_class_allocs;
+        self.total = total;
+        self
+    }
 }
 
 /// Node-level execution timing and counter summary.
@@ -947,16 +1078,21 @@ impl<'env> ReadTxn<'env> {
         inputs: &InputBindings,
     ) -> Result<QueryOutput> {
         let total_start = Instant::now();
+        let total_alloc_start = allocation::snapshot();
         let mut timings = QueryTimings::default();
+        let mut allocations = QueryAllocationStats::default();
 
         let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
         {
             let _span = tracing::debug_span!("bumbledb.query.validate_inputs").entered();
             validate_inputs(query, inputs)?;
         }
         timings.validate_inputs_micros = elapsed_micros(phase_start);
+        allocations.validate_inputs = allocation_delta_since(phase_alloc_start);
 
         let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
         let mut normalized = {
             let _span = tracing::debug_span!(
                 "bumbledb.query.normalize",
@@ -967,8 +1103,10 @@ impl<'env> ReadTxn<'env> {
             normalize_query(self, schema, query)?
         };
         timings.normalize_micros = elapsed_micros(phase_start);
+        allocations.normalize = allocation_delta_since(phase_alloc_start);
 
         let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
         let encoded_inputs = {
             let _span = tracing::debug_span!(
                 "bumbledb.query.encode_inputs",
@@ -978,23 +1116,30 @@ impl<'env> ReadTxn<'env> {
             encode_inputs(self, &normalized, inputs)?
         };
         timings.encode_inputs_micros = elapsed_micros(phase_start);
+        allocations.encode_inputs = allocation_delta_since(phase_alloc_start);
 
         let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
         let image = {
             let _span = tracing::debug_span!("bumbledb.query.image").entered();
             self.query_images.get_or_build(self, schema)?
         };
         timings.query_image_micros = elapsed_micros(phase_start);
+        allocations.query_image = allocation_delta_since(phase_alloc_start);
 
         let query_image_cache = self.query_images.diagnostics();
         let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
         let mut plan = plan_query(schema, &mut normalized, image.as_ref(), query_image_cache)?;
         timings.plan_micros = elapsed_micros(phase_start);
+        allocations.plan = allocation_delta_since(phase_alloc_start);
         plan.summary.timings = timings;
+        plan.summary.allocations = allocations;
         tracing::debug!(variable_order = ?plan.summary.variable_order, nodes = plan.summary.free_join.nodes.len(), "free join query planned");
         let mut sink = OutputSink::new(&plan.summary.free_join.output);
 
         let execute_start = Instant::now();
+        let execute_alloc_start = allocation::snapshot();
         execute_free_join(
             image.as_ref(),
             self,
@@ -1005,19 +1150,24 @@ impl<'env> ReadTxn<'env> {
             &mut sink,
         )?;
         plan.summary.timings.execute_micros = elapsed_micros(execute_start);
+        plan.summary.allocations.execute = allocation_delta_since(execute_alloc_start);
 
         let columns = result_columns(&normalized);
         let sink_finish_start = Instant::now();
+        let sink_finish_alloc_start = allocation::snapshot();
         let rows = {
             let _span = tracing::debug_span!("bumbledb.query.sink.finish").entered();
             sink.finish(self, &normalized, &mut plan.summary.counters)?
         };
         plan.summary.timings.sink_finish_micros = elapsed_micros(sink_finish_start);
+        plan.summary.allocations.sink_finish = allocation_delta_since(sink_finish_alloc_start);
         plan.summary.counters.output_rows = rows.len() as u64;
         if has_aggregate(&normalized) {
             plan.summary.counters.aggregate_groups = rows.len() as u64;
         }
         plan.summary.timings.total_micros = elapsed_micros(total_start);
+        let total_alloc = allocation_delta_since(total_alloc_start);
+        plan.summary.allocations = plan.summary.allocations.with_total(total_alloc);
         plan.summary.refresh_node_timings();
         tracing::debug!(?plan.summary.counters, "free join query executed");
         Ok(QueryOutput {
@@ -1030,6 +1180,10 @@ impl<'env> ReadTxn<'env> {
 
 fn elapsed_micros(start: Instant) -> u128 {
     start.elapsed().as_micros()
+}
+
+fn allocation_delta_since(start: allocation::AllocationSnapshot) -> AllocationPhaseStats {
+    allocation::delta(start, allocation::snapshot()).into()
 }
 
 fn execute_free_join<'txn, 'query, S: TupleSink>(
@@ -1074,6 +1228,7 @@ fn execute_hash_probe<'txn, 'query, S: TupleSink>(
     sink: &mut S,
 ) -> Result<()> {
     let build_start = Instant::now();
+    let build_alloc_start = allocation::snapshot();
     let atom_indexes = {
         let _span = tracing::debug_span!(
             "bumbledb.query.hash.build_indexes",
@@ -1087,8 +1242,10 @@ fn execute_hash_probe<'txn, 'query, S: TupleSink>(
         .timings
         .hash_index_micros
         .saturating_add(elapsed_micros(build_start));
+    plan.summary.allocations.hash_index = allocation_delta_since(build_alloc_start);
 
     let execute_start = Instant::now();
+    let execute_alloc_start = allocation::snapshot();
     let result = {
         let _span =
             tracing::debug_span!("bumbledb.query.hash.execute", variables = query.vars.len())
@@ -1115,6 +1272,7 @@ fn execute_hash_probe<'txn, 'query, S: TupleSink>(
         .timings
         .hash_execute_micros
         .saturating_add(elapsed_micros(execute_start));
+    plan.summary.allocations.hash_execute = allocation_delta_since(execute_alloc_start);
     result
 }
 
@@ -1620,6 +1778,7 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
         ));
     }
     let build_start = Instant::now();
+    let build_alloc_start = allocation::snapshot();
     let atom_plans = {
         let _span = tracing::debug_span!(
             "bumbledb.query.lftj.build",
@@ -1640,6 +1799,7 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
         .timings
         .lftj_build_micros
         .saturating_add(elapsed_micros(build_start));
+    plan.summary.allocations.lftj_build = allocation_delta_since(build_alloc_start);
     if atom_plans
         .iter()
         .any(|atom| atom.variables.is_empty() && atom.row_count == 0)
@@ -1657,6 +1817,7 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
             .collect(),
     };
     let execute_start = Instant::now();
+    let execute_alloc_start = allocation::snapshot();
     let result = {
         let _span =
             tracing::debug_span!("bumbledb.query.lftj.execute", variables = query.vars.len())
@@ -1678,6 +1839,7 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
         .timings
         .lftj_execute_micros
         .saturating_add(elapsed_micros(execute_start));
+    plan.summary.allocations.lftj_execute = allocation_delta_since(execute_alloc_start);
     result
 }
 
