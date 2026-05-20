@@ -1783,6 +1783,21 @@ mod tests {
     }
 
     #[test]
+    fn validation_accepts_single_enum_foreign_key() {
+        assert_eq!(enum_fk_schema().validate(), Ok(()));
+    }
+
+    #[test]
+    fn validation_accepts_compound_enum_foreign_key() {
+        assert_eq!(compound_enum_fk_schema().validate(), Ok(()));
+    }
+
+    #[test]
+    fn validation_accepts_compound_serial_enum_foreign_key() {
+        assert_eq!(compound_serial_enum_fk_schema().validate(), Ok(()));
+    }
+
+    #[test]
     fn validation_rejects_foreign_key_arity_mismatch() {
         let mut schema = compound_fk_schema();
         schema.relations[1].constraints[0] =
@@ -1842,6 +1857,49 @@ mod tests {
             schema.validate(),
             Err(SchemaError::ForeignKeyTypeMismatch { relation, constraint, .. })
                 if relation == "Child" && constraint == "parent"
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_enum_foreign_key_domain_mismatch() {
+        let mut schema = enum_fk_schema();
+        schema.relations[1].fields[1] = FieldDescriptor::new(
+            "currency",
+            ValueType::Enum {
+                name: "Country".to_owned(),
+            },
+        );
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::ForeignKeyTypeMismatch {
+                relation,
+                constraint,
+                source_field,
+                target_field,
+                source_type,
+                target_type,
+            }) if relation == "Account"
+                && constraint == "currency"
+                && source_field == "currency"
+                && target_field == "Currency.code"
+                && source_type.contains("Country")
+                && target_type.contains("Currency")
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_compound_foreign_key_field_order_mismatch() {
+        let mut schema = compound_enum_fk_schema();
+        schema.relations[1].constraints[0] = ConstraintDescriptor::foreign_key(
+            "policy",
+            ["currency", "country"],
+            "Policy",
+            "by_country_currency",
+        );
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::ForeignKeyTypeMismatch { relation, constraint, .. })
+                if relation == "Account" && constraint == "policy"
         ));
     }
 
@@ -1992,6 +2050,140 @@ mod tests {
                 )),
             ],
         )
+    }
+
+    fn enum_fk_schema() -> SchemaDescriptor {
+        SchemaDescriptor::new(
+            "EnumFkDb",
+            vec![
+                RelationDescriptor::new(
+                    "Currency",
+                    vec![FieldDescriptor::new(
+                        "code",
+                        ValueType::Enum {
+                            name: "Currency".to_owned(),
+                        },
+                    )],
+                )
+                .with_covering_unique("by_code", ["code"]),
+                RelationDescriptor::new(
+                    "Account",
+                    vec![
+                        FieldDescriptor::new("id", serial_type("AccountId", "Account")),
+                        FieldDescriptor::new(
+                            "currency",
+                            ValueType::Enum {
+                                name: "Currency".to_owned(),
+                            },
+                        ),
+                    ],
+                )
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "currency",
+                    ["currency"],
+                    "Currency",
+                    "by_code",
+                )),
+            ],
+        )
+        .with_enum(EnumDescriptor::codes("Currency", [1, 2]))
+        .with_enum(EnumDescriptor::codes("Country", [1, 2]))
+    }
+
+    fn compound_enum_fk_schema() -> SchemaDescriptor {
+        SchemaDescriptor::new(
+            "CompoundEnumFkDb",
+            vec![
+                RelationDescriptor::new(
+                    "Policy",
+                    vec![
+                        FieldDescriptor::new(
+                            "country",
+                            ValueType::Enum {
+                                name: "Country".to_owned(),
+                            },
+                        ),
+                        FieldDescriptor::new(
+                            "currency",
+                            ValueType::Enum {
+                                name: "Currency".to_owned(),
+                            },
+                        ),
+                    ],
+                )
+                .with_covering_unique("by_country_currency", ["country", "currency"]),
+                RelationDescriptor::new(
+                    "Account",
+                    vec![
+                        FieldDescriptor::new("id", serial_type("AccountId", "Account")),
+                        FieldDescriptor::new(
+                            "country",
+                            ValueType::Enum {
+                                name: "Country".to_owned(),
+                            },
+                        ),
+                        FieldDescriptor::new(
+                            "currency",
+                            ValueType::Enum {
+                                name: "Currency".to_owned(),
+                            },
+                        ),
+                    ],
+                )
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "policy",
+                    ["country", "currency"],
+                    "Policy",
+                    "by_country_currency",
+                )),
+            ],
+        )
+        .with_enum(EnumDescriptor::codes("Country", [1, 2]))
+        .with_enum(EnumDescriptor::codes("Currency", [1, 2]))
+    }
+
+    fn compound_serial_enum_fk_schema() -> SchemaDescriptor {
+        SchemaDescriptor::new(
+            "CompoundSerialEnumFkDb",
+            vec![
+                RelationDescriptor::new(
+                    "AccountCurrency",
+                    vec![
+                        FieldDescriptor::new("account", serial_type("AccountId", "Account")),
+                        FieldDescriptor::new(
+                            "currency",
+                            ValueType::Enum {
+                                name: "Currency".to_owned(),
+                            },
+                        ),
+                    ],
+                )
+                .with_covering_unique("by_account_currency", ["account", "currency"]),
+                RelationDescriptor::new(
+                    "Posting",
+                    vec![
+                        FieldDescriptor::new("id", serial_type("PostingId", "Posting")),
+                        FieldDescriptor::new("account", serial_type("AccountId", "Account")),
+                        FieldDescriptor::new(
+                            "currency",
+                            ValueType::Enum {
+                                name: "Currency".to_owned(),
+                            },
+                        ),
+                    ],
+                )
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "account_currency",
+                    ["account", "currency"],
+                    "AccountCurrency",
+                    "by_account_currency",
+                )),
+            ],
+        )
+        .with_enum(EnumDescriptor::codes("Currency", [1, 2]))
     }
 
     fn serial_type(type_name: &str, owning_relation: &str) -> ValueType {
