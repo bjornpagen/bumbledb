@@ -519,7 +519,6 @@ fn write_u32(db: &RawDatabase, txn: &mut RwTxn, key: &[u8], value: u32) -> Resul
 mod tests {
     use super::*;
     use crate::benchmark::{benchmark_queries, benchmark_rows, benchmark_schema};
-    use bumbledb_core::datalog::parse_and_typecheck;
     use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, RelationKind, ValueType};
 
     const MARKER_KEY: &[u8] = b"test_marker";
@@ -623,7 +622,8 @@ mod tests {
         assert_eq!(report.rows_inserted, benchmark_rows(5).len());
         assert!(report.dictionary_entries > 0);
 
-        let query = parse_and_typecheck(schema.descriptor(), benchmark_queries()[0].datalog)?;
+        let typed = (benchmark_queries()[0].build)(schema.descriptor())?;
+        let query = row_env.prepare_query(&schema, &typed)?;
         let inputs = InputBindings::from_values([
             ("holder", Value::Ref(1)),
             (
@@ -636,10 +636,10 @@ mod tests {
             ),
         ]);
         let row_result = row_env
-            .read(|txn| txn.execute_query(&schema, &query, &inputs))?
+            .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .rows;
         let bulk_result = bulk_env
-            .read(|txn| txn.execute_query(&schema, &query, &inputs))?
+            .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .rows;
         assert_eq!(sorted_rows(row_result), sorted_rows(bulk_result));
         Ok(())
@@ -716,7 +716,8 @@ mod tests {
         env.compact_copy_to_path(compact_dir.path())?;
         let compact = Environment::open_with_schema(compact_dir.path(), &schema)?;
 
-        let query = parse_and_typecheck(schema.descriptor(), benchmark_queries()[0].datalog)?;
+        let typed = (benchmark_queries()[0].build)(schema.descriptor())?;
+        let query = env.prepare_query(&schema, &typed)?;
         let inputs = InputBindings::from_values([
             ("holder", Value::Ref(1)),
             (
@@ -730,13 +731,13 @@ mod tests {
         ]);
 
         let original = env
-            .read(|txn| txn.execute_query(&schema, &query, &inputs))?
+            .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .rows;
         let backup_rows = backup
-            .read(|txn| txn.execute_query(&schema, &query, &inputs))?
+            .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .rows;
         let compact_rows = compact
-            .read(|txn| txn.execute_query(&schema, &query, &inputs))?
+            .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .rows;
 
         assert_eq!(sorted_rows(original.clone()), sorted_rows(backup_rows));

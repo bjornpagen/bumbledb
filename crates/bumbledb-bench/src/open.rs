@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
+use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
+use bumbledb_core::query_ir::{AggregateFunction, ComparisonOperator, Literal, TypedQuery};
 use bumbledb_core::schema::{
     FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
     SchemaDescriptor, ValueType,
@@ -933,18 +935,7 @@ fn job_queries() -> Vec<BenchQuery> {
     vec![
         BenchQuery {
             name: "job_broad_cast_keyword_company",
-            datalog: r#"
-                find count(?movie)
-                where
-                  Title(id: ?movie, kind: ?kind)
-                  CastInfo(movie: ?movie, person: ?person, role: ?role)
-                  RoleType(id: ?role)
-                  MovieKeyword(movie: ?movie, keyword: ?keyword)
-                  Keyword(id: ?keyword)
-                  MovieCompanies(movie: ?movie, company: ?company, company_type: ?company_type)
-                  CompanyName(id: ?company)
-                  CompanyType(id: ?company_type)
-            "#,
+            build: build_job_broad_cast_keyword_company,
             inputs: Vec::new(),
             sqlite: r#"
                 SELECT COUNT(*)
@@ -962,21 +953,7 @@ fn job_queries() -> Vec<BenchQuery> {
         },
         BenchQuery {
             name: "job_broad_movie_info_star",
-            datalog: r#"
-                find count(?movie)
-                where
-                  Title(id: ?movie)
-                  CastInfo(movie: ?movie, role: ?role)
-                  RoleType(id: ?role)
-                  MovieCompanies(movie: ?movie, company_type: ?company_type)
-                  CompanyType(id: ?company_type)
-                  MovieKeyword(movie: ?movie, keyword: ?keyword)
-                  Keyword(id: ?keyword)
-                  MovieInfo(movie: ?movie, info_type: ?info_type)
-                  InfoType(id: ?info_type)
-                  MovieInfoIdx(movie: ?movie, info_type: ?idx_info_type)
-                  InfoType(id: ?idx_info_type)
-            "#,
+            build: build_job_broad_movie_info_star,
             inputs: Vec::new(),
             sqlite: r#"
                 SELECT COUNT(*)
@@ -997,15 +974,7 @@ fn job_queries() -> Vec<BenchQuery> {
         },
         BenchQuery {
             name: "job_q01_top_production",
-            datalog: r#"
-                find count(?movie)
-                where
-                  CompanyType(id: ?company_type, kind: "production companies")
-                  InfoType(id: ?info_type, info: "top 250 rank")
-                  MovieCompanies(movie: ?movie, company_type: ?company_type)
-                  MovieInfoIdx(movie: ?movie, info_type: ?info_type)
-                  Title(id: ?movie)
-            "#,
+            build: build_job_q01_top_production,
             inputs: Vec::new(),
             sqlite: r#"
                 SELECT COUNT(*)
@@ -1022,20 +991,7 @@ fn job_queries() -> Vec<BenchQuery> {
         },
         BenchQuery {
             name: "job_q09_voice_us_actor",
-            datalog: r#"
-                find count(?movie)
-                where
-                  AkaName(person: ?person)
-                  CastInfo(person: ?person, movie: ?movie, person_role: ?character, role: ?role)
-                  CharName(id: ?character)
-                  CompanyName(id: ?company, country_code: "[us]")
-                  MovieCompanies(movie: ?movie, company: ?company)
-                  Name(id: ?person, gender: "m")
-                  RoleType(id: ?role, role: "actor")
-                  Title(id: ?movie, production_year: ?year)
-                  ?year >= 2005
-                  ?year <= 2015
-            "#,
+            build: build_job_q09_voice_us_actor,
             inputs: Vec::new(),
             sqlite: r#"
                 SELECT COUNT(*)
@@ -1057,20 +1013,7 @@ fn job_queries() -> Vec<BenchQuery> {
         },
         BenchQuery {
             name: "job_q16_character_title_us",
-            datalog: r#"
-                find count(?movie)
-                where
-                  AkaName(person: ?person)
-                  CastInfo(person: ?person, movie: ?movie)
-                  CompanyName(id: ?company, country_code: "[us]")
-                  Keyword(id: ?keyword, keyword: "character-name-in-title")
-                  MovieCompanies(movie: ?movie, company: ?company)
-                  MovieKeyword(movie: ?movie, keyword: ?keyword)
-                  Name(id: ?person)
-                  Title(id: ?movie, episode_nr: ?episode)
-                  ?episode >= 50
-                  ?episode < 100
-            "#,
+            build: build_job_q16_character_title_us,
             inputs: Vec::new(),
             sqlite: r#"
                 SELECT COUNT(*)
@@ -1092,21 +1035,7 @@ fn job_queries() -> Vec<BenchQuery> {
         },
         BenchQuery {
             name: "job_q24_voice_keyword_actor",
-            datalog: r#"
-                find ?movie
-                where
-                  AkaName(person: ?person)
-                  CastInfo(person: ?person, movie: ?movie, person_role: ?character, role: ?role)
-                  CharName(id: ?character)
-                  CompanyName(id: ?company, country_code: "[us]")
-                  Keyword(id: ?keyword, keyword: "hero")
-                  MovieCompanies(movie: ?movie, company: ?company)
-                  MovieKeyword(movie: ?movie, keyword: ?keyword)
-                  Name(id: ?person, gender: "m")
-                  RoleType(id: ?role, role: "actor")
-                  Title(id: ?movie, production_year: ?year)
-                  ?year > 2010
-            "#,
+            build: build_job_q24_voice_keyword_actor,
             inputs: Vec::new(),
             sqlite: r#"
                 SELECT DISTINCT t.id
@@ -1130,22 +1059,7 @@ fn job_queries() -> Vec<BenchQuery> {
         },
         BenchQuery {
             name: "job_movie_link_bridge",
-            datalog: r#"
-                find count(?movie1)
-                where
-                  MovieLink(movie: ?movie1, linked_movie: ?movie2, link_type: ?link_type)
-                  LinkType(id: ?link_type)
-                  Title(id: ?movie1)
-                  Title(id: ?movie2)
-                  MovieCompanies(movie: ?movie1, company: ?company1)
-                  CompanyName(id: ?company1)
-                  MovieCompanies(movie: ?movie2, company: ?company2)
-                  CompanyName(id: ?company2)
-                  MovieInfoIdx(movie: ?movie1, info_type: ?info_type1)
-                  InfoType(id: ?info_type1)
-                  MovieInfoIdx(movie: ?movie2, info_type: ?info_type2)
-                  InfoType(id: ?info_type2)
-            "#,
+            build: build_job_movie_link_bridge,
             inputs: Vec::new(),
             sqlite: r#"
                 SELECT COUNT(*)
@@ -1167,22 +1081,7 @@ fn job_queries() -> Vec<BenchQuery> {
         },
         BenchQuery {
             name: "job_q33_linked_series_companies",
-            datalog: r#"
-                find count(?movie1)
-                where
-                  CompanyName(id: ?company1, country_code: "[us]")
-                  CompanyName(id: ?company2)
-                  KindType(id: ?kind1, kind: "tv series")
-                  KindType(id: ?kind2, kind: "tv series")
-                  LinkType(id: ?link_type, link: "sequel")
-                  MovieCompanies(movie: ?movie1, company: ?company1)
-                  MovieCompanies(movie: ?movie2, company: ?company2)
-                  MovieLink(movie: ?movie1, linked_movie: ?movie2, link_type: ?link_type)
-                  Title(id: ?movie1, kind: ?kind1)
-                  Title(id: ?movie2, kind: ?kind2, production_year: ?year2)
-                  ?year2 >= 2005
-                  ?year2 <= 2008
-            "#,
+            build: build_job_q33_linked_series_companies,
             inputs: Vec::new(),
             sqlite: r#"
                 SELECT COUNT(*)
@@ -1206,6 +1105,371 @@ fn job_queries() -> Vec<BenchQuery> {
             sqlite_params: Vec::new(),
         },
     ]
+}
+
+fn build_job_broad_cast_keyword_company(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("Title")?
+        .var("id", "movie")?
+        .var("kind", "kind")?
+        .done()
+        .rel("CastInfo")?
+        .var("movie", "movie")?
+        .var("person", "person")?
+        .var("role", "role")?
+        .done()
+        .rel("RoleType")?
+        .var("id", "role")?
+        .done()
+        .rel("MovieKeyword")?
+        .var("movie", "movie")?
+        .var("keyword", "keyword")?
+        .done()
+        .rel("Keyword")?
+        .var("id", "keyword")?
+        .done()
+        .rel("MovieCompanies")?
+        .var("movie", "movie")?
+        .var("company", "company")?
+        .var("company_type", "company_type")?
+        .done()
+        .rel("CompanyName")?
+        .var("id", "company")?
+        .done()
+        .rel("CompanyType")?
+        .var("id", "company_type")?
+        .done()
+        .find_aggregate(AggregateFunction::Count, "movie")?
+        .finish()
+}
+
+fn build_job_broad_movie_info_star(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("Title")?
+        .var("id", "movie")?
+        .done()
+        .rel("CastInfo")?
+        .var("movie", "movie")?
+        .var("role", "role")?
+        .done()
+        .rel("RoleType")?
+        .var("id", "role")?
+        .done()
+        .rel("MovieCompanies")?
+        .var("movie", "movie")?
+        .var("company_type", "company_type")?
+        .done()
+        .rel("CompanyType")?
+        .var("id", "company_type")?
+        .done()
+        .rel("MovieKeyword")?
+        .var("movie", "movie")?
+        .var("keyword", "keyword")?
+        .done()
+        .rel("Keyword")?
+        .var("id", "keyword")?
+        .done()
+        .rel("MovieInfo")?
+        .var("movie", "movie")?
+        .var("info_type", "info_type")?
+        .done()
+        .rel("InfoType")?
+        .var("id", "info_type")?
+        .done()
+        .rel("MovieInfoIdx")?
+        .var("movie", "movie")?
+        .var("info_type", "idx_info_type")?
+        .done()
+        .rel("InfoType")?
+        .var("id", "idx_info_type")?
+        .done()
+        .find_aggregate(AggregateFunction::Count, "movie")?
+        .finish()
+}
+
+fn build_job_q01_top_production(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("CompanyType")?
+        .var("id", "company_type")?
+        .string("kind", "production companies")?
+        .done()
+        .rel("InfoType")?
+        .var("id", "info_type")?
+        .string("info", "top 250 rank")?
+        .done()
+        .rel("MovieCompanies")?
+        .var("movie", "movie")?
+        .var("company_type", "company_type")?
+        .done()
+        .rel("MovieInfoIdx")?
+        .var("movie", "movie")?
+        .var("info_type", "info_type")?
+        .done()
+        .rel("Title")?
+        .var("id", "movie")?
+        .done()
+        .find_aggregate(AggregateFunction::Count, "movie")?
+        .finish()
+}
+
+fn build_job_q09_voice_us_actor(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("AkaName")?
+        .var("person", "person")?
+        .done()
+        .rel("CastInfo")?
+        .var("person", "person")?
+        .var("movie", "movie")?
+        .var("person_role", "character")?
+        .var("role", "role")?
+        .done()
+        .rel("CharName")?
+        .var("id", "character")?
+        .done()
+        .rel("CompanyName")?
+        .var("id", "company")?
+        .string("country_code", "[us]")?
+        .done()
+        .rel("MovieCompanies")?
+        .var("movie", "movie")?
+        .var("company", "company")?
+        .done()
+        .rel("Name")?
+        .var("id", "person")?
+        .string("gender", "m")?
+        .done()
+        .rel("RoleType")?
+        .var("id", "role")?
+        .string("role", "actor")?
+        .done()
+        .rel("Title")?
+        .var("id", "movie")?
+        .var("production_year", "year")?
+        .done()
+        .cmp(
+            OperandRef::var("year"),
+            ComparisonOperator::Gte,
+            OperandRef::literal(Literal::Integer(2005)),
+        )?
+        .cmp(
+            OperandRef::var("year"),
+            ComparisonOperator::Lte,
+            OperandRef::literal(Literal::Integer(2015)),
+        )?
+        .find_aggregate(AggregateFunction::Count, "movie")?
+        .finish()
+}
+
+fn build_job_q16_character_title_us(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("AkaName")?
+        .var("person", "person")?
+        .done()
+        .rel("CastInfo")?
+        .var("person", "person")?
+        .var("movie", "movie")?
+        .done()
+        .rel("CompanyName")?
+        .var("id", "company")?
+        .string("country_code", "[us]")?
+        .done()
+        .rel("Keyword")?
+        .var("id", "keyword")?
+        .string("keyword", "character-name-in-title")?
+        .done()
+        .rel("MovieCompanies")?
+        .var("movie", "movie")?
+        .var("company", "company")?
+        .done()
+        .rel("MovieKeyword")?
+        .var("movie", "movie")?
+        .var("keyword", "keyword")?
+        .done()
+        .rel("Name")?
+        .var("id", "person")?
+        .done()
+        .rel("Title")?
+        .var("id", "movie")?
+        .var("episode_nr", "episode")?
+        .done()
+        .cmp(
+            OperandRef::var("episode"),
+            ComparisonOperator::Gte,
+            OperandRef::literal(Literal::Integer(50)),
+        )?
+        .cmp(
+            OperandRef::var("episode"),
+            ComparisonOperator::Lt,
+            OperandRef::literal(Literal::Integer(100)),
+        )?
+        .find_aggregate(AggregateFunction::Count, "movie")?
+        .finish()
+}
+
+fn build_job_q24_voice_keyword_actor(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("AkaName")?
+        .var("person", "person")?
+        .done()
+        .rel("CastInfo")?
+        .var("person", "person")?
+        .var("movie", "movie")?
+        .var("person_role", "character")?
+        .var("role", "role")?
+        .done()
+        .rel("CharName")?
+        .var("id", "character")?
+        .done()
+        .rel("CompanyName")?
+        .var("id", "company")?
+        .string("country_code", "[us]")?
+        .done()
+        .rel("Keyword")?
+        .var("id", "keyword")?
+        .string("keyword", "hero")?
+        .done()
+        .rel("MovieCompanies")?
+        .var("movie", "movie")?
+        .var("company", "company")?
+        .done()
+        .rel("MovieKeyword")?
+        .var("movie", "movie")?
+        .var("keyword", "keyword")?
+        .done()
+        .rel("Name")?
+        .var("id", "person")?
+        .string("gender", "m")?
+        .done()
+        .rel("RoleType")?
+        .var("id", "role")?
+        .string("role", "actor")?
+        .done()
+        .rel("Title")?
+        .var("id", "movie")?
+        .var("production_year", "year")?
+        .done()
+        .cmp(
+            OperandRef::var("year"),
+            ComparisonOperator::Gt,
+            OperandRef::literal(Literal::Integer(2010)),
+        )?
+        .find_var("movie")?
+        .finish()
+}
+
+fn build_job_movie_link_bridge(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("MovieLink")?
+        .var("movie", "movie1")?
+        .var("linked_movie", "movie2")?
+        .var("link_type", "link_type")?
+        .done()
+        .rel("LinkType")?
+        .var("id", "link_type")?
+        .done()
+        .rel("Title")?
+        .var("id", "movie1")?
+        .done()
+        .rel("Title")?
+        .var("id", "movie2")?
+        .done()
+        .rel("MovieCompanies")?
+        .var("movie", "movie1")?
+        .var("company", "company1")?
+        .done()
+        .rel("CompanyName")?
+        .var("id", "company1")?
+        .done()
+        .rel("MovieCompanies")?
+        .var("movie", "movie2")?
+        .var("company", "company2")?
+        .done()
+        .rel("CompanyName")?
+        .var("id", "company2")?
+        .done()
+        .rel("MovieInfoIdx")?
+        .var("movie", "movie1")?
+        .var("info_type", "info_type1")?
+        .done()
+        .rel("InfoType")?
+        .var("id", "info_type1")?
+        .done()
+        .rel("MovieInfoIdx")?
+        .var("movie", "movie2")?
+        .var("info_type", "info_type2")?
+        .done()
+        .rel("InfoType")?
+        .var("id", "info_type2")?
+        .done()
+        .find_aggregate(AggregateFunction::Count, "movie1")?
+        .finish()
+}
+
+fn build_job_q33_linked_series_companies(
+    schema: &SchemaDescriptor,
+) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("CompanyName")?
+        .var("id", "company1")?
+        .string("country_code", "[us]")?
+        .done()
+        .rel("CompanyName")?
+        .var("id", "company2")?
+        .done()
+        .rel("KindType")?
+        .var("id", "kind1")?
+        .string("kind", "tv series")?
+        .done()
+        .rel("KindType")?
+        .var("id", "kind2")?
+        .string("kind", "tv series")?
+        .done()
+        .rel("LinkType")?
+        .var("id", "link_type")?
+        .string("link", "sequel")?
+        .done()
+        .rel("MovieCompanies")?
+        .var("movie", "movie1")?
+        .var("company", "company1")?
+        .done()
+        .rel("MovieCompanies")?
+        .var("movie", "movie2")?
+        .var("company", "company2")?
+        .done()
+        .rel("MovieLink")?
+        .var("movie", "movie1")?
+        .var("linked_movie", "movie2")?
+        .var("link_type", "link_type")?
+        .done()
+        .rel("Title")?
+        .var("id", "movie1")?
+        .var("kind", "kind1")?
+        .done()
+        .rel("Title")?
+        .var("id", "movie2")?
+        .var("kind", "kind2")?
+        .var("production_year", "year2")?
+        .done()
+        .cmp(
+            OperandRef::var("year2"),
+            ComparisonOperator::Gte,
+            OperandRef::literal(Literal::Integer(2005)),
+        )?
+        .cmp(
+            OperandRef::var("year2"),
+            ComparisonOperator::Lte,
+            OperandRef::literal(Literal::Integer(2008)),
+        )?
+        .find_aggregate(AggregateFunction::Count, "movie1")?
+        .finish()
 }
 
 fn job_string_field(name: &str) -> FieldDescriptor {
@@ -1400,13 +1664,7 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         queries: vec![
             BenchQuery {
                 name: "person_high_rated_titles",
-                datalog: r#"
-                    find ?title ?rating
-                    where
-                      Principal(name: $name, title: ?title, category: $category)
-                      TitleRating(title: ?title, rating: ?rating)
-                      ?rating >= $min_rating
-                "#,
+                build: build_imdb_person_high_rated_titles,
                 inputs: vec![
                     ("name", Value::Ref(sample_name)),
                     ("category", Value::Code(sample_category)),
@@ -1425,13 +1683,7 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
             },
             BenchQuery {
                 name: "category_rating_join",
-                datalog: r#"
-                    find ?title ?name
-                    where
-                      Principal(title: ?title, name: ?name, category: $category)
-                      TitleRating(title: ?title, rating: ?rating)
-                      ?rating >= $min_rating
-                "#,
+                build: build_imdb_category_rating_join,
                 inputs: vec![
                     ("category", Value::Code(sample_category)),
                     ("min_rating", Value::I64(80)),
@@ -1512,6 +1764,50 @@ fn imdb_schema() -> SchemaDescriptor {
         ],
     )
     .with_ref_foreign_keys()
+}
+
+fn build_imdb_person_high_rated_titles(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("Principal")?
+        .input("name", "name")?
+        .var("title", "title")?
+        .input("category", "category")?
+        .done()
+        .rel("TitleRating")?
+        .var("title", "title")?
+        .var("rating", "rating")?
+        .done()
+        .cmp(
+            OperandRef::var("rating"),
+            ComparisonOperator::Gte,
+            OperandRef::input("min_rating"),
+        )?
+        .find_var("title")?
+        .find_var("rating")?
+        .finish()
+}
+
+fn build_imdb_category_rating_join(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("Principal")?
+        .var("title", "title")?
+        .var("name", "name")?
+        .input("category", "category")?
+        .done()
+        .rel("TitleRating")?
+        .var("title", "title")?
+        .var("rating", "rating")?
+        .done()
+        .cmp(
+            OperandRef::var("rating"),
+            ComparisonOperator::Gte,
+            OperandRef::input("min_rating"),
+        )?
+        .find_var("title")?
+        .find_var("name")?
+        .finish()
 }
 
 fn tpch_open_dataset(
@@ -1943,17 +2239,31 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
         sqlite_insert: insert_lahman_sqlite,
         queries: vec![BenchQuery {
             name: "salary_hits_by_year",
-            datalog: r#"
-                    find ?player ?salary ?hits
-                    where
-                      Salary(player: ?player, year: $year, salary: ?salary)
-                      Batting(player: ?player, year: $year, hits: ?hits)
-                "#,
+            build: build_lahman_salary_hits_by_year,
             inputs: vec![("year", Value::I64(2000))],
             sqlite: "SELECT s.player, s.salary, b.hits FROM salary s JOIN batting b ON b.player = s.player AND b.year = s.year WHERE s.year = ?1",
             sqlite_params: vec![SqlParam::I64(2000)],
         }],
     }
+}
+
+fn build_lahman_salary_hits_by_year(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("Salary")?
+        .var("player", "player")?
+        .input("year", "year")?
+        .var("salary", "salary")?
+        .done()
+        .rel("Batting")?
+        .var("player", "player")?
+        .input("year", "year")?
+        .var("hits", "hits")?
+        .done()
+        .find_var("player")?
+        .find_var("salary")?
+        .find_var("hits")?
+        .finish()
 }
 
 fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
@@ -2030,30 +2340,50 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
         queries: vec![
             BenchQuery {
                 name: "person_likes_posts",
-                datalog: r#"
-                    find ?post
-                    where
-                      Likes(person: $person, post: ?post)
-                      Post(id: ?post, creator: ?creator)
-                "#,
+                build: build_ldbc_person_likes_posts,
                 inputs: vec![("person", Value::Ref(1))],
                 sqlite: "SELECT p.id FROM likes l JOIN post p ON p.id = l.post WHERE l.person = ?1",
                 sqlite_params: vec![SqlParam::I64(1)],
             },
             BenchQuery {
                 name: "two_hop_knows",
-                datalog: r#"
-                    find ?friend2
-                    where
-                      Knows(person1: $person, person2: ?friend1)
-                      Knows(person1: ?friend1, person2: ?friend2)
-                "#,
+                build: build_ldbc_two_hop_knows,
                 inputs: vec![("person", Value::Ref(1))],
                 sqlite: "SELECT k2.person2 FROM knows k1 JOIN knows k2 ON k2.person1 = k1.person2 WHERE k1.person1 = ?1",
                 sqlite_params: vec![SqlParam::I64(1)],
             },
         ],
     }
+}
+
+fn build_ldbc_person_likes_posts(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("Likes")?
+        .input("person", "person")?
+        .var("post", "post")?
+        .done()
+        .rel("Post")?
+        .var("id", "post")?
+        .var("creator", "creator")?
+        .done()
+        .find_var("post")?
+        .finish()
+}
+
+fn build_ldbc_two_hop_knows(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("Knows")?
+        .input("person1", "person")?
+        .var("person2", "friend1")?
+        .done()
+        .rel("Knows")?
+        .var("person1", "friend1")?
+        .var("person2", "friend2")?
+        .done()
+        .find_var("friend2")?
+        .finish()
 }
 
 fn super_tpch_dataset() -> Dataset {
@@ -2534,7 +2864,7 @@ mod tests {
     fn job_queries_typecheck_against_job_schema() -> Result<(), Box<dyn std::error::Error>> {
         let schema = job_schema();
         for query in job_queries() {
-            bumbledb_core::datalog::parse_and_typecheck(&schema, query.datalog)?;
+            (query.build)(&schema)?;
         }
         Ok(())
     }

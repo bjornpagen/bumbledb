@@ -1,4 +1,3 @@
-use bumbledb_core::datalog::parse_and_typecheck;
 use bumbledb_core::encoding::TimestampMicros;
 use bumbledb_lmdb::{Environment, InputBindings, StorageSchema, Value};
 use bumbledb_test_support::assertions::{assert_invariants, assert_same_rows, execute_sorted};
@@ -22,8 +21,7 @@ proptest! {
         prop(assert_invariants(&env, &schema))?;
 
         let reference = ReferenceDb::from_rows(rows);
-        for source in ledger_queries() {
-            let query = prop(parse_and_typecheck(schema.descriptor(), source))?;
+        for query in prop(ledger_queries(schema.descriptor()))? {
             let inputs = default_inputs();
             let lmdb_rows = prop(execute_sorted(&env, &schema, &query, &inputs))?;
             let reference_rows = prop(reference.execute(&query, &inputs))?;
@@ -71,8 +69,7 @@ fn representative_queries_match_reference() -> Result<(), Box<dyn std::error::Er
     let schema = StorageSchema::new(ledger_schema(), env.max_key_size())?;
     env.bulk_load(&schema, rows)?;
 
-    for source in ledger_queries() {
-        let query = parse_and_typecheck(schema.descriptor(), source)?;
+    for query in ledger_queries(schema.descriptor())? {
         let inputs = default_inputs();
         assert_same_rows(
             execute_sorted(&env, &schema, &query, &inputs)?,

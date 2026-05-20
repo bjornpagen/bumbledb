@@ -1,7 +1,7 @@
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use bumbledb_core::datalog::parse_and_typecheck;
+use bumbledb_core::query_builder::QueryBuilder;
 use bumbledb_lmdb::{Environment, InputBindings, StorageSchema};
 use bumbledb_test_support::assertions::assert_invariants;
 use bumbledb_test_support::rows::{account, holder, seeded_ledger_rows};
@@ -14,10 +14,14 @@ fn readers_see_stable_snapshots_while_writer_commits() -> Result<(), Box<dyn std
     let schema = Arc::new(StorageSchema::new(ledger_schema(), env.max_key_size())?);
     env.bulk_load(&schema, seeded_ledger_rows())?;
     let barrier = Arc::new(Barrier::new(2));
-    let query = Arc::new(parse_and_typecheck(
-        schema.descriptor(),
-        "find ?account where Account(id: ?account)",
-    )?);
+    let query = Arc::new(
+        QueryBuilder::new(schema.descriptor())
+            .rel("Account")?
+            .var("id", "account")?
+            .done()
+            .find_var("account")?
+            .finish()?,
+    );
 
     let reader_env = env.clone();
     let reader_schema = schema.clone();

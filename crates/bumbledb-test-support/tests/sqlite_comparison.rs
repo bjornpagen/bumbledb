@@ -1,5 +1,6 @@
-use bumbledb_core::datalog::parse_and_typecheck;
 use bumbledb_core::encoding::TimestampMicros;
+use bumbledb_core::query_builder::{OperandRef, QueryBuilder};
+use bumbledb_core::query_ir::ComparisonOperator;
 use bumbledb_lmdb::{Environment, InputBindings, StorageSchema, Value};
 use bumbledb_test_support::assertions::execute_sorted;
 use bumbledb_test_support::rows::seeded_ledger_rows;
@@ -15,17 +16,30 @@ fn sqlite_comparison_queries_match_bumbledb() -> Result<(), Box<dyn std::error::
     let schema = StorageSchema::new(ledger_schema(), env.max_key_size())?;
     env.bulk_load(&schema, rows)?;
 
-    let query = parse_and_typecheck(
-        schema.descriptor(),
-        r#"
-        find ?posting ?amount
-        where
-          Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
-          Account(id: ?account, holder: $holder)
-          ?t >= $start
-          ?t < $end
-        "#,
-    )?;
+    let query = QueryBuilder::new(schema.descriptor())
+        .rel("Posting")?
+        .var("id", "posting")?
+        .var("account", "account")?
+        .var("amount", "amount")?
+        .var("at", "t")?
+        .done()
+        .rel("Account")?
+        .var("id", "account")?
+        .input("holder", "holder")?
+        .done()
+        .cmp(
+            OperandRef::var("t"),
+            ComparisonOperator::Gte,
+            OperandRef::input("start"),
+        )?
+        .cmp(
+            OperandRef::var("t"),
+            ComparisonOperator::Lt,
+            OperandRef::input("end"),
+        )?
+        .find_var("posting")?
+        .find_var("amount")?
+        .finish()?;
     let bumbledb_rows = execute_sorted(&env, &schema, &query, &inputs())?;
     let sqlite_rows = query_i64_rows(
         &sqlite,

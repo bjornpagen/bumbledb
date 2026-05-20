@@ -1,28 +1,70 @@
 //! Reusable query workloads.
 
-/// Representative supported positive Datalog queries.
-pub fn ledger_queries() -> Vec<&'static str> {
-    vec![
-        "find ?account where Account(id: ?account, holder: $holder)",
-        r#"
-        find ?account ?holder_name
-        where
-          Account(id: ?account, holder: ?holder)
-          Holder(id: ?holder, name: ?holder_name)
-        "#,
-        r#"
-        find ?posting ?account ?holder_name
-        where
-          Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
-          Account(id: ?account, holder: ?holder)
-          Holder(id: ?holder, name: ?holder_name)
-          ?t >= $start
-          ?t < $end
-        "#,
-        r#"
-        find ?account sum(?amount) count(?posting)
-        where
-          Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
-        "#,
-    ]
+use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
+use bumbledb_core::query_ir::{AggregateFunction, ComparisonOperator, TypedQuery};
+use bumbledb_core::schema::SchemaDescriptor;
+
+/// Representative supported positive ledger queries.
+pub fn ledger_queries(schema: &SchemaDescriptor) -> QueryBuildResult<Vec<TypedQuery>> {
+    Ok(vec![
+        QueryBuilder::new(schema)
+            .rel("Account")?
+            .var("id", "account")?
+            .input("holder", "holder")?
+            .done()
+            .find_var("account")?
+            .finish()?,
+        QueryBuilder::new(schema)
+            .rel("Account")?
+            .var("id", "account")?
+            .var("holder", "holder")?
+            .done()
+            .rel("Holder")?
+            .var("id", "holder")?
+            .var("name", "holder_name")?
+            .done()
+            .find_var("account")?
+            .find_var("holder_name")?
+            .finish()?,
+        QueryBuilder::new(schema)
+            .rel("Posting")?
+            .var("id", "posting")?
+            .var("account", "account")?
+            .var("amount", "amount")?
+            .var("at", "t")?
+            .done()
+            .rel("Account")?
+            .var("id", "account")?
+            .var("holder", "holder")?
+            .done()
+            .rel("Holder")?
+            .var("id", "holder")?
+            .var("name", "holder_name")?
+            .done()
+            .cmp(
+                OperandRef::var("t"),
+                ComparisonOperator::Gte,
+                OperandRef::input("start"),
+            )?
+            .cmp(
+                OperandRef::var("t"),
+                ComparisonOperator::Lt,
+                OperandRef::input("end"),
+            )?
+            .find_var("posting")?
+            .find_var("account")?
+            .find_var("holder_name")?
+            .finish()?,
+        QueryBuilder::new(schema)
+            .rel("Posting")?
+            .var("id", "posting")?
+            .var("account", "account")?
+            .var("amount", "amount")?
+            .var("at", "t")?
+            .done()
+            .find_var("account")?
+            .find_aggregate(AggregateFunction::Sum, "amount")?
+            .find_aggregate(AggregateFunction::Count, "posting")?
+            .finish()?,
+    ])
 }

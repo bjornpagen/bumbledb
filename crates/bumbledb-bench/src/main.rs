@@ -5,8 +5,9 @@ use std::io::Write as IoWrite;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use bumbledb_core::datalog::parse_and_typecheck;
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
+use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
+use bumbledb_core::query_ir::{AggregateFunction, ComparisonOperator, TypedFindTerm, TypedQuery};
 use bumbledb_core::schema::{
     EnumDescriptor, FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor,
     RelationKind, SchemaDescriptor, ValueType,
@@ -553,7 +554,7 @@ pub(crate) type SqliteInsert = fn(&Connection, &[Row]) -> Result<(), Box<dyn std
 
 pub(crate) struct BenchQuery {
     name: &'static str,
-    datalog: &'static str,
+    build: fn(&SchemaDescriptor) -> QueryBuildResult<TypedQuery>,
     inputs: Vec<(&'static str, Value)>,
     sqlite: &'static str,
     sqlite_params: Vec<SqlParam>,
@@ -831,7 +832,7 @@ fn run_dataset(
 
     let mut results = Vec::new();
     for query in selected_queries {
-        let typed = parse_and_typecheck(bumble_schema.descriptor(), query.datalog)?;
+        let typed = (query.build)(bumble_schema.descriptor())?;
         let prepared = bumble_env.prepare_query(&bumble_schema, &typed)?;
         let inputs = InputBindings::from_values(query.inputs.clone());
         let params = query.sqlite_params.clone();
@@ -923,6 +924,7 @@ fn run_dataset(
         let result = benchmark_result(
             dataset.name,
             &query,
+            &typed,
             &bumble_output,
             config.compare_mode,
             QueryTimingSamples {
@@ -1014,6 +1016,7 @@ fn sqlite_count(
 fn benchmark_result(
     dataset: &'static str,
     query: &BenchQuery,
+    typed: &TypedQuery,
     output: &QueryOutput,
     compare_mode: CompareMode,
     timing: QueryTimingSamples,
@@ -1031,6 +1034,7 @@ fn benchmark_result(
     let gate = evaluate_gate(
         dataset,
         query,
+        typed,
         output,
         compare_mode,
         bumbledb_avg,
@@ -1172,6 +1176,7 @@ fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
 fn evaluate_gate(
     dataset: &'static str,
     query: &BenchQuery,
+    typed: &TypedQuery,
     output: &QueryOutput,
     compare_mode: CompareMode,
     bumbledb_avg: Duration,
@@ -1304,7 +1309,7 @@ fn evaluate_gate(
     }
     if compare_mode == CompareMode::Materialized
         && has_aggregate
-        && query.datalog.contains("count(")
+        && typed_query_has_count_aggregate(typed)
         && counters.materialized_output_values > final_output_values
     {
         passed = false;
@@ -1318,6 +1323,18 @@ fn evaluate_gate(
         notes.push("all configured gates passed".to_owned());
     }
     GateOutcome { passed, notes }
+}
+
+fn typed_query_has_count_aggregate(query: &TypedQuery) -> bool {
+    query.find.iter().any(|term| {
+        matches!(
+            term,
+            TypedFindTerm::Aggregate {
+                function: AggregateFunction::Count,
+                ..
+            }
+        )
+    })
 }
 
 fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<BenchmarkGate> {
@@ -1938,14 +1955,7 @@ fn ledger_dataset(scale: u64) -> Dataset {
         queries: vec![
             BenchQuery {
                 name: "postings_for_holder_range",
-                datalog: r#"
-                    find ?posting ?amount
-                    where
-                      Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
-                      Account(id: ?account, holder: $holder)
-                      ?t >= $start
-                      ?t < $end
-                "#,
+                build: build_ledger_postings_for_holder_range,
                 inputs: vec![
                     ("holder", Value::Ref(1)),
                     ("start", Value::Timestamp(TimestampMicros(0))),
@@ -1967,12 +1977,7 @@ fn ledger_dataset(scale: u64) -> Dataset {
             },
             BenchQuery {
                 name: "balances_by_instrument",
-                datalog: r#"
-                    find ?instrument sum(?amount)
-                    where
-                      Posting(id: ?posting, account: ?account, instrument: ?instrument, amount: ?amount, at: ?t)
-                      Account(id: ?account, holder: $holder)
-                "#,
+                build: build_ledger_balances_by_instrument,
                 inputs: vec![("holder", Value::Ref(1))],
                 sqlite: r#"
                     SELECT p.instrument, SUM(p.amount) FROM posting p
@@ -1984,12 +1989,7 @@ fn ledger_dataset(scale: u64) -> Dataset {
             },
             BenchQuery {
                 name: "tag_lookup_join",
-                datalog: r#"
-                    find ?posting ?account
-                    where
-                      PostingTag(posting: ?posting, tag: $tag)
-                      Posting(id: ?posting, account: ?account)
-                "#,
+                build: build_ledger_tag_lookup_join,
                 inputs: vec![("tag", Value::Enum(1))],
                 sqlite: r#"
                     SELECT p.id, p.account FROM posting_tag t
@@ -2066,13 +2066,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
         queries: vec![
             BenchQuery {
                 name: "red_boat_sailors",
-                datalog: r#"
-                    find ?sailor ?rating
-                    where
-                      Reserve(sailor: ?sailor, boat: ?boat)
-                      Boat(id: ?boat, color: $color)
-                      Sailor(id: ?sailor, rating: ?rating)
-                "#,
+                build: build_sailors_red_boat_sailors,
                 inputs: vec![("color", Value::Enum(1))],
                 sqlite: r#"
                     SELECT DISTINCT s.id, s.rating FROM reserve r
@@ -2084,13 +2078,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
             },
             BenchQuery {
                 name: "sailor_range_reserves",
-                datalog: r#"
-                    find ?boat ?day
-                    where
-                      Reserve(sailor: $sailor, boat: ?boat, day: ?day)
-                      ?day >= $start
-                      ?day < $end
-                "#,
+                build: build_sailors_sailor_range_reserves,
                 inputs: vec![
                     ("sailor", Value::Ref(1)),
                     ("start", Value::Timestamp(TimestampMicros(0))),
@@ -2105,14 +2093,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
             },
             BenchQuery {
                 name: "high_rating_red_boats",
-                datalog: r#"
-                    find ?sailor ?boat
-                    where
-                      Sailor(id: ?sailor, rating: ?rating)
-                      Reserve(sailor: ?sailor, boat: ?boat)
-                      Boat(id: ?boat, color: $color)
-                      ?rating >= $min_rating
-                "#,
+                build: build_sailors_high_rating_red_boats,
                 inputs: vec![("color", Value::Enum(1)), ("min_rating", Value::U64(7))],
                 sqlite: r#"
                     SELECT DISTINCT s.id, b.id FROM sailor s
@@ -2235,27 +2216,14 @@ fn join_stress_dataset(scale: u64) -> Dataset {
         queries: vec![
             BenchQuery {
                 name: "chain4_from_a",
-                datalog: r#"
-                    find ?d
-                    where
-                      A(id: $a)
-                      B(id: ?b, a: $a)
-                      C(id: ?c, b: ?b)
-                      D(id: ?d, c: ?c)
-                "#,
+                build: build_joinstress_chain4_from_a,
                 inputs: vec![("a", Value::Id(1))],
                 sqlite: "SELECT d.id FROM a JOIN b ON b.a = a.id JOIN c ON c.b = b.id JOIN d ON d.c = c.id WHERE a.id = ?1",
                 sqlite_params: vec![SqlParam::I64(1)],
             },
             BenchQuery {
                 name: "triangle_count",
-                datalog: r#"
-                    find count(?a)
-                    where
-                      EdgeAB(a: ?a, b: ?b)
-                      EdgeAC(a: ?a, c: ?c)
-                      EdgeBC(b: ?b, c: ?c)
-                "#,
+                build: build_joinstress_triangle_count,
                 inputs: vec![],
                 sqlite: "SELECT COUNT(eab.a) FROM edge_ab eab JOIN edge_ac eac ON eac.a = eab.a JOIN edge_bc ebc ON ebc.b = eab.b AND ebc.c = eac.c",
                 sqlite_params: vec![],
@@ -2362,15 +2330,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
         queries: vec![
             BenchQuery {
                 name: "revenue_by_customer_range",
-                datalog: r#"
-                    find ?customer sum(?price)
-                    where
-                      Customer(id: ?customer, nation: $nation)
-                      Orders(id: ?order, customer: ?customer)
-                      LineItem(order: ?order, extended_price: ?price, ship_date: ?ship)
-                      ?ship >= $start
-                      ?ship < $end
-                "#,
+                build: build_tpch_revenue_by_customer_range,
                 inputs: vec![
                     ("nation", Value::Code(1)),
                     ("start", Value::Timestamp(TimestampMicros(0))),
@@ -2391,13 +2351,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
             },
             BenchQuery {
                 name: "supplier_nation_orders",
-                datalog: r#"
-                    find ?line ?order
-                    where
-                      Supplier(id: ?supplier, nation: $nation)
-                      LineItem(id: ?line, order: ?order, supplier: ?supplier)
-                      Orders(id: ?order, customer: ?customer)
-                "#,
+                build: build_tpch_supplier_nation_orders,
                 inputs: vec![("nation", Value::Code(2))],
                 sqlite: r#"
                     SELECT l.id, o.id FROM supplier s
@@ -2409,6 +2363,232 @@ fn tpch_dataset(scale: u64) -> Dataset {
             },
         ],
     }
+}
+
+fn build_ledger_postings_for_holder_range(
+    schema: &SchemaDescriptor,
+) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("Posting")?
+        .var("id", "posting")?
+        .var("account", "account")?
+        .var("amount", "amount")?
+        .var("at", "t")?
+        .done()
+        .rel("Account")?
+        .var("id", "account")?
+        .input("holder", "holder")?
+        .done()
+        .cmp(
+            OperandRef::var("t"),
+            ComparisonOperator::Gte,
+            OperandRef::input("start"),
+        )?
+        .cmp(
+            OperandRef::var("t"),
+            ComparisonOperator::Lt,
+            OperandRef::input("end"),
+        )?
+        .find_var("posting")?
+        .find_var("amount")?
+        .finish()
+}
+
+fn build_ledger_balances_by_instrument(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("Posting")?
+        .var("id", "posting")?
+        .var("account", "account")?
+        .var("instrument", "instrument")?
+        .var("amount", "amount")?
+        .var("at", "t")?
+        .done()
+        .rel("Account")?
+        .var("id", "account")?
+        .input("holder", "holder")?
+        .done()
+        .find_var("instrument")?
+        .find_aggregate(AggregateFunction::Sum, "amount")?
+        .finish()
+}
+
+fn build_ledger_tag_lookup_join(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("PostingTag")?
+        .var("posting", "posting")?
+        .input("tag", "tag")?
+        .done()
+        .rel("Posting")?
+        .var("id", "posting")?
+        .var("account", "account")?
+        .done()
+        .find_var("posting")?
+        .find_var("account")?
+        .finish()
+}
+
+fn build_sailors_red_boat_sailors(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("Reserve")?
+        .var("sailor", "sailor")?
+        .var("boat", "boat")?
+        .done()
+        .rel("Boat")?
+        .var("id", "boat")?
+        .input("color", "color")?
+        .done()
+        .rel("Sailor")?
+        .var("id", "sailor")?
+        .var("rating", "rating")?
+        .done()
+        .find_var("sailor")?
+        .find_var("rating")?
+        .finish()
+}
+
+fn build_sailors_sailor_range_reserves(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("Reserve")?
+        .input("sailor", "sailor")?
+        .var("boat", "boat")?
+        .var("day", "day")?
+        .done()
+        .cmp(
+            OperandRef::var("day"),
+            ComparisonOperator::Gte,
+            OperandRef::input("start"),
+        )?
+        .cmp(
+            OperandRef::var("day"),
+            ComparisonOperator::Lt,
+            OperandRef::input("end"),
+        )?
+        .find_var("boat")?
+        .find_var("day")?
+        .finish()
+}
+
+fn build_sailors_high_rating_red_boats(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("Sailor")?
+        .var("id", "sailor")?
+        .var("rating", "rating")?
+        .done()
+        .rel("Reserve")?
+        .var("sailor", "sailor")?
+        .var("boat", "boat")?
+        .done()
+        .rel("Boat")?
+        .var("id", "boat")?
+        .input("color", "color")?
+        .done()
+        .cmp(
+            OperandRef::var("rating"),
+            ComparisonOperator::Gte,
+            OperandRef::input("min_rating"),
+        )?
+        .find_var("sailor")?
+        .find_var("boat")?
+        .finish()
+}
+
+fn build_joinstress_chain4_from_a(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("A")?
+        .input("id", "a")?
+        .done()
+        .rel("B")?
+        .var("id", "b")?
+        .input("a", "a")?
+        .done()
+        .rel("C")?
+        .var("id", "c")?
+        .var("b", "b")?
+        .done()
+        .rel("D")?
+        .var("id", "d")?
+        .var("c", "c")?
+        .done()
+        .find_var("d")?
+        .finish()
+}
+
+fn build_joinstress_triangle_count(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("EdgeAB")?
+        .var("a", "a")?
+        .var("b", "b")?
+        .done()
+        .rel("EdgeAC")?
+        .var("a", "a")?
+        .var("c", "c")?
+        .done()
+        .rel("EdgeBC")?
+        .var("b", "b")?
+        .var("c", "c")?
+        .done()
+        .find_aggregate(AggregateFunction::Count, "a")?
+        .finish()
+}
+
+fn build_tpch_revenue_by_customer_range(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("Customer")?
+        .var("id", "customer")?
+        .input("nation", "nation")?
+        .done()
+        .rel("Orders")?
+        .var("id", "order")?
+        .var("customer", "customer")?
+        .done()
+        .rel("LineItem")?
+        .var("order", "order")?
+        .var("extended_price", "price")?
+        .var("ship_date", "ship")?
+        .done()
+        .cmp(
+            OperandRef::var("ship"),
+            ComparisonOperator::Gte,
+            OperandRef::input("start"),
+        )?
+        .cmp(
+            OperandRef::var("ship"),
+            ComparisonOperator::Lt,
+            OperandRef::input("end"),
+        )?
+        .find_var("customer")?
+        .find_aggregate(AggregateFunction::Sum, "price")?
+        .finish()
+}
+
+fn build_tpch_supplier_nation_orders(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut query = QueryBuilder::new(schema);
+    query
+        .rel("Supplier")?
+        .var("id", "supplier")?
+        .input("nation", "nation")?
+        .done()
+        .rel("LineItem")?
+        .var("id", "line")?
+        .var("order", "order")?
+        .var("supplier", "supplier")?
+        .done()
+        .rel("Orders")?
+        .var("id", "order")?
+        .var("customer", "customer")?
+        .done()
+        .find_var("line")?
+        .find_var("order")?
+        .finish()
 }
 
 fn sailors_rows(sailors: u64) -> Vec<Row> {

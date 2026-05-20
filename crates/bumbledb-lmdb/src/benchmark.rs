@@ -1,6 +1,8 @@
 //! Reproducible benchmark fixtures for the normalized ledger workload.
 
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
+use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
+use bumbledb_core::query_ir::{ComparisonOperator, TypedQuery};
 use bumbledb_core::schema::{
     FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
     SchemaDescriptor, ValueType,
@@ -8,13 +10,16 @@ use bumbledb_core::schema::{
 
 use crate::{Row, Value};
 
-/// A named benchmark query with equivalent Datalog and SQLite SQL.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Builds a typed benchmark query for a schema descriptor.
+pub type BenchmarkQueryBuilder = fn(&SchemaDescriptor) -> QueryBuildResult<TypedQuery>;
+
+/// A named benchmark query with equivalent typed Bumbledb and SQLite SQL.
+#[derive(Clone, Debug)]
 pub struct BenchmarkQuery {
     /// Stable query name.
     pub name: &'static str,
-    /// Datalog query text.
-    pub datalog: &'static str,
+    /// Typed query builder.
+    pub build: BenchmarkQueryBuilder,
     /// SQLite SQL query text.
     pub sqlite: &'static str,
 }
@@ -293,14 +298,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
 pub fn benchmark_queries() -> Vec<BenchmarkQuery> {
     vec![BenchmarkQuery {
         name: "postings_for_holder_range",
-        datalog: r#"
-            find ?posting ?amount
-            where
-              Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
-              Account(id: ?account, holder: $holder)
-              ?t >= $start
-              ?t < $end
-        "#,
+        build: postings_for_holder_range_query,
         sqlite: r#"
             SELECT p.id, p.amount
             FROM posting p
@@ -308,6 +306,33 @@ pub fn benchmark_queries() -> Vec<BenchmarkQuery> {
             WHERE a.holder = ?1 AND p.at >= ?2 AND p.at < ?3
         "#,
     }]
+}
+
+fn postings_for_holder_range_query(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    QueryBuilder::new(schema)
+        .rel("Posting")?
+        .var("id", "posting")?
+        .var("account", "account")?
+        .var("amount", "amount")?
+        .var("at", "t")?
+        .done()
+        .rel("Account")?
+        .var("id", "account")?
+        .input("holder", "holder")?
+        .done()
+        .cmp(
+            OperandRef::var("t"),
+            ComparisonOperator::Gte,
+            OperandRef::input("start"),
+        )?
+        .cmp(
+            OperandRef::var("t"),
+            ComparisonOperator::Lt,
+            OperandRef::input("end"),
+        )?
+        .find_var("posting")?
+        .find_var("amount")?
+        .finish()
 }
 
 fn entity(name: &str, id_type: &str, fields: Vec<FieldDescriptor>) -> RelationDescriptor {
@@ -344,7 +369,6 @@ fn ref_field(id_type: &str, field: &str, target: &str) -> FieldDescriptor {
 
 #[cfg(test)]
 mod tests {
-    use bumbledb_core::datalog::parse_and_typecheck;
     use rusqlite::{Connection, params};
 
     use super::*;
@@ -366,11 +390,12 @@ mod tests {
         })?;
 
         let query = &benchmark_queries()[0];
-        let typed = parse_and_typecheck(schema.descriptor(), query.datalog)?;
+        let typed = (query.build)(schema.descriptor())?;
+        let prepared = env.prepare_query(&schema, &typed)?;
         let bumbledb = env.read(|txn| {
-            txn.execute_query(
+            txn.execute_prepared_query(
                 &schema,
-                &typed,
+                &prepared,
                 &InputBindings::from_values([
                     ("holder", Value::Ref(1)),
                     ("start", Value::Timestamp(TimestampMicros(0))),

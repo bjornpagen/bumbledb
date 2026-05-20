@@ -9521,12 +9521,21 @@ mod tests {
     use super::*;
     use crate::query_image::{QueryImageBuilder, QueryImageScope};
     use crate::{AggregateError, Environment, ExecuteError, QueryError, Row};
-    use bumbledb_core::datalog::parse_and_typecheck;
+    use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
     use bumbledb_core::schema::{
         FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
     };
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
+    fn typed_query(
+        schema: &StorageSchema,
+        build: impl FnOnce(&mut QueryBuilder<'_>) -> QueryBuildResult<()>,
+    ) -> QueryBuildResult<TypedQuery> {
+        let mut builder = QueryBuilder::new(schema.descriptor());
+        build(&mut builder)?;
+        builder.finish()
+    }
 
     #[test]
     fn query_observability_defaults_are_zero() {
@@ -9544,10 +9553,15 @@ mod tests {
     #[test]
     fn executes_single_relation_query() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            "find ?account where Account(id: ?account, holder: $holder)",
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .input("holder", "holder")?
+                .done()
+                .find_var("account")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| {
             txn.execute_query(
@@ -9577,10 +9591,15 @@ mod tests {
     #[test]
     fn planner_recommends_missing_static_predicate_index() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            "find ?account where Account(id: ?account, currency: $currency)",
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .input("currency", "currency")?
+                .done()
+                .find_var("account")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| {
             txn.execute_query(
@@ -9611,10 +9630,15 @@ mod tests {
             txn.insert(&schema, item_row(3, 2))?;
             Ok::<(), Error>(())
         })?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            "find ?item where Item(id: ?item, kind: $kind)",
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Item")?
+                .var("id", "item")?
+                .input("kind", "kind")?
+                .done()
+                .find_var("item")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| {
             txn.execute_query(
@@ -9642,16 +9666,17 @@ mod tests {
             txn.insert(&schema, b_row(1, 99))?;
             Ok::<(), Error>(())
         })?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?b
-            where
-              A(id: $a)
-              B(id: ?b, a: $a)
-              ?b != 0
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query.rel("A")?.input("id", "a")?.done();
+            query.rel("B")?.var("id", "b")?.input("a", "a")?.done();
+            query.cmp(
+                OperandRef::var("b"),
+                ComparisonOperator::NotEq,
+                OperandRef::integer(0),
+            )?;
+            query.find_var("b")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| {
             txn.execute_query(
@@ -9681,17 +9706,18 @@ mod tests {
             txn.insert(&schema, chain_c_row(21, 10))?;
             Ok::<_, Error>(())
         })?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?c
-            where
-              A(id: ?a)
-              B(id: ?b, a: ?a)
-              C(id: ?c, b: ?b)
-              ?c != 0
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query.rel("A")?.var("id", "a")?.done();
+            query.rel("B")?.var("id", "b")?.var("a", "a")?.done();
+            query.rel("C")?.var("id", "c")?.var("b", "b")?.done();
+            query.cmp(
+                OperandRef::var("c"),
+                ComparisonOperator::NotEq,
+                OperandRef::integer(0),
+            )?;
+            query.find_var("c")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
@@ -9729,16 +9755,26 @@ mod tests {
             txn.insert(&schema, reserve_row(2, 12, 5))?;
             Ok::<_, Error>(())
         })?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?boat ?day
-            where
-              Reserve(sailor: $sailor, boat: ?boat, day: ?day)
-              ?day >= $start
-              ?day < $end
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Reserve")?
+                .input("sailor", "sailor")?
+                .var("boat", "boat")?
+                .var("day", "day")?
+                .done();
+            query.cmp(
+                OperandRef::var("day"),
+                ComparisonOperator::Gte,
+                OperandRef::input("start"),
+            )?;
+            query.cmp(
+                OperandRef::var("day"),
+                ComparisonOperator::Lt,
+                OperandRef::input("end"),
+            )?;
+            query.find_var("boat")?.find_var("day")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| {
             txn.execute_query(
@@ -9784,16 +9820,26 @@ mod tests {
             txn.insert(&schema, reserve_row(2, 12, 25))?;
             Ok::<_, Error>(())
         })?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?sailor ?boat
-            where
-              Reserve(sailor: ?sailor, boat: ?boat, day: ?day)
-              ?day >= $start
-              ?day < $end
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Reserve")?
+                .var("sailor", "sailor")?
+                .var("boat", "boat")?
+                .var("day", "day")?
+                .done();
+            query.cmp(
+                OperandRef::var("day"),
+                ComparisonOperator::Gte,
+                OperandRef::input("start"),
+            )?;
+            query.cmp(
+                OperandRef::var("day"),
+                ComparisonOperator::Lt,
+                OperandRef::input("end"),
+            )?;
+            query.find_var("sailor")?.find_var("boat")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| {
             txn.execute_query(
@@ -9830,16 +9876,26 @@ mod tests {
             txn.insert(&schema, reserve_row(1, 10, 5))?;
             Ok::<_, Error>(())
         })?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?boat ?day
-            where
-              Reserve(sailor: $sailor, boat: ?boat, day: ?day)
-              ?day >= $start
-              ?day < $end
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Reserve")?
+                .input("sailor", "sailor")?
+                .var("boat", "boat")?
+                .var("day", "day")?
+                .done();
+            query.cmp(
+                OperandRef::var("day"),
+                ComparisonOperator::Gte,
+                OperandRef::input("start"),
+            )?;
+            query.cmp(
+                OperandRef::var("day"),
+                ComparisonOperator::Lt,
+                OperandRef::input("end"),
+            )?;
+            query.find_var("boat")?.find_var("day")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| {
             txn.execute_query(
@@ -9872,17 +9928,14 @@ mod tests {
             txn.insert(&schema, chain_d_row(30, 20))?;
             Ok::<_, Error>(())
         })?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?d
-            where
-              A(id: $a)
-              B(id: ?b, a: $a)
-              C(id: ?c, b: ?b)
-              D(id: ?d, c: ?c)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query.rel("A")?.input("id", "a")?.done();
+            query.rel("B")?.var("id", "b")?.input("a", "a")?.done();
+            query.rel("C")?.var("id", "c")?.var("b", "b")?.done();
+            query.rel("D")?.var("id", "d")?.var("c", "c")?.done();
+            query.find_var("d")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| {
             txn.execute_query(
@@ -9919,17 +9972,14 @@ mod tests {
             txn.insert(&schema, chain_d_row(30, 20))?;
             Ok::<_, Error>(())
         })?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?d
-            where
-              A(id: $a)
-              B(id: ?b, a: $a)
-              C(id: ?c, b: ?b)
-              D(id: ?d, c: ?c)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query.rel("A")?.input("id", "a")?.done();
+            query.rel("B")?.var("id", "b")?.input("a", "a")?.done();
+            query.rel("C")?.var("id", "c")?.var("b", "b")?.done();
+            query.rel("D")?.var("id", "d")?.var("c", "c")?.done();
+            query.find_var("d")?;
+            Ok(())
+        })?;
         let inputs = InputBindings::from_values([("a", Value::U64(1))]);
 
         let materialized = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
@@ -9950,17 +10000,14 @@ mod tests {
             txn.insert(&schema, chain_b_row(10, 1))?;
             Ok::<_, Error>(())
         })?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?d
-            where
-              A(id: $a)
-              B(id: ?b, a: $a)
-              C(id: ?c, b: ?b)
-              D(id: ?d, c: ?c)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query.rel("A")?.input("id", "a")?.done();
+            query.rel("B")?.var("id", "b")?.input("a", "a")?.done();
+            query.rel("C")?.var("id", "c")?.var("b", "b")?.done();
+            query.rel("D")?.var("id", "d")?.var("c", "c")?.done();
+            query.find_var("d")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| {
             txn.execute_query(
@@ -9991,16 +10038,13 @@ mod tests {
             txn.insert(&schema, edge_bc_row(10, 40))?;
             Ok::<(), Error>(())
         })?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find count(?a)
-            where
-              EdgeAB(a: ?a, b: ?b)
-              EdgeAC(a: ?a, c: ?c)
-              EdgeBC(b: ?b, c: ?c)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
+            query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
+            query.rel("EdgeBC")?.var("b", "b")?.var("c", "c")?.done();
+            query.find_aggregate(AggregateFunction::Count, "a")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
@@ -10036,15 +10080,12 @@ mod tests {
             txn.insert(&schema, Row::new("A", [("id", Value::U64(2))]))?;
             Ok::<_, Error>(())
         })?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?left ?right
-            where
-              A(id: ?left)
-              A(id: ?right)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query.rel("A")?.var("id", "left")?.done();
+            query.rel("A")?.var("id", "right")?.done();
+            query.find_var("left")?.find_var("right")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
@@ -10063,15 +10104,12 @@ mod tests {
             txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
             Ok::<_, Error>(())
         })?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?a ?b
-            where
-              A(id: ?a)
-              B(id: ?b, a: 99)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query.rel("A")?.var("id", "a")?.done();
+            query.rel("B")?.var("id", "b")?.integer("a", 99)?.done();
+            query.find_var("a")?.find_var("b")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
@@ -10092,15 +10130,12 @@ mod tests {
             txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
             Ok::<_, Error>(())
         })?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?a ?b
-            where
-              A(id: ?a)
-              B(id: ?b, a: 99)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query.rel("A")?.var("id", "a")?.done();
+            query.rel("B")?.var("id", "b")?.integer("a", 99)?.done();
+            query.find_var("a")?.find_var("b")?;
+            Ok(())
+        })?;
 
         let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
         let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
@@ -10136,15 +10171,12 @@ mod tests {
             )?;
             Ok::<_, Error>(())
         })?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find count(?a)
-            where
-              EdgeAB(a: ?a, b: ?b)
-              EdgeAC(a: ?a, c: ?c)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
+            query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
+            query.find_aggregate(AggregateFunction::Count, "a")?;
+            Ok(())
+        })?;
         let prepared = env.prepare_query(&schema, &query)?;
 
         let output =
@@ -10166,15 +10198,20 @@ mod tests {
     #[test]
     fn optimizer_trace_and_cost_tiebreak_are_stable() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?account ?holder_name
-            where
-              Account(id: ?account, holder: ?holder)
-              Holder(id: ?holder, name: ?holder_name)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .var("holder", "holder")?
+                .done();
+            query
+                .rel("Holder")?
+                .var("id", "holder")?
+                .var("name", "holder_name")?
+                .done();
+            query.find_var("account")?.find_var("holder_name")?;
+            Ok(())
+        })?;
 
         let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
         let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
@@ -10191,15 +10228,20 @@ mod tests {
     #[test]
     fn prepared_plan_cache_reuses_parameterized_shape() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?account ?holder_name
-            where
-              Account(id: ?account, holder: ?holder)
-              Holder(id: $holder, name: ?holder_name)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .var("holder", "holder")?
+                .done();
+            query
+                .rel("Holder")?
+                .input("id", "holder")?
+                .var("name", "holder_name")?
+                .done();
+            query.find_var("account")?.find_var("holder_name")?;
+            Ok(())
+        })?;
         let inputs = InputBindings::from_values([("holder", Value::Id(1))]);
 
         let first = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
@@ -10216,10 +10258,15 @@ mod tests {
     #[test]
     fn prepared_plan_cache_reuses_no_input_physical_plan() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            "find ?account ?holder where Account(id: ?account, holder: ?holder)",
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .var("holder", "holder")?
+                .done();
+            query.find_var("account")?.find_var("holder")?;
+            Ok(())
+        })?;
 
         let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
         let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
@@ -10243,10 +10290,15 @@ mod tests {
     #[test]
     fn prepared_plan_cache_is_snapshot_scoped() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            "find ?account ?holder where Account(id: ?account, holder: ?holder)",
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .var("holder", "holder")?
+                .done();
+            query.find_var("account")?.find_var("holder")?;
+            Ok(())
+        })?;
 
         let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
         env.write(|txn| {
@@ -10267,10 +10319,15 @@ mod tests {
     #[test]
     fn planner_stats_are_cached_per_query_image() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            "find ?account where Account(id: ?account, holder: ?holder)",
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .var("holder", "holder")?
+                .done()
+                .find_var("account")?;
+            Ok(())
+        })?;
         let inputs = InputBindings::new();
 
         let first = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
@@ -10302,10 +10359,15 @@ mod tests {
     #[test]
     fn execute_query_uses_warmed_query_image_cache() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            "find ?account where Account(id: ?account, holder: ?holder)",
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .var("holder", "holder")?
+                .done()
+                .find_var("account")?;
+            Ok(())
+        })?;
         let inputs = InputBindings::new();
 
         let warm = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
@@ -10325,10 +10387,15 @@ mod tests {
     #[test]
     fn execute_query_cache_misses_after_write_commit() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            "find ?account where Account(id: ?account, holder: ?holder)",
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .var("holder", "holder")?
+                .done()
+                .find_var("account")?;
+            Ok(())
+        })?;
 
         let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
         env.write(|txn| {
@@ -10349,12 +10416,20 @@ mod tests {
         let env = Environment::open(dir.path())?;
         let schema_a = StorageSchema::new(optimizer_schema(), env.max_key_size())?;
         let schema_b = StorageSchema::new(triangle_schema(), env.max_key_size())?;
-        let item_query = parse_and_typecheck(
-            schema_a.descriptor(),
-            "find ?item where Item(id: ?item, kind: ?kind)",
-        )?;
-        let edge_query =
-            parse_and_typecheck(schema_b.descriptor(), "find ?a where EdgeAB(a: ?a, b: ?b)")?;
+        let item_query = typed_query(&schema_a, |query| {
+            query
+                .rel("Item")?
+                .var("id", "item")?
+                .var("kind", "kind")?
+                .done();
+            query.find_var("item")?;
+            Ok(())
+        })?;
+        let edge_query = typed_query(&schema_b, |query| {
+            query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
+            query.find_var("a")?;
+            Ok(())
+        })?;
 
         let item =
             env.read(|txn| txn.execute_query(&schema_a, &item_query, &InputBindings::new()))?;
@@ -10370,24 +10445,35 @@ mod tests {
     #[test]
     fn planner_stats_reuse_shared_relations_across_queries() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let first_query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?posting
-            where
-              Posting(id: ?posting, account: ?account)
-              Account(id: ?account, holder: ?holder)
-            "#,
-        )?;
-        let second_query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?posting
-            where
-              Posting(id: ?posting, account: ?account, at: ?t)
-              ?t >= 0
-            "#,
-        )?;
+        let first_query = typed_query(&schema, |query| {
+            query
+                .rel("Posting")?
+                .var("id", "posting")?
+                .var("account", "account")?
+                .done();
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .var("holder", "holder")?
+                .done();
+            query.find_var("posting")?;
+            Ok(())
+        })?;
+        let second_query = typed_query(&schema, |query| {
+            query
+                .rel("Posting")?
+                .var("id", "posting")?
+                .var("account", "account")?
+                .var("at", "t")?
+                .done();
+            query.cmp(
+                OperandRef::var("t"),
+                ComparisonOperator::Gte,
+                OperandRef::integer(0),
+            )?;
+            query.find_var("posting")?;
+            Ok(())
+        })?;
 
         let inputs = InputBindings::new();
 
@@ -10403,10 +10489,15 @@ mod tests {
     #[test]
     fn planner_stats_cache_is_snapshot_scoped() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            "find ?account where Account(id: ?account, holder: ?holder)",
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .var("holder", "holder")?
+                .done()
+                .find_var("account")?;
+            Ok(())
+        })?;
 
         let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
         env.write(|txn| {
@@ -10424,17 +10515,32 @@ mod tests {
     #[test]
     fn normalized_query_preserves_typed_query_shape() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?posting ?amount
-            where
-              Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
-              Account(id: ?account, holder: $holder)
-              ?t >= $start
-              ?t < $end
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Posting")?
+                .var("id", "posting")?
+                .var("account", "account")?
+                .var("amount", "amount")?
+                .var("at", "t")?
+                .done();
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .input("holder", "holder")?
+                .done();
+            query.cmp(
+                OperandRef::var("t"),
+                ComparisonOperator::Gte,
+                OperandRef::input("start"),
+            )?;
+            query.cmp(
+                OperandRef::var("t"),
+                ComparisonOperator::Lt,
+                OperandRef::input("end"),
+            )?;
+            query.find_var("posting")?.find_var("amount")?;
+            Ok(())
+        })?;
 
         let normalized = env.read(|txn| normalize_query(txn, &schema, &query))?;
 
@@ -10453,51 +10559,38 @@ mod tests {
     #[test]
     fn query_shape_key_is_structural_and_stable() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let base = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?posting ?amount
-            where
-              Posting(id: ?posting, amount: ?amount, at: ?t)
-              ?t < 30
-            "#,
-        )?;
-        let same = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?posting ?amount
-            where
-              Posting(id: ?posting, amount: ?amount, at: ?t)
-              ?t < 30
-            "#,
-        )?;
-        let different_literal = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?posting ?amount
-            where
-              Posting(id: ?posting, amount: ?amount, at: ?t)
-              ?t < 31
-            "#,
-        )?;
-        let different_operator = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?posting ?amount
-            where
-              Posting(id: ?posting, amount: ?amount, at: ?t)
-              ?t <= 30
-            "#,
-        )?;
-        let different_output = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?amount ?posting
-            where
-              Posting(id: ?posting, amount: ?amount, at: ?t)
-              ?t < 30
-            "#,
-        )?;
+        let posting_amount_before = |limit, operator| {
+            typed_query(&schema, |query| {
+                query
+                    .rel("Posting")?
+                    .var("id", "posting")?
+                    .var("amount", "amount")?
+                    .var("at", "t")?
+                    .done();
+                query.cmp(OperandRef::var("t"), operator, OperandRef::integer(limit))?;
+                query.find_var("posting")?.find_var("amount")?;
+                Ok(())
+            })
+        };
+        let base = posting_amount_before(30, ComparisonOperator::Lt)?;
+        let same = posting_amount_before(30, ComparisonOperator::Lt)?;
+        let different_literal = posting_amount_before(31, ComparisonOperator::Lt)?;
+        let different_operator = posting_amount_before(30, ComparisonOperator::Lte)?;
+        let different_output = typed_query(&schema, |query| {
+            query
+                .rel("Posting")?
+                .var("id", "posting")?
+                .var("amount", "amount")?
+                .var("at", "t")?
+                .done();
+            query.cmp(
+                OperandRef::var("t"),
+                ComparisonOperator::Lt,
+                OperandRef::integer(30),
+            )?;
+            query.find_var("amount")?.find_var("posting")?;
+            Ok(())
+        })?;
 
         let keys = env.read(|txn| {
             let base = normalize_query(txn, &schema, &base)?;
@@ -10524,15 +10617,21 @@ mod tests {
     #[test]
     fn prepared_query_reuses_normalized_snapshot_shape() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?posting ?amount
-            where
-              Posting(id: ?posting, account: ?account, amount: ?amount)
-              Account(id: ?account, holder: $holder)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Posting")?
+                .var("id", "posting")?
+                .var("account", "account")?
+                .var("amount", "amount")?
+                .done();
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .input("holder", "holder")?
+                .done();
+            query.find_var("posting")?.find_var("amount")?;
+            Ok(())
+        })?;
         let prepared = env.prepare_query(&schema, &query)?;
         let inputs = InputBindings::from_values([("holder", Value::Ref(1))]);
 
@@ -10548,13 +10647,15 @@ mod tests {
     #[test]
     fn lftj_atom_key_includes_encoded_inputs() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?account
-            where Account(id: ?account, holder: $holder)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .input("holder", "holder")?
+                .done()
+                .find_var("account")?;
+            Ok(())
+        })?;
         let first_inputs = InputBindings::from_values([("holder", Value::Ref(1))]);
         let second_inputs = InputBindings::from_values([("holder", Value::Ref(2))]);
 
@@ -10592,7 +10693,11 @@ mod tests {
             txn.insert(&schema, edge_ab_row(1, 2))?;
             Ok::<(), Error>(())
         })?;
-        let query = parse_and_typecheck(schema.descriptor(), "find ?a where EdgeAB(a: ?a, b: ?a)")?;
+        let query = typed_query(&schema, |query| {
+            query.rel("EdgeAB")?.var("a", "a")?.var("b", "a")?.done();
+            query.find_var("a")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
@@ -10603,16 +10708,26 @@ mod tests {
     #[test]
     fn predicate_earliest_depth_assignment_is_deterministic() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?posting
-            where
-              Posting(id: ?posting, account: ?account, at: ?t)
-              Account(id: ?account, holder: $holder)
-              ?t >= $start
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Posting")?
+                .var("id", "posting")?
+                .var("account", "account")?
+                .var("at", "t")?
+                .done();
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .input("holder", "holder")?
+                .done();
+            query.cmp(
+                OperandRef::var("t"),
+                ComparisonOperator::Gte,
+                OperandRef::input("start"),
+            )?;
+            query.find_var("posting")?;
+            Ok(())
+        })?;
 
         let depths = env.read(|txn| {
             let mut normalized = normalize_query(txn, &schema, &query)?;
@@ -10669,10 +10784,15 @@ mod tests {
             txn.insert(&schema, item_row(1, 1))?;
             Ok::<(), Error>(())
         })?;
-        let typed = parse_and_typecheck(
-            schema.descriptor(),
-            "find ?item where Item(id: ?item, kind: $kind)",
-        )?;
+        let typed = typed_query(&schema, |query| {
+            query
+                .rel("Item")?
+                .var("id", "item")?
+                .input("kind", "kind")?
+                .done()
+                .find_var("item")?;
+            Ok(())
+        })?;
         let inputs = InputBindings::from_values([("kind", Value::Enum(1))]);
         let interpreted = env
             .read(|txn| txn.execute_query(&schema, &typed, &inputs))?
@@ -10704,15 +10824,20 @@ mod tests {
     #[test]
     fn executes_two_relation_join() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?account ?holder_name
-            where
-              Account(id: ?account, holder: ?holder)
-              Holder(id: ?holder, name: ?holder_name)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .var("holder", "holder")?
+                .done();
+            query
+                .rel("Holder")?
+                .var("id", "holder")?
+                .var("name", "holder_name")?
+                .done();
+            query.find_var("account")?.find_var("holder_name")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
         assert!(output.plan.uses_indexed_multiway_join);
@@ -10730,18 +10855,40 @@ mod tests {
     #[test]
     fn executes_many_relation_join_and_range_filter() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?posting ?account ?holder_name
-            where
-              Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
-              Account(id: ?account, holder: ?holder)
-              Holder(id: ?holder, name: ?holder_name)
-              ?t >= $start
-              ?t < $end
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Posting")?
+                .var("id", "posting")?
+                .var("account", "account")?
+                .var("amount", "amount")?
+                .var("at", "t")?
+                .done();
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .var("holder", "holder")?
+                .done();
+            query
+                .rel("Holder")?
+                .var("id", "holder")?
+                .var("name", "holder_name")?
+                .done();
+            query.cmp(
+                OperandRef::var("t"),
+                ComparisonOperator::Gte,
+                OperandRef::input("start"),
+            )?;
+            query.cmp(
+                OperandRef::var("t"),
+                ComparisonOperator::Lt,
+                OperandRef::input("end"),
+            )?;
+            query
+                .find_var("posting")?
+                .find_var("account")?
+                .find_var("holder_name")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| {
             txn.execute_query(
@@ -10782,10 +10929,15 @@ mod tests {
     #[test]
     fn projection_uses_set_semantics() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            "find ?holder where Account(id: ?account, holder: ?holder)",
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .var("holder", "holder")?
+                .done()
+                .find_var("holder")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
         assert_eq!(output.rows, vec![vec![Value::Ref(1)], vec![Value::Ref(2)]]);
@@ -10797,10 +10949,11 @@ mod tests {
     #[test]
     fn count_sink_avoids_decoding_counted_variable() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            "find count(?posting) where Posting(id: ?posting)",
-        )?;
+        let query = typed_query(&schema, |query| {
+            query.rel("Posting")?.var("id", "posting")?.done();
+            query.find_aggregate(AggregateFunction::Count, "posting")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
@@ -10820,14 +10973,17 @@ mod tests {
     #[test]
     fn sum_sink_decodes_only_aggregate_operand_values() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find sum(?amount) count(?posting)
-            where
-              Posting(id: ?posting, amount: ?amount)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Posting")?
+                .var("id", "posting")?
+                .var("amount", "amount")?
+                .done();
+            query
+                .find_aggregate(AggregateFunction::Sum, "amount")?
+                .find_aggregate(AggregateFunction::Count, "posting")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
@@ -10844,15 +11000,22 @@ mod tests {
     #[test]
     fn grouped_count_decodes_dictionary_keys_only_at_final_output() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?holder_name count(?account)
-            where
-              Account(id: ?account, holder: ?holder)
-              Holder(id: ?holder, name: ?holder_name)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .var("holder", "holder")?
+                .done();
+            query
+                .rel("Holder")?
+                .var("id", "holder")?
+                .var("name", "holder_name")?
+                .done();
+            query
+                .find_var("holder_name")?
+                .find_aggregate(AggregateFunction::Count, "account")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
@@ -10895,14 +11058,22 @@ mod tests {
     #[test]
     fn aggregation_groups_and_sums_decimal_values() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?account sum(?amount) count(?posting) min(?t) max(?t)
-            where
-              Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Posting")?
+                .var("id", "posting")?
+                .var("account", "account")?
+                .var("amount", "amount")?
+                .var("at", "t")?
+                .done();
+            query
+                .find_var("account")?
+                .find_aggregate(AggregateFunction::Sum, "amount")?
+                .find_aggregate(AggregateFunction::Count, "posting")?
+                .find_aggregate(AggregateFunction::Min, "t")?
+                .find_aggregate(AggregateFunction::Max, "t")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
@@ -10939,8 +11110,11 @@ mod tests {
             Ok::<(), Error>(())
         })?;
 
-        let int_query =
-            parse_and_typecheck(schema.descriptor(), "find sum(?n) where Number(n: ?n)")?;
+        let int_query = typed_query(&schema, |query| {
+            query.rel("Number")?.var("n", "n")?.done();
+            query.find_aggregate(AggregateFunction::Sum, "n")?;
+            Ok(())
+        })?;
         assert!(matches!(
             env.read(|txn| txn.execute_query(&schema, &int_query, &InputBindings::new())),
             Err(Error::Query(QueryError::Aggregate(
@@ -10948,8 +11122,11 @@ mod tests {
             )))
         ));
 
-        let decimal_query =
-            parse_and_typecheck(schema.descriptor(), "find sum(?d) where Number(d: ?d)")?;
+        let decimal_query = typed_query(&schema, |query| {
+            query.rel("Number")?.var("d", "d")?.done();
+            query.find_aggregate(AggregateFunction::Sum, "d")?;
+            Ok(())
+        })?;
         assert!(matches!(
             env.read(|txn| txn.execute_query(&schema, &decimal_query, &InputBindings::new())),
             Err(Error::Query(QueryError::Aggregate(
@@ -10962,10 +11139,15 @@ mod tests {
     #[test]
     fn input_type_mismatch_is_rejected_at_execution() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            "find ?account where Account(id: ?account, holder: $holder)",
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .input("holder", "holder")?
+                .done()
+                .find_var("account")?;
+            Ok(())
+        })?;
         let result = env.read(|txn| {
             txn.execute_query(
                 &schema,
@@ -10985,10 +11167,15 @@ mod tests {
     #[test]
     fn enum_input_value_must_be_declared_variant() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            "find ?account where Account(id: ?account, currency: $currency)",
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .input("currency", "currency")?
+                .done()
+                .find_var("account")?;
+            Ok(())
+        })?;
         let result = env.read(|txn| {
             txn.execute_query(
                 &schema,
@@ -11008,17 +11195,32 @@ mod tests {
     #[test]
     fn explain_and_storage_diagnostics_are_available() -> TestResult {
         let (env, schema) = seeded_db()?;
-        let query = parse_and_typecheck(
-            schema.descriptor(),
-            r#"
-            find ?posting ?amount
-            where
-              Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
-              Account(id: ?account, holder: $holder)
-              ?t >= $start
-              ?t < $end
-            "#,
-        )?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("Posting")?
+                .var("id", "posting")?
+                .var("account", "account")?
+                .var("amount", "amount")?
+                .var("at", "t")?
+                .done();
+            query
+                .rel("Account")?
+                .var("id", "account")?
+                .input("holder", "holder")?
+                .done();
+            query.cmp(
+                OperandRef::var("t"),
+                ComparisonOperator::Gte,
+                OperandRef::input("start"),
+            )?;
+            query.cmp(
+                OperandRef::var("t"),
+                ComparisonOperator::Lt,
+                OperandRef::input("end"),
+            )?;
+            query.find_var("posting")?.find_var("amount")?;
+            Ok(())
+        })?;
 
         let output = env.read(|txn| {
             txn.execute_query(
@@ -11080,26 +11282,59 @@ mod tests {
         let reference = ReferenceDb::from_rows(seeded_rows());
         let cases = [
             (
-                "find ?account where Account(id: ?account, holder: $holder)",
+                typed_query(&schema, |query| {
+                    query
+                        .rel("Account")?
+                        .var("id", "account")?
+                        .input("holder", "holder")?
+                        .done()
+                        .find_var("account")?;
+                    Ok(())
+                })?,
                 InputBindings::from_values([("holder", Value::Ref(1))]),
             ),
             (
-                r#"
-                find ?account ?holder_name
-                where
-                  Account(id: ?account, holder: ?holder)
-                  Holder(id: ?holder, name: ?holder_name)
-                "#,
+                typed_query(&schema, |query| {
+                    query
+                        .rel("Account")?
+                        .var("id", "account")?
+                        .var("holder", "holder")?
+                        .done();
+                    query
+                        .rel("Holder")?
+                        .var("id", "holder")?
+                        .var("name", "holder_name")?
+                        .done();
+                    query.find_var("account")?.find_var("holder_name")?;
+                    Ok(())
+                })?,
                 InputBindings::new(),
             ),
             (
-                r#"
-                find ?account sum(?amount) count(?posting)
-                where
-                  Posting(id: ?posting, account: ?account, amount: ?amount, at: ?t)
-                  ?t >= $start
-                  ?t < $end
-                "#,
+                typed_query(&schema, |query| {
+                    query
+                        .rel("Posting")?
+                        .var("id", "posting")?
+                        .var("account", "account")?
+                        .var("amount", "amount")?
+                        .var("at", "t")?
+                        .done();
+                    query.cmp(
+                        OperandRef::var("t"),
+                        ComparisonOperator::Gte,
+                        OperandRef::input("start"),
+                    )?;
+                    query.cmp(
+                        OperandRef::var("t"),
+                        ComparisonOperator::Lt,
+                        OperandRef::input("end"),
+                    )?;
+                    query
+                        .find_var("account")?
+                        .find_aggregate(AggregateFunction::Sum, "amount")?
+                        .find_aggregate(AggregateFunction::Count, "posting")?;
+                    Ok(())
+                })?,
                 InputBindings::from_values([
                     ("start", Value::Timestamp(TimestampMicros(0))),
                     ("end", Value::Timestamp(TimestampMicros(100))),
@@ -11107,8 +11342,7 @@ mod tests {
             ),
         ];
 
-        for (source, inputs) in cases {
-            let query = parse_and_typecheck(schema.descriptor(), source)?;
+        for (query, inputs) in cases {
             let lmdb_rows = env
                 .read(|txn| txn.execute_query(&schema, &query, &inputs))?
                 .rows;
