@@ -1,4 +1,4 @@
-//! Simple in-memory reference model for supported v0 Datalog.
+//! Simple in-memory reference model for supported typed query IR.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,7 +32,7 @@ impl ReferenceDb {
         Self { rows: by_relation }
     }
 
-    /// Executes a typed positive Datalog query.
+    /// Executes a typed positive query IR.
     pub fn execute(&self, query: &TypedQuery, inputs: &InputBindings) -> Result<Vec<Vec<Value>>> {
         validate_inputs(query, inputs)?;
         let atoms = query

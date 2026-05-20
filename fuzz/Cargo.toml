@@ -41,10 +41,3 @@ path = "fuzz_targets/fuzz_encoding_decode.rs"
 test = false
 doc = false
 bench = false
-
-[[bin]]
-name = "fuzz_datalog_parser"
-path = "fuzz_targets/fuzz_datalog_parser.rs"
-test = false
-doc = false
-bench = false

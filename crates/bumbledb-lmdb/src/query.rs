@@ -73,7 +73,7 @@ pub struct InputId(pub u16);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PredicateId(pub u16);
 
-/// Executor-friendly normalized Datalog query.
+/// Executor-friendly normalized typed query IR.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NormalizedQuery {
     /// Dense variables used by this query.
@@ -1520,7 +1520,7 @@ enum DirectStorageAccess {
 }
 
 impl<'env> ReadTxn<'env> {
-    /// Executes a typed positive Datalog query against current indexes.
+    /// Executes a typed positive query IR against current indexes.
     #[tracing::instrument(name = "bumbledb.query.execute", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
     pub fn execute_query(
         &self,
@@ -1761,7 +1761,7 @@ impl<'env> ReadTxn<'env> {
         })
     }
 
-    /// Executes a prepared typed positive Datalog query against current indexes.
+    /// Executes a prepared typed positive query IR against current indexes.
     #[tracing::instrument(name = "bumbledb.query.execute_prepared", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
     pub fn execute_prepared_query(
         &self,

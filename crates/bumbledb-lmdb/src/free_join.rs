@@ -130,7 +130,7 @@ impl Default for OutputPlan {
 pub struct ProjectPlan {
     /// Projected variables in output order.
     pub vars: Vec<VarId>,
-    /// True for Datalog set semantics.
+    /// True for typed query IR set semantics.
     pub set_semantics: bool,
 }
 
