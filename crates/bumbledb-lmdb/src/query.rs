@@ -1148,29 +1148,23 @@ pub struct PlanCounters {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct EncodedValue {
-    value_type: ValueType,
     encoded: EncodedOwned,
 }
 
 impl EncodedValue {
-    fn new(value_type: ValueType, encoded: EncodedOwned) -> Self {
-        Self {
-            value_type,
-            encoded,
-        }
+    fn new(encoded: EncodedOwned) -> Self {
+        Self { encoded }
     }
 
-    fn from_owned(value_type: ValueType, value: &EncodedOwned) -> Self {
+    fn from_owned(value: &EncodedOwned) -> Self {
         Self {
-            value_type,
             encoded: value.clone(),
         }
     }
 
-    fn from_bytes(value_type: ValueType, bytes: &[u8]) -> Result<Self> {
+    fn from_bytes(value_type: &ValueType, bytes: &[u8]) -> Result<Self> {
         Ok(Self {
             encoded: encoded_owned_for_width(value_type.encoded_width(), bytes)?,
-            value_type,
         })
     }
 
@@ -3594,7 +3588,7 @@ fn bind_direct_storage_row(
                 let encoded = txn
                     .encode_query_value(&query.vars[variable.0 as usize].value_type, &normalized)?;
                 let encoded = EncodedValue::from_bytes(
-                    query.vars[variable.0 as usize].value_type.clone(),
+                    &query.vars[variable.0 as usize].value_type,
                     &encoded,
                 )?;
                 if !binding.bind(variable.0 as usize, encoded) {
@@ -4626,7 +4620,7 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                     return Err(Error::internal("missing direct chain image bind field"));
                 };
                 let encoded = EncodedValue::from_bytes(
-                    self.query.vars[step.bind_var].value_type.clone(),
+                    &self.query.vars[step.bind_var].value_type,
                     value.as_bytes(),
                 )?;
                 if !self.binding.bind(step.bind_var, encoded) {
@@ -4667,10 +4661,8 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 let encoded = self
                     .txn
                     .encode_query_value(&self.query.vars[step.bind_var].value_type, &normalized)?;
-                let encoded = EncodedValue::from_bytes(
-                    self.query.vars[step.bind_var].value_type.clone(),
-                    &encoded,
-                )?;
+                let encoded =
+                    EncodedValue::from_bytes(&self.query.vars[step.bind_var].value_type, &encoded)?;
                 if !self.binding.bind(step.bind_var, encoded) {
                     continue;
                 }
@@ -4713,7 +4705,7 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 .encoded_bytes(row, step.bind_field)
                 .ok_or_else(|| Error::internal("missing direct chain bind field"))?;
             let value =
-                EncodedValue::from_bytes(self.query.vars[step.bind_var].value_type.clone(), bytes)?;
+                EncodedValue::from_bytes(&self.query.vars[step.bind_var].value_type, bytes)?;
             if !self.binding.bind(step.bind_var, value) {
                 continue;
             }
@@ -5021,7 +5013,7 @@ fn bind_atom_variables(
         let bytes = relation
             .encoded_bytes(row, field.field)
             .ok_or_else(|| Error::internal("missing direct variable field"))?;
-        let value = EncodedValue::from_bytes(field.value_type.clone(), bytes)?;
+        let value = EncodedValue::from_bytes(&field.value_type, bytes)?;
         if !binding.bind(variable, value) {
             continue;
         }
@@ -5366,7 +5358,7 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
                 }
             } else {
                 out = Some(EncodedValue::from_bytes(
-                    self.query.vars[variable].value_type.clone(),
+                    &self.query.vars[variable].value_type,
                     bytes,
                 )?);
             }
@@ -5552,10 +5544,7 @@ impl<S: TupleSink> MixedExecutor<'_, '_, '_, '_, '_, S> {
         while !leapfrog.at_end {
             let value = leapfrog.key(&self.lftj_runtime.iters, &mut self.plan.summary.counters)?;
             self.plan.summary.counters.variable_candidates += 1;
-            if self.binding.bind(
-                variable,
-                EncodedValue::new(self.query.vars[variable].value_type.clone(), value),
-            ) {
+            if self.binding.bind(variable, EncodedValue::new(value)) {
                 let keep = comparisons_ready_pass(
                     self.txn,
                     &self.plan.comparisons,
@@ -5793,7 +5782,7 @@ impl<S: TupleSink> MixedExecutor<'_, '_, '_, '_, '_, S> {
                 }
             } else {
                 out = Some(EncodedValue::from_bytes(
-                    self.query.vars[variable].value_type.clone(),
+                    &self.query.vars[variable].value_type,
                     bytes,
                 )?);
             }
@@ -6098,10 +6087,7 @@ impl LftjPrefixProbe<'_, '_, '_, '_> {
         leapfrog.init(&mut self.iters, &mut self.counters)?;
         while !leapfrog.at_end {
             let value = leapfrog.key(&self.iters, &mut self.counters)?;
-            if self.binding.bind(
-                variable,
-                EncodedValue::new(self.query.vars[variable].value_type.clone(), value),
-            ) {
+            if self.binding.bind(variable, EncodedValue::new(value)) {
                 let keep = comparisons_ready_pass(
                     self.txn,
                     &self.query.predicates,
@@ -6203,10 +6189,7 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
         while !leapfrog.at_end {
             let value = leapfrog.key(&self.runtime.iters, &mut self.plan.summary.counters)?;
             self.plan.summary.counters.variable_candidates += 1;
-            if self.binding.bind(
-                variable,
-                EncodedValue::new(self.query.vars[variable].value_type.clone(), value),
-            ) {
+            if self.binding.bind(variable, EncodedValue::new(value)) {
                 let keep = comparisons_ready_pass(
                     self.txn,
                     &self.plan.comparisons,
@@ -6429,7 +6412,9 @@ fn build_lftj_atom_plan(
     let variables = atom_variables_in_plan_order(atom, variable_order_ids);
     let cache_key = lftj_atom_cache_key(atom, &variables, variable_order_ids, inputs);
     let cached = image.cached_sorted_trie(cache_key, || {
-        if let Some(build) = build_durable_lftj_sorted_trie(source, query, inputs, atom, &variables)? {
+        if let Some(build) =
+            build_durable_lftj_sorted_trie(source, query, inputs, atom, &variables)?
+        {
             Ok(build)
         } else {
             build_lftj_sorted_trie(source, query, inputs, atom, &variables)
@@ -6505,7 +6490,10 @@ fn build_durable_lftj_sorted_trie(
         let mut prefix = Vec::new();
         let mut cursor = 0usize;
         while let Some(field) = index.fields.get(cursor) {
-            let Some(atom_field) = atom.fields.iter().find(|atom_field| atom_field.field == *field)
+            let Some(atom_field) = atom
+                .fields
+                .iter()
+                .find(|atom_field| atom_field.field == *field)
             else {
                 break;
             };
@@ -6528,9 +6516,9 @@ fn build_durable_lftj_sorted_trie(
         let mut fields = Vec::new();
         let mut eligible = true;
         for variable in variables {
-            let Some(atom_field) = atom.fields.iter().find(|field| {
-                matches!(field.term, NormTerm::Var(id) if id.0 as usize == *variable)
-            }) else {
+            let Some(atom_field) = atom.fields.iter().find(
+                |field| matches!(field.term, NormTerm::Var(id) if id.0 as usize == *variable),
+            ) else {
                 eligible = false;
                 break;
             };
@@ -6553,8 +6541,7 @@ fn build_durable_lftj_sorted_trie(
         }) {
             continue;
         }
-        return build_sorted_trie_from_relation_index(source.id, index, &prefix, &fields)
-            .map(Some);
+        return build_sorted_trie_from_relation_index(source.id, index, &prefix, &fields).map(Some);
     }
     Ok(None)
 }
@@ -6568,9 +6555,14 @@ fn build_sorted_trie_from_relation_index(
     let start = Instant::now();
     let range = index.prefix_range(prefix);
     let row_count = range.end.saturating_sub(range.start);
-    let order = (0..row_count).map(|row| RowId(row as u32)).collect::<Vec<_>>();
+    let order = (0..row_count)
+        .map(|row| RowId(row as u32))
+        .collect::<Vec<_>>();
     let levels = durable_sorted_trie_levels(index, range.start, row_count, fields)?;
-    let distinct_by_depth = levels.iter().map(|level| level.keys.len()).collect::<Vec<_>>();
+    let distinct_by_depth = levels
+        .iter()
+        .map(|level| level.keys.len())
+        .collect::<Vec<_>>();
     let mut avg_fanout_by_depth = Vec::new();
     let mut max_fanout_by_depth = Vec::new();
     for level in &levels {
@@ -8269,21 +8261,14 @@ fn comparisons_ready_pass(
 
 fn operand_encoded_value(
     operand: &NormOperand,
-    value_type: &ValueType,
+    _value_type: &ValueType,
     inputs: &EncodedInputs,
     binding: &EncodedBinding,
 ) -> Option<EncodedValue> {
     match operand {
-        NormOperand::Var(variable) => binding.get(variable.0 as usize).map(|value| EncodedValue {
-            value_type: value_type.clone(),
-            encoded: value.encoded.clone(),
-        }),
-        NormOperand::Input(input) => inputs
-            .get(*input)
-            .map(|value| EncodedValue::from_owned(value_type.clone(), value)),
-        NormOperand::Literal(literal) => {
-            Some(EncodedValue::from_owned(value_type.clone(), literal))
-        }
+        NormOperand::Var(variable) => binding.get(variable.0 as usize).cloned(),
+        NormOperand::Input(input) => inputs.get(*input).map(EncodedValue::from_owned),
+        NormOperand::Literal(literal) => Some(EncodedValue::from_owned(literal)),
     }
 }
 
@@ -8856,7 +8841,7 @@ impl TupleSink for EncodedProjectSink {
     fn finish(
         self,
         txn: &ReadTxn<'_>,
-        _query: &NormalizedQuery,
+        query: &NormalizedQuery,
         counters: &mut PlanCounters,
     ) -> Result<Vec<Vec<Value>>> {
         let _span =
@@ -8865,7 +8850,15 @@ impl TupleSink for EncodedProjectSink {
             .into_iter()
             .map(|row| {
                 row.into_iter()
-                    .map(|value| decode_output_value(txn, value, counters))
+                    .zip(&self.vars)
+                    .map(|(value, variable)| {
+                        decode_output_value(
+                            txn,
+                            &query.vars[variable.0 as usize].value_type,
+                            value,
+                            counters,
+                        )
+                    })
                     .collect::<Result<Vec<_>>>()
             })
             .collect()
@@ -9045,18 +9038,23 @@ impl TupleSink for AggregateSink {
             let mut state_iter = states.into_iter();
             for term in &query.find {
                 match term {
-                    NormFindTerm::Variable { .. } => {
+                    NormFindTerm::Variable { variable } => {
                         let value = key_iter
                             .next()
                             .ok_or_else(|| Error::internal("aggregate group key is missing"))?;
-                        row.push(decode_output_value(txn, value, counters)?);
+                        row.push(decode_output_value(
+                            txn,
+                            &query.vars[variable.0 as usize].value_type,
+                            value,
+                            counters,
+                        )?);
                     }
-                    NormFindTerm::Aggregate { .. } => {
+                    NormFindTerm::Aggregate { value_type, .. } => {
                         counters.materialized_output_values += 1;
                         let state = state_iter
                             .next()
                             .ok_or_else(|| Error::internal("aggregate state is missing"))?;
-                        row.push(state.finish_encoded(txn, counters)?);
+                        row.push(state.finish_encoded(txn, value_type, counters)?);
                     }
                 }
             }
@@ -9107,12 +9105,13 @@ fn decode_bound_variable(
 
 fn decode_output_value(
     txn: &ReadTxn<'_>,
+    value_type: &ValueType,
     value: EncodedValue,
     counters: &mut PlanCounters,
 ) -> Result<Value> {
     counters.materialized_output_values += 1;
-    record_decode(&value.value_type, counters);
-    txn.decode_query_value(&value.value_type, value.as_bytes())
+    record_decode(value_type, counters);
+    txn.decode_query_value(value_type, value.as_bytes())
 }
 
 #[derive(Clone, Debug)]
@@ -9258,11 +9257,16 @@ impl AggregateState {
         })
     }
 
-    fn finish_encoded(self, txn: &ReadTxn<'_>, counters: &mut PlanCounters) -> Result<Value> {
+    fn finish_encoded(
+        self,
+        txn: &ReadTxn<'_>,
+        value_type: &ValueType,
+        counters: &mut PlanCounters,
+    ) -> Result<Value> {
         Ok(match self {
             AggregateState::EncodedMin(Some(value)) | AggregateState::EncodedMax(Some(value)) => {
-                record_decode(&value.value_type, counters);
-                txn.decode_query_value(&value.value_type, value.as_bytes())?
+                record_decode(value_type, counters);
+                txn.decode_query_value(value_type, value.as_bytes())?
             }
             AggregateState::EncodedMin(None) | AggregateState::EncodedMax(None) => Value::U64(0),
             state => state.finish()?,
@@ -10461,7 +10465,7 @@ mod tests {
             let encoded = txn.encode_query_value(&normalized.vars[0].value_type, &Value::Id(1))?;
             assert!(binding.bind(
                 0,
-                EncodedValue::from_bytes(normalized.vars[0].value_type.clone(), &encoded)?,
+                EncodedValue::from_bytes(&normalized.vars[0].value_type, &encoded)?,
             ));
             let mut plan = MockSpecializedPlan {
                 bindings: vec![binding],

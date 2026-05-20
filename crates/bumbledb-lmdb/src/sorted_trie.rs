@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use smallvec::SmallVec;
+
 use crate::{EncodedRef, FieldId, RelationId, RelationImage, Result, RowId, RowRange};
 
 /// Owned fixed-width encoded value used in trie levels.
@@ -121,7 +123,7 @@ impl SortedTrieIndex {
     pub fn iter(&self) -> SortedTrieIter<'_> {
         SortedTrieIter {
             index: self,
-            stack: Vec::with_capacity(self.fields.len()),
+            stack: SmallVec::new(),
         }
     }
 
@@ -235,7 +237,7 @@ pub trait TrieIter: LinearIter {
 /// Concrete sorted trie iterator.
 pub struct SortedTrieIter<'a> {
     index: &'a SortedTrieIndex,
-    stack: Vec<TrieFrame>,
+    stack: SmallVec<[TrieFrame; 8]>,
 }
 
 /// Cursor frame for one trie depth.
