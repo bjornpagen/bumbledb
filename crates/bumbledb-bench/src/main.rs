@@ -832,18 +832,21 @@ fn run_dataset(
     let mut results = Vec::new();
     for query in selected_queries {
         let typed = parse_and_typecheck(bumble_schema.descriptor(), query.datalog)?;
+        let prepared = bumble_env.prepare_query(&bumble_schema, &typed)?;
         let inputs = InputBindings::from_values(query.inputs.clone());
         let params = query.sqlite_params.clone();
 
-        let materialized_once =
-            timed(|| bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs)))?;
+        let materialized_once = timed(|| {
+            bumble_env.read(|txn| txn.execute_prepared_query(&bumble_schema, &prepared, &inputs))
+        })?;
         let materialized_output = materialized_once.value;
         let (bumble_cold_execution, bumble_output) = match config.compare_mode {
             CompareMode::Materialized => (materialized_once.elapsed, materialized_output.clone()),
             CompareMode::Rows => {
                 let count_once = timed(|| {
-                    bumble_env
-                        .read(|txn| txn.execute_query_count_only(&bumble_schema, &typed, &inputs))
+                    bumble_env.read(|txn| {
+                        txn.execute_prepared_query_count_only(&bumble_schema, &prepared, &inputs)
+                    })
                 })?;
                 (
                     count_once.elapsed,
@@ -872,14 +875,16 @@ fn run_dataset(
         let bumble_warmup = timed_samples(config.warmup, || match config.compare_mode {
             CompareMode::Materialized => {
                 let rows = bumble_env
-                    .read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?
+                    .read(|txn| txn.execute_prepared_query(&bumble_schema, &prepared, &inputs))?
                     .rows;
                 black_box(rows.len());
                 Ok::<_, bumbledb_lmdb::Error>(())
             }
             CompareMode::Rows => {
                 let rows = bumble_env
-                    .read(|txn| txn.execute_query_count_only(&bumble_schema, &typed, &inputs))?
+                    .read(|txn| {
+                        txn.execute_prepared_query_count_only(&bumble_schema, &prepared, &inputs)
+                    })?
                     .rows;
                 black_box(rows);
                 Ok::<_, bumbledb_lmdb::Error>(())
@@ -894,14 +899,16 @@ fn run_dataset(
         let bumble_samples = timed_samples(config.repeats, || match config.compare_mode {
             CompareMode::Materialized => {
                 let rows = bumble_env
-                    .read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?
+                    .read(|txn| txn.execute_prepared_query(&bumble_schema, &prepared, &inputs))?
                     .rows;
                 black_box(rows.len());
                 Ok::<_, bumbledb_lmdb::Error>(())
             }
             CompareMode::Rows => {
                 let rows = bumble_env
-                    .read(|txn| txn.execute_query_count_only(&bumble_schema, &typed, &inputs))?
+                    .read(|txn| {
+                        txn.execute_prepared_query_count_only(&bumble_schema, &prepared, &inputs)
+                    })?
                     .rows;
                 black_box(rows);
                 Ok::<_, bumbledb_lmdb::Error>(())

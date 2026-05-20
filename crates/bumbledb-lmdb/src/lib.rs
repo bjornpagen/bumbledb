@@ -27,6 +27,8 @@ use std::sync::Arc;
 use heed::types::Bytes;
 use heed::{CompactionOption, Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
+use bumbledb_core::query_ir::TypedQuery;
+
 pub use error::*;
 pub use free_join::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, FreeJoinPlan, NodeId, NodeImpl, OutputPlan,
@@ -40,8 +42,8 @@ pub use query::{
     AllocationPhaseStats, CostKey, InputBindings, InputId, MissingIndexRecommendation,
     NodeRowEstimate, NormAtom, NormAtomField, NormFindTerm, NormInput, NormOperand, NormPredicate,
     NormTerm, NormVar, NormalizedQuery, OptimizerTrace, PlanCandidate, PlanCounters, PlanFamily,
-    PredicateId, QueryAllocationStats, QueryCountOutput, QueryNodeTiming, QueryOutput, QueryPlan,
-    QueryRuntimeKind, QueryTimings, ResultColumn, VariableEstimate,
+    PredicateId, PreparedQuery, QueryAllocationStats, QueryCountOutput, QueryNodeTiming,
+    QueryOutput, QueryPlan, QueryRuntimeKind, QueryTimings, ResultColumn, VariableEstimate,
 };
 pub use query_image::{
     ColumnImage, EncodedRef, FieldId, FieldImage, FixedColumn, PreparedPlanCacheDiagnostics,
@@ -344,6 +346,15 @@ impl Environment {
     /// Returns the immutable query image for the latest committed snapshot.
     pub fn query_image(&self, schema: &StorageSchema) -> Result<Arc<QueryImage>> {
         self.read(|txn| self.query_images.get_or_build(txn, schema))
+    }
+
+    /// Prepares a typed query for repeated execution against read snapshots.
+    pub fn prepare_query(
+        &self,
+        schema: &StorageSchema,
+        query: &TypedQuery,
+    ) -> Result<PreparedQuery> {
+        Ok(PreparedQuery::new(schema, query.clone()))
     }
 
     /// Returns current query image cache diagnostics.

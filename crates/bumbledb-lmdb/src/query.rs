@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use smallvec::SmallVec;
@@ -10,7 +10,7 @@ use bumbledb_core::query_ir::{
     AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm,
     TypedLiteral, TypedOperand, TypedQuery, TypedRelationAtom, TypedTerm,
 };
-use bumbledb_core::schema::{CurrentIndexLayout, IndexKind, ValueType};
+use bumbledb_core::schema::{CurrentIndexLayout, IndexKind, SchemaFingerprint, ValueType};
 
 use crate::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FieldValues,
@@ -221,6 +221,62 @@ pub struct QueryCountOutput {
     pub rows: usize,
     /// Physical plan and counters.
     pub plan: QueryPlan,
+}
+
+/// Reusable typed query shape with snapshot-local normalized query cache.
+#[derive(Debug)]
+pub struct PreparedQuery {
+    schema: SchemaFingerprint,
+    query: TypedQuery,
+    normalized: RwLock<BTreeMap<u64, Arc<NormalizedQuery>>>,
+}
+
+impl PreparedQuery {
+    pub(crate) fn new(schema: &StorageSchema, query: TypedQuery) -> Self {
+        Self {
+            schema: schema.descriptor().fingerprint(),
+            query,
+            normalized: RwLock::default(),
+        }
+    }
+
+    fn query(&self) -> &TypedQuery {
+        &self.query
+    }
+
+    fn normalized_for(
+        &self,
+        txn: &ReadTxn<'_>,
+        schema: &StorageSchema,
+    ) -> Result<(Arc<NormalizedQuery>, bool)> {
+        let schema_fingerprint = schema.descriptor().fingerprint();
+        if self.schema != schema_fingerprint {
+            return Err(Error::schema_mismatch(
+                self.schema.to_string(),
+                schema_fingerprint.to_string(),
+            ));
+        }
+        let tx_id = txn.last_committed_tx_id()?;
+        if let Some(normalized) = self
+            .normalized
+            .read()
+            .map_err(|_| Error::internal("prepared query cache read lock poisoned"))?
+            .get(&tx_id)
+            .cloned()
+        {
+            return Ok((normalized, false));
+        }
+        let normalized = Arc::new(normalize_query(txn, schema, &self.query)?);
+        let mut cache = self
+            .normalized
+            .write()
+            .map_err(|_| Error::internal("prepared query cache write lock poisoned"))?;
+        if let Some(existing) = cache.get(&tx_id).cloned() {
+            return Ok((existing, false));
+        }
+        cache.insert(tx_id, normalized.clone());
+        Ok((normalized, true))
+    }
 }
 
 impl QueryOutput {
@@ -1619,6 +1675,259 @@ impl<'env> ReadTxn<'env> {
             rows,
             plan: plan.summary,
         })
+    }
+
+    /// Executes a prepared typed positive Datalog query against current indexes.
+    #[tracing::instrument(name = "bumbledb.query.execute_prepared", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
+    pub fn execute_prepared_query(
+        &self,
+        schema: &StorageSchema,
+        query: &PreparedQuery,
+        inputs: &InputBindings,
+    ) -> Result<QueryOutput> {
+        let typed = query.query();
+        let total_start = Instant::now();
+        let total_alloc_start = allocation::snapshot();
+        let static_empty_fast_key = if typed.inputs.is_empty() {
+            Some(typed_static_empty_fast_key(
+                schema,
+                self.last_committed_tx_id()?,
+                typed,
+            ))
+        } else {
+            None
+        };
+        if let Some(cache_key) = static_empty_fast_key
+            && self.query_images.static_empty_fast_cached(cache_key)?
+        {
+            return Ok(static_empty_output_from_typed(
+                typed,
+                self.query_images.diagnostics(),
+                total_start,
+                total_alloc_start,
+                true,
+            ));
+        }
+        let mut timings = QueryTimings::default();
+        let mut allocations = QueryAllocationStats::default();
+
+        let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
+        {
+            let _span = tracing::debug_span!("bumbledb.query.validate_inputs").entered();
+            validate_inputs(schema, typed, inputs)?;
+        }
+        timings.validate_inputs_micros = elapsed_micros(phase_start);
+        allocations.validate_inputs = allocation_delta_since(phase_alloc_start);
+
+        let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
+        let (normalized, normalized_built) = {
+            let _span = tracing::debug_span!(
+                "bumbledb.query.normalize",
+                vars = typed.variables.len(),
+                clauses = typed.clauses.len()
+            )
+            .entered();
+            query.normalized_for(self, schema)?
+        };
+        if normalized_built {
+            timings.normalize_micros = elapsed_micros(phase_start);
+            allocations.normalize = allocation_delta_since(phase_alloc_start);
+        }
+        let normalized = normalized.as_ref();
+
+        let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
+        let encoded_inputs = {
+            let _span = tracing::debug_span!(
+                "bumbledb.query.encode_inputs",
+                inputs = normalized.inputs.len()
+            )
+            .entered();
+            encode_inputs(self, schema, normalized, inputs)?
+        };
+        timings.encode_inputs_micros = elapsed_micros(phase_start);
+        allocations.encode_inputs = allocation_delta_since(phase_alloc_start);
+
+        if let Some(output) = try_execute_direct_storage_project(
+            self,
+            schema,
+            normalized,
+            &encoded_inputs,
+            inputs,
+            timings,
+            allocations,
+            total_start,
+            total_alloc_start,
+        )? {
+            return Ok(output);
+        }
+
+        let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
+        let image = {
+            let _span = tracing::debug_span!("bumbledb.query.image").entered();
+            self.query_images.get_or_build(self, schema)?
+        };
+        timings.query_image_micros = elapsed_micros(phase_start);
+        allocations.query_image = allocation_delta_since(phase_alloc_start);
+
+        let query_image_cache = self.query_images.diagnostics();
+        let prepared_cache_key = query_shape_key(schema, normalized);
+        if image.static_empty_cached(prepared_cache_key)? {
+            let mut plan = static_empty_plan(
+                normalized,
+                query_image_cache,
+                image.planner_stats_diagnostics(),
+                image.prepared_plan_diagnostics(),
+            );
+            plan.timings = timings;
+            plan.allocations = allocations;
+            plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
+            plan.counters.static_empty_cache_hits = 1;
+            plan.timings.total_micros = elapsed_micros(total_start);
+            let total_alloc = allocation_delta_since(total_alloc_start);
+            plan.allocations = plan.allocations.with_total(total_alloc);
+            return Ok(QueryOutput {
+                columns: result_columns(normalized),
+                rows: Vec::new(),
+                plan,
+            });
+        }
+        let static_empty_proof = if normalized.inputs.is_empty() {
+            Some(static_literal_atoms_prove_empty(
+                image.as_ref(),
+                normalized,
+                &encoded_inputs,
+            )?)
+        } else {
+            None
+        };
+        if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
+            image.insert_static_empty(prepared_cache_key)?;
+            if let Some(cache_key) = static_empty_fast_key {
+                self.query_images.insert_static_empty_fast(cache_key)?;
+            }
+            let mut plan = static_empty_plan(
+                normalized,
+                query_image_cache,
+                image.planner_stats_diagnostics(),
+                image.prepared_plan_diagnostics(),
+            );
+            plan.timings = timings;
+            plan.allocations = allocations;
+            plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
+            if let Some(proof) = static_empty_proof {
+                plan.counters.static_empty_cache_misses = 1;
+                plan.counters.static_empty_atoms_checked = proof.atoms_checked;
+                plan.counters.static_empty_rows_scanned = proof.rows_scanned;
+            }
+            plan.timings.total_micros = elapsed_micros(total_start);
+            let total_alloc = allocation_delta_since(total_alloc_start);
+            plan.allocations = plan.allocations.with_total(total_alloc);
+            return Ok(QueryOutput {
+                columns: result_columns(normalized),
+                rows: Vec::new(),
+                plan,
+            });
+        }
+
+        if let Some(output) = try_execute_direct_count_query(
+            image.as_ref(),
+            self,
+            normalized,
+            query_image_cache,
+            image.planner_stats_diagnostics(),
+            image.prepared_plan_diagnostics(),
+            timings,
+            allocations,
+            total_start,
+            total_alloc_start,
+        )? {
+            return Ok(output);
+        }
+        let phase_start = Instant::now();
+        let phase_alloc_start = allocation::snapshot();
+        let mut plan = if let Some(cached) = image.cached_prepared_plan(prepared_cache_key)? {
+            cached.instantiate(
+                query_image_cache,
+                image.planner_stats_diagnostics(),
+                image.prepared_plan_diagnostics(),
+            )
+        } else {
+            let prepared_plan_cache = image.prepared_plan_diagnostics();
+            let mut planned_normalized = (*normalized).clone();
+            let planned = plan_query(
+                schema,
+                &mut planned_normalized,
+                image.as_ref(),
+                query_image_cache,
+                prepared_plan_cache,
+            )?;
+            let build_micros = elapsed_micros(phase_start).min(u128::from(u64::MAX)) as u64;
+            let cached = image.insert_prepared_plan(prepared_cache_key, planned, build_micros)?;
+            cached.instantiate(
+                query_image_cache,
+                image.planner_stats_diagnostics(),
+                image.prepared_plan_diagnostics(),
+            )
+        };
+        timings.plan_micros = elapsed_micros(phase_start);
+        allocations.plan = allocation_delta_since(phase_alloc_start);
+        plan.summary.timings = timings;
+        plan.summary.allocations = allocations;
+        tracing::debug!(variable_order = ?plan.summary.variable_order, nodes = plan.summary.free_join.nodes.len(), "free join query planned");
+        let mut sink = OutputSink::new(&plan.summary.free_join.output);
+
+        let execute_start = Instant::now();
+        let execute_alloc_start = allocation::snapshot();
+        execute_free_join(
+            image.as_ref(),
+            self,
+            schema,
+            normalized,
+            &encoded_inputs,
+            &mut plan,
+            &mut sink,
+        )?;
+        plan.summary.timings.execute_micros = elapsed_micros(execute_start);
+        plan.summary.allocations.execute = allocation_delta_since(execute_alloc_start);
+
+        let columns = result_columns(normalized);
+        let sink_finish_start = Instant::now();
+        let sink_finish_alloc_start = allocation::snapshot();
+        let rows = {
+            let _span = tracing::debug_span!("bumbledb.query.sink.finish").entered();
+            sink.finish(self, normalized, &mut plan.summary.counters)?
+        };
+        plan.summary.timings.sink_finish_micros = elapsed_micros(sink_finish_start);
+        plan.summary.allocations.sink_finish = allocation_delta_since(sink_finish_alloc_start);
+        plan.summary.counters.output_rows = rows.len() as u64;
+        if has_aggregate(normalized) {
+            plan.summary.counters.aggregate_groups = rows.len() as u64;
+        }
+        plan.summary.timings.total_micros = elapsed_micros(total_start);
+        let total_alloc = allocation_delta_since(total_alloc_start);
+        plan.summary.allocations = plan.summary.allocations.with_total(total_alloc);
+        plan.summary.refresh_node_timings();
+        tracing::debug!(?plan.summary.counters, "free join query executed");
+        Ok(QueryOutput {
+            columns,
+            rows,
+            plan: plan.summary,
+        })
+    }
+
+    /// Executes a prepared typed query and returns only the output row count.
+    #[tracing::instrument(name = "bumbledb.query.execute_prepared_count", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
+    pub fn execute_prepared_query_count_only(
+        &self,
+        schema: &StorageSchema,
+        query: &PreparedQuery,
+        inputs: &InputBindings,
+    ) -> Result<QueryCountOutput> {
+        self.execute_query_count_only(schema, query.query(), inputs)
     }
 
     /// Executes a typed query and returns only the output row count.
@@ -9674,6 +9983,30 @@ mod tests {
         assert_ne!(keys.0, keys.2);
         assert_ne!(keys.0, keys.3);
         assert_ne!(keys.0, keys.4);
+        Ok(())
+    }
+
+    #[test]
+    fn prepared_query_reuses_normalized_snapshot_shape() -> TestResult {
+        let (env, schema) = seeded_db()?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?posting ?amount
+            where
+              Posting(id: ?posting, account: ?account, amount: ?amount)
+              Account(id: ?account, holder: $holder)
+            "#,
+        )?;
+        let prepared = env.prepare_query(&schema, &query)?;
+        let inputs = InputBindings::from_values([("holder", Value::Ref(1))]);
+
+        let first = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &inputs))?;
+        let second = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &inputs))?;
+
+        assert_eq!(first.rows, second.rows);
+        assert!(first.plan.timings.normalize_micros > 0);
+        assert_eq!(second.plan.timings.normalize_micros, 0);
         Ok(())
     }
 
