@@ -31,6 +31,7 @@ use crate::query_image::{
 use crate::{PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics};
 
 const HASH_BUILD_ROWS_PER_MICRO: u64 = 5;
+const TINY_PROJECT_THRESHOLD: usize = 32;
 
 /// Query input bindings keyed by input name without `$`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -8748,6 +8749,8 @@ enum CompiledPlan {
 
 #[derive(Clone, Debug)]
 enum OutputSink {
+    GlobalCount(GlobalCountSink),
+    TinyProject(Box<TinyProjectSink>),
     Project(EncodedProjectSink),
     Aggregate(AggregateSink),
 }
@@ -8755,7 +8758,13 @@ enum OutputSink {
 impl OutputSink {
     fn new(output: &OutputPlan) -> Self {
         match output {
+            OutputPlan::Project(plan) if is_tiny_project_candidate(output) => {
+                OutputSink::TinyProject(Box::new(TinyProjectSink::new(plan)))
+            }
             OutputPlan::Project(plan) => OutputSink::Project(EncodedProjectSink::new(plan)),
+            OutputPlan::Aggregate(plan) if is_global_count_plan(plan) => {
+                OutputSink::GlobalCount(GlobalCountSink::default())
+            }
             OutputPlan::Aggregate(plan) => OutputSink::Aggregate(AggregateSink::new(plan)),
         }
     }
@@ -8770,6 +8779,8 @@ impl TupleSink for OutputSink {
         counters: &mut PlanCounters,
     ) -> Result<()> {
         match self {
+            OutputSink::GlobalCount(sink) => sink.emit(txn, query, binding, counters),
+            OutputSink::TinyProject(sink) => sink.emit(txn, query, binding, counters),
             OutputSink::Project(sink) => sink.emit(txn, query, binding, counters),
             OutputSink::Aggregate(sink) => sink.emit(txn, query, binding, counters),
         }
@@ -8782,6 +8793,8 @@ impl TupleSink for OutputSink {
         counters: &mut PlanCounters,
     ) -> Result<Vec<Vec<Value>>> {
         match self {
+            OutputSink::GlobalCount(sink) => sink.finish(txn, query, counters),
+            OutputSink::TinyProject(sink) => sink.finish(txn, query, counters),
             OutputSink::Project(sink) => sink.finish(txn, query, counters),
             OutputSink::Aggregate(sink) => sink.finish(txn, query, counters),
         }
@@ -8796,6 +8809,12 @@ impl TupleSink for OutputSink {
         counters: &mut PlanCounters,
     ) -> Result<()> {
         match self {
+            OutputSink::GlobalCount(sink) => {
+                sink.emit_count_range(txn, query, binding, count, counters)
+            }
+            OutputSink::TinyProject(sink) => {
+                sink.emit_count_range(txn, query, binding, count, counters)
+            }
             OutputSink::Project(sink) => {
                 sink.emit_count_range(txn, query, binding, count, counters)
             }
@@ -8803,6 +8822,146 @@ impl TupleSink for OutputSink {
                 sink, txn, query, binding, count, counters,
             ),
         }
+    }
+}
+
+fn is_global_count_plan(plan: &AggregatePlan) -> bool {
+    plan.group_vars.is_empty()
+        && plan.aggregates.len() == 1
+        && plan.aggregates[0].function == AggregateFunction::Count
+}
+
+fn is_tiny_project_candidate(output: &OutputPlan) -> bool {
+    matches!(output, OutputPlan::Project(plan) if plan.vars.len() <= 8)
+}
+
+#[derive(Clone, Debug, Default)]
+struct GlobalCountSink {
+    count: u64,
+}
+
+impl TupleSink for GlobalCountSink {
+    fn emit(
+        &mut self,
+        _txn: &ReadTxn<'_>,
+        _query: &NormalizedQuery,
+        _binding: &EncodedBinding,
+        _counters: &mut PlanCounters,
+    ) -> Result<()> {
+        self.emit_count_range(_txn, _query, _binding, 1, _counters)
+    }
+
+    fn emit_count_range(
+        &mut self,
+        _txn: &ReadTxn<'_>,
+        _query: &NormalizedQuery,
+        _binding: &EncodedBinding,
+        count: u64,
+        _counters: &mut PlanCounters,
+    ) -> Result<()> {
+        self.count = self
+            .count
+            .checked_add(count)
+            .ok_or_else(|| Error::integer_overflow("count"))?;
+        Ok(())
+    }
+
+    fn finish(
+        self,
+        _txn: &ReadTxn<'_>,
+        _query: &NormalizedQuery,
+        counters: &mut PlanCounters,
+    ) -> Result<Vec<Vec<Value>>> {
+        if self.count == 0 {
+            return Ok(Vec::new());
+        }
+        counters.materialized_output_values += 1;
+        Ok(vec![vec![Value::U64(self.count)]])
+    }
+}
+
+#[derive(Clone, Debug)]
+struct TinyProjectSink {
+    vars: Vec<VarId>,
+    rows: SmallVec<[SmallEncodedRow; 16]>,
+    overflow: Option<BTreeSet<SmallEncodedRow>>,
+}
+
+impl TinyProjectSink {
+    fn new(plan: &ProjectPlan) -> Self {
+        Self {
+            vars: plan.vars.clone(),
+            rows: SmallVec::new(),
+            overflow: None,
+        }
+    }
+
+    fn insert_row(&mut self, row: SmallEncodedRow) {
+        if let Some(overflow) = &mut self.overflow {
+            overflow.insert(row);
+            return;
+        }
+        if self.rows.iter().any(|existing| existing == &row) {
+            return;
+        }
+        if self.rows.len() < TINY_PROJECT_THRESHOLD {
+            self.rows.push(row);
+            return;
+        }
+        let mut overflow = std::mem::take(&mut self.rows)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        overflow.insert(row);
+        self.overflow = Some(overflow);
+    }
+}
+
+impl TupleSink for TinyProjectSink {
+    fn emit(
+        &mut self,
+        _txn: &ReadTxn<'_>,
+        _query: &NormalizedQuery,
+        binding: &EncodedBinding,
+        _counters: &mut PlanCounters,
+    ) -> Result<()> {
+        let row = self
+            .vars
+            .iter()
+            .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
+            .collect::<Result<SmallEncodedRow>>()?;
+        self.insert_row(row);
+        Ok(())
+    }
+
+    fn finish(
+        self,
+        txn: &ReadTxn<'_>,
+        query: &NormalizedQuery,
+        counters: &mut PlanCounters,
+    ) -> Result<Vec<Vec<Value>>> {
+        let mut rows = if let Some(overflow) = self.overflow {
+            overflow.into_iter().collect::<Vec<_>>()
+        } else {
+            let mut rows = self.rows.into_vec();
+            rows.sort();
+            rows
+        };
+        rows.dedup();
+        rows.into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .zip(&self.vars)
+                    .map(|(value, variable)| {
+                        decode_output_value(
+                            txn,
+                            &query.vars[variable.0 as usize].value_type,
+                            value,
+                            counters,
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .collect()
     }
 }
 
@@ -8868,6 +9027,7 @@ impl TupleSink for EncodedProjectSink {
 #[derive(Clone, Debug)]
 struct CountOnlySink {
     output: OutputPlan,
+    global_count: u64,
     project_rows: BTreeSet<SmallEncodedRow>,
     aggregate_groups: BTreeSet<SmallEncodedRow>,
 }
@@ -8876,6 +9036,7 @@ impl CountOnlySink {
     fn new(output: &OutputPlan) -> Self {
         Self {
             output: output.clone(),
+            global_count: 0,
             project_rows: BTreeSet::new(),
             aggregate_groups: BTreeSet::new(),
         }
@@ -8884,6 +9045,9 @@ impl CountOnlySink {
     fn finish_count(self) -> usize {
         match self.output {
             OutputPlan::Project(_) => self.project_rows.len(),
+            OutputPlan::Aggregate(plan) if is_global_count_plan(&plan) => {
+                usize::from(self.global_count > 0)
+            }
             OutputPlan::Aggregate(_) => self.aggregate_groups.len(),
         }
     }
@@ -8907,6 +9071,10 @@ impl TupleSink for CountOnlySink {
                 self.project_rows.insert(row);
             }
             OutputPlan::Aggregate(plan) => {
+                if is_global_count_plan(plan) {
+                    self.global_count = self.global_count.saturating_add(1);
+                    return Ok(());
+                }
                 let key = plan
                     .group_vars
                     .iter()
@@ -8927,6 +9095,10 @@ impl TupleSink for CountOnlySink {
         _counters: &mut PlanCounters,
     ) -> Result<()> {
         if let OutputPlan::Aggregate(plan) = &self.output {
+            if is_global_count_plan(plan) {
+                self.global_count = self.global_count.saturating_add(_count);
+                return Ok(());
+            }
             let key = plan
                 .group_vars
                 .iter()
