@@ -431,12 +431,12 @@ fn build_levels(
 #[cfg(test)]
 mod tests {
     use bumbledb_core::schema::{
-        FieldDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind, SchemaDescriptor,
-        ValueType,
+        FieldDescriptor, IdentityAllocation, PrimaryKeyDescriptor, RelationDescriptor,
+        RelationKind, SchemaDescriptor, ValueType,
     };
 
     use super::*;
-    use crate::{Environment, Row, StorageSchema, Value};
+    use crate::{Environment, IdentityValue, Row, StorageSchema, Value};
 
     #[test]
     fn builds_one_level_trie_and_collapses_duplicate_keys() -> Result<()> {
@@ -582,9 +582,10 @@ mod tests {
                 vec![
                     FieldDescriptor::new(
                         "id",
-                        ValueType::Id {
-                            name: "AccountId".to_owned(),
-                            relation: "Account".to_owned(),
+                        ValueType::Identity {
+                            type_name: "AccountId".to_owned(),
+                            owning_relation: "Account".to_owned(),
+                            allocation: IdentityAllocation::Serial,
                         },
                     ),
                     FieldDescriptor::new(
@@ -609,7 +610,7 @@ mod tests {
             Row::new(
                 "Account",
                 [
-                    ("id", Value::Id(1)),
+                    ("id", Value::Identity(IdentityValue::Serial(1))),
                     ("currency", Value::Enum(840)),
                     ("active", Value::Bool(true)),
                 ],
@@ -617,7 +618,7 @@ mod tests {
             Row::new(
                 "Account",
                 [
-                    ("id", Value::Id(2)),
+                    ("id", Value::Identity(IdentityValue::Serial(2))),
                     ("currency", Value::Enum(978)),
                     ("active", Value::Bool(false)),
                 ],
@@ -625,7 +626,7 @@ mod tests {
             Row::new(
                 "Account",
                 [
-                    ("id", Value::Id(3)),
+                    ("id", Value::Identity(IdentityValue::Serial(3))),
                     ("currency", Value::Enum(840)),
                     ("active", Value::Bool(true)),
                 ],

@@ -1,13 +1,16 @@
 //! Deterministic row fixtures.
 
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
-use bumbledb_lmdb::{KeyValues, Row, Value};
+use bumbledb_lmdb::{IdentityValue, KeyValues, Row, Value};
 
 /// Holder row.
 pub fn holder(id: u64, name: impl Into<String>) -> Row {
     Row::new(
         "Holder",
-        [("id", Value::Id(id)), ("name", Value::String(name.into()))],
+        [
+            ("id", Value::Identity(IdentityValue::Serial(id))),
+            ("name", Value::String(name.into())),
+        ],
     )
 }
 
@@ -16,8 +19,8 @@ pub fn account(id: u64, holder: u64, currency: u64) -> Row {
     Row::new(
         "Account",
         [
-            ("id", Value::Id(id)),
-            ("holder", Value::Ref(holder)),
+            ("id", Value::Identity(IdentityValue::Serial(id))),
+            ("holder", Value::Identity(IdentityValue::Serial(holder))),
             ("currency", Value::Enum(currency)),
         ],
     )
@@ -28,8 +31,8 @@ pub fn posting(id: u64, account: u64, amount: i128, at: i64) -> Row {
     Row::new(
         "Posting",
         [
-            ("id", Value::Id(id)),
-            ("account", Value::Ref(account)),
+            ("id", Value::Identity(IdentityValue::Serial(id))),
+            ("account", Value::Identity(IdentityValue::Serial(account))),
             ("amount", Value::Decimal(DecimalRaw(amount))),
             ("at", Value::Timestamp(TimestampMicros(at))),
         ],
@@ -40,7 +43,10 @@ pub fn posting(id: u64, account: u64, amount: i128, at: i64) -> Row {
 pub fn account_tag(account: u64, tag: u64) -> Row {
     Row::new(
         "AccountTag",
-        [("account", Value::Ref(account)), ("tag", Value::Enum(tag))],
+        [
+            ("account", Value::Identity(IdentityValue::Serial(account))),
+            ("tag", Value::Enum(tag)),
+        ],
     )
 }
 
@@ -49,7 +55,7 @@ pub fn number(id: u64, n: i64, d: i128) -> Row {
     Row::new(
         "Number",
         [
-            ("id", Value::Id(id)),
+            ("id", Value::Identity(IdentityValue::Serial(id))),
             ("n", Value::I64(n)),
             ("d", Value::Decimal(DecimalRaw(d))),
         ],
@@ -58,12 +64,18 @@ pub fn number(id: u64, n: i64, d: i128) -> Row {
 
 /// Holder primary key.
 pub fn holder_key(id: u64) -> KeyValues {
-    KeyValues::new("Holder", [("id", Value::Id(id))])
+    KeyValues::new(
+        "Holder",
+        [("id", Value::Identity(IdentityValue::Serial(id)))],
+    )
 }
 
 /// Account primary key.
 pub fn account_key(id: u64) -> KeyValues {
-    KeyValues::new("Account", [("id", Value::Id(id))])
+    KeyValues::new(
+        "Account",
+        [("id", Value::Identity(IdentityValue::Serial(id)))],
+    )
 }
 
 /// Seeded valid ledger rows.

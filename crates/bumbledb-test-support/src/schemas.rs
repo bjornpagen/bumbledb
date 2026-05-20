@@ -1,8 +1,8 @@
 //! Reusable schemas for tests.
 
 use bumbledb_core::schema::{
-    EnumDescriptor, FieldDescriptor, GeneratedIdDescriptor, PrimaryKeyDescriptor,
-    RelationDescriptor, RelationKind, SchemaDescriptor, ValueType,
+    EnumDescriptor, FieldDescriptor, GeneratedIdDescriptor, IdentityAllocation,
+    PrimaryKeyDescriptor, RelationDescriptor, RelationKind, SchemaDescriptor, ValueType,
 };
 
 /// Canonical small ledger schema used by most correctness tests.
@@ -31,9 +31,10 @@ pub fn ledger_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("id", id_type("AccountId", "Account")),
                     FieldDescriptor::new(
                         "holder",
-                        ValueType::Ref {
-                            name: "HolderId".to_owned(),
-                            target_relation: "Holder".to_owned(),
+                        ValueType::Identity {
+                            type_name: "HolderId".to_owned(),
+                            owning_relation: "Holder".to_owned(),
+                            allocation: IdentityAllocation::Serial,
                         },
                     ),
                     FieldDescriptor::new(
@@ -57,9 +58,10 @@ pub fn ledger_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("id", id_type("PostingId", "Posting")),
                     FieldDescriptor::new(
                         "account",
-                        ValueType::Ref {
-                            name: "AccountId".to_owned(),
-                            target_relation: "Account".to_owned(),
+                        ValueType::Identity {
+                            type_name: "AccountId".to_owned(),
+                            owning_relation: "Account".to_owned(),
+                            allocation: IdentityAllocation::Serial,
                         },
                     ),
                     FieldDescriptor::new("amount", ValueType::Decimal { scale: 4 }),
@@ -74,9 +76,10 @@ pub fn ledger_schema() -> SchemaDescriptor {
                 vec![
                     FieldDescriptor::new(
                         "account",
-                        ValueType::Ref {
-                            name: "AccountId".to_owned(),
-                            target_relation: "Account".to_owned(),
+                        ValueType::Identity {
+                            type_name: "AccountId".to_owned(),
+                            owning_relation: "Account".to_owned(),
+                            allocation: IdentityAllocation::Serial,
                         },
                     ),
                     FieldDescriptor::new(
@@ -125,8 +128,9 @@ pub fn changed_ledger_schema() -> SchemaDescriptor {
 }
 
 fn id_type(name: &str, relation: &str) -> ValueType {
-    ValueType::Id {
-        name: name.to_owned(),
-        relation: relation.to_owned(),
+    ValueType::Identity {
+        type_name: name.to_owned(),
+        owning_relation: relation.to_owned(),
+        allocation: IdentityAllocation::Serial,
     }
 }

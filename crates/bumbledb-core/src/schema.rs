@@ -186,7 +186,7 @@ impl SchemaDescriptor {
         self
     }
 
-    /// Adds explicit single-field FK constraints for scalar `Ref` fields in every relation.
+    /// Adds explicit single-field FK constraints for cross-relation identity fields.
     pub fn with_ref_foreign_keys(mut self) -> Self {
         self.relations = self
             .relations
@@ -342,7 +342,6 @@ impl SchemaDescriptor {
                 });
             }
             self.validate_field_type(relation, field)?;
-            self.validate_ref_field(relation, field)?;
         }
 
         self.validate_primary_key(relation)?;
@@ -425,18 +424,22 @@ impl SchemaDescriptor {
             });
         }
         match &field.value_type {
-            ValueType::Id {
-                relation: target, ..
+            ValueType::Identity {
+                owning_relation: target,
+                allocation: IdentityAllocation::Serial,
+                ..
             } if target == &relation.name => Ok(()),
-            ValueType::Id { .. } => Err(SchemaError::InvalidGeneratedId {
+            ValueType::Identity { .. } => Err(SchemaError::InvalidGeneratedId {
                 relation: relation.name.clone(),
                 field: generated_id.field.clone(),
-                reason: "generated ID field must use an ID type for its owning relation".to_owned(),
+                reason:
+                    "generated ID field must use a serial identity type for its owning relation"
+                        .to_owned(),
             }),
             _ => Err(SchemaError::InvalidGeneratedId {
                 relation: relation.name.clone(),
                 field: generated_id.field.clone(),
-                reason: "generated ID field must have an ID type".to_owned(),
+                reason: "generated ID field must have an identity type".to_owned(),
             }),
         }
     }
@@ -451,53 +454,6 @@ impl SchemaDescriptor {
             });
         }
         Ok(())
-    }
-
-    fn validate_ref_field(
-        &self,
-        relation: &RelationDescriptor,
-        field: &FieldDescriptor,
-    ) -> Result<()> {
-        let ValueType::Ref {
-            name,
-            target_relation,
-        } = &field.value_type
-        else {
-            return Ok(());
-        };
-
-        let target = self
-            .relations
-            .iter()
-            .find(|candidate| &candidate.name == target_relation)
-            .ok_or_else(|| SchemaError::UnknownRefTarget {
-                relation: relation.name.clone(),
-                field: field.name.clone(),
-                target_relation: target_relation.clone(),
-            })?;
-        if target.primary_key.fields.len() != 1 {
-            return Ok(());
-        }
-        let target_field_name = &target.primary_key.fields[0];
-        let target_field =
-            target
-                .field(target_field_name)
-                .ok_or_else(|| SchemaError::UnknownField {
-                    relation: target.name.clone(),
-                    field: target_field_name.clone(),
-                })?;
-        match &target_field.value_type {
-            ValueType::Id {
-                name: id_name,
-                relation: id_relation,
-            } if id_name == name && id_relation == target_relation => Ok(()),
-            _ => Err(SchemaError::RefTypeMismatch {
-                relation: relation.name.clone(),
-                field: field.name.clone(),
-                target_relation: target.name.clone(),
-                target_field: target_field.name.clone(),
-            }),
-        }
     }
 
     fn validate_constraints(&self, relation: &RelationDescriptor) -> Result<()> {
@@ -916,19 +872,22 @@ impl RelationDescriptor {
         self
     }
 
-    /// Adds one explicit foreign-key constraint for each scalar `Ref` field.
+    /// Adds one explicit foreign-key constraint for each identity field owned by another relation.
     pub fn with_ref_foreign_keys(mut self) -> Self {
         for field in &self.fields {
-            let ValueType::Ref {
-                target_relation, ..
+            let ValueType::Identity {
+                owning_relation, ..
             } = &field.value_type
             else {
                 continue;
             };
+            if owning_relation == &self.name {
+                continue;
+            }
             self.constraints.push(ConstraintDescriptor::foreign_key(
                 format!("ref_{}", field.name),
                 [field.name.clone()],
-                target_relation.clone(),
+                owning_relation.clone(),
                 ["id".to_owned()],
             ));
         }
@@ -951,17 +910,6 @@ impl RelationDescriptor {
         seen.insert(candidates[0].fields.clone());
 
         for field in &self.fields {
-            if matches!(field.value_type, ValueType::Ref { .. }) {
-                let fields = vec![field.name.clone()];
-                if seen.insert(fields.clone()) {
-                    candidates.push(IndexCandidate {
-                        name: format!("by_{}", field.name),
-                        kind: IndexKind::Ref,
-                        fields,
-                    });
-                }
-            }
-
             if field.indexing.range {
                 let fields = vec![field.name.clone()];
                 if seen.insert(fields.clone()) {
@@ -1171,13 +1119,6 @@ pub enum ValueType {
     U64,
     /// Signed 64-bit integer.
     I64,
-    /// Typed generated/application ID.
-    Id { name: String, relation: String },
-    /// Typed foreign-key reference.
-    Ref {
-        name: String,
-        target_relation: String,
-    },
     /// UTC timestamp in microseconds.
     TimestampMicros,
     /// Fixed-scale decimal.
@@ -1186,12 +1127,27 @@ pub enum ValueType {
     Uuid,
     /// Closed enum domain stored as a stable numeric code.
     Enum { name: String },
-    /// Open numeric code domain without closed variants.
-    Code { name: String },
     /// Interned UTF-8 string.
     String,
     /// Interned bytes.
     Bytes,
+    /// Nominal identity value.
+    Identity {
+        type_name: String,
+        owning_relation: String,
+        allocation: IdentityAllocation,
+    },
+}
+
+/// Identity allocation strategy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum IdentityAllocation {
+    /// Database-allocated monotonic u64 identity.
+    Serial,
+    /// Database-allocated UUID identity.
+    Uuid,
+    /// Application-supplied u64 identity.
+    Application,
 }
 
 impl ValueType {
@@ -1201,14 +1157,15 @@ impl ValueType {
             ValueType::Bool => 1,
             ValueType::U64
             | ValueType::I64
-            | ValueType::Id { .. }
-            | ValueType::Ref { .. }
             | ValueType::TimestampMicros
             | ValueType::Enum { .. }
-            | ValueType::Code { .. }
             | ValueType::String
             | ValueType::Bytes => 8,
             ValueType::Decimal { .. } | ValueType::Uuid => 16,
+            ValueType::Identity { allocation, .. } => match allocation {
+                IdentityAllocation::Serial | IdentityAllocation::Application => 8,
+                IdentityAllocation::Uuid => 16,
+            },
         }
     }
 
@@ -1228,11 +1185,12 @@ impl ValueType {
             self,
             ValueType::U64
                 | ValueType::I64
-                | ValueType::Id { .. }
-                | ValueType::Ref { .. }
                 | ValueType::TimestampMicros
                 | ValueType::Decimal { .. }
-                | ValueType::Code { .. }
+                | ValueType::Identity {
+                    allocation: IdentityAllocation::Serial,
+                    ..
+                }
         )
     }
 
@@ -1246,35 +1204,38 @@ impl ValueType {
             ValueType::Bool => push_u8(out, 1),
             ValueType::U64 => push_u8(out, 2),
             ValueType::I64 => push_u8(out, 3),
-            ValueType::Id { name, relation } => {
-                push_u8(out, 4);
-                push_str(out, name);
-                push_str(out, relation);
-            }
-            ValueType::Ref {
-                name,
-                target_relation,
-            } => {
-                push_u8(out, 5);
-                push_str(out, name);
-                push_str(out, target_relation);
-            }
-            ValueType::TimestampMicros => push_u8(out, 6),
+            ValueType::TimestampMicros => push_u8(out, 4),
             ValueType::Decimal { scale } => {
-                push_u8(out, 7);
+                push_u8(out, 5);
                 push_u32(out, *scale);
             }
-            ValueType::Uuid => push_u8(out, 8),
+            ValueType::Uuid => push_u8(out, 6),
             ValueType::Enum { name } => {
-                push_u8(out, 9);
+                push_u8(out, 7);
                 push_str(out, name);
             }
-            ValueType::Code { name } => {
+            ValueType::String => push_u8(out, 8),
+            ValueType::Bytes => push_u8(out, 9),
+            ValueType::Identity {
+                type_name,
+                owning_relation,
+                allocation,
+            } => {
                 push_u8(out, 10);
-                push_str(out, name);
+                push_str(out, type_name);
+                push_str(out, owning_relation);
+                allocation.push_canonical(out);
             }
-            ValueType::String => push_u8(out, 11),
-            ValueType::Bytes => push_u8(out, 12),
+        }
+    }
+}
+
+impl IdentityAllocation {
+    fn push_canonical(self, out: &mut Vec<u8>) {
+        match self {
+            IdentityAllocation::Serial => push_u8(out, 1),
+            IdentityAllocation::Uuid => push_u8(out, 2),
+            IdentityAllocation::Application => push_u8(out, 3),
         }
     }
 }
@@ -1584,7 +1545,7 @@ struct IndexCandidate {
 fn generated_index_names(relation: &RelationDescriptor) -> BTreeSet<String> {
     let mut names = BTreeSet::from(["primary".to_owned()]);
     for field in &relation.fields {
-        if matches!(field.value_type, ValueType::Ref { .. }) || field.indexing.range {
+        if field.indexing.range {
             names.insert(format!("by_{}", field.name));
         }
     }
@@ -1603,19 +1564,7 @@ fn generated_index_names(relation: &RelationDescriptor) -> BTreeSet<String> {
 }
 
 fn foreign_key_types_compatible(source: &ValueType, target: &ValueType) -> bool {
-    if source == target {
-        return true;
-    }
-    matches!(
-        (source, target),
-        (
-            ValueType::Ref {
-                name: ref_name,
-                target_relation,
-            },
-            ValueType::Id { name, relation },
-        ) if ref_name == name && target_relation == relation
-    )
+    source == target
 }
 
 fn push_u8(out: &mut Vec<u8>, value: u8) {
@@ -1648,14 +1597,8 @@ mod tests {
 
     #[test]
     fn typed_ids_are_logically_distinct() {
-        let account = ValueType::Id {
-            name: "AccountId".to_owned(),
-            relation: "Account".to_owned(),
-        };
-        let instrument = ValueType::Id {
-            name: "InstrumentId".to_owned(),
-            relation: "Instrument".to_owned(),
-        };
+        let account = identity("AccountId", "Account");
+        let instrument = identity("InstrumentId", "Instrument");
 
         assert_ne!(account, instrument);
         assert_eq!(account.encoded_width(), instrument.encoded_width());
@@ -1698,12 +1641,6 @@ mod tests {
         let account_primary = find_layout(&layouts, "Account", "primary")?;
         assert_eq!(account_primary.leading_fields, ["id"]);
         assert_eq!(field_names(account_primary), ["id", "holder", "currency"]);
-
-        let posting_account = find_layout(&layouts, "Posting", "by_account")?;
-        assert_eq!(posting_account.kind, IndexKind::Ref);
-        assert_eq!(posting_account.leading_fields, ["account"]);
-        assert_eq!(field_names(posting_account), ["account", "id"]);
-        assert!(!posting_account.covers_full_row);
 
         let posting_at = find_layout(&layouts, "Posting", "by_at")?;
         assert_eq!(posting_at.kind, IndexKind::Range);
@@ -1781,13 +1718,7 @@ mod tests {
                     "Account",
                     RelationKind::Entity,
                     vec![
-                        FieldDescriptor::new(
-                            "id",
-                            ValueType::Id {
-                                name: "AccountId".to_owned(),
-                                relation: "Account".to_owned(),
-                            },
-                        ),
+                        FieldDescriptor::new("id", identity("AccountId", "Account")),
                         FieldDescriptor::new(
                             "currency",
                             ValueType::Enum {
@@ -1867,16 +1798,20 @@ mod tests {
     }
 
     #[test]
-    fn validation_rejects_unknown_ref_target() {
+    fn validation_rejects_unknown_foreign_key_target() {
         let mut schema = valid_schema();
-        schema.relations[1].fields[1].value_type = ValueType::Ref {
-            name: "MissingId".to_owned(),
-            target_relation: "Missing".to_owned(),
-        };
+        schema.relations[1]
+            .constraints
+            .push(ConstraintDescriptor::foreign_key(
+                "missing_parent",
+                ["parent"],
+                "Missing",
+                ["id"],
+            ));
         assert!(matches!(
             schema.validate(),
-            Err(SchemaError::UnknownRefTarget { relation, field, target_relation })
-                if relation == "Child" && field == "parent" && target_relation == "Missing"
+            Err(SchemaError::InvalidConstraint { relation, constraint, .. })
+                if relation == "Child" && constraint == "missing_parent"
         ));
     }
 
@@ -1920,13 +1855,13 @@ mod tests {
     #[test]
     fn validation_rejects_reserved_generated_index_names() {
         let mut schema = valid_schema();
-        schema.relations[1]
+        schema.relations[0]
             .indexes
-            .push(IndexDescriptor::equality("by_parent", ["parent", "id"]));
+            .push(IndexDescriptor::equality("unique_code", ["code", "id"]));
         assert!(matches!(
             schema.validate(),
             Err(SchemaError::ReservedIndexName { relation, index })
-                if relation == "Child" && index == "by_parent"
+                if relation == "Parent" && index == "unique_code"
         ));
     }
 
@@ -2034,20 +1969,8 @@ mod tests {
                     "Account",
                     RelationKind::Entity,
                     vec![
-                        FieldDescriptor::new(
-                            "id",
-                            ValueType::Id {
-                                name: "AccountId".to_owned(),
-                                relation: "Account".to_owned(),
-                            },
-                        ),
-                        FieldDescriptor::new(
-                            "holder",
-                            ValueType::Ref {
-                                name: "HolderId".to_owned(),
-                                target_relation: "Holder".to_owned(),
-                            },
-                        ),
+                        FieldDescriptor::new("id", identity("AccountId", "Account")),
+                        FieldDescriptor::new("holder", identity("HolderId", "Holder")),
                         FieldDescriptor::new(
                             "currency",
                             ValueType::Enum {
@@ -2067,34 +1990,10 @@ mod tests {
                     "Posting",
                     RelationKind::Event,
                     vec![
-                        FieldDescriptor::new(
-                            "id",
-                            ValueType::Id {
-                                name: "PostingId".to_owned(),
-                                relation: "Posting".to_owned(),
-                            },
-                        ),
-                        FieldDescriptor::new(
-                            "entry",
-                            ValueType::Ref {
-                                name: "JournalEntryId".to_owned(),
-                                target_relation: "JournalEntry".to_owned(),
-                            },
-                        ),
-                        FieldDescriptor::new(
-                            "account",
-                            ValueType::Ref {
-                                name: "AccountId".to_owned(),
-                                target_relation: "Account".to_owned(),
-                            },
-                        ),
-                        FieldDescriptor::new(
-                            "instrument",
-                            ValueType::Ref {
-                                name: "InstrumentId".to_owned(),
-                                target_relation: "Instrument".to_owned(),
-                            },
-                        ),
+                        FieldDescriptor::new("id", identity("PostingId", "Posting")),
+                        FieldDescriptor::new("entry", identity("JournalEntryId", "JournalEntry")),
+                        FieldDescriptor::new("account", identity("AccountId", "Account")),
+                        FieldDescriptor::new("instrument", identity("InstrumentId", "Instrument")),
                         FieldDescriptor::new("amount", ValueType::Decimal { scale: 4 }),
                         FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
                     ],
@@ -2105,13 +2004,7 @@ mod tests {
                     "Holder",
                     RelationKind::Entity,
                     vec![
-                        FieldDescriptor::new(
-                            "id",
-                            ValueType::Id {
-                                name: "HolderId".to_owned(),
-                                relation: "Holder".to_owned(),
-                            },
-                        ),
+                        FieldDescriptor::new("id", identity("HolderId", "Holder")),
                         FieldDescriptor::new("name", ValueType::String),
                     ],
                     PrimaryKeyDescriptor::new(["id"]),
@@ -2122,13 +2015,7 @@ mod tests {
                     "SourceDocument",
                     RelationKind::Entity,
                     vec![
-                        FieldDescriptor::new(
-                            "id",
-                            ValueType::Id {
-                                name: "SourceDocumentId".to_owned(),
-                                relation: "SourceDocument".to_owned(),
-                            },
-                        ),
+                        FieldDescriptor::new("id", identity("SourceDocumentId", "SourceDocument")),
                         FieldDescriptor::new("payload", ValueType::Bytes),
                     ],
                     PrimaryKeyDescriptor::new(["id"]),
@@ -2138,20 +2025,8 @@ mod tests {
                     "OrgParent",
                     RelationKind::Edge,
                     vec![
-                        FieldDescriptor::new(
-                            "child",
-                            ValueType::Ref {
-                                name: "OrgId".to_owned(),
-                                target_relation: "Org".to_owned(),
-                            },
-                        ),
-                        FieldDescriptor::new(
-                            "parent",
-                            ValueType::Ref {
-                                name: "OrgId".to_owned(),
-                                target_relation: "Org".to_owned(),
-                            },
-                        ),
+                        FieldDescriptor::new("child", identity("OrgId", "Org")),
+                        FieldDescriptor::new("parent", identity("OrgId", "Org")),
                     ],
                     PrimaryKeyDescriptor::new(["child", "parent"]),
                 ),
@@ -2168,13 +2043,7 @@ mod tests {
                     "Parent",
                     RelationKind::Entity,
                     vec![
-                        FieldDescriptor::new(
-                            "id",
-                            ValueType::Id {
-                                name: "ParentId".to_owned(),
-                                relation: "Parent".to_owned(),
-                            },
-                        ),
+                        FieldDescriptor::new("id", identity("ParentId", "Parent")),
                         FieldDescriptor::new("code", ValueType::U64),
                     ],
                     PrimaryKeyDescriptor::new(["id"]),
@@ -2186,20 +2055,8 @@ mod tests {
                     "Child",
                     RelationKind::Entity,
                     vec![
-                        FieldDescriptor::new(
-                            "id",
-                            ValueType::Id {
-                                name: "ChildId".to_owned(),
-                                relation: "Child".to_owned(),
-                            },
-                        ),
-                        FieldDescriptor::new(
-                            "parent",
-                            ValueType::Ref {
-                                name: "ParentId".to_owned(),
-                                target_relation: "Parent".to_owned(),
-                            },
-                        ),
+                        FieldDescriptor::new("id", identity("ChildId", "Child")),
+                        FieldDescriptor::new("parent", identity("ParentId", "Parent")),
                     ],
                     PrimaryKeyDescriptor::new(["id"]),
                 )
@@ -2239,6 +2096,14 @@ mod tests {
                 )),
             ],
         )
+    }
+
+    fn identity(type_name: &str, owning_relation: &str) -> ValueType {
+        ValueType::Identity {
+            type_name: type_name.to_owned(),
+            owning_relation: owning_relation.to_owned(),
+            allocation: IdentityAllocation::Serial,
+        }
     }
 
     fn find_layout<'a>(

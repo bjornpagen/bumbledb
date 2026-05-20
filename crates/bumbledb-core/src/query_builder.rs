@@ -7,7 +7,9 @@ use crate::query_ir::{
     TypedFieldBinding, TypedFindTerm, TypedInput, TypedLiteral, TypedOperand, TypedQuery,
     TypedRelationAtom, TypedTerm, TypedVariable,
 };
-use crate::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
+use crate::schema::{
+    FieldDescriptor, IdentityAllocation, RelationDescriptor, SchemaDescriptor, ValueType,
+};
 
 /// Query-builder result type.
 pub type QueryBuildResult<T> = std::result::Result<T, QueryBuildError>;
@@ -459,33 +461,7 @@ fn merge_types(existing: &ValueType, incoming: &ValueType) -> Option<ValueType> 
     if existing == incoming {
         return Some(existing.clone());
     }
-
-    match (existing, incoming) {
-        (
-            ValueType::Id {
-                name: id_name,
-                relation,
-            },
-            ValueType::Ref {
-                name: ref_name,
-                target_relation,
-            },
-        )
-        | (
-            ValueType::Ref {
-                name: ref_name,
-                target_relation,
-            },
-            ValueType::Id {
-                name: id_name,
-                relation,
-            },
-        ) if id_name == ref_name && relation == target_relation => Some(ValueType::Id {
-            name: id_name.clone(),
-            relation: relation.clone(),
-        }),
-        _ => None,
-    }
+    None
 }
 
 fn literal_fits_type(schema: &SchemaDescriptor, literal: &Literal, expected: &ValueType) -> bool {
@@ -497,9 +473,13 @@ fn literal_fits_type(schema: &SchemaDescriptor, literal: &Literal, expected: &Va
                 && *value <= u64::MAX as i128
                 && schema.enum_contains_code(name, *value as u64)
         }
+        (Literal::Integer(value), ValueType::U64) => *value >= 0 && *value <= u64::MAX as i128,
         (
             Literal::Integer(value),
-            ValueType::U64 | ValueType::Id { .. } | ValueType::Ref { .. } | ValueType::Code { .. },
+            ValueType::Identity {
+                allocation: IdentityAllocation::Serial | IdentityAllocation::Application,
+                ..
+            },
         ) => *value >= 0 && *value <= u64::MAX as i128,
         (Literal::Integer(value), ValueType::I64 | ValueType::TimestampMicros) => {
             *value >= i64::MIN as i128 && *value <= i64::MAX as i128
@@ -525,11 +505,12 @@ fn is_orderable(value_type: &ValueType) -> bool {
         value_type,
         ValueType::U64
             | ValueType::I64
-            | ValueType::Id { .. }
-            | ValueType::Ref { .. }
             | ValueType::TimestampMicros
             | ValueType::Decimal { .. }
-            | ValueType::Code { .. }
+            | ValueType::Identity {
+                allocation: IdentityAllocation::Serial,
+                ..
+            }
     )
 }
 
@@ -538,17 +519,17 @@ fn type_name(value_type: &ValueType) -> String {
         ValueType::Bool => "bool".to_owned(),
         ValueType::U64 => "u64".to_owned(),
         ValueType::I64 => "i64".to_owned(),
-        ValueType::Id { name, relation } => format!("{name}@{relation}"),
-        ValueType::Ref {
-            name,
-            target_relation,
-        } => format!("{name}->{target_relation}"),
         ValueType::TimestampMicros => "timestamp".to_owned(),
         ValueType::Decimal { scale } => format!("decimal(scale={scale})"),
         ValueType::Uuid => "uuid".to_owned(),
-        ValueType::Enum { name } | ValueType::Code { name } => name.clone(),
+        ValueType::Enum { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),
+        ValueType::Identity {
+            type_name,
+            owning_relation,
+            ..
+        } => format!("{type_name}@{owning_relation}"),
     }
 }
 
@@ -600,7 +581,7 @@ mod tests {
         assert_eq!(query.variables[1].name, "holder");
         assert!(matches!(
             query.variables[1].value_type,
-            ValueType::Id { .. }
+            ValueType::Identity { .. }
         ));
         Ok(())
     }
@@ -738,13 +719,7 @@ mod tests {
                     RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("id", id_type("AccountId", "Account")),
-                        FieldDescriptor::new(
-                            "holder",
-                            ValueType::Ref {
-                                name: "HolderId".to_owned(),
-                                target_relation: "Holder".to_owned(),
-                            },
-                        ),
+                        FieldDescriptor::new("holder", id_type("HolderId", "Holder")),
                         FieldDescriptor::new(
                             "currency",
                             ValueType::Enum {
@@ -759,13 +734,7 @@ mod tests {
                     RelationKind::Event,
                     vec![
                         FieldDescriptor::new("id", id_type("PostingId", "Posting")),
-                        FieldDescriptor::new(
-                            "account",
-                            ValueType::Ref {
-                                name: "AccountId".to_owned(),
-                                target_relation: "Account".to_owned(),
-                            },
-                        ),
+                        FieldDescriptor::new("account", id_type("AccountId", "Account")),
                         FieldDescriptor::new("amount", ValueType::Decimal { scale: 2 }),
                         FieldDescriptor::new("at", ValueType::TimestampMicros),
                     ],
@@ -777,9 +746,10 @@ mod tests {
     }
 
     fn id_type(name: &str, relation: &str) -> ValueType {
-        ValueType::Id {
-            name: name.to_owned(),
-            relation: relation.to_owned(),
+        ValueType::Identity {
+            type_name: name.to_owned(),
+            owning_relation: relation.to_owned(),
+            allocation: IdentityAllocation::Serial,
         }
     }
 }

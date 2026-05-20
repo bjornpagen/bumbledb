@@ -1533,12 +1533,12 @@ mod tests {
     use std::sync::Arc;
 
     use bumbledb_core::schema::{
-        FieldDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind, SchemaDescriptor,
-        ValueType,
+        FieldDescriptor, IdentityAllocation, PrimaryKeyDescriptor, RelationDescriptor,
+        RelationKind, SchemaDescriptor, ValueType,
     };
 
     use super::*;
-    use crate::{AccessId, Environment, KeyValues, Row, Value};
+    use crate::{AccessId, Environment, IdentityValue, KeyValues, Row, Value};
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -1889,7 +1889,7 @@ mod tests {
                 Row::new(
                     "Account",
                     [
-                        ("id", Value::Id(3)),
+                        ("id", Value::Identity(IdentityValue::Serial(3))),
                         ("currency", Value::Enum(826)),
                         ("active", Value::Bool(true)),
                         ("payload", Value::Bytes(vec![7, 8, 9])),
@@ -1969,7 +1969,13 @@ mod tests {
                 &schema,
                 account_row(2, 826, true, vec![9, 9, 9], "Cash GBP"),
             )?;
-            txn.delete(&schema, KeyValues::new("Account", [("id", Value::Id(1))]))?;
+            txn.delete(
+                &schema,
+                KeyValues::new(
+                    "Account",
+                    [("id", Value::Identity(IdentityValue::Serial(1)))],
+                ),
+            )?;
             Ok::<_, crate::Error>(())
         })?;
 
@@ -2071,9 +2077,10 @@ mod tests {
         let mut fields = vec![
             FieldDescriptor::new(
                 "id",
-                ValueType::Id {
-                    name: "AccountId".to_owned(),
-                    relation: "Account".to_owned(),
+                ValueType::Identity {
+                    type_name: "AccountId".to_owned(),
+                    owning_relation: "Account".to_owned(),
+                    allocation: IdentityAllocation::Serial,
                 },
             ),
             FieldDescriptor::new(
@@ -2127,7 +2134,7 @@ mod tests {
         Row::new(
             "Account",
             [
-                ("id", Value::Id(id)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
                 ("currency", Value::Enum(currency)),
                 ("active", Value::Bool(active)),
                 ("payload", Value::Bytes(payload)),

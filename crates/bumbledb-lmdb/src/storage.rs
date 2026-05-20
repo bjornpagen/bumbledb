@@ -6,8 +6,8 @@ use bumbledb_core::encoding::{
     encode_i64, encode_intern_id, encode_timestamp, encode_u64, encode_uuid,
 };
 use bumbledb_core::schema::{
-    ConstraintDescriptor, CurrentIndexLayout, FieldDescriptor, IndexComponent, RelationDescriptor,
-    SchemaDescriptor, ValueType,
+    ConstraintDescriptor, CurrentIndexLayout, FieldDescriptor, IdentityAllocation, IndexComponent,
+    RelationDescriptor, SchemaDescriptor, ValueType,
 };
 
 use crate::{
@@ -125,10 +125,8 @@ pub enum Value {
     U64(u64),
     /// Signed 64-bit integer.
     I64(i64),
-    /// Typed ID represented as `u64`.
-    Id(u64),
-    /// Typed ref represented as `u64`.
-    Ref(u64),
+    /// Typed nominal identity.
+    Identity(IdentityValue),
     /// UTC timestamp micros.
     Timestamp(TimestampMicros),
     /// Fixed-scale decimal raw value.
@@ -137,8 +135,6 @@ pub enum Value {
     Uuid(UuidBytes),
     /// Closed enum represented as a stable `u64` code.
     Enum(u64),
-    /// Open numeric code domain represented as `u64`.
-    Code(u64),
     /// String to intern.
     String(String),
     /// Bytes to intern.
@@ -151,17 +147,26 @@ impl Value {
             Value::Bool(_) => "bool",
             Value::U64(_) => "u64",
             Value::I64(_) => "i64",
-            Value::Id(_) => "id",
-            Value::Ref(_) => "ref",
+            Value::Identity(_) => "identity",
             Value::Timestamp(_) => "timestamp",
             Value::Decimal(_) => "decimal",
             Value::Uuid(_) => "uuid",
             Value::Enum(_) => "enum",
-            Value::Code(_) => "code",
             Value::String(_) => "string",
             Value::Bytes(_) => "bytes",
         }
     }
+}
+
+/// Runtime identity value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum IdentityValue {
+    /// Serial u64 identity.
+    Serial(u64),
+    /// UUID identity.
+    Uuid(UuidBytes),
+    /// Application-supplied u64 identity.
+    Application(u64),
 }
 
 /// Encoded component from a covering index key.
@@ -1603,13 +1608,31 @@ fn encode_value_for_type(
         (ValueType::Bool, Value::Bool(value)) => encode_bool(*value).to_vec(),
         (ValueType::U64, Value::U64(value)) => encode_u64(*value).to_vec(),
         (ValueType::I64, Value::I64(value)) => encode_i64(*value).to_vec(),
-        (ValueType::Id { .. }, Value::Id(value)) => encode_u64(*value).to_vec(),
-        (ValueType::Ref { .. }, Value::Ref(value)) => encode_u64(*value).to_vec(),
+        (
+            ValueType::Identity {
+                allocation: IdentityAllocation::Serial,
+                ..
+            },
+            Value::Identity(IdentityValue::Serial(value)),
+        )
+        | (
+            ValueType::Identity {
+                allocation: IdentityAllocation::Application,
+                ..
+            },
+            Value::Identity(IdentityValue::Application(value)),
+        ) => encode_u64(*value).to_vec(),
+        (
+            ValueType::Identity {
+                allocation: IdentityAllocation::Uuid,
+                ..
+            },
+            Value::Identity(IdentityValue::Uuid(value)),
+        ) => encode_uuid(*value).to_vec(),
         (ValueType::TimestampMicros, Value::Timestamp(value)) => encode_timestamp(*value).to_vec(),
         (ValueType::Decimal { .. }, Value::Decimal(value)) => encode_decimal(*value).to_vec(),
         (ValueType::Uuid, Value::Uuid(value)) => encode_uuid(*value).to_vec(),
-        (ValueType::Enum { .. }, Value::Enum(value))
-        | (ValueType::Code { .. }, Value::Code(value)) => encode_u64(*value).to_vec(),
+        (ValueType::Enum { .. }, Value::Enum(value)) => encode_u64(*value).to_vec(),
         (ValueType::String, Value::String(value)) => {
             encode_intern_id(InternId(intern(DICT_STRING, value.as_bytes())?)).to_vec()
         }
@@ -1669,13 +1692,31 @@ fn storage_value_matches_type(value: &Value, value_type: &ValueType) -> bool {
         (Value::Bool(_), ValueType::Bool)
             | (Value::U64(_), ValueType::U64)
             | (Value::I64(_), ValueType::I64)
-            | (Value::Id(_), ValueType::Id { .. })
-            | (Value::Ref(_), ValueType::Ref { .. })
+            | (
+                Value::Identity(IdentityValue::Serial(_)),
+                ValueType::Identity {
+                    allocation: IdentityAllocation::Serial,
+                    ..
+                },
+            )
+            | (
+                Value::Identity(IdentityValue::Application(_)),
+                ValueType::Identity {
+                    allocation: IdentityAllocation::Application,
+                    ..
+                },
+            )
+            | (
+                Value::Identity(IdentityValue::Uuid(_)),
+                ValueType::Identity {
+                    allocation: IdentityAllocation::Uuid,
+                    ..
+                },
+            )
             | (Value::Timestamp(_), ValueType::TimestampMicros)
             | (Value::Decimal(_), ValueType::Decimal { .. })
             | (Value::Uuid(_), ValueType::Uuid)
             | (Value::Enum(_), ValueType::Enum { .. })
-            | (Value::Code(_), ValueType::Code { .. })
             | (Value::String(_), ValueType::String)
             | (Value::Bytes(_), ValueType::Bytes)
     )
@@ -1797,12 +1838,24 @@ fn decode_value(
         ValueType::I64 => {
             Value::I64(decode_i64(bytes).map_err(|_| Error::corrupt("i64 width invalid"))?)
         }
-        ValueType::Id { .. } => {
-            Value::Id(decode_u64(bytes).map_err(|_| Error::corrupt("id width invalid"))?)
-        }
-        ValueType::Ref { .. } => {
-            Value::Ref(decode_u64(bytes).map_err(|_| Error::corrupt("ref width invalid"))?)
-        }
+        ValueType::Identity {
+            allocation: IdentityAllocation::Serial,
+            ..
+        } => Value::Identity(IdentityValue::Serial(
+            decode_u64(bytes).map_err(|_| Error::corrupt("identity width invalid"))?,
+        )),
+        ValueType::Identity {
+            allocation: IdentityAllocation::Application,
+            ..
+        } => Value::Identity(IdentityValue::Application(
+            decode_u64(bytes).map_err(|_| Error::corrupt("identity width invalid"))?,
+        )),
+        ValueType::Identity {
+            allocation: IdentityAllocation::Uuid,
+            ..
+        } => Value::Identity(IdentityValue::Uuid(
+            decode_uuid(bytes).map_err(|_| Error::corrupt("identity uuid width invalid"))?,
+        )),
         ValueType::TimestampMicros => Value::Timestamp(
             decode_timestamp(bytes).map_err(|_| Error::corrupt("timestamp width invalid"))?,
         ),
@@ -1814,9 +1867,6 @@ fn decode_value(
         }
         ValueType::Enum { .. } => {
             Value::Enum(decode_u64(bytes).map_err(|_| Error::corrupt("enum width invalid"))?)
-        }
-        ValueType::Code { .. } => {
-            Value::Code(decode_u64(bytes).map_err(|_| Error::corrupt("code width invalid"))?)
         }
         ValueType::String => {
             let InternId(id) = decode_intern_id(bytes)
@@ -1840,14 +1890,17 @@ fn value_type_name(value_type: &ValueType) -> String {
         ValueType::Bool => "bool".to_owned(),
         ValueType::U64 => "u64".to_owned(),
         ValueType::I64 => "i64".to_owned(),
-        ValueType::Id { name, .. } => name.clone(),
-        ValueType::Ref { name, .. } => name.clone(),
         ValueType::TimestampMicros => "timestamp".to_owned(),
         ValueType::Decimal { scale } => format!("decimal(scale={scale})"),
         ValueType::Uuid => "uuid".to_owned(),
-        ValueType::Enum { name } | ValueType::Code { name } => name.clone(),
+        ValueType::Enum { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),
+        ValueType::Identity {
+            type_name,
+            owning_relation,
+            ..
+        } => format!("{type_name}@{owning_relation}"),
     }
 }
 
@@ -2144,8 +2197,8 @@ mod tests {
     use super::*;
     use crate::{ConstraintError, Environment};
     use bumbledb_core::schema::{
-        ConstraintDescriptor, FieldDescriptor, GeneratedIdDescriptor, PrimaryKeyDescriptor,
-        RelationKind,
+        ConstraintDescriptor, FieldDescriptor, GeneratedIdDescriptor, IndexDescriptor,
+        PrimaryKeyDescriptor, RelationKind,
     };
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -2516,7 +2569,10 @@ mod tests {
                 &schema,
                 "Account",
                 "by_holder",
-                &FieldValues::new("Account", [("holder", Value::Ref(1))]),
+                &FieldValues::new(
+                    "Account",
+                    [("holder", Value::Identity(IdentityValue::Serial(1)))],
+                ),
             )?)?;
             assert_same_rows(
                 &by_holder_items
@@ -2636,9 +2692,10 @@ mod tests {
                     vec![
                         FieldDescriptor::new(
                             "id",
-                            ValueType::Id {
-                                name: "HolderId".to_owned(),
-                                relation: "Holder".to_owned(),
+                            ValueType::Identity {
+                                type_name: "HolderId".to_owned(),
+                                owning_relation: "Holder".to_owned(),
+                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new("name", ValueType::String),
@@ -2653,16 +2710,18 @@ mod tests {
                     vec![
                         FieldDescriptor::new(
                             "id",
-                            ValueType::Id {
-                                name: "AccountId".to_owned(),
-                                relation: "Account".to_owned(),
+                            ValueType::Identity {
+                                type_name: "AccountId".to_owned(),
+                                owning_relation: "Account".to_owned(),
+                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new(
                             "holder",
-                            ValueType::Ref {
-                                name: "HolderId".to_owned(),
-                                target_relation: "Holder".to_owned(),
+                            ValueType::Identity {
+                                type_name: "HolderId".to_owned(),
+                                owning_relation: "Holder".to_owned(),
+                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new(
@@ -2676,6 +2735,7 @@ mod tests {
                     PrimaryKeyDescriptor::new(["id"]),
                 )
                 .with_generated_id(GeneratedIdDescriptor::new("id"))
+                .with_index(IndexDescriptor::equality("by_holder", ["holder"]))
                 .with_constraint(ConstraintDescriptor::unique(
                     "holder_currency",
                     ["holder", "currency"],
@@ -2686,9 +2746,10 @@ mod tests {
                     vec![
                         FieldDescriptor::new(
                             "account",
-                            ValueType::Ref {
-                                name: "AccountId".to_owned(),
-                                target_relation: "Account".to_owned(),
+                            ValueType::Identity {
+                                type_name: "AccountId".to_owned(),
+                                owning_relation: "Account".to_owned(),
+                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new(
@@ -2699,7 +2760,8 @@ mod tests {
                         ),
                     ],
                     PrimaryKeyDescriptor::new(["account", "tag"]),
-                ),
+                )
+                .with_index(IndexDescriptor::equality("by_account", ["account"])),
             ],
         )
         .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
@@ -2717,7 +2779,7 @@ mod tests {
         Row::new(
             "Holder",
             [
-                ("id", Value::Id(id)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
                 ("name", Value::String(name.to_owned())),
             ],
         )
@@ -2727,8 +2789,8 @@ mod tests {
         Row::new(
             "Account",
             [
-                ("id", Value::Id(id)),
-                ("holder", Value::Ref(holder)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("holder", Value::Identity(IdentityValue::Serial(holder))),
                 ("currency", Value::Enum(currency)),
                 (
                     "opened",
@@ -2741,16 +2803,25 @@ mod tests {
     fn tag_row(account: u64, tag: u64) -> Row {
         Row::new(
             "AccountTag",
-            [("account", Value::Ref(account)), ("tag", Value::Enum(tag))],
+            [
+                ("account", Value::Identity(IdentityValue::Serial(account))),
+                ("tag", Value::Enum(tag)),
+            ],
         )
     }
 
     fn holder_key(id: u64) -> KeyValues {
-        KeyValues::new("Holder", [("id", Value::Id(id))])
+        KeyValues::new(
+            "Holder",
+            [("id", Value::Identity(IdentityValue::Serial(id)))],
+        )
     }
 
     fn account_key(id: u64) -> KeyValues {
-        KeyValues::new("Account", [("id", Value::Id(id))])
+        KeyValues::new(
+            "Account",
+            [("id", Value::Identity(IdentityValue::Serial(id)))],
+        )
     }
 
     fn collect_items(scan: IndexScan<'_, '_, '_>) -> Result<Vec<ScanItem>> {
@@ -2774,13 +2845,13 @@ mod tests {
         rows.iter()
             .map(|row| {
                 let id = match required_value(row, "id")? {
-                    Value::Id(value) => *value,
+                    Value::Identity(IdentityValue::Serial(value)) => *value,
                     other => {
                         return Err(Error::internal(format!("unexpected id value: {other:?}")));
                     }
                 };
                 let holder = match required_value(row, "holder")? {
-                    Value::Ref(value) => *value,
+                    Value::Identity(IdentityValue::Serial(value)) => *value,
                     other => {
                         return Err(Error::internal(format!(
                             "unexpected holder value: {other:?}"

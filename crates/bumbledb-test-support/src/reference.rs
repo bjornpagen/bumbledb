@@ -7,10 +7,10 @@ use bumbledb_core::query_ir::{
     AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm,
     TypedLiteral, TypedOperand, TypedQuery, TypedTerm,
 };
-use bumbledb_core::schema::ValueType;
+use bumbledb_core::schema::{IdentityAllocation, ValueType};
 use bumbledb_lmdb::{
-    AggregateError, Error, ExecuteError, InputBindings, InternalError, QueryError, Result, Row,
-    Value,
+    AggregateError, Error, ExecuteError, IdentityValue, InputBindings, InternalError, QueryError,
+    Result, Row, Value,
 };
 
 /// In-memory reference database.
@@ -140,23 +140,18 @@ fn match_atom(
         };
         match &field.term {
             TypedTerm::Variable(variable) => {
-                let normalized =
-                    normalize_value_for_type(row_value, &query.variables[*variable].value_type);
-                if !next.bind(*variable, normalized) {
+                if !next.bind(*variable, row_value.clone()) {
                     return Ok(None);
                 }
             }
             TypedTerm::Input(input) => {
                 let input_value = input_value(query, inputs, *input)?;
-                let normalized =
-                    normalize_value_for_type(row_value, &query.inputs[*input].value_type);
-                if input_value != &normalized {
+                if input_value != row_value {
                     return Ok(None);
                 }
             }
             TypedTerm::Literal(literal) => {
-                let normalized = normalize_value_for_type(row_value, &literal.value_type);
-                if literal_to_value(literal)? != normalized {
+                if literal_to_value(literal)? != *row_value {
                     return Ok(None);
                 }
             }
@@ -179,8 +174,6 @@ fn comparisons_pass(
         let Some(right) = operand_value(&comparison.right, query, inputs, binding)? else {
             continue;
         };
-        let left = normalize_value_for_type(&left, &comparison.value_type);
-        let right = normalize_value_for_type(&right, &comparison.value_type);
         if !compare_values(&left, comparison.operator, &right) {
             return Ok(false);
         }
@@ -410,10 +403,21 @@ fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
         (Literal::String(value), ValueType::String) => Value::String(value.clone()),
         (Literal::Integer(value), ValueType::U64) => Value::U64(*value as u64),
         (Literal::Integer(value), ValueType::I64) => Value::I64(*value as i64),
-        (Literal::Integer(value), ValueType::Id { .. }) => Value::Id(*value as u64),
-        (Literal::Integer(value), ValueType::Ref { .. }) => Value::Ref(*value as u64),
         (Literal::Integer(value), ValueType::Enum { .. }) => Value::Enum(*value as u64),
-        (Literal::Integer(value), ValueType::Code { .. }) => Value::Code(*value as u64),
+        (
+            Literal::Integer(value),
+            ValueType::Identity {
+                allocation: IdentityAllocation::Serial,
+                ..
+            },
+        ) => Value::Identity(IdentityValue::Serial(*value as u64)),
+        (
+            Literal::Integer(value),
+            ValueType::Identity {
+                allocation: IdentityAllocation::Application,
+                ..
+            },
+        ) => Value::Identity(IdentityValue::Application(*value as u64)),
         (Literal::Integer(value), ValueType::TimestampMicros) => {
             Value::Timestamp(TimestampMicros(*value as i64))
         }
@@ -424,14 +428,6 @@ fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
             }));
         }
     })
-}
-
-fn normalize_value_for_type(value: &Value, value_type: &ValueType) -> Value {
-    match (value, value_type) {
-        (Value::Ref(raw), ValueType::Id { .. }) => Value::Id(*raw),
-        (Value::Id(raw), ValueType::Ref { .. }) => Value::Ref(*raw),
-        _ => value.clone(),
-    }
 }
 
 fn compare_values(left: &Value, operator: ComparisonOperator, right: &Value) -> bool {
@@ -451,13 +447,31 @@ fn value_matches_type(value: &Value, value_type: &ValueType) -> bool {
         (Value::Bool(_), ValueType::Bool)
             | (Value::U64(_), ValueType::U64)
             | (Value::I64(_), ValueType::I64)
-            | (Value::Id(_), ValueType::Id { .. })
-            | (Value::Ref(_), ValueType::Ref { .. })
+            | (
+                Value::Identity(IdentityValue::Serial(_)),
+                ValueType::Identity {
+                    allocation: IdentityAllocation::Serial,
+                    ..
+                }
+            )
+            | (
+                Value::Identity(IdentityValue::Application(_)),
+                ValueType::Identity {
+                    allocation: IdentityAllocation::Application,
+                    ..
+                }
+            )
+            | (
+                Value::Identity(IdentityValue::Uuid(_)),
+                ValueType::Identity {
+                    allocation: IdentityAllocation::Uuid,
+                    ..
+                }
+            )
             | (Value::Timestamp(_), ValueType::TimestampMicros)
             | (Value::Decimal(_), ValueType::Decimal { .. })
             | (Value::Uuid(_), ValueType::Uuid)
             | (Value::Enum(_), ValueType::Enum { .. })
-            | (Value::Code(_), ValueType::Code { .. })
             | (Value::String(_), ValueType::String)
             | (Value::Bytes(_), ValueType::Bytes)
     )
@@ -468,14 +482,17 @@ fn value_type_name(value_type: &ValueType) -> String {
         ValueType::Bool => "bool".to_owned(),
         ValueType::U64 => "u64".to_owned(),
         ValueType::I64 => "i64".to_owned(),
-        ValueType::Id { name, .. } => name.clone(),
-        ValueType::Ref { name, .. } => name.clone(),
         ValueType::TimestampMicros => "timestamp".to_owned(),
         ValueType::Decimal { scale } => format!("decimal(scale={scale})"),
         ValueType::Uuid => "uuid".to_owned(),
-        ValueType::Enum { name } | ValueType::Code { name } => name.clone(),
+        ValueType::Enum { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),
+        ValueType::Identity {
+            type_name,
+            owning_relation,
+            ..
+        } => format!("{type_name}@{owning_relation}"),
     }
 }
 
@@ -484,13 +501,11 @@ fn value_kind_name(value: &Value) -> &'static str {
         Value::Bool(_) => "bool",
         Value::U64(_) => "u64",
         Value::I64(_) => "i64",
-        Value::Id(_) => "id",
-        Value::Ref(_) => "ref",
+        Value::Identity(_) => "identity",
         Value::Timestamp(_) => "timestamp",
         Value::Decimal(_) => "decimal",
         Value::Uuid(_) => "uuid",
         Value::Enum(_) => "enum",
-        Value::Code(_) => "code",
         Value::String(_) => "string",
         Value::Bytes(_) => "bytes",
     }

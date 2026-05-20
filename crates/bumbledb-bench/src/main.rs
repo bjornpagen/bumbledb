@@ -9,12 +9,13 @@ use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
 use bumbledb_core::query_ir::{AggregateFunction, ComparisonOperator, TypedFindTerm, TypedQuery};
 use bumbledb_core::schema::{
-    EnumDescriptor, FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor,
-    RelationKind, SchemaDescriptor, ValueType,
+    EnumDescriptor, FieldDescriptor, IdentityAllocation, IndexDescriptor, PrimaryKeyDescriptor,
+    RelationDescriptor, RelationKind, SchemaDescriptor, ValueType,
 };
 use bumbledb_lmdb::{
-    AllocationPhaseStats, Environment, InputBindings, PlanCounters, QueryAllocationStats,
-    QueryOutput, QueryPlan, QueryTimings, ResultColumn, Row, StorageSchema, Value,
+    AllocationPhaseStats, Environment, IdentityValue, InputBindings, PlanCounters,
+    QueryAllocationStats, QueryOutput, QueryPlan, QueryTimings, ResultColumn, Row, StorageSchema,
+    Value,
 };
 use rusqlite::{Connection, params_from_iter};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -1957,7 +1958,7 @@ fn ledger_dataset(scale: u64) -> Dataset {
                 name: "postings_for_holder_range",
                 build: build_ledger_postings_for_holder_range,
                 inputs: vec![
-                    ("holder", Value::Ref(1)),
+                    ("holder", Value::Identity(IdentityValue::Serial(1))),
                     ("start", Value::Timestamp(TimestampMicros(0))),
                     (
                         "end",
@@ -1978,7 +1979,7 @@ fn ledger_dataset(scale: u64) -> Dataset {
             BenchQuery {
                 name: "balances_by_instrument",
                 build: build_ledger_balances_by_instrument,
-                inputs: vec![("holder", Value::Ref(1))],
+                inputs: vec![("holder", Value::Identity(IdentityValue::Serial(1)))],
                 sqlite: r#"
                     SELECT p.instrument, SUM(p.amount) FROM posting p
                     JOIN account a ON a.id = p.account
@@ -2080,7 +2081,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
                 name: "sailor_range_reserves",
                 build: build_sailors_sailor_range_reserves,
                 inputs: vec![
-                    ("sailor", Value::Ref(1)),
+                    ("sailor", Value::Identity(IdentityValue::Serial(1))),
                     ("start", Value::Timestamp(TimestampMicros(0))),
                     ("end", Value::Timestamp(TimestampMicros(10_000_000))),
                 ],
@@ -2217,7 +2218,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
             BenchQuery {
                 name: "chain4_from_a",
                 build: build_joinstress_chain4_from_a,
-                inputs: vec![("a", Value::Id(1))],
+                inputs: vec![("a", Value::Identity(IdentityValue::Serial(1)))],
                 sqlite: "SELECT d.id FROM a JOIN b ON b.a = a.id JOIN c ON c.b = b.id JOIN d ON d.c = c.id WHERE a.id = ?1",
                 sqlite_params: vec![SqlParam::I64(1)],
             },
@@ -2244,12 +2245,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                     RelationKind::Entity,
                     vec![
                         id_field("CustomerId", "Customer"),
-                        FieldDescriptor::new(
-                            "nation",
-                            ValueType::Code {
-                                name: "Nation".to_owned(),
-                            },
-                        ),
+                        FieldDescriptor::new("nation", ValueType::U64),
                     ],
                     PrimaryKeyDescriptor::new(["id"]),
                 )
@@ -2259,12 +2255,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                     RelationKind::Entity,
                     vec![
                         id_field("SupplierId", "Supplier"),
-                        FieldDescriptor::new(
-                            "nation",
-                            ValueType::Code {
-                                name: "Nation".to_owned(),
-                            },
-                        ),
+                        FieldDescriptor::new("nation", ValueType::U64),
                     ],
                     PrimaryKeyDescriptor::new(["id"]),
                 )
@@ -2274,12 +2265,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                     RelationKind::Entity,
                     vec![
                         id_field("PartId", "Part"),
-                        FieldDescriptor::new(
-                            "brand",
-                            ValueType::Code {
-                                name: "Brand".to_owned(),
-                            },
-                        ),
+                        FieldDescriptor::new("brand", ValueType::U64),
                     ],
                     PrimaryKeyDescriptor::new(["id"]),
                 ),
@@ -2332,7 +2318,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                 name: "revenue_by_customer_range",
                 build: build_tpch_revenue_by_customer_range,
                 inputs: vec![
-                    ("nation", Value::Code(1)),
+                    ("nation", Value::U64(1)),
                     ("start", Value::Timestamp(TimestampMicros(0))),
                     ("end", Value::Timestamp(TimestampMicros(1_000_000_000))),
                 ],
@@ -2352,7 +2338,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
             BenchQuery {
                 name: "supplier_nation_orders",
                 build: build_tpch_supplier_nation_orders,
-                inputs: vec![("nation", Value::Code(2))],
+                inputs: vec![("nation", Value::U64(2))],
                 sqlite: r#"
                     SELECT l.id, o.id FROM supplier s
                     JOIN lineitem l ON l.supplier = s.id
@@ -2597,7 +2583,7 @@ fn sailors_rows(sailors: u64) -> Vec<Row> {
         rows.push(Row::new(
             "Sailor",
             [
-                ("id", Value::Id(sid)),
+                ("id", Value::Identity(IdentityValue::Serial(sid))),
                 ("name", Value::String(format!("sailor-{sid}"))),
                 ("rating", Value::U64((sid % 10) + 1)),
                 ("age", Value::I64(18 + (sid % 50) as i64)),
@@ -2609,7 +2595,7 @@ fn sailors_rows(sailors: u64) -> Vec<Row> {
         rows.push(Row::new(
             "Boat",
             [
-                ("id", Value::Id(bid)),
+                ("id", Value::Identity(IdentityValue::Serial(bid))),
                 ("name", Value::String(format!("boat-{bid}"))),
                 ("color", Value::Enum((bid % 3) + 1)),
             ],
@@ -2624,8 +2610,8 @@ fn sailors_rows(sailors: u64) -> Vec<Row> {
                 rows.push(Row::new(
                     "Reserve",
                     [
-                        ("sailor", Value::Ref(sid)),
-                        ("boat", Value::Ref(bid)),
+                        ("sailor", Value::Identity(IdentityValue::Serial(sid))),
+                        ("boat", Value::Identity(IdentityValue::Serial(bid))),
                         ("day", Value::Timestamp(TimestampMicros(day))),
                     ],
                 ));
@@ -2640,29 +2626,41 @@ fn join_stress_rows(n: u64) -> Vec<Row> {
     for id in 1..=n {
         rows.push(Row::new(
             "A",
-            [("id", Value::Id(id)), ("k", Value::Enum(id % 10))],
+            [
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("k", Value::Enum(id % 10)),
+            ],
         ));
         rows.push(Row::new(
             "B",
             [
-                ("id", Value::Id(id)),
-                ("a", Value::Ref(((id - 1) % n) + 1)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                (
+                    "a",
+                    Value::Identity(IdentityValue::Serial(((id - 1) % n) + 1)),
+                ),
                 ("k", Value::Enum(id % 10)),
             ],
         ));
         rows.push(Row::new(
             "C",
             [
-                ("id", Value::Id(id)),
-                ("b", Value::Ref(((id - 1) % n) + 1)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                (
+                    "b",
+                    Value::Identity(IdentityValue::Serial(((id - 1) % n) + 1)),
+                ),
                 ("k", Value::Enum(id % 10)),
             ],
         ));
         rows.push(Row::new(
             "D",
             [
-                ("id", Value::Id(id)),
-                ("c", Value::Ref(((id - 1) % n) + 1)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                (
+                    "c",
+                    Value::Identity(IdentityValue::Serial(((id - 1) % n) + 1)),
+                ),
                 ("k", Value::Enum(id % 10)),
             ],
         ));
@@ -2677,19 +2675,28 @@ fn join_stress_rows(n: u64) -> Vec<Row> {
             if ab.insert((a, b)) {
                 rows.push(Row::new(
                     "EdgeAB",
-                    [("a", Value::Ref(a)), ("b", Value::Ref(b))],
+                    [
+                        ("a", Value::Identity(IdentityValue::Serial(a))),
+                        ("b", Value::Identity(IdentityValue::Serial(b))),
+                    ],
                 ));
             }
             if ac.insert((a, c)) {
                 rows.push(Row::new(
                     "EdgeAC",
-                    [("a", Value::Ref(a)), ("c", Value::Ref(c))],
+                    [
+                        ("a", Value::Identity(IdentityValue::Serial(a))),
+                        ("c", Value::Identity(IdentityValue::Serial(c))),
+                    ],
                 ));
             }
             if bc.insert((b, c)) {
                 rows.push(Row::new(
                     "EdgeBC",
-                    [("b", Value::Ref(b)), ("c", Value::Ref(c))],
+                    [
+                        ("b", Value::Identity(IdentityValue::Serial(b))),
+                        ("c", Value::Identity(IdentityValue::Serial(c))),
+                    ],
                 ));
             }
         }
@@ -2702,21 +2709,33 @@ fn tpch_rows(n: u64) -> Vec<Row> {
     for id in 1..=n {
         rows.push(Row::new(
             "Customer",
-            [("id", Value::Id(id)), ("nation", Value::Code((id % 5) + 1))],
+            [
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("nation", Value::U64((id % 5) + 1)),
+            ],
         ));
         rows.push(Row::new(
             "Supplier",
-            [("id", Value::Id(id)), ("nation", Value::Code((id % 7) + 1))],
+            [
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("nation", Value::U64((id % 7) + 1)),
+            ],
         ));
         rows.push(Row::new(
             "Part",
-            [("id", Value::Id(id)), ("brand", Value::Code((id % 11) + 1))],
+            [
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("brand", Value::U64((id % 11) + 1)),
+            ],
         ));
         rows.push(Row::new(
             "Orders",
             [
-                ("id", Value::Id(id)),
-                ("customer", Value::Ref(((id - 1) % n) + 1)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                (
+                    "customer",
+                    Value::Identity(IdentityValue::Serial(((id - 1) % n) + 1)),
+                ),
                 (
                     "order_date",
                     Value::Timestamp(TimestampMicros(id as i64 * 10)),
@@ -2730,10 +2749,16 @@ fn tpch_rows(n: u64) -> Vec<Row> {
             rows.push(Row::new(
                 "LineItem",
                 [
-                    ("id", Value::Id(line)),
-                    ("order", Value::Ref(order)),
-                    ("part", Value::Ref(((order + offset) % n) + 1)),
-                    ("supplier", Value::Ref(((order + offset * 3) % n) + 1)),
+                    ("id", Value::Identity(IdentityValue::Serial(line))),
+                    ("order", Value::Identity(IdentityValue::Serial(order))),
+                    (
+                        "part",
+                        Value::Identity(IdentityValue::Serial(((order + offset) % n) + 1)),
+                    ),
+                    (
+                        "supplier",
+                        Value::Identity(IdentityValue::Serial(((order + offset * 3) % n) + 1)),
+                    ),
                     ("quantity", Value::I64((offset + 1) as i64)),
                     (
                         "extended_price",
@@ -2928,21 +2953,21 @@ fn insert_tpch_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std
 
 pub(crate) fn id(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
     match required_value(row, field)? {
-        Value::Id(v) => Ok(*v as i64),
+        Value::Identity(IdentityValue::Serial(v)) => Ok(*v as i64),
         other => Err(unexpected_value(field, "id", other)),
     }
 }
 
 pub(crate) fn rf(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
     match required_value(row, field)? {
-        Value::Ref(v) => Ok(*v as i64),
+        Value::Identity(IdentityValue::Serial(v)) => Ok(*v as i64),
         other => Err(unexpected_value(field, "ref", other)),
     }
 }
 
 pub(crate) fn symbol(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
     match required_value(row, field)? {
-        Value::Enum(v) | Value::Code(v) => Ok(*v as i64),
+        Value::Enum(v) | Value::U64(v) => Ok(*v as i64),
         other => Err(unexpected_value(field, "symbol", other)),
     }
 }
@@ -2994,9 +3019,10 @@ fn unexpected_value(field: &str, expected: &str, actual: &Value) -> Box<dyn std:
 pub(crate) fn id_field(id_type: &str, relation: &str) -> FieldDescriptor {
     FieldDescriptor::new(
         "id",
-        ValueType::Id {
-            name: id_type.to_owned(),
-            relation: relation.to_owned(),
+        ValueType::Identity {
+            type_name: id_type.to_owned(),
+            owning_relation: relation.to_owned(),
+            allocation: IdentityAllocation::Serial,
         },
     )
 }
@@ -3004,9 +3030,10 @@ pub(crate) fn id_field(id_type: &str, relation: &str) -> FieldDescriptor {
 pub(crate) fn ref_field(id_type: &str, field: &str, target: &str) -> FieldDescriptor {
     FieldDescriptor::new(
         field,
-        ValueType::Ref {
-            name: id_type.to_owned(),
-            target_relation: target.to_owned(),
+        ValueType::Identity {
+            type_name: id_type.to_owned(),
+            owning_relation: target.to_owned(),
+            allocation: IdentityAllocation::Serial,
         },
     )
 }

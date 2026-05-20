@@ -10,14 +10,16 @@ use bumbledb_core::query_ir::{
     AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm,
     TypedLiteral, TypedOperand, TypedQuery, TypedRelationAtom, TypedTerm,
 };
-use bumbledb_core::schema::{CurrentIndexLayout, IndexKind, SchemaFingerprint, ValueType};
+use bumbledb_core::schema::{
+    CurrentIndexLayout, IdentityAllocation, IndexKind, SchemaFingerprint, ValueType,
+};
 
 use crate::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FieldValues,
-    FreeJoinPlan, HashTrieIndex, IndexSpec, LinearIter, NodeId, NodeImpl, OutputPlan,
-    PayloadDemand, PlanEstimates, PlanNode, PrefixProbe, PrefixRows, ProjectPlan, ReadTxn,
-    RelationImage, RelationStats, Result, Row, RowId, RowRange, SortedTrieIndex, StorageSchema,
-    SubAtom, TrieIter, Value, VarId,
+    FreeJoinPlan, HashTrieIndex, IdentityValue, IndexSpec, LinearIter, NodeId, NodeImpl,
+    OutputPlan, PayloadDemand, PlanEstimates, PlanNode, PrefixProbe, PrefixRows, ProjectPlan,
+    ReadTxn, RelationImage, RelationStats, Result, Row, RowId, RowRange, SortedTrieIndex,
+    StorageSchema, SubAtom, TrieIter, Value, VarId,
 };
 
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
@@ -2412,36 +2414,40 @@ fn hash_value_type(hasher: &mut blake3::Hasher, value_type: &ValueType) {
         ValueType::Bool => hash_u8(hasher, 1),
         ValueType::U64 => hash_u8(hasher, 2),
         ValueType::I64 => hash_u8(hasher, 3),
-        ValueType::Id { name, relation } => {
-            hash_u8(hasher, 4);
-            hash_bytes_len_prefixed(hasher, name.as_bytes());
-            hash_bytes_len_prefixed(hasher, relation.as_bytes());
-        }
-        ValueType::Ref {
-            name,
-            target_relation,
-        } => {
-            hash_u8(hasher, 5);
-            hash_bytes_len_prefixed(hasher, name.as_bytes());
-            hash_bytes_len_prefixed(hasher, target_relation.as_bytes());
-        }
-        ValueType::TimestampMicros => hash_u8(hasher, 6),
+        ValueType::TimestampMicros => hash_u8(hasher, 4),
         ValueType::Decimal { scale } => {
-            hash_u8(hasher, 7);
+            hash_u8(hasher, 5);
             hash_u32(hasher, *scale);
         }
-        ValueType::Uuid => hash_u8(hasher, 8),
+        ValueType::Uuid => hash_u8(hasher, 6),
         ValueType::Enum { name } => {
-            hash_u8(hasher, 9);
+            hash_u8(hasher, 7);
             hash_bytes_len_prefixed(hasher, name.as_bytes());
         }
-        ValueType::Code { name } => {
+        ValueType::String => hash_u8(hasher, 8),
+        ValueType::Bytes => hash_u8(hasher, 9),
+        ValueType::Identity {
+            type_name,
+            owning_relation,
+            allocation,
+        } => {
             hash_u8(hasher, 10);
-            hash_bytes_len_prefixed(hasher, name.as_bytes());
+            hash_bytes_len_prefixed(hasher, type_name.as_bytes());
+            hash_bytes_len_prefixed(hasher, owning_relation.as_bytes());
+            hash_identity_allocation(hasher, *allocation);
         }
-        ValueType::String => hash_u8(hasher, 11),
-        ValueType::Bytes => hash_u8(hasher, 12),
     }
+}
+
+fn hash_identity_allocation(hasher: &mut blake3::Hasher, allocation: IdentityAllocation) {
+    hash_u8(
+        hasher,
+        match allocation {
+            IdentityAllocation::Serial => 1,
+            IdentityAllocation::Uuid => 2,
+            IdentityAllocation::Application => 3,
+        },
+    );
 }
 
 fn hash_encoded_owned(hasher: &mut blake3::Hasher, value: &EncodedOwned) {
@@ -3588,10 +3594,8 @@ fn bind_direct_storage_row(
         };
         match &field.term {
             NormTerm::Var(variable) => {
-                let normalized =
-                    normalize_value_for_type(value, &query.vars[variable.0 as usize].value_type);
-                let encoded = txn
-                    .encode_query_value(&query.vars[variable.0 as usize].value_type, &normalized)?;
+                let encoded =
+                    txn.encode_query_value(&query.vars[variable.0 as usize].value_type, value)?;
                 let encoded = EncodedValue::from_bytes(
                     &query.vars[variable.0 as usize].value_type,
                     &encoded,
@@ -4661,11 +4665,9 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 let value = row
                     .value(field_name)
                     .ok_or_else(|| Error::internal("missing direct chain storage row value"))?;
-                let normalized =
-                    normalize_value_for_type(value, &self.query.vars[step.bind_var].value_type);
                 let encoded = self
                     .txn
-                    .encode_query_value(&self.query.vars[step.bind_var].value_type, &normalized)?;
+                    .encode_query_value(&self.query.vars[step.bind_var].value_type, value)?;
                 let encoded =
                     EncodedValue::from_bytes(&self.query.vars[step.bind_var].value_type, &encoded)?;
                 if !self.binding.bind(step.bind_var, encoded) {
@@ -8300,8 +8302,6 @@ fn comparisons_ready_pass(
         };
         counters.comparisons_evaluated += 1;
         counters.decoded_comparisons_evaluated += 1;
-        let left = normalize_value_for_type(&left, &comparison.value_type);
-        let right = normalize_value_for_type(&right, &comparison.value_type);
         if !compare_values(&left, comparison.op, &right) {
             counters.comparisons_failed += 1;
             return Ok(false);
@@ -8433,24 +8433,34 @@ fn value_matches_type(schema: &StorageSchema, value: &Value, value_type: &ValueT
         (Value::Bool(_), ValueType::Bool)
             | (Value::U64(_), ValueType::U64)
             | (Value::I64(_), ValueType::I64)
-            | (Value::Id(_), ValueType::Id { .. })
-            | (Value::Ref(_), ValueType::Ref { .. })
+            | (
+                Value::Identity(IdentityValue::Serial(_)),
+                ValueType::Identity {
+                    allocation: IdentityAllocation::Serial,
+                    ..
+                },
+            )
+            | (
+                Value::Identity(IdentityValue::Application(_)),
+                ValueType::Identity {
+                    allocation: IdentityAllocation::Application,
+                    ..
+                },
+            )
+            | (
+                Value::Identity(IdentityValue::Uuid(_)),
+                ValueType::Identity {
+                    allocation: IdentityAllocation::Uuid,
+                    ..
+                },
+            )
             | (Value::Timestamp(_), ValueType::TimestampMicros)
             | (Value::Decimal(_), ValueType::Decimal { .. })
             | (Value::Uuid(_), ValueType::Uuid)
             | (Value::Enum(_), ValueType::Enum { .. })
-            | (Value::Code(_), ValueType::Code { .. })
             | (Value::String(_), ValueType::String)
             | (Value::Bytes(_), ValueType::Bytes)
     )
-}
-
-fn normalize_value_for_type(value: &Value, value_type: &ValueType) -> Value {
-    match (value, value_type) {
-        (Value::Ref(raw), ValueType::Id { .. }) => Value::Id(*raw),
-        (Value::Id(raw), ValueType::Ref { .. }) => Value::Ref(*raw),
-        _ => value.clone(),
-    }
 }
 
 fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
@@ -8459,10 +8469,21 @@ fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
         (Literal::String(value), ValueType::String) => Value::String(value.clone()),
         (Literal::Integer(value), ValueType::U64) => Value::U64(*value as u64),
         (Literal::Integer(value), ValueType::I64) => Value::I64(*value as i64),
-        (Literal::Integer(value), ValueType::Id { .. }) => Value::Id(*value as u64),
-        (Literal::Integer(value), ValueType::Ref { .. }) => Value::Ref(*value as u64),
+        (
+            Literal::Integer(value),
+            ValueType::Identity {
+                allocation: IdentityAllocation::Serial,
+                ..
+            },
+        ) => Value::Identity(IdentityValue::Serial(*value as u64)),
+        (
+            Literal::Integer(value),
+            ValueType::Identity {
+                allocation: IdentityAllocation::Application,
+                ..
+            },
+        ) => Value::Identity(IdentityValue::Application(*value as u64)),
         (Literal::Integer(value), ValueType::Enum { .. }) => Value::Enum(*value as u64),
-        (Literal::Integer(value), ValueType::Code { .. }) => Value::Code(*value as u64),
         (Literal::Integer(value), ValueType::TimestampMicros) => {
             Value::Timestamp(TimestampMicros(*value as i64))
         }
@@ -8597,16 +8618,14 @@ fn normalize_operand(
         TypedOperand::Input(input) => NormOperand::Input(InputId(*input as u16)),
         TypedOperand::Literal(literal) => {
             let value = literal_to_value(literal)?;
-            let normalized = normalize_value_for_type(&value, value_type);
-            NormOperand::Literal(encode_owned_value(txn, value_type, &normalized)?)
+            NormOperand::Literal(encode_owned_value(txn, value_type, &value)?)
         }
     })
 }
 
 fn encode_literal(txn: &ReadTxn<'_>, literal: &TypedLiteral) -> Result<EncodedOwned> {
     let value = literal_to_value(literal)?;
-    let normalized = normalize_value_for_type(&value, &literal.value_type);
-    encode_owned_value(txn, &literal.value_type, &normalized)
+    encode_owned_value(txn, &literal.value_type, &value)
 }
 
 fn encode_owned_value(
@@ -8659,8 +8678,7 @@ fn encode_inputs(
                     value.kind_name(),
                 ));
             }
-            let normalized = normalize_value_for_type(value, &input.value_type);
-            encode_owned_value(txn, &input.value_type, &normalized)
+            encode_owned_value(txn, &input.value_type, value)
         })
         .collect::<Result<Vec<_>>>()?;
     Ok(EncodedInputs { values })
@@ -9505,14 +9523,17 @@ fn value_type_name(value_type: &ValueType) -> String {
         ValueType::Bool => "bool".to_owned(),
         ValueType::U64 => "u64".to_owned(),
         ValueType::I64 => "i64".to_owned(),
-        ValueType::Id { name, .. } => name.clone(),
-        ValueType::Ref { name, .. } => name.clone(),
         ValueType::TimestampMicros => "timestamp".to_owned(),
         ValueType::Decimal { scale } => format!("decimal(scale={scale})"),
         ValueType::Uuid => "uuid".to_owned(),
-        ValueType::Enum { name } | ValueType::Code { name } => name.clone(),
+        ValueType::Enum { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),
+        ValueType::Identity {
+            type_name,
+            owning_relation,
+            ..
+        } => format!("{type_name}@{owning_relation}"),
     }
 }
 
@@ -9567,11 +9588,20 @@ mod tests {
             txn.execute_query(
                 &schema,
                 &query,
-                &InputBindings::from_values([("holder", Value::Ref(1))]),
+                &InputBindings::from_values([(
+                    "holder",
+                    Value::Identity(IdentityValue::Serial(1)),
+                )]),
             )
         })?;
 
-        assert_eq!(output.rows, vec![vec![Value::Id(1)], vec![Value::Id(2)]]);
+        assert_eq!(
+            output.rows,
+            vec![
+                vec![Value::Identity(IdentityValue::Serial(1))],
+                vec![Value::Identity(IdentityValue::Serial(2))]
+            ]
+        );
         assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
         assert_eq!(output.plan.plan_family, PlanFamily::Direct);
         assert!(
@@ -9609,7 +9639,13 @@ mod tests {
             )
         })?;
 
-        assert_same_rows(&output.rows, &[vec![Value::Id(1)], vec![Value::Id(3)]]);
+        assert_same_rows(
+            &output.rows,
+            &[
+                vec![Value::Identity(IdentityValue::Serial(1))],
+                vec![Value::Identity(IdentityValue::Serial(3))],
+            ],
+        );
         let expected_fields = vec!["currency".to_owned(), "id".to_owned()];
         assert!(output.plan.missing_indexes.iter().any(|missing| {
             missing.relation == "Account"
@@ -9653,7 +9689,13 @@ mod tests {
         assert_eq!(output.plan.optimizer.chosen, "direct_storage");
         assert_eq!(output.plan.query_image_cache.builds, 0);
         assert_eq!(output.plan.counters.direct_kernel_rows, 2);
-        assert_same_rows(&output.rows, &[vec![Value::Id(1)], vec![Value::Id(2)]]);
+        assert_same_rows(
+            &output.rows,
+            &[
+                vec![Value::Identity(IdentityValue::Serial(1))],
+                vec![Value::Identity(IdentityValue::Serial(2))],
+            ],
+        );
         Ok(())
     }
 
@@ -10242,7 +10284,8 @@ mod tests {
             query.find_var("account")?.find_var("holder_name")?;
             Ok(())
         })?;
-        let inputs = InputBindings::from_values([("holder", Value::Id(1))]);
+        let inputs =
+            InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(1)))]);
 
         let first = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
         let second = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
@@ -10633,7 +10676,8 @@ mod tests {
             Ok(())
         })?;
         let prepared = env.prepare_query(&schema, &query)?;
-        let inputs = InputBindings::from_values([("holder", Value::Ref(1))]);
+        let inputs =
+            InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(1)))]);
 
         let first = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &inputs))?;
         let second = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &inputs))?;
@@ -10656,8 +10700,10 @@ mod tests {
                 .find_var("account")?;
             Ok(())
         })?;
-        let first_inputs = InputBindings::from_values([("holder", Value::Ref(1))]);
-        let second_inputs = InputBindings::from_values([("holder", Value::Ref(2))]);
+        let first_inputs =
+            InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(1)))]);
+        let second_inputs =
+            InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(2)))]);
 
         let (first, same, second) = env.read(|txn| {
             let normalized = normalize_query(txn, &schema, &query)?;
@@ -10666,7 +10712,10 @@ mod tests {
                 txn,
                 &schema,
                 &normalized,
-                &InputBindings::from_values([("holder", Value::Ref(1))]),
+                &InputBindings::from_values([(
+                    "holder",
+                    Value::Identity(IdentityValue::Serial(1)),
+                )]),
             )?;
             let second_inputs = encode_inputs(txn, &schema, &normalized, &second_inputs)?;
             let atom = &normalized.atoms[0];
@@ -10804,7 +10853,10 @@ mod tests {
             let image =
                 QueryImageBuilder::new(txn, &schema, QueryImageScope::full(&schema)).build()?;
             let mut binding = EncodedBinding::new(normalized.vars.len());
-            let encoded = txn.encode_query_value(&normalized.vars[0].value_type, &Value::Id(1))?;
+            let encoded = txn.encode_query_value(
+                &normalized.vars[0].value_type,
+                &Value::Identity(IdentityValue::Serial(1)),
+            )?;
             assert!(binding.bind(
                 0,
                 EncodedValue::from_bytes(&normalized.vars[0].value_type, &encoded)?,
@@ -10844,9 +10896,18 @@ mod tests {
         assert_same_rows(
             &output.rows,
             &[
-                vec![Value::Id(1), Value::String("Alice".to_owned())],
-                vec![Value::Id(2), Value::String("Alice".to_owned())],
-                vec![Value::Id(3), Value::String("Bob".to_owned())],
+                vec![
+                    Value::Identity(IdentityValue::Serial(1)),
+                    Value::String("Alice".to_owned()),
+                ],
+                vec![
+                    Value::Identity(IdentityValue::Serial(2)),
+                    Value::String("Alice".to_owned()),
+                ],
+                vec![
+                    Value::Identity(IdentityValue::Serial(3)),
+                    Value::String("Bob".to_owned()),
+                ],
             ],
         );
         Ok(())
@@ -10912,13 +10973,13 @@ mod tests {
             &output.rows,
             &[
                 vec![
-                    Value::Id(2),
-                    Value::Id(1),
+                    Value::Identity(IdentityValue::Serial(2)),
+                    Value::Identity(IdentityValue::Serial(1)),
                     Value::String("Alice".to_owned()),
                 ],
                 vec![
-                    Value::Id(3),
-                    Value::Id(2),
+                    Value::Identity(IdentityValue::Serial(3)),
+                    Value::Identity(IdentityValue::Serial(2)),
                     Value::String("Alice".to_owned()),
                 ],
             ],
@@ -10940,7 +11001,13 @@ mod tests {
         })?;
 
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-        assert_eq!(output.rows, vec![vec![Value::Ref(1)], vec![Value::Ref(2)]]);
+        assert_eq!(
+            output.rows,
+            vec![
+                vec![Value::Identity(IdentityValue::Serial(1))],
+                vec![Value::Identity(IdentityValue::Serial(2))]
+            ]
+        );
         assert_eq!(output.plan.counters.bindings_yielded, 3);
         assert_eq!(output.plan.counters.materialized_output_values, 2);
         Ok(())
@@ -11081,14 +11148,14 @@ mod tests {
             &output.rows,
             &[
                 vec![
-                    Value::Ref(1),
+                    Value::Identity(IdentityValue::Serial(1)),
                     Value::Decimal(DecimalRaw(300)),
                     Value::U64(2),
                     Value::Timestamp(TimestampMicros(10)),
                     Value::Timestamp(TimestampMicros(20)),
                 ],
                 vec![
-                    Value::Ref(2),
+                    Value::Identity(IdentityValue::Serial(2)),
                     Value::Decimal(DecimalRaw(300)),
                     Value::U64(1),
                     Value::Timestamp(TimestampMicros(30)),
@@ -11227,7 +11294,7 @@ mod tests {
                 &schema,
                 &query,
                 &InputBindings::from_values([
-                    ("holder", Value::Ref(1)),
+                    ("holder", Value::Identity(IdentityValue::Serial(1))),
                     ("start", Value::Timestamp(TimestampMicros(0))),
                     ("end", Value::Timestamp(TimestampMicros(100))),
                 ]),
@@ -11291,7 +11358,7 @@ mod tests {
                         .find_var("account")?;
                     Ok(())
                 })?,
-                InputBindings::from_values([("holder", Value::Ref(1))]),
+                InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(1)))]),
             ),
             (
                 typed_query(&schema, |query| {
@@ -11390,9 +11457,10 @@ mod tests {
                     vec![
                         FieldDescriptor::new(
                             "id",
-                            ValueType::Id {
-                                name: "HolderId".to_owned(),
-                                relation: "Holder".to_owned(),
+                            ValueType::Identity {
+                                type_name: "HolderId".to_owned(),
+                                owning_relation: "Holder".to_owned(),
+                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new("name", ValueType::String),
@@ -11406,16 +11474,18 @@ mod tests {
                     vec![
                         FieldDescriptor::new(
                             "id",
-                            ValueType::Id {
-                                name: "AccountId".to_owned(),
-                                relation: "Account".to_owned(),
+                            ValueType::Identity {
+                                type_name: "AccountId".to_owned(),
+                                owning_relation: "Account".to_owned(),
+                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new(
                             "holder",
-                            ValueType::Ref {
-                                name: "HolderId".to_owned(),
-                                target_relation: "Holder".to_owned(),
+                            ValueType::Identity {
+                                type_name: "HolderId".to_owned(),
+                                owning_relation: "Holder".to_owned(),
+                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new(
@@ -11434,16 +11504,18 @@ mod tests {
                     vec![
                         FieldDescriptor::new(
                             "id",
-                            ValueType::Id {
-                                name: "PostingId".to_owned(),
-                                relation: "Posting".to_owned(),
+                            ValueType::Identity {
+                                type_name: "PostingId".to_owned(),
+                                owning_relation: "Posting".to_owned(),
+                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new(
                             "account",
-                            ValueType::Ref {
-                                name: "AccountId".to_owned(),
-                                target_relation: "Account".to_owned(),
+                            ValueType::Identity {
+                                type_name: "AccountId".to_owned(),
+                                owning_relation: "Account".to_owned(),
+                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new("amount", ValueType::Decimal { scale: 4 }),
@@ -11470,9 +11542,10 @@ mod tests {
                 vec![
                     FieldDescriptor::new(
                         "id",
-                        ValueType::Id {
-                            name: "NumberId".to_owned(),
-                            relation: "Number".to_owned(),
+                        ValueType::Identity {
+                            type_name: "NumberId".to_owned(),
+                            owning_relation: "Number".to_owned(),
+                            allocation: IdentityAllocation::Serial,
                         },
                     ),
                     FieldDescriptor::new("n", ValueType::I64),
@@ -11493,9 +11566,10 @@ mod tests {
                     vec![
                         FieldDescriptor::new(
                             "id",
-                            ValueType::Id {
-                                name: "ItemId".to_owned(),
-                                relation: "Item".to_owned(),
+                            ValueType::Identity {
+                                type_name: "ItemId".to_owned(),
+                                owning_relation: "Item".to_owned(),
+                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new(
@@ -11637,7 +11711,7 @@ mod tests {
         Row::new(
             "Holder",
             [
-                ("id", Value::Id(id)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
                 ("name", Value::String(name.to_owned())),
             ],
         )
@@ -11647,8 +11721,8 @@ mod tests {
         Row::new(
             "Account",
             [
-                ("id", Value::Id(id)),
-                ("holder", Value::Ref(holder)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("holder", Value::Identity(IdentityValue::Serial(holder))),
                 ("currency", Value::Enum(currency)),
             ],
         )
@@ -11658,8 +11732,8 @@ mod tests {
         Row::new(
             "Posting",
             [
-                ("id", Value::Id(id)),
-                ("account", Value::Ref(account)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("account", Value::Identity(IdentityValue::Serial(account))),
                 ("amount", Value::Decimal(DecimalRaw(amount))),
                 ("at", Value::Timestamp(TimestampMicros(at))),
             ],
@@ -11670,7 +11744,7 @@ mod tests {
         Row::new(
             "Number",
             [
-                ("id", Value::Id(id)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
                 ("n", Value::I64(n)),
                 ("d", Value::Decimal(DecimalRaw(d))),
             ],
@@ -11678,7 +11752,13 @@ mod tests {
     }
 
     fn item_row(id: u64, kind: u64) -> Row {
-        Row::new("Item", [("id", Value::Id(id)), ("kind", Value::Enum(kind))])
+        Row::new(
+            "Item",
+            [
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("kind", Value::Enum(kind)),
+            ],
+        )
     }
 
     fn edge_ab_row(a: u64, b: u64) -> Row {
@@ -11866,7 +11946,7 @@ mod tests {
             match &field.term {
                 TypedTerm::Variable(variable) => {
                     let normalized =
-                        normalize_value_for_type(row_value, &query.variables[*variable].value_type);
+                        reference_value_for_type(row_value, &query.variables[*variable].value_type);
                     if !next.bind(*variable, normalized) {
                         return Ok(None);
                     }
@@ -11874,13 +11954,13 @@ mod tests {
                 TypedTerm::Input(input) => {
                     let input_value = reference_input_value(query, inputs, *input)?;
                     let normalized =
-                        normalize_value_for_type(row_value, &query.inputs[*input].value_type);
+                        reference_value_for_type(row_value, &query.inputs[*input].value_type);
                     if input_value != &normalized {
                         return Ok(None);
                     }
                 }
                 TypedTerm::Literal(literal) => {
-                    let normalized = normalize_value_for_type(row_value, &literal.value_type);
+                    let normalized = reference_value_for_type(row_value, &literal.value_type);
                     if literal_to_value(literal)? != normalized {
                         return Ok(None);
                     }
@@ -11908,8 +11988,8 @@ mod tests {
                 continue;
             };
             counters.comparisons_evaluated += 1;
-            let left = normalize_value_for_type(&left, &comparison.value_type);
-            let right = normalize_value_for_type(&right, &comparison.value_type);
+            let left = reference_value_for_type(&left, &comparison.value_type);
+            let right = reference_value_for_type(&right, &comparison.value_type);
             if !compare_values(&left, comparison.operator, &right) {
                 counters.comparisons_failed += 1;
                 return Ok(false);
@@ -11942,6 +12022,10 @@ mod tests {
             }
             TypedOperand::Literal(literal) => Some(literal_to_value(literal)?),
         })
+    }
+
+    fn reference_value_for_type(value: &Value, _value_type: &ValueType) -> Value {
+        value.clone()
     }
 
     fn reference_project_results(

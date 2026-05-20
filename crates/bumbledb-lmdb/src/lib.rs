@@ -54,7 +54,9 @@ pub use sorted_trie::{
     EncodedOwned, IndexSpec, LinearIter, SortedTrieIndex, SortedTrieIter, TrieFrame, TrieIter,
     TrieLevel, TrieStats,
 };
-pub use storage::{EncodedComponent, FieldValues, IndexScan, KeyValues, Row, ScanItem, Value};
+pub use storage::{
+    EncodedComponent, FieldValues, IdentityValue, IndexScan, KeyValues, Row, ScanItem, Value,
+};
 pub use storage_schema::{
     AccessPathDescriptor, BulkLoadReport, ColumnSegmentDescriptor, IndexSegmentDescriptor,
     IndexStatsSummary, SegmentDescriptor, StorageSchema,
@@ -625,7 +627,7 @@ mod tests {
         let typed = (benchmark_queries()[0].build)(schema.descriptor())?;
         let query = row_env.prepare_query(&schema, &typed)?;
         let inputs = InputBindings::from_values([
-            ("holder", Value::Ref(1)),
+            ("holder", Value::Identity(IdentityValue::Serial(1))),
             (
                 "start",
                 Value::Timestamp(bumbledb_core::encoding::TimestampMicros(0)),
@@ -719,7 +721,7 @@ mod tests {
         let typed = (benchmark_queries()[0].build)(schema.descriptor())?;
         let query = env.prepare_query(&schema, &typed)?;
         let inputs = InputBindings::from_values([
-            ("holder", Value::Ref(1)),
+            ("holder", Value::Identity(IdentityValue::Serial(1))),
             (
                 "start",
                 Value::Timestamp(bumbledb_core::encoding::TimestampMicros(0)),
@@ -780,9 +782,10 @@ mod tests {
             RelationKind::Entity,
             vec![FieldDescriptor::new(
                 "id",
-                ValueType::Id {
-                    name: "ExtraId".to_owned(),
-                    relation: "Extra".to_owned(),
+                ValueType::Identity {
+                    type_name: "ExtraId".to_owned(),
+                    owning_relation: "Extra".to_owned(),
+                    allocation: bumbledb_core::schema::IdentityAllocation::Serial,
                 },
             )],
             bumbledb_core::schema::PrimaryKeyDescriptor::new(["id"]),

@@ -4,11 +4,11 @@ use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
 use bumbledb_core::query_ir::{ComparisonOperator, TypedQuery};
 use bumbledb_core::schema::{
-    FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
-    SchemaDescriptor, ValueType,
+    FieldDescriptor, IdentityAllocation, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor,
+    RelationKind, SchemaDescriptor, ValueType,
 };
 
-use crate::{Row, Value};
+use crate::{IdentityValue, Row, Value};
 
 /// Builds a typed benchmark query for a schema descriptor.
 pub type BenchmarkQueryBuilder = fn(&SchemaDescriptor) -> QueryBuildResult<TypedQuery>;
@@ -181,14 +181,14 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
         rows.push(Row::new(
             "Holder",
             [
-                ("id", Value::Id(id)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
                 ("name", Value::String(format!("holder-{id}"))),
             ],
         ));
         rows.push(Row::new(
             "Org",
             [
-                ("id", Value::Id(id)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
                 ("name", Value::String(format!("org-{id}"))),
             ],
         ));
@@ -197,7 +197,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
         rows.push(Row::new(
             "Instrument",
             [
-                ("id", Value::Id(id)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
                 ("symbol", Value::String(format!("SYM{id}"))),
             ],
         ));
@@ -206,7 +206,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
         rows.push(Row::new(
             "SourceDocument",
             [
-                ("id", Value::Id(id)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
                 ("payload", Value::Bytes(format!("source-{id}").into_bytes())),
             ],
         ));
@@ -215,8 +215,8 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
         rows.push(Row::new(
             "Account",
             [
-                ("id", Value::Id(id)),
-                ("holder", Value::Ref(id)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("holder", Value::Identity(IdentityValue::Serial(id))),
                 ("currency", Value::Enum(840)),
             ],
         ));
@@ -225,8 +225,8 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
         rows.push(Row::new(
             "JournalEntry",
             [
-                ("id", Value::Id(id)),
-                ("source", Value::Ref(id)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("source", Value::Identity(IdentityValue::Serial(id))),
                 (
                     "created_at",
                     Value::Timestamp(TimestampMicros(id as i64 * 10)),
@@ -240,10 +240,13 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
             rows.push(Row::new(
                 "Posting",
                 [
-                    ("id", Value::Id(posting_id)),
-                    ("entry", Value::Ref(account)),
-                    ("account", Value::Ref(account)),
-                    ("instrument", Value::Ref((offset % 3) + 1)),
+                    ("id", Value::Identity(IdentityValue::Serial(posting_id))),
+                    ("entry", Value::Identity(IdentityValue::Serial(account))),
+                    ("account", Value::Identity(IdentityValue::Serial(account))),
+                    (
+                        "instrument",
+                        Value::Identity(IdentityValue::Serial((offset % 3) + 1)),
+                    ),
                     (
                         "amount",
                         Value::Decimal(DecimalRaw((posting_id as i128) * 100)),
@@ -257,7 +260,10 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
             rows.push(Row::new(
                 "PostingTag",
                 [
-                    ("posting", Value::Ref(posting_id)),
+                    (
+                        "posting",
+                        Value::Identity(IdentityValue::Serial(posting_id)),
+                    ),
                     ("tag", Value::Enum(1 + offset)),
                 ],
             ));
@@ -267,13 +273,16 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
     for id in 2..=scale {
         rows.push(Row::new(
             "OrgParent",
-            [("child", Value::Ref(id)), ("parent", Value::Ref(1))],
+            [
+                ("child", Value::Identity(IdentityValue::Serial(id))),
+                ("parent", Value::Identity(IdentityValue::Serial(1))),
+            ],
         ));
         rows.push(Row::new(
             "AuthorizationEdge",
             [
-                ("subject", Value::Ref(id)),
-                ("object", Value::Ref(1)),
+                ("subject", Value::Identity(IdentityValue::Serial(id))),
+                ("object", Value::Identity(IdentityValue::Serial(1))),
                 ("permission", Value::Enum(7)),
             ],
         ));
@@ -282,9 +291,9 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
         rows.push(Row::new(
             "ExchangeRate",
             [
-                ("id", Value::Id(id)),
-                ("base", Value::Ref(id)),
-                ("quote", Value::Ref(1)),
+                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("base", Value::Identity(IdentityValue::Serial(id))),
+                ("quote", Value::Identity(IdentityValue::Serial(1))),
                 ("at", Value::Timestamp(TimestampMicros(id as i64 * 10))),
                 ("rate", Value::Decimal(DecimalRaw(100_000_000))),
             ],
@@ -350,9 +359,10 @@ fn entity(name: &str, id_type: &str, fields: Vec<FieldDescriptor>) -> RelationDe
 fn id_field(id_type: &str, relation: &str) -> FieldDescriptor {
     FieldDescriptor::new(
         "id",
-        ValueType::Id {
-            name: id_type.to_owned(),
-            relation: relation.to_owned(),
+        ValueType::Identity {
+            type_name: id_type.to_owned(),
+            owning_relation: relation.to_owned(),
+            allocation: IdentityAllocation::Serial,
         },
     )
 }
@@ -360,9 +370,10 @@ fn id_field(id_type: &str, relation: &str) -> FieldDescriptor {
 fn ref_field(id_type: &str, field: &str, target: &str) -> FieldDescriptor {
     FieldDescriptor::new(
         field,
-        ValueType::Ref {
-            name: id_type.to_owned(),
-            target_relation: target.to_owned(),
+        ValueType::Identity {
+            type_name: id_type.to_owned(),
+            owning_relation: target.to_owned(),
+            allocation: IdentityAllocation::Serial,
         },
     )
 }
@@ -397,7 +408,7 @@ mod tests {
                 &schema,
                 &prepared,
                 &InputBindings::from_values([
-                    ("holder", Value::Ref(1)),
+                    ("holder", Value::Identity(IdentityValue::Serial(1))),
                     ("start", Value::Timestamp(TimestampMicros(0))),
                     ("end", Value::Timestamp(TimestampMicros(1000))),
                 ]),
@@ -472,21 +483,21 @@ mod tests {
 
     fn id(row: &Row, field: &str) -> Result<i64> {
         match required_value(row, field)? {
-            Value::Id(value) => Ok(*value as i64),
+            Value::Identity(IdentityValue::Serial(value)) => Ok(*value as i64),
             other => Err(unexpected_value("id", other)),
         }
     }
 
     fn rf(row: &Row, field: &str) -> Result<i64> {
         match required_value(row, field)? {
-            Value::Ref(value) => Ok(*value as i64),
+            Value::Identity(IdentityValue::Serial(value)) => Ok(*value as i64),
             other => Err(unexpected_value("ref", other)),
         }
     }
 
     fn symbol(row: &Row, field: &str) -> Result<i64> {
         match required_value(row, field)? {
-            Value::Enum(value) | Value::Code(value) => Ok(*value as i64),
+            Value::Enum(value) | Value::U64(value) => Ok(*value as i64),
             other => Err(unexpected_value("symbol", other)),
         }
     }
