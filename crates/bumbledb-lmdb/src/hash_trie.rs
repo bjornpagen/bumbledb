@@ -197,11 +197,6 @@ pub trait PrefixRows {
 }
 
 impl HashTrieIndex {
-    /// Collects row IDs under any prefix depth for row-retaining tries.
-    pub fn rows_owned(&self, prefix: &[EncodedRef<'_>]) -> Vec<RowId> {
-        self.rows_for_prefix(prefix).collect()
-    }
-
     /// Visits row IDs under any prefix depth for row-retaining tries.
     pub fn for_each_row(&self, prefix: &[EncodedRef<'_>], mut visit: impl FnMut(RowId) -> bool) {
         let Some(node) = find_node(&self.root, prefix) else {
