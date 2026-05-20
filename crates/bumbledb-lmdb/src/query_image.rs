@@ -863,18 +863,6 @@ pub enum ColumnImage {
 }
 
 impl ColumnImage {
-    pub(crate) fn from_query_image_bytes(
-        field: FieldId,
-        width: usize,
-        values: Vec<Vec<u8>>,
-    ) -> Result<Self> {
-        let mut builder = EncodedColumnBuilder::with_capacity(field, width, values.len())?;
-        for bytes in values {
-            builder.append_bytes(&bytes)?;
-        }
-        Ok(builder.finish())
-    }
-
     pub(crate) fn from_flat_bytes(field: FieldId, width: usize, bytes: &[u8]) -> Result<Self> {
         let mut builder = EncodedColumnBuilder::with_capacity(field, width, bytes.len() / width)?;
         builder.extend_flat_bytes(bytes)?;

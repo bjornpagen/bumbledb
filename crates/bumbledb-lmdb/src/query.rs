@@ -24,7 +24,9 @@ use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
 use crate::planner_stats::{
     OptimizerFieldStats, OptimizerIndexStats, OptimizerRelationStats, PlannerStatsCacheDiagnostics,
 };
-use crate::query_image::SortedTrieBuild;
+use crate::query_image::{
+    EncodedColumnBuilder, SortedTrieBuild, encoded_column_builders, finish_column_builders,
+};
 use crate::{PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics};
 
 const HASH_BUILD_ROWS_PER_MICRO: u64 = 5;
@@ -5502,7 +5504,7 @@ fn build_lftj_sorted_trie(
             width: query.vars[*variable].value_type.encoded_width(),
         })
         .collect::<Vec<_>>();
-    let mut raw_columns = vec![Vec::<Vec<u8>>::new(); variables.len()];
+    let mut builders = encoded_column_builders(&fields, 0)?;
     let mut included_rows = 0usize;
     let source_rows_scanned;
 
@@ -5510,31 +5512,30 @@ fn build_lftj_sorted_trie(
     let scan_start = Instant::now();
     {
         let _span = tracing::debug_span!("bumbledb.query.lftj.build.scan_filter_copy").entered();
-        if let Some(indexed) = indexed_lftj_atom_values(source, query, inputs, atom, variables)? {
+        if let Some(indexed) =
+            append_indexed_lftj_atom_values(&mut builders, source, query, inputs, atom, variables)?
+        {
             source_rows_scanned = indexed.source_rows_scanned;
-            for values in indexed.rows {
-                included_rows += 1;
-                for (column, bytes) in values.into_iter().enumerate() {
-                    bytes_copied = bytes_copied.saturating_add(bytes.len() as u64);
-                    raw_columns[column].push(bytes);
-                }
-            }
+            included_rows = indexed.rows_retained as usize;
+            bytes_copied = bytes_copied.saturating_add(indexed.bytes_appended);
         } else {
             source_rows_scanned = source.row_count as u64;
             for row in 0..source.row_count {
                 let row = RowId(row as u32);
-                let Some(values) = atom_row_values(source, query, inputs, atom, row, variables)?
+                let Some(slots) =
+                    atom_row_value_slots(source, inputs, atom, row, query.vars.len())?
                 else {
                     continue;
                 };
-                if !atom_local_comparisons_pass(query, inputs, variables, &values)? {
+                if !atom_local_comparisons_pass_slots(query, inputs, &slots)? {
                     continue;
                 }
                 included_rows += 1;
-                for (column, bytes) in values.into_iter().enumerate() {
-                    bytes_copied = bytes_copied.saturating_add(bytes.len() as u64);
-                    raw_columns[column].push(bytes);
-                }
+                bytes_copied = bytes_copied.saturating_add(append_atom_slots(
+                    &mut builders,
+                    &slots,
+                    variables,
+                )?);
             }
         }
     }
@@ -5543,19 +5544,16 @@ fn build_lftj_sorted_trie(
     let row_count = if variables.is_empty() {
         included_rows
     } else {
-        raw_columns[0].len()
+        builders[0].len()
     };
-    let encoded_column_bytes = raw_columns.iter().flatten().map(Vec::len).sum::<usize>();
+    let encoded_column_bytes = builders
+        .iter()
+        .map(EncodedColumnBuilder::byte_len)
+        .sum::<usize>();
     let column_start = Instant::now();
     let columns = {
         let _span = tracing::debug_span!("bumbledb.query.lftj.build.column_image").entered();
-        fields
-            .iter()
-            .zip(raw_columns)
-            .map(|(field, raw_column)| {
-                crate::ColumnImage::from_query_image_bytes(field.id, field.width, raw_column)
-            })
-            .collect::<Result<Vec<_>>>()?
+        finish_column_builders(builders)
     };
     let column_micros = elapsed_micros(column_start).min(u128::from(u64::MAX)) as u64;
     let relation = RelationImage {
@@ -5596,18 +5594,22 @@ fn build_lftj_sorted_trie(
     })
 }
 
-struct IndexedLftjAtomValues {
-    rows: Vec<Vec<Vec<u8>>>,
+struct IndexedPrefixAppendStats {
     source_rows_scanned: u64,
+    rows_retained: u64,
+    bytes_appended: u64,
 }
 
-fn indexed_lftj_atom_values(
+type AtomValueSlots = SmallVec<[Option<EncodedOwned>; 8]>;
+
+fn append_indexed_lftj_atom_values(
+    builders: &mut [EncodedColumnBuilder],
     source: &RelationImage,
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
     atom: &NormAtom,
     variables: &[usize],
-) -> Result<Option<IndexedLftjAtomValues>> {
+) -> Result<Option<IndexedPrefixAppendStats>> {
     let mut best = None;
     for index in source.indexes() {
         if !atom
@@ -5656,8 +5658,9 @@ fn indexed_lftj_atom_values(
         .iter()
         .find(|index| index.access.0 as usize == access)
         .ok_or_else(|| Error::internal("missing selected LFTJ atom index"))?;
-    let mut rows = Vec::new();
     let mut source_rows_scanned = 0u64;
+    let mut rows_retained = 0u64;
+    let mut bytes_appended = 0u64;
     let _span = tracing::trace_span!(
         "bumbledb.query.lftj_atom.indexed_prefix",
         relation = %source.name,
@@ -5666,26 +5669,30 @@ fn indexed_lftj_atom_values(
     .entered();
     for entry in index.entries_with_prefix(&prefix) {
         source_rows_scanned += 1;
-        if let Some(values) = atom_index_entry_values(index, inputs, atom, entry, variables)?
-            && atom_local_comparisons_pass(query, inputs, variables, &values)?
+        if let Some(slots) =
+            atom_index_entry_value_slots(index, inputs, atom, entry, query.vars.len())?
+            && atom_local_comparisons_pass_slots(query, inputs, &slots)?
         {
-            rows.push(values);
+            rows_retained += 1;
+            bytes_appended =
+                bytes_appended.saturating_add(append_atom_slots(builders, &slots, variables)?);
         }
     }
-    Ok(Some(IndexedLftjAtomValues {
-        rows,
+    Ok(Some(IndexedPrefixAppendStats {
         source_rows_scanned,
+        rows_retained,
+        bytes_appended,
     }))
 }
 
-fn atom_index_entry_values(
+fn atom_index_entry_value_slots(
     index: &crate::query_image::RelationIndexImage,
     inputs: &EncodedInputs,
     atom: &NormAtom,
     entry: &[u8],
-    variables: &[usize],
-) -> Result<Option<Vec<Vec<u8>>>> {
-    let mut values_by_variable = BTreeMap::<usize, Vec<u8>>::new();
+    variable_count: usize,
+) -> Result<Option<AtomValueSlots>> {
+    let mut slots = empty_atom_slots(variable_count);
     for field in &atom.fields {
         let bytes = index
             .component_bytes(entry, field.field)
@@ -5693,12 +5700,8 @@ fn atom_index_entry_values(
         match &field.term {
             NormTerm::Var(variable) => {
                 let variable = variable.0 as usize;
-                if let Some(existing) = values_by_variable.get(&variable) {
-                    if existing.as_slice() != bytes {
-                        return Ok(None);
-                    }
-                } else {
-                    values_by_variable.insert(variable, bytes.to_vec());
+                if !bind_atom_slot(&mut slots, variable, &field.value_type, bytes)? {
+                    return Ok(None);
                 }
             }
             NormTerm::Input(input) => {
@@ -5717,53 +5720,89 @@ fn atom_index_entry_values(
             NormTerm::Wildcard => {}
         }
     }
-    variables
-        .iter()
-        .map(|variable| {
-            values_by_variable
-                .get(variable)
-                .cloned()
-                .ok_or_else(|| Error::internal("missing indexed LFTJ variable value"))
-        })
-        .collect::<Result<Vec<_>>>()
-        .map(Some)
+    Ok(Some(slots))
 }
 
-fn atom_local_comparisons_pass(
+fn empty_atom_slots(variable_count: usize) -> AtomValueSlots {
+    std::iter::repeat_with(|| None)
+        .take(variable_count)
+        .collect()
+}
+
+fn bind_atom_slot(
+    slots: &mut AtomValueSlots,
+    variable: usize,
+    value_type: &ValueType,
+    bytes: &[u8],
+) -> Result<bool> {
+    let slot = slots
+        .get_mut(variable)
+        .ok_or_else(|| Error::internal("atom variable id out of bounds"))?;
+    if let Some(existing) = slot {
+        return Ok(existing.as_bytes() == bytes);
+    }
+    *slot = Some(encoded_owned_for_width(value_type.encoded_width(), bytes)?);
+    Ok(true)
+}
+
+fn append_atom_slots(
+    builders: &mut [EncodedColumnBuilder],
+    slots: &AtomValueSlots,
+    variables: &[usize],
+) -> Result<u64> {
+    let mut bytes_appended = 0u64;
+    for (column, variable) in variables.iter().enumerate() {
+        let value = slots
+            .get(*variable)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| Error::internal("missing LFTJ variable value"))?;
+        builders
+            .get_mut(column)
+            .ok_or_else(|| Error::internal("missing LFTJ column builder"))?
+            .append_encoded_owned(value)?;
+        bytes_appended = bytes_appended.saturating_add(value.as_bytes().len() as u64);
+    }
+    Ok(bytes_appended)
+}
+
+fn atom_local_comparisons_pass_slots(
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
-    variables: &[usize],
-    values: &[Vec<u8>],
+    slots: &AtomValueSlots,
 ) -> Result<bool> {
     for predicate in &query.predicates {
         let mut saw_local_variable = false;
-        let mut encoded = Vec::with_capacity(2);
-        for operand in &predicate.operands {
-            match operand {
+        let mut encoded: [Option<&[u8]>; 2] = [None, None];
+        for (index, operand) in predicate.operands.iter().enumerate() {
+            let Some(out) = encoded.get_mut(index) else {
+                return Err(Error::internal("comparison operand index out of bounds"));
+            };
+            *out = match operand {
                 NormOperand::Var(variable) => {
-                    let Some(position) = variables.iter().position(|id| *id == variable.0 as usize)
+                    let Some(value) = slots.get(variable.0 as usize).and_then(Option::as_ref)
                     else {
-                        encoded.clear();
                         break;
                     };
                     saw_local_variable = true;
-                    encoded.push(values[position].as_slice());
+                    Some(value.as_bytes())
                 }
                 NormOperand::Input(input) => {
                     let Some(input) = inputs.get(*input) else {
-                        encoded.clear();
                         break;
                     };
-                    encoded.push(input.as_bytes());
+                    Some(input.as_bytes())
                 }
-                NormOperand::Literal(literal) => encoded.push(literal.as_bytes()),
-            }
+                NormOperand::Literal(literal) => Some(literal.as_bytes()),
+            };
         }
-        if !saw_local_variable || encoded.len() != 2 {
+        let [Some(left), Some(right)] = encoded else {
+            continue;
+        };
+        if !saw_local_variable {
             continue;
         }
         if encoded_comparison_supported(predicate.op, &predicate.value_type)
-            && !compare_encoded_values(encoded[0], predicate.op, encoded[1])
+            && !compare_encoded_values(left, predicate.op, right)
         {
             return Ok(false);
         }
@@ -5832,15 +5871,14 @@ fn atom_variables_in_plan_order(atom: &NormAtom, variable_order_ids: &[usize]) -
         .collect()
 }
 
-fn atom_row_values(
+fn atom_row_value_slots(
     relation: &RelationImage,
-    _query: &NormalizedQuery,
     inputs: &EncodedInputs,
     atom: &NormAtom,
     row: RowId,
-    variables: &[usize],
-) -> Result<Option<Vec<Vec<u8>>>> {
-    let mut values_by_variable = BTreeMap::<usize, Vec<u8>>::new();
+    variable_count: usize,
+) -> Result<Option<AtomValueSlots>> {
+    let mut slots = empty_atom_slots(variable_count);
     for field in &atom.fields {
         let bytes = relation
             .encoded_bytes(row, field.field)
@@ -5848,12 +5886,8 @@ fn atom_row_values(
         match &field.term {
             NormTerm::Var(variable) => {
                 let variable = variable.0 as usize;
-                if let Some(existing) = values_by_variable.get(&variable) {
-                    if existing.as_slice() != bytes {
-                        return Ok(None);
-                    }
-                } else {
-                    values_by_variable.insert(variable, bytes.to_vec());
+                if !bind_atom_slot(&mut slots, variable, &field.value_type, bytes)? {
+                    return Ok(None);
                 }
             }
             NormTerm::Input(input) => {
@@ -5872,16 +5906,7 @@ fn atom_row_values(
             NormTerm::Wildcard => {}
         }
     }
-    variables
-        .iter()
-        .map(|variable| {
-            values_by_variable
-                .get(variable)
-                .cloned()
-                .ok_or_else(|| Error::internal("missing LFTJ variable value"))
-        })
-        .collect::<Result<Vec<_>>>()
-        .map(Some)
+    Ok(Some(slots))
 }
 
 fn plan_query(
