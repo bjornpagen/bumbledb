@@ -185,10 +185,10 @@ fn hash_probe_runtime_checks_static_existence_atoms() -> TestResult {
     })?;
 
     assert!(output.rows.is_empty());
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert_eq!(output.plan.counters.trie_open, 0);
-    assert!(output.plan.counters.hash_probe_calls > 0);
-    assert_eq!(output.plan.counters.hash_index_builds, 1);
-    assert_eq!(output.plan.counters.hash_index_build_rows, 0);
+    assert_eq!(output.plan.counters.hash_probe_calls, 0);
+    assert!(output.plan.counters.static_empty_atoms_checked > 0);
     Ok(())
 }
 
@@ -515,8 +515,8 @@ fn direct_chain_broken_path_returns_zero_rows() -> TestResult {
         )
     })?;
 
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::IndexNestedLoop);
-    assert_eq!(output.plan.plan_family, PlanFamily::IndexNestedLoop);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert_eq!(output.plan.plan_family, PlanFamily::StaticEmpty);
     assert!(output.rows.is_empty());
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
@@ -1537,6 +1537,413 @@ fn static_empty_global_count_returns_zero_row() -> TestResult {
 }
 
 #[test]
+fn static_semijoin_dimension_row_exists_but_fact_is_empty() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, dim_row(1, 1))?;
+        txn.insert(&schema, fact_row(2, 10))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Dim")?
+            .var("id", "dim")?
+            .integer("kind", 1)?
+            .done();
+        query
+            .rel("Fact")?
+            .var("dim", "dim")?
+            .var("item", "item")?
+            .done();
+        query.find_var("item")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert!(output.rows.is_empty());
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert!(output.plan.counters.static_semijoin_rounds > 0);
+    Ok(())
+}
+
+#[test]
+fn static_semijoin_disjoint_central_candidates_prove_empty() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, dim_row(1, 1))?;
+        txn.insert(&schema, other_dim_row(2, 2))?;
+        txn.insert(&schema, fact_row(1, 10))?;
+        txn.insert(&schema, fact_row(2, 20))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Dim")?
+            .var("id", "left")?
+            .integer("kind", 1)?
+            .done();
+        query
+            .rel("OtherDim")?
+            .var("id", "right")?
+            .integer("kind", 2)?
+            .done();
+        query
+            .rel("Fact")?
+            .var("dim", "left")?
+            .var("item", "item")?
+            .done();
+        query
+            .rel("Fact")?
+            .var("dim", "right")?
+            .var("item", "item")?
+            .done();
+        query.find_var("item")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert!(output.rows.is_empty());
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert!(output.plan.counters.static_semijoin_candidate_values > 0);
+    Ok(())
+}
+
+#[test]
+fn static_semijoin_enum_literal_proves_empty() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, dim_row(7, 1))?;
+        txn.insert(&schema, fact_row(8, 99))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Dim")?
+            .var("id", "dim")?
+            .integer("kind", 1)?
+            .done();
+        query
+            .rel("Fact")?
+            .var("dim", "dim")?
+            .var("item", "item")?
+            .done();
+        query.find_var("item")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert!(output.plan.counters.static_semijoin_prefixes_probed > 0);
+    Ok(())
+}
+
+#[test]
+fn static_semijoin_serial_literal_proves_empty() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, owner_group_row(1, 10))?;
+        txn.insert(&schema, owned_fact_row(2, 11, 99))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("OwnerGroup")?
+            .integer("owner", 1)?
+            .var("group", "group")?
+            .done();
+        query
+            .rel("OwnedFact")?
+            .var("group", "group")?
+            .var("item", "item")?
+            .done();
+        query.find_var("item")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert!(output.plan.counters.static_semijoin_rounds > 0);
+    Ok(())
+}
+
+#[test]
+fn static_semijoin_compound_relation_proves_empty() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, dim_row(1, 1))?;
+        txn.insert(&schema, other_dim_row(2, 2))?;
+        txn.insert(&schema, pair_row(1, 3))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Dim")?
+            .var("id", "left")?
+            .integer("kind", 1)?
+            .done();
+        query
+            .rel("OtherDim")?
+            .var("id", "right")?
+            .integer("kind", 2)?
+            .done();
+        query
+            .rel("Pair")?
+            .var("left", "left")?
+            .var("right", "right")?
+            .done();
+        query.find_var("left")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert!(output.rows.is_empty());
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    Ok(())
+}
+
+#[test]
+fn static_semijoin_budget_exhaustion_falls_back_safely() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(static_semijoin_budget_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        for id in 1..=1_001 {
+            txn.insert(
+                &schema,
+                Row::new("Big", [("pad", Value::U64(0)), ("id", Value::U64(id))]),
+            )?;
+        }
+        txn.insert(&schema, Row::new("Link", [("id", Value::U64(999_999))]))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query.rel("Big")?.var("id", "id")?.done();
+        query.rel("Link")?.var("id", "id")?.done();
+        query.cmp(
+            OperandRef::var("id"),
+            ComparisonOperator::Gt,
+            OperandRef::integer(0),
+        )?;
+        query.find_var("id")?;
+        Ok(())
+    })?;
+
+    let proof = env.read(|txn| {
+        let normalized = normalize_query(txn, &schema, &query)?;
+        let encoded_inputs = encode_inputs(txn, &schema, &normalized, &InputBindings::new())?;
+        let image = txn.query_images.get_or_build_scoped(
+            txn,
+            &schema,
+            query_image_scope_for_query(&schema, &normalized),
+        )?;
+        static_semijoin_proves_empty(image.as_ref(), &normalized, &encoded_inputs)
+    })?;
+
+    assert!(!proof.empty);
+    assert!(proof.rounds > 0);
+    Ok(())
+}
+
+#[test]
+fn static_semijoin_non_empty_query_is_not_proven_empty() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, dim_row(1, 1))?;
+        txn.insert(&schema, fact_row(1, 10))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Dim")?
+            .var("id", "dim")?
+            .integer("kind", 1)?
+            .done();
+        query
+            .rel("Fact")?
+            .var("dim", "dim")?
+            .var("item", "item")?
+            .done();
+        query.find_var("item")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert_same_rows(&output.rows, &[vec![Value::U64(10)]]);
+    assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    Ok(())
+}
+
+#[test]
+fn static_semijoin_q24_like_empty_shape_proves_empty() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, Row::new("Alias", [("person", Value::U64(1))]))?;
+        txn.insert(&schema, Row::new("Character", [("id", Value::U64(1))]))?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Appearance",
+                [
+                    ("person", Value::U64(1)),
+                    ("work", Value::U64(100)),
+                    ("character", Value::U64(1)),
+                    ("role", Value::U64(1)),
+                ],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Company",
+                [
+                    ("id", Value::U64(1)),
+                    ("country", Value::String("[us]".to_owned())),
+                ],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Keyword",
+                [
+                    ("id", Value::U64(1)),
+                    ("word", Value::String("hero".to_owned())),
+                ],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Person",
+                [
+                    ("id", Value::U64(1)),
+                    ("gender", Value::String("m".to_owned())),
+                ],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Role",
+                [
+                    ("id", Value::U64(1)),
+                    ("name", Value::String("actor".to_owned())),
+                ],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Title",
+                [("id", Value::U64(100)), ("year", Value::I64(2012))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Title",
+                [("id", Value::U64(200)), ("year", Value::I64(2012))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "WorkCompany",
+                [("work", Value::U64(100)), ("company", Value::U64(1))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "WorkKeyword",
+                [("work", Value::U64(200)), ("keyword", Value::U64(1))],
+            ),
+        )?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query.rel("Alias")?.var("person", "person")?.done();
+        query
+            .rel("Appearance")?
+            .var("person", "person")?
+            .var("work", "work")?
+            .var("character", "character")?
+            .var("role", "role")?
+            .done();
+        query.rel("Character")?.var("id", "character")?.done();
+        query
+            .rel("Company")?
+            .var("id", "company")?
+            .string("country", "[us]")?
+            .done();
+        query
+            .rel("Keyword")?
+            .var("id", "keyword")?
+            .string("word", "hero")?
+            .done();
+        query
+            .rel("WorkCompany")?
+            .var("work", "work")?
+            .var("company", "company")?
+            .done();
+        query
+            .rel("WorkKeyword")?
+            .var("work", "work")?
+            .var("keyword", "keyword")?
+            .done();
+        query
+            .rel("Person")?
+            .var("id", "person")?
+            .string("gender", "m")?
+            .done();
+        query
+            .rel("Role")?
+            .var("id", "role")?
+            .string("name", "actor")?
+            .done();
+        query
+            .rel("Title")?
+            .var("id", "work")?
+            .var("year", "year")?
+            .done();
+        query.cmp(
+            OperandRef::var("year"),
+            ComparisonOperator::Gt,
+            OperandRef::integer(2010),
+        )?;
+        query.find_var("work")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert!(output.rows.is_empty());
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert!(output.plan.counters.static_semijoin_candidate_values > 0);
+    Ok(())
+}
+
+#[test]
 fn sum_sink_decodes_only_aggregate_operand_values() -> TestResult {
     let (env, schema) = seeded_db()?;
     let query = typed_query(&schema, |query| {
@@ -1931,6 +2338,259 @@ fn seeded_db() -> Result<(Environment, StorageSchema)> {
         Ok::<(), Error>(())
     })?;
     Ok((env, schema))
+}
+
+fn static_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
+    bumbledb_core::schema::SchemaDescriptor::new(
+        "StaticSemijoinDb",
+        vec![
+            RelationDescriptor::new(
+                "Dim",
+                vec![
+                    FieldDescriptor::new("id", ValueType::U64),
+                    FieldDescriptor::new(
+                        "kind",
+                        ValueType::Enum {
+                            name: "Kind".to_owned(),
+                        },
+                    ),
+                ],
+            )
+            .with_covering_unique("id", ["id"])
+            .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"])),
+            RelationDescriptor::new(
+                "OtherDim",
+                vec![
+                    FieldDescriptor::new("id", ValueType::U64),
+                    FieldDescriptor::new(
+                        "kind",
+                        ValueType::Enum {
+                            name: "Kind".to_owned(),
+                        },
+                    ),
+                ],
+            )
+            .with_covering_unique("id", ["id"])
+            .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"])),
+            RelationDescriptor::new(
+                "Fact",
+                vec![
+                    FieldDescriptor::new("dim", ValueType::U64),
+                    FieldDescriptor::new("item", ValueType::U64),
+                ],
+            )
+            .with_covering_unique("dim_item", ["dim", "item"])
+            .with_index(IndexDescriptor::equality("by_item", ["item", "dim"])),
+            RelationDescriptor::new(
+                "OwnerGroup",
+                vec![
+                    FieldDescriptor::new(
+                        "owner",
+                        ValueType::Identity {
+                            type_name: "OwnerId".to_owned(),
+                            owning_relation: "OwnerGroup".to_owned(),
+                            allocation: IdentityAllocation::Serial,
+                        },
+                    ),
+                    FieldDescriptor::new("group", ValueType::U64),
+                ],
+            )
+            .with_covering_unique("owner_group", ["owner", "group"])
+            .with_index(IndexDescriptor::equality("by_group", ["group", "owner"])),
+            RelationDescriptor::new(
+                "OwnedFact",
+                vec![
+                    FieldDescriptor::new(
+                        "owner",
+                        ValueType::Identity {
+                            type_name: "OwnerId".to_owned(),
+                            owning_relation: "OwnerGroup".to_owned(),
+                            allocation: IdentityAllocation::Serial,
+                        },
+                    ),
+                    FieldDescriptor::new("group", ValueType::U64),
+                    FieldDescriptor::new("item", ValueType::U64),
+                ],
+            )
+            .with_covering_unique("owner_group_item", ["owner", "group", "item"])
+            .with_index(IndexDescriptor::equality(
+                "by_group",
+                ["group", "owner", "item"],
+            )),
+            RelationDescriptor::new(
+                "Pair",
+                vec![
+                    FieldDescriptor::new("left", ValueType::U64),
+                    FieldDescriptor::new("right", ValueType::U64),
+                ],
+            )
+            .with_covering_unique("left_right", ["left", "right"])
+            .with_index(IndexDescriptor::equality("by_right", ["right", "left"])),
+        ],
+    )
+    .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
+        "Kind",
+        [1, 2, 3],
+    ))
+}
+
+fn static_semijoin_budget_schema() -> bumbledb_core::schema::SchemaDescriptor {
+    bumbledb_core::schema::SchemaDescriptor::new(
+        "StaticSemijoinBudgetDb",
+        vec![
+            RelationDescriptor::new(
+                "Big",
+                vec![
+                    FieldDescriptor::new("pad", ValueType::U64),
+                    FieldDescriptor::new("id", ValueType::U64),
+                ],
+            )
+            .with_covering_unique("pad_id", ["pad", "id"]),
+            RelationDescriptor::new("Link", vec![FieldDescriptor::new("id", ValueType::U64)])
+                .with_covering_unique("id", ["id"]),
+        ],
+    )
+}
+
+fn q24_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
+    bumbledb_core::schema::SchemaDescriptor::new(
+        "StaticSemijoinQ24LikeDb",
+        vec![
+            RelationDescriptor::new(
+                "Alias",
+                vec![FieldDescriptor::new("person", ValueType::U64)],
+            )
+            .with_covering_unique("person", ["person"]),
+            RelationDescriptor::new(
+                "Character",
+                vec![FieldDescriptor::new("id", ValueType::U64)],
+            )
+            .with_covering_unique("id", ["id"]),
+            RelationDescriptor::new(
+                "Appearance",
+                vec![
+                    FieldDescriptor::new("person", ValueType::U64),
+                    FieldDescriptor::new("work", ValueType::U64),
+                    FieldDescriptor::new("character", ValueType::U64),
+                    FieldDescriptor::new("role", ValueType::U64),
+                ],
+            )
+            .with_covering_unique("person_work_role", ["person", "work", "role", "character"])
+            .with_index(IndexDescriptor::equality(
+                "by_role_work",
+                ["role", "work", "person", "character"],
+            )),
+            RelationDescriptor::new(
+                "Company",
+                vec![
+                    FieldDescriptor::new("id", ValueType::U64),
+                    FieldDescriptor::new("country", ValueType::String),
+                ],
+            )
+            .with_covering_unique("id", ["id"])
+            .with_index(IndexDescriptor::equality("by_country", ["country", "id"])),
+            RelationDescriptor::new(
+                "Keyword",
+                vec![
+                    FieldDescriptor::new("id", ValueType::U64),
+                    FieldDescriptor::new("word", ValueType::String),
+                ],
+            )
+            .with_covering_unique("id", ["id"])
+            .with_index(IndexDescriptor::equality("by_word", ["word", "id"])),
+            RelationDescriptor::new(
+                "WorkCompany",
+                vec![
+                    FieldDescriptor::new("work", ValueType::U64),
+                    FieldDescriptor::new("company", ValueType::U64),
+                ],
+            )
+            .with_covering_unique("work_company", ["work", "company"])
+            .with_index(IndexDescriptor::equality("by_company", ["company", "work"])),
+            RelationDescriptor::new(
+                "WorkKeyword",
+                vec![
+                    FieldDescriptor::new("work", ValueType::U64),
+                    FieldDescriptor::new("keyword", ValueType::U64),
+                ],
+            )
+            .with_covering_unique("work_keyword", ["work", "keyword"])
+            .with_index(IndexDescriptor::equality("by_keyword", ["keyword", "work"])),
+            RelationDescriptor::new(
+                "Person",
+                vec![
+                    FieldDescriptor::new("id", ValueType::U64),
+                    FieldDescriptor::new("gender", ValueType::String),
+                ],
+            )
+            .with_covering_unique("id", ["id"])
+            .with_index(IndexDescriptor::equality("by_gender", ["gender", "id"])),
+            RelationDescriptor::new(
+                "Role",
+                vec![
+                    FieldDescriptor::new("id", ValueType::U64),
+                    FieldDescriptor::new("name", ValueType::String),
+                ],
+            )
+            .with_covering_unique("id", ["id"])
+            .with_index(IndexDescriptor::equality("by_name", ["name", "id"])),
+            RelationDescriptor::new(
+                "Title",
+                vec![
+                    FieldDescriptor::new("id", ValueType::U64),
+                    FieldDescriptor::new("year", ValueType::I64),
+                ],
+            )
+            .with_covering_unique("id", ["id"])
+            .with_index(IndexDescriptor::equality("by_year", ["year", "id"])),
+        ],
+    )
+}
+
+fn dim_row(id: u64, kind: u64) -> Row {
+    Row::new("Dim", [("id", Value::U64(id)), ("kind", Value::Enum(kind))])
+}
+
+fn other_dim_row(id: u64, kind: u64) -> Row {
+    Row::new(
+        "OtherDim",
+        [("id", Value::U64(id)), ("kind", Value::Enum(kind))],
+    )
+}
+
+fn fact_row(dim: u64, item: u64) -> Row {
+    Row::new(
+        "Fact",
+        [("dim", Value::U64(dim)), ("item", Value::U64(item))],
+    )
+}
+
+fn owner_group_row(owner: u64, group: u64) -> Row {
+    Row::new(
+        "OwnerGroup",
+        [
+            ("owner", Value::Identity(IdentityValue::Serial(owner))),
+            ("group", Value::U64(group)),
+        ],
+    )
+}
+
+fn owned_fact_row(owner: u64, group: u64, item: u64) -> Row {
+    Row::new(
+        "OwnedFact",
+        [
+            ("owner", Value::Identity(IdentityValue::Serial(owner))),
+            ("group", Value::U64(group)),
+            ("item", Value::U64(item)),
+        ],
+    )
+}
+
+fn pair_row(left: u64, right: u64) -> Row {
+    Row::new(
+        "Pair",
+        [("left", Value::U64(left)), ("right", Value::U64(right))],
+    )
 }
 
 fn seeded_rows() -> Vec<Row> {

@@ -18,8 +18,8 @@ use crate::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FieldValues,
     FreeJoinPlan, HashTrieIndex, IdentityValue, IndexSpec, LeafMode, LinearIter, NodeId, NodeImpl,
     OutputPlan, PayloadDemand, PlanEstimates, PlanNode, PrefixProbe, PrefixRows, ProjectPlan,
-    ReadTxn, RelationImage, RelationStats, Result, Row, RowId, RowRange, SortedTrieIndex,
-    StorageSchema, SubAtom, TrieIter, Value, VarId,
+    ReadTxn, RelationImage, RelationIndexImage, RelationStats, Result, Row, RowId, RowRange,
+    SortedTrieIndex, StorageSchema, SubAtom, TrieIter, Value, VarId,
 };
 
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
@@ -35,6 +35,11 @@ use crate::{PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics};
 
 const HASH_BUILD_ROWS_PER_MICRO: u64 = 5;
 const TINY_PROJECT_THRESHOLD: usize = 32;
+const STATIC_SEMIJOIN_MAX_PROBES: u64 = 50_000;
+const STATIC_SEMIJOIN_MAX_SCANNED_ROWS: u64 = 100_000;
+const STATIC_SEMIJOIN_MAX_CANDIDATES: usize = 50_000;
+const STATIC_SEMIJOIN_MAX_ROUNDS: u64 = 8;
+const STATIC_SEMIJOIN_SCAN_THRESHOLD: usize = 1_000;
 
 /// Query input bindings keyed by input name without `$`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -495,11 +500,14 @@ impl QueryPlan {
         }
         if self.runtime_kind == QueryRuntimeKind::StaticEmpty {
             out.push_str(&format!(
-                "static_empty cache_hits={} cache_misses={} atoms_checked={} rows_scanned={}\n",
+                "static_empty cache_hits={} cache_misses={} atoms_checked={} rows_scanned={} semijoin_prefixes_probed={} semijoin_candidate_values={} semijoin_rounds={}\n",
                 self.counters.static_empty_cache_hits,
                 self.counters.static_empty_cache_misses,
                 self.counters.static_empty_atoms_checked,
                 self.counters.static_empty_rows_scanned,
+                self.counters.static_semijoin_prefixes_probed,
+                self.counters.static_semijoin_candidate_values,
+                self.counters.static_semijoin_rounds,
             ));
         }
         out.push_str("free_join_plan:\n");
@@ -709,6 +717,18 @@ impl QueryPlan {
         out.push_str(&format!(
             "  static_empty_cache_misses: {}\n",
             self.counters.static_empty_cache_misses
+        ));
+        out.push_str(&format!(
+            "  static_semijoin_prefixes_probed: {}\n",
+            self.counters.static_semijoin_prefixes_probed
+        ));
+        out.push_str(&format!(
+            "  static_semijoin_candidate_values: {}\n",
+            self.counters.static_semijoin_candidate_values
+        ));
+        out.push_str(&format!(
+            "  static_semijoin_rounds: {}\n",
+            self.counters.static_semijoin_rounds
         ));
         out.push_str(&format!("  output_rows: {}\n", self.counters.output_rows));
         out
@@ -1151,6 +1171,12 @@ pub struct PlanCounters {
     pub static_empty_cache_hits: u64,
     /// Number of static-empty proof cache misses.
     pub static_empty_cache_misses: u64,
+    /// Number of static semijoin index prefixes probed.
+    pub static_semijoin_prefixes_probed: u64,
+    /// Number of static semijoin candidate values retained.
+    pub static_semijoin_candidate_values: u64,
+    /// Number of static semijoin propagation rounds completed.
+    pub static_semijoin_rounds: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -1610,19 +1636,14 @@ impl<'env> ReadTxn<'env> {
                 plan,
             });
         }
-        let static_empty_proof = if normalized.inputs.is_empty() {
-            Some(static_literal_atoms_prove_empty(
-                image.as_ref(),
-                &normalized,
-                &encoded_inputs,
-            )?)
-        } else {
-            None
-        };
+        let static_empty_proof =
+            static_query_proves_empty(image.as_ref(), &normalized, &encoded_inputs)?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
-            image.insert_static_empty(prepared_cache_key)?;
-            if let Some(cache_key) = static_empty_fast_key {
-                self.query_images.insert_static_empty_fast(cache_key)?;
+            if normalized.inputs.is_empty() {
+                image.insert_static_empty(prepared_cache_key)?;
+                if let Some(cache_key) = static_empty_fast_key {
+                    self.query_images.insert_static_empty_fast(cache_key)?;
+                }
             }
             let mut plan = static_empty_plan(
                 &normalized,
@@ -1637,6 +1658,9 @@ impl<'env> ReadTxn<'env> {
                 plan.counters.static_empty_cache_misses = 1;
                 plan.counters.static_empty_atoms_checked = proof.atoms_checked;
                 plan.counters.static_empty_rows_scanned = proof.rows_scanned;
+                plan.counters.static_semijoin_prefixes_probed = proof.prefixes_probed;
+                plan.counters.static_semijoin_candidate_values = proof.candidate_values;
+                plan.counters.static_semijoin_rounds = proof.rounds;
             }
             plan.timings.total_micros = elapsed_micros(total_start);
             let total_alloc = allocation_delta_since(total_alloc_start);
@@ -1855,19 +1879,14 @@ impl<'env> ReadTxn<'env> {
                 plan,
             });
         }
-        let static_empty_proof = if normalized.inputs.is_empty() {
-            Some(static_literal_atoms_prove_empty(
-                image.as_ref(),
-                normalized,
-                &encoded_inputs,
-            )?)
-        } else {
-            None
-        };
+        let static_empty_proof =
+            static_query_proves_empty(image.as_ref(), normalized, &encoded_inputs)?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
-            image.insert_static_empty(prepared_cache_key)?;
-            if let Some(cache_key) = static_empty_fast_key {
-                self.query_images.insert_static_empty_fast(cache_key)?;
+            if normalized.inputs.is_empty() {
+                image.insert_static_empty(prepared_cache_key)?;
+                if let Some(cache_key) = static_empty_fast_key {
+                    self.query_images.insert_static_empty_fast(cache_key)?;
+                }
             }
             let mut plan = static_empty_plan(
                 normalized,
@@ -1882,6 +1901,9 @@ impl<'env> ReadTxn<'env> {
                 plan.counters.static_empty_cache_misses = 1;
                 plan.counters.static_empty_atoms_checked = proof.atoms_checked;
                 plan.counters.static_empty_rows_scanned = proof.rows_scanned;
+                plan.counters.static_semijoin_prefixes_probed = proof.prefixes_probed;
+                plan.counters.static_semijoin_candidate_values = proof.candidate_values;
+                plan.counters.static_semijoin_rounds = proof.rounds;
             }
             plan.timings.total_micros = elapsed_micros(total_start);
             let total_alloc = allocation_delta_since(total_alloc_start);
@@ -2074,19 +2096,14 @@ impl<'env> ReadTxn<'env> {
             return Ok(QueryCountOutput { rows: 0, plan });
         }
 
-        let static_empty_proof = if normalized.inputs.is_empty() {
-            Some(static_literal_atoms_prove_empty(
-                image.as_ref(),
-                &normalized,
-                &encoded_inputs,
-            )?)
-        } else {
-            None
-        };
+        let static_empty_proof =
+            static_query_proves_empty(image.as_ref(), &normalized, &encoded_inputs)?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
-            image.insert_static_empty(prepared_cache_key)?;
-            if let Some(cache_key) = static_empty_fast_key {
-                self.query_images.insert_static_empty_fast(cache_key)?;
+            if normalized.inputs.is_empty() {
+                image.insert_static_empty(prepared_cache_key)?;
+                if let Some(cache_key) = static_empty_fast_key {
+                    self.query_images.insert_static_empty_fast(cache_key)?;
+                }
             }
             let mut plan = static_empty_plan(
                 &normalized,
@@ -2101,6 +2118,9 @@ impl<'env> ReadTxn<'env> {
                 plan.counters.static_empty_cache_misses = 1;
                 plan.counters.static_empty_atoms_checked = proof.atoms_checked;
                 plan.counters.static_empty_rows_scanned = proof.rows_scanned;
+                plan.counters.static_semijoin_prefixes_probed = proof.prefixes_probed;
+                plan.counters.static_semijoin_candidate_values = proof.candidate_values;
+                plan.counters.static_semijoin_rounds = proof.rounds;
             }
             plan.timings.total_micros = elapsed_micros(total_start);
             plan.allocations = plan
@@ -2546,6 +2566,47 @@ struct StaticEmptyProof {
     empty: bool,
     atoms_checked: u64,
     rows_scanned: u64,
+    prefixes_probed: u64,
+    candidate_values: u64,
+    rounds: u64,
+}
+
+#[derive(Clone, Debug)]
+struct CandidateSet {
+    values: BTreeSet<EncodedOwned>,
+}
+
+impl CandidateSet {
+    fn new(values: BTreeSet<EncodedOwned>) -> Self {
+        Self { values }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum FieldConstraint<'a> {
+    Single(&'a EncodedOwned),
+    Candidates(&'a BTreeSet<EncodedOwned>),
+}
+
+type StaticSemijoinPrefixes<'a> = (&'a RelationIndexImage, Vec<Vec<u8>>);
+
+fn static_query_proves_empty(
+    image: &crate::QueryImage,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+) -> Result<Option<StaticEmptyProof>> {
+    let mut proof = static_literal_atoms_prove_empty(image, query, inputs)?;
+    if proof.empty {
+        return Ok(Some(proof));
+    }
+    let semijoin = static_semijoin_proves_empty(image, query, inputs)?;
+    proof.atoms_checked = proof.atoms_checked.saturating_add(semijoin.atoms_checked);
+    proof.rows_scanned = proof.rows_scanned.saturating_add(semijoin.rows_scanned);
+    proof.prefixes_probed = semijoin.prefixes_probed;
+    proof.candidate_values = semijoin.candidate_values;
+    proof.rounds = semijoin.rounds;
+    proof.empty = semijoin.empty;
+    Ok(Some(proof))
 }
 
 fn static_literal_atoms_prove_empty(
@@ -2557,6 +2618,9 @@ fn static_literal_atoms_prove_empty(
         empty: false,
         atoms_checked: 0,
         rows_scanned: 0,
+        prefixes_probed: 0,
+        candidate_values: 0,
+        rounds: 0,
     };
     let _span = tracing::debug_span!("bumbledb.query.static_empty.prove").entered();
     for atom in &query.atoms {
@@ -2585,6 +2649,484 @@ fn static_literal_atoms_prove_empty(
         }
     }
     Ok(proof)
+}
+
+fn static_semijoin_proves_empty(
+    image: &crate::QueryImage,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+) -> Result<StaticEmptyProof> {
+    let mut proof = StaticEmptyProof {
+        empty: false,
+        atoms_checked: 0,
+        rows_scanned: 0,
+        prefixes_probed: 0,
+        candidate_values: 0,
+        rounds: 0,
+    };
+    if query.atoms.len() < 2 {
+        return Ok(proof);
+    }
+    let _span = tracing::debug_span!("bumbledb.query.static_semijoin.prove").entered();
+    let mut candidates: BTreeMap<VarId, CandidateSet> = BTreeMap::new();
+
+    for atom in &query.atoms {
+        if !atom_has_static_constraint(query, atom) {
+            continue;
+        }
+        let relation = image
+            .relation_by_id(atom.relation)
+            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
+        let Some(atom_candidates) = enumerate_static_atom_candidates(
+            relation,
+            query,
+            atom,
+            inputs,
+            &candidates,
+            &mut proof,
+            false,
+        )?
+        else {
+            continue;
+        };
+        if atom_candidates.is_empty() && !atom_variables(atom).is_empty() {
+            proof.empty = true;
+            return Ok(proof);
+        }
+        if merge_atom_candidates(&mut candidates, atom_candidates) {
+            proof.candidate_values = total_candidate_values(&candidates);
+            if proof.candidate_values as usize > STATIC_SEMIJOIN_MAX_CANDIDATES {
+                return Ok(StaticEmptyProof {
+                    empty: false,
+                    ..proof
+                });
+            }
+        }
+        if has_empty_candidate(&candidates) {
+            proof.empty = true;
+            return Ok(proof);
+        }
+    }
+
+    if candidates.is_empty() {
+        return Ok(proof);
+    }
+
+    for _ in 0..STATIC_SEMIJOIN_MAX_ROUNDS {
+        proof.rounds += 1;
+        let mut changed = false;
+        for atom in &query.atoms {
+            if !atom_has_static_constraint(query, atom)
+                && !atom
+                    .fields
+                    .iter()
+                    .any(|field| matches!(field.term, NormTerm::Var(var) if candidates.contains_key(&var)))
+            {
+                continue;
+            }
+            let relation = image
+                .relation_by_id(atom.relation)
+                .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
+            let Some(atom_candidates) = enumerate_static_atom_candidates(
+                relation,
+                query,
+                atom,
+                inputs,
+                &candidates,
+                &mut proof,
+                true,
+            )?
+            else {
+                continue;
+            };
+            proof.atoms_checked += 1;
+            if atom_candidates.is_empty() && !atom_variables(atom).is_empty() {
+                proof.empty = true;
+                return Ok(proof);
+            }
+            if merge_atom_candidates(&mut candidates, atom_candidates) {
+                changed = true;
+                proof.candidate_values = total_candidate_values(&candidates);
+                if proof.candidate_values as usize > STATIC_SEMIJOIN_MAX_CANDIDATES {
+                    return Ok(StaticEmptyProof {
+                        empty: false,
+                        ..proof
+                    });
+                }
+            }
+            if has_empty_candidate(&candidates) {
+                proof.empty = true;
+                return Ok(proof);
+            }
+        }
+        if !changed {
+            return Ok(proof);
+        }
+    }
+    Ok(StaticEmptyProof {
+        empty: false,
+        ..proof
+    })
+}
+
+fn atom_has_static_constraint(query: &NormalizedQuery, atom: &NormAtom) -> bool {
+    atom.fields
+        .iter()
+        .any(|field| matches!(field.term, NormTerm::Input(_) | NormTerm::Literal(_)))
+        || query.predicates.iter().any(|predicate| {
+            static_predicate_variable(predicate)
+                .is_some_and(|variable| atom_has_variable(atom, variable))
+        })
+}
+
+fn static_predicate_variable(predicate: &NormPredicate) -> Option<VarId> {
+    match (&predicate.operands[0], &predicate.operands[1]) {
+        (NormOperand::Var(variable), NormOperand::Literal(_))
+        | (NormOperand::Literal(_), NormOperand::Var(variable))
+        | (NormOperand::Var(variable), NormOperand::Input(_))
+        | (NormOperand::Input(_), NormOperand::Var(variable)) => Some(*variable),
+        _ => None,
+    }
+}
+
+fn atom_has_variable(atom: &NormAtom, variable: VarId) -> bool {
+    atom.fields
+        .iter()
+        .any(|field| matches!(field.term, NormTerm::Var(var) if var == variable))
+}
+
+fn enumerate_static_atom_candidates(
+    relation: &RelationImage,
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    inputs: &EncodedInputs,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+    proof: &mut StaticEmptyProof,
+    use_candidates: bool,
+) -> Result<Option<BTreeMap<VarId, BTreeSet<EncodedOwned>>>> {
+    if let Some((index, prefixes)) =
+        static_semijoin_prefixes(relation, atom, inputs, candidates, use_candidates)?
+    {
+        let mut out = empty_atom_candidate_map(atom);
+        for prefix in prefixes {
+            if proof.prefixes_probed >= STATIC_SEMIJOIN_MAX_PROBES {
+                return Ok(None);
+            }
+            proof.prefixes_probed += 1;
+            for entry in index.entries_with_prefix(&prefix) {
+                if static_atom_entry_matches(index, entry, query, atom, inputs, candidates)? {
+                    collect_atom_entry_candidates(index, entry, atom, &mut out)?;
+                    if total_raw_candidate_values(&out) > STATIC_SEMIJOIN_MAX_CANDIDATES {
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+        return Ok(Some(out));
+    }
+
+    if relation.row_count > STATIC_SEMIJOIN_SCAN_THRESHOLD {
+        return Ok(None);
+    }
+    let mut out = empty_atom_candidate_map(atom);
+    for row in 0..relation.row_count {
+        if proof.rows_scanned >= STATIC_SEMIJOIN_MAX_SCANNED_ROWS {
+            return Ok(None);
+        }
+        proof.rows_scanned += 1;
+        let row = RowId(row as u32);
+        if static_atom_row_matches_with_candidates(relation, query, atom, row, inputs, candidates)?
+        {
+            collect_atom_row_candidates(relation, atom, row, &mut out)?;
+            if total_raw_candidate_values(&out) > STATIC_SEMIJOIN_MAX_CANDIDATES {
+                return Ok(None);
+            }
+        }
+    }
+    Ok(Some(out))
+}
+
+fn static_semijoin_prefixes<'a>(
+    relation: &'a RelationImage,
+    atom: &'a NormAtom,
+    inputs: &'a EncodedInputs,
+    candidates: &'a BTreeMap<VarId, CandidateSet>,
+    use_candidates: bool,
+) -> Result<Option<StaticSemijoinPrefixes<'a>>> {
+    let mut best: Option<(&RelationIndexImage, Vec<Vec<u8>>)> = None;
+    for index in relation.indexes() {
+        if atom
+            .fields
+            .iter()
+            .any(|field| !index.contains_field(field.field))
+        {
+            continue;
+        }
+        let mut prefix_values: Vec<Vec<&EncodedOwned>> = Vec::new();
+        for field in &index.fields {
+            let Some(atom_field) = atom
+                .fields
+                .iter()
+                .find(|atom_field| atom_field.field == *field)
+            else {
+                break;
+            };
+            match static_field_constraint(atom_field, inputs, candidates, use_candidates) {
+                Some(FieldConstraint::Single(value)) => prefix_values.push(vec![value]),
+                Some(FieldConstraint::Candidates(values)) => {
+                    if values.is_empty() {
+                        return Ok(Some((index, Vec::new())));
+                    }
+                    prefix_values.push(values.iter().collect());
+                }
+                None => break,
+            }
+        }
+        if prefix_values.is_empty() {
+            continue;
+        }
+        let prefix_count = prefix_values
+            .iter()
+            .try_fold(1usize, |count, values| count.checked_mul(values.len()))
+            .unwrap_or(STATIC_SEMIJOIN_MAX_PROBES as usize + 1);
+        if prefix_count > STATIC_SEMIJOIN_MAX_PROBES as usize {
+            continue;
+        }
+        let mut prefixes = Vec::with_capacity(prefix_count);
+        build_static_prefixes(&prefix_values, 0, Vec::new(), &mut prefixes);
+        if best
+            .as_ref()
+            .is_none_or(|(_, existing)| prefixes.len() < existing.len())
+        {
+            best = Some((index, prefixes));
+        }
+    }
+    Ok(best)
+}
+
+fn static_field_constraint<'a>(
+    field: &'a NormAtomField,
+    inputs: &'a EncodedInputs,
+    candidates: &'a BTreeMap<VarId, CandidateSet>,
+    use_candidates: bool,
+) -> Option<FieldConstraint<'a>> {
+    match &field.term {
+        NormTerm::Input(input) => inputs.get(*input).map(FieldConstraint::Single),
+        NormTerm::Literal(literal) => Some(FieldConstraint::Single(literal)),
+        NormTerm::Var(variable) if use_candidates => candidates
+            .get(variable)
+            .map(|set| FieldConstraint::Candidates(&set.values)),
+        NormTerm::Var(_) | NormTerm::Wildcard => None,
+    }
+}
+
+fn build_static_prefixes(
+    values: &[Vec<&EncodedOwned>],
+    depth: usize,
+    mut current: Vec<u8>,
+    out: &mut Vec<Vec<u8>>,
+) {
+    if depth == values.len() {
+        out.push(current);
+        return;
+    }
+    for value in &values[depth] {
+        let len = current.len();
+        current.extend_from_slice(value.as_bytes());
+        build_static_prefixes(values, depth + 1, current.clone(), out);
+        current.truncate(len);
+    }
+}
+
+fn empty_atom_candidate_map(atom: &NormAtom) -> BTreeMap<VarId, BTreeSet<EncodedOwned>> {
+    let mut out = BTreeMap::new();
+    for field in &atom.fields {
+        if let NormTerm::Var(variable) = field.term {
+            out.entry(variable).or_insert_with(BTreeSet::new);
+        }
+    }
+    out
+}
+
+fn static_atom_entry_matches(
+    index: &RelationIndexImage,
+    entry: &[u8],
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    inputs: &EncodedInputs,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+) -> Result<bool> {
+    for field in &atom.fields {
+        let Some(bytes) = index.component_bytes(entry, field.field) else {
+            return Ok(false);
+        };
+        if !static_atom_field_bytes_match(field, bytes, inputs, candidates) {
+            return Ok(false);
+        }
+    }
+    static_atom_predicates_match(query, atom, inputs, |field| {
+        index.component_bytes(entry, field.field)
+    })
+}
+
+fn static_atom_row_matches_with_candidates(
+    relation: &RelationImage,
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    row: RowId,
+    inputs: &EncodedInputs,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+) -> Result<bool> {
+    for field in &atom.fields {
+        let bytes = relation
+            .encoded_bytes(row, field.field)
+            .ok_or_else(|| Error::internal("missing static semijoin atom field"))?;
+        if !static_atom_field_bytes_match(field, bytes, inputs, candidates) {
+            return Ok(false);
+        }
+    }
+    static_atom_predicates_match(query, atom, inputs, |field| {
+        relation.encoded_bytes(row, field.field)
+    })
+}
+
+fn static_atom_field_bytes_match(
+    field: &NormAtomField,
+    bytes: &[u8],
+    inputs: &EncodedInputs,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+) -> bool {
+    match &field.term {
+        NormTerm::Input(input) => inputs
+            .get(*input)
+            .is_some_and(|value| value.as_bytes() == bytes),
+        NormTerm::Literal(literal) => literal.as_bytes() == bytes,
+        NormTerm::Var(variable) => candidates
+            .get(variable)
+            .is_none_or(|set| set.values.iter().any(|value| value.as_bytes() == bytes)),
+        NormTerm::Wildcard => true,
+    }
+}
+
+fn static_atom_predicates_match<'a>(
+    query: &'a NormalizedQuery,
+    atom: &'a NormAtom,
+    inputs: &'a EncodedInputs,
+    encoded_field: impl Fn(&'a NormAtomField) -> Option<&'a [u8]>,
+) -> Result<bool> {
+    for predicate in &query.predicates {
+        let left = static_operand_bytes(&predicate.operands[0], atom, inputs, &encoded_field);
+        let right = static_operand_bytes(&predicate.operands[1], atom, inputs, &encoded_field);
+        let (Some(left), Some(right)) = (left, right) else {
+            continue;
+        };
+        if encoded_comparison_supported(predicate.op, &predicate.value_type)
+            && !compare_encoded_values(left, predicate.op, right)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn static_operand_bytes<'a>(
+    operand: &'a NormOperand,
+    atom: &'a NormAtom,
+    inputs: &'a EncodedInputs,
+    encoded_field: &impl Fn(&'a NormAtomField) -> Option<&'a [u8]>,
+) -> Option<&'a [u8]> {
+    match operand {
+        NormOperand::Var(variable) => atom.fields.iter().find_map(|field| {
+            matches!(field.term, NormTerm::Var(var) if var == *variable)
+                .then(|| encoded_field(field))
+                .flatten()
+        }),
+        NormOperand::Input(input) => inputs.get(*input).map(EncodedOwned::as_bytes),
+        NormOperand::Literal(literal) => Some(literal.as_bytes()),
+    }
+}
+
+fn collect_atom_entry_candidates(
+    index: &RelationIndexImage,
+    entry: &[u8],
+    atom: &NormAtom,
+    out: &mut BTreeMap<VarId, BTreeSet<EncodedOwned>>,
+) -> Result<()> {
+    for field in &atom.fields {
+        if let NormTerm::Var(variable) = field.term {
+            let bytes = index
+                .component_bytes(entry, field.field)
+                .ok_or_else(|| Error::internal("missing static semijoin index component"))?;
+            out.entry(variable)
+                .or_default()
+                .insert(encoded_owned_for_width(
+                    field.value_type.encoded_width(),
+                    bytes,
+                )?);
+        }
+    }
+    Ok(())
+}
+
+fn collect_atom_row_candidates(
+    relation: &RelationImage,
+    atom: &NormAtom,
+    row: RowId,
+    out: &mut BTreeMap<VarId, BTreeSet<EncodedOwned>>,
+) -> Result<()> {
+    for field in &atom.fields {
+        if let NormTerm::Var(variable) = field.term {
+            let bytes = relation
+                .encoded_bytes(row, field.field)
+                .ok_or_else(|| Error::internal("missing static semijoin row field"))?;
+            out.entry(variable)
+                .or_default()
+                .insert(encoded_owned_for_width(
+                    field.value_type.encoded_width(),
+                    bytes,
+                )?);
+        }
+    }
+    Ok(())
+}
+
+fn merge_atom_candidates(
+    candidates: &mut BTreeMap<VarId, CandidateSet>,
+    atom_candidates: BTreeMap<VarId, BTreeSet<EncodedOwned>>,
+) -> bool {
+    let mut changed = false;
+    for (variable, values) in atom_candidates {
+        match candidates.get_mut(&variable) {
+            Some(existing) => {
+                let intersection = existing
+                    .values
+                    .intersection(&values)
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                if intersection.len() != existing.values.len() {
+                    existing.values = intersection;
+                    changed = true;
+                }
+            }
+            None => {
+                candidates.insert(variable, CandidateSet::new(values));
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+fn has_empty_candidate(candidates: &BTreeMap<VarId, CandidateSet>) -> bool {
+    candidates.values().any(|set| set.values.is_empty())
+}
+
+fn total_candidate_values(candidates: &BTreeMap<VarId, CandidateSet>) -> u64 {
+    candidates.values().map(|set| set.values.len() as u64).sum()
+}
+
+fn total_raw_candidate_values(candidates: &BTreeMap<VarId, BTreeSet<EncodedOwned>>) -> usize {
+    candidates.values().map(BTreeSet::len).sum()
 }
 
 fn static_atom_row_matches(
