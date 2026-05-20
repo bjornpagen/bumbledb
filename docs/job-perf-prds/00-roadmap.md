@@ -1,5 +1,7 @@
 # JOB Performance PRD Roadmap
 
+Historical note: this roadmap predates the v2 cleanup. It records the completed JOB performance optimization pass and is not the current architecture contract. Use `docs/ROSETTA_STONE.md` for the normative v2 design.
+
 ## Purpose
 
 This directory is the implementation roadmap for eliminating the largest CPU and allocation waste found in the fully traced JOB benchmark run.

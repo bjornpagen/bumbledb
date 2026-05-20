@@ -1,5 +1,7 @@
 # JOB Trace Analysis Overview
 
+Historical note: this analysis predates the v2 schema/query cleanup. It may refer to Datalog, primary-key internals, current-row payloads, or other v1 implementation details that no longer exist in the current architecture.
+
 ## Inputs
 
 | Artifact | Path |

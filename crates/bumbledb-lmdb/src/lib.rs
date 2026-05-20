@@ -67,7 +67,7 @@ pub use storage_schema::{
 };
 
 /// Current on-disk storage format version.
-pub const STORAGE_FORMAT_VERSION: u32 = 1;
+pub const STORAGE_FORMAT_VERSION: u32 = 2;
 
 const DEFAULT_MAP_SIZE: usize = 64 * 1024 * 1024 * 1024;
 const DEFAULT_MAX_READERS: u32 = 1024;

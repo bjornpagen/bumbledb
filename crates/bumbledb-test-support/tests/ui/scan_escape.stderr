@@ -1,16 +1,16 @@
 error: lifetime may not live long enough
- --> tests/ui/scan_escape.rs:7:32
+ --> tests/ui/scan_escape.rs:9:32
   |
-7 |     let _scan = env.read(|txn| txn.scan_relation(&schema, "Holder"))?;
+9 |     let _scan = env.read(|txn| txn.scan_relation(&schema, "Holder"))?;
   |                           ---- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ returning this value requires that `'1` must outlive `'2`
   |                           |  |
   |                           |  return type of closure is Result<IndexScan<'2, '_, '_>, bumbledb_lmdb::Error>
   |                           has type `&'1 ReadTxn<'_>`
 
 error: lifetime may not live long enough
- --> tests/ui/scan_escape.rs:7:32
+ --> tests/ui/scan_escape.rs:9:32
   |
-7 |     let _scan = env.read(|txn| txn.scan_relation(&schema, "Holder"))?;
+9 |     let _scan = env.read(|txn| txn.scan_relation(&schema, "Holder"))?;
   |                           ---- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ returning this value requires that `'3` must outlive `'2`
   |                           |  |
   |                           |  return type of closure is Result<IndexScan<'2, '_, '_>, bumbledb_lmdb::Error>
