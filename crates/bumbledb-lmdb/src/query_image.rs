@@ -7,7 +7,10 @@ use bumbledb_core::schema::{RelationDescriptor, SchemaFingerprint, ValueType};
 
 use crate::planner_stats::{PlannerStatsCache, PlannerStatsCacheDiagnostics};
 use crate::query::ExecutionPlan;
-use crate::{AccessId, Error, ReadTxn, Result, SegmentDescriptor, SortedTrieIndex, StorageSchema};
+use crate::{
+    AccessId, EncodedOwned, Error, ReadTxn, Result, SegmentDescriptor, SortedTrieIndex,
+    StorageSchema,
+};
 use crate::{HashTrieIndex, IndexSpec, LeafMode};
 
 /// Cache key for an immutable query image.
@@ -723,6 +726,133 @@ impl<T: Copy> FixedColumn<T> {
     }
 }
 
+/// Builder for fixed-width encoded column images.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum EncodedColumnBuilder {
+    Bool {
+        field: FieldId,
+        values: Vec<[u8; 1]>,
+    },
+    Fixed8 {
+        field: FieldId,
+        values: Vec<[u8; 8]>,
+    },
+    Fixed16 {
+        field: FieldId,
+        values: Vec<[u8; 16]>,
+    },
+}
+
+impl EncodedColumnBuilder {
+    #[allow(dead_code)]
+    pub(crate) fn new(field: FieldId, width: usize) -> Result<Self> {
+        Self::with_capacity(field, width, 0)
+    }
+
+    pub(crate) fn with_capacity(field: FieldId, width: usize, capacity: usize) -> Result<Self> {
+        Ok(match width {
+            1 => Self::Bool {
+                field,
+                values: Vec::with_capacity(capacity),
+            },
+            8 => Self::Fixed8 {
+                field,
+                values: Vec::with_capacity(capacity),
+            },
+            16 => Self::Fixed16 {
+                field,
+                values: Vec::with_capacity(capacity),
+            },
+            _ => return Err(Error::internal(format!("unsupported column width {width}"))),
+        })
+    }
+
+    pub(crate) fn append_bytes(&mut self, bytes: &[u8]) -> Result<()> {
+        match self {
+            Self::Bool { values, .. } => values.push(exact_array::<1>(bytes)?),
+            Self::Fixed8 { values, .. } => values.push(exact_array::<8>(bytes)?),
+            Self::Fixed16 { values, .. } => values.push(exact_array::<16>(bytes)?),
+        }
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn append_encoded_owned(&mut self, value: &EncodedOwned) -> Result<()> {
+        self.append_bytes(value.as_bytes())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn append_encoded_ref(&mut self, value: EncodedRef<'_>) -> Result<()> {
+        self.append_bytes(value.as_bytes())
+    }
+
+    pub(crate) fn extend_flat_bytes(&mut self, bytes: &[u8]) -> Result<()> {
+        let width = self.width();
+        if width == 0 || !bytes.len().is_multiple_of(width) {
+            return Err(Error::corrupt("segment column byte width mismatch"));
+        }
+        for chunk in bytes.chunks_exact(width) {
+            self.append_bytes(chunk)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Bool { values, .. } => values.len(),
+            Self::Fixed8 { values, .. } => values.len(),
+            Self::Fixed16 { values, .. } => values.len(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn byte_len(&self) -> usize {
+        self.len() * self.width()
+    }
+
+    pub(crate) fn width(&self) -> usize {
+        match self {
+            Self::Bool { .. } => 1,
+            Self::Fixed8 { .. } => 8,
+            Self::Fixed16 { .. } => 16,
+        }
+    }
+
+    pub(crate) fn finish(self) -> ColumnImage {
+        match self {
+            Self::Bool { field, values } => ColumnImage::Bool(FixedColumn::new(field, values)),
+            Self::Fixed8 { field, values } => ColumnImage::Fixed8(FixedColumn::new(field, values)),
+            Self::Fixed16 { field, values } => {
+                ColumnImage::Fixed16(FixedColumn::new(field, values))
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn encoded_column_builders(
+    fields: &[FieldImage],
+    capacity: usize,
+) -> Result<Vec<EncodedColumnBuilder>> {
+    fields
+        .iter()
+        .map(|field| EncodedColumnBuilder::with_capacity(field.id, field.width, capacity))
+        .collect()
+}
+
+#[allow(dead_code)]
+pub(crate) fn finish_column_builders(builders: Vec<EncodedColumnBuilder>) -> Vec<ColumnImage> {
+    builders
+        .into_iter()
+        .map(EncodedColumnBuilder::finish)
+        .collect()
+}
+
 /// Encoded fixed-width column image.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ColumnImage {
@@ -744,41 +874,24 @@ impl ColumnImage {
         width: usize,
         values: Vec<Vec<u8>>,
     ) -> Result<Self> {
-        Ok(match width {
-            1 => ColumnImage::Bool(FixedColumn::new(
-                field,
-                values
-                    .into_iter()
-                    .map(|bytes| exact_array::<1>(&bytes))
-                    .collect::<Result<Vec<_>>>()?,
-            )),
-            8 => ColumnImage::Fixed8(FixedColumn::new(
-                field,
-                values
-                    .into_iter()
-                    .map(|bytes| exact_array::<8>(&bytes))
-                    .collect::<Result<Vec<_>>>()?,
-            )),
-            16 => ColumnImage::Fixed16(FixedColumn::new(
-                field,
-                values
-                    .into_iter()
-                    .map(|bytes| exact_array::<16>(&bytes))
-                    .collect::<Result<Vec<_>>>()?,
-            )),
-            _ => return Err(Error::internal(format!("unsupported column width {width}"))),
-        })
+        let mut builder = EncodedColumnBuilder::with_capacity(field, width, values.len())?;
+        for bytes in values {
+            builder.append_bytes(&bytes)?;
+        }
+        Ok(builder.finish())
+    }
+
+    pub(crate) fn from_flat_bytes(field: FieldId, width: usize, bytes: &[u8]) -> Result<Self> {
+        let mut builder = EncodedColumnBuilder::with_capacity(field, width, bytes.len() / width)?;
+        builder.extend_flat_bytes(bytes)?;
+        Ok(builder.finish())
     }
 
     pub(crate) fn from_segment_bytes(field: FieldId, width: usize, bytes: Vec<u8>) -> Result<Self> {
         if width == 0 || !bytes.len().is_multiple_of(width) {
             return Err(Error::corrupt("segment column byte width mismatch"));
         }
-        let values = bytes
-            .chunks_exact(width)
-            .map(|chunk| chunk.to_vec())
-            .collect::<Vec<_>>();
-        Self::from_query_image_bytes(field, width, values)
+        Self::from_flat_bytes(field, width, &bytes)
     }
 
     fn encoded(&self, row: RowId) -> Option<EncodedRef<'_>> {
@@ -1212,6 +1325,94 @@ mod tests {
     use crate::{Environment, KeyValues, Row, Value};
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn encoded_column_builder_appends_width_1() -> TestResult {
+        let mut builder = EncodedColumnBuilder::new(FieldId(2), 1)?;
+        builder.append_bytes(&[1])?;
+        builder.append_bytes(&[0])?;
+
+        assert_eq!(builder.len(), 2);
+        assert!(!builder.is_empty());
+        assert_eq!(builder.byte_len(), 2);
+        match builder.finish() {
+            ColumnImage::Bool(column) => {
+                assert_eq!(column.field(), FieldId(2));
+                assert_eq!(column.get(RowId(0)), Some([1]));
+                assert_eq!(column.get(RowId(1)), Some([0]));
+            }
+            other => return Err(format!("expected bool column, got {other:?}").into()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn encoded_column_builder_appends_width_8() -> TestResult {
+        let mut builder = EncodedColumnBuilder::with_capacity(FieldId(1), 8, 2)?;
+        builder.append_encoded_owned(&EncodedOwned::Eight(7u64.to_be_bytes()))?;
+        builder.append_encoded_ref(EncodedRef::Eight(&9u64.to_be_bytes()))?;
+
+        assert_eq!(builder.len(), 2);
+        assert_eq!(builder.byte_len(), 16);
+        match builder.finish() {
+            ColumnImage::Fixed8(column) => {
+                assert_eq!(column.field(), FieldId(1));
+                assert_eq!(column.get(RowId(0)), Some(7u64.to_be_bytes()));
+                assert_eq!(column.get(RowId(1)), Some(9u64.to_be_bytes()));
+            }
+            other => return Err(format!("expected fixed8 column, got {other:?}").into()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn encoded_column_builder_appends_width_16() -> TestResult {
+        let mut builder = EncodedColumnBuilder::new(FieldId(3), 16)?;
+        builder.append_bytes(&1u128.to_be_bytes())?;
+        builder.append_bytes(&2u128.to_be_bytes())?;
+
+        assert_eq!(builder.len(), 2);
+        assert_eq!(builder.byte_len(), 32);
+        match builder.finish() {
+            ColumnImage::Fixed16(column) => {
+                assert_eq!(column.field(), FieldId(3));
+                assert_eq!(column.get(RowId(0)), Some(1u128.to_be_bytes()));
+                assert_eq!(column.get(RowId(1)), Some(2u128.to_be_bytes()));
+            }
+            other => return Err(format!("expected fixed16 column, got {other:?}").into()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn encoded_column_builder_extends_flat_bytes() -> TestResult {
+        let bytes = [3u64.to_be_bytes(), 4u64.to_be_bytes()].concat();
+        let column = ColumnImage::from_flat_bytes(FieldId(0), 8, &bytes)?;
+
+        match column {
+            ColumnImage::Fixed8(column) => {
+                assert_eq!(column.len(), 2);
+                assert_eq!(column.get(RowId(0)), Some(3u64.to_be_bytes()));
+                assert_eq!(column.get(RowId(1)), Some(4u64.to_be_bytes()));
+            }
+            other => return Err(format!("expected fixed8 column, got {other:?}").into()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn encoded_column_builder_rejects_bad_width() {
+        assert!(EncodedColumnBuilder::new(FieldId(0), 4).is_err());
+    }
+
+    #[test]
+    fn encoded_column_builder_rejects_bad_flat_length() -> TestResult {
+        let mut builder = EncodedColumnBuilder::new(FieldId(0), 8)?;
+
+        assert!(builder.extend_flat_bytes(&[1, 2, 3]).is_err());
+        assert!(builder.append_bytes(&[1, 2, 3]).is_err());
+        Ok(())
+    }
 
     #[test]
     fn builds_query_image_from_snapshot_and_matches_diagnostics() -> TestResult {
