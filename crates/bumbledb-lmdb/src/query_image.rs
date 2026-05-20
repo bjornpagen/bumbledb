@@ -834,7 +834,6 @@ impl EncodedColumnBuilder {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn encoded_column_builders(
     fields: &[FieldImage],
     capacity: usize,
@@ -845,7 +844,6 @@ pub(crate) fn encoded_column_builders(
         .collect()
 }
 
-#[allow(dead_code)]
 pub(crate) fn finish_column_builders(builders: Vec<EncodedColumnBuilder>) -> Vec<ColumnImage> {
     builders
         .into_iter()
@@ -865,10 +863,6 @@ pub enum ColumnImage {
 }
 
 impl ColumnImage {
-    fn from_bytes(field: FieldId, width: usize, values: Vec<Vec<u8>>) -> Result<Self> {
-        Self::from_query_image_bytes(field, width, values)
-    }
-
     pub(crate) fn from_query_image_bytes(
         field: FieldId,
         width: usize,
@@ -1236,7 +1230,7 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
 
     fn build_from_current_index(self) -> Result<BuiltRelationImage> {
         let fields = self.field_images();
-        let mut raw_columns = vec![Vec::<Vec<u8>>::new(); fields.len()];
+        let mut builders = encoded_column_builders(&fields, 0)?;
         let layout = self
             .schema
             .layout(&self.relation.name, "primary")
@@ -1260,21 +1254,12 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
                 let bytes = item
                     .component(&layout.components, component_index)
                     .ok_or_else(|| Error::corrupt("query image primary index component missing"))?;
-                raw_columns[field_id].push(bytes.to_vec());
+                builders[field_id].append_bytes(bytes)?;
             }
         }
 
-        let row_count = raw_columns.first().map_or(0, Vec::len);
-        let columns = fields
-            .iter()
-            .map(|field| {
-                ColumnImage::from_bytes(
-                    field.id,
-                    field.width,
-                    raw_columns[field.id.0 as usize].clone(),
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let row_count = builders.first().map_or(0, EncodedColumnBuilder::len);
+        let columns = finish_column_builders(builders);
         let encoded_column_bytes = columns.iter().map(ColumnImage::byte_len).sum();
         Ok(BuiltRelationImage {
             relation: RelationImage {
@@ -1411,6 +1396,20 @@ mod tests {
 
         assert!(builder.extend_flat_bytes(&[1, 2, 3]).is_err());
         assert!(builder.append_bytes(&[1, 2, 3]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn column_image_rejects_segment_length_mismatch() {
+        assert!(ColumnImage::from_segment_bytes(FieldId(0), 8, vec![1, 2, 3]).is_err());
+    }
+
+    #[test]
+    fn column_image_accepts_empty_flat_bytes() -> TestResult {
+        let column = ColumnImage::from_flat_bytes(FieldId(0), 8, &[])?;
+
+        assert!(column.is_empty());
+        assert_eq!(column.len(), 0);
         Ok(())
     }
 
