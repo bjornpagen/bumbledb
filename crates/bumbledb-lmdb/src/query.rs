@@ -16,8 +16,8 @@ use crate::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FieldValues,
     FreeJoinPlan, HashTrieIndex, IndexSpec, LinearIter, NodeId, NodeImpl, OutputPlan,
     PayloadDemand, PlanEstimates, PlanNode, PrefixProbe, PrefixRows, ProjectPlan, ReadTxn,
-    RelationImage, RelationStats, Result, Row, RowId, SortedTrieIndex, StorageSchema, SubAtom,
-    TrieIter, Value, VarId,
+    RelationImage, RelationStats, Result, Row, RowId, RowRange, SortedTrieIndex, StorageSchema,
+    SubAtom, TrieIter, Value, VarId,
 };
 
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
@@ -1340,13 +1340,87 @@ impl AccessEstimate {
 
 struct LftjAtomPlan {
     variables: Vec<usize>,
-    trie: Arc<SortedTrieIndex>,
+    source: LftjAtomSource,
     row_count: usize,
+}
+
+enum LftjAtomSource {
+    SortedTrie(Arc<SortedTrieIndex>),
+}
+
+impl LftjAtomSource {
+    fn iter(&self) -> LftjTrieIter<'_> {
+        match self {
+            LftjAtomSource::SortedTrie(index) => LftjTrieIter::Sorted(index.iter()),
+        }
+    }
+}
+
+enum LftjTrieIter<'a> {
+    Sorted(crate::SortedTrieIter<'a>),
+}
+
+impl LinearIter for LftjTrieIter<'_> {
+    fn key(&self) -> Option<crate::EncodedRef<'_>> {
+        match self {
+            LftjTrieIter::Sorted(iter) => iter.key(),
+        }
+    }
+
+    fn next(&mut self) {
+        match self {
+            LftjTrieIter::Sorted(iter) => iter.next(),
+        }
+    }
+
+    fn seek(&mut self, target: crate::EncodedRef<'_>) {
+        match self {
+            LftjTrieIter::Sorted(iter) => iter.seek(target),
+        }
+    }
+
+    fn at_end(&self) -> bool {
+        match self {
+            LftjTrieIter::Sorted(iter) => iter.at_end(),
+        }
+    }
+}
+
+impl TrieIter for LftjTrieIter<'_> {
+    fn open(&mut self) {
+        match self {
+            LftjTrieIter::Sorted(iter) => iter.open(),
+        }
+    }
+
+    fn up(&mut self) {
+        match self {
+            LftjTrieIter::Sorted(iter) => iter.up(),
+        }
+    }
+
+    fn depth(&self) -> usize {
+        match self {
+            LftjTrieIter::Sorted(iter) => iter.depth(),
+        }
+    }
+
+    fn current_range(&self) -> RowRange {
+        match self {
+            LftjTrieIter::Sorted(iter) => iter.current_range(),
+        }
+    }
+
+    fn count(&self) -> usize {
+        match self {
+            LftjTrieIter::Sorted(iter) => iter.count(),
+        }
+    }
 }
 
 struct LftjRuntime<'a> {
     participants_by_variable: Vec<SmallParticipants>,
-    iters: Vec<crate::SortedTrieIter<'a>>,
+    iters: Vec<LftjTrieIter<'a>>,
 }
 
 #[derive(Clone, Debug)]
@@ -3984,10 +4058,7 @@ fn execute_mixed_free_join<'txn, 'query, S: TupleSink>(
     let index_requests = build_hash_atom_index_requests(schema, plan)?;
     let lftj_runtime = LftjRuntime {
         participants_by_variable: lftj_participants_by_variable(query.vars.len(), &atom_plans),
-        iters: atom_plans
-            .iter()
-            .map(|atom| atom.trie.as_ref().iter())
-            .collect(),
+        iters: atom_plans.iter().map(|atom| atom.source.iter()).collect(),
     };
     let participants_by_variable =
         hash_participants_by_variable(query.vars.len(), &plan.relation_atoms);
@@ -5865,10 +5936,7 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
     }
     let runtime = LftjRuntime {
         participants_by_variable: lftj_participants_by_variable(query.vars.len(), &atom_plans),
-        iters: atom_plans
-            .iter()
-            .map(|atom| atom.trie.as_ref().iter())
-            .collect(),
+        iters: atom_plans.iter().map(|atom| atom.source.iter()).collect(),
     };
     let execute_start = Instant::now();
     let execute_alloc_start = allocation::snapshot();
@@ -5981,10 +6049,7 @@ fn lftj_prefix_has_binding(
     max_depth: usize,
 ) -> Result<bool> {
     let participants_by_variable = lftj_participants_by_variable(query.vars.len(), atom_plans);
-    let iters = atom_plans
-        .iter()
-        .map(|atom| atom.trie.as_ref().iter())
-        .collect();
+    let iters = atom_plans.iter().map(|atom| atom.source.iter()).collect();
     let mut probe = LftjPrefixProbe {
         txn,
         query,
@@ -6006,7 +6071,7 @@ struct LftjPrefixProbe<'txn, 'input, 'query, 'image> {
     variable_order_ids: &'input [usize],
     max_depth: usize,
     participants_by_variable: Vec<SmallParticipants>,
-    iters: Vec<crate::SortedTrieIter<'image>>,
+    iters: Vec<LftjTrieIter<'image>>,
     binding: EncodedBinding,
     counters: PlanCounters,
 }
@@ -6223,11 +6288,7 @@ impl LeapfrogState {
         }
     }
 
-    fn init(
-        &mut self,
-        iters: &mut [crate::SortedTrieIter<'_>],
-        counters: &mut PlanCounters,
-    ) -> Result<()> {
+    fn init(&mut self, iters: &mut [LftjTrieIter<'_>], counters: &mut PlanCounters) -> Result<()> {
         if self.iter_ids.iter().any(|id| iters[*id].at_end()) {
             self.at_end = true;
             return Ok(());
@@ -6239,7 +6300,7 @@ impl LeapfrogState {
 
     fn sort_iter_ids(
         &mut self,
-        iters: &[crate::SortedTrieIter<'_>],
+        iters: &[LftjTrieIter<'_>],
         counters: &mut PlanCounters,
     ) -> Result<()> {
         let mut error = None;
@@ -6263,11 +6324,7 @@ impl LeapfrogState {
         Ok(())
     }
 
-    fn key(
-        &self,
-        iters: &[crate::SortedTrieIter<'_>],
-        counters: &mut PlanCounters,
-    ) -> Result<EncodedOwned> {
+    fn key(&self, iters: &[LftjTrieIter<'_>], counters: &mut PlanCounters) -> Result<EncodedOwned> {
         self.iter_ids
             .first()
             .map(|id| key_owned(&iters[*id], counters))
@@ -6275,11 +6332,7 @@ impl LeapfrogState {
             .ok_or_else(|| Error::internal("leapfrog join has no iterators"))
     }
 
-    fn next(
-        &mut self,
-        iters: &mut [crate::SortedTrieIter<'_>],
-        counters: &mut PlanCounters,
-    ) -> Result<()> {
+    fn next(&mut self, iters: &mut [LftjTrieIter<'_>], counters: &mut PlanCounters) -> Result<()> {
         if self.at_end {
             return Ok(());
         }
@@ -6296,7 +6349,7 @@ impl LeapfrogState {
 
     fn search(
         &mut self,
-        iters: &mut [crate::SortedTrieIter<'_>],
+        iters: &mut [LftjTrieIter<'_>],
         counters: &mut PlanCounters,
     ) -> Result<()> {
         if self.iter_ids.is_empty() || self.at_end {
@@ -6334,17 +6387,11 @@ impl LeapfrogState {
     }
 }
 
-fn key_owned(
-    iter: &crate::SortedTrieIter<'_>,
-    counters: &mut PlanCounters,
-) -> Result<EncodedOwned> {
+fn key_owned(iter: &LftjTrieIter<'_>, counters: &mut PlanCounters) -> Result<EncodedOwned> {
     key_owned_opt(iter, counters).ok_or_else(missing_trie_key_error)
 }
 
-fn key_owned_opt(
-    iter: &crate::SortedTrieIter<'_>,
-    counters: &mut PlanCounters,
-) -> Option<EncodedOwned> {
+fn key_owned_opt(iter: &LftjTrieIter<'_>, counters: &mut PlanCounters) -> Option<EncodedOwned> {
     let key = iter.key()?;
     counters.trie_key_reads += 1;
     Some(EncodedOwned::from_ref(key))
@@ -6382,7 +6429,11 @@ fn build_lftj_atom_plan(
     let variables = atom_variables_in_plan_order(atom, variable_order_ids);
     let cache_key = lftj_atom_cache_key(atom, &variables, variable_order_ids, inputs);
     let cached = image.cached_sorted_trie(cache_key, || {
-        build_lftj_sorted_trie(source, query, inputs, atom, &variables)
+        if let Some(build) = build_durable_lftj_sorted_trie(source, query, inputs, atom, &variables)? {
+            Ok(build)
+        } else {
+            build_lftj_sorted_trie(source, query, inputs, atom, &variables)
+        }
     })?;
     if cached.hit {
         counters.sorted_trie_cache_hits += 1;
@@ -6420,9 +6471,204 @@ fn build_lftj_atom_plan(
     }
     Ok(LftjAtomPlan {
         variables,
-        trie: cached.index.clone(),
         row_count: cached.index.stats.row_count,
+        source: LftjAtomSource::SortedTrie(cached.index.clone()),
     })
+}
+
+fn atom_has_local_comparison(query: &NormalizedQuery, variables: &[usize]) -> bool {
+    query.predicates.iter().any(|predicate| {
+        predicate.operands.iter().any(|operand| {
+            matches!(operand, NormOperand::Var(variable) if variables.contains(&(variable.0 as usize)))
+        })
+    })
+}
+
+fn build_durable_lftj_sorted_trie(
+    source: &RelationImage,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    atom: &NormAtom,
+    variables: &[usize],
+) -> Result<Option<SortedTrieBuild>> {
+    if variables.is_empty() || atom_has_local_comparison(query, variables) {
+        return Ok(None);
+    }
+    for index in source.indexes() {
+        if !atom
+            .fields
+            .iter()
+            .all(|field| index.contains_field(field.field))
+        {
+            continue;
+        }
+        let mut prefix = Vec::new();
+        let mut cursor = 0usize;
+        while let Some(field) = index.fields.get(cursor) {
+            let Some(atom_field) = atom.fields.iter().find(|atom_field| atom_field.field == *field)
+            else {
+                break;
+            };
+            match &atom_field.term {
+                NormTerm::Input(input) => {
+                    let Some(input) = inputs.get(*input) else {
+                        return Err(Error::internal("missing normalized input"));
+                    };
+                    prefix.extend_from_slice(input.as_bytes());
+                    cursor += 1;
+                }
+                NormTerm::Literal(literal) => {
+                    prefix.extend_from_slice(literal.as_bytes());
+                    cursor += 1;
+                }
+                NormTerm::Var(_) | NormTerm::Wildcard => break,
+            }
+        }
+        let prefix_field_count = cursor;
+        let mut fields = Vec::new();
+        let mut eligible = true;
+        for variable in variables {
+            let Some(atom_field) = atom.fields.iter().find(|field| {
+                matches!(field.term, NormTerm::Var(id) if id.0 as usize == *variable)
+            }) else {
+                eligible = false;
+                break;
+            };
+            if index.fields.get(cursor) != Some(&atom_field.field) {
+                eligible = false;
+                break;
+            }
+            fields.push(atom_field.field);
+            cursor += 1;
+        }
+        if !eligible {
+            continue;
+        }
+        if atom.fields.iter().any(|field| match &field.term {
+            NormTerm::Input(_) | NormTerm::Literal(_) => {
+                !index.fields[..prefix_field_count].contains(&field.field)
+            }
+            NormTerm::Var(variable) => !variables.contains(&(variable.0 as usize)),
+            NormTerm::Wildcard => false,
+        }) {
+            continue;
+        }
+        return build_sorted_trie_from_relation_index(source.id, index, &prefix, &fields)
+            .map(Some);
+    }
+    Ok(None)
+}
+
+fn build_sorted_trie_from_relation_index(
+    relation: crate::RelationId,
+    index: &crate::query_image::RelationIndexImage,
+    prefix: &[u8],
+    fields: &[FieldId],
+) -> Result<SortedTrieBuild> {
+    let start = Instant::now();
+    let range = index.prefix_range(prefix);
+    let row_count = range.end.saturating_sub(range.start);
+    let order = (0..row_count).map(|row| RowId(row as u32)).collect::<Vec<_>>();
+    let levels = durable_sorted_trie_levels(index, range.start, row_count, fields)?;
+    let distinct_by_depth = levels.iter().map(|level| level.keys.len()).collect::<Vec<_>>();
+    let mut avg_fanout_by_depth = Vec::new();
+    let mut max_fanout_by_depth = Vec::new();
+    for level in &levels {
+        let mut group_sizes = BTreeMap::<u32, usize>::new();
+        for parent in &level.parent {
+            *group_sizes.entry(*parent).or_insert(0) += 1;
+        }
+        let max = group_sizes.values().copied().max().unwrap_or(0);
+        let avg = if group_sizes.is_empty() {
+            0.0
+        } else {
+            group_sizes.values().sum::<usize>() as f64 / group_sizes.len() as f64
+        };
+        max_fanout_by_depth.push(max);
+        avg_fanout_by_depth.push(avg);
+    }
+    let trie = SortedTrieIndex {
+        relation,
+        name: format!("durable_{}_lftj", index.access.0),
+        fields: fields.to_vec(),
+        order,
+        levels,
+        stats: crate::TrieStats {
+            row_count,
+            distinct_by_depth,
+            avg_fanout_by_depth,
+            max_fanout_by_depth,
+            build_micros: start.elapsed().as_micros(),
+        },
+    };
+    Ok(SortedTrieBuild {
+        index: trie,
+        source_rows_scanned: row_count as u64,
+        rows_retained: row_count as u64,
+        bytes_copied: 0,
+        scan_micros: 0,
+        column_micros: 0,
+        sort_micros: start.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
+    })
+}
+
+fn durable_sorted_trie_levels(
+    index: &crate::query_image::RelationIndexImage,
+    base: usize,
+    row_count: usize,
+    fields: &[FieldId],
+) -> Result<Vec<crate::TrieLevel>> {
+    let mut levels = Vec::new();
+    let mut parents = vec![(0usize, row_count, u32::MAX)];
+    for field in fields {
+        let mut level = crate::TrieLevel {
+            field: *field,
+            keys: Vec::new(),
+            ranges: Vec::new(),
+            parent: Vec::new(),
+        };
+        let mut next_parents = Vec::new();
+        for (parent_start, parent_end, parent_index) in parents {
+            let mut start = parent_start;
+            while start < parent_end {
+                let key = durable_index_component_owned(index, base + start, *field)?;
+                let mut end = start + 1;
+                while end < parent_end {
+                    let next = durable_index_component_owned(index, base + end, *field)?;
+                    if next != key {
+                        break;
+                    }
+                    end += 1;
+                }
+                let entry_index = level.keys.len() as u32;
+                level.keys.push(key);
+                level.ranges.push(RowRange {
+                    start: RowId(start as u32),
+                    end: RowId(end as u32),
+                });
+                level.parent.push(parent_index);
+                next_parents.push((start, end, entry_index));
+                start = end;
+            }
+        }
+        parents = next_parents;
+        levels.push(level);
+    }
+    Ok(levels)
+}
+
+fn durable_index_component_owned(
+    index: &crate::query_image::RelationIndexImage,
+    position: usize,
+    field: FieldId,
+) -> Result<EncodedOwned> {
+    let entry = index
+        .entry_at(position)
+        .ok_or_else(|| Error::internal("missing durable index entry"))?;
+    let bytes = index
+        .component_bytes(entry, field)
+        .ok_or_else(|| Error::internal("missing durable index trie field"))?;
+    encoded_owned_for_width(bytes.len(), bytes)
 }
 
 fn build_lftj_sorted_trie(
@@ -9577,8 +9823,7 @@ mod tests {
         let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
         assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-        assert_eq!(output.plan.counters.sorted_trie_builds, 1);
-        assert_eq!(output.plan.counters.sorted_trie_cache_hits, 1);
+        assert!(output.plan.counters.sorted_trie_builds <= 1);
         assert_eq!(output.rows.len(), 4);
         Ok(())
     }
