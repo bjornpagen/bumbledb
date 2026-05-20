@@ -432,10 +432,6 @@ pub enum PlanError {
     #[error("no access path for relation {relation}")]
     NoAccessPath { relation: String },
 
-    /// Missing primary index for relation.
-    #[error("missing primary index for relation {relation}")]
-    MissingPrimaryIndex { relation: String },
-
     /// Unknown index.
     #[error("unknown index {relation}.{index}")]
     UnknownIndex { relation: String, index: String },

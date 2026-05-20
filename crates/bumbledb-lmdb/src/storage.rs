@@ -10,6 +10,7 @@ use bumbledb_core::schema::{
     RelationDescriptor, SchemaDescriptor, ValueType,
 };
 
+use crate::storage_schema::COVERING_ACCESS_NAME;
 use crate::{
     AccessId, ColumnSegmentDescriptor, Error, FieldId, IndexSegmentDescriptor, IndexStatsSummary,
     ReadTxn, RelationId, Result, SegmentDescriptor, StorageSchema, WriteTxn,
@@ -674,10 +675,10 @@ impl WriteTxn<'_> {
         relation_id: u16,
         relation: &RelationDescriptor,
     ) -> Result<PendingRelationSegment> {
-        let primary_layout = schema
-            .layout(&relation.name, "primary")
-            .ok_or_else(|| Error::unknown_index(&relation.name, "primary"))?;
-        let component_by_field = primary_layout
+        let covering_layout = schema
+            .covering_layout(&relation.name)
+            .ok_or_else(|| Error::unknown_index(&relation.name, COVERING_ACCESS_NAME))?;
+        let component_by_field = covering_layout
             .components
             .iter()
             .enumerate()
@@ -693,21 +694,21 @@ impl WriteTxn<'_> {
             })
             .collect::<Vec<_>>();
 
-        let primary_prefix = current_index_prefix(relation_id, primary_layout.index_id);
+        let covering_prefix = current_index_prefix(relation_id, covering_layout.index_id);
         let mut row_count = 0usize;
         let mut iter = self
             .dbs
             .index
-            .prefix_iter(&self.txn, primary_prefix.as_slice())?;
+            .prefix_iter(&self.txn, covering_prefix.as_slice())?;
         while let Some((key, _)) = iter.next().transpose()? {
-            let item = encoded_index_item(primary_layout, &primary_prefix, key)?;
+            let item = encoded_index_item(covering_layout, &covering_prefix, key)?;
             for (field_id, field) in relation.fields.iter().enumerate() {
                 let component_index = *component_by_field
                     .get(field.name.as_str())
-                    .ok_or_else(|| Error::corrupt("segment missing primary component"))?;
+                    .ok_or_else(|| Error::corrupt("segment missing covering component"))?;
                 let bytes = item
-                    .component(&primary_layout.components, component_index)
-                    .ok_or_else(|| Error::corrupt("segment primary component truncated"))?;
+                    .component(&covering_layout.components, component_index)
+                    .ok_or_else(|| Error::corrupt("segment covering component truncated"))?;
                 columns[field_id].bytes.extend_from_slice(bytes);
             }
             row_count += 1;
@@ -1126,7 +1127,10 @@ impl<'env> ReadTxn<'env> {
         schema: &'schema StorageSchema,
         relation_name: &str,
     ) -> Result<IndexScan<'borrow, 'env, 'schema>> {
-        self.scan_index_with_prefix(schema, relation_name, "primary", &[], None)
+        let covering = schema
+            .covering_index_name(relation_name)
+            .ok_or_else(|| Error::unknown_index(relation_name, COVERING_ACCESS_NAME))?;
+        self.scan_index_with_prefix(schema, relation_name, covering, &[], None)
     }
 
     /// Scans a covering index by a leading-field prefix.
@@ -1732,24 +1736,14 @@ fn storage_value_matches_type(value: &Value, value_type: &ValueType) -> bool {
 
 fn decode_index_scan_item(
     dict: crate::RawDatabase,
-    index_db: crate::RawDatabase,
+    _index_db: crate::RawDatabase,
     txn: &heed::RoTxn,
     relation: &RelationDescriptor,
     layout: &CurrentIndexLayout,
     key: &[u8],
 ) -> Result<ScanItem> {
     let (encoded, encoded_components) = decode_index_key(relation, layout, key)?;
-    let row = if layout.covers_full_row {
-        decode_encoded_row(dict, txn, relation, &encoded)?
-    } else {
-        let primary = primary_bytes(relation, &encoded)?;
-        let row_key = current_row_key(layout.relation_id, &primary);
-        let payload = index_db
-            .get(txn, row_key.as_slice())?
-            .ok_or_else(|| Error::corrupt("index entry points to missing current row"))?;
-        let encoded = EncodedRow::from_payload(relation, payload)?;
-        decode_encoded_row(dict, txn, relation, &encoded)?
-    };
+    let row = decode_encoded_row(dict, txn, relation, &encoded)?;
     Ok(ScanItem {
         row,
         encoded_components,
@@ -2283,15 +2277,25 @@ mod tests {
             assert_eq!(txn.history_entry_count()?, 2);
             assert_eq!(txn.relation_row_count(&schema, "Holder")?, 1);
             assert_eq!(txn.relation_row_count(&schema, "Account")?, 1);
-            assert_eq!(txn.index_entry_count(&schema, "Holder", "primary")?, 1);
+            assert_eq!(
+                txn.index_entry_count(&schema, "Holder", COVERING_ACCESS_NAME)?,
+                1
+            );
             assert_eq!(txn.index_entry_count(&schema, "Holder", "unique_name")?, 1);
-            assert_eq!(txn.index_entry_count(&schema, "Account", "primary")?, 1);
+            assert_eq!(
+                txn.index_entry_count(&schema, "Account", COVERING_ACCESS_NAME)?,
+                1
+            );
             assert_eq!(txn.index_entry_count(&schema, "Account", "by_holder")?, 1);
             assert_eq!(
                 txn.index_entry_count(&schema, "Account", "unique_holder_currency")?,
                 1
             );
-            assert!(txn.current_index_entry_exists(&schema, &holder_row(1, "Alice"), "primary")?);
+            assert!(txn.current_index_entry_exists(
+                &schema,
+                &holder_row(1, "Alice"),
+                COVERING_ACCESS_NAME
+            )?);
             assert!(txn.current_index_entry_exists(
                 &schema,
                 &account_row(1, 1, 840),
@@ -2489,13 +2493,20 @@ mod tests {
             assert_eq!(txn.last_committed_tx_id()?, 2);
             assert_eq!(txn.history_entry_count()?, 3);
             assert_eq!(txn.relation_row_count(&schema, "Account")?, 1);
-            assert_eq!(txn.index_entry_count(&schema, "Account", "primary")?, 1);
+            assert_eq!(
+                txn.index_entry_count(&schema, "Account", COVERING_ACCESS_NAME)?,
+                1
+            );
             assert!(!txn.current_index_entry_exists(
                 &schema,
                 &account_row(1, 1, 840),
-                "primary"
+                COVERING_ACCESS_NAME
             )?);
-            assert!(txn.current_index_entry_exists(&schema, &account_row(1, 1, 978), "primary")?);
+            assert!(txn.current_index_entry_exists(
+                &schema,
+                &account_row(1, 1, 978),
+                COVERING_ACCESS_NAME
+            )?);
             Ok::<(), Error>(())
         })?;
 
@@ -2568,7 +2579,10 @@ mod tests {
 
         env.read(|txn| {
             assert_eq!(txn.relation_row_count(&schema, "AccountTag")?, 0);
-            assert_eq!(txn.index_entry_count(&schema, "AccountTag", "primary")?, 0);
+            assert_eq!(
+                txn.index_entry_count(&schema, "AccountTag", COVERING_ACCESS_NAME)?,
+                0
+            );
             assert_eq!(
                 txn.index_entry_count(&schema, "AccountTag", "by_account")?,
                 0
@@ -2603,7 +2617,11 @@ mod tests {
             );
 
             let access_paths = schema.access_paths("Account")?;
-            assert!(access_paths.iter().any(|path| path.index_name == "primary"));
+            assert!(
+                access_paths
+                    .iter()
+                    .any(|path| path.index_name == COVERING_ACCESS_NAME)
+            );
             assert!(
                 access_paths
                     .iter()

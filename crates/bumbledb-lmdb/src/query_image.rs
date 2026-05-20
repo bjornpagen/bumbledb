@@ -8,6 +8,7 @@ use bumbledb_core::schema::{RelationDescriptor, SchemaFingerprint, ValueType};
 
 use crate::planner_stats::{PlannerStatsCache, PlannerStatsCacheDiagnostics};
 use crate::query::ExecutionPlan;
+use crate::storage_schema::COVERING_ACCESS_NAME;
 use crate::{
     AccessId, EncodedOwned, Error, ReadTxn, Result, SegmentDescriptor, SortedTrieIndex,
     StorageSchema,
@@ -1460,8 +1461,8 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
         let mut builders = encoded_column_builders(&fields, 0)?;
         let layout = self
             .schema
-            .layout(&self.relation.name, "primary")
-            .ok_or_else(|| Error::unknown_index(&self.relation.name, "primary"))?;
+            .covering_layout(&self.relation.name)
+            .ok_or_else(|| Error::unknown_index(&self.relation.name, COVERING_ACCESS_NAME))?;
         let component_by_field = layout
             .components
             .iter()
@@ -1469,18 +1470,25 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
             .map(|(index, component)| (component.field_name.as_str(), index))
             .collect::<BTreeMap<_, _>>();
 
+        let covering = self
+            .schema
+            .covering_index_name(&self.relation.name)
+            .ok_or_else(|| Error::unknown_index(&self.relation.name, COVERING_ACCESS_NAME))?;
         let scan =
             self.txn
-                .scan_encoded_index_prefix(self.schema, &self.relation.name, "primary", &[])?;
+                .scan_encoded_index_prefix(self.schema, &self.relation.name, covering, &[])?;
         for item in scan {
             let item = item?;
             for (field_id, field) in self.relation.fields.iter().enumerate() {
-                let component_index = *component_by_field
-                    .get(field.name.as_str())
-                    .ok_or_else(|| Error::corrupt("query image missing primary index component"))?;
+                let component_index =
+                    *component_by_field.get(field.name.as_str()).ok_or_else(|| {
+                        Error::corrupt("query image missing covering index component")
+                    })?;
                 let bytes = item
                     .component(&layout.components, component_index)
-                    .ok_or_else(|| Error::corrupt("query image primary index component missing"))?;
+                    .ok_or_else(|| {
+                        Error::corrupt("query image covering index component missing")
+                    })?;
                 builders[field_id].append_bytes(bytes)?;
             }
         }
@@ -1865,12 +1873,15 @@ mod tests {
         let account = account_relation(&image)?;
 
         assert!(!account.indexes().is_empty());
-        let primary = account
+        let covering = account
             .indexes()
             .iter()
             .find(|index| index.fields == vec![FieldId(0)])
-            .ok_or_else(|| crate::Error::internal("missing primary segment index image"))?;
-        assert_eq!(primary.bytes.len(), primary.encoded_len * account.row_count);
+            .ok_or_else(|| crate::Error::internal("missing covering segment index image"))?;
+        assert_eq!(
+            covering.bytes.len(),
+            covering.encoded_len * account.row_count
+        );
         Ok(())
     }
 

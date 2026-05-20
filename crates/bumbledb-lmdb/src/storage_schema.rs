@@ -1,5 +1,7 @@
 //! Compiled storage schema and public storage descriptors.
 
+use std::collections::BTreeMap;
+
 use bumbledb_core::schema::{
     CurrentIndexLayout, IndexComponent, IndexKind, RelationDescriptor, SchemaDescriptor, ValueType,
 };
@@ -11,7 +13,11 @@ use crate::{AccessId, Error, FieldId, RelationId, Result};
 pub struct StorageSchema {
     pub(crate) descriptor: SchemaDescriptor,
     pub(crate) layouts: Vec<CurrentIndexLayout>,
+    relation_by_name: BTreeMap<String, RelationId>,
+    layout_by_relation_name: BTreeMap<(String, String), AccessId>,
 }
+
+pub(crate) const COVERING_ACCESS_NAME: &str = "covering";
 
 /// Bulk ETL load report.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,9 +97,26 @@ impl StorageSchema {
     pub fn new(descriptor: SchemaDescriptor, max_key_size: usize) -> Result<Self> {
         descriptor.validate()?;
         let layouts = descriptor.current_index_layouts(max_key_size)?;
+        let relation_by_name = descriptor
+            .relations
+            .iter()
+            .enumerate()
+            .map(|(id, relation)| (relation.name.clone(), RelationId(id as u16)))
+            .collect();
+        let layout_by_relation_name = layouts
+            .iter()
+            .map(|layout| {
+                (
+                    (layout.relation_name.clone(), layout.index_name.clone()),
+                    AccessId(layout.index_id),
+                )
+            })
+            .collect();
         Ok(Self {
             descriptor,
             layouts,
+            relation_by_name,
+            layout_by_relation_name,
         })
     }
 
@@ -117,13 +140,16 @@ impl StorageSchema {
     }
 
     pub(crate) fn relation(&self, name: &str) -> Result<(u16, &RelationDescriptor)> {
-        self.descriptor
+        let relation_id = self
+            .relation_by_name
+            .get(name)
+            .ok_or_else(|| Error::unknown_relation(name))?;
+        let relation = self
+            .descriptor
             .relations
-            .iter()
-            .enumerate()
-            .find(|(_, relation)| relation.name == name)
-            .map(|(id, relation)| (id as u16, relation))
-            .ok_or_else(|| Error::unknown_relation(name))
+            .get(relation_id.0 as usize)
+            .ok_or_else(|| Error::unknown_relation(name))?;
+        Ok((relation_id.0, relation))
     }
 
     pub(crate) fn layouts_for_relation(
@@ -136,9 +162,22 @@ impl StorageSchema {
     }
 
     pub(crate) fn layout(&self, relation: &str, index: &str) -> Option<&CurrentIndexLayout> {
-        self.layouts
-            .iter()
-            .find(|layout| layout.relation_name == relation && layout.index_name == index)
+        self.layout_by_relation_name
+            .get(&(relation.to_owned(), index.to_owned()))
+            .and_then(|access| {
+                self.layouts
+                    .iter()
+                    .find(|layout| layout.relation_name == relation && layout.index_id == access.0)
+            })
+    }
+
+    pub(crate) fn covering_layout(&self, relation: &str) -> Option<&CurrentIndexLayout> {
+        self.layout(relation, COVERING_ACCESS_NAME)
+    }
+
+    pub(crate) fn covering_index_name(&self, relation: &str) -> Option<&str> {
+        self.covering_layout(relation)
+            .map(|layout| layout.index_name.as_str())
     }
 }
 

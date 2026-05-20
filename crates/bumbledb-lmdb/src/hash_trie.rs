@@ -421,7 +421,7 @@ mod tests {
     fn builds_hash_trie_over_primary_key() -> Result<()> {
         let image = account_image()?;
         let account = account_relation(&image)?;
-        let index = HashTrieIndex::build(account, IndexSpec::new("primary", [FieldId(0)]))?;
+        let index = HashTrieIndex::build(account, IndexSpec::new("covering", [FieldId(0)]))?;
         let key = EncodedOwned::Eight(2u64.to_be_bytes());
 
         assert!(index.exists(&[key.as_ref()]));
@@ -487,10 +487,10 @@ mod tests {
     fn prefix_rows_streams_empty_one_slice_and_nested_prefixes() -> Result<()> {
         let image = account_image()?;
         let account = account_relation(&image)?;
-        let primary = HashTrieIndex::build(account, IndexSpec::new("primary", [FieldId(0)]))?;
+        let covering = HashTrieIndex::build(account, IndexSpec::new("covering", [FieldId(0)]))?;
         let missing = EncodedOwned::Eight(99u64.to_be_bytes());
         assert_eq!(
-            primary
+            covering
                 .rows_for_prefix(&[missing.as_ref()])
                 .collect::<Vec<_>>(),
             []
@@ -498,7 +498,9 @@ mod tests {
 
         let one = EncodedOwned::Eight(2u64.to_be_bytes());
         assert_eq!(
-            primary.rows_for_prefix(&[one.as_ref()]).collect::<Vec<_>>(),
+            covering
+                .rows_for_prefix(&[one.as_ref()])
+                .collect::<Vec<_>>(),
             [RowId(1)]
         );
 

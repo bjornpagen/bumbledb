@@ -7467,7 +7467,7 @@ fn estimate_atom_variable_access(
         } else {
             index_stats.estimated_rows_for_prefix(prefix_len)
         };
-        if path.kind == IndexKind::Unique
+        if matches!(path.kind, IndexKind::Covering | IndexKind::Unique)
             && current_is_next
             && prefix_len + 1 == path.leading_fields.len()
         {

@@ -248,12 +248,7 @@ impl SchemaDescriptor {
 
             for (index_id, candidate) in candidates.into_iter().enumerate() {
                 let index_id = index_id as u16;
-                let components = relation.index_components(
-                    &candidate.name,
-                    candidate.kind,
-                    &candidate.fields,
-                )?;
-                let covers_full_row = relation.index_covers_full_row(&components);
+                let components = relation.index_components(&candidate.name, &candidate.fields)?;
                 let encoded_len = INDEX_KEY_OVERHEAD_BYTES
                     + components
                         .iter()
@@ -277,7 +272,6 @@ impl SchemaDescriptor {
                     kind: candidate.kind,
                     leading_fields: candidate.fields,
                     components,
-                    covers_full_row,
                     encoded_len,
                 });
             }
@@ -803,57 +797,64 @@ impl RelationDescriptor {
     }
 
     fn index_candidates(&self) -> Vec<IndexCandidate> {
-        let mut candidates = vec![IndexCandidate {
-            name: "primary".to_owned(),
-            kind: IndexKind::Primary,
-            fields: self.covering_unique_fields().unwrap_or_default().to_vec(),
-        }];
+        let mut candidates = Vec::new();
 
-        let mut seen = BTreeSet::new();
-        seen.insert(candidates[0].fields.clone());
-
-        for field in &self.fields {
-            if field.indexing.range {
-                let fields = vec![field.name.clone()];
-                if seen.insert(fields.clone()) {
-                    candidates.push(IndexCandidate {
-                        name: format!("by_{}", field.name),
-                        kind: IndexKind::Range,
-                        fields,
-                    });
-                }
+        for constraint in &self.constraints {
+            if let ConstraintDescriptor::Unique {
+                fields,
+                covering: true,
+                ..
+            } = constraint
+            {
+                candidates.push(IndexCandidate {
+                    name: "covering".to_owned(),
+                    kind: IndexKind::Covering,
+                    fields: fields.clone(),
+                });
             }
         }
 
         for constraint in &self.constraints {
-            match constraint {
-                ConstraintDescriptor::Unique { name, fields, .. } => {
-                    if seen.insert(fields.clone()) {
-                        candidates.push(IndexCandidate {
-                            name: format!("unique_{name}"),
-                            kind: IndexKind::Unique,
-                            fields: fields.clone(),
-                        });
-                    }
-                }
-                ConstraintDescriptor::ForeignKey { name, fields, .. } => {
-                    candidates.push(IndexCandidate {
-                        name: format!("by_fk_{name}"),
-                        kind: IndexKind::ForeignKey,
-                        fields: fields.clone(),
-                    });
-                }
+            if let ConstraintDescriptor::Unique {
+                name,
+                fields,
+                covering: false,
+            } = constraint
+            {
+                candidates.push(IndexCandidate {
+                    name: format!("unique_{name}"),
+                    kind: IndexKind::Unique,
+                    fields: fields.clone(),
+                });
+            }
+        }
+
+        for constraint in &self.constraints {
+            if let ConstraintDescriptor::ForeignKey { name, fields, .. } = constraint {
+                candidates.push(IndexCandidate {
+                    name: format!("by_fk_{name}"),
+                    kind: IndexKind::ForeignKey,
+                    fields: fields.clone(),
+                });
+            }
+        }
+
+        for field in &self.fields {
+            if field.indexing.range {
+                candidates.push(IndexCandidate {
+                    name: format!("by_{}", field.name),
+                    kind: IndexKind::Range,
+                    fields: vec![field.name.clone()],
+                });
             }
         }
 
         for index in &self.indexes {
-            if seen.insert(index.fields.clone()) {
-                candidates.push(IndexCandidate {
-                    name: index.name.clone(),
-                    kind: index.kind,
-                    fields: index.fields.clone(),
-                });
-            }
+            candidates.push(IndexCandidate {
+                name: index.name.clone(),
+                kind: index.kind,
+                fields: index.fields.clone(),
+            });
         }
 
         candidates
@@ -862,7 +863,6 @@ impl RelationDescriptor {
     fn index_components(
         &self,
         index_name: &str,
-        kind: IndexKind,
         leading_fields: &[String],
     ) -> Result<Vec<IndexComponent>> {
         let mut components = Vec::with_capacity(self.fields.len());
@@ -886,60 +886,13 @@ impl RelationDescriptor {
             components.push(IndexComponent::new(field, ComponentRole::Leading));
         }
 
-        match kind {
-            IndexKind::Primary => {
-                for field in &self.fields {
-                    if seen.insert(field.name.clone()) {
-                        components.push(IndexComponent::new(field, ComponentRole::Covering));
-                    }
-                }
-            }
-            IndexKind::Ref
-            | IndexKind::Unique
-            | IndexKind::ForeignKey
-            | IndexKind::Range
-            | IndexKind::Equality
-            | IndexKind::Permutation => {
-                for field_name in self.covering_unique_fields().unwrap_or(&[]) {
-                    let field =
-                        self.field(field_name)
-                            .ok_or_else(|| SchemaError::UnknownField {
-                                relation: self.name.clone(),
-                                field: field_name.clone(),
-                            })?;
-                    if seen.insert(field.name.clone()) {
-                        components.push(IndexComponent::new(field, ComponentRole::Identity));
-                    }
-                }
+        for field in &self.fields {
+            if seen.insert(field.name.clone()) {
+                components.push(IndexComponent::new(field, ComponentRole::Covering));
             }
         }
 
         Ok(components)
-    }
-
-    fn covering_unique_fields(&self) -> Option<&[String]> {
-        self.constraints
-            .iter()
-            .find_map(|constraint| match constraint {
-                ConstraintDescriptor::Unique {
-                    fields,
-                    covering: true,
-                    ..
-                } => Some(fields.as_slice()),
-                ConstraintDescriptor::Unique { .. } | ConstraintDescriptor::ForeignKey { .. } => {
-                    None
-                }
-            })
-    }
-
-    fn index_covers_full_row(&self, components: &[IndexComponent]) -> bool {
-        let names = components
-            .iter()
-            .map(|component| component.field_name.as_str())
-            .collect::<BTreeSet<_>>();
-        self.fields
-            .iter()
-            .all(|field| names.contains(field.name.as_str()))
     }
 
     fn push_canonical(&self, out: &mut Vec<u8>) {
@@ -1306,10 +1259,8 @@ impl IndexDescriptor {
 /// Current index kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IndexKind {
-    /// Primary covering index.
-    Primary,
-    /// Reference leading covering index.
-    Ref,
+    /// Relation-level full covering access path.
+    Covering,
     /// Unique leading covering index.
     Unique,
     /// Foreign-key leading covering index.
@@ -1327,13 +1278,12 @@ impl IndexKind {
         push_u8(
             out,
             match self {
-                IndexKind::Primary => 1,
-                IndexKind::Ref => 2,
-                IndexKind::Unique => 3,
-                IndexKind::ForeignKey => 4,
-                IndexKind::Range => 5,
-                IndexKind::Equality => 6,
-                IndexKind::Permutation => 7,
+                IndexKind::Covering => 1,
+                IndexKind::Unique => 2,
+                IndexKind::ForeignKey => 3,
+                IndexKind::Range => 4,
+                IndexKind::Equality => 5,
+                IndexKind::Permutation => 6,
             },
         );
     }
@@ -1356,8 +1306,6 @@ pub struct CurrentIndexLayout {
     pub leading_fields: Vec<String>,
     /// Full covering components in encoded order.
     pub components: Vec<IndexComponent>,
-    /// True when the index key contains every relation field.
-    pub covers_full_row: bool,
     /// Total encoded key length including namespace/relation/index overhead.
     pub encoded_len: usize,
 }
@@ -1376,8 +1324,6 @@ pub enum ComponentRole {
     Leading,
     /// Covering payload component inside the key.
     Covering,
-    /// Primary identity component used to fetch the row payload.
-    Identity,
 }
 
 /// A field component inside an index key.
@@ -1412,7 +1358,7 @@ struct IndexCandidate {
 }
 
 fn generated_index_names(relation: &RelationDescriptor) -> BTreeSet<String> {
-    let mut names = BTreeSet::from(["primary".to_owned()]);
+    let mut names = BTreeSet::new();
     for field in &relation.fields {
         if field.indexing.range {
             names.insert(format!("by_{}", field.name));
@@ -1420,8 +1366,12 @@ fn generated_index_names(relation: &RelationDescriptor) -> BTreeSet<String> {
     }
     for constraint in &relation.constraints {
         match constraint {
-            ConstraintDescriptor::Unique { name, .. } => {
-                names.insert(format!("unique_{name}"));
+            ConstraintDescriptor::Unique { name, covering, .. } => {
+                if *covering {
+                    names.insert("covering".to_owned());
+                } else {
+                    names.insert(format!("unique_{name}"));
+                }
             }
             ConstraintDescriptor::ForeignKey { name, .. } => {
                 names.insert(format!("by_fk_{name}"));
@@ -1506,9 +1456,10 @@ mod tests {
     fn computes_current_index_layouts() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let layouts = ledger_schema().current_index_layouts(511)?;
 
-        let account_primary = find_layout(&layouts, "Account", "primary")?;
-        assert_eq!(account_primary.leading_fields, ["id"]);
-        assert_eq!(field_names(account_primary), ["id", "holder", "currency"]);
+        let account_covering = find_layout(&layouts, "Account", "covering")?;
+        assert_eq!(account_covering.kind, IndexKind::Covering);
+        assert_eq!(account_covering.leading_fields, ["id"]);
+        assert_eq!(field_names(account_covering), ["id", "holder", "currency"]);
 
         let posting_at = find_layout(&layouts, "Posting", "by_at")?;
         assert_eq!(posting_at.kind, IndexKind::Range);
@@ -1517,18 +1468,65 @@ mod tests {
         let holder_unique = find_layout(&layouts, "Holder", "unique_name")?;
         assert_eq!(holder_unique.kind, IndexKind::Unique);
         assert_eq!(holder_unique.leading_fields, ["name"]);
+        assert_eq!(field_names(holder_unique), ["name", "id"]);
+
+        let account_holder_fk = find_layout(&layouts, "Account", "by_fk_holder")?;
+        assert_eq!(account_holder_fk.kind, IndexKind::ForeignKey);
+        assert_eq!(account_holder_fk.leading_fields, ["holder"]);
+        assert_eq!(field_names(account_holder_fk), ["holder", "id", "currency"]);
 
         let account_currency = find_layout(&layouts, "Account", "by_currency")?;
         assert_eq!(account_currency.kind, IndexKind::Equality);
         assert_eq!(account_currency.leading_fields, ["currency", "id"]);
-        assert_eq!(field_names(account_currency), ["currency", "id"]);
-        assert!(!account_currency.covers_full_row);
+        assert_eq!(field_names(account_currency), ["currency", "id", "holder"]);
+
+        for layout in &layouts {
+            let relation = ledger_schema()
+                .relations
+                .into_iter()
+                .find(|relation| relation.name == layout.relation_name)
+                .ok_or_else(|| std::io::Error::other("missing layout relation"))?;
+            let mut names = field_names(layout);
+            names.sort_unstable();
+            let mut relation_fields = relation
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>();
+            relation_fields.sort_unstable();
+            assert_eq!(names, relation_fields);
+        }
 
         assert!(
             layouts
                 .iter()
                 .all(|layout| !layout.needs_runtime_type_tags())
         );
+        Ok(())
+    }
+
+    #[test]
+    fn covering_layout_is_first_even_when_declared_later()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let schema = SchemaDescriptor::new(
+            "Ordering",
+            vec![
+                RelationDescriptor::new(
+                    "Account",
+                    vec![
+                        FieldDescriptor::new("id", identity("AccountId", "Account")),
+                        FieldDescriptor::new("code", ValueType::U64),
+                    ],
+                )
+                .with_constraint(ConstraintDescriptor::unique("code", ["code"]))
+                .with_covering_unique("id", ["id"]),
+            ],
+        );
+
+        let layouts = schema.current_index_layouts(511)?;
+        assert_eq!(layouts[0].index_name, "covering");
+        assert_eq!(layouts[0].kind, IndexKind::Covering);
+        assert_eq!(layouts[1].index_name, "unique_code");
         Ok(())
     }
 
@@ -1546,8 +1544,8 @@ mod tests {
         assert!(name.value_type.is_interned_placeholder());
         assert_eq!(name.encoded_width, 8);
 
-        let source_primary = find_layout(&layouts, "SourceDocument", "primary")?;
-        let payload = source_primary
+        let source_covering = find_layout(&layouts, "SourceDocument", "covering")?;
+        let payload = source_covering
             .components
             .iter()
             .find(|component| component.field_name == "payload")
