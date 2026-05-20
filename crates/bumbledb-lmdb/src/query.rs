@@ -1635,24 +1635,6 @@ impl<'env> ReadTxn<'env> {
                 plan,
             });
         }
-        if !normalized.predicates.is_empty()
-            && let Some(output) = try_execute_direct_count_query(
-                image.as_ref(),
-                self,
-                schema,
-                &normalized,
-                &encoded_inputs,
-                query_image_cache,
-                image.planner_stats_diagnostics(),
-                image.prepared_plan_diagnostics(),
-                timings,
-                allocations,
-                total_start,
-                total_alloc_start,
-            )?
-        {
-            return Ok(output);
-        }
         let static_empty_proof =
             static_query_proves_empty(image.as_ref(), &normalized, &encoded_inputs)?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
@@ -1898,24 +1880,6 @@ impl<'env> ReadTxn<'env> {
                 rows: empty_output_rows(&normalized.output),
                 plan,
             });
-        }
-        if !normalized.predicates.is_empty()
-            && let Some(output) = try_execute_direct_count_query(
-                image.as_ref(),
-                self,
-                schema,
-                normalized,
-                &encoded_inputs,
-                query_image_cache,
-                image.planner_stats_diagnostics(),
-                image.prepared_plan_diagnostics(),
-                timings,
-                allocations,
-                total_start,
-                total_alloc_start,
-            )?
-        {
-            return Ok(output);
         }
         let static_empty_proof =
             static_query_proves_empty(image.as_ref(), normalized, &encoded_inputs)?;
@@ -2615,7 +2579,23 @@ enum FieldConstraint<'a> {
     Candidates(&'a BTreeSet<EncodedOwned>),
 }
 
-type StaticSemijoinPrefixes<'a> = (&'a RelationIndexImage, Vec<Vec<u8>>);
+#[derive(Clone, Debug)]
+enum StaticSemijoinProbe {
+    Prefix(Vec<u8>),
+    Range {
+        lower: Vec<u8>,
+        upper: Option<Vec<u8>>,
+        upper_inclusive: bool,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct StaticRangeConstraint {
+    lower: Option<(EncodedOwned, bool)>,
+    upper: Option<(EncodedOwned, bool)>,
+}
+
+type StaticSemijoinProbes<'a> = (&'a RelationIndexImage, Vec<StaticSemijoinProbe>);
 
 fn static_query_proves_empty(
     image: &crate::QueryImage,
@@ -2838,16 +2818,16 @@ fn enumerate_static_atom_candidates(
     use_candidates: bool,
     max_candidates: usize,
 ) -> Result<Option<BTreeMap<VarId, BTreeSet<EncodedOwned>>>> {
-    if let Some((index, prefixes)) =
-        static_semijoin_prefixes(relation, atom, inputs, candidates, use_candidates)?
+    if let Some((index, probes)) =
+        static_semijoin_prefixes(relation, query, atom, inputs, candidates, use_candidates)?
     {
         let mut out = empty_atom_candidate_map(atom);
-        for prefix in prefixes {
+        for probe in probes {
             if proof.prefixes_probed >= STATIC_SEMIJOIN_MAX_PROBES {
                 return Ok(None);
             }
             proof.prefixes_probed += 1;
-            for entry in index.entries_with_prefix(&prefix) {
+            for entry in static_semijoin_probe_entries(index, &probe) {
                 if static_atom_entry_matches(index, entry, query, atom, inputs, candidates)? {
                     collect_atom_entry_candidates(index, entry, atom, &mut out)?;
                     if total_raw_candidate_values(&out) > max_candidates {
@@ -2882,12 +2862,13 @@ fn enumerate_static_atom_candidates(
 
 fn static_semijoin_prefixes<'a>(
     relation: &'a RelationImage,
+    query: &'a NormalizedQuery,
     atom: &'a NormAtom,
     inputs: &'a EncodedInputs,
     candidates: &'a BTreeMap<VarId, CandidateSet>,
     use_candidates: bool,
-) -> Result<Option<StaticSemijoinPrefixes<'a>>> {
-    let mut best: Option<(&RelationIndexImage, Vec<Vec<u8>>)> = None;
+) -> Result<Option<StaticSemijoinProbes<'a>>> {
+    let mut best: Option<(&RelationIndexImage, Vec<StaticSemijoinProbe>)> = None;
     for index in relation.indexes() {
         if atom
             .fields
@@ -2897,6 +2878,7 @@ fn static_semijoin_prefixes<'a>(
             continue;
         }
         let mut prefix_values: Vec<Vec<&EncodedOwned>> = Vec::new();
+        let mut range_constraint = None;
         for field in &index.fields {
             let Some(atom_field) = atom
                 .fields
@@ -2913,10 +2895,13 @@ fn static_semijoin_prefixes<'a>(
                     }
                     prefix_values.push(values.iter().collect());
                 }
-                None => break,
+                None => {
+                    range_constraint = static_field_range_constraint(atom_field, query);
+                    break;
+                }
             }
         }
-        if prefix_values.is_empty() {
+        if prefix_values.is_empty() && range_constraint.is_none() {
             continue;
         }
         let prefix_count = prefix_values
@@ -2928,14 +2913,158 @@ fn static_semijoin_prefixes<'a>(
         }
         let mut prefixes = Vec::with_capacity(prefix_count);
         build_static_prefixes(&prefix_values, 0, Vec::new(), &mut prefixes);
+        let probes = if let Some(range) = range_constraint {
+            static_range_probes(prefixes, range)
+        } else {
+            prefixes
+                .into_iter()
+                .map(StaticSemijoinProbe::Prefix)
+                .collect()
+        };
         if best
             .as_ref()
-            .is_none_or(|(_, existing)| prefixes.len() < existing.len())
+            .is_none_or(|(_, existing)| probes.len() < existing.len())
         {
-            best = Some((index, prefixes));
+            best = Some((index, probes));
         }
     }
     Ok(best)
+}
+
+fn static_semijoin_probe_entries<'a>(
+    index: &'a RelationIndexImage,
+    probe: &'a StaticSemijoinProbe,
+) -> Box<dyn Iterator<Item = &'a [u8]> + 'a> {
+    match probe {
+        StaticSemijoinProbe::Prefix(prefix) => Box::new(index.entries_with_prefix(prefix)),
+        StaticSemijoinProbe::Range {
+            lower,
+            upper,
+            upper_inclusive,
+        } => Box::new(index.entries_with_prefix_bounds(lower, upper.as_deref(), *upper_inclusive)),
+    }
+}
+
+fn static_range_probes(
+    mut prefixes: Vec<Vec<u8>>,
+    range: StaticRangeConstraint,
+) -> Vec<StaticSemijoinProbe> {
+    if prefixes.is_empty() {
+        prefixes.push(Vec::new());
+    }
+    prefixes
+        .into_iter()
+        .map(|prefix| {
+            let mut lower = prefix.clone();
+            if let Some((value, _)) = &range.lower {
+                lower.extend_from_slice(value.as_bytes());
+            }
+            let upper = range.upper.as_ref().map(|(value, _)| {
+                let mut upper = prefix;
+                upper.extend_from_slice(value.as_bytes());
+                upper
+            });
+            StaticSemijoinProbe::Range {
+                lower,
+                upper,
+                upper_inclusive: range
+                    .upper
+                    .as_ref()
+                    .is_some_and(|(_, inclusive)| *inclusive),
+            }
+        })
+        .collect()
+}
+
+fn static_field_range_constraint(
+    field: &NormAtomField,
+    query: &NormalizedQuery,
+) -> Option<StaticRangeConstraint> {
+    let NormTerm::Var(variable) = field.term else {
+        return None;
+    };
+    let mut range = StaticRangeConstraint {
+        lower: None,
+        upper: None,
+    };
+    for predicate in &query.predicates {
+        if !encoded_comparison_supported(predicate.op, &predicate.value_type) {
+            continue;
+        }
+        match (&predicate.operands[0], &predicate.operands[1]) {
+            (NormOperand::Var(left), NormOperand::Literal(right)) if *left == variable => {
+                apply_static_range_bound(&mut range, predicate.op, right);
+            }
+            (NormOperand::Literal(left), NormOperand::Var(right)) if *right == variable => {
+                apply_static_range_bound(&mut range, reverse_comparison(predicate.op), left);
+            }
+            _ => {}
+        }
+    }
+    (range.lower.is_some() || range.upper.is_some()).then_some(range)
+}
+
+fn apply_static_range_bound(
+    range: &mut StaticRangeConstraint,
+    operator: ComparisonOperator,
+    value: &EncodedOwned,
+) {
+    match operator {
+        ComparisonOperator::Eq => {
+            merge_static_lower_bound(range, value, true);
+            merge_static_upper_bound(range, value, true);
+        }
+        ComparisonOperator::Gt => merge_static_lower_bound(range, value, false),
+        ComparisonOperator::Gte => merge_static_lower_bound(range, value, true),
+        ComparisonOperator::Lt => merge_static_upper_bound(range, value, false),
+        ComparisonOperator::Lte => merge_static_upper_bound(range, value, true),
+        ComparisonOperator::NotEq => {}
+    }
+}
+
+fn merge_static_lower_bound(
+    range: &mut StaticRangeConstraint,
+    value: &EncodedOwned,
+    inclusive: bool,
+) {
+    let replace = range
+        .lower
+        .as_ref()
+        .is_none_or(|(existing, existing_inclusive)| {
+            value.as_bytes() > existing.as_bytes()
+                || (value.as_bytes() == existing.as_bytes() && *existing_inclusive && !inclusive)
+        });
+    if replace {
+        range.lower = Some((value.clone(), inclusive));
+    }
+}
+
+fn merge_static_upper_bound(
+    range: &mut StaticRangeConstraint,
+    value: &EncodedOwned,
+    inclusive: bool,
+) {
+    let replace = range
+        .upper
+        .as_ref()
+        .is_none_or(|(existing, existing_inclusive)| {
+            value.as_bytes() < existing.as_bytes()
+                || (value.as_bytes() == existing.as_bytes() && *existing_inclusive && !inclusive)
+        });
+    if replace {
+        range.upper = Some((value.clone(), inclusive));
+    }
+}
+
+fn reverse_comparison(operator: ComparisonOperator) -> ComparisonOperator {
+    match operator {
+        ComparisonOperator::Eq => ComparisonOperator::Eq,
+        ComparisonOperator::NotEq => ComparisonOperator::NotEq,
+        ComparisonOperator::Lt => ComparisonOperator::Gt,
+        ComparisonOperator::Lte => ComparisonOperator::Gte,
+        ComparisonOperator::Gt => ComparisonOperator::Lt,
+        ComparisonOperator::Gte => ComparisonOperator::Lte,
+    }
 }
 
 fn static_field_constraint<'a>(

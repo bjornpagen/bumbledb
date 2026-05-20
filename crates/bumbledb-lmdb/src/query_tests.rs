@@ -2213,6 +2213,143 @@ fn static_semijoin_q24_like_empty_shape_proves_empty() -> TestResult {
 }
 
 #[test]
+fn static_semijoin_range_index_q16_like_count_proves_empty() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(q16_like_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, Row::new("Alias", [("person", Value::U64(1))]))?;
+        txn.insert(&schema, Row::new("Person", [("id", Value::U64(1))]))?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Cast",
+                [("person", Value::U64(1)), ("work", Value::U64(200))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Company",
+                [
+                    ("id", Value::U64(1)),
+                    ("country", Value::String("[us]".to_owned())),
+                ],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Keyword",
+                [
+                    ("id", Value::U64(1)),
+                    ("word", Value::String("character-name-in-title".to_owned())),
+                ],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "WorkCompany",
+                [("work", Value::U64(100)), ("company", Value::U64(1))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "WorkCompany",
+                [("work", Value::U64(200)), ("company", Value::U64(1))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "WorkKeyword",
+                [("work", Value::U64(200)), ("keyword", Value::U64(1))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Title",
+                [("id", Value::U64(100)), ("episode", Value::I64(60))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Title",
+                [("id", Value::U64(200)), ("episode", Value::I64(10))],
+            ),
+        )?;
+        for id in 1_000..2_500 {
+            txn.insert(
+                &schema,
+                Row::new(
+                    "Title",
+                    [("id", Value::U64(id)), ("episode", Value::I64(10))],
+                ),
+            )?;
+        }
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query.rel("Alias")?.var("person", "person")?.done();
+        query
+            .rel("Cast")?
+            .var("person", "person")?
+            .var("work", "work")?
+            .done();
+        query
+            .rel("Company")?
+            .var("id", "company")?
+            .string("country", "[us]")?
+            .done();
+        query
+            .rel("Keyword")?
+            .var("id", "keyword")?
+            .string("word", "character-name-in-title")?
+            .done();
+        query
+            .rel("WorkCompany")?
+            .var("work", "work")?
+            .var("company", "company")?
+            .done();
+        query
+            .rel("WorkKeyword")?
+            .var("work", "work")?
+            .var("keyword", "keyword")?
+            .done();
+        query.rel("Person")?.var("id", "person")?.done();
+        query
+            .rel("Title")?
+            .var("id", "work")?
+            .var("episode", "episode")?
+            .done();
+        query.cmp(
+            OperandRef::var("episode"),
+            ComparisonOperator::Gte,
+            OperandRef::integer(50),
+        )?;
+        query.cmp(
+            OperandRef::var("episode"),
+            ComparisonOperator::Lt,
+            OperandRef::integer(100),
+        )?;
+        query.find_aggregate(AggregateFunction::Count, "work")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert!(output.plan.counters.static_semijoin_prefixes_probed > 0);
+    assert!(output.plan.counters.static_semijoin_candidate_values > 0);
+    Ok(())
+}
+
+#[test]
 fn sum_sink_decodes_only_aggregate_operand_values() -> TestResult {
     let (env, schema) = seeded_db()?;
     let query = typed_query(&schema, |query| {
@@ -2865,6 +3002,78 @@ fn q24_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
             )
             .with_covering_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_year", ["year", "id"])),
+        ],
+    )
+}
+
+fn q16_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
+    bumbledb_core::schema::SchemaDescriptor::new(
+        "StaticSemijoinQ16LikeDb",
+        vec![
+            RelationDescriptor::new(
+                "Alias",
+                vec![FieldDescriptor::new("person", ValueType::U64)],
+            )
+            .with_covering_unique("person", ["person"]),
+            RelationDescriptor::new(
+                "Cast",
+                vec![
+                    FieldDescriptor::new("person", ValueType::U64),
+                    FieldDescriptor::new("work", ValueType::U64),
+                ],
+            )
+            .with_covering_unique("person_work", ["person", "work"])
+            .with_index(IndexDescriptor::equality(
+                "by_work_person",
+                ["work", "person"],
+            )),
+            RelationDescriptor::new(
+                "Company",
+                vec![
+                    FieldDescriptor::new("id", ValueType::U64),
+                    FieldDescriptor::new("country", ValueType::String),
+                ],
+            )
+            .with_covering_unique("id", ["id"])
+            .with_index(IndexDescriptor::equality("by_country", ["country", "id"])),
+            RelationDescriptor::new(
+                "Keyword",
+                vec![
+                    FieldDescriptor::new("id", ValueType::U64),
+                    FieldDescriptor::new("word", ValueType::String),
+                ],
+            )
+            .with_covering_unique("id", ["id"])
+            .with_index(IndexDescriptor::equality("by_word", ["word", "id"])),
+            RelationDescriptor::new(
+                "WorkCompany",
+                vec![
+                    FieldDescriptor::new("work", ValueType::U64),
+                    FieldDescriptor::new("company", ValueType::U64),
+                ],
+            )
+            .with_covering_unique("work_company", ["work", "company"])
+            .with_index(IndexDescriptor::equality("by_company", ["company", "work"])),
+            RelationDescriptor::new(
+                "WorkKeyword",
+                vec![
+                    FieldDescriptor::new("work", ValueType::U64),
+                    FieldDescriptor::new("keyword", ValueType::U64),
+                ],
+            )
+            .with_covering_unique("work_keyword", ["work", "keyword"])
+            .with_index(IndexDescriptor::equality("by_keyword", ["keyword", "work"])),
+            RelationDescriptor::new("Person", vec![FieldDescriptor::new("id", ValueType::U64)])
+                .with_covering_unique("id", ["id"]),
+            RelationDescriptor::new(
+                "Title",
+                vec![
+                    FieldDescriptor::new("id", ValueType::U64),
+                    FieldDescriptor::new("episode", ValueType::I64),
+                ],
+            )
+            .with_covering_unique("id", ["id"])
+            .with_index(IndexDescriptor::equality("by_episode", ["episode", "id"])),
         ],
     )
 }

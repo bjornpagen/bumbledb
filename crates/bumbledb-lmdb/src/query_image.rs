@@ -734,6 +734,30 @@ impl RelationIndexImage {
         }
     }
 
+    /// Returns encoded entries whose leading component bytes are within a bounded range.
+    pub fn entries_with_prefix_bounds<'a>(
+        &'a self,
+        lower: &'a [u8],
+        upper: Option<&'a [u8]>,
+        upper_inclusive: bool,
+    ) -> RelationIndexRangeIter<'a> {
+        let end = upper.map_or_else(
+            || self.bytes.len() / self.encoded_len,
+            |upper| {
+                if upper_inclusive {
+                    self.upper_bound_prefix(upper)
+                } else {
+                    self.lower_bound_prefix(upper)
+                }
+            },
+        );
+        RelationIndexRangeIter {
+            index: self,
+            position: self.lower_bound_prefix(lower),
+            end,
+        }
+    }
+
     /// Returns the half-open entry-position range matching a leading component prefix.
     pub fn prefix_range(&self, prefix: &[u8]) -> Range<usize> {
         debug_assert!(prefix.len() <= self.encoded_len.saturating_sub(self.prefix_len));
@@ -838,6 +862,26 @@ impl<'a> Iterator for RelationIndexPrefixIter<'a> {
             self.position = self.end;
             return None;
         }
+        self.position += 1;
+        Some(entry)
+    }
+}
+
+/// Iterator over durable index entries in encoded leading-component order.
+pub struct RelationIndexRangeIter<'a> {
+    index: &'a RelationIndexImage,
+    position: usize,
+    end: usize,
+}
+
+impl<'a> Iterator for RelationIndexRangeIter<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.position >= self.end {
+            return None;
+        }
+        let entry = self.index.entry(self.position)?;
         self.position += 1;
         Some(entry)
     }
