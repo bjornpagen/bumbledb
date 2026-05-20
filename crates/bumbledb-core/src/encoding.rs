@@ -3,8 +3,6 @@
 //! These encodings are file-format decisions: byte-lexical order must match
 //! logical order for every ordered primitive used in LMDB keys.
 
-use std::fmt;
-
 /// An interned dictionary identifier used for strings and bytes in hot keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InternId(pub u64);
@@ -16,16 +14,6 @@ pub struct TimestampMicros(pub i64);
 /// Fixed-scale decimal raw integer. The scale lives in the schema type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DecimalRaw(pub i128);
-
-/// UUID bytes in canonical byte order.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct UuidBytes(pub [u8; 16]);
-
-impl fmt::Debug for UuidBytes {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "UuidBytes({:02x?})", self.0)
-    }
-}
 
 /// Encoding failure.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -96,16 +84,6 @@ pub fn decode_decimal(bytes: &[u8]) -> Result<DecimalRaw, EncodingError> {
     Ok(DecimalRaw(decode_i128(bytes)?))
 }
 
-/// Encodes a UUID as canonical bytes.
-pub fn encode_uuid(value: UuidBytes) -> [u8; 16] {
-    value.0
-}
-
-/// Decodes a UUID encoded by [`encode_uuid`].
-pub fn decode_uuid(bytes: &[u8]) -> Result<UuidBytes, EncodingError> {
-    Ok(UuidBytes(exact::<16>(bytes)?))
-}
-
 /// Encodes an interned value identifier.
 pub fn encode_intern_id(value: InternId) -> [u8; 8] {
     encode_u64(value.0)
@@ -147,9 +125,6 @@ mod tests {
             let decimal = DecimalRaw(value);
             assert_eq!(decode_decimal(&encode_decimal(decimal))?, decimal);
         }
-
-        let uuid = UuidBytes([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-        assert_eq!(decode_uuid(&encode_uuid(uuid))?, uuid);
 
         let intern = InternId(42);
         assert_eq!(decode_intern_id(&encode_intern_id(intern))?, intern);

@@ -521,7 +521,6 @@ fn type_name(value_type: &ValueType) -> String {
         ValueType::I64 => "i64".to_owned(),
         ValueType::TimestampMicros => "timestamp".to_owned(),
         ValueType::Decimal { scale } => format!("decimal(scale={scale})"),
-        ValueType::Uuid => "uuid".to_owned(),
         ValueType::Enum { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),

@@ -2452,7 +2452,6 @@ fn hash_value_type(hasher: &mut blake3::Hasher, value_type: &ValueType) {
             hash_u8(hasher, 5);
             hash_u32(hasher, *scale);
         }
-        ValueType::Uuid => hash_u8(hasher, 6),
         ValueType::Enum { name } => {
             hash_u8(hasher, 7);
             hash_bytes_len_prefixed(hasher, name.as_bytes());
@@ -2477,7 +2476,6 @@ fn hash_identity_allocation(hasher: &mut blake3::Hasher, allocation: IdentityAll
         hasher,
         match allocation {
             IdentityAllocation::Serial => 1,
-            IdentityAllocation::Uuid => 2,
             IdentityAllocation::Application => 3,
         },
     );
@@ -10510,16 +10508,8 @@ fn value_matches_type(schema: &StorageSchema, value: &Value, value_type: &ValueT
                     ..
                 },
             )
-            | (
-                Value::Identity(IdentityValue::Uuid(_)),
-                ValueType::Identity {
-                    allocation: IdentityAllocation::Uuid,
-                    ..
-                },
-            )
             | (Value::Timestamp(_), ValueType::TimestampMicros)
             | (Value::Decimal(_), ValueType::Decimal { .. })
-            | (Value::Uuid(_), ValueType::Uuid)
             | (Value::Enum(_), ValueType::Enum { .. })
             | (Value::String(_), ValueType::String)
             | (Value::Bytes(_), ValueType::Bytes)
@@ -11615,7 +11605,6 @@ fn value_type_name(value_type: &ValueType) -> String {
         ValueType::I64 => "i64".to_owned(),
         ValueType::TimestampMicros => "timestamp".to_owned(),
         ValueType::Decimal { scale } => format!("decimal(scale={scale})"),
-        ValueType::Uuid => "uuid".to_owned(),
         ValueType::Enum { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),

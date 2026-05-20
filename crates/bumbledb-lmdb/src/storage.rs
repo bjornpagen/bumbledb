@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bumbledb_core::encoding::{
-    DecimalRaw, InternId, TimestampMicros, UuidBytes, decode_bool, decode_decimal, decode_i64,
-    decode_intern_id, decode_timestamp, decode_u64, decode_uuid, encode_bool, encode_decimal,
-    encode_i64, encode_intern_id, encode_timestamp, encode_u64, encode_uuid,
+    DecimalRaw, InternId, TimestampMicros, decode_bool, decode_decimal, decode_i64,
+    decode_intern_id, decode_timestamp, decode_u64, encode_bool, encode_decimal, encode_i64,
+    encode_intern_id, encode_timestamp, encode_u64,
 };
 use bumbledb_core::schema::{
     ConstraintDescriptor, CurrentIndexLayout, FieldDescriptor, IdentityAllocation, IndexComponent,
@@ -107,8 +107,6 @@ pub enum Value {
     Timestamp(TimestampMicros),
     /// Fixed-scale decimal raw value.
     Decimal(DecimalRaw),
-    /// UUID bytes.
-    Uuid(UuidBytes),
     /// Closed enum represented as a stable `u64` code.
     Enum(u64),
     /// String to intern.
@@ -126,7 +124,6 @@ impl Value {
             Value::Identity(_) => "identity",
             Value::Timestamp(_) => "timestamp",
             Value::Decimal(_) => "decimal",
-            Value::Uuid(_) => "uuid",
             Value::Enum(_) => "enum",
             Value::String(_) => "string",
             Value::Bytes(_) => "bytes",
@@ -139,8 +136,6 @@ impl Value {
 pub enum IdentityValue {
     /// Serial u64 identity.
     Serial(u64),
-    /// UUID identity.
-    Uuid(UuidBytes),
     /// Application-supplied u64 identity.
     Application(u64),
 }
@@ -1438,16 +1433,8 @@ fn encode_value_for_type(
             },
             Value::Identity(IdentityValue::Application(value)),
         ) => encode_u64(*value).to_vec(),
-        (
-            ValueType::Identity {
-                allocation: IdentityAllocation::Uuid,
-                ..
-            },
-            Value::Identity(IdentityValue::Uuid(value)),
-        ) => encode_uuid(*value).to_vec(),
         (ValueType::TimestampMicros, Value::Timestamp(value)) => encode_timestamp(*value).to_vec(),
         (ValueType::Decimal { .. }, Value::Decimal(value)) => encode_decimal(*value).to_vec(),
-        (ValueType::Uuid, Value::Uuid(value)) => encode_uuid(*value).to_vec(),
         (ValueType::Enum { .. }, Value::Enum(value)) => encode_u64(*value).to_vec(),
         (ValueType::String, Value::String(value)) => {
             encode_intern_id(InternId(intern(DICT_STRING, value.as_bytes())?)).to_vec()
@@ -1522,16 +1509,8 @@ fn storage_value_matches_type(value: &Value, value_type: &ValueType) -> bool {
                     ..
                 },
             )
-            | (
-                Value::Identity(IdentityValue::Uuid(_)),
-                ValueType::Identity {
-                    allocation: IdentityAllocation::Uuid,
-                    ..
-                },
-            )
             | (Value::Timestamp(_), ValueType::TimestampMicros)
             | (Value::Decimal(_), ValueType::Decimal { .. })
-            | (Value::Uuid(_), ValueType::Uuid)
             | (Value::Enum(_), ValueType::Enum { .. })
             | (Value::String(_), ValueType::String)
             | (Value::Bytes(_), ValueType::Bytes)
@@ -1675,21 +1654,12 @@ fn decode_value(
         } => Value::Identity(IdentityValue::Application(
             decode_u64(bytes).map_err(|_| Error::corrupt("identity width invalid"))?,
         )),
-        ValueType::Identity {
-            allocation: IdentityAllocation::Uuid,
-            ..
-        } => Value::Identity(IdentityValue::Uuid(
-            decode_uuid(bytes).map_err(|_| Error::corrupt("identity uuid width invalid"))?,
-        )),
         ValueType::TimestampMicros => Value::Timestamp(
             decode_timestamp(bytes).map_err(|_| Error::corrupt("timestamp width invalid"))?,
         ),
         ValueType::Decimal { .. } => Value::Decimal(
             decode_decimal(bytes).map_err(|_| Error::corrupt("decimal width invalid"))?,
         ),
-        ValueType::Uuid => {
-            Value::Uuid(decode_uuid(bytes).map_err(|_| Error::corrupt("uuid width invalid"))?)
-        }
         ValueType::Enum { .. } => {
             Value::Enum(decode_u64(bytes).map_err(|_| Error::corrupt("enum width invalid"))?)
         }
@@ -1717,7 +1687,6 @@ fn value_type_name(value_type: &ValueType) -> String {
         ValueType::I64 => "i64".to_owned(),
         ValueType::TimestampMicros => "timestamp".to_owned(),
         ValueType::Decimal { scale } => format!("decimal(scale={scale})"),
-        ValueType::Uuid => "uuid".to_owned(),
         ValueType::Enum { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),

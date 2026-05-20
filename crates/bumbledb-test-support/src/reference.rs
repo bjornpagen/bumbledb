@@ -461,16 +461,8 @@ fn value_matches_type(value: &Value, value_type: &ValueType) -> bool {
                     ..
                 }
             )
-            | (
-                Value::Identity(IdentityValue::Uuid(_)),
-                ValueType::Identity {
-                    allocation: IdentityAllocation::Uuid,
-                    ..
-                }
-            )
             | (Value::Timestamp(_), ValueType::TimestampMicros)
             | (Value::Decimal(_), ValueType::Decimal { .. })
-            | (Value::Uuid(_), ValueType::Uuid)
             | (Value::Enum(_), ValueType::Enum { .. })
             | (Value::String(_), ValueType::String)
             | (Value::Bytes(_), ValueType::Bytes)
@@ -484,7 +476,6 @@ fn value_type_name(value_type: &ValueType) -> String {
         ValueType::I64 => "i64".to_owned(),
         ValueType::TimestampMicros => "timestamp".to_owned(),
         ValueType::Decimal { scale } => format!("decimal(scale={scale})"),
-        ValueType::Uuid => "uuid".to_owned(),
         ValueType::Enum { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),
@@ -504,7 +495,6 @@ fn value_kind_name(value: &Value) -> &'static str {
         Value::Identity(_) => "identity",
         Value::Timestamp(_) => "timestamp",
         Value::Decimal(_) => "decimal",
-        Value::Uuid(_) => "uuid",
         Value::Enum(_) => "enum",
         Value::String(_) => "string",
         Value::Bytes(_) => "bytes",

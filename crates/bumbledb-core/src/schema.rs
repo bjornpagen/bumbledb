@@ -971,8 +971,6 @@ pub enum ValueType {
     TimestampMicros,
     /// Fixed-scale decimal.
     Decimal { scale: u32 },
-    /// UUID.
-    Uuid,
     /// Closed enum domain stored as a stable numeric code.
     Enum { name: String },
     /// Interned UTF-8 string.
@@ -992,8 +990,6 @@ pub enum ValueType {
 pub enum IdentityAllocation {
     /// Database-allocated monotonic u64 identity.
     Serial,
-    /// Database-allocated UUID identity.
-    Uuid,
     /// Application-supplied u64 identity.
     Application,
 }
@@ -1009,10 +1005,9 @@ impl ValueType {
             | ValueType::Enum { .. }
             | ValueType::String
             | ValueType::Bytes => 8,
-            ValueType::Decimal { .. } | ValueType::Uuid => 16,
+            ValueType::Decimal { .. } => 16,
             ValueType::Identity { allocation, .. } => match allocation {
                 IdentityAllocation::Serial | IdentityAllocation::Application => 8,
-                IdentityAllocation::Uuid => 16,
             },
         }
     }
@@ -1057,7 +1052,6 @@ impl ValueType {
                 push_u8(out, 5);
                 push_u32(out, *scale);
             }
-            ValueType::Uuid => push_u8(out, 6),
             ValueType::Enum { name } => {
                 push_u8(out, 7);
                 push_str(out, name);
@@ -1082,7 +1076,6 @@ impl IdentityAllocation {
     fn push_canonical(self, out: &mut Vec<u8>) {
         match self {
             IdentityAllocation::Serial => push_u8(out, 1),
-            IdentityAllocation::Uuid => push_u8(out, 2),
             IdentityAllocation::Application => push_u8(out, 3),
         }
     }
@@ -1565,7 +1558,12 @@ mod tests {
                 RelationDescriptor::new(
                     "Wide",
                     (0..80)
-                        .map(|index| FieldDescriptor::new(format!("f{index}"), ValueType::Uuid))
+                        .map(|index| {
+                            FieldDescriptor::new(
+                                format!("f{index}"),
+                                ValueType::Decimal { scale: 0 },
+                            )
+                        })
                         .collect(),
                 )
                 .with_covering_unique("id", ["f0"]),
