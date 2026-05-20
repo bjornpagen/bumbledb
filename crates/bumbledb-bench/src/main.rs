@@ -1281,6 +1281,41 @@ fn evaluate_gate(
                 ));
             }
         }
+        if dataset == "job" && query.name == "job_q09_voice_us_actor" {
+            if output.plan.counters.factorized_counted_bindings == 0 {
+                passed = false;
+                notes.push("q09 did not use factorized count bindings".to_owned());
+            }
+            if output.plan.counters.direct_kernel_probes == 0 {
+                passed = false;
+                notes.push("q09 did not use direct kernel probes".to_owned());
+            }
+            if !output
+                .plan
+                .direct_kernel
+                .as_ref()
+                .is_some_and(|kernel| kernel.target.contains("factorized_count"))
+            {
+                passed = false;
+                notes.push("q09 direct kernel target is not factorized_count".to_owned());
+            }
+        }
+        if dataset == "job" && query.name == "job_q24_voice_keyword_actor" {
+            if format!("{:?}", output.plan.runtime_kind) != "StaticEmpty" {
+                passed = false;
+                notes.push(format!(
+                    "q24 runtime_kind {:?} is not StaticEmpty",
+                    output.plan.runtime_kind
+                ));
+            }
+            if output.plan.timings.lftj_execute_micros != 0 {
+                passed = false;
+                notes.push(format!(
+                    "q24 lftj_execute_micros {} should be 0",
+                    output.plan.timings.lftj_execute_micros
+                ));
+            }
+        }
     } else {
         notes.push("no performance gate configured for query".to_owned());
     }
@@ -1399,6 +1434,24 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_iterator_ops: None,
             max_materialized_values: None,
             allowed_plan_families: &["IndexNestedLoop"],
+        },
+        ("job", "job_q09_voice_us_actor") => BenchmarkGate {
+            dataset,
+            query,
+            max_bumbledb_avg_micros: Some(3_000),
+            max_sqlite_ratio: Some(1.0),
+            max_iterator_ops: None,
+            max_materialized_values: Some(1),
+            allowed_plan_families: &["Direct"],
+        },
+        ("job", "job_q24_voice_keyword_actor") => BenchmarkGate {
+            dataset,
+            query,
+            max_bumbledb_avg_micros: Some(1_000),
+            max_sqlite_ratio: Some(1.0),
+            max_iterator_ops: None,
+            max_materialized_values: Some(0),
+            allowed_plan_families: &["StaticEmpty"],
         },
         _ => return None,
     };
@@ -3409,6 +3462,8 @@ mod tests {
         assert!(benchmark_gate("ledger", "tag_lookup_join").is_some());
         assert!(benchmark_gate("sailors", "red_boat_sailors").is_some());
         assert!(benchmark_gate("tpch", "supplier_nation_orders").is_some());
+        assert!(benchmark_gate("job", "job_q09_voice_us_actor").is_some());
+        assert!(benchmark_gate("job", "job_q24_voice_keyword_actor").is_some());
         assert!(benchmark_gate("ledger", "unknown").is_none());
         assert_eq!(
             benchmark_gate("sailors", "sailor_range_reserves")
@@ -3418,6 +3473,22 @@ mod tests {
         assert_eq!(
             benchmark_gate("joinstress", "chain4_from_a").map(|gate| gate.allowed_plan_families),
             Some(&["IndexNestedLoop"][..])
+        );
+        assert_eq!(
+            benchmark_gate("job", "job_q09_voice_us_actor").map(|gate| (
+                gate.max_bumbledb_avg_micros,
+                gate.max_sqlite_ratio,
+                gate.allowed_plan_families
+            )),
+            Some((Some(3_000), Some(1.0), &["Direct"][..]))
+        );
+        assert_eq!(
+            benchmark_gate("job", "job_q24_voice_keyword_actor").map(|gate| (
+                gate.max_bumbledb_avg_micros,
+                gate.max_sqlite_ratio,
+                gate.allowed_plan_families
+            )),
+            Some((Some(1_000), Some(1.0), &["StaticEmpty"][..]))
         );
     }
 
