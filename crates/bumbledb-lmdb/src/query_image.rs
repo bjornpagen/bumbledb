@@ -1577,12 +1577,10 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
 mod tests {
     use std::sync::Arc;
 
-    use bumbledb_core::schema::{
-        FieldDescriptor, IdentityAllocation, RelationDescriptor, SchemaDescriptor, ValueType,
-    };
+    use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
 
     use super::*;
-    use crate::{AccessId, Environment, IdentityValue, Row, Value};
+    use crate::{AccessId, Environment, Row, Value};
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -1937,7 +1935,7 @@ mod tests {
                 Row::new(
                     "Account",
                     [
-                        ("id", Value::Identity(IdentityValue::Serial(3))),
+                        ("id", Value::Serial(3)),
                         ("currency", Value::Enum(3)),
                         ("active", Value::Bool(true)),
                         ("payload", Value::Bytes(vec![7, 8, 9])),
@@ -2108,10 +2106,9 @@ mod tests {
         let mut fields = vec![
             FieldDescriptor::new(
                 "id",
-                ValueType::Identity {
+                ValueType::Serial {
                     type_name: "AccountId".to_owned(),
                     owning_relation: "Account".to_owned(),
-                    allocation: IdentityAllocation::Serial,
                 },
             ),
             FieldDescriptor::new(
@@ -2155,7 +2152,7 @@ mod tests {
         Row::new(
             "Account",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("currency", Value::Enum(currency)),
                 ("active", Value::Bool(active)),
                 ("payload", Value::Bytes(payload)),

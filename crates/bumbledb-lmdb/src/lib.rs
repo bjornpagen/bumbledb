@@ -58,8 +58,7 @@ pub use sorted_trie::{
     TrieLevel, TrieStats,
 };
 pub use storage::{
-    DeleteOutcome, EncodedComponent, FieldValues, IdentityValue, IndexScan, InsertOutcome, Row,
-    ScanItem, Value,
+    DeleteOutcome, EncodedComponent, FieldValues, IndexScan, InsertOutcome, Row, ScanItem, Value,
 };
 pub use storage_schema::{
     AccessPathDescriptor, BulkLoadReport, ColumnSegmentDescriptor, IndexSegmentDescriptor,
@@ -631,7 +630,7 @@ mod tests {
         let typed = (benchmark_queries()[0].build)(schema.descriptor())?;
         let query = row_env.prepare_query(&schema, &typed)?;
         let inputs = InputBindings::from_values([
-            ("holder", Value::Identity(IdentityValue::Serial(1))),
+            ("holder", Value::Serial(1)),
             (
                 "start",
                 Value::Timestamp(bumbledb_core::encoding::TimestampMicros(0)),
@@ -724,7 +723,7 @@ mod tests {
         let typed = (benchmark_queries()[0].build)(schema.descriptor())?;
         let query = env.prepare_query(&schema, &typed)?;
         let inputs = InputBindings::from_values([
-            ("holder", Value::Identity(IdentityValue::Serial(1))),
+            ("holder", Value::Serial(1)),
             (
                 "start",
                 Value::Timestamp(bumbledb_core::encoding::TimestampMicros(0)),
@@ -785,10 +784,9 @@ mod tests {
                 "Extra",
                 vec![FieldDescriptor::new(
                     "id",
-                    ValueType::Identity {
+                    ValueType::Serial {
                         type_name: "ExtraId".to_owned(),
                         owning_relation: "Extra".to_owned(),
-                        allocation: bumbledb_core::schema::IdentityAllocation::Serial,
                     },
                 )],
             )

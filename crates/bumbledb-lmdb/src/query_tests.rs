@@ -47,16 +47,13 @@ fn executes_single_relation_query() -> TestResult {
         txn.execute_query(
             &schema,
             &query,
-            &InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(1)))]),
+            &InputBindings::from_values([("holder", Value::Serial(1))]),
         )
     })?;
 
     assert_eq!(
         output.rows,
-        vec![
-            vec![Value::Identity(IdentityValue::Serial(1))],
-            vec![Value::Identity(IdentityValue::Serial(2))]
-        ]
+        vec![vec![Value::Serial(1)], vec![Value::Serial(2)]]
     );
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
     assert_eq!(output.plan.plan_family, PlanFamily::Direct);
@@ -97,10 +94,7 @@ fn planner_recommends_missing_static_predicate_index() -> TestResult {
 
     assert_same_rows(
         &output.rows,
-        &[
-            vec![Value::Identity(IdentityValue::Serial(1))],
-            vec![Value::Identity(IdentityValue::Serial(3))],
-        ],
+        &[vec![Value::Serial(1)], vec![Value::Serial(3)]],
     );
     let expected_fields = vec!["currency".to_owned(), "id".to_owned()];
     assert!(output.plan.missing_indexes.iter().any(|missing| {
@@ -147,10 +141,7 @@ fn optimizer_selects_equality_index_and_hash_probe_for_static_lookup() -> TestRe
     assert_eq!(output.plan.counters.direct_kernel_rows, 2);
     assert_same_rows(
         &output.rows,
-        &[
-            vec![Value::Identity(IdentityValue::Serial(1))],
-            vec![Value::Identity(IdentityValue::Serial(2))],
-        ],
+        &[vec![Value::Serial(1)], vec![Value::Serial(2)]],
     );
     Ok(())
 }
@@ -1037,8 +1028,7 @@ fn prepared_plan_cache_reuses_parameterized_shape() -> TestResult {
         query.find_var("account")?.find_var("holder_name")?;
         Ok(())
     })?;
-    let inputs =
-        InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(1)))]);
+    let inputs = InputBindings::from_values([("holder", Value::Serial(1))]);
 
     let first = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
     let second = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
@@ -1427,8 +1417,7 @@ fn prepared_query_reuses_normalized_snapshot_shape() -> TestResult {
         Ok(())
     })?;
     let prepared = env.prepare_query(&schema, &query)?;
-    let inputs =
-        InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(1)))]);
+    let inputs = InputBindings::from_values([("holder", Value::Serial(1))]);
 
     let first = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &inputs))?;
     let second = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &inputs))?;
@@ -1451,10 +1440,8 @@ fn lftj_atom_key_includes_encoded_inputs() -> TestResult {
             .find_var("account")?;
         Ok(())
     })?;
-    let first_inputs =
-        InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(1)))]);
-    let second_inputs =
-        InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(2)))]);
+    let first_inputs = InputBindings::from_values([("holder", Value::Serial(1))]);
+    let second_inputs = InputBindings::from_values([("holder", Value::Serial(2))]);
 
     let (first, same, second) = env.read(|txn| {
         let normalized = normalize_query(txn, &schema, &query)?;
@@ -1463,7 +1450,7 @@ fn lftj_atom_key_includes_encoded_inputs() -> TestResult {
             txn,
             &schema,
             &normalized,
-            &InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(1)))]),
+            &InputBindings::from_values([("holder", Value::Serial(1))]),
         )?;
         let second_inputs = encode_inputs(txn, &schema, &normalized, &second_inputs)?;
         let atom = &normalized.atoms[0];
@@ -1599,10 +1586,7 @@ fn specialized_mock_plan_matches_interpreted_sink_output() -> TestResult {
         let encoded_inputs = encode_inputs(txn, &schema, &normalized, &inputs)?;
         let image = QueryImageBuilder::new(txn, &schema, QueryImageScope::full(&schema)).build()?;
         let mut binding = EncodedBinding::new(normalized.vars.len());
-        let encoded = txn.encode_query_value(
-            &normalized.vars[0].value_type,
-            &Value::Identity(IdentityValue::Serial(1)),
-        )?;
+        let encoded = txn.encode_query_value(&normalized.vars[0].value_type, &Value::Serial(1))?;
         assert!(binding.bind(
             0,
             encoded_owned_for_width(normalized.vars[0].value_type.encoded_width(), &encoded)?,
@@ -1642,18 +1626,9 @@ fn executes_two_relation_join() -> TestResult {
     assert_same_rows(
         &output.rows,
         &[
-            vec![
-                Value::Identity(IdentityValue::Serial(1)),
-                Value::String("Alice".to_owned()),
-            ],
-            vec![
-                Value::Identity(IdentityValue::Serial(2)),
-                Value::String("Alice".to_owned()),
-            ],
-            vec![
-                Value::Identity(IdentityValue::Serial(3)),
-                Value::String("Bob".to_owned()),
-            ],
+            vec![Value::Serial(1), Value::String("Alice".to_owned())],
+            vec![Value::Serial(2), Value::String("Alice".to_owned())],
+            vec![Value::Serial(3), Value::String("Bob".to_owned())],
         ],
     );
     Ok(())
@@ -1719,13 +1694,13 @@ fn executes_many_relation_join_and_range_filter() -> TestResult {
         &output.rows,
         &[
             vec![
-                Value::Identity(IdentityValue::Serial(2)),
-                Value::Identity(IdentityValue::Serial(1)),
+                Value::Serial(2),
+                Value::Serial(1),
                 Value::String("Alice".to_owned()),
             ],
             vec![
-                Value::Identity(IdentityValue::Serial(3)),
-                Value::Identity(IdentityValue::Serial(2)),
+                Value::Serial(3),
+                Value::Serial(2),
                 Value::String("Alice".to_owned()),
             ],
         ],
@@ -1749,10 +1724,7 @@ fn projection_deduplicates_results() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     assert_eq!(
         output.rows,
-        vec![
-            vec![Value::Identity(IdentityValue::Serial(1))],
-            vec![Value::Identity(IdentityValue::Serial(2))]
-        ]
+        vec![vec![Value::Serial(1)], vec![Value::Serial(2)]]
     );
     assert_eq!(output.plan.counters.bindings_yielded, 3);
     assert_eq!(output.plan.counters.materialized_output_values, 2);
@@ -2351,14 +2323,14 @@ fn aggregation_groups_and_sums_decimal_values() -> TestResult {
         &output.rows,
         &[
             vec![
-                Value::Identity(IdentityValue::Serial(1)),
+                Value::Serial(1),
                 Value::Decimal(DecimalRaw(300)),
                 Value::U64(2),
                 Value::Timestamp(TimestampMicros(10)),
                 Value::Timestamp(TimestampMicros(20)),
             ],
             vec![
-                Value::Identity(IdentityValue::Serial(2)),
+                Value::Serial(2),
                 Value::Decimal(DecimalRaw(300)),
                 Value::U64(1),
                 Value::Timestamp(TimestampMicros(30)),
@@ -2435,6 +2407,61 @@ fn input_type_mismatch_is_rejected_at_execution() -> TestResult {
 }
 
 #[test]
+fn serial_input_accepts_serial_value() -> TestResult {
+    let (env, schema) = seeded_db()?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Account")?
+            .var("id", "account")?
+            .input("holder", "holder")?
+            .done()
+            .find_var("account")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| {
+        txn.execute_query(
+            &schema,
+            &query,
+            &InputBindings::from_values([("holder", Value::Serial(1))]),
+        )
+    })?;
+
+    assert!(!output.rows.is_empty());
+    Ok(())
+}
+
+#[test]
+fn serial_input_rejects_u64_value() -> TestResult {
+    let (env, schema) = seeded_db()?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Account")?
+            .var("id", "account")?
+            .input("holder", "holder")?
+            .done()
+            .find_var("account")?;
+        Ok(())
+    })?;
+
+    let result = env.read(|txn| {
+        txn.execute_query(
+            &schema,
+            &query,
+            &InputBindings::from_values([("holder", Value::U64(1))]),
+        )
+    });
+
+    assert!(matches!(
+        result,
+        Err(Error::Query(QueryError::Execute(
+            ExecuteError::InputTypeMismatch { .. }
+        )))
+    ));
+    Ok(())
+}
+
+#[test]
 fn enum_input_value_must_be_declared_variant() -> TestResult {
     let (env, schema) = seeded_db()?;
     let query = typed_query(&schema, |query| {
@@ -2497,7 +2524,7 @@ fn explain_and_storage_diagnostics_are_available() -> TestResult {
             &schema,
             &query,
             &InputBindings::from_values([
-                ("holder", Value::Identity(IdentityValue::Serial(1))),
+                ("holder", Value::Serial(1)),
                 ("start", Value::Timestamp(TimestampMicros(0))),
                 ("end", Value::Timestamp(TimestampMicros(100))),
             ]),
@@ -2561,7 +2588,7 @@ fn differential_reference_evaluator_matches_lmdb() -> TestResult {
                     .find_var("account")?;
                 Ok(())
             })?,
-            InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(1)))]),
+            InputBindings::from_values([("holder", Value::Serial(1))]),
         ),
         (
             typed_query(&schema, |query| {
@@ -2683,10 +2710,9 @@ fn static_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                 vec![
                     FieldDescriptor::new(
                         "owner",
-                        ValueType::Identity {
+                        ValueType::Serial {
                             type_name: "OwnerId".to_owned(),
                             owning_relation: "OwnerGroup".to_owned(),
-                            allocation: IdentityAllocation::Serial,
                         },
                     ),
                     FieldDescriptor::new("group", ValueType::U64),
@@ -2699,10 +2725,9 @@ fn static_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                 vec![
                     FieldDescriptor::new(
                         "owner",
-                        ValueType::Identity {
+                        ValueType::Serial {
                             type_name: "OwnerId".to_owned(),
                             owning_relation: "OwnerGroup".to_owned(),
-                            allocation: IdentityAllocation::Serial,
                         },
                     ),
                     FieldDescriptor::new("group", ValueType::U64),
@@ -2866,7 +2891,7 @@ fn owner_group_row(owner: u64, group: u64) -> Row {
     Row::new(
         "OwnerGroup",
         [
-            ("owner", Value::Identity(IdentityValue::Serial(owner))),
+            ("owner", Value::Serial(owner)),
             ("group", Value::U64(group)),
         ],
     )
@@ -2876,7 +2901,7 @@ fn owned_fact_row(owner: u64, group: u64, item: u64) -> Row {
     Row::new(
         "OwnedFact",
         [
-            ("owner", Value::Identity(IdentityValue::Serial(owner))),
+            ("owner", Value::Serial(owner)),
             ("group", Value::U64(group)),
             ("item", Value::U64(item)),
         ],
@@ -2912,10 +2937,9 @@ fn ledger_schema() -> bumbledb_core::schema::SchemaDescriptor {
                 vec![
                     FieldDescriptor::new(
                         "id",
-                        ValueType::Identity {
+                        ValueType::Serial {
                             type_name: "HolderId".to_owned(),
                             owning_relation: "Holder".to_owned(),
-                            allocation: IdentityAllocation::Serial,
                         },
                     ),
                     FieldDescriptor::new("name", ValueType::String),
@@ -2927,18 +2951,16 @@ fn ledger_schema() -> bumbledb_core::schema::SchemaDescriptor {
                 vec![
                     FieldDescriptor::new(
                         "id",
-                        ValueType::Identity {
+                        ValueType::Serial {
                             type_name: "AccountId".to_owned(),
                             owning_relation: "Account".to_owned(),
-                            allocation: IdentityAllocation::Serial,
                         },
                     ),
                     FieldDescriptor::new(
                         "holder",
-                        ValueType::Identity {
+                        ValueType::Serial {
                             type_name: "HolderId".to_owned(),
                             owning_relation: "Holder".to_owned(),
-                            allocation: IdentityAllocation::Serial,
                         },
                     ),
                     FieldDescriptor::new(
@@ -2961,18 +2983,16 @@ fn ledger_schema() -> bumbledb_core::schema::SchemaDescriptor {
                 vec![
                     FieldDescriptor::new(
                         "id",
-                        ValueType::Identity {
+                        ValueType::Serial {
                             type_name: "PostingId".to_owned(),
                             owning_relation: "Posting".to_owned(),
-                            allocation: IdentityAllocation::Serial,
                         },
                     ),
                     FieldDescriptor::new(
                         "account",
-                        ValueType::Identity {
+                        ValueType::Serial {
                             type_name: "AccountId".to_owned(),
                             owning_relation: "Account".to_owned(),
-                            allocation: IdentityAllocation::Serial,
                         },
                     ),
                     FieldDescriptor::new("amount", ValueType::Decimal { scale: 4 }),
@@ -3003,10 +3023,9 @@ fn overflow_schema() -> bumbledb_core::schema::SchemaDescriptor {
                 vec![
                     FieldDescriptor::new(
                         "id",
-                        ValueType::Identity {
+                        ValueType::Serial {
                             type_name: "NumberId".to_owned(),
                             owning_relation: "Number".to_owned(),
-                            allocation: IdentityAllocation::Serial,
                         },
                     ),
                     FieldDescriptor::new("n", ValueType::I64),
@@ -3027,10 +3046,9 @@ fn optimizer_schema() -> bumbledb_core::schema::SchemaDescriptor {
                 vec![
                     FieldDescriptor::new(
                         "id",
-                        ValueType::Identity {
+                        ValueType::Serial {
                             type_name: "ItemId".to_owned(),
                             owning_relation: "Item".to_owned(),
-                            allocation: IdentityAllocation::Serial,
                         },
                     ),
                     FieldDescriptor::new(
@@ -3157,7 +3175,7 @@ fn holder_row(id: u64, name: &str) -> Row {
     Row::new(
         "Holder",
         [
-            ("id", Value::Identity(IdentityValue::Serial(id))),
+            ("id", Value::Serial(id)),
             ("name", Value::String(name.to_owned())),
         ],
     )
@@ -3167,8 +3185,8 @@ fn account_row(id: u64, holder: u64, currency: u8) -> Row {
     Row::new(
         "Account",
         [
-            ("id", Value::Identity(IdentityValue::Serial(id))),
-            ("holder", Value::Identity(IdentityValue::Serial(holder))),
+            ("id", Value::Serial(id)),
+            ("holder", Value::Serial(holder)),
             ("currency", Value::Enum(currency)),
         ],
     )
@@ -3178,8 +3196,8 @@ fn posting_row(id: u64, account: u64, amount: i128, at: i64) -> Row {
     Row::new(
         "Posting",
         [
-            ("id", Value::Identity(IdentityValue::Serial(id))),
-            ("account", Value::Identity(IdentityValue::Serial(account))),
+            ("id", Value::Serial(id)),
+            ("account", Value::Serial(account)),
             ("amount", Value::Decimal(DecimalRaw(amount))),
             ("at", Value::Timestamp(TimestampMicros(at))),
         ],
@@ -3190,7 +3208,7 @@ fn number_row(id: u64, n: i64, d: i128) -> Row {
     Row::new(
         "Number",
         [
-            ("id", Value::Identity(IdentityValue::Serial(id))),
+            ("id", Value::Serial(id)),
             ("n", Value::I64(n)),
             ("d", Value::Decimal(DecimalRaw(d))),
         ],
@@ -3200,10 +3218,7 @@ fn number_row(id: u64, n: i64, d: i128) -> Row {
 fn item_row(id: u64, kind: u8) -> Row {
     Row::new(
         "Item",
-        [
-            ("id", Value::Identity(IdentityValue::Serial(id))),
-            ("kind", Value::Enum(kind)),
-        ],
+        [("id", Value::Serial(id)), ("kind", Value::Enum(kind))],
     )
 }
 

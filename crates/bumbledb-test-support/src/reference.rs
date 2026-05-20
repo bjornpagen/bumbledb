@@ -7,10 +7,10 @@ use bumbledb_core::query_ir::{
     AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm,
     TypedLiteral, TypedOperand, TypedQuery, TypedTerm,
 };
-use bumbledb_core::schema::{IdentityAllocation, ValueType};
+use bumbledb_core::schema::ValueType;
 use bumbledb_lmdb::{
-    AggregateError, Error, ExecuteError, IdentityValue, InputBindings, InternalError, QueryError,
-    Result, Row, Value,
+    AggregateError, Error, ExecuteError, InputBindings, InternalError, QueryError, Result, Row,
+    Value,
 };
 
 /// In-memory reference database.
@@ -404,20 +404,7 @@ fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
         (Literal::Integer(value), ValueType::U64) => Value::U64(*value as u64),
         (Literal::Integer(value), ValueType::I64) => Value::I64(*value as i64),
         (Literal::Integer(value), ValueType::Enum { .. }) => Value::Enum(*value as u8),
-        (
-            Literal::Integer(value),
-            ValueType::Identity {
-                allocation: IdentityAllocation::Serial,
-                ..
-            },
-        ) => Value::Identity(IdentityValue::Serial(*value as u64)),
-        (
-            Literal::Integer(value),
-            ValueType::Identity {
-                allocation: IdentityAllocation::Application,
-                ..
-            },
-        ) => Value::Identity(IdentityValue::Application(*value as u64)),
+        (Literal::Integer(value), ValueType::Serial { .. }) => Value::Serial(*value as u64),
         (Literal::Integer(value), ValueType::TimestampMicros) => {
             Value::Timestamp(TimestampMicros(*value as i64))
         }
@@ -447,20 +434,7 @@ fn value_matches_type(value: &Value, value_type: &ValueType) -> bool {
         (Value::Bool(_), ValueType::Bool)
             | (Value::U64(_), ValueType::U64)
             | (Value::I64(_), ValueType::I64)
-            | (
-                Value::Identity(IdentityValue::Serial(_)),
-                ValueType::Identity {
-                    allocation: IdentityAllocation::Serial,
-                    ..
-                }
-            )
-            | (
-                Value::Identity(IdentityValue::Application(_)),
-                ValueType::Identity {
-                    allocation: IdentityAllocation::Application,
-                    ..
-                }
-            )
+            | (Value::Serial(_), ValueType::Serial { .. })
             | (Value::Timestamp(_), ValueType::TimestampMicros)
             | (Value::Decimal(_), ValueType::Decimal { .. })
             | (Value::Enum(_), ValueType::Enum { .. })
@@ -479,10 +453,9 @@ fn value_type_name(value_type: &ValueType) -> String {
         ValueType::Enum { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),
-        ValueType::Identity {
+        ValueType::Serial {
             type_name,
             owning_relation,
-            ..
         } => format!("{type_name}@{owning_relation}"),
     }
 }
@@ -492,7 +465,7 @@ fn value_kind_name(value: &Value) -> &'static str {
         Value::Bool(_) => "bool",
         Value::U64(_) => "u64",
         Value::I64(_) => "i64",
-        Value::Identity(_) => "identity",
+        Value::Serial(_) => "serial",
         Value::Timestamp(_) => "timestamp",
         Value::Decimal(_) => "decimal",
         Value::Enum(_) => "enum",

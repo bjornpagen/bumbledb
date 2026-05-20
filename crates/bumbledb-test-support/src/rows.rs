@@ -1,14 +1,14 @@
 //! Deterministic row fixtures.
 
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
-use bumbledb_lmdb::{IdentityValue, Row, Value};
+use bumbledb_lmdb::{Row, Value};
 
 /// Holder row.
 pub fn holder(id: u64, name: impl Into<String>) -> Row {
     Row::new(
         "Holder",
         [
-            ("id", Value::Identity(IdentityValue::Serial(id))),
+            ("id", Value::Serial(id)),
             ("name", Value::String(name.into())),
         ],
     )
@@ -19,8 +19,8 @@ pub fn account(id: u64, holder: u64, currency: u8) -> Row {
     Row::new(
         "Account",
         [
-            ("id", Value::Identity(IdentityValue::Serial(id))),
-            ("holder", Value::Identity(IdentityValue::Serial(holder))),
+            ("id", Value::Serial(id)),
+            ("holder", Value::Serial(holder)),
             ("currency", Value::Enum(currency)),
         ],
     )
@@ -31,8 +31,8 @@ pub fn posting(id: u64, account: u64, amount: i128, at: i64) -> Row {
     Row::new(
         "Posting",
         [
-            ("id", Value::Identity(IdentityValue::Serial(id))),
-            ("account", Value::Identity(IdentityValue::Serial(account))),
+            ("id", Value::Serial(id)),
+            ("account", Value::Serial(account)),
             ("amount", Value::Decimal(DecimalRaw(amount))),
             ("at", Value::Timestamp(TimestampMicros(at))),
         ],
@@ -44,7 +44,7 @@ pub fn account_tag(account: u64, tag: u8) -> Row {
     Row::new(
         "AccountTag",
         [
-            ("account", Value::Identity(IdentityValue::Serial(account))),
+            ("account", Value::Serial(account)),
             ("tag", Value::Enum(tag)),
         ],
     )
@@ -55,7 +55,7 @@ pub fn number(id: u64, n: i64, d: i128) -> Row {
     Row::new(
         "Number",
         [
-            ("id", Value::Identity(IdentityValue::Serial(id))),
+            ("id", Value::Serial(id)),
             ("n", Value::I64(n)),
             ("d", Value::Decimal(DecimalRaw(d))),
         ],

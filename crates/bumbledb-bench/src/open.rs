@@ -8,13 +8,13 @@ use bumbledb_core::schema::{
     ConstraintDescriptor, FieldDescriptor, IndexDescriptor, RelationDescriptor, SchemaDescriptor,
     ValueType,
 };
-use bumbledb_lmdb::{IdentityValue, Row, Value};
+use bumbledb_lmdb::{Row, Value};
 use csv::{ReaderBuilder, StringRecord};
 use rusqlite::Connection;
 
 use crate::{
-    BenchQuery, Config, Dataset, SqlParam, i64v, id, id_field, ref_field, rf, symbol, text, ts,
-    u64v,
+    BenchQuery, Config, Dataset, SqlParam, i64v, id, rf, serial_field, serial_id_field, symbol,
+    text, ts, u64v,
 };
 
 #[derive(Clone, Debug)]
@@ -120,7 +120,7 @@ fn stream_job_rows(
         emit(Row::new(
             "CompCastType",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("kind", Value::String(job_text(get(&record, 1)))),
             ],
         ))?;
@@ -136,7 +136,7 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "CompanyType",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("kind", Value::String(job_text(get(&record, 1)))),
             ],
         ));
@@ -151,7 +151,7 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "InfoType",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("info", Value::String(job_text(get(&record, 1)))),
             ],
         ));
@@ -166,7 +166,7 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "KindType",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("kind", Value::String(job_text(get(&record, 1)))),
             ],
         ));
@@ -181,7 +181,7 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "LinkType",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("link", Value::String(job_text(get(&record, 1)))),
             ],
         ));
@@ -196,7 +196,7 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "RoleType",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("role", Value::String(job_text(get(&record, 1)))),
             ],
         ));
@@ -211,7 +211,7 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "Keyword",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("keyword", Value::String(job_text(get(&record, 1)))),
                 ("phonetic_code", Value::String(job_text(get(&record, 2)))),
             ],
@@ -227,7 +227,7 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "CompanyName",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("name", Value::String(job_text(get(&record, 1)))),
                 ("country_code", Value::String(job_text(get(&record, 2)))),
                 ("imdb_id", Value::I64(parse_optional_i64(get(&record, 3)))),
@@ -246,7 +246,7 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "CharName",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("name", Value::String(job_text(get(&record, 1)))),
                 ("imdb_index", Value::String(job_text(get(&record, 2)))),
                 ("imdb_id", Value::I64(parse_optional_i64(get(&record, 3)))),
@@ -265,7 +265,7 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "Name",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("name", Value::String(job_text(get(&record, 1)))),
                 ("imdb_index", Value::String(job_text(get(&record, 2)))),
                 ("imdb_id", Value::I64(parse_optional_i64(get(&record, 3)))),
@@ -287,10 +287,10 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "Title",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("title", Value::String(job_text(get(&record, 1)))),
                 ("imdb_index", Value::String(job_text(get(&record, 2)))),
-                ("kind", Value::Identity(IdentityValue::Serial(kind))),
+                ("kind", Value::Serial(kind)),
                 (
                     "production_year",
                     Value::I64(parse_optional_i64(get(&record, 4))),
@@ -321,8 +321,8 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "AkaName",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("person", Value::Identity(IdentityValue::Serial(person))),
+                ("id", Value::Serial(id)),
+                ("person", Value::Serial(person)),
                 ("name", Value::String(job_text(get(&record, 2)))),
                 ("imdb_index", Value::String(job_text(get(&record, 3)))),
                 ("name_pcode_cf", Value::String(job_text(get(&record, 4)))),
@@ -342,11 +342,11 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "AkaTitle",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("movie", Value::Identity(IdentityValue::Serial(movie))),
+                ("id", Value::Serial(id)),
+                ("movie", Value::Serial(movie)),
                 ("title", Value::String(job_text(get(&record, 2)))),
                 ("imdb_index", Value::String(job_text(get(&record, 3)))),
-                ("kind", Value::Identity(IdentityValue::Serial(kind))),
+                ("kind", Value::Serial(kind)),
                 (
                     "production_year",
                     Value::I64(parse_optional_i64(get(&record, 5))),
@@ -383,16 +383,13 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "CastInfo",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("person", Value::Identity(IdentityValue::Serial(person))),
-                ("movie", Value::Identity(IdentityValue::Serial(movie))),
-                (
-                    "person_role",
-                    Value::Identity(IdentityValue::Serial(person_role))
-                ),
+                ("id", Value::Serial(id)),
+                ("person", Value::Serial(person)),
+                ("movie", Value::Serial(movie)),
+                ("person_role", Value::Serial(person_role)),
                 ("note", Value::String(job_text(get(&record, 4)))),
                 ("nr_order", Value::I64(parse_optional_i64(get(&record, 5)))),
-                ("role", Value::Identity(IdentityValue::Serial(role))),
+                ("role", Value::Serial(role)),
             ],
         ));
         Ok(true)
@@ -412,10 +409,10 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "CompleteCast",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("movie", Value::Identity(IdentityValue::Serial(movie))),
-                ("subject", Value::Identity(IdentityValue::Serial(subject))),
-                ("status", Value::Identity(IdentityValue::Serial(status))),
+                ("id", Value::Serial(id)),
+                ("movie", Value::Serial(movie)),
+                ("subject", Value::Serial(subject)),
+                ("status", Value::Serial(status)),
             ],
         ));
         Ok(true)
@@ -435,13 +432,10 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "MovieCompanies",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("movie", Value::Identity(IdentityValue::Serial(movie))),
-                ("company", Value::Identity(IdentityValue::Serial(company))),
-                (
-                    "company_type",
-                    Value::Identity(IdentityValue::Serial(company_type))
-                ),
+                ("id", Value::Serial(id)),
+                ("movie", Value::Serial(movie)),
+                ("company", Value::Serial(company)),
+                ("company_type", Value::Serial(company_type)),
                 ("note", Value::String(job_text(get(&record, 4)))),
             ],
         ));
@@ -457,12 +451,9 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "MovieInfo",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("movie", Value::Identity(IdentityValue::Serial(movie))),
-                (
-                    "info_type",
-                    Value::Identity(IdentityValue::Serial(info_type))
-                ),
+                ("id", Value::Serial(id)),
+                ("movie", Value::Serial(movie)),
+                ("info_type", Value::Serial(info_type)),
                 ("info", Value::String(job_text(get(&record, 3)))),
                 ("note", Value::String(job_text(get(&record, 4)))),
             ],
@@ -479,12 +470,9 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "MovieInfoIdx",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("movie", Value::Identity(IdentityValue::Serial(movie))),
-                (
-                    "info_type",
-                    Value::Identity(IdentityValue::Serial(info_type))
-                ),
+                ("id", Value::Serial(id)),
+                ("movie", Value::Serial(movie)),
+                ("info_type", Value::Serial(info_type)),
                 ("info", Value::String(job_text(get(&record, 3)))),
                 ("note", Value::String(job_text(get(&record, 4)))),
             ],
@@ -501,9 +489,9 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "MovieKeyword",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("movie", Value::Identity(IdentityValue::Serial(movie))),
-                ("keyword", Value::Identity(IdentityValue::Serial(keyword))),
+                ("id", Value::Serial(id)),
+                ("movie", Value::Serial(movie)),
+                ("keyword", Value::Serial(keyword)),
             ],
         ));
         Ok(true)
@@ -523,16 +511,10 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "MovieLink",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("movie", Value::Identity(IdentityValue::Serial(movie))),
-                (
-                    "linked_movie",
-                    Value::Identity(IdentityValue::Serial(linked_movie))
-                ),
-                (
-                    "link_type",
-                    Value::Identity(IdentityValue::Serial(link_type))
-                ),
+                ("id", Value::Serial(id)),
+                ("movie", Value::Serial(movie)),
+                ("linked_movie", Value::Serial(linked_movie)),
+                ("link_type", Value::Serial(link_type)),
             ],
         ));
         Ok(true)
@@ -547,12 +529,9 @@ fn stream_job_rows(
         emit_row!(Row::new(
             "PersonInfo",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("person", Value::Identity(IdentityValue::Serial(person))),
-                (
-                    "info_type",
-                    Value::Identity(IdentityValue::Serial(info_type))
-                ),
+                ("id", Value::Serial(id)),
+                ("person", Value::Serial(person)),
+                ("info_type", Value::Serial(info_type)),
                 ("info", Value::String(job_text(get(&record, 3)))),
                 ("note", Value::String(job_text(get(&record, 4)))),
             ],
@@ -567,8 +546,8 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "AkaName",
             vec![
-                id_field("AkaNameId", "AkaName"),
-                ref_field("NameId", "person", "Name"),
+                serial_id_field("AkaNameId", "AkaName"),
+                serial_field("NameId", "person", "Name"),
                 job_string_field("name"),
                 job_string_field("imdb_index"),
                 job_string_field("name_pcode_cf"),
@@ -583,11 +562,11 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "AkaTitle",
             vec![
-                id_field("AkaTitleId", "AkaTitle"),
-                ref_field("TitleId", "movie", "Title"),
+                serial_id_field("AkaTitleId", "AkaTitle"),
+                serial_field("TitleId", "movie", "Title"),
                 job_string_field("title"),
                 job_string_field("imdb_index"),
-                ref_field("KindTypeId", "kind", "KindType"),
+                serial_field("KindTypeId", "kind", "KindType"),
                 job_range_i64_field("production_year"),
                 job_string_field("phonetic_code"),
                 job_u64_field("episode_of"),
@@ -603,13 +582,13 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "CastInfo",
             vec![
-                id_field("CastInfoId", "CastInfo"),
-                ref_field("NameId", "person", "Name"),
-                ref_field("TitleId", "movie", "Title"),
-                ref_field("CharNameId", "person_role", "CharName"),
+                serial_id_field("CastInfoId", "CastInfo"),
+                serial_field("NameId", "person", "Name"),
+                serial_field("TitleId", "movie", "Title"),
+                serial_field("CharNameId", "person_role", "CharName"),
                 job_string_field("note"),
                 job_i64_field("nr_order"),
-                ref_field("RoleTypeId", "role", "RoleType"),
+                serial_field("RoleTypeId", "role", "RoleType"),
             ],
         )
         .with_index(IndexDescriptor::permutation(
@@ -631,7 +610,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "CharName",
             vec![
-                id_field("CharNameId", "CharName"),
+                serial_id_field("CharNameId", "CharName"),
                 job_string_field("name"),
                 job_string_field("imdb_index"),
                 job_i64_field("imdb_id"),
@@ -643,7 +622,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "CompCastType",
             vec![
-                id_field("CompCastTypeId", "CompCastType"),
+                serial_id_field("CompCastTypeId", "CompCastType"),
                 job_string_field("kind"),
             ],
         )
@@ -651,7 +630,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "CompanyName",
             vec![
-                id_field("CompanyNameId", "CompanyName"),
+                serial_id_field("CompanyNameId", "CompanyName"),
                 job_string_field("name"),
                 job_string_field("country_code"),
                 job_i64_field("imdb_id"),
@@ -667,7 +646,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "CompanyType",
             vec![
-                id_field("CompanyTypeId", "CompanyType"),
+                serial_id_field("CompanyTypeId", "CompanyType"),
                 job_string_field("kind"),
             ],
         )
@@ -675,10 +654,10 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "CompleteCast",
             vec![
-                id_field("CompleteCastId", "CompleteCast"),
-                ref_field("TitleId", "movie", "Title"),
-                ref_field("CompCastTypeId", "subject", "CompCastType"),
-                ref_field("CompCastTypeId", "status", "CompCastType"),
+                serial_id_field("CompleteCastId", "CompleteCast"),
+                serial_field("TitleId", "movie", "Title"),
+                serial_field("CompCastTypeId", "subject", "CompCastType"),
+                serial_field("CompCastTypeId", "status", "CompCastType"),
             ],
         )
         .with_index(IndexDescriptor::permutation(
@@ -691,13 +670,16 @@ fn job_schema() -> SchemaDescriptor {
         )),
         job_relation(
             "InfoType",
-            vec![id_field("InfoTypeId", "InfoType"), job_string_field("info")],
+            vec![
+                serial_id_field("InfoTypeId", "InfoType"),
+                job_string_field("info"),
+            ],
         )
         .with_index(IndexDescriptor::permutation("by_info", ["info", "id"])),
         job_relation(
             "Keyword",
             vec![
-                id_field("KeywordId", "Keyword"),
+                serial_id_field("KeywordId", "Keyword"),
                 job_string_field("keyword"),
                 job_string_field("phonetic_code"),
             ],
@@ -708,21 +690,27 @@ fn job_schema() -> SchemaDescriptor {
         )),
         job_relation(
             "KindType",
-            vec![id_field("KindTypeId", "KindType"), job_string_field("kind")],
+            vec![
+                serial_id_field("KindTypeId", "KindType"),
+                job_string_field("kind"),
+            ],
         )
         .with_index(IndexDescriptor::permutation("by_kind", ["kind", "id"])),
         job_relation(
             "LinkType",
-            vec![id_field("LinkTypeId", "LinkType"), job_string_field("link")],
+            vec![
+                serial_id_field("LinkTypeId", "LinkType"),
+                job_string_field("link"),
+            ],
         )
         .with_index(IndexDescriptor::permutation("by_link", ["link", "id"])),
         job_relation(
             "MovieCompanies",
             vec![
-                id_field("MovieCompaniesId", "MovieCompanies"),
-                ref_field("TitleId", "movie", "Title"),
-                ref_field("CompanyNameId", "company", "CompanyName"),
-                ref_field("CompanyTypeId", "company_type", "CompanyType"),
+                serial_id_field("MovieCompaniesId", "MovieCompanies"),
+                serial_field("TitleId", "movie", "Title"),
+                serial_field("CompanyNameId", "company", "CompanyName"),
+                serial_field("CompanyTypeId", "company_type", "CompanyType"),
                 job_string_field("note"),
             ],
         )
@@ -741,9 +729,9 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "MovieInfo",
             vec![
-                id_field("MovieInfoId", "MovieInfo"),
-                ref_field("TitleId", "movie", "Title"),
-                ref_field("InfoTypeId", "info_type", "InfoType"),
+                serial_id_field("MovieInfoId", "MovieInfo"),
+                serial_field("TitleId", "movie", "Title"),
+                serial_field("InfoTypeId", "info_type", "InfoType"),
                 job_string_field("info"),
                 job_string_field("note"),
             ],
@@ -759,9 +747,9 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "MovieInfoIdx",
             vec![
-                id_field("MovieInfoIdxId", "MovieInfoIdx"),
-                ref_field("TitleId", "movie", "Title"),
-                ref_field("InfoTypeId", "info_type", "InfoType"),
+                serial_id_field("MovieInfoIdxId", "MovieInfoIdx"),
+                serial_field("TitleId", "movie", "Title"),
+                serial_field("InfoTypeId", "info_type", "InfoType"),
                 job_string_field("info"),
                 job_string_field("note"),
             ],
@@ -777,9 +765,9 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "MovieKeyword",
             vec![
-                id_field("MovieKeywordId", "MovieKeyword"),
-                ref_field("TitleId", "movie", "Title"),
-                ref_field("KeywordId", "keyword", "Keyword"),
+                serial_id_field("MovieKeywordId", "MovieKeyword"),
+                serial_field("TitleId", "movie", "Title"),
+                serial_field("KeywordId", "keyword", "Keyword"),
             ],
         )
         .with_index(IndexDescriptor::permutation(
@@ -793,10 +781,10 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "MovieLink",
             vec![
-                id_field("MovieLinkId", "MovieLink"),
-                ref_field("TitleId", "movie", "Title"),
-                ref_field("TitleId", "linked_movie", "Title"),
-                ref_field("LinkTypeId", "link_type", "LinkType"),
+                serial_id_field("MovieLinkId", "MovieLink"),
+                serial_field("TitleId", "movie", "Title"),
+                serial_field("TitleId", "linked_movie", "Title"),
+                serial_field("LinkTypeId", "link_type", "LinkType"),
             ],
         )
         .with_index(IndexDescriptor::permutation(
@@ -814,7 +802,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "Name",
             vec![
-                id_field("NameId", "Name"),
+                serial_id_field("NameId", "Name"),
                 job_string_field("name"),
                 job_string_field("imdb_index"),
                 job_i64_field("imdb_id"),
@@ -829,9 +817,9 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "PersonInfo",
             vec![
-                id_field("PersonInfoId", "PersonInfo"),
-                ref_field("NameId", "person", "Name"),
-                ref_field("InfoTypeId", "info_type", "InfoType"),
+                serial_id_field("PersonInfoId", "PersonInfo"),
+                serial_field("NameId", "person", "Name"),
+                serial_field("InfoTypeId", "info_type", "InfoType"),
                 job_string_field("info"),
                 job_string_field("note"),
             ],
@@ -846,16 +834,19 @@ fn job_schema() -> SchemaDescriptor {
         )),
         job_relation(
             "RoleType",
-            vec![id_field("RoleTypeId", "RoleType"), job_string_field("role")],
+            vec![
+                serial_id_field("RoleTypeId", "RoleType"),
+                job_string_field("role"),
+            ],
         )
         .with_index(IndexDescriptor::permutation("by_role", ["role", "id"])),
         job_relation(
             "Title",
             vec![
-                id_field("TitleId", "Title"),
+                serial_id_field("TitleId", "Title"),
                 job_string_field("title"),
                 job_string_field("imdb_index"),
-                ref_field("KindTypeId", "kind", "KindType"),
+                serial_field("KindTypeId", "kind", "KindType"),
                 job_range_i64_field("production_year"),
                 job_i64_field("imdb_id"),
                 job_string_field("phonetic_code"),
@@ -879,17 +870,17 @@ fn job_schema() -> SchemaDescriptor {
         )),
     ];
     relations.sort_by_key(|relation| job_relation_order(&relation.name));
-    add_identity_foreign_keys(SchemaDescriptor::new("JoinOrderBenchmarkDb", relations))
+    add_serial_foreign_keys(SchemaDescriptor::new("JoinOrderBenchmarkDb", relations))
 }
 
 fn job_relation(name: impl Into<String>, fields: Vec<FieldDescriptor>) -> RelationDescriptor {
     RelationDescriptor::new(name, fields).with_covering_unique("id", ["id"])
 }
 
-fn add_identity_foreign_keys(mut schema: SchemaDescriptor) -> SchemaDescriptor {
+fn add_serial_foreign_keys(mut schema: SchemaDescriptor) -> SchemaDescriptor {
     for relation in &mut schema.relations {
         for field in relation.fields.clone() {
-            let ValueType::Identity {
+            let ValueType::Serial {
                 owning_relation, ..
             } = field.value_type
             else {
@@ -1570,7 +1561,7 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         rows.push(Row::new(
             "Title",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("title_type", Value::U64(symbols.id(get(&record, 1)))),
                 ("primary_title", Value::String(get(&record, 2).to_owned())),
                 (
@@ -1594,7 +1585,7 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         rows.push(Row::new(
             "Name",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("name", Value::String(get(&record, 1).to_owned())),
                 (
                     "birth_year",
@@ -1614,7 +1605,7 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         rows.push(Row::new(
             "TitleRating",
             [
-                ("title", Value::Identity(IdentityValue::Serial(title))),
+                ("title", Value::Serial(title)),
                 ("rating", Value::I64(parse_rating_x10(get(&record, 1)))),
                 ("votes", Value::I64(parse_optional_i64(get(&record, 2)))),
             ],
@@ -1639,8 +1630,8 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         rows.push(Row::new(
             "Principal",
             [
-                ("title", Value::Identity(IdentityValue::Serial(title))),
-                ("name", Value::Identity(IdentityValue::Serial(name))),
+                ("title", Value::Serial(title)),
+                ("name", Value::Serial(name)),
                 ("category", Value::U64(category)),
                 ("ordering", Value::U64(parse_optional_u64(get(&record, 1)))),
             ],
@@ -1667,7 +1658,7 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
                 name: "person_high_rated_titles",
                 build: build_imdb_person_high_rated_titles,
                 inputs: vec![
-                    ("name", Value::Identity(IdentityValue::Serial(sample_name))),
+                    ("name", Value::Serial(sample_name)),
                     ("category", Value::U64(sample_category)),
                     ("min_rating", Value::I64(70)),
                 ],
@@ -1707,7 +1698,7 @@ fn imdb_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Title",
                 vec![
-                    id_field("TitleId", "Title"),
+                    serial_id_field("TitleId", "Title"),
                     FieldDescriptor::new("title_type", ValueType::U64),
                     FieldDescriptor::new("primary_title", ValueType::String),
                     FieldDescriptor::new("start_year", ValueType::I64).range_indexed(),
@@ -1717,7 +1708,7 @@ fn imdb_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Name",
                 vec![
-                    id_field("NameId", "Name"),
+                    serial_id_field("NameId", "Name"),
                     FieldDescriptor::new("name", ValueType::String),
                     FieldDescriptor::new("birth_year", ValueType::I64).range_indexed(),
                 ],
@@ -1726,7 +1717,7 @@ fn imdb_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "TitleRating",
                 vec![
-                    ref_field("TitleId", "title", "Title"),
+                    serial_field("TitleId", "title", "Title"),
                     FieldDescriptor::new("rating", ValueType::I64).range_indexed(),
                     FieldDescriptor::new("votes", ValueType::I64),
                 ],
@@ -1741,8 +1732,8 @@ fn imdb_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Principal",
                 vec![
-                    ref_field("TitleId", "title", "Title"),
-                    ref_field("NameId", "name", "Name"),
+                    serial_field("TitleId", "title", "Title"),
+                    serial_field("NameId", "name", "Name"),
                     FieldDescriptor::new("category", ValueType::U64),
                     FieldDescriptor::new("ordering", ValueType::U64),
                 ],
@@ -1830,7 +1821,7 @@ fn tpch_open_dataset(
         rows.push(Row::new(
             "Customer",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("nation", Value::U64(parse_u64(get(&record, 3)))),
             ],
         ));
@@ -1842,7 +1833,7 @@ fn tpch_open_dataset(
         rows.push(Row::new(
             "Supplier",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("nation", Value::U64(parse_u64(get(&record, 3)))),
             ],
         ));
@@ -1854,7 +1845,7 @@ fn tpch_open_dataset(
         rows.push(Row::new(
             "Part",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("brand", Value::String(get(&record, 3).to_owned())),
             ],
         ));
@@ -1870,8 +1861,8 @@ fn tpch_open_dataset(
         rows.push(Row::new(
             "Orders",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("customer", Value::Identity(IdentityValue::Serial(customer))),
+                ("id", Value::Serial(id)),
+                ("customer", Value::Serial(customer)),
                 (
                     "order_date",
                     Value::Timestamp(TimestampMicros(parse_date(get(&record, 4)))),
@@ -1890,13 +1881,10 @@ fn tpch_open_dataset(
         rows.push(Row::new(
             "LineItem",
             [
-                (
-                    "id",
-                    Value::Identity(IdentityValue::Serial(rows.len() as u64 + 1)),
-                ),
-                ("order", Value::Identity(IdentityValue::Serial(order))),
-                ("part", Value::Identity(IdentityValue::Serial(part))),
-                ("supplier", Value::Identity(IdentityValue::Serial(supplier))),
+                ("id", Value::Serial(rows.len() as u64 + 1)),
+                ("order", Value::Serial(order)),
+                ("part", Value::Serial(part)),
+                ("supplier", Value::Serial(supplier)),
                 ("quantity", Value::I64(parse_decimal_i64(get(&record, 4)))),
                 (
                     "extended_price",
@@ -1930,7 +1918,7 @@ fn lahman_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn s
         rows.push(Row::new(
             "Player",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 (
                     "first",
                     Value::String(col(headers, record, &["nameFirst"]).to_owned()),
@@ -1959,7 +1947,7 @@ fn lahman_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn s
             rows.push(Row::new(
                 "Team",
                 [
-                    ("id", Value::Identity(IdentityValue::Serial(id))),
+                    ("id", Value::Serial(id)),
                     (
                         "year",
                         Value::I64(parse_optional_i64(col(headers, record, &["yearID"]))),
@@ -1998,8 +1986,8 @@ fn lahman_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn s
             rows.push(Row::new(
                 "Batting",
                 [
-                    ("player", Value::Identity(IdentityValue::Serial(player))),
-                    ("team", Value::Identity(IdentityValue::Serial(team))),
+                    ("player", Value::Serial(player)),
+                    ("team", Value::Serial(team)),
                     (
                         "year",
                         Value::I64(parse_optional_i64(col(headers, record, &["yearID"]))),
@@ -2038,8 +2026,8 @@ fn lahman_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn s
             rows.push(Row::new(
                 "Salary",
                 [
-                    ("player", Value::Identity(IdentityValue::Serial(player))),
-                    ("team", Value::Identity(IdentityValue::Serial(team))),
+                    ("player", Value::Serial(player)),
+                    ("team", Value::Serial(team)),
                     (
                         "year",
                         Value::I64(parse_optional_i64(col(headers, record, &["yearID"]))),
@@ -2072,7 +2060,7 @@ fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         rows.push(Row::new(
             "Person",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 (
                     "first",
                     Value::String(col(headers, record, &["firstName", "first_name"]).to_owned()),
@@ -2103,8 +2091,8 @@ fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         rows.push(Row::new(
             "Post",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("creator", Value::Identity(IdentityValue::Serial(creator))),
+                ("id", Value::Serial(id)),
+                ("creator", Value::Serial(creator)),
                 (
                     "created",
                     Value::Timestamp(TimestampMicros(parse_ldbc_time(col(
@@ -2131,8 +2119,8 @@ fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         rows.push(Row::new(
             "Knows",
             [
-                ("person1", Value::Identity(IdentityValue::Serial(p1))),
-                ("person2", Value::Identity(IdentityValue::Serial(p2))),
+                ("person1", Value::Serial(p1)),
+                ("person2", Value::Serial(p2)),
                 (
                     "created",
                     Value::Timestamp(TimestampMicros(parse_ldbc_time(col(
@@ -2154,8 +2142,8 @@ fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         rows.push(Row::new(
             "Likes",
             [
-                ("person", Value::Identity(IdentityValue::Serial(person))),
-                ("post", Value::Identity(IdentityValue::Serial(post))),
+                ("person", Value::Serial(person)),
+                ("post", Value::Serial(post)),
                 (
                     "created",
                     Value::Timestamp(TimestampMicros(parse_ldbc_time(col(
@@ -2180,7 +2168,7 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                 RelationDescriptor::new(
                     "Player",
                     vec![
-                        id_field("PlayerId", "Player"),
+                        serial_id_field("PlayerId", "Player"),
                         FieldDescriptor::new("first", ValueType::String),
                         FieldDescriptor::new("last", ValueType::String),
                     ],
@@ -2189,7 +2177,7 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                 RelationDescriptor::new(
                     "Team",
                     vec![
-                        id_field("TeamId", "Team"),
+                        serial_id_field("TeamId", "Team"),
                         FieldDescriptor::new("year", ValueType::I64).range_indexed(),
                         FieldDescriptor::new("league", ValueType::String),
                         FieldDescriptor::new("name", ValueType::String),
@@ -2199,8 +2187,8 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                 RelationDescriptor::new(
                     "Batting",
                     vec![
-                        ref_field("PlayerId", "player", "Player"),
-                        ref_field("TeamId", "team", "Team"),
+                        serial_field("PlayerId", "player", "Player"),
+                        serial_field("TeamId", "team", "Team"),
                         FieldDescriptor::new("year", ValueType::I64).range_indexed(),
                         FieldDescriptor::new("games", ValueType::I64),
                         FieldDescriptor::new("hits", ValueType::I64),
@@ -2226,8 +2214,8 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                 RelationDescriptor::new(
                     "Salary",
                     vec![
-                        ref_field("PlayerId", "player", "Player"),
-                        ref_field("TeamId", "team", "Team"),
+                        serial_field("PlayerId", "player", "Player"),
+                        serial_field("TeamId", "team", "Team"),
                         FieldDescriptor::new("year", ValueType::I64).range_indexed(),
                         FieldDescriptor::new("salary", ValueType::I64),
                     ],
@@ -2302,7 +2290,7 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                 RelationDescriptor::new(
                     "Person",
                     vec![
-                        id_field("PersonId", "Person"),
+                        serial_id_field("PersonId", "Person"),
                         FieldDescriptor::new("first", ValueType::String),
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
@@ -2311,8 +2299,8 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                 RelationDescriptor::new(
                     "Post",
                     vec![
-                        id_field("PostId", "Post"),
-                        ref_field("PersonId", "creator", "Person"),
+                        serial_id_field("PostId", "Post"),
+                        serial_field("PersonId", "creator", "Person"),
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
                 )
@@ -2326,8 +2314,8 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                 RelationDescriptor::new(
                     "Knows",
                     vec![
-                        ref_field("PersonId", "person1", "Person"),
-                        ref_field("PersonId", "person2", "Person"),
+                        serial_field("PersonId", "person1", "Person"),
+                        serial_field("PersonId", "person2", "Person"),
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
                 )
@@ -2351,8 +2339,8 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                 RelationDescriptor::new(
                     "Likes",
                     vec![
-                        ref_field("PersonId", "person", "Person"),
-                        ref_field("PostId", "post", "Post"),
+                        serial_field("PersonId", "person", "Person"),
+                        serial_field("PostId", "post", "Post"),
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
                 )
@@ -2393,14 +2381,14 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
             BenchQuery {
                 name: "person_likes_posts",
                 build: build_ldbc_person_likes_posts,
-                inputs: vec![("person", Value::Identity(IdentityValue::Serial(1)))],
+                inputs: vec![("person", Value::Serial(1))],
                 sqlite: "SELECT p.id FROM likes l JOIN post p ON p.id = l.post WHERE l.person = ?1",
                 sqlite_params: vec![SqlParam::I64(1)],
             },
             BenchQuery {
                 name: "two_hop_knows",
                 build: build_ldbc_two_hop_knows,
-                inputs: vec![("person", Value::Identity(IdentityValue::Serial(1)))],
+                inputs: vec![("person", Value::Serial(1))],
                 sqlite: "SELECT k2.person2 FROM knows k1 JOIN knows k2 ON k2.person1 = k1.person2 WHERE k1.person1 = ?1",
                 sqlite_params: vec![SqlParam::I64(1)],
             },

@@ -10,15 +10,13 @@ use bumbledb_core::query_ir::{
     AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm,
     TypedLiteral, TypedOperand, TypedQuery, TypedRelationAtom, TypedTerm,
 };
-use bumbledb_core::schema::{
-    CurrentIndexLayout, IdentityAllocation, IndexKind, SchemaFingerprint, ValueType,
-};
+use bumbledb_core::schema::{CurrentIndexLayout, IndexKind, SchemaFingerprint, ValueType};
 
 use crate::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FieldValues,
-    FreeJoinPlan, HashTrieIndex, IdentityValue, IndexSpec, LeafMode, LinearIter, NodeId, NodeImpl,
-    OutputPlan, PayloadDemand, PlanEstimates, PlanNode, PrefixProbe, PrefixRows, ProjectPlan,
-    ReadTxn, RelationImage, RelationIndexImage, RelationStats, Result, Row, RowId, RowRange,
+    FreeJoinPlan, HashTrieIndex, IndexSpec, LeafMode, LinearIter, NodeId, NodeImpl, OutputPlan,
+    PayloadDemand, PlanEstimates, PlanNode, PrefixProbe, PrefixRows, ProjectPlan, ReadTxn,
+    RelationImage, RelationIndexImage, RelationStats, Result, Row, RowId, RowRange,
     SortedTrieIndex, StorageSchema, SubAtom, TrieIter, Value, VarId,
 };
 
@@ -2458,27 +2456,15 @@ fn hash_value_type(hasher: &mut blake3::Hasher, value_type: &ValueType) {
         }
         ValueType::String => hash_u8(hasher, 8),
         ValueType::Bytes => hash_u8(hasher, 9),
-        ValueType::Identity {
+        ValueType::Serial {
             type_name,
             owning_relation,
-            allocation,
         } => {
             hash_u8(hasher, 10);
             hash_bytes_len_prefixed(hasher, type_name.as_bytes());
             hash_bytes_len_prefixed(hasher, owning_relation.as_bytes());
-            hash_identity_allocation(hasher, *allocation);
         }
     }
-}
-
-fn hash_identity_allocation(hasher: &mut blake3::Hasher, allocation: IdentityAllocation) {
-    hash_u8(
-        hasher,
-        match allocation {
-            IdentityAllocation::Serial => 1,
-            IdentityAllocation::Application => 3,
-        },
-    );
 }
 
 fn hash_encoded_owned(hasher: &mut blake3::Hasher, value: &EncodedOwned) {
@@ -10494,20 +10480,7 @@ fn value_matches_type(schema: &StorageSchema, value: &Value, value_type: &ValueT
         (Value::Bool(_), ValueType::Bool)
             | (Value::U64(_), ValueType::U64)
             | (Value::I64(_), ValueType::I64)
-            | (
-                Value::Identity(IdentityValue::Serial(_)),
-                ValueType::Identity {
-                    allocation: IdentityAllocation::Serial,
-                    ..
-                },
-            )
-            | (
-                Value::Identity(IdentityValue::Application(_)),
-                ValueType::Identity {
-                    allocation: IdentityAllocation::Application,
-                    ..
-                },
-            )
+            | (Value::Serial(_), ValueType::Serial { .. })
             | (Value::Timestamp(_), ValueType::TimestampMicros)
             | (Value::Decimal(_), ValueType::Decimal { .. })
             | (Value::Enum(_), ValueType::Enum { .. })
@@ -10522,20 +10495,7 @@ fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
         (Literal::String(value), ValueType::String) => Value::String(value.clone()),
         (Literal::Integer(value), ValueType::U64) => Value::U64(*value as u64),
         (Literal::Integer(value), ValueType::I64) => Value::I64(*value as i64),
-        (
-            Literal::Integer(value),
-            ValueType::Identity {
-                allocation: IdentityAllocation::Serial,
-                ..
-            },
-        ) => Value::Identity(IdentityValue::Serial(*value as u64)),
-        (
-            Literal::Integer(value),
-            ValueType::Identity {
-                allocation: IdentityAllocation::Application,
-                ..
-            },
-        ) => Value::Identity(IdentityValue::Application(*value as u64)),
+        (Literal::Integer(value), ValueType::Serial { .. }) => Value::Serial(*value as u64),
         (Literal::Integer(value), ValueType::Enum { .. }) => Value::Enum(*value as u8),
         (Literal::Integer(value), ValueType::TimestampMicros) => {
             Value::Timestamp(TimestampMicros(*value as i64))
@@ -11608,10 +11568,9 @@ fn value_type_name(value_type: &ValueType) -> String {
         ValueType::Enum { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),
-        ValueType::Identity {
+        ValueType::Serial {
             type_name,
             owning_relation,
-            ..
         } => format!("{type_name}@{owning_relation}"),
     }
 }

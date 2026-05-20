@@ -1,7 +1,7 @@
 #![allow(clippy::result_large_err)]
 
 use bumbledb_core::encoding::TimestampMicros;
-use bumbledb_lmdb::{Environment, IdentityValue, InputBindings, StorageSchema, Value};
+use bumbledb_lmdb::{Environment, InputBindings, StorageSchema, Value};
 use bumbledb_test_support::assertions::{assert_invariants, assert_same_rows, execute_sorted};
 use bumbledb_test_support::operations::{
     duplicate_holder_rows, valid_ledger_rows_strategy, wrong_type_holder_row,
@@ -87,7 +87,7 @@ fn prop<T, E: std::fmt::Display>(result: std::result::Result<T, E>) -> Result<T,
 
 fn default_inputs() -> InputBindings {
     InputBindings::from_values([
-        ("holder", Value::Identity(IdentityValue::Serial(1))),
+        ("holder", Value::Serial(1)),
         ("start", Value::Timestamp(TimestampMicros(0))),
         ("end", Value::Timestamp(TimestampMicros(1_000_000))),
     ])

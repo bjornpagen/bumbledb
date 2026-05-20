@@ -105,23 +105,22 @@ ConstraintDescriptor::ForeignKey {
 }
 ```
 
-## Identity Model
+## Serial Model
 
-Typed identity is preserved, but `Id` and `Ref` are gone.
+Nominal serial types are preserved, but `Id` and `Ref` field types are gone.
 
-Identity is a nominal value type:
+Serial is a nominal value type:
 
 ```rust
-ValueType::Identity {
+ValueType::Serial {
     type_name: "AccountId".to_owned(),
     owning_relation: "Account".to_owned(),
-    allocation: IdentityAllocation::Serial,
 }
 ```
 
-An `AccountId` is not an `InstrumentId`, even if both are encoded as 64-bit integers. Query building must reject unifying variables across different identity types.
+An `AccountId` is not an `InstrumentId`, even if both are encoded as 64-bit integers. Query building must reject unifying variables across different serial types.
 
-A referencing column uses the target identity type. The fact that the column is a foreign key is expressed only by an explicit foreign-key constraint.
+A referencing column uses the target serial type. The fact that the column is a foreign key is expressed only by an explicit foreign-key constraint.
 
 ## Primitive Value Types
 
@@ -132,11 +131,10 @@ Supported persistent types:
 - `I64`
 - `TimestampMicros`
 - `Decimal { scale }`
-- `Uuid`
 - `Enum { name }`
 - `String`
 - `Bytes`
-- `Identity { type_name, owning_relation, allocation }`
+- `Serial { type_name, owning_relation }`
 
 There is no `Code` type. Open numeric domains use `U64`. Closed domains use `Enum`.
 

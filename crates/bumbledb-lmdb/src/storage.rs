@@ -6,8 +6,8 @@ use bumbledb_core::encoding::{
     encode_i64, encode_intern_id, encode_timestamp, encode_u64,
 };
 use bumbledb_core::schema::{
-    ConstraintDescriptor, CurrentIndexLayout, FieldDescriptor, IdentityAllocation, IndexComponent,
-    RelationDescriptor, SchemaDescriptor, ValueType,
+    ConstraintDescriptor, CurrentIndexLayout, FieldDescriptor, IndexComponent, RelationDescriptor,
+    SchemaDescriptor, ValueType,
 };
 
 use crate::storage_schema::COVERING_ACCESS_NAME;
@@ -101,8 +101,8 @@ pub enum Value {
     U64(u64),
     /// Signed 64-bit integer.
     I64(i64),
-    /// Typed nominal identity.
-    Identity(IdentityValue),
+    /// Typed nominal serial.
+    Serial(u64),
     /// UTC timestamp micros.
     Timestamp(TimestampMicros),
     /// Fixed-scale decimal raw value.
@@ -121,7 +121,7 @@ impl Value {
             Value::Bool(_) => "bool",
             Value::U64(_) => "u64",
             Value::I64(_) => "i64",
-            Value::Identity(_) => "identity",
+            Value::Serial(_) => "serial",
             Value::Timestamp(_) => "timestamp",
             Value::Decimal(_) => "decimal",
             Value::Enum(_) => "enum",
@@ -129,15 +129,6 @@ impl Value {
             Value::Bytes(_) => "bytes",
         }
     }
-}
-
-/// Runtime identity value.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum IdentityValue {
-    /// Serial u64 identity.
-    Serial(u64),
-    /// Application-supplied u64 identity.
-    Application(u64),
 }
 
 /// Encoded component from a covering index key.
@@ -327,11 +318,7 @@ impl WriteTxn<'_> {
             .find(|field| {
                 matches!(
                     &field.value_type,
-                    bumbledb_core::schema::ValueType::Identity {
-                        owning_relation,
-                        allocation: bumbledb_core::schema::IdentityAllocation::Serial,
-                        ..
-                    } if owning_relation == &relation.name
+                    ValueType::Serial { owning_relation, .. } if owning_relation == &relation.name
                 )
             })
             .ok_or_else(|| Error::internal(format!("relation {relation_name} has no serial ID")))?;
@@ -1419,20 +1406,7 @@ fn encode_value_for_type(
         (ValueType::Bool, Value::Bool(value)) => encode_bool(*value).to_vec(),
         (ValueType::U64, Value::U64(value)) => encode_u64(*value).to_vec(),
         (ValueType::I64, Value::I64(value)) => encode_i64(*value).to_vec(),
-        (
-            ValueType::Identity {
-                allocation: IdentityAllocation::Serial,
-                ..
-            },
-            Value::Identity(IdentityValue::Serial(value)),
-        )
-        | (
-            ValueType::Identity {
-                allocation: IdentityAllocation::Application,
-                ..
-            },
-            Value::Identity(IdentityValue::Application(value)),
-        ) => encode_u64(*value).to_vec(),
+        (ValueType::Serial { .. }, Value::Serial(value)) => encode_u64(*value).to_vec(),
         (ValueType::TimestampMicros, Value::Timestamp(value)) => encode_timestamp(*value).to_vec(),
         (ValueType::Decimal { .. }, Value::Decimal(value)) => encode_decimal(*value).to_vec(),
         (ValueType::Enum { .. }, Value::Enum(value)) => encode_enum(*value).to_vec(),
@@ -1495,20 +1469,7 @@ fn storage_value_matches_type(value: &Value, value_type: &ValueType) -> bool {
         (Value::Bool(_), ValueType::Bool)
             | (Value::U64(_), ValueType::U64)
             | (Value::I64(_), ValueType::I64)
-            | (
-                Value::Identity(IdentityValue::Serial(_)),
-                ValueType::Identity {
-                    allocation: IdentityAllocation::Serial,
-                    ..
-                },
-            )
-            | (
-                Value::Identity(IdentityValue::Application(_)),
-                ValueType::Identity {
-                    allocation: IdentityAllocation::Application,
-                    ..
-                },
-            )
+            | (Value::Serial(_), ValueType::Serial { .. })
             | (Value::Timestamp(_), ValueType::TimestampMicros)
             | (Value::Decimal(_), ValueType::Decimal { .. })
             | (Value::Enum(_), ValueType::Enum { .. })
@@ -1642,18 +1603,9 @@ fn decode_value(
         ValueType::I64 => {
             Value::I64(decode_i64(bytes).map_err(|_| Error::corrupt("i64 width invalid"))?)
         }
-        ValueType::Identity {
-            allocation: IdentityAllocation::Serial,
-            ..
-        } => Value::Identity(IdentityValue::Serial(
-            decode_u64(bytes).map_err(|_| Error::corrupt("identity width invalid"))?,
-        )),
-        ValueType::Identity {
-            allocation: IdentityAllocation::Application,
-            ..
-        } => Value::Identity(IdentityValue::Application(
-            decode_u64(bytes).map_err(|_| Error::corrupt("identity width invalid"))?,
-        )),
+        ValueType::Serial { .. } => {
+            Value::Serial(decode_u64(bytes).map_err(|_| Error::corrupt("serial width invalid"))?)
+        }
         ValueType::TimestampMicros => Value::Timestamp(
             decode_timestamp(bytes).map_err(|_| Error::corrupt("timestamp width invalid"))?,
         ),
@@ -1690,10 +1642,9 @@ fn value_type_name(value_type: &ValueType) -> String {
         ValueType::Enum { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),
-        ValueType::Identity {
+        ValueType::Serial {
             type_name,
             owning_relation,
-            ..
         } => format!("{type_name}@{owning_relation}"),
     }
 }
@@ -2613,10 +2564,7 @@ mod tests {
                 &schema,
                 "Account",
                 "by_holder",
-                &FieldValues::new(
-                    "Account",
-                    [("holder", Value::Identity(IdentityValue::Serial(1)))],
-                ),
+                &FieldValues::new("Account", [("holder", Value::Serial(1))]),
             )?)?;
             assert_same_rows(
                 &by_holder_items
@@ -2836,10 +2784,9 @@ mod tests {
                     vec![
                         FieldDescriptor::new(
                             "id",
-                            ValueType::Identity {
+                            ValueType::Serial {
                                 type_name: "HolderId".to_owned(),
                                 owning_relation: "Holder".to_owned(),
-                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new("name", ValueType::String),
@@ -2852,18 +2799,16 @@ mod tests {
                     vec![
                         FieldDescriptor::new(
                             "id",
-                            ValueType::Identity {
+                            ValueType::Serial {
                                 type_name: "AccountId".to_owned(),
                                 owning_relation: "Account".to_owned(),
-                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new(
                             "holder",
-                            ValueType::Identity {
+                            ValueType::Serial {
                                 type_name: "HolderId".to_owned(),
                                 owning_relation: "Holder".to_owned(),
-                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new(
@@ -2892,10 +2837,9 @@ mod tests {
                     vec![
                         FieldDescriptor::new(
                             "account",
-                            ValueType::Identity {
+                            ValueType::Serial {
                                 type_name: "AccountId".to_owned(),
                                 owning_relation: "Account".to_owned(),
-                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new(
@@ -2930,7 +2874,7 @@ mod tests {
         Row::new(
             "Holder",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
+                ("id", Value::Serial(id)),
                 ("name", Value::String(name.to_owned())),
             ],
         )
@@ -2940,8 +2884,8 @@ mod tests {
         Row::new(
             "Account",
             [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("holder", Value::Identity(IdentityValue::Serial(holder))),
+                ("id", Value::Serial(id)),
+                ("holder", Value::Serial(holder)),
                 ("currency", Value::Enum(currency)),
                 (
                     "opened",
@@ -2955,7 +2899,7 @@ mod tests {
         Row::new(
             "AccountTag",
             [
-                ("account", Value::Identity(IdentityValue::Serial(account))),
+                ("account", Value::Serial(account)),
                 ("tag", Value::Enum(tag)),
             ],
         )
@@ -2982,13 +2926,13 @@ mod tests {
         rows.iter()
             .map(|row| {
                 let id = match required_value(row, "id")? {
-                    Value::Identity(IdentityValue::Serial(value)) => *value,
+                    Value::Serial(value) => *value,
                     other => {
                         return Err(Error::internal(format!("unexpected id value: {other:?}")));
                     }
                 };
                 let holder = match required_value(row, "holder")? {
-                    Value::Identity(IdentityValue::Serial(value)) => *value,
+                    Value::Serial(value) => *value,
                     other => {
                         return Err(Error::internal(format!(
                             "unexpected holder value: {other:?}"

@@ -977,21 +977,11 @@ pub enum ValueType {
     String,
     /// Interned bytes.
     Bytes,
-    /// Nominal identity value.
-    Identity {
+    /// Nominal database-allocated serial value.
+    Serial {
         type_name: String,
         owning_relation: String,
-        allocation: IdentityAllocation,
     },
-}
-
-/// Identity allocation strategy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum IdentityAllocation {
-    /// Database-allocated monotonic u64 identity.
-    Serial,
-    /// Application-supplied u64 identity.
-    Application,
 }
 
 impl ValueType {
@@ -1004,11 +994,9 @@ impl ValueType {
             | ValueType::I64
             | ValueType::TimestampMicros
             | ValueType::String
-            | ValueType::Bytes => 8,
+            | ValueType::Bytes
+            | ValueType::Serial { .. } => 8,
             ValueType::Decimal { .. } => 16,
-            ValueType::Identity { allocation, .. } => match allocation {
-                IdentityAllocation::Serial | IdentityAllocation::Application => 8,
-            },
         }
     }
 
@@ -1030,10 +1018,7 @@ impl ValueType {
                 | ValueType::I64
                 | ValueType::TimestampMicros
                 | ValueType::Decimal { .. }
-                | ValueType::Identity {
-                    allocation: IdentityAllocation::Serial,
-                    ..
-                }
+                | ValueType::Serial { .. }
         )
     }
 
@@ -1058,25 +1043,14 @@ impl ValueType {
             }
             ValueType::String => push_u8(out, 8),
             ValueType::Bytes => push_u8(out, 9),
-            ValueType::Identity {
+            ValueType::Serial {
                 type_name,
                 owning_relation,
-                allocation,
             } => {
                 push_u8(out, 10);
                 push_str(out, type_name);
                 push_str(out, owning_relation);
-                allocation.push_canonical(out);
             }
-        }
-    }
-}
-
-impl IdentityAllocation {
-    fn push_canonical(self, out: &mut Vec<u8>) {
-        match self {
-            IdentityAllocation::Serial => push_u8(out, 1),
-            IdentityAllocation::Application => push_u8(out, 3),
         }
     }
 }
@@ -1406,8 +1380,8 @@ mod tests {
 
     #[test]
     fn typed_ids_are_logically_distinct() {
-        let account = identity("AccountId", "Account");
-        let instrument = identity("InstrumentId", "Instrument");
+        let account = serial_type("AccountId", "Account");
+        let instrument = serial_type("InstrumentId", "Instrument");
 
         assert_ne!(account, instrument);
         assert_eq!(account.encoded_width(), instrument.encoded_width());
@@ -1505,7 +1479,7 @@ mod tests {
                 RelationDescriptor::new(
                     "Account",
                     vec![
-                        FieldDescriptor::new("id", identity("AccountId", "Account")),
+                        FieldDescriptor::new("id", serial_type("AccountId", "Account")),
                         FieldDescriptor::new("code", ValueType::U64),
                     ],
                 )
@@ -1588,7 +1562,7 @@ mod tests {
                 RelationDescriptor::new(
                     "Account",
                     vec![
-                        FieldDescriptor::new("id", identity("AccountId", "Account")),
+                        FieldDescriptor::new("id", serial_type("AccountId", "Account")),
                         FieldDescriptor::new(
                             "currency",
                             ValueType::Enum {
@@ -1878,8 +1852,8 @@ mod tests {
                 RelationDescriptor::new(
                     "Account",
                     vec![
-                        FieldDescriptor::new("id", identity("AccountId", "Account")),
-                        FieldDescriptor::new("holder", identity("HolderId", "Holder")),
+                        FieldDescriptor::new("id", serial_type("AccountId", "Account")),
+                        FieldDescriptor::new("holder", serial_type("HolderId", "Holder")),
                         FieldDescriptor::new(
                             "currency",
                             ValueType::Enum {
@@ -1903,10 +1877,16 @@ mod tests {
                 RelationDescriptor::new(
                     "Posting",
                     vec![
-                        FieldDescriptor::new("id", identity("PostingId", "Posting")),
-                        FieldDescriptor::new("entry", identity("JournalEntryId", "JournalEntry")),
-                        FieldDescriptor::new("account", identity("AccountId", "Account")),
-                        FieldDescriptor::new("instrument", identity("InstrumentId", "Instrument")),
+                        FieldDescriptor::new("id", serial_type("PostingId", "Posting")),
+                        FieldDescriptor::new(
+                            "entry",
+                            serial_type("JournalEntryId", "JournalEntry"),
+                        ),
+                        FieldDescriptor::new("account", serial_type("AccountId", "Account")),
+                        FieldDescriptor::new(
+                            "instrument",
+                            serial_type("InstrumentId", "Instrument"),
+                        ),
                         FieldDescriptor::new("amount", ValueType::Decimal { scale: 4 }),
                         FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
                     ],
@@ -1921,7 +1901,7 @@ mod tests {
                 RelationDescriptor::new(
                     "Holder",
                     vec![
-                        FieldDescriptor::new("id", identity("HolderId", "Holder")),
+                        FieldDescriptor::new("id", serial_type("HolderId", "Holder")),
                         FieldDescriptor::new("name", ValueType::String),
                     ],
                 )
@@ -1930,7 +1910,10 @@ mod tests {
                 RelationDescriptor::new(
                     "SourceDocument",
                     vec![
-                        FieldDescriptor::new("id", identity("SourceDocumentId", "SourceDocument")),
+                        FieldDescriptor::new(
+                            "id",
+                            serial_type("SourceDocumentId", "SourceDocument"),
+                        ),
                         FieldDescriptor::new("payload", ValueType::Bytes),
                     ],
                 )
@@ -1938,8 +1921,8 @@ mod tests {
                 RelationDescriptor::new(
                     "OrgParent",
                     vec![
-                        FieldDescriptor::new("child", identity("OrgId", "Org")),
-                        FieldDescriptor::new("parent", identity("OrgId", "Org")),
+                        FieldDescriptor::new("child", serial_type("OrgId", "Org")),
+                        FieldDescriptor::new("parent", serial_type("OrgId", "Org")),
                     ],
                 )
                 .with_covering_unique("child_parent", ["child", "parent"]),
@@ -1955,7 +1938,7 @@ mod tests {
                 RelationDescriptor::new(
                     "Parent",
                     vec![
-                        FieldDescriptor::new("id", identity("ParentId", "Parent")),
+                        FieldDescriptor::new("id", serial_type("ParentId", "Parent")),
                         FieldDescriptor::new("code", ValueType::U64),
                     ],
                 )
@@ -1965,8 +1948,8 @@ mod tests {
                 RelationDescriptor::new(
                     "Child",
                     vec![
-                        FieldDescriptor::new("id", identity("ChildId", "Child")),
-                        FieldDescriptor::new("parent", identity("ParentId", "Parent")),
+                        FieldDescriptor::new("id", serial_type("ChildId", "Child")),
+                        FieldDescriptor::new("parent", serial_type("ParentId", "Parent")),
                     ],
                 )
                 .with_covering_unique("id", ["id"])
@@ -2011,11 +1994,10 @@ mod tests {
         )
     }
 
-    fn identity(type_name: &str, owning_relation: &str) -> ValueType {
-        ValueType::Identity {
+    fn serial_type(type_name: &str, owning_relation: &str) -> ValueType {
+        ValueType::Serial {
             type_name: type_name.to_owned(),
             owning_relation: owning_relation.to_owned(),
-            allocation: IdentityAllocation::Serial,
         }
     }
 

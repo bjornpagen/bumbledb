@@ -3,7 +3,7 @@
 use bumbledb_core::encoding::TimestampMicros;
 use bumbledb_core::query_builder::{OperandRef, QueryBuilder};
 use bumbledb_core::query_ir::ComparisonOperator;
-use bumbledb_lmdb::{Environment, IdentityValue, InputBindings, StorageSchema, Value};
+use bumbledb_lmdb::{Environment, InputBindings, StorageSchema, Value};
 use bumbledb_test_support::assertions::execute_sorted;
 use bumbledb_test_support::rows::seeded_ledger_rows;
 use bumbledb_test_support::schemas::ledger_schema;
@@ -59,7 +59,7 @@ fn sqlite_comparison_queries_match_bumbledb() -> Result<(), Box<dyn std::error::
 
 fn inputs() -> InputBindings {
     InputBindings::from_values([
-        ("holder", Value::Identity(IdentityValue::Serial(1))),
+        ("holder", Value::Serial(1)),
         ("start", Value::Timestamp(TimestampMicros(0))),
         ("end", Value::Timestamp(TimestampMicros(1_000_000))),
     ])

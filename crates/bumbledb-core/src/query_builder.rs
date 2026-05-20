@@ -7,9 +7,7 @@ use crate::query_ir::{
     TypedFieldBinding, TypedFindTerm, TypedInput, TypedLiteral, TypedOperand, TypedQuery,
     TypedRelationAtom, TypedTerm, TypedVariable,
 };
-use crate::schema::{
-    FieldDescriptor, IdentityAllocation, RelationDescriptor, SchemaDescriptor, ValueType,
-};
+use crate::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
 
 /// Query-builder result type.
 pub type QueryBuildResult<T> = std::result::Result<T, QueryBuildError>;
@@ -474,13 +472,9 @@ fn literal_fits_type(schema: &SchemaDescriptor, literal: &Literal, expected: &Va
                 && schema.enum_contains_code(name, *value as u8)
         }
         (Literal::Integer(value), ValueType::U64) => *value >= 0 && *value <= u64::MAX as i128,
-        (
-            Literal::Integer(value),
-            ValueType::Identity {
-                allocation: IdentityAllocation::Serial | IdentityAllocation::Application,
-                ..
-            },
-        ) => *value >= 0 && *value <= u64::MAX as i128,
+        (Literal::Integer(value), ValueType::Serial { .. }) => {
+            *value >= 0 && *value <= u64::MAX as i128
+        }
         (Literal::Integer(value), ValueType::I64 | ValueType::TimestampMicros) => {
             *value >= i64::MIN as i128 && *value <= i64::MAX as i128
         }
@@ -507,10 +501,7 @@ fn is_orderable(value_type: &ValueType) -> bool {
             | ValueType::I64
             | ValueType::TimestampMicros
             | ValueType::Decimal { .. }
-            | ValueType::Identity {
-                allocation: IdentityAllocation::Serial,
-                ..
-            }
+            | ValueType::Serial { .. }
     )
 }
 
@@ -524,10 +515,9 @@ fn type_name(value_type: &ValueType) -> String {
         ValueType::Enum { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),
-        ValueType::Identity {
+        ValueType::Serial {
             type_name,
             owning_relation,
-            ..
         } => format!("{type_name}@{owning_relation}"),
     }
 }
@@ -579,7 +569,7 @@ mod tests {
         assert_eq!(query.variables[1].name, "holder");
         assert!(matches!(
             query.variables[1].value_type,
-            ValueType::Identity { .. }
+            ValueType::Serial { .. }
         ));
         Ok(())
     }
@@ -670,6 +660,35 @@ mod tests {
     }
 
     #[test]
+    fn rejects_cross_serial_variable_unification() {
+        let schema = schema();
+        let mut builder = QueryBuilder::new(&schema);
+        let result = builder
+            .rel("Account")
+            .and_then(|atom| atom.var("id", "x")?.done().rel("Holder"))
+            .and_then(|atom| atom.var("id", "x"));
+        assert!(matches!(
+            result,
+            Err(QueryBuildError::VariableTypeConflict { .. })
+        ));
+    }
+
+    #[test]
+    fn accepts_matching_serial_variable_unification() -> QueryBuildResult<()> {
+        let schema = schema();
+        QueryBuilder::new(&schema)
+            .rel("Account")?
+            .var("holder", "x")?
+            .done()
+            .rel("Holder")?
+            .var("id", "x")?
+            .done()
+            .find_var("x")?
+            .finish()?;
+        Ok(())
+    }
+
+    #[test]
     fn rejects_input_type_conflict() {
         let schema = schema();
         let mut builder = QueryBuilder::new(&schema);
@@ -741,7 +760,7 @@ mod tests {
                 RelationDescriptor::new(
                     "Holder",
                     vec![
-                        FieldDescriptor::new("id", id_type("HolderId", "Holder")),
+                        FieldDescriptor::new("id", serial_type("HolderId", "Holder")),
                         FieldDescriptor::new("name", ValueType::String),
                     ],
                 )
@@ -749,8 +768,8 @@ mod tests {
                 RelationDescriptor::new(
                     "Account",
                     vec![
-                        FieldDescriptor::new("id", id_type("AccountId", "Account")),
-                        FieldDescriptor::new("holder", id_type("HolderId", "Holder")),
+                        FieldDescriptor::new("id", serial_type("AccountId", "Account")),
+                        FieldDescriptor::new("holder", serial_type("HolderId", "Holder")),
                         FieldDescriptor::new(
                             "currency",
                             ValueType::Enum {
@@ -769,8 +788,8 @@ mod tests {
                 RelationDescriptor::new(
                     "Posting",
                     vec![
-                        FieldDescriptor::new("id", id_type("PostingId", "Posting")),
-                        FieldDescriptor::new("account", id_type("AccountId", "Account")),
+                        FieldDescriptor::new("id", serial_type("PostingId", "Posting")),
+                        FieldDescriptor::new("account", serial_type("AccountId", "Account")),
                         FieldDescriptor::new("amount", ValueType::Decimal { scale: 2 }),
                         FieldDescriptor::new("at", ValueType::TimestampMicros),
                     ],
@@ -787,11 +806,10 @@ mod tests {
         .with_enum(EnumDescriptor::codes("Currency", [1, 2]))
     }
 
-    fn id_type(name: &str, relation: &str) -> ValueType {
-        ValueType::Identity {
+    fn serial_type(name: &str, relation: &str) -> ValueType {
+        ValueType::Serial {
             type_name: name.to_owned(),
             owning_relation: relation.to_owned(),
-            allocation: IdentityAllocation::Serial,
         }
     }
 }

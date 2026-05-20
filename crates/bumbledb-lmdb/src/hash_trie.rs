@@ -405,12 +405,10 @@ fn accumulate_stats(node: &HashNode, stats: &mut HashTrieStats) {
 
 #[cfg(test)]
 mod tests {
-    use bumbledb_core::schema::{
-        FieldDescriptor, IdentityAllocation, RelationDescriptor, SchemaDescriptor, ValueType,
-    };
+    use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
 
     use super::*;
-    use crate::{Environment, IdentityValue, Row, StorageSchema, Value};
+    use crate::{Environment, Row, StorageSchema, Value};
 
     #[test]
     fn builds_hash_trie_over_primary_key() -> Result<()> {
@@ -558,10 +556,9 @@ mod tests {
                     vec![
                         FieldDescriptor::new(
                             "id",
-                            ValueType::Identity {
+                            ValueType::Serial {
                                 type_name: "AccountId".to_owned(),
                                 owning_relation: "Account".to_owned(),
-                                allocation: IdentityAllocation::Serial,
                             },
                         ),
                         FieldDescriptor::new(
@@ -587,7 +584,7 @@ mod tests {
             Row::new(
                 "Account",
                 [
-                    ("id", Value::Identity(IdentityValue::Serial(1))),
+                    ("id", Value::Serial(1)),
                     ("currency", Value::Enum(1)),
                     ("active", Value::Bool(true)),
                 ],
@@ -595,7 +592,7 @@ mod tests {
             Row::new(
                 "Account",
                 [
-                    ("id", Value::Identity(IdentityValue::Serial(2))),
+                    ("id", Value::Serial(2)),
                     ("currency", Value::Enum(2)),
                     ("active", Value::Bool(false)),
                 ],
@@ -603,7 +600,7 @@ mod tests {
             Row::new(
                 "Account",
                 [
-                    ("id", Value::Identity(IdentityValue::Serial(3))),
+                    ("id", Value::Serial(3)),
                     ("currency", Value::Enum(1)),
                     ("active", Value::Bool(true)),
                 ],
