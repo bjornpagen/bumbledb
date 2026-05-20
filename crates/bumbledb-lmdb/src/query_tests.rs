@@ -694,6 +694,303 @@ fn direct_count_plan_has_no_free_join_nodes() -> TestResult {
 }
 
 #[test]
+fn factorized_count_supports_serial_literal_filter() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, owner_group_row(1, 10))?;
+        txn.insert(&schema, owner_group_row(2, 20))?;
+        txn.insert(&schema, owned_fact_row(9, 10, 100))?;
+        txn.insert(&schema, owned_fact_row(9, 10, 101))?;
+        txn.insert(&schema, owned_fact_row(9, 20, 200))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("OwnerGroup")?
+            .integer("owner", 1)?
+            .var("group", "group")?
+            .done();
+        query
+            .rel("OwnedFact")?
+            .var("group", "group")?
+            .var("item", "item")?
+            .done();
+        query.find_aggregate(AggregateFunction::Count, "item")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+    assert!(output.explain().contains("target=factorized_count"));
+    Ok(())
+}
+
+#[test]
+fn factorized_count_supports_enum_literal_filter() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, dim_row(1, 1))?;
+        txn.insert(&schema, dim_row(2, 2))?;
+        txn.insert(&schema, fact_row(1, 10))?;
+        txn.insert(&schema, fact_row(1, 11))?;
+        txn.insert(&schema, fact_row(2, 20))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Dim")?
+            .var("id", "dim")?
+            .integer("kind", 1)?
+            .done();
+        query
+            .rel("Fact")?
+            .var("dim", "dim")?
+            .var("item", "item")?
+            .done();
+        query.find_aggregate(AggregateFunction::Count, "item")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+    assert!(output.explain().contains("target=factorized_count"));
+    Ok(())
+}
+
+#[test]
+fn factorized_count_supports_range_filter() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(
+            &schema,
+            Row::new("Title", [("id", Value::U64(1)), ("year", Value::I64(2004))]),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new("Title", [("id", Value::U64(2)), ("year", Value::I64(2005))]),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new("Title", [("id", Value::U64(3)), ("year", Value::I64(2015))]),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new("Title", [("id", Value::U64(4)), ("year", Value::I64(2016))]),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "WorkCompany",
+                [("work", Value::U64(1)), ("company", Value::U64(10))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "WorkCompany",
+                [("work", Value::U64(2)), ("company", Value::U64(20))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "WorkCompany",
+                [("work", Value::U64(3)), ("company", Value::U64(30))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "WorkCompany",
+                [("work", Value::U64(4)), ("company", Value::U64(40))],
+            ),
+        )?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("WorkCompany")?
+            .var("work", "work")?
+            .var("company", "company")?
+            .done();
+        query
+            .rel("Title")?
+            .var("id", "work")?
+            .var("year", "year")?
+            .done();
+        query.cmp(
+            OperandRef::var("year"),
+            ComparisonOperator::Gte,
+            OperandRef::integer(2005),
+        )?;
+        query.cmp(
+            OperandRef::var("year"),
+            ComparisonOperator::Lte,
+            OperandRef::integer(2015),
+        )?;
+        query.find_aggregate(AggregateFunction::Count, "company")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+    assert!(output.explain().contains("target=factorized_count"));
+    Ok(())
+}
+
+#[test]
+fn factorized_count_supports_mixed_literal_and_range_filters() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(
+            &schema,
+            Row::new(
+                "Company",
+                [
+                    ("id", Value::U64(1)),
+                    ("country", Value::String("[us]".to_owned())),
+                ],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Company",
+                [
+                    ("id", Value::U64(2)),
+                    ("country", Value::String("[de]".to_owned())),
+                ],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Title",
+                [("id", Value::U64(10)), ("year", Value::I64(2010))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Title",
+                [("id", Value::U64(20)), ("year", Value::I64(2010))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "Title",
+                [("id", Value::U64(30)), ("year", Value::I64(2020))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "WorkCompany",
+                [("work", Value::U64(10)), ("company", Value::U64(1))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "WorkCompany",
+                [("work", Value::U64(20)), ("company", Value::U64(2))],
+            ),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new(
+                "WorkCompany",
+                [("work", Value::U64(30)), ("company", Value::U64(1))],
+            ),
+        )?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("WorkCompany")?
+            .var("work", "work")?
+            .var("company", "company")?
+            .done();
+        query
+            .rel("Company")?
+            .var("id", "company")?
+            .string("country", "[us]")?
+            .done();
+        query
+            .rel("Title")?
+            .var("id", "work")?
+            .var("year", "year")?
+            .done();
+        query.cmp(
+            OperandRef::var("year"),
+            ComparisonOperator::Gte,
+            OperandRef::integer(2005),
+        )?;
+        query.cmp(
+            OperandRef::var("year"),
+            ComparisonOperator::Lte,
+            OperandRef::integer(2015),
+        )?;
+        query.find_aggregate(AggregateFunction::Count, "work")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+    assert!(output.explain().contains("target=factorized_count"));
+    Ok(())
+}
+
+#[test]
+fn factorized_count_rejects_unsafe_cycle() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, edge_ab_row(1, 10))?;
+        txn.insert(
+            &schema,
+            Row::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(20))]),
+        )?;
+        txn.insert(
+            &schema,
+            Row::new("EdgeBC", [("b", Value::U64(10)), ("c", Value::U64(20))]),
+        )?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
+        query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
+        query.rel("EdgeBC")?.var("b", "b")?.var("c", "c")?.done();
+        query.find_aggregate(AggregateFunction::Count, "a")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+    assert!(!output.explain().contains("target=factorized_count"));
+    Ok(())
+}
+
+#[test]
 fn optimizer_trace_and_cost_tiebreak_are_stable() -> TestResult {
     let (env, schema) = seeded_db()?;
     let query = typed_query(&schema, |query| {

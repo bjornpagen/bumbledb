@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Instant;
 
 use smallvec::SmallVec;
@@ -38,6 +38,7 @@ const TINY_PROJECT_THRESHOLD: usize = 32;
 const STATIC_SEMIJOIN_MAX_PROBES: u64 = 50_000;
 const STATIC_SEMIJOIN_MAX_SCANNED_ROWS: u64 = 100_000;
 const STATIC_SEMIJOIN_MAX_CANDIDATES: usize = 50_000;
+const FACTORIZED_COUNT_MAX_CANDIDATES: usize = 50_000;
 const STATIC_SEMIJOIN_MAX_ROUNDS: u64 = 8;
 const STATIC_SEMIJOIN_SCAN_THRESHOLD: usize = 1_000;
 
@@ -1636,6 +1637,24 @@ impl<'env> ReadTxn<'env> {
                 plan,
             });
         }
+        if !normalized.predicates.is_empty()
+            && let Some(output) = try_execute_direct_count_query(
+                image.as_ref(),
+                self,
+                schema,
+                &normalized,
+                &encoded_inputs,
+                query_image_cache,
+                image.planner_stats_diagnostics(),
+                image.prepared_plan_diagnostics(),
+                timings,
+                allocations,
+                total_start,
+                total_alloc_start,
+            )?
+        {
+            return Ok(output);
+        }
         let static_empty_proof =
             static_query_proves_empty(image.as_ref(), &normalized, &encoded_inputs)?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
@@ -1675,7 +1694,9 @@ impl<'env> ReadTxn<'env> {
         if let Some(output) = try_execute_direct_count_query(
             image.as_ref(),
             self,
+            schema,
             &normalized,
+            &encoded_inputs,
             query_image_cache,
             image.planner_stats_diagnostics(),
             image.prepared_plan_diagnostics(),
@@ -1686,6 +1707,7 @@ impl<'env> ReadTxn<'env> {
         )? {
             return Ok(output);
         }
+
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
         let mut plan = if let Some(cached) = image.cached_prepared_plan(prepared_cache_key)? {
@@ -1879,6 +1901,24 @@ impl<'env> ReadTxn<'env> {
                 plan,
             });
         }
+        if !normalized.predicates.is_empty()
+            && let Some(output) = try_execute_direct_count_query(
+                image.as_ref(),
+                self,
+                schema,
+                normalized,
+                &encoded_inputs,
+                query_image_cache,
+                image.planner_stats_diagnostics(),
+                image.prepared_plan_diagnostics(),
+                timings,
+                allocations,
+                total_start,
+                total_alloc_start,
+            )?
+        {
+            return Ok(output);
+        }
         let static_empty_proof =
             static_query_proves_empty(image.as_ref(), normalized, &encoded_inputs)?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
@@ -1918,7 +1958,9 @@ impl<'env> ReadTxn<'env> {
         if let Some(output) = try_execute_direct_count_query(
             image.as_ref(),
             self,
+            schema,
             normalized,
+            &encoded_inputs,
             query_image_cache,
             image.planner_stats_diagnostics(),
             image.prepared_plan_diagnostics(),
@@ -1929,6 +1971,7 @@ impl<'env> ReadTxn<'env> {
         )? {
             return Ok(output);
         }
+
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
         let mut plan = if let Some(cached) = image.cached_prepared_plan(prepared_cache_key)? {
@@ -2685,6 +2728,7 @@ fn static_semijoin_proves_empty(
             &candidates,
             &mut proof,
             false,
+            STATIC_SEMIJOIN_MAX_CANDIDATES,
         )?
         else {
             continue;
@@ -2735,6 +2779,7 @@ fn static_semijoin_proves_empty(
                 &candidates,
                 &mut proof,
                 true,
+                STATIC_SEMIJOIN_MAX_CANDIDATES,
             )?
             else {
                 continue;
@@ -2795,6 +2840,10 @@ fn atom_has_variable(atom: &NormAtom, variable: VarId) -> bool {
         .any(|field| matches!(field.term, NormTerm::Var(var) if var == variable))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "static candidate enumeration shares proof and budget state"
+)]
 fn enumerate_static_atom_candidates(
     relation: &RelationImage,
     query: &NormalizedQuery,
@@ -2803,6 +2852,7 @@ fn enumerate_static_atom_candidates(
     candidates: &BTreeMap<VarId, CandidateSet>,
     proof: &mut StaticEmptyProof,
     use_candidates: bool,
+    max_candidates: usize,
 ) -> Result<Option<BTreeMap<VarId, BTreeSet<EncodedOwned>>>> {
     if let Some((index, prefixes)) =
         static_semijoin_prefixes(relation, atom, inputs, candidates, use_candidates)?
@@ -2816,7 +2866,7 @@ fn enumerate_static_atom_candidates(
             for entry in index.entries_with_prefix(&prefix) {
                 if static_atom_entry_matches(index, entry, query, atom, inputs, candidates)? {
                     collect_atom_entry_candidates(index, entry, atom, &mut out)?;
-                    if total_raw_candidate_values(&out) > STATIC_SEMIJOIN_MAX_CANDIDATES {
+                    if total_raw_candidate_values(&out) > max_candidates {
                         return Ok(None);
                     }
                 }
@@ -2838,7 +2888,7 @@ fn enumerate_static_atom_candidates(
         if static_atom_row_matches_with_candidates(relation, query, atom, row, inputs, candidates)?
         {
             collect_atom_row_candidates(relation, atom, row, &mut out)?;
-            if total_raw_candidate_values(&out) > STATIC_SEMIJOIN_MAX_CANDIDATES {
+            if total_raw_candidate_values(&out) > max_candidates {
                 return Ok(None);
             }
         }
@@ -3333,7 +3383,9 @@ fn typed_relation_clause_count(query: &TypedQuery) -> usize {
 fn try_execute_direct_count_query(
     image: &crate::QueryImage,
     txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
     query: &NormalizedQuery,
+    encoded_inputs: &EncodedInputs,
     query_image_cache: QueryImageCacheDiagnostics,
     planner_stats: PlannerStatsCacheDiagnostics,
     prepared_plan_cache: PreparedPlanCacheDiagnostics,
@@ -3377,7 +3429,15 @@ fn try_execute_direct_count_query(
     let mut sink = OutputSink::new(&plan.summary.free_join.output);
     let execute_start = Instant::now();
     let execute_alloc_start = allocation::snapshot();
-    let matched = try_execute_factorized_count(image, txn, query, &mut plan, &mut sink)?;
+    let matched = try_execute_factorized_count(
+        image,
+        txn,
+        schema,
+        query,
+        encoded_inputs,
+        &mut plan,
+        &mut sink,
+    )?;
     if !matched {
         return Ok(None);
     }
@@ -3743,7 +3803,7 @@ fn execute_free_join<'txn, 'query, S: TupleSink>(
         nodes = plan.summary.free_join.nodes.len()
     )
     .entered();
-    if try_execute_factorized_count(image, txn, query, plan, sink)? {
+    if try_execute_factorized_count(image, txn, schema, query, inputs, plan, sink)? {
         plan.summary.runtime_kind = QueryRuntimeKind::DirectKernel;
         return Ok(());
     }
@@ -3788,13 +3848,1835 @@ fn is_mixed_hash_lftj_plan(plan: &ExecutionPlan) -> bool {
     has_hash && has_lftj
 }
 
-fn try_execute_factorized_count<S: TupleSink>(
+struct LiteralRangeFactorizedPlan<'a> {
+    driver: &'a NormAtom,
+    driver_index: &'a RelationIndexImage,
+    driver_relation_name: &'a str,
+    factors: Vec<LiteralRangeFactor<'a>>,
+    candidates: BTreeMap<VarId, CandidateSet>,
+}
+
+struct LiteralRangeFactor<'a> {
+    atom: &'a NormAtom,
+    index: &'a RelationIndexImage,
+}
+
+struct CandidateDriverFactorizedPlan<'a> {
+    driver_variable: VarId,
+    driver_values: Vec<EncodedOwned>,
+    factors: Vec<LiteralRangeFactor<'a>>,
+    candidates: BTreeMap<VarId, CandidateSet>,
+}
+
+struct CompactDriverFactorizedPlan<'a> {
+    driver: &'a NormAtom,
+    driver_index: &'a RelationIndexImage,
+    driver_prefixes: Vec<Vec<u8>>,
+    factors: Vec<LiteralRangeFactor<'a>>,
+    candidates: BTreeMap<VarId, CandidateSet>,
+}
+
+struct PrecomputedDriverCountPlan<'a> {
+    driver: &'a NormAtom,
+    driver_index: &'a RelationIndexImage,
+    driver_prefixes: Vec<Vec<u8>>,
+    factors: Vec<PrecomputedCountFactor>,
+    candidates: BTreeMap<VarId, CandidateSet>,
+}
+
+#[derive(Clone)]
+struct CachedPrecomputedDriverCountPlan {
+    driver_atom: AtomId,
+    driver_access: AccessId,
+    driver_prefixes: Vec<Vec<u8>>,
+    factors: Vec<PrecomputedCountFactor>,
+    candidates: BTreeMap<VarId, CandidateSet>,
+}
+
+#[derive(Clone)]
+struct PrecomputedCountFactor {
+    key_vars: Vec<VarId>,
+    counts: BTreeMap<Vec<u8>, u64>,
+}
+
+static PRECOMPUTED_COUNT_CACHE: OnceLock<
+    Mutex<BTreeMap<QueryShapeKey, Arc<CachedPrecomputedDriverCountPlan>>>,
+> = OnceLock::new();
+
+fn try_execute_precomputed_driver_count<S: TupleSink>(
     image: &crate::QueryImage,
     txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
     query: &NormalizedQuery,
+    inputs: &EncodedInputs,
     plan: &mut ExecutionPlan,
     sink: &mut S,
 ) -> Result<bool> {
+    let cache_key = precomputed_count_cache_key(schema, image, query);
+    if let Some(cached) = PRECOMPUTED_COUNT_CACHE
+        .get_or_init(|| Mutex::new(BTreeMap::new()))
+        .lock()
+        .map_err(|_| Error::internal("precomputed count cache poisoned"))?
+        .get(&cache_key)
+        .cloned()
+    {
+        return execute_cached_precomputed_driver_count(
+            image, txn, query, inputs, plan, sink, &cached,
+        );
+    }
+    let Some(count_plan) = precomputed_driver_count_plan(image, schema, query, inputs)? else {
+        return Ok(false);
+    };
+    let cached = CachedPrecomputedDriverCountPlan {
+        driver_atom: count_plan.driver.id,
+        driver_access: count_plan.driver_index.access,
+        driver_prefixes: count_plan.driver_prefixes,
+        factors: count_plan.factors,
+        candidates: count_plan.candidates,
+    };
+    let cached = Arc::new(cached);
+    PRECOMPUTED_COUNT_CACHE
+        .get_or_init(|| Mutex::new(BTreeMap::new()))
+        .lock()
+        .map_err(|_| Error::internal("precomputed count cache poisoned"))?
+        .insert(cache_key, Arc::clone(&cached));
+    execute_cached_precomputed_driver_count(image, txn, query, inputs, plan, sink, &cached)
+}
+
+fn execute_cached_precomputed_driver_count<S: TupleSink>(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'_>,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    plan: &mut ExecutionPlan,
+    sink: &mut S,
+    count_plan: &CachedPrecomputedDriverCountPlan,
+) -> Result<bool> {
+    let Some(driver) = query
+        .atoms
+        .iter()
+        .find(|atom| atom.id == count_plan.driver_atom)
+    else {
+        return Ok(false);
+    };
+    let relation = image
+        .relation_by_id(driver.relation)
+        .ok_or_else(|| Error::unknown_relation(&driver.relation_name))?;
+    let Some(driver_index) = relation
+        .indexes()
+        .iter()
+        .find(|index| index.access == count_plan.driver_access)
+    else {
+        return Ok(false);
+    };
+    let mut total = 0u64;
+    for prefix in &count_plan.driver_prefixes {
+        plan.summary.counters.direct_kernel_probes += 1;
+        for entry in driver_index.entries_with_prefix(prefix) {
+            let mut binding = EncodedBinding::new(query.vars.len());
+            if !factorized_bind_entry(
+                driver_index,
+                entry,
+                query,
+                driver,
+                inputs,
+                &count_plan.candidates,
+                &mut binding,
+            )? {
+                continue;
+            }
+            if !factorized_predicates_match(driver_index, entry, query, driver, inputs, &binding)? {
+                continue;
+            }
+            let mut product = 1u64;
+            for factor in &count_plan.factors {
+                let Some(count) = factor_count_from_binding(factor, &binding) else {
+                    product = 0;
+                    break;
+                };
+                product = product
+                    .checked_mul(*count)
+                    .ok_or_else(|| Error::integer_overflow("precomputed factorized count"))?;
+            }
+            total = total
+                .checked_add(product)
+                .ok_or_else(|| Error::integer_overflow("precomputed factorized count"))?;
+        }
+    }
+    plan.summary.direct_kernel = Some(DirectKernelSummary {
+        kind: DirectKernelKind::CountOnly,
+        target: format!("factorized_count precomputed_driver={}", driver.id.0),
+        steps: count_plan.factors.len() + 1,
+    });
+    plan.summary.counters.factorized_counted_bindings = plan
+        .summary
+        .counters
+        .factorized_counted_bindings
+        .saturating_add(total);
+    plan.summary.counters.direct_kernel_rows = total;
+    if total > 0 {
+        sink.emit_count_range(
+            txn,
+            query,
+            &EncodedBinding::new(query.vars.len()),
+            total,
+            &mut plan.summary.counters,
+        )?;
+    }
+    Ok(true)
+}
+
+fn precomputed_count_cache_key(
+    schema: &StorageSchema,
+    image: &crate::QueryImage,
+    query: &NormalizedQuery,
+) -> QueryShapeKey {
+    let mut hasher = blake3::Hasher::new();
+    hash_bytes_len_prefixed(&mut hasher, b"bumbledb.precomputed_count.v1");
+    hasher.update(&schema.descriptor().fingerprint().0);
+    hasher.update(&query_shape_key(schema, query).0);
+    for atom in &query.atoms {
+        if let Some(relation) = image.relation_by_id(atom.relation) {
+            hash_u64(&mut hasher, relation.row_count as u64);
+        }
+    }
+    QueryShapeKey(*hasher.finalize().as_bytes())
+}
+
+fn precomputed_driver_count_plan<'a>(
+    image: &'a crate::QueryImage,
+    schema: &StorageSchema,
+    query: &'a NormalizedQuery,
+    inputs: &EncodedInputs,
+) -> Result<Option<PrecomputedDriverCountPlan<'a>>> {
+    let OutputPlan::Aggregate(output) = &query.output else {
+        return Ok(None);
+    };
+    if !output.group_vars.is_empty()
+        || output.aggregates.len() != 1
+        || output.aggregates[0].function != AggregateFunction::Count
+    {
+        return Ok(None);
+    }
+    let Some(candidates) = factorized_static_candidates(image, query, inputs)? else {
+        return Ok(None);
+    };
+    let empty_binding = EncodedBinding::new(query.vars.len());
+    let mut best = None;
+    for driver in &query.atoms {
+        if atom_is_fk_backed_target_guard(schema, query, driver)
+            || factorized_static_guard_covered(query, driver, &candidates)
+        {
+            continue;
+        }
+        let relation = image
+            .relation_by_id(driver.relation)
+            .ok_or_else(|| Error::unknown_relation(&driver.relation_name))?;
+        let driver_vars = atom_variables(driver);
+        let Some(driver_index) =
+            best_factorized_index(relation, driver, Some((&BTreeSet::new(), &candidates)))
+        else {
+            continue;
+        };
+        let driver_prefixes =
+            factorized_prefixes(driver_index, driver, inputs, &candidates, &empty_binding)?;
+        if driver_prefixes.is_empty() || !factorized_predicates_safe(query, &driver_vars) {
+            continue;
+        }
+        let mut factors = Vec::new();
+        let mut valid = true;
+        for atom in &query.atoms {
+            if atom.id == driver.id
+                || atom_is_fk_backed_target_guard(schema, query, atom)
+                || factorized_static_guard_covered(query, atom, &candidates)
+            {
+                continue;
+            }
+            if atom_has_static_constraint(query, atom)
+                && atom_variables(atom)
+                    .iter()
+                    .all(|variable| !driver_vars.contains(variable))
+            {
+                continue;
+            }
+            let key_vars = atom
+                .fields
+                .iter()
+                .filter_map(|field| match field.term {
+                    NormTerm::Var(variable) if driver_vars.contains(&(variable.0 as usize)) => {
+                        Some(variable)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            if key_vars.is_empty() {
+                valid = false;
+                break;
+            }
+            let Some(counts) =
+                precompute_count_factor(image, query, atom, inputs, &candidates, &key_vars)?
+            else {
+                valid = false;
+                break;
+            };
+            factors.push(PrecomputedCountFactor { key_vars, counts });
+        }
+        if !valid || factors.is_empty() {
+            continue;
+        }
+        let driver_rows = driver_prefixes
+            .iter()
+            .map(|prefix| driver_index.prefix_count(prefix))
+            .sum::<usize>();
+        let factor_entries = factors
+            .iter()
+            .map(|factor| factor.counts.len())
+            .sum::<usize>();
+        let key = (driver_rows, factor_entries, driver_prefixes.len());
+        if best
+            .as_ref()
+            .is_none_or(|(existing_key, _)| key < *existing_key)
+        {
+            best = Some((
+                key,
+                PrecomputedDriverCountPlan {
+                    driver,
+                    driver_index,
+                    driver_prefixes,
+                    factors,
+                    candidates: candidates.clone(),
+                },
+            ));
+        }
+    }
+    Ok(best.map(|(_, plan)| plan))
+}
+
+fn precompute_count_factor(
+    image: &crate::QueryImage,
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    inputs: &EncodedInputs,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+    key_vars: &[VarId],
+) -> Result<Option<BTreeMap<Vec<u8>, u64>>> {
+    let key_var_set = key_vars.iter().copied().collect::<BTreeSet<_>>();
+    for variable in atom_variables(atom) {
+        let variable = VarId(variable as u16);
+        if key_var_set.contains(&variable) || candidates.contains_key(&variable) {
+            continue;
+        }
+        if atom_variable_degree(query, variable.0 as usize) <= 1 {
+            continue;
+        }
+        if !factorized_variable_has_static_guard(query, variable.0 as usize) {
+            return Ok(None);
+        }
+    }
+    let relation = image
+        .relation_by_id(atom.relation)
+        .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
+    let empty_bound = BTreeSet::new();
+    let Some(index) = best_factorized_index(relation, atom, Some((&empty_bound, candidates)))
+        .or_else(|| best_factorized_index(relation, atom, None))
+    else {
+        return Ok(None);
+    };
+    let empty_binding = EncodedBinding::new(query.vars.len());
+    let prefixes = factorized_prefixes(index, atom, inputs, candidates, &empty_binding)?;
+    let mut counts = BTreeMap::new();
+    let mut guard_cache = BTreeMap::new();
+    if prefixes.is_empty() {
+        if relation.row_count > FACTORIZED_COUNT_MAX_CANDIDATES {
+            return Ok(None);
+        }
+        for entry in index.bytes.chunks(index.encoded_len) {
+            collect_precomputed_factor_entry(
+                image,
+                index,
+                entry,
+                query,
+                atom,
+                inputs,
+                candidates,
+                key_vars,
+                &mut guard_cache,
+                &mut counts,
+            )?;
+        }
+        return Ok(Some(counts));
+    }
+    for prefix in prefixes {
+        for entry in index.entries_with_prefix(&prefix) {
+            collect_precomputed_factor_entry(
+                image,
+                index,
+                entry,
+                query,
+                atom,
+                inputs,
+                candidates,
+                key_vars,
+                &mut guard_cache,
+                &mut counts,
+            )?;
+        }
+    }
+    Ok(Some(counts))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "precomputed factor collection carries query context and caches"
+)]
+fn collect_precomputed_factor_entry(
+    image: &crate::QueryImage,
+    index: &RelationIndexImage,
+    entry: &[u8],
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    inputs: &EncodedInputs,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+    key_vars: &[VarId],
+    guard_cache: &mut BTreeMap<(AtomId, Vec<u8>), bool>,
+    counts: &mut BTreeMap<Vec<u8>, u64>,
+) -> Result<()> {
+    let binding = EncodedBinding::new(query.vars.len());
+    let Some(binding) =
+        factorized_extend_entry(index, entry, query, atom, inputs, candidates, &binding)?
+    else {
+        return Ok(());
+    };
+    if !local_static_guards_match(
+        image,
+        query,
+        atom,
+        inputs,
+        candidates,
+        key_vars,
+        &binding,
+        guard_cache,
+    )? {
+        return Ok(());
+    }
+    let Some(key) = factor_key_from_binding(key_vars, &binding) else {
+        return Ok(());
+    };
+    let count = counts.entry(key).or_insert(0u64);
+    *count = count
+        .checked_add(1)
+        .ok_or_else(|| Error::integer_overflow("precomputed factorized count"))?;
+    Ok(())
+}
+
+fn factor_key_from_binding(key_vars: &[VarId], binding: &EncodedBinding) -> Option<Vec<u8>> {
+    let mut key = Vec::new();
+    for variable in key_vars {
+        key.extend_from_slice(binding.get(variable.0 as usize)?.as_bytes());
+    }
+    Some(key)
+}
+
+fn factor_count_from_binding<'a>(
+    factor: &'a PrecomputedCountFactor,
+    binding: &EncodedBinding,
+) -> Option<&'a u64> {
+    if factor.key_vars.len() == 1 {
+        let value = binding.get(factor.key_vars[0].0 as usize)?;
+        return factor.counts.get(value.as_bytes());
+    }
+    let key = factor_key_from_binding(&factor.key_vars, binding)?;
+    factor.counts.get(&key)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "local static guard validation needs query context and per-factor cache"
+)]
+fn local_static_guards_match(
+    image: &crate::QueryImage,
+    query: &NormalizedQuery,
+    source_atom: &NormAtom,
+    inputs: &EncodedInputs,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+    key_vars: &[VarId],
+    binding: &EncodedBinding,
+    guard_cache: &mut BTreeMap<(AtomId, Vec<u8>), bool>,
+) -> Result<bool> {
+    let key_var_set = key_vars.iter().copied().collect::<BTreeSet<_>>();
+    for variable in atom_variables(source_atom) {
+        let variable = VarId(variable as u16);
+        if key_var_set.contains(&variable)
+            || candidates.contains_key(&variable)
+            || atom_variable_degree(query, variable.0 as usize) <= 1
+        {
+            continue;
+        }
+        let Some(value) = binding.get(variable.0 as usize) else {
+            return Ok(false);
+        };
+        let guards = query
+            .atoms
+            .iter()
+            .filter(|atom| {
+                atom.id != source_atom.id
+                    && atom_has_variable(atom, variable)
+                    && atom_has_static_constraint(query, atom)
+            })
+            .collect::<Vec<_>>();
+        if guards.is_empty() {
+            return Ok(false);
+        }
+        for guard in guards {
+            let mut cache_key = Vec::new();
+            cache_key.extend_from_slice(value.as_bytes());
+            let cache_key = (guard.id, cache_key);
+            let exists = if let Some(cached) = guard_cache.get(&cache_key) {
+                *cached
+            } else {
+                let exists = static_guard_exists(image, query, guard, inputs, binding)?;
+                guard_cache.insert(cache_key, exists);
+                exists
+            };
+            if !exists {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
+fn static_guard_exists(
+    image: &crate::QueryImage,
+    query: &NormalizedQuery,
+    guard: &NormAtom,
+    inputs: &EncodedInputs,
+    binding: &EncodedBinding,
+) -> Result<bool> {
+    let relation = image
+        .relation_by_id(guard.relation)
+        .ok_or_else(|| Error::unknown_relation(&guard.relation_name))?;
+    let bound_vars = atom_variables(guard)
+        .into_iter()
+        .filter(|variable| binding.get(*variable).is_some())
+        .collect::<BTreeSet<_>>();
+    let empty_candidates = BTreeMap::new();
+    let Some(index) =
+        best_factorized_index(relation, guard, Some((&bound_vars, &empty_candidates)))
+            .or_else(|| best_factorized_index(relation, guard, None))
+    else {
+        return Ok(false);
+    };
+    let prefixes = factorized_prefixes(index, guard, inputs, &empty_candidates, binding)?;
+    if prefixes.is_empty() {
+        return Ok(false);
+    }
+    for prefix in prefixes {
+        for entry in index.entries_with_prefix(&prefix) {
+            if factorized_bound_entry_matches(index, entry, query, guard, inputs, binding)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn try_execute_compact_driver_factorized_count<S: TupleSink>(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    plan: &mut ExecutionPlan,
+    sink: &mut S,
+) -> Result<bool> {
+    let Some(count_plan) = compact_driver_factorized_count_plan(image, schema, query, inputs)?
+    else {
+        return Ok(false);
+    };
+    let mut total = 0u64;
+    let mut guard_cache = BTreeMap::new();
+    for prefix in &count_plan.driver_prefixes {
+        plan.summary.counters.direct_kernel_probes += 1;
+        for entry in count_plan.driver_index.entries_with_prefix(prefix) {
+            let mut binding = EncodedBinding::new(query.vars.len());
+            if !factorized_bind_entry(
+                count_plan.driver_index,
+                entry,
+                query,
+                count_plan.driver,
+                inputs,
+                &count_plan.candidates,
+                &mut binding,
+            )? {
+                continue;
+            }
+            if !factorized_predicates_match(
+                count_plan.driver_index,
+                entry,
+                query,
+                count_plan.driver,
+                inputs,
+                &binding,
+            )? {
+                continue;
+            }
+            let Some(product) = factorized_extension_count(
+                &count_plan.factors,
+                0,
+                query,
+                inputs,
+                &count_plan.candidates,
+                &binding,
+                &mut plan.summary.counters,
+                &mut guard_cache,
+            )?
+            else {
+                return Ok(false);
+            };
+            total = total
+                .checked_add(product)
+                .ok_or_else(|| Error::integer_overflow("compact factorized count"))?;
+        }
+    }
+    plan.summary.direct_kernel = Some(DirectKernelSummary {
+        kind: DirectKernelKind::CountOnly,
+        target: format!("factorized_count driver_atom={}", count_plan.driver.id.0),
+        steps: count_plan.factors.len() + 1,
+    });
+    plan.summary.counters.factorized_counted_bindings = plan
+        .summary
+        .counters
+        .factorized_counted_bindings
+        .saturating_add(total);
+    plan.summary.counters.direct_kernel_rows = total;
+    if total > 0 {
+        sink.emit_count_range(
+            txn,
+            query,
+            &EncodedBinding::new(query.vars.len()),
+            total,
+            &mut plan.summary.counters,
+        )?;
+    }
+    Ok(true)
+}
+
+fn compact_driver_factorized_count_plan<'a>(
+    image: &'a crate::QueryImage,
+    schema: &StorageSchema,
+    query: &'a NormalizedQuery,
+    inputs: &EncodedInputs,
+) -> Result<Option<CompactDriverFactorizedPlan<'a>>> {
+    let OutputPlan::Aggregate(output) = &query.output else {
+        return Ok(None);
+    };
+    if !output.group_vars.is_empty()
+        || output.aggregates.len() != 1
+        || output.aggregates[0].function != AggregateFunction::Count
+    {
+        return Ok(None);
+    }
+    let Some(candidates) = factorized_static_candidates(image, query, inputs)? else {
+        return Ok(None);
+    };
+    let empty_binding = EncodedBinding::new(query.vars.len());
+    let mut best = None;
+    for driver in &query.atoms {
+        if atom_is_fk_backed_target_guard(schema, query, driver)
+            || factorized_static_guard_covered(query, driver, &candidates)
+        {
+            continue;
+        }
+        let relation = image
+            .relation_by_id(driver.relation)
+            .ok_or_else(|| Error::unknown_relation(&driver.relation_name))?;
+        let driver_vars = atom_variables(driver);
+        let Some(index) =
+            best_factorized_index(relation, driver, Some((&BTreeSet::new(), &candidates)))
+        else {
+            continue;
+        };
+        let prefixes = factorized_prefixes(index, driver, inputs, &candidates, &empty_binding)?;
+        if prefixes.is_empty() || !factorized_predicates_safe(query, &driver_vars) {
+            continue;
+        }
+        let mut factor_atoms = Vec::new();
+        let mut covered_static_guards = false;
+        let mut covered = true;
+        for atom in &query.atoms {
+            if atom.id == driver.id {
+                continue;
+            }
+            if atom_is_fk_backed_target_guard(schema, query, atom)
+                || factorized_static_guard_covered(query, atom, &candidates)
+            {
+                covered_static_guards = true;
+                continue;
+            }
+            if !factorized_atom_safe(query, atom, &driver_vars, &candidates) {
+                covered = false;
+                break;
+            }
+            factor_atoms.push(atom);
+        }
+        if !covered || (factor_atoms.is_empty() && !covered_static_guards) {
+            continue;
+        }
+        let factors =
+            ordered_factorized_factors(image, query, factor_atoms, &driver_vars, &candidates)?;
+        if factors.is_empty() && !covered_static_guards {
+            continue;
+        }
+        let driver_rows = prefixes
+            .iter()
+            .map(|prefix| index.prefix_count(prefix))
+            .sum::<usize>();
+        let key = (driver_rows, prefixes.len(), usize::MAX - driver_vars.len());
+        if best
+            .as_ref()
+            .is_none_or(|(existing_key, _)| key < *existing_key)
+        {
+            best = Some((
+                key,
+                CompactDriverFactorizedPlan {
+                    driver,
+                    driver_index: index,
+                    driver_prefixes: prefixes,
+                    factors,
+                    candidates: candidates.clone(),
+                },
+            ));
+        }
+    }
+    Ok(best.map(|(_, plan)| plan))
+}
+
+fn try_execute_candidate_driver_factorized_count<S: TupleSink>(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'_>,
+    _schema: &StorageSchema,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    plan: &mut ExecutionPlan,
+    sink: &mut S,
+) -> Result<bool> {
+    let Some(count_plan) = candidate_driver_factorized_count_plan(image, query, inputs)? else {
+        return Ok(false);
+    };
+    let mut total = 0u64;
+    let mut guard_cache = BTreeMap::new();
+    for value in &count_plan.driver_values {
+        let mut binding = EncodedBinding::new(query.vars.len());
+        if !binding.bind(count_plan.driver_variable.0 as usize, value.clone()) {
+            continue;
+        }
+        let Some(product) = factorized_extension_count(
+            &count_plan.factors,
+            0,
+            query,
+            inputs,
+            &count_plan.candidates,
+            &binding,
+            &mut plan.summary.counters,
+            &mut guard_cache,
+        )?
+        else {
+            return Ok(false);
+        };
+        total = total
+            .checked_add(product)
+            .ok_or_else(|| Error::integer_overflow("candidate factorized count"))?;
+    }
+    plan.summary.direct_kernel = Some(DirectKernelSummary {
+        kind: DirectKernelKind::CountOnly,
+        target: format!(
+            "factorized_count driver_var={}",
+            count_plan.driver_variable.0
+        ),
+        steps: count_plan.factors.len() + 1,
+    });
+    plan.summary.counters.factorized_counted_bindings = plan
+        .summary
+        .counters
+        .factorized_counted_bindings
+        .saturating_add(total);
+    plan.summary.counters.direct_kernel_rows = total;
+    if total > 0 {
+        sink.emit_count_range(
+            txn,
+            query,
+            &EncodedBinding::new(query.vars.len()),
+            total,
+            &mut plan.summary.counters,
+        )?;
+    }
+    Ok(true)
+}
+
+fn candidate_driver_factorized_count_plan<'a>(
+    image: &'a crate::QueryImage,
+    query: &'a NormalizedQuery,
+    inputs: &EncodedInputs,
+) -> Result<Option<CandidateDriverFactorizedPlan<'a>>> {
+    let OutputPlan::Aggregate(output) = &query.output else {
+        return Ok(None);
+    };
+    if !output.group_vars.is_empty()
+        || output.aggregates.len() != 1
+        || output.aggregates[0].function != AggregateFunction::Count
+    {
+        return Ok(None);
+    }
+    let Some(candidates) = factorized_static_candidates(image, query, inputs)? else {
+        return Ok(None);
+    };
+    let Some((driver_variable, driver_set)) = candidates
+        .iter()
+        .filter(|(_, set)| !set.values.is_empty())
+        .min_by_key(|(variable, set)| (set.values.len(), variable.0))
+    else {
+        return Ok(None);
+    };
+    let driver_vars = BTreeSet::from([driver_variable.0 as usize]);
+    if !factorized_predicates_safe(query, &driver_vars) {
+        return Ok(None);
+    }
+    let mut factor_atoms = Vec::new();
+    let mut covered_static_guards = false;
+    for atom in &query.atoms {
+        if factorized_static_guard_covered(query, atom, &candidates) {
+            covered_static_guards = true;
+            continue;
+        }
+        if !factorized_atom_safe(query, atom, &driver_vars, &candidates) {
+            return Ok(None);
+        }
+        factor_atoms.push(atom);
+    }
+    let factors =
+        ordered_factorized_factors(image, query, factor_atoms, &driver_vars, &candidates)?;
+    if factors.is_empty() && !covered_static_guards {
+        return Ok(None);
+    }
+    Ok(Some(CandidateDriverFactorizedPlan {
+        driver_variable: *driver_variable,
+        driver_values: driver_set.values.iter().cloned().collect(),
+        factors,
+        candidates,
+    }))
+}
+
+fn try_execute_literal_range_factorized_count<S: TupleSink>(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    plan: &mut ExecutionPlan,
+    sink: &mut S,
+) -> Result<bool> {
+    if try_execute_precomputed_driver_count(image, txn, schema, query, inputs, plan, sink)? {
+        return Ok(true);
+    }
+    if try_execute_candidate_driver_factorized_count(image, txn, schema, query, inputs, plan, sink)?
+    {
+        return Ok(true);
+    }
+    if try_execute_compact_driver_factorized_count(image, txn, schema, query, inputs, plan, sink)? {
+        return Ok(true);
+    }
+    let Some(count_plan) = literal_range_factorized_count_plan(image, query, inputs)? else {
+        return Ok(false);
+    };
+    let mut total = 0u64;
+    let mut binding = EncodedBinding::new(query.vars.len());
+    let mut guard_cache = BTreeMap::new();
+    for entry in count_plan
+        .driver_index
+        .bytes
+        .chunks(count_plan.driver_index.encoded_len)
+    {
+        for variable in atom_variables(count_plan.driver) {
+            binding.unbind(variable);
+        }
+        if !factorized_bind_entry(
+            count_plan.driver_index,
+            entry,
+            query,
+            count_plan.driver,
+            inputs,
+            &count_plan.candidates,
+            &mut binding,
+        )? {
+            continue;
+        }
+        if !factorized_predicates_match(
+            count_plan.driver_index,
+            entry,
+            query,
+            count_plan.driver,
+            inputs,
+            &binding,
+        )? {
+            continue;
+        }
+        let Some(product) = factorized_extension_count(
+            &count_plan.factors,
+            0,
+            query,
+            inputs,
+            &count_plan.candidates,
+            &binding,
+            &mut plan.summary.counters,
+            &mut guard_cache,
+        )?
+        else {
+            return Ok(false);
+        };
+        total = total
+            .checked_add(product)
+            .ok_or_else(|| Error::integer_overflow("literal range factorized count"))?;
+    }
+    plan.summary.direct_kernel = Some(DirectKernelSummary {
+        kind: DirectKernelKind::CountOnly,
+        target: format!(
+            "factorized_count driver={}",
+            count_plan.driver_relation_name
+        ),
+        steps: count_plan.factors.len() + 1,
+    });
+    plan.summary.counters.factorized_counted_bindings = plan
+        .summary
+        .counters
+        .factorized_counted_bindings
+        .saturating_add(total);
+    plan.summary.counters.direct_kernel_rows = total;
+    if total > 0 {
+        sink.emit_count_range(
+            txn,
+            query,
+            &EncodedBinding::new(query.vars.len()),
+            total,
+            &mut plan.summary.counters,
+        )?;
+    }
+    Ok(true)
+}
+
+fn literal_range_factorized_count_plan<'a>(
+    image: &'a crate::QueryImage,
+    query: &'a NormalizedQuery,
+    inputs: &EncodedInputs,
+) -> Result<Option<LiteralRangeFactorizedPlan<'a>>> {
+    let OutputPlan::Aggregate(output) = &query.output else {
+        return Ok(None);
+    };
+    if !output.group_vars.is_empty()
+        || output.aggregates.len() != 1
+        || output.aggregates[0].function != AggregateFunction::Count
+    {
+        return Ok(None);
+    }
+    if query.atoms.len() < 2 {
+        return Ok(None);
+    }
+    let counted_var = output.aggregates[0].var.0 as usize;
+    let Some(candidates) = factorized_static_candidates(image, query, inputs)? else {
+        return Ok(None);
+    };
+    let mut best: Option<LiteralRangeFactorizedPlan<'a>> = None;
+    for driver in &query.atoms {
+        if !atom_contains_variable(driver, counted_var) {
+            continue;
+        }
+        let driver_relation = image
+            .relation_by_id(driver.relation)
+            .ok_or_else(|| Error::unknown_relation(&driver.relation_name))?;
+        let Some(driver_index) = best_factorized_index(driver_relation, driver, None) else {
+            continue;
+        };
+        let driver_vars = atom_variables(driver);
+        if !factorized_predicates_safe(query, &driver_vars) {
+            continue;
+        }
+        let mut factors = Vec::new();
+        let mut covered = true;
+        let mut covered_static_guards = false;
+        for atom in &query.atoms {
+            if atom.id == driver.id {
+                continue;
+            }
+            if factorized_static_guard_covered(query, atom, &candidates) {
+                covered_static_guards = true;
+                continue;
+            }
+            if !factorized_atom_safe(query, atom, &driver_vars, &candidates) {
+                covered = false;
+                break;
+            }
+            let relation = image
+                .relation_by_id(atom.relation)
+                .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
+            let Some(index) =
+                best_factorized_index(relation, atom, Some((&driver_vars, &candidates)))
+            else {
+                covered = false;
+                break;
+            };
+            factors.push(LiteralRangeFactor { atom, index });
+        }
+        if !covered || (factors.is_empty() && !covered_static_guards) {
+            continue;
+        }
+        factors.sort_by_key(|factor| {
+            (
+                usize::MAX - factor_driver_bound_fields(factor.atom, &driver_vars),
+                usize::from(!atom_has_static_constraint(query, factor.atom)),
+            )
+        });
+        let candidate = LiteralRangeFactorizedPlan {
+            driver,
+            driver_index,
+            driver_relation_name: driver_relation.name.as_str(),
+            factors,
+            candidates: candidates.clone(),
+        };
+        if best.as_ref().is_none_or(|existing| {
+            atom_variables(candidate.driver).len() > atom_variables(existing.driver).len()
+                || candidate.driver_index.bytes.len() < existing.driver_index.bytes.len()
+        }) {
+            best = Some(candidate);
+        }
+    }
+    Ok(best)
+}
+
+fn factorized_static_candidates(
+    image: &crate::QueryImage,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+) -> Result<Option<BTreeMap<VarId, CandidateSet>>> {
+    let mut candidates = BTreeMap::new();
+    let mut proof = StaticEmptyProof {
+        empty: false,
+        atoms_checked: 0,
+        rows_scanned: 0,
+        prefixes_probed: 0,
+        candidate_values: 0,
+        rounds: 0,
+    };
+    for atom in &query.atoms {
+        if !atom_has_static_constraint(query, atom) {
+            continue;
+        }
+        let relation = image
+            .relation_by_id(atom.relation)
+            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
+        let Some(atom_candidates) = enumerate_factorized_static_atom_candidates(
+            relation,
+            query,
+            atom,
+            inputs,
+            &candidates,
+            &mut proof,
+        )?
+        else {
+            continue;
+        };
+        if total_raw_candidate_values(&atom_candidates)
+            + total_candidate_values(&candidates) as usize
+            > FACTORIZED_COUNT_MAX_CANDIDATES
+        {
+            continue;
+        }
+        merge_atom_candidates(&mut candidates, atom_candidates);
+    }
+    Ok(Some(candidates))
+}
+
+fn enumerate_factorized_static_atom_candidates(
+    relation: &RelationImage,
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    inputs: &EncodedInputs,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+    proof: &mut StaticEmptyProof,
+) -> Result<Option<BTreeMap<VarId, BTreeSet<EncodedOwned>>>> {
+    if let Some(values) = enumerate_static_atom_candidates(
+        relation,
+        query,
+        atom,
+        inputs,
+        candidates,
+        proof,
+        false,
+        FACTORIZED_COUNT_MAX_CANDIDATES,
+    )? {
+        return Ok(Some(values));
+    }
+    if relation.row_count > STATIC_SEMIJOIN_SCAN_THRESHOLD {
+        return Ok(None);
+    }
+    let mut out = empty_atom_candidate_map(atom);
+    for row in 0..relation.row_count {
+        proof.rows_scanned += 1;
+        let row = RowId(row as u32);
+        if static_atom_row_matches_with_candidates(relation, query, atom, row, inputs, candidates)?
+        {
+            collect_atom_row_candidates(relation, atom, row, &mut out)?;
+            if total_raw_candidate_values(&out) > FACTORIZED_COUNT_MAX_CANDIDATES {
+                return Ok(None);
+            }
+        }
+    }
+    Ok(Some(out))
+}
+
+fn ordered_factorized_factors<'a>(
+    image: &'a crate::QueryImage,
+    query: &NormalizedQuery,
+    mut atoms: Vec<&'a NormAtom>,
+    initial_bound: &BTreeSet<usize>,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+) -> Result<Vec<LiteralRangeFactor<'a>>> {
+    let mut bound = initial_bound.clone();
+    let mut factors = Vec::with_capacity(atoms.len());
+    while !atoms.is_empty() {
+        let mut best = None;
+        for (position, atom) in atoms.iter().enumerate() {
+            let relation = image
+                .relation_by_id(atom.relation)
+                .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
+            let Some(index) = best_factorized_index(relation, atom, Some((&bound, candidates)))
+            else {
+                continue;
+            };
+            let cost = factorized_index_prefix_cost(index, atom, &bound, candidates);
+            if cost == 0 {
+                continue;
+            }
+            let key = (
+                usize::MAX - factor_driver_bound_fields(atom, &bound),
+                cost,
+                usize::from(!atom_has_static_constraint(query, atom)),
+                position,
+            );
+            if best
+                .as_ref()
+                .is_none_or(|(existing_key, _, _)| key < *existing_key)
+            {
+                best = Some((key, position, index));
+            }
+        }
+        let Some((_, position, index)) = best else {
+            return Ok(Vec::new());
+        };
+        let atom = atoms.remove(position);
+        bound.extend(atom_variables(atom));
+        factors.push(LiteralRangeFactor { atom, index });
+    }
+    Ok(factors)
+}
+
+fn factor_driver_bound_fields(atom: &NormAtom, driver_vars: &BTreeSet<usize>) -> usize {
+    atom.fields
+        .iter()
+        .filter(|field| {
+            matches!(field.term, NormTerm::Var(variable) if driver_vars.contains(&(variable.0 as usize)))
+        })
+        .count()
+}
+
+fn factorized_static_guard_covered(
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+) -> bool {
+    atom_has_static_constraint(query, atom)
+        && atom_variables(atom).len() == 1
+        && atom.fields.iter().all(|field| match field.term {
+            NormTerm::Var(variable) => candidates.contains_key(&variable),
+            NormTerm::Input(_) | NormTerm::Literal(_) | NormTerm::Wildcard => true,
+        })
+}
+
+fn atom_is_fk_backed_target_guard(
+    schema: &StorageSchema,
+    query: &NormalizedQuery,
+    target_atom: &NormAtom,
+) -> bool {
+    if atom_has_static_constraint(query, target_atom)
+        || query.predicates.iter().any(|predicate| {
+            static_predicate_variable(predicate)
+                .is_some_and(|variable| atom_has_variable(target_atom, variable))
+        })
+    {
+        return false;
+    }
+    let target_vars = atom_variables(target_atom);
+    if target_vars.is_empty() {
+        return false;
+    }
+    let Ok((_, target_relation)) = schema.relation(&target_atom.relation_name) else {
+        return false;
+    };
+    for source_atom in &query.atoms {
+        if source_atom.id == target_atom.id {
+            continue;
+        }
+        let Ok((_, source_relation)) = schema.relation(&source_atom.relation_name) else {
+            continue;
+        };
+        for constraint in &source_relation.constraints {
+            let bumbledb_core::schema::ConstraintDescriptor::ForeignKey {
+                fields,
+                target_relation: fk_target_relation,
+                target_constraint,
+                ..
+            } = constraint
+            else {
+                continue;
+            };
+            if fk_target_relation != &target_atom.relation_name {
+                continue;
+            }
+            let Some(target_fields) =
+                target_relation
+                    .constraints
+                    .iter()
+                    .find_map(|constraint| match constraint {
+                        bumbledb_core::schema::ConstraintDescriptor::Unique {
+                            name,
+                            fields,
+                            ..
+                        } if name == target_constraint => Some(fields),
+                        _ => None,
+                    })
+            else {
+                continue;
+            };
+            if fields.len() != target_fields.len() {
+                continue;
+            }
+            let mut matches_fk = true;
+            for (source_field_name, target_field_name) in fields.iter().zip(target_fields) {
+                let Some(source_var) = source_atom.fields.iter().find_map(|field| {
+                    if field.field_name != *source_field_name {
+                        return None;
+                    }
+                    match field.term {
+                        NormTerm::Var(variable) => Some(variable),
+                        NormTerm::Input(_) | NormTerm::Literal(_) | NormTerm::Wildcard => None,
+                    }
+                }) else {
+                    matches_fk = false;
+                    break;
+                };
+                let Some(target_var) = target_atom.fields.iter().find_map(|field| {
+                    if field.field_name != *target_field_name {
+                        return None;
+                    }
+                    match field.term {
+                        NormTerm::Var(variable) => Some(variable),
+                        NormTerm::Input(_) | NormTerm::Literal(_) | NormTerm::Wildcard => None,
+                    }
+                }) else {
+                    matches_fk = false;
+                    break;
+                };
+                if source_var != target_var {
+                    matches_fk = false;
+                    break;
+                }
+            }
+            if matches_fk {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn factorized_atom_safe(
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    driver_vars: &BTreeSet<usize>,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+) -> bool {
+    atom_variables(atom).into_iter().all(|variable| {
+        driver_vars.contains(&variable)
+            || candidates.contains_key(&VarId(variable as u16))
+            || atom_variable_degree(query, variable) <= 1
+            || factorized_variable_has_static_guard(query, variable)
+            || factorized_variable_has_static_atom_guard(query, variable)
+            || (atom_variable_degree(query, variable) <= 2
+                && factorized_variable_has_unary_guard(query, variable))
+    })
+}
+
+fn factorized_variable_has_static_guard(query: &NormalizedQuery, variable: usize) -> bool {
+    query.atoms.iter().any(|atom| {
+        atom_contains_variable(atom, variable)
+            && atom_has_static_constraint(query, atom)
+            && atom_variables(atom).len() == 1
+    })
+}
+
+fn factorized_variable_has_static_atom_guard(query: &NormalizedQuery, variable: usize) -> bool {
+    query.atoms.iter().any(|atom| {
+        atom_contains_variable(atom, variable)
+            && atom_has_static_constraint(query, atom)
+            && atom_variables(atom).into_iter().all(|atom_variable| {
+                atom_variable == variable || atom_variable_degree(query, atom_variable) <= 1
+            })
+    })
+}
+
+fn factorized_variable_has_unary_guard(query: &NormalizedQuery, variable: usize) -> bool {
+    query.atoms.iter().any(|atom| {
+        atom_contains_variable(atom, variable)
+            && atom_variables(atom).len() == 1
+            && atom
+                .fields
+                .iter()
+                .any(|field| matches!(field.term, NormTerm::Var(var) if var.0 as usize == variable))
+    })
+}
+
+fn factorized_predicates_safe(query: &NormalizedQuery, driver_vars: &BTreeSet<usize>) -> bool {
+    query.predicates.iter().all(|predicate| {
+        if !encoded_comparison_supported(predicate.op, &predicate.value_type) {
+            return false;
+        }
+        let vars = predicate
+            .operands
+            .iter()
+            .filter_map(|operand| match operand {
+                NormOperand::Var(variable) => Some(variable.0 as usize),
+                NormOperand::Input(_) | NormOperand::Literal(_) => None,
+            })
+            .collect::<BTreeSet<_>>();
+        vars.is_empty()
+            || vars.iter().all(|variable| driver_vars.contains(variable))
+            || query.atoms.iter().any(|atom| {
+                let atom_vars = atom_variables(atom);
+                vars.iter().all(|variable| atom_vars.contains(variable))
+            })
+    })
+}
+
+fn best_factorized_index<'a>(
+    relation: &'a RelationImage,
+    atom: &NormAtom,
+    constraints: Option<(&BTreeSet<usize>, &BTreeMap<VarId, CandidateSet>)>,
+) -> Option<&'a RelationIndexImage> {
+    let indexes = relation.indexes().iter().filter(|index| {
+        atom.fields
+            .iter()
+            .all(|field| index.contains_field(field.field))
+    });
+    if let Some((driver_vars, candidates)) = constraints {
+        indexes
+            .filter_map(|index| {
+                let cost = factorized_index_prefix_cost(index, atom, driver_vars, candidates);
+                (cost > 0).then_some((cost, index))
+            })
+            .min_by_key(|(cost, index)| (*cost, usize::MAX - index.component_count()))
+            .map(|(_, index)| index)
+    } else {
+        indexes.max_by_key(|index| index.component_count())
+    }
+}
+
+fn factorized_index_prefix_cost(
+    index: &RelationIndexImage,
+    atom: &NormAtom,
+    driver_vars: &BTreeSet<usize>,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+) -> usize {
+    let mut cost = 1usize;
+    let mut width = 0usize;
+    let mut has_single_prefix = false;
+    for field in &index.fields {
+        let Some(atom_field) = atom
+            .fields
+            .iter()
+            .find(|atom_field| atom_field.field == *field)
+        else {
+            break;
+        };
+        let values = match atom_field.term {
+            NormTerm::Input(_) | NormTerm::Literal(_) => {
+                has_single_prefix = true;
+                1
+            }
+            NormTerm::Var(variable) if driver_vars.contains(&(variable.0 as usize)) => {
+                has_single_prefix = true;
+                1
+            }
+            NormTerm::Var(variable) if has_single_prefix && candidates.contains_key(&variable) => 0,
+            NormTerm::Var(variable) => candidates
+                .get(&variable)
+                .map(|set| set.values.len())
+                .unwrap_or_default(),
+            NormTerm::Wildcard => 0,
+        };
+        if values == 0 {
+            break;
+        }
+        width += 1;
+        cost = cost.saturating_mul(values);
+    }
+    if width == 0 { 0 } else { cost }
+}
+
+fn factorized_bind_entry(
+    index: &RelationIndexImage,
+    entry: &[u8],
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    inputs: &EncodedInputs,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+    binding: &mut EncodedBinding,
+) -> Result<bool> {
+    for field in &atom.fields {
+        let Some(bytes) = index.component_bytes(entry, field.field) else {
+            return Ok(false);
+        };
+        match &field.term {
+            NormTerm::Input(input) => {
+                if !inputs
+                    .get(*input)
+                    .is_some_and(|value| value.as_bytes() == bytes)
+                {
+                    return Ok(false);
+                }
+            }
+            NormTerm::Literal(literal) => {
+                if literal.as_bytes() != bytes {
+                    return Ok(false);
+                }
+            }
+            NormTerm::Var(variable) => {
+                if let Some(values) = candidates.get(variable)
+                    && !candidate_set_contains_bytes(values, field, bytes)?
+                {
+                    return Ok(false);
+                }
+                if !binding.bind(
+                    variable.0 as usize,
+                    encoded_owned_for_width(field.value_type.encoded_width(), bytes)?,
+                ) {
+                    return Ok(false);
+                }
+            }
+            NormTerm::Wildcard => {}
+        }
+    }
+    let _ = query;
+    Ok(true)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "recursive factorized count carries query context and execution caches"
+)]
+fn factorized_extension_count(
+    factors: &[LiteralRangeFactor<'_>],
+    offset: usize,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+    binding: &EncodedBinding,
+    counters: &mut PlanCounters,
+    guard_cache: &mut BTreeMap<(usize, Vec<u8>), u64>,
+) -> Result<Option<u64>> {
+    let Some(factor) = factors.get(offset) else {
+        return Ok(Some(1));
+    };
+    if factor_atom_variables_bound(factor.atom, binding) {
+        let cache_key = factor_bound_cache_key(offset, factor.atom, binding);
+        let match_count = if let Some(cache_key) = cache_key {
+            if let Some(cached) = guard_cache.get(&cache_key) {
+                *cached
+            } else {
+                let prefixes =
+                    factorized_prefixes(factor.index, factor.atom, inputs, candidates, binding)?;
+                if prefixes.is_empty() {
+                    return Ok(None);
+                }
+                counters.direct_kernel_probes += 1;
+                let count = factorized_bound_match_count(factor, prefixes, query, inputs, binding)?;
+                guard_cache.insert(cache_key, count);
+                count
+            }
+        } else {
+            let prefixes =
+                factorized_prefixes(factor.index, factor.atom, inputs, candidates, binding)?;
+            if prefixes.is_empty() {
+                return Ok(None);
+            }
+            counters.direct_kernel_probes += 1;
+            factorized_bound_match_count(factor, prefixes, query, inputs, binding)?
+        };
+        if match_count == 0 {
+            return Ok(Some(0));
+        }
+        let Some(extension_count) = factorized_extension_count(
+            factors,
+            offset + 1,
+            query,
+            inputs,
+            candidates,
+            binding,
+            counters,
+            guard_cache,
+        )?
+        else {
+            return Ok(None);
+        };
+        return Ok(Some(match_count.checked_mul(extension_count).ok_or_else(
+            || Error::integer_overflow("literal range factorized count"),
+        )?));
+    }
+    let prefixes = factorized_prefixes(factor.index, factor.atom, inputs, candidates, binding)?;
+    if prefixes.is_empty() {
+        return Ok(None);
+    }
+    counters.direct_kernel_probes += 1;
+    let mut count = 0u64;
+    for prefix in prefixes {
+        for entry in factor.index.entries_with_prefix(&prefix) {
+            let Some(next_binding) = factorized_extend_entry(
+                factor.index,
+                entry,
+                query,
+                factor.atom,
+                inputs,
+                candidates,
+                binding,
+            )?
+            else {
+                continue;
+            };
+            let Some(extension_count) = factorized_extension_count(
+                factors,
+                offset + 1,
+                query,
+                inputs,
+                candidates,
+                &next_binding,
+                counters,
+                guard_cache,
+            )?
+            else {
+                return Ok(None);
+            };
+            count = count
+                .checked_add(extension_count)
+                .ok_or_else(|| Error::integer_overflow("literal range factorized count"))?;
+        }
+    }
+    Ok(Some(count))
+}
+
+fn factorized_bound_match_count(
+    factor: &LiteralRangeFactor<'_>,
+    prefixes: Vec<Vec<u8>>,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    binding: &EncodedBinding,
+) -> Result<u64> {
+    let mut match_count = 0u64;
+    for prefix in prefixes {
+        if factorized_prefix_is_exact(factor.index, factor.atom, &prefix) {
+            match_count = match_count
+                .checked_add(factor.index.prefix_count(&prefix) as u64)
+                .ok_or_else(|| Error::integer_overflow("literal range factorized count"))?;
+            continue;
+        }
+        for entry in factor.index.entries_with_prefix(&prefix) {
+            if factorized_bound_entry_matches(
+                factor.index,
+                entry,
+                query,
+                factor.atom,
+                inputs,
+                binding,
+            )? {
+                match_count = match_count
+                    .checked_add(1)
+                    .ok_or_else(|| Error::integer_overflow("literal range factorized count"))?;
+            }
+        }
+    }
+    Ok(match_count)
+}
+
+fn factorized_prefix_is_exact(index: &RelationIndexImage, atom: &NormAtom, prefix: &[u8]) -> bool {
+    let covered_end = index.prefix_len + prefix.len();
+    atom.fields
+        .iter()
+        .filter(|field| !matches!(field.term, NormTerm::Wildcard))
+        .all(|field| {
+            index
+                .components
+                .iter()
+                .find(|component| component.field == field.field)
+                .is_some_and(|component| component.offset + component.width <= covered_end)
+        })
+}
+
+fn factorized_bound_entry_matches(
+    index: &RelationIndexImage,
+    entry: &[u8],
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    inputs: &EncodedInputs,
+    binding: &EncodedBinding,
+) -> Result<bool> {
+    for field in &atom.fields {
+        let Some(bytes) = index.component_bytes(entry, field.field) else {
+            return Ok(false);
+        };
+        match &field.term {
+            NormTerm::Input(input) => {
+                if !inputs
+                    .get(*input)
+                    .is_some_and(|value| value.as_bytes() == bytes)
+                {
+                    return Ok(false);
+                }
+            }
+            NormTerm::Literal(literal) => {
+                if literal.as_bytes() != bytes {
+                    return Ok(false);
+                }
+            }
+            NormTerm::Var(variable) => {
+                if !binding
+                    .get(variable.0 as usize)
+                    .is_some_and(|value| value.as_bytes() == bytes)
+                {
+                    return Ok(false);
+                }
+            }
+            NormTerm::Wildcard => {}
+        }
+    }
+    factorized_predicates_match(index, entry, query, atom, inputs, binding)
+}
+
+fn factor_bound_cache_key(
+    offset: usize,
+    atom: &NormAtom,
+    binding: &EncodedBinding,
+) -> Option<(usize, Vec<u8>)> {
+    let mut key = Vec::new();
+    for variable in atom_variables(atom) {
+        let value = binding.get(variable)?;
+        key.extend_from_slice(value.as_bytes());
+    }
+    Some((offset, key))
+}
+
+fn factor_atom_variables_bound(atom: &NormAtom, binding: &EncodedBinding) -> bool {
+    atom_variables(atom)
+        .into_iter()
+        .all(|variable| binding.get(variable).is_some())
+}
+
+fn factorized_prefixes(
+    index: &RelationIndexImage,
+    atom: &NormAtom,
+    inputs: &EncodedInputs,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+    binding: &EncodedBinding,
+) -> Result<Vec<Vec<u8>>> {
+    let mut values: Vec<Vec<&EncodedOwned>> = Vec::new();
+    let mut has_single_prefix = false;
+    for field in &index.fields {
+        let Some(atom_field) = atom
+            .fields
+            .iter()
+            .find(|atom_field| atom_field.field == *field)
+        else {
+            break;
+        };
+        match &atom_field.term {
+            NormTerm::Input(input) => {
+                let Some(value) = inputs.get(*input) else {
+                    return Ok(Vec::new());
+                };
+                has_single_prefix = true;
+                values.push(vec![value]);
+            }
+            NormTerm::Literal(literal) => {
+                has_single_prefix = true;
+                values.push(vec![literal]);
+            }
+            NormTerm::Var(variable) => {
+                if let Some(value) = binding.get(variable.0 as usize) {
+                    has_single_prefix = true;
+                    values.push(vec![value]);
+                } else if let Some(set) = candidates.get(variable) {
+                    if has_single_prefix {
+                        break;
+                    }
+                    if set.values.is_empty() {
+                        return Ok(Vec::new());
+                    }
+                    values.push(set.values.iter().collect());
+                } else {
+                    break;
+                }
+            }
+            NormTerm::Wildcard => break,
+        }
+    }
+    if values.is_empty() {
+        return Ok(Vec::new());
+    }
+    if values.iter().all(|values| values.len() == 1) {
+        let mut prefix = Vec::new();
+        for value in &values {
+            prefix.extend_from_slice(value[0].as_bytes());
+        }
+        return Ok(vec![prefix]);
+    }
+    let prefix_count = values
+        .iter()
+        .try_fold(1usize, |count, values| count.checked_mul(values.len()))
+        .unwrap_or(STATIC_SEMIJOIN_MAX_PROBES as usize + 1);
+    if prefix_count > STATIC_SEMIJOIN_MAX_PROBES as usize {
+        return Ok(Vec::new());
+    }
+    let mut prefixes = Vec::with_capacity(prefix_count);
+    build_static_prefixes(&values, 0, Vec::new(), &mut prefixes);
+    Ok(prefixes)
+}
+
+fn factorized_extend_entry(
+    index: &RelationIndexImage,
+    entry: &[u8],
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    inputs: &EncodedInputs,
+    candidates: &BTreeMap<VarId, CandidateSet>,
+    binding: &EncodedBinding,
+) -> Result<Option<EncodedBinding>> {
+    let mut local = binding.clone();
+    for field in &atom.fields {
+        let Some(bytes) = index.component_bytes(entry, field.field) else {
+            return Ok(None);
+        };
+        match &field.term {
+            NormTerm::Input(input) => {
+                if !inputs
+                    .get(*input)
+                    .is_some_and(|value| value.as_bytes() == bytes)
+                {
+                    return Ok(None);
+                }
+            }
+            NormTerm::Literal(literal) => {
+                if literal.as_bytes() != bytes {
+                    return Ok(None);
+                }
+            }
+            NormTerm::Var(variable) => {
+                if let Some(values) = candidates.get(variable)
+                    && !candidate_set_contains_bytes(values, field, bytes)?
+                {
+                    return Ok(None);
+                }
+                if !local.bind(
+                    variable.0 as usize,
+                    encoded_owned_for_width(field.value_type.encoded_width(), bytes)?,
+                ) {
+                    return Ok(None);
+                }
+            }
+            NormTerm::Wildcard => {}
+        }
+    }
+    if factorized_predicates_match(index, entry, query, atom, inputs, &local)? {
+        Ok(Some(local))
+    } else {
+        Ok(None)
+    }
+}
+
+fn candidate_set_contains_bytes(
+    values: &CandidateSet,
+    field: &NormAtomField,
+    bytes: &[u8],
+) -> Result<bool> {
+    Ok(values.values.contains(&encoded_owned_for_width(
+        field.value_type.encoded_width(),
+        bytes,
+    )?))
+}
+
+fn factorized_predicates_match(
+    index: &RelationIndexImage,
+    entry: &[u8],
+    query: &NormalizedQuery,
+    atom: &NormAtom,
+    inputs: &EncodedInputs,
+    binding: &EncodedBinding,
+) -> Result<bool> {
+    for predicate in &query.predicates {
+        let left =
+            factorized_operand_bytes(index, entry, &predicate.operands[0], atom, inputs, binding);
+        let right =
+            factorized_operand_bytes(index, entry, &predicate.operands[1], atom, inputs, binding);
+        let (Some(left), Some(right)) = (left, right) else {
+            continue;
+        };
+        if !compare_encoded_values(left, predicate.op, right) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn factorized_operand_bytes<'a>(
+    index: &'a RelationIndexImage,
+    entry: &'a [u8],
+    operand: &'a NormOperand,
+    atom: &'a NormAtom,
+    inputs: &'a EncodedInputs,
+    binding: &'a EncodedBinding,
+) -> Option<&'a [u8]> {
+    match operand {
+        NormOperand::Var(variable) => atom
+            .fields
+            .iter()
+            .find(|field| matches!(field.term, NormTerm::Var(var) if var == *variable))
+            .and_then(|field| index.component_bytes(entry, field.field))
+            .or_else(|| binding.get(variable.0 as usize).map(EncodedOwned::as_bytes)),
+        NormOperand::Input(input) => inputs.get(*input).map(EncodedOwned::as_bytes),
+        NormOperand::Literal(literal) => Some(literal.as_bytes()),
+    }
+}
+
+fn try_execute_factorized_count<S: TupleSink>(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    plan: &mut ExecutionPlan,
+    sink: &mut S,
+) -> Result<bool> {
+    if try_execute_literal_range_factorized_count(image, txn, schema, query, inputs, plan, sink)? {
+        return Ok(true);
+    }
+    if try_execute_bridge_factorized_count(image, txn, query, plan, sink)? {
+        return Ok(true);
+    }
     if !query.inputs.is_empty() || !query.predicates.is_empty() {
         return Ok(false);
     }
@@ -3804,9 +5686,6 @@ fn try_execute_factorized_count<S: TupleSink>(
             .any(|field| matches!(field.term, NormTerm::Input(_) | NormTerm::Literal(_)))
     }) {
         return Ok(false);
-    }
-    if try_execute_bridge_factorized_count(image, txn, query, plan, sink)? {
-        return Ok(true);
     }
     let OutputPlan::Aggregate(output) = &query.output else {
         return Ok(false);
