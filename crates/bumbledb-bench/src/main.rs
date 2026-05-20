@@ -20,6 +20,8 @@ use tracing_subscriber::fmt::format::FmtSpan;
 
 mod open;
 
+const DEFAULT_OPEN_LIMIT: usize = 100_000;
+
 #[cfg(feature = "alloc-profile")]
 mod alloc_profile {
     use std::alloc::{GlobalAlloc, Layout, System};
@@ -207,7 +209,7 @@ impl Config {
         args: impl IntoIterator<Item = String>,
     ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         let mut scale = 200;
-        let mut open_limit = None;
+        let mut open_limit = Some(DEFAULT_OPEN_LIMIT);
         let mut repeats = 10;
         let mut warmup = 0;
         let mut datasets = Vec::new();
@@ -241,6 +243,7 @@ impl Config {
                             })?,
                     )
                 }
+                "--open-full" => open_limit = None,
                 "--repeats" => {
                     repeats = next_arg(&mut args, "--repeats")?
                         .parse()
@@ -299,7 +302,7 @@ impl Config {
                 "--fail-gates" => fail_gates = true,
                 "--help" | "-h" => {
                     println!(
-                        "usage: cargo run -p bumbledb-bench --release -- [--preset quick|nonjob|job|job-sample] [--scale N] [--open-limit N] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--compare-mode materialized|rows] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
+                        "usage: cargo run -p bumbledb-bench --release -- [--preset quick|nonjob|job|job-sample|job-full] [--scale N] [--open-limit N|--open-full] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--compare-mode materialized|rows] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
                     );
                     return Ok(None);
                 }
@@ -363,7 +366,7 @@ impl Config {
                 self.repeats = 30;
                 self.warmup = 2;
                 self.datasets = vec!["job".to_owned()];
-                self.open_limit = None;
+                self.open_limit = Some(self.open_limit.unwrap_or(DEFAULT_OPEN_LIMIT));
                 self.format = OutputFormat::Json;
                 if self.job_dir.is_none() {
                     self.job_dir = std::env::var("BUMBLED_JOB_DIR").ok();
@@ -373,7 +376,17 @@ impl Config {
                 self.repeats = 30;
                 self.warmup = 2;
                 self.datasets = vec!["job".to_owned()];
-                self.open_limit = Some(self.open_limit.unwrap_or(10_000));
+                self.open_limit = Some(self.open_limit.unwrap_or(DEFAULT_OPEN_LIMIT));
+                self.format = OutputFormat::Json;
+                if self.job_dir.is_none() {
+                    self.job_dir = std::env::var("BUMBLED_JOB_DIR").ok();
+                }
+            }
+            "job-full" => {
+                self.repeats = 30;
+                self.warmup = 2;
+                self.datasets = vec!["job".to_owned()];
+                self.open_limit = None;
                 self.format = OutputFormat::Json;
                 if self.job_dir.is_none() {
                     self.job_dir = std::env::var("BUMBLED_JOB_DIR").ok();
@@ -2933,10 +2946,34 @@ mod tests {
         .ok_or_else(|| bench_error("expected config"))?;
 
         assert_eq!(config.datasets, vec!["job"]);
-        assert_eq!(config.open_limit, Some(10_000));
+        assert_eq!(config.open_limit, Some(DEFAULT_OPEN_LIMIT));
         assert_eq!(config.job_dir.as_deref(), Some("/tmp/job"));
         assert_eq!(config.repeats, 30);
         assert_eq!(config.warmup, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn cli_preset_job_full_is_explicit() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::from_args(
+            ["--preset", "job-full", "--job-dir", "/tmp/job"]
+                .into_iter()
+                .map(str::to_owned),
+        )?
+        .ok_or_else(|| bench_error("expected config"))?;
+
+        assert_eq!(config.datasets, vec!["job"]);
+        assert_eq!(config.open_limit, None);
+        assert_eq!(config.job_dir.as_deref(), Some("/tmp/job"));
+        Ok(())
+    }
+
+    #[test]
+    fn cli_open_full_overrides_default_limit() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::from_args(["--open-full"].into_iter().map(str::to_owned))?
+            .ok_or_else(|| bench_error("expected config"))?;
+
+        assert_eq!(config.open_limit, None);
         Ok(())
     }
 
