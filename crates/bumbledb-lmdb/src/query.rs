@@ -1515,6 +1515,21 @@ impl<'env> ReadTxn<'env> {
                 plan,
             });
         }
+
+        if let Some(output) = try_execute_direct_count_query(
+            image.as_ref(),
+            self,
+            &normalized,
+            query_image_cache,
+            image.planner_stats_diagnostics(),
+            image.prepared_plan_diagnostics(),
+            timings,
+            allocations,
+            total_start,
+            total_alloc_start,
+        )? {
+            return Ok(output);
+        }
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
         let mut plan = if let Some(cache_key) = prepared_cache_key {
@@ -2296,6 +2311,96 @@ fn static_empty_plan(
 
 #[expect(
     clippy::too_many_arguments,
+    reason = "direct count fast path needs current execution diagnostics"
+)]
+fn try_execute_direct_count_query(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'_>,
+    query: &NormalizedQuery,
+    query_image_cache: QueryImageCacheDiagnostics,
+    planner_stats: PlannerStatsCacheDiagnostics,
+    prepared_plan_cache: PreparedPlanCacheDiagnostics,
+    mut timings: QueryTimings,
+    mut allocations: QueryAllocationStats,
+    total_start: Instant,
+    total_alloc_start: allocation::AllocationSnapshot,
+) -> Result<Option<QueryOutput>> {
+    let mut plan = ExecutionPlan {
+        variable_order_ids: Vec::new(),
+        relation_atoms: query.atoms.clone(),
+        comparisons: query.predicates.clone(),
+        direct_kernel: None,
+        summary: QueryPlan {
+            variable_order: Vec::new(),
+            variable_estimates: Vec::new(),
+            missing_indexes: Vec::new(),
+            optimizer: OptimizerTrace {
+                chosen: "direct_count".to_owned(),
+                candidates: Vec::new(),
+            },
+            plan_family: PlanFamily::Direct,
+            query_image_cache,
+            planner_stats,
+            prepared_plan_cache,
+            node_rows: Vec::new(),
+            node_timings: Vec::new(),
+            free_join: FreeJoinPlan {
+                nodes: Vec::new(),
+                output: query.output.clone(),
+                estimates: PlanEstimates::default(),
+            },
+            direct_kernel: None,
+            runtime_kind: QueryRuntimeKind::Unknown,
+            timings: QueryTimings::default(),
+            allocations: QueryAllocationStats::default(),
+            counters: PlanCounters::default(),
+            uses_indexed_multiway_join: query.atoms.len() > 1,
+        },
+    };
+    let mut sink = OutputSink::new(&plan.summary.free_join.output);
+    let execute_start = Instant::now();
+    let execute_alloc_start = allocation::snapshot();
+    let matched = try_execute_factorized_count(image, txn, query, &mut plan, &mut sink)?;
+    if !matched {
+        return Ok(None);
+    }
+    timings.execute_micros = elapsed_micros(execute_start);
+    allocations.execute = allocation_delta_since(execute_alloc_start);
+    if plan.summary.direct_kernel.is_none() {
+        plan.summary.direct_kernel = Some(DirectKernelSummary {
+            kind: DirectKernelKind::CountOnly,
+            target: "direct_count_empty".to_owned(),
+            steps: 0,
+        });
+    }
+    let columns = result_columns(query);
+    let sink_finish_start = Instant::now();
+    let sink_finish_alloc_start = allocation::snapshot();
+    let rows = {
+        let _span = tracing::debug_span!("bumbledb.query.sink.finish").entered();
+        sink.finish(txn, query, &mut plan.summary.counters)?
+    };
+    timings.sink_finish_micros = elapsed_micros(sink_finish_start);
+    allocations.sink_finish = allocation_delta_since(sink_finish_alloc_start);
+    plan.summary.runtime_kind = QueryRuntimeKind::DirectKernel;
+    plan.summary.timings = timings;
+    plan.summary.allocations = allocations;
+    plan.summary.counters.output_rows = rows.len() as u64;
+    if has_aggregate(query) {
+        plan.summary.counters.aggregate_groups = rows.len() as u64;
+    }
+    plan.summary.timings.total_micros = elapsed_micros(total_start);
+    let total_alloc = allocation_delta_since(total_alloc_start);
+    plan.summary.allocations = plan.summary.allocations.with_total(total_alloc);
+    Ok(Some(QueryOutput {
+        columns,
+        rows,
+        plan: plan.summary,
+    }))
+}
+
+#[expect(
+    clippy::too_many_arguments,
     reason = "direct storage path needs current execution diagnostics"
 )]
 fn try_execute_direct_storage_project(
@@ -2736,19 +2841,23 @@ fn try_execute_factorized_count<S: TupleSink>(
     }
     fact_indexes.sort_by_key(|(_, index, _)| index.bytes.len());
     let (_, driver, driver_field) = fact_indexes[0];
-    let mut central_values = BTreeSet::<Vec<u8>>::new();
-    for entry in driver.bytes.chunks(driver.encoded_len) {
-        if let Some(bytes) = driver.component_bytes(entry, driver_field) {
-            central_values.insert(bytes.to_vec());
-        }
-    }
 
     let mut total = 0u64;
-    for central_value in central_values {
+    let mut previous_central_value: Option<EncodedOwned> = None;
+    for entry in driver.bytes.chunks(driver.encoded_len) {
+        let Some(central_value) = driver.component_bytes(entry, driver_field) else {
+            continue;
+        };
+        if previous_central_value
+            .as_ref()
+            .is_some_and(|previous| previous.as_bytes() == central_value)
+        {
+            continue;
+        }
         let mut product = 1u64;
         for (_, index, _) in &fact_indexes {
             plan.summary.counters.direct_kernel_probes += 1;
-            let count = index.prefix_count(&central_value) as u64;
+            let count = index.prefix_count(central_value) as u64;
             if count == 0 {
                 product = 0;
                 break;
@@ -2760,6 +2869,7 @@ fn try_execute_factorized_count<S: TupleSink>(
         total = total
             .checked_add(product)
             .ok_or_else(|| Error::integer_overflow("factorized count"))?;
+        previous_central_value = Some(encoded_owned_for_width(central_value.len(), central_value)?);
     }
     if total == 0 {
         return Ok(true);
