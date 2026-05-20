@@ -1,0 +1,9 @@
+query	rows	runtime	plan_family	bumbledb_avg_us	sqlite_avg_us	sqlite_div_bumbledb	prepare_bumbledb_us	prepare_sqlite_us	timing_total_us	timing_image_us	timing_plan_us	timing_lftj_build_us	timing_execute_us	alloc_calls	bytes_allocated	net_bytes	peak_live_bytes
+job_broad_cast_keyword_company	1	DirectKernel	FreeJoinLftj	16090	112828	7.012	923197	110566	923100	899106	7432	0	16352	32806517	2596590703	984767632	986141983
+job_broad_movie_info_star	1	DirectKernel	FreeJoinLftj	10372	5300376	511.027	12828	5337185	12773	33	2288	0	10345	53301	2493228	36891	36891
+job_q01_top_production	0	StaticEmpty	StaticEmpty	83	9064	109.205	3446	9360	3392	26	0	0	0	31492	1218878	3927	3927
+job_q09_voice_us_actor	1	Lftj	FreeJoinLftj	296726	434220	1.463	982866	407874	982807	28	4896	682770	977726	17246735	2749266511	139145279	199048869
+job_q16_character_title_us	0	StaticEmpty	StaticEmpty	82	11280	137.561	676	11381	620	26	0	0	0	169	47347	5622	5622
+job_q24_voice_keyword_actor	12	Lftj	FreeJoinLftj	2689	385657	143.42	37288	367299	37225	31	649	33592	36361	942537	109457119	5068059	5068059
+job_movie_link_bridge	1	DirectKernel	FreeJoinLftj	924	22960	24.848	2304	23158	2245	34	959	0	1132	18504	1114047	36819	36819
+job_q33_linked_series_companies	0	StaticEmpty	StaticEmpty	91	65	0.714	200	169	141	26	0	0	0	207	57369	7426	7426
