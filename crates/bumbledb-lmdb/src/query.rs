@@ -460,7 +460,7 @@ impl QueryPlan {
         out.push_str(&format!("  chosen_plan: {}\n", self.optimizer.chosen));
         for candidate in &self.optimizer.candidates {
             out.push_str(&format!(
-                "  candidate_plan name={} family={:?} selected={} estimated_micros={} setup_micros={} memory_bytes={} materialization_penalty={} tie_breaker={} rejected_reason={} impls={:?}\n",
+                "  candidate_plan name={} family={:?} selected={} estimated_micros={} setup_micros={} memory_bytes={} materialization_penalty={} candidate_rank={} implementation_mask={} rejected_reason={} impls={:?}\n",
                 candidate.name,
                 candidate.family,
                 candidate.selected,
@@ -468,7 +468,8 @@ impl QueryPlan {
                 candidate.cost.setup_micros,
                 candidate.cost.memory_bytes,
                 candidate.cost.materialization_penalty,
-                candidate.cost.tie_breaker,
+                candidate.cost.candidate_rank,
+                candidate.cost.implementation_mask,
                 candidate.rejected_reason,
                 candidate.implementations
             ));
@@ -1029,8 +1030,10 @@ pub struct CostKey {
     pub memory_bytes: usize,
     /// Penalty for materializing output values or intermediate payload.
     pub materialization_penalty: u64,
-    /// Stable deterministic tie-breaker.
-    pub tie_breaker: String,
+    /// Stable candidate rank tie-breaker.
+    pub candidate_rank: u8,
+    /// Stable implementation-shape tie-breaker.
+    pub implementation_mask: u64,
 }
 
 /// Estimated and observed rows/candidates for one Free Join node.
@@ -3403,7 +3406,8 @@ fn try_execute_direct_storage_project(
                         setup_micros: 0,
                         memory_bytes: 0,
                         materialization_penalty: counters.materialized_output_values,
-                        tie_breaker: "direct_storage".to_owned(),
+                        candidate_rank: 0,
+                        implementation_mask: 0,
                     },
                     selected: true,
                     rejected_reason: "selected direct shape before query image".to_owned(),
@@ -7242,39 +7246,57 @@ fn choose_variable_order(
     comparisons: &[&NormPredicate],
     stats: &PlannerStats,
 ) -> Result<(Vec<usize>, Vec<VariableCost>)> {
-    let mut remaining = (0..query.vars.len()).collect::<BTreeSet<_>>();
+    let mut remaining = vec![true; query.vars.len()];
+    let mut remaining_count = query.vars.len();
     let mut bound = BTreeSet::new();
-    let mut order = Vec::new();
-    let mut costs = Vec::new();
+    let mut order = Vec::with_capacity(query.vars.len());
+    let mut costs = Vec::with_capacity(query.vars.len());
 
-    while !remaining.is_empty() {
-        let mut candidates = remaining
-            .iter()
-            .map(|variable| {
-                estimate_variable_cost(schema, atoms, comparisons, stats, &bound, *variable)
-            })
-            .collect::<Result<Vec<_>>>()?;
-        candidates.sort_by_key(|cost| {
-            (
-                cost.estimated_candidates,
-                std::cmp::Reverse(cost.static_constraints),
-                std::cmp::Reverse(cost.bound_constraints),
-                std::cmp::Reverse(cost.relation_constraints),
-                std::cmp::Reverse(cost.degree),
-                query.vars[cost.variable].name.clone(),
-            )
-        });
-        let best = candidates
-            .into_iter()
-            .next()
-            .ok_or_else(|| Error::internal("query has no remaining variables"))?;
-        remaining.remove(&best.variable);
+    while remaining_count != 0 {
+        let mut best = None;
+        for (variable, is_remaining) in remaining.iter().copied().enumerate() {
+            if !is_remaining {
+                continue;
+            }
+            let cost = estimate_variable_cost(schema, atoms, comparisons, stats, &bound, variable)?;
+            if best.as_ref().is_none_or(|best: &VariableCost| {
+                variable_cost_order_key(&cost, query) < variable_cost_order_key(best, query)
+            }) {
+                best = Some(cost);
+            }
+        }
+        let best = best.ok_or_else(|| Error::internal("query has no remaining variables"))?;
+        remaining[best.variable] = false;
+        remaining_count -= 1;
         bound.insert(best.variable);
         order.push(best.variable);
         costs.push(best);
     }
 
     Ok((order, costs))
+}
+
+type VariableCostOrderKey<'a> = (
+    u64,
+    std::cmp::Reverse<usize>,
+    std::cmp::Reverse<usize>,
+    std::cmp::Reverse<usize>,
+    std::cmp::Reverse<usize>,
+    &'a str,
+);
+
+fn variable_cost_order_key<'a>(
+    cost: &'a VariableCost,
+    query: &'a NormalizedQuery,
+) -> VariableCostOrderKey<'a> {
+    (
+        cost.estimated_candidates,
+        std::cmp::Reverse(cost.static_constraints),
+        std::cmp::Reverse(cost.bound_constraints),
+        std::cmp::Reverse(cost.relation_constraints),
+        std::cmp::Reverse(cost.degree),
+        query.vars[cost.variable].name.as_str(),
+    )
 }
 
 fn estimate_variable_cost(
@@ -7285,55 +7307,63 @@ fn estimate_variable_cost(
     bound: &BTreeSet<usize>,
     variable: usize,
 ) -> Result<VariableCost> {
-    let atom_infos = atoms
+    let mut has_constrained_stream = false;
+    let mut has_unconstrained_payload_stream = false;
+    for atom in atoms
         .iter()
         .copied()
         .filter(|atom| atom_contains_variable(atom, variable))
-        .map(|atom| {
-            let relation_constraints = atom_bound_constraint_count(atom, variable, bound);
-            let static_constraints = atom_static_constraint_count(atom, variable)
-                + comparison_static_constraint_count(comparisons, variable, bound);
-            let has_unbound_other = atom_has_unbound_other_variable_id(atom, variable, bound);
-            (
-                atom,
-                relation_constraints + static_constraints,
-                has_unbound_other,
-            )
-        })
-        .collect::<Vec<_>>();
-    let has_constrained_stream = atom_infos.iter().any(|(_, strength, _)| *strength > 0);
-    let has_unconstrained_payload_stream = atom_infos
-        .iter()
-        .any(|(_, strength, has_unbound_other)| *strength == 0 && *has_unbound_other);
-    let mut estimates = Vec::new();
+    {
+        let relation_constraints = atom_bound_constraint_count(atom, variable, bound);
+        let static_constraints = atom_static_constraint_count(atom, variable)
+            + comparison_static_constraint_count(comparisons, variable, bound);
+        let has_unbound_other = atom_has_unbound_other_variable_id(atom, variable, bound);
+        let strength = relation_constraints + static_constraints;
+        has_constrained_stream |= strength > 0;
+        has_unconstrained_payload_stream |= strength == 0 && has_unbound_other;
+    }
+    let mut best_access: Option<AccessEstimate> = None;
     let mut relation_constraints = 0usize;
     let mut static_constraints = comparison_static_constraint_count(comparisons, variable, bound);
     let mut bound_constraints = comparison_bound_constraint_count(comparisons, variable, bound);
 
-    for (atom, strength, has_unbound_other) in atom_infos {
+    for atom in atoms
+        .iter()
+        .copied()
+        .filter(|atom| atom_contains_variable(atom, variable))
+    {
+        let strength = atom_bound_constraint_count(atom, variable, bound)
+            + atom_static_constraint_count(atom, variable)
+            + comparison_static_constraint_count(comparisons, variable, bound);
+        let has_unbound_other = atom_has_unbound_other_variable_id(atom, variable, bound);
         relation_constraints += 1;
         static_constraints += atom_static_constraint_count(atom, variable);
         bound_constraints += atom_bound_constraint_count(atom, variable, bound);
         if has_constrained_stream && strength == 0 && has_unbound_other {
             continue;
         }
-        estimates.push(estimate_atom_variable_access(
-            schema, stats, bound, atom, variable,
-        )?);
+        let estimate = estimate_atom_variable_access(schema, stats, bound, atom, variable)?;
+        if best_access.as_ref().is_none_or(|best| {
+            (
+                estimate.estimated_rows,
+                std::cmp::Reverse(estimate.prefix_len),
+                std::cmp::Reverse(estimate.current_is_next),
+                estimate.access_label(),
+            ) < (
+                best.estimated_rows,
+                std::cmp::Reverse(best.prefix_len),
+                std::cmp::Reverse(best.current_is_next),
+                best.access_label(),
+            )
+        }) {
+            best_access = Some(estimate);
+        }
     }
 
     let degree = atoms
         .iter()
         .filter(|atom| atom_contains_variable(atom, variable))
         .count();
-    let best_access = estimates.into_iter().min_by_key(|estimate| {
-        (
-            estimate.estimated_rows,
-            std::cmp::Reverse(estimate.prefix_len),
-            std::cmp::Reverse(estimate.current_is_next),
-            estimate.access_label(),
-        )
-    });
     let mut estimated_candidates = best_access
         .as_ref()
         .map(|estimate| estimate.estimated_rows)
@@ -7731,12 +7761,19 @@ fn optimize_free_join_plan(
         .ok_or_else(|| Error::internal("no optimizer plan candidates"))?
         .name
         .clone();
-    let plan = candidates
+    let chosen_candidate = candidates
         .iter()
         .find(|candidate| candidate.name == chosen)
-        .ok_or_else(|| Error::internal("chosen optimizer candidate missing"))?
-        .plan
-        .clone();
+        .ok_or_else(|| Error::internal("chosen optimizer candidate missing"))?;
+    let plan = build_free_join_plan(
+        schema,
+        query,
+        atoms,
+        variable_order_ids,
+        &chosen_candidate.implementations,
+        stats,
+        chosen_candidate.estimates.clone(),
+    )?;
     let trace_candidates = candidates
         .into_iter()
         .map(|candidate| PlanCandidate {
@@ -7768,7 +7805,7 @@ struct OptimizerCandidate {
     implementations: Vec<NodeImpl>,
     family: PlanFamily,
     cost: CostKey,
-    plan: FreeJoinPlan,
+    estimates: PlanEstimates,
 }
 
 #[expect(
@@ -7777,7 +7814,7 @@ struct OptimizerCandidate {
 )]
 fn build_plan_candidate(
     name: &str,
-    schema: &StorageSchema,
+    _schema: &StorageSchema,
     query: &NormalizedQuery,
     atoms: &[&NormAtom],
     variable_order_ids: &[usize],
@@ -7805,32 +7842,45 @@ fn build_plan_candidate(
         setup_micros: estimated_setup_micros(name, &estimates),
         memory_bytes: estimates.memory_bytes,
         materialization_penalty: estimates.materialized_values,
-        tie_breaker: format!(
-            "{}:{}",
-            name,
-            implementations
-                .iter()
-                .map(|implementation| format!("{implementation:?}"))
-                .collect::<Vec<_>>()
-                .join(",")
-        ),
+        candidate_rank: candidate_rank(name),
+        implementation_mask: implementation_mask(&implementations),
     };
-    let plan = build_free_join_plan(
-        schema,
-        query,
-        atoms,
-        variable_order_ids,
-        &implementations,
-        stats,
-        estimates,
-    )?;
     Ok(OptimizerCandidate {
         name: name.to_owned(),
         implementations,
         family: plan_family_for_chosen(name),
         cost,
-        plan,
+        estimates,
     })
+}
+
+fn candidate_rank(name: &str) -> u8 {
+    match name {
+        "pure_lftj" => 0,
+        "hash_probe" => 1,
+        "hybrid" => 2,
+        "aggregate_pushdown" => 3,
+        _ => u8::MAX,
+    }
+}
+
+fn implementation_mask(implementations: &[NodeImpl]) -> u64 {
+    implementations
+        .iter()
+        .take(16)
+        .enumerate()
+        .fold(0u64, |mask, (index, implementation)| {
+            let code = match implementation {
+                NodeImpl::SortedLeapfrog => 1,
+                NodeImpl::HashProbe => 2,
+                NodeImpl::Hybrid => 3,
+                NodeImpl::VectorLoop => 4,
+                NodeImpl::ExistenceCheck => 5,
+                NodeImpl::Product => 6,
+                NodeImpl::AggregateSink => 7,
+            };
+            mask | ((code as u64) << (index * 4))
+        })
 }
 
 fn estimated_setup_micros(name: &str, estimates: &PlanEstimates) -> u64 {
