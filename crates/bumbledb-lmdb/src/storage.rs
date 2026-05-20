@@ -2379,6 +2379,120 @@ mod tests {
     }
 
     #[test]
+    fn compound_serial_enum_foreign_key_insert_and_restrict_delete() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = compound_serial_enum_fk_schema(&env)?;
+
+        let missing_account = env.write(|txn| {
+            txn.insert(
+                &schema,
+                Row::new(
+                    "Posting",
+                    [
+                        ("id", Value::U64(1)),
+                        ("account", Value::Serial(7)),
+                        ("currency", Value::Enum(1)),
+                    ],
+                ),
+            )
+        });
+        assert!(matches!(
+            missing_account,
+            Err(Error::Constraint(
+                ConstraintError::ForeignKeyViolation { .. }
+            ))
+        ));
+
+        env.write(|txn| {
+            txn.insert(
+                &schema,
+                Row::new(
+                    "AccountCurrency",
+                    [("account", Value::Serial(7)), ("currency", Value::Enum(1))],
+                ),
+            )?;
+            txn.insert(
+                &schema,
+                Row::new(
+                    "Posting",
+                    [
+                        ("id", Value::U64(1)),
+                        ("account", Value::Serial(7)),
+                        ("currency", Value::Enum(1)),
+                    ],
+                ),
+            )?;
+            Ok::<(), Error>(())
+        })?;
+
+        for (id, account, currency) in [(2, 8, 1), (3, 7, 2)] {
+            let missing_component = env.write(|txn| {
+                txn.insert(
+                    &schema,
+                    Row::new(
+                        "Posting",
+                        [
+                            ("id", Value::U64(id)),
+                            ("account", Value::Serial(account)),
+                            ("currency", Value::Enum(currency)),
+                        ],
+                    ),
+                )
+            });
+            assert!(matches!(
+                missing_component,
+                Err(Error::Constraint(
+                    ConstraintError::ForeignKeyViolation { .. }
+                ))
+            ));
+        }
+
+        let restricted = env.write(|txn| {
+            txn.delete(
+                &schema,
+                Row::new(
+                    "AccountCurrency",
+                    [("account", Value::Serial(7)), ("currency", Value::Enum(1))],
+                ),
+            )
+        });
+        assert!(matches!(
+            restricted,
+            Err(Error::Constraint(ConstraintError::RestrictViolation { .. }))
+        ));
+
+        env.write(|txn| {
+            assert_eq!(
+                txn.delete(
+                    &schema,
+                    Row::new(
+                        "Posting",
+                        [
+                            ("id", Value::U64(1)),
+                            ("account", Value::Serial(7)),
+                            ("currency", Value::Enum(1)),
+                        ],
+                    ),
+                )?,
+                DeleteOutcome::Deleted
+            );
+            assert_eq!(
+                txn.delete(
+                    &schema,
+                    Row::new(
+                        "AccountCurrency",
+                        [("account", Value::Serial(7)), ("currency", Value::Enum(1))],
+                    ),
+                )?,
+                DeleteOutcome::Deleted
+            );
+            Ok::<(), Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
     fn exact_delete_then_insert_updates_current_entries_and_counts() -> TestResult {
         let dir = tempfile::tempdir()?;
         let env = Environment::open(dir.path())?;
@@ -2770,6 +2884,66 @@ mod tests {
             .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
                 "Currency",
                 [1, 2, 3],
+            )),
+            env.max_key_size(),
+        )
+    }
+
+    fn compound_serial_enum_fk_schema(env: &Environment) -> Result<StorageSchema> {
+        StorageSchema::new(
+            SchemaDescriptor::new(
+                "CompoundSerialEnumFkDb",
+                vec![
+                    RelationDescriptor::new(
+                        "AccountCurrency",
+                        vec![
+                            FieldDescriptor::new(
+                                "account",
+                                ValueType::Serial {
+                                    type_name: "AccountId".to_owned(),
+                                    owning_relation: "Account".to_owned(),
+                                },
+                            ),
+                            FieldDescriptor::new(
+                                "currency",
+                                ValueType::Enum {
+                                    name: "Currency".to_owned(),
+                                },
+                            ),
+                        ],
+                    )
+                    .with_covering_unique("by_account_currency", ["account", "currency"]),
+                    RelationDescriptor::new(
+                        "Posting",
+                        vec![
+                            FieldDescriptor::new("id", ValueType::U64),
+                            FieldDescriptor::new(
+                                "account",
+                                ValueType::Serial {
+                                    type_name: "AccountId".to_owned(),
+                                    owning_relation: "Account".to_owned(),
+                                },
+                            ),
+                            FieldDescriptor::new(
+                                "currency",
+                                ValueType::Enum {
+                                    name: "Currency".to_owned(),
+                                },
+                            ),
+                        ],
+                    )
+                    .with_covering_unique("id", ["id"])
+                    .with_constraint(ConstraintDescriptor::foreign_key(
+                        "account_currency",
+                        ["account", "currency"],
+                        "AccountCurrency",
+                        "by_account_currency",
+                    )),
+                ],
+            )
+            .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
+                "Currency",
+                [1, 2],
             )),
             env.max_key_size(),
         )
