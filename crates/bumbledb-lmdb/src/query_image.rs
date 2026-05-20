@@ -23,6 +23,12 @@ pub struct QueryImageKey {
     pub tx_id: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct QueryShapeKey(pub(crate) [u8; 32]);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct LftjAtomKey(pub(crate) [u8; 32]);
+
 impl PartialOrd for QueryImageKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
@@ -101,8 +107,8 @@ pub struct QueryImage {
     stats: QueryImageStats,
     planner_stats: PlannerStatsCache,
     prepared_plans: PreparedPlanCache,
-    static_empty_queries: Arc<RwLock<BTreeSet<String>>>,
-    sorted_trie_cache: Arc<RwLock<BTreeMap<String, Arc<SortedTrieIndex>>>>,
+    static_empty_queries: Arc<RwLock<BTreeSet<QueryShapeKey>>>,
+    sorted_trie_cache: Arc<RwLock<BTreeMap<LftjAtomKey, Arc<SortedTrieIndex>>>>,
     hash_trie_cache: Arc<RwLock<BTreeMap<String, Arc<HashTrieIndex>>>>,
 }
 
@@ -190,28 +196,31 @@ impl QueryImage {
         self.prepared_plans.diagnostics()
     }
 
-    pub(crate) fn cached_prepared_plan(&self, key: &str) -> Result<Option<Arc<ExecutionPlan>>> {
+    pub(crate) fn cached_prepared_plan(
+        &self,
+        key: QueryShapeKey,
+    ) -> Result<Option<Arc<ExecutionPlan>>> {
         self.prepared_plans.get(key)
     }
 
     pub(crate) fn insert_prepared_plan(
         &self,
-        key: String,
+        key: QueryShapeKey,
         plan: ExecutionPlan,
         build_micros: u64,
     ) -> Result<Arc<ExecutionPlan>> {
         self.prepared_plans.insert(key, plan, build_micros)
     }
 
-    pub(crate) fn static_empty_cached(&self, key: &str) -> Result<bool> {
+    pub(crate) fn static_empty_cached(&self, key: QueryShapeKey) -> Result<bool> {
         Ok(self
             .static_empty_queries
             .read()
             .map_err(|_| Error::internal("static-empty cache read lock poisoned"))?
-            .contains(key))
+            .contains(&key))
     }
 
-    pub(crate) fn insert_static_empty(&self, key: String) -> Result<()> {
+    pub(crate) fn insert_static_empty(&self, key: QueryShapeKey) -> Result<()> {
         self.static_empty_queries
             .write()
             .map_err(|_| Error::internal("static-empty cache write lock poisoned"))?
@@ -221,7 +230,7 @@ impl QueryImage {
 
     pub(crate) fn cached_sorted_trie(
         &self,
-        key: String,
+        key: LftjAtomKey,
         build: impl FnOnce() -> Result<SortedTrieBuild>,
     ) -> Result<CachedSortedTrie> {
         if let Some(index) = self
@@ -336,7 +345,7 @@ struct PreparedPlanCache {
 
 #[derive(Default)]
 struct PreparedPlanCacheInner {
-    plans: RwLock<BTreeMap<String, Arc<ExecutionPlan>>>,
+    plans: RwLock<BTreeMap<QueryShapeKey, Arc<ExecutionPlan>>>,
     hits: AtomicU64,
     misses: AtomicU64,
     builds: AtomicU64,
@@ -352,13 +361,13 @@ impl std::fmt::Debug for PreparedPlanCache {
 }
 
 impl PreparedPlanCache {
-    fn get(&self, key: &str) -> Result<Option<Arc<ExecutionPlan>>> {
+    fn get(&self, key: QueryShapeKey) -> Result<Option<Arc<ExecutionPlan>>> {
         let plan = self
             .inner
             .plans
             .read()
             .map_err(|_| Error::internal("prepared plan cache read lock poisoned"))?
-            .get(key)
+            .get(&key)
             .cloned();
         if plan.is_some() {
             self.inner.hits.fetch_add(1, Ordering::Relaxed);
@@ -370,7 +379,7 @@ impl PreparedPlanCache {
 
     fn insert(
         &self,
-        key: String,
+        key: QueryShapeKey,
         plan: ExecutionPlan,
         build_micros: u64,
     ) -> Result<Arc<ExecutionPlan>> {

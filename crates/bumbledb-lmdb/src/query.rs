@@ -25,7 +25,8 @@ use crate::planner_stats::{
     OptimizerFieldStats, OptimizerIndexStats, OptimizerRelationStats, PlannerStatsCacheDiagnostics,
 };
 use crate::query_image::{
-    EncodedColumnBuilder, SortedTrieBuild, encoded_column_builders, finish_column_builders,
+    EncodedColumnBuilder, LftjAtomKey, QueryShapeKey, SortedTrieBuild, encoded_column_builders,
+    finish_column_builders,
 };
 use crate::{PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics};
 
@@ -1456,10 +1457,8 @@ impl<'env> ReadTxn<'env> {
         allocations.query_image = allocation_delta_since(phase_alloc_start);
 
         let query_image_cache = self.query_images.diagnostics();
-        let prepared_cache_key = prepared_plan_cache_key(&normalized);
-        if let Some(cache_key) = &prepared_cache_key
-            && image.static_empty_cached(cache_key)?
-        {
+        let prepared_cache_key = query_shape_key(schema, &normalized);
+        if image.static_empty_cached(prepared_cache_key)? {
             let mut plan = static_empty_plan(
                 &normalized,
                 query_image_cache,
@@ -1489,9 +1488,7 @@ impl<'env> ReadTxn<'env> {
             None
         };
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
-            if let Some(cache_key) = &prepared_cache_key {
-                image.insert_static_empty(cache_key.clone())?;
-            }
+            image.insert_static_empty(prepared_cache_key)?;
             let mut plan = static_empty_plan(
                 &normalized,
                 query_image_cache,
@@ -1532,38 +1529,28 @@ impl<'env> ReadTxn<'env> {
         }
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
-        let mut plan = if let Some(cache_key) = prepared_cache_key {
-            if let Some(cached) = image.cached_prepared_plan(&cache_key)? {
-                cached.instantiate(
-                    query_image_cache,
-                    image.planner_stats_diagnostics(),
-                    image.prepared_plan_diagnostics(),
-                )
-            } else {
-                let prepared_plan_cache = image.prepared_plan_diagnostics();
-                let planned = plan_query(
-                    schema,
-                    &mut normalized,
-                    image.as_ref(),
-                    query_image_cache,
-                    prepared_plan_cache,
-                )?;
-                let build_micros = elapsed_micros(phase_start).min(u128::from(u64::MAX)) as u64;
-                let cached = image.insert_prepared_plan(cache_key, planned, build_micros)?;
-                cached.instantiate(
-                    query_image_cache,
-                    image.planner_stats_diagnostics(),
-                    image.prepared_plan_diagnostics(),
-                )
-            }
+        let mut plan = if let Some(cached) = image.cached_prepared_plan(prepared_cache_key)? {
+            cached.instantiate(
+                query_image_cache,
+                image.planner_stats_diagnostics(),
+                image.prepared_plan_diagnostics(),
+            )
         } else {
-            plan_query(
+            let prepared_plan_cache = image.prepared_plan_diagnostics();
+            let planned = plan_query(
                 schema,
                 &mut normalized,
                 image.as_ref(),
                 query_image_cache,
+                prepared_plan_cache,
+            )?;
+            let build_micros = elapsed_micros(phase_start).min(u128::from(u64::MAX)) as u64;
+            let cached = image.insert_prepared_plan(prepared_cache_key, planned, build_micros)?;
+            cached.instantiate(
+                query_image_cache,
+                image.planner_stats_diagnostics(),
                 image.prepared_plan_diagnostics(),
-            )?
+            )
         };
         timings.plan_micros = elapsed_micros(phase_start);
         allocations.plan = allocation_delta_since(phase_alloc_start);
@@ -1649,10 +1636,8 @@ impl<'env> ReadTxn<'env> {
         allocations.query_image = allocation_delta_since(phase_alloc_start);
 
         let query_image_cache = self.query_images.diagnostics();
-        let prepared_cache_key = prepared_plan_cache_key(&normalized);
-        if let Some(cache_key) = &prepared_cache_key
-            && image.static_empty_cached(cache_key)?
-        {
+        let prepared_cache_key = query_shape_key(schema, &normalized);
+        if image.static_empty_cached(prepared_cache_key)? {
             let mut plan = static_empty_plan(
                 &normalized,
                 query_image_cache,
@@ -1680,9 +1665,7 @@ impl<'env> ReadTxn<'env> {
             None
         };
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
-            if let Some(cache_key) = &prepared_cache_key {
-                image.insert_static_empty(cache_key.clone())?;
-            }
+            image.insert_static_empty(prepared_cache_key)?;
             let mut plan = static_empty_plan(
                 &normalized,
                 query_image_cache,
@@ -1706,38 +1689,28 @@ impl<'env> ReadTxn<'env> {
 
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
-        let mut plan = if let Some(cache_key) = prepared_cache_key {
-            if let Some(cached) = image.cached_prepared_plan(&cache_key)? {
-                cached.instantiate(
-                    query_image_cache,
-                    image.planner_stats_diagnostics(),
-                    image.prepared_plan_diagnostics(),
-                )
-            } else {
-                let prepared_plan_cache = image.prepared_plan_diagnostics();
-                let planned = plan_query(
-                    schema,
-                    &mut normalized,
-                    image.as_ref(),
-                    query_image_cache,
-                    prepared_plan_cache,
-                )?;
-                let build_micros = elapsed_micros(phase_start).min(u128::from(u64::MAX)) as u64;
-                let cached = image.insert_prepared_plan(cache_key, planned, build_micros)?;
-                cached.instantiate(
-                    query_image_cache,
-                    image.planner_stats_diagnostics(),
-                    image.prepared_plan_diagnostics(),
-                )
-            }
+        let mut plan = if let Some(cached) = image.cached_prepared_plan(prepared_cache_key)? {
+            cached.instantiate(
+                query_image_cache,
+                image.planner_stats_diagnostics(),
+                image.prepared_plan_diagnostics(),
+            )
         } else {
-            plan_query(
+            let prepared_plan_cache = image.prepared_plan_diagnostics();
+            let planned = plan_query(
                 schema,
                 &mut normalized,
                 image.as_ref(),
                 query_image_cache,
+                prepared_plan_cache,
+            )?;
+            let build_micros = elapsed_micros(phase_start).min(u128::from(u64::MAX)) as u64;
+            let cached = image.insert_prepared_plan(prepared_cache_key, planned, build_micros)?;
+            cached.instantiate(
+                query_image_cache,
+                image.planner_stats_diagnostics(),
                 image.prepared_plan_diagnostics(),
-            )?
+            )
         };
         timings.plan_micros = elapsed_micros(phase_start);
         allocations.plan = allocation_delta_since(phase_alloc_start);
@@ -1785,10 +1758,231 @@ fn allocation_delta_since(start: allocation::AllocationSnapshot) -> AllocationPh
     allocation::delta(start, allocation::snapshot()).into()
 }
 
-fn prepared_plan_cache_key(query: &NormalizedQuery) -> Option<String> {
+fn query_shape_key(schema: &StorageSchema, query: &NormalizedQuery) -> QueryShapeKey {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(format!("{query:?}").as_bytes());
-    Some(hasher.finalize().to_hex().to_string())
+    hash_bytes_len_prefixed(&mut hasher, b"bumbledb.query_shape.v1");
+    hasher.update(&schema.descriptor().fingerprint().0);
+    hash_u64(&mut hasher, query.vars.len() as u64);
+    for var in &query.vars {
+        hash_u16(&mut hasher, var.id.0);
+        hash_bytes_len_prefixed(&mut hasher, var.name.as_bytes());
+        hash_value_type(&mut hasher, &var.value_type);
+    }
+    hash_u64(&mut hasher, query.inputs.len() as u64);
+    for input in &query.inputs {
+        hash_u16(&mut hasher, input.id.0);
+        hash_bytes_len_prefixed(&mut hasher, input.name.as_bytes());
+        hash_value_type(&mut hasher, &input.value_type);
+    }
+    hash_u64(&mut hasher, query.atoms.len() as u64);
+    for atom in &query.atoms {
+        hash_u16(&mut hasher, atom.id.0);
+        hash_u16(&mut hasher, atom.relation.0);
+        hash_bytes_len_prefixed(&mut hasher, atom.relation_name.as_bytes());
+        hash_u64(&mut hasher, atom.fields.len() as u64);
+        for field in &atom.fields {
+            hash_u16(&mut hasher, field.field.0);
+            hash_bytes_len_prefixed(&mut hasher, field.field_name.as_bytes());
+            hash_value_type(&mut hasher, &field.value_type);
+            hash_norm_term(&mut hasher, &field.term);
+        }
+    }
+    hash_u64(&mut hasher, query.predicates.len() as u64);
+    for predicate in &query.predicates {
+        hash_u16(&mut hasher, predicate.id.0);
+        hash_comparison_operator(&mut hasher, predicate.op);
+        hash_value_type(&mut hasher, &predicate.value_type);
+        for operand in &predicate.operands {
+            hash_norm_operand(&mut hasher, operand);
+        }
+    }
+    hash_u64(&mut hasher, query.find.len() as u64);
+    for term in &query.find {
+        hash_find_term(&mut hasher, term);
+    }
+    hash_output_plan(&mut hasher, &query.output);
+    QueryShapeKey(*hasher.finalize().as_bytes())
+}
+
+fn hash_u8(hasher: &mut blake3::Hasher, value: u8) {
+    hasher.update(&[value]);
+}
+
+fn hash_u16(hasher: &mut blake3::Hasher, value: u16) {
+    hasher.update(&value.to_be_bytes());
+}
+
+fn hash_u32(hasher: &mut blake3::Hasher, value: u32) {
+    hasher.update(&value.to_be_bytes());
+}
+
+fn hash_u64(hasher: &mut blake3::Hasher, value: u64) {
+    hasher.update(&value.to_be_bytes());
+}
+
+fn hash_bytes_len_prefixed(hasher: &mut blake3::Hasher, bytes: &[u8]) {
+    hash_u64(hasher, bytes.len() as u64);
+    hasher.update(bytes);
+}
+
+fn hash_value_type(hasher: &mut blake3::Hasher, value_type: &ValueType) {
+    match value_type {
+        ValueType::Bool => hash_u8(hasher, 1),
+        ValueType::U64 => hash_u8(hasher, 2),
+        ValueType::I64 => hash_u8(hasher, 3),
+        ValueType::Id { name, relation } => {
+            hash_u8(hasher, 4);
+            hash_bytes_len_prefixed(hasher, name.as_bytes());
+            hash_bytes_len_prefixed(hasher, relation.as_bytes());
+        }
+        ValueType::Ref {
+            name,
+            target_relation,
+        } => {
+            hash_u8(hasher, 5);
+            hash_bytes_len_prefixed(hasher, name.as_bytes());
+            hash_bytes_len_prefixed(hasher, target_relation.as_bytes());
+        }
+        ValueType::TimestampMicros => hash_u8(hasher, 6),
+        ValueType::Decimal { scale } => {
+            hash_u8(hasher, 7);
+            hash_u32(hasher, *scale);
+        }
+        ValueType::Uuid => hash_u8(hasher, 8),
+        ValueType::Enum { name } => {
+            hash_u8(hasher, 9);
+            hash_bytes_len_prefixed(hasher, name.as_bytes());
+        }
+        ValueType::Code { name } => {
+            hash_u8(hasher, 10);
+            hash_bytes_len_prefixed(hasher, name.as_bytes());
+        }
+        ValueType::String => hash_u8(hasher, 11),
+        ValueType::Bytes => hash_u8(hasher, 12),
+    }
+}
+
+fn hash_encoded_owned(hasher: &mut blake3::Hasher, value: &EncodedOwned) {
+    match value {
+        EncodedOwned::One(bytes) => {
+            hash_u8(hasher, 1);
+            hash_bytes_len_prefixed(hasher, bytes);
+        }
+        EncodedOwned::Eight(bytes) => {
+            hash_u8(hasher, 8);
+            hash_bytes_len_prefixed(hasher, bytes);
+        }
+        EncodedOwned::Sixteen(bytes) => {
+            hash_u8(hasher, 16);
+            hash_bytes_len_prefixed(hasher, bytes);
+        }
+    }
+}
+
+fn hash_norm_term(hasher: &mut blake3::Hasher, term: &NormTerm) {
+    match term {
+        NormTerm::Var(variable) => {
+            hash_u8(hasher, 1);
+            hash_u16(hasher, variable.0);
+        }
+        NormTerm::Input(input) => {
+            hash_u8(hasher, 2);
+            hash_u16(hasher, input.0);
+        }
+        NormTerm::Literal(value) => {
+            hash_u8(hasher, 3);
+            hash_encoded_owned(hasher, value);
+        }
+        NormTerm::Wildcard => hash_u8(hasher, 4),
+    }
+}
+
+fn hash_norm_operand(hasher: &mut blake3::Hasher, operand: &NormOperand) {
+    match operand {
+        NormOperand::Var(variable) => {
+            hash_u8(hasher, 1);
+            hash_u16(hasher, variable.0);
+        }
+        NormOperand::Input(input) => {
+            hash_u8(hasher, 2);
+            hash_u16(hasher, input.0);
+        }
+        NormOperand::Literal(value) => {
+            hash_u8(hasher, 3);
+            hash_encoded_owned(hasher, value);
+        }
+    }
+}
+
+fn hash_comparison_operator(hasher: &mut blake3::Hasher, op: ComparisonOperator) {
+    hash_u8(
+        hasher,
+        match op {
+            ComparisonOperator::Eq => 1,
+            ComparisonOperator::NotEq => 2,
+            ComparisonOperator::Lt => 3,
+            ComparisonOperator::Lte => 4,
+            ComparisonOperator::Gt => 5,
+            ComparisonOperator::Gte => 6,
+        },
+    );
+}
+
+fn hash_aggregate_function(hasher: &mut blake3::Hasher, function: AggregateFunction) {
+    hash_u8(
+        hasher,
+        match function {
+            AggregateFunction::Count => 1,
+            AggregateFunction::Sum => 2,
+            AggregateFunction::Min => 3,
+            AggregateFunction::Max => 4,
+        },
+    );
+}
+
+fn hash_find_term(hasher: &mut blake3::Hasher, term: &NormFindTerm) {
+    match term {
+        NormFindTerm::Variable { variable } => {
+            hash_u8(hasher, 1);
+            hash_u16(hasher, variable.0);
+        }
+        NormFindTerm::Aggregate {
+            function,
+            variable,
+            value_type,
+        } => {
+            hash_u8(hasher, 2);
+            hash_aggregate_function(hasher, *function);
+            hash_u16(hasher, variable.0);
+            hash_value_type(hasher, value_type);
+        }
+    }
+}
+
+fn hash_output_plan(hasher: &mut blake3::Hasher, output: &OutputPlan) {
+    match output {
+        OutputPlan::Project(project) => {
+            hash_u8(hasher, 1);
+            hash_u64(hasher, project.vars.len() as u64);
+            for variable in &project.vars {
+                hash_u16(hasher, variable.0);
+            }
+            hash_u8(hasher, u8::from(project.set_semantics));
+        }
+        OutputPlan::Aggregate(aggregate) => {
+            hash_u8(hasher, 2);
+            hash_u64(hasher, aggregate.group_vars.len() as u64);
+            for variable in &aggregate.group_vars {
+                hash_u16(hasher, variable.0);
+            }
+            hash_u64(hasher, aggregate.aggregates.len() as u64);
+            for term in &aggregate.aggregates {
+                hash_aggregate_function(hasher, term.function);
+                hash_u16(hasher, term.var.0);
+                hash_value_type(hasher, &term.value_type);
+            }
+        }
+    }
 }
 
 struct StaticEmptyProof {
@@ -5925,9 +6119,11 @@ fn lftj_atom_cache_key(
     variables: &[usize],
     _variable_order_ids: &[usize],
     inputs: &EncodedInputs,
-) -> String {
-    let mut key = String::new();
-    let _ = write!(key, "relation={};vars=", atom.relation.0);
+) -> LftjAtomKey {
+    let mut hasher = blake3::Hasher::new();
+    hash_bytes_len_prefixed(&mut hasher, b"bumbledb.lftj_atom.v1");
+    hash_u16(&mut hasher, atom.relation.0);
+    hash_u64(&mut hasher, variables.len() as u64);
     for variable in variables {
         let field = atom
             .fields
@@ -5935,42 +6131,38 @@ fn lftj_atom_cache_key(
             .find(|field| matches!(field.term, NormTerm::Var(id) if id.0 as usize == *variable))
             .map(|field| field.field.0)
             .unwrap_or(u16::MAX);
-        let _ = write!(key, "{field},");
+        hash_u16(&mut hasher, field);
     }
-    key.push_str(";fields=");
+    hash_u64(&mut hasher, atom.fields.len() as u64);
     for field in &atom.fields {
-        let _ = write!(key, "{}:", field.field.0);
+        hash_u16(&mut hasher, field.field.0);
+        hash_value_type(&mut hasher, &field.value_type);
         match &field.term {
             NormTerm::Var(variable) => {
+                hash_u8(&mut hasher, 1);
                 let ordinal = variables
                     .iter()
                     .position(|candidate| *candidate == variable.0 as usize)
                     .unwrap_or(usize::MAX);
-                let _ = write!(key, "v{ordinal}");
+                hash_u64(&mut hasher, ordinal as u64);
             }
             NormTerm::Input(input) => {
-                let _ = write!(key, "i{}=", input.0);
+                hash_u8(&mut hasher, 2);
+                hash_u16(&mut hasher, input.0);
                 if let Some(value) = inputs.get(*input) {
-                    append_hex(&mut key, value.as_bytes());
+                    hash_encoded_owned(&mut hasher, value);
                 } else {
-                    key.push_str("missing");
+                    hash_u8(&mut hasher, 0);
                 }
             }
             NormTerm::Literal(value) => {
-                key.push_str("l=");
-                append_hex(&mut key, value.as_bytes());
+                hash_u8(&mut hasher, 3);
+                hash_encoded_owned(&mut hasher, value);
             }
-            NormTerm::Wildcard => key.push('_'),
+            NormTerm::Wildcard => hash_u8(&mut hasher, 4),
         }
-        key.push(';');
     }
-    key
-}
-
-fn append_hex(out: &mut String, bytes: &[u8]) {
-    for byte in bytes {
-        let _ = write!(out, "{byte:02x}");
-    }
+    LftjAtomKey(*hasher.finalize().as_bytes())
 }
 
 fn atom_variables_in_plan_order(atom: &NormAtom, variable_order_ids: &[usize]) -> Vec<usize> {
@@ -9069,6 +9261,114 @@ mod tests {
             normalized.atoms[0].fields[0].term,
             NormTerm::Var(_)
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn query_shape_key_is_structural_and_stable() -> TestResult {
+        let (env, schema) = seeded_db()?;
+        let base = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?posting ?amount
+            where
+              Posting(id: ?posting, amount: ?amount, at: ?t)
+              ?t < 30
+            "#,
+        )?;
+        let same = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?posting ?amount
+            where
+              Posting(id: ?posting, amount: ?amount, at: ?t)
+              ?t < 30
+            "#,
+        )?;
+        let different_literal = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?posting ?amount
+            where
+              Posting(id: ?posting, amount: ?amount, at: ?t)
+              ?t < 31
+            "#,
+        )?;
+        let different_operator = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?posting ?amount
+            where
+              Posting(id: ?posting, amount: ?amount, at: ?t)
+              ?t <= 30
+            "#,
+        )?;
+        let different_output = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?amount ?posting
+            where
+              Posting(id: ?posting, amount: ?amount, at: ?t)
+              ?t < 30
+            "#,
+        )?;
+
+        let keys = env.read(|txn| {
+            let base = normalize_query(txn, &schema, &base)?;
+            let same = normalize_query(txn, &schema, &same)?;
+            let different_literal = normalize_query(txn, &schema, &different_literal)?;
+            let different_operator = normalize_query(txn, &schema, &different_operator)?;
+            let different_output = normalize_query(txn, &schema, &different_output)?;
+            Ok::<_, Error>((
+                query_shape_key(&schema, &base),
+                query_shape_key(&schema, &same),
+                query_shape_key(&schema, &different_literal),
+                query_shape_key(&schema, &different_operator),
+                query_shape_key(&schema, &different_output),
+            ))
+        })?;
+
+        assert_eq!(keys.0, keys.1);
+        assert_ne!(keys.0, keys.2);
+        assert_ne!(keys.0, keys.3);
+        assert_ne!(keys.0, keys.4);
+        Ok(())
+    }
+
+    #[test]
+    fn lftj_atom_key_includes_encoded_inputs() -> TestResult {
+        let (env, schema) = seeded_db()?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?account
+            where Account(id: ?account, holder: $holder)
+            "#,
+        )?;
+        let first_inputs = InputBindings::from_values([("holder", Value::Ref(1))]);
+        let second_inputs = InputBindings::from_values([("holder", Value::Ref(2))]);
+
+        let (first, same, second) = env.read(|txn| {
+            let normalized = normalize_query(txn, &schema, &query)?;
+            let first_inputs = encode_inputs(txn, &schema, &normalized, &first_inputs)?;
+            let same_inputs = encode_inputs(
+                txn,
+                &schema,
+                &normalized,
+                &InputBindings::from_values([("holder", Value::Ref(1))]),
+            )?;
+            let second_inputs = encode_inputs(txn, &schema, &normalized, &second_inputs)?;
+            let atom = &normalized.atoms[0];
+            let variables = atom_variables_in_plan_order(atom, &[0]);
+            Ok::<_, Error>((
+                lftj_atom_cache_key(atom, &variables, &[0], &first_inputs),
+                lftj_atom_cache_key(atom, &variables, &[0], &same_inputs),
+                lftj_atom_cache_key(atom, &variables, &[0], &second_inputs),
+            ))
+        })?;
+
+        assert_eq!(first, same);
+        assert_ne!(first, second);
         Ok(())
     }
 
