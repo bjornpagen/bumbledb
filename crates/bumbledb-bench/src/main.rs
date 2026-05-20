@@ -224,6 +224,7 @@ impl Config {
         let mut trace_output = None;
         let mut trace_format = TraceFormat::Fmt;
         let mut format = OutputFormat::Text;
+        let mut format_explicit = false;
         let mut compare_mode = CompareMode::Materialized;
         let mut fail_gates = false;
         let mut args = args.into_iter();
@@ -280,6 +281,7 @@ impl Config {
                     };
                 }
                 "--format" => {
+                    format_explicit = true;
                     format = match next_arg(&mut args, "--format")?.as_str() {
                         "text" => OutputFormat::Text,
                         "markdown" => OutputFormat::Markdown,
@@ -297,8 +299,14 @@ impl Config {
                         }
                     }
                 }
-                "--markdown" => format = OutputFormat::Markdown,
-                "--json" => format = OutputFormat::Json,
+                "--markdown" => {
+                    format_explicit = true;
+                    format = OutputFormat::Markdown;
+                }
+                "--json" => {
+                    format_explicit = true;
+                    format = OutputFormat::Json;
+                }
                 "--fail-gates" => fail_gates = true,
                 "--help" | "-h" => {
                     println!(
@@ -329,11 +337,11 @@ impl Config {
             compare_mode,
             fail_gates,
         };
-        config.apply_preset()?;
+        config.apply_preset(format_explicit)?;
         Ok(Some(config))
     }
 
-    fn apply_preset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn apply_preset(&mut self, format_explicit: bool) -> Result<(), Box<dyn std::error::Error>> {
         let Some(preset) = self.preset.as_deref() else {
             return Ok(());
         };
@@ -348,7 +356,9 @@ impl Config {
                     "joinstress".to_owned(),
                     "tpch".to_owned(),
                 ];
-                self.format = OutputFormat::Markdown;
+                if !format_explicit {
+                    self.format = OutputFormat::Markdown;
+                }
             }
             "nonjob" => {
                 self.scale = 10000;
@@ -360,14 +370,18 @@ impl Config {
                     "joinstress".to_owned(),
                     "tpch".to_owned(),
                 ];
-                self.format = OutputFormat::Json;
+                if !format_explicit {
+                    self.format = OutputFormat::Json;
+                }
             }
             "job" => {
                 self.repeats = 30;
                 self.warmup = 2;
                 self.datasets = vec!["job".to_owned()];
                 self.open_limit = Some(self.open_limit.unwrap_or(DEFAULT_OPEN_LIMIT));
-                self.format = OutputFormat::Json;
+                if !format_explicit {
+                    self.format = OutputFormat::Json;
+                }
                 if self.job_dir.is_none() {
                     self.job_dir = std::env::var("BUMBLED_JOB_DIR").ok();
                 }
@@ -377,7 +391,9 @@ impl Config {
                 self.warmup = 2;
                 self.datasets = vec!["job".to_owned()];
                 self.open_limit = Some(self.open_limit.unwrap_or(DEFAULT_OPEN_LIMIT));
-                self.format = OutputFormat::Json;
+                if !format_explicit {
+                    self.format = OutputFormat::Json;
+                }
                 if self.job_dir.is_none() {
                     self.job_dir = std::env::var("BUMBLED_JOB_DIR").ok();
                 }
@@ -387,7 +403,9 @@ impl Config {
                 self.warmup = 2;
                 self.datasets = vec!["job".to_owned()];
                 self.open_limit = None;
-                self.format = OutputFormat::Json;
+                if !format_explicit {
+                    self.format = OutputFormat::Json;
+                }
                 if self.job_dir.is_none() {
                     self.job_dir = std::env::var("BUMBLED_JOB_DIR").ok();
                 }
@@ -557,8 +575,14 @@ struct BenchmarkRunResult {
     dataset: &'static str,
     query: &'static str,
     rows: usize,
-    bumbledb_prepare: Duration,
-    sqlite_prepare: Duration,
+    bumbledb_correctness_execution: Duration,
+    sqlite_correctness_execution: Duration,
+    bumbledb_cold_execution: Duration,
+    sqlite_cold_execution: Duration,
+    cold_execution_uses_correctness_output: bool,
+    count_cold_execution_warmed_by_correctness: bool,
+    allocation_scope: String,
+    query_image_scope: String,
     bumbledb_warmup: TimingStats,
     sqlite_warmup: TimingStats,
     bumbledb_samples: TimingStats,
@@ -627,8 +651,10 @@ struct TimingStats {
 
 #[derive(Clone, Copy, Debug)]
 struct QueryTimingSamples {
-    bumbledb_prepare: Duration,
-    sqlite_prepare: Duration,
+    bumbledb_correctness_execution: Duration,
+    sqlite_correctness_execution: Duration,
+    bumbledb_cold_execution: Duration,
+    sqlite_cold_execution: Duration,
     bumbledb_warmup: TimingStats,
     sqlite_warmup: TimingStats,
     bumbledb_samples: TimingStats,
@@ -812,7 +838,7 @@ fn run_dataset(
         let materialized_once =
             timed(|| bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs)))?;
         let materialized_output = materialized_once.value;
-        let (bumble_prepare, bumble_output) = match config.compare_mode {
+        let (bumble_cold_execution, bumble_output) = match config.compare_mode {
             CompareMode::Materialized => (materialized_once.elapsed, materialized_output.clone()),
             CompareMode::Rows => {
                 let count_once = timed(|| {
@@ -830,7 +856,7 @@ fn run_dataset(
             }
         };
         let sqlite_once = timed(|| sqlite_count(&mut sqlite, query.sqlite, &params))?;
-        let sqlite_prepare = sqlite_once.elapsed;
+        let sqlite_cold_execution = sqlite_once.elapsed;
         let sqlite_once = sqlite_once.value;
         if materialized_output.rows.len() != sqlite_once {
             return Err(format!(
@@ -893,8 +919,10 @@ fn run_dataset(
             &bumble_output,
             config.compare_mode,
             QueryTimingSamples {
-                bumbledb_prepare: bumble_prepare,
-                sqlite_prepare,
+                bumbledb_correctness_execution: materialized_once.elapsed,
+                sqlite_correctness_execution: sqlite_cold_execution,
+                bumbledb_cold_execution: bumble_cold_execution,
+                sqlite_cold_execution,
                 bumbledb_warmup: bumble_warmup,
                 sqlite_warmup,
                 bumbledb_samples: bumble_samples,
@@ -905,13 +933,13 @@ fn run_dataset(
         emit_profile_summary(dataset.name, query.name, &bumble_output);
         if format.includes_text() {
             println!(
-                "query={} rows={} bumbledb_prepare={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_prepare={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
+                "query={} rows={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
                 query.name,
                 bumble_output.rows.len(),
-                bumble_prepare,
+                bumble_cold_execution,
                 result.bumbledb_samples.samples,
                 result.bumbledb_avg,
-                sqlite_prepare,
+                sqlite_cold_execution,
                 result.sqlite_samples.samples,
                 result.sqlite_avg,
                 if result.gate.passed { "pass" } else { "fail" },
@@ -1007,8 +1035,14 @@ fn benchmark_result(
         dataset,
         query: query.name,
         rows: output.rows.len(),
-        bumbledb_prepare: timing.bumbledb_prepare,
-        sqlite_prepare: timing.sqlite_prepare,
+        bumbledb_correctness_execution: timing.bumbledb_correctness_execution,
+        sqlite_correctness_execution: timing.sqlite_correctness_execution,
+        bumbledb_cold_execution: timing.bumbledb_cold_execution,
+        sqlite_cold_execution: timing.sqlite_cold_execution,
+        cold_execution_uses_correctness_output: compare_mode == CompareMode::Materialized,
+        count_cold_execution_warmed_by_correctness: compare_mode == CompareMode::Rows,
+        allocation_scope: allocation_scope(compare_mode).to_owned(),
+        query_image_scope: query_image_scope(output).to_owned(),
         bumbledb_warmup: timing.bumbledb_warmup,
         sqlite_warmup: timing.sqlite_warmup,
         bumbledb_samples: timing.bumbledb_samples,
@@ -1074,6 +1108,24 @@ fn count_output_as_query_output(
         columns,
         rows: (0..rows).map(|_| Vec::new()).collect(),
         plan,
+    }
+}
+
+fn allocation_scope(compare_mode: CompareMode) -> &'static str {
+    match compare_mode {
+        CompareMode::Materialized => "bumbledb.correctness_execution",
+        CompareMode::Rows => "bumbledb.count_cold_execution",
+    }
+}
+
+fn query_image_scope(output: &QueryOutput) -> &'static str {
+    if output.plan.timings.query_image_micros == 0
+        && output.plan.query_image_cache.cached_images == 0
+        && output.plan.query_image_cache.builds == 0
+    {
+        "not_applicable"
+    } else {
+        "full_schema"
     }
 }
 
@@ -1379,6 +1431,21 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             if result.gate.passed { "pass" } else { "fail" },
         );
     }
+    out.push_str("\n## Measurement Contract\n\n");
+    out.push_str("| dataset | query | allocation scope | query image scope | cold execution uses correctness output | count cold warmed by correctness |\n");
+    out.push_str("|---|---|---|---|---|---|\n");
+    for result in results {
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} | {} | {} |",
+            markdown_escape(result.dataset),
+            markdown_escape(result.query),
+            markdown_escape(&result.allocation_scope),
+            markdown_escape(&result.query_image_scope),
+            result.cold_execution_uses_correctness_output,
+            result.count_cold_execution_warmed_by_correctness,
+        );
+    }
     out.push_str("\n## Phase Timing\n\n");
     out.push_str("| dataset | query | runtime | total us | validate us | normalize us | encode us | image us | plan us | lftj build us | hash index us | execute us | lftj exec us | hash exec us | sink emit us | sink finish us | decode us |\n");
     out.push_str(
@@ -1475,17 +1542,18 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Distribution\n\n");
-    out.push_str("| dataset | query | bumbledb prepare us | bumbledb warmup samples | bumbledb warmup avg us | bumbledb samples | bumbledb min us | bumbledb p50 us | bumbledb p95 us | bumbledb max us | sqlite prepare us | sqlite warmup samples | sqlite warmup avg us | sqlite samples | sqlite min us | sqlite p50 us | sqlite p95 us | sqlite max us |\n");
-    out.push_str("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("| dataset | query | bumbledb correctness us | bumbledb cold execution us | bumbledb warmup samples | bumbledb warmup avg us | bumbledb samples | bumbledb min us | bumbledb p50 us | bumbledb p95 us | bumbledb max us | sqlite correctness us | sqlite cold execution us | sqlite warmup samples | sqlite warmup avg us | sqlite samples | sqlite min us | sqlite p50 us | sqlite p95 us | sqlite max us |\n");
+    out.push_str("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     for result in results {
         let bumble = result.bumbledb_samples;
         let sqlite = result.sqlite_samples;
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
-            duration_micros(result.bumbledb_prepare),
+            duration_micros(result.bumbledb_correctness_execution),
+            duration_micros(result.bumbledb_cold_execution),
             result.bumbledb_warmup.samples,
             duration_micros(result.bumbledb_warmup.avg),
             bumble.samples,
@@ -1493,7 +1561,8 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             duration_micros(bumble.p50),
             duration_micros(bumble.p95),
             duration_micros(bumble.max),
-            duration_micros(result.sqlite_prepare),
+            duration_micros(result.sqlite_correctness_execution),
+            duration_micros(result.sqlite_cold_execution),
             result.sqlite_warmup.samples,
             duration_micros(result.sqlite_warmup.avg),
             sqlite.samples,
@@ -1569,10 +1638,18 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"bumbledb_materialized_rows\":{},\"sqlite_materialized_rows\":{},\"count_only_supported\":{},\"count_only_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},",
+            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"result\":{{\"logical_rows\":{},\"materialized_rows\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"bumbledb_materialized_rows\":{},\"sqlite_materialized_rows\":{},\"count_only_supported\":{},\"count_only_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
             json_escape(result.dataset),
             json_escape(result.query),
             result.rows,
+            result.rows,
+            if result.bumbledb_materialized_rows {
+                result.rows
+            } else {
+                0
+            },
+            result.final_output_values,
+            json_escape(&result.compare_mode),
             json_escape(&result.chosen_plan),
             json_escape(&result.runtime_kind),
             json_escape(&result.plan_family),
@@ -1582,21 +1659,49 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.count_only_supported,
             json_escape(&result.count_only_fallback_reason),
             result.query_image_built_during_query,
+            json_escape(&result.allocation_scope),
+            json_escape(&result.query_image_scope),
+            result.cold_execution_uses_correctness_output,
+            result.count_cold_execution_warmed_by_correctness,
         );
-        write_timing_stats(&mut out, "bumbledb", result.bumbledb_samples);
-        out.push(',');
-        write_timing_stats(&mut out, "sqlite", result.sqlite_samples);
+        out.push_str("\"bumbledb\":{");
+        let _ = write!(
+            out,
+            "\"correctness_execution\":{{\"elapsed_us\":{},\"output_mode\":\"materialized\"}},\"cold_execution\":{{\"elapsed_us\":{},\"plan_family\":\"{}\",\"runtime\":\"{}\",\"query_image_built\":{},\"query_image_scope\":\"{}\",\"materialized_rows\":{},\"logical_rows\":{},\"output_values\":{}}},\"warmup\":{{\"samples\":{},\"avg_us\":{}}},\"samples\":",
+            duration_micros(result.bumbledb_correctness_execution),
+            duration_micros(result.bumbledb_cold_execution),
+            json_escape(&result.plan_family),
+            json_escape(&result.runtime_kind),
+            result.query_image_built_during_query,
+            json_escape(&result.query_image_scope),
+            if result.bumbledb_materialized_rows {
+                result.rows
+            } else {
+                0
+            },
+            result.rows,
+            result.final_output_values,
+            result.bumbledb_warmup.samples,
+            duration_micros(result.bumbledb_warmup.avg),
+        );
+        write_timing_stats_value(&mut out, result.bumbledb_samples);
+        out.push_str("},\"sqlite\":{");
+        let _ = write!(
+            out,
+            "\"correctness_execution\":{{\"elapsed_us\":{},\"output_mode\":\"rows\"}},\"cold_execution\":{{\"elapsed_us\":{}}},\"warmup\":{{\"samples\":{},\"avg_us\":{}}},\"samples\":",
+            duration_micros(result.sqlite_correctness_execution),
+            duration_micros(result.sqlite_cold_execution),
+            result.sqlite_warmup.samples,
+            duration_micros(result.sqlite_warmup.avg),
+        );
+        write_timing_stats_value(&mut out, result.sqlite_samples);
+        out.push('}');
         let timings = result.timings;
         let allocations = result.allocations;
         let _ = write!(
             out,
-            ",\"prepare\":{{\"bumbledb_us\":{},\"sqlite_us\":{}}},\"warmup\":{{\"bumbledb_samples\":{},\"bumbledb_avg_us\":{},\"sqlite_samples\":{},\"sqlite_avg_us\":{}}},\"phase_timing\":{{\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"hash_index_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"hash_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{}}},\"allocations\":{{\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
-            duration_micros(result.bumbledb_prepare),
-            duration_micros(result.sqlite_prepare),
-            result.bumbledb_warmup.samples,
-            duration_micros(result.bumbledb_warmup.avg),
-            result.sqlite_warmup.samples,
-            duration_micros(result.sqlite_warmup.avg),
+            ",\"phase_timing\":{{\"scope\":\"{}\",\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"hash_index_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"hash_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{}}},\"allocations\":{{\"scope\":\"{}\",\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
+            json_escape(&result.allocation_scope),
             timings.total_micros,
             timings.validate_inputs_micros,
             timings.normalize_micros,
@@ -1611,6 +1716,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             timings.sink_emit_micros,
             timings.sink_finish_micros,
             timings.decode_micros,
+            json_escape(&result.allocation_scope),
             allocations.enabled,
             allocations.alloc_calls,
             allocations.dealloc_calls,
@@ -1674,11 +1780,10 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
     out
 }
 
-fn write_timing_stats(out: &mut String, name: &str, stats: TimingStats) {
+fn write_timing_stats_value(out: &mut String, stats: TimingStats) {
     let _ = write!(
         out,
-        "\"{}\":{{\"samples\":{},\"total_us\":{},\"avg_us\":{},\"min_us\":{},\"p50_us\":{},\"p95_us\":{},\"max_us\":{}}}",
-        name,
+        "{{\"samples\":{},\"total_us\":{},\"avg_us\":{},\"min_us\":{},\"p50_us\":{},\"p95_us\":{},\"max_us\":{}}}",
         stats.samples,
         duration_micros(stats.total),
         duration_micros(stats.avg),
@@ -2734,8 +2839,14 @@ mod tests {
             dataset: "joinstress",
             query: "triangle_count",
             rows: 1,
-            bumbledb_prepare: Duration::from_micros(20),
-            sqlite_prepare: Duration::from_micros(12),
+            bumbledb_correctness_execution: Duration::from_micros(20),
+            sqlite_correctness_execution: Duration::from_micros(12),
+            bumbledb_cold_execution: Duration::from_micros(20),
+            sqlite_cold_execution: Duration::from_micros(12),
+            cold_execution_uses_correctness_output: true,
+            count_cold_execution_warmed_by_correctness: false,
+            allocation_scope: "bumbledb.correctness_execution".to_owned(),
+            query_image_scope: "full_schema".to_owned(),
             bumbledb_warmup: TimingStats::from_samples(vec![Duration::from_micros(13)]),
             sqlite_warmup: TimingStats::from_samples(vec![Duration::from_micros(8)]),
             bumbledb_samples: sample_stats,
@@ -2807,6 +2918,8 @@ mod tests {
         assert!(markdown.contains("| joinstress | triangle_count |"));
         assert!(markdown.contains("| pure_lftj | Lftj | FreeJoinLftj |"));
         assert!(markdown.contains("## Phase Timing"));
+        assert!(markdown.contains("## Measurement Contract"));
+        assert!(markdown.contains("bumbledb.correctness_execution"));
         assert!(markdown.contains("## Allocation Summary"));
         assert!(markdown.contains("## Allocation Phase Detail"));
         assert!(markdown.contains("## Distribution"));
@@ -2822,8 +2935,14 @@ mod tests {
             dataset: "ledger",
             query: "tag_lookup_join",
             rows: 2,
-            bumbledb_prepare: Duration::from_micros(20),
-            sqlite_prepare: Duration::from_micros(10),
+            bumbledb_correctness_execution: Duration::from_micros(21),
+            sqlite_correctness_execution: Duration::from_micros(10),
+            bumbledb_cold_execution: Duration::from_micros(20),
+            sqlite_cold_execution: Duration::from_micros(10),
+            cold_execution_uses_correctness_output: false,
+            count_cold_execution_warmed_by_correctness: true,
+            allocation_scope: "bumbledb.count_cold_execution".to_owned(),
+            query_image_scope: "full_schema".to_owned(),
             bumbledb_warmup: TimingStats::from_samples(vec![Duration::from_micros(11)]),
             sqlite_warmup: TimingStats::from_samples(vec![Duration::from_micros(7)]),
             bumbledb_samples: TimingStats::from_samples(vec![Duration::from_micros(9)]),
@@ -2892,6 +3011,13 @@ mod tests {
         assert!(json.contains("\"plan_family\":\"HashProbe\""));
         assert!(json.contains("\"compare_mode\":\"rows\""));
         assert!(json.contains("\"count_only_supported\":true"));
+        assert!(json.contains("\"allocation_scope\":\"bumbledb.count_cold_execution\""));
+        assert!(json.contains("\"query_image_scope\":\"full_schema\""));
+        assert!(json.contains("\"cold_execution_uses_correctness_output\":false"));
+        assert!(json.contains("\"count_cold_execution_warmed_by_correctness\":true"));
+        assert!(json.contains("\"correctness_execution\""));
+        assert!(json.contains("\"cold_execution\""));
+        assert!(!json.contains("\"prepare\""));
         assert!(json.contains("\"query_image_built_during_query\":true"));
         assert!(json.contains("\"phase_timing\""));
         assert!(json.contains("\"allocations\""));
