@@ -952,7 +952,6 @@ fn job_queries() -> Vec<BenchQuery> {
                 JOIN movie_companies mc ON mc.movie_id = t.id
                 JOIN company_name cn ON cn.id = mc.company_id
                 JOIN company_type ct ON ct.id = mc.company_type_id
-                HAVING COUNT(*) > 0
             "#,
             sqlite_params: Vec::new(),
         },
@@ -973,7 +972,6 @@ fn job_queries() -> Vec<BenchQuery> {
                 JOIN info_type it ON it.id = mi.info_type_id
                 JOIN movie_info_idx mi_idx ON mi_idx.movie_id = t.id
                 JOIN info_type it_idx ON it_idx.id = mi_idx.info_type_id
-                HAVING COUNT(*) > 0
             "#,
             sqlite_params: Vec::new(),
         },
@@ -990,7 +988,6 @@ fn job_queries() -> Vec<BenchQuery> {
                 JOIN title t ON t.id = mc.movie_id
                 WHERE ct.kind = 'production companies'
                   AND it.info = 'top 250 rank'
-                HAVING COUNT(*) > 0
             "#,
             sqlite_params: Vec::new(),
         },
@@ -1012,7 +1009,6 @@ fn job_queries() -> Vec<BenchQuery> {
                   AND n.gender = 'm'
                   AND rt.role = 'actor'
                   AND t.production_year BETWEEN 2005 AND 2015
-                HAVING COUNT(*) > 0
             "#,
             sqlite_params: Vec::new(),
         },
@@ -1034,7 +1030,6 @@ fn job_queries() -> Vec<BenchQuery> {
                   AND k.keyword = 'character-name-in-title'
                   AND t.episode_nr >= 50
                   AND t.episode_nr < 100
-                HAVING COUNT(*) > 0
             "#,
             sqlite_params: Vec::new(),
         },
@@ -1080,7 +1075,6 @@ fn job_queries() -> Vec<BenchQuery> {
                 JOIN info_type it1 ON it1.id = mi_idx1.info_type_id
                 JOIN movie_info_idx mi_idx2 ON mi_idx2.movie_id = t2.id
                 JOIN info_type it2 ON it2.id = mi_idx2.info_type_id
-                HAVING COUNT(*) > 0
             "#,
             sqlite_params: Vec::new(),
         },
@@ -1105,7 +1099,6 @@ fn job_queries() -> Vec<BenchQuery> {
                   AND kt2.kind = 'tv series'
                   AND lt.link = 'sequel'
                   AND t2.production_year BETWEEN 2005 AND 2008
-                HAVING COUNT(*) > 0
             "#,
             sqlite_params: Vec::new(),
         },
