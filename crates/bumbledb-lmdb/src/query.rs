@@ -1636,7 +1636,7 @@ impl<'env> ReadTxn<'env> {
             plan.allocations = plan.allocations.with_total(total_alloc);
             return Ok(QueryOutput {
                 columns: result_columns(&normalized),
-                rows: Vec::new(),
+                rows: empty_output_rows(&normalized.output),
                 plan,
             });
         }
@@ -1673,7 +1673,7 @@ impl<'env> ReadTxn<'env> {
             plan.allocations = plan.allocations.with_total(total_alloc);
             return Ok(QueryOutput {
                 columns: result_columns(&normalized),
-                rows: Vec::new(),
+                rows: empty_output_rows(&normalized.output),
                 plan,
             });
         }
@@ -1881,7 +1881,7 @@ impl<'env> ReadTxn<'env> {
             plan.allocations = plan.allocations.with_total(total_alloc);
             return Ok(QueryOutput {
                 columns: result_columns(normalized),
-                rows: Vec::new(),
+                rows: empty_output_rows(&normalized.output),
                 plan,
             });
         }
@@ -1918,7 +1918,7 @@ impl<'env> ReadTxn<'env> {
             plan.allocations = plan.allocations.with_total(total_alloc);
             return Ok(QueryOutput {
                 columns: result_columns(normalized),
-                rows: Vec::new(),
+                rows: empty_output_rows(&normalized.output),
                 plan,
             });
         }
@@ -3099,7 +3099,7 @@ fn static_empty_output_from_typed(
 ) -> QueryOutput {
     QueryOutput {
         columns: result_columns_from_typed(query),
-        rows: Vec::new(),
+        rows: empty_output_rows(&output_plan_from_typed_find(query)),
         plan: static_empty_plan_from_typed(
             query,
             query_image_cache,
@@ -3107,6 +3107,13 @@ fn static_empty_output_from_typed(
             total_alloc_start,
             cache_hit,
         ),
+    }
+}
+
+fn empty_output_rows(output: &OutputPlan) -> Vec<Vec<Value>> {
+    match output {
+        OutputPlan::Aggregate(plan) if is_global_count_plan(plan) => vec![vec![Value::U64(0)]],
+        OutputPlan::Project(_) | OutputPlan::Aggregate(_) => Vec::new(),
     }
 }
 
@@ -8956,9 +8963,6 @@ impl TupleSink for GlobalCountSink {
         _query: &NormalizedQuery,
         counters: &mut PlanCounters,
     ) -> Result<Vec<Vec<Value>>> {
-        if self.count == 0 {
-            return Ok(Vec::new());
-        }
         counters.materialized_output_values += 1;
         Ok(vec![vec![Value::U64(self.count)]])
     }
@@ -9129,9 +9133,7 @@ impl CountOnlySink {
     fn finish_count(self) -> usize {
         match self.output {
             OutputPlan::Project(_) => self.project_rows.len(),
-            OutputPlan::Aggregate(plan) if is_global_count_plan(&plan) => {
-                usize::from(self.global_count > 0)
-            }
+            OutputPlan::Aggregate(plan) if is_global_count_plan(&plan) => 1,
             OutputPlan::Aggregate(_) => self.aggregate_groups.len(),
         }
     }
@@ -11050,6 +11052,56 @@ mod tests {
             output.plan.counters.materialized_output_values
                 < output.plan.counters.factorized_counted_bindings
         );
+        Ok(())
+    }
+
+    #[test]
+    fn global_count_over_empty_input_returns_zero_row() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("A")?
+                .var("id", "a")?
+                .done()
+                .find_aggregate(AggregateFunction::Count, "a")?;
+            Ok(())
+        })?;
+
+        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+        assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
+        assert_eq!(output.plan.counters.output_rows, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn static_empty_global_count_returns_zero_row() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
+        env.write(|txn| {
+            let _ = txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
+            Ok::<_, Error>(())
+        })?;
+        let query = typed_query(&schema, |query| {
+            query
+                .rel("A")?
+                .var("id", "a")?
+                .done()
+                .rel("B")?
+                .var("id", "b")?
+                .integer("a", 99)?
+                .done()
+                .find_aggregate(AggregateFunction::Count, "a")?;
+            Ok(())
+        })?;
+
+        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+        assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
         Ok(())
     }
 

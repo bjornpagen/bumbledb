@@ -116,15 +116,6 @@ pub enum TypedClause {
     Comparison(TypedComparison),
 }
 
-/// Future language-neutral query predicate.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TypedPredicate {
-    /// Binary comparison predicate supported by the current executor.
-    Comparison(TypedComparison),
-    /// Boolean expression reserved for future Logica `Constraint(expr)` lowering.
-    Boolean(TypedExpr),
-}
-
 /// Typed relation atom.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypedRelationAtom {
@@ -193,44 +184,4 @@ pub struct TypedLiteral {
     pub literal: Literal,
     /// Resolved logical type.
     pub value_type: ValueType,
-}
-
-/// Typed expression skeleton reserved for future frontends.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TypedExpr {
-    /// Variable expression.
-    Variable(usize),
-    /// Input expression.
-    Input(usize),
-    /// Literal expression.
-    Literal(TypedLiteral),
-    /// Unary expression.
-    Unary {
-        /// Operator name.
-        op: String,
-        /// Operand expression.
-        expr: Box<TypedExpr>,
-        /// Result type.
-        value_type: ValueType,
-    },
-    /// Binary expression.
-    Binary {
-        /// Operator name.
-        op: String,
-        /// Left expression.
-        left: Box<TypedExpr>,
-        /// Right expression.
-        right: Box<TypedExpr>,
-        /// Result type.
-        value_type: ValueType,
-    },
-    /// Function call expression.
-    Call {
-        /// Function name.
-        function: String,
-        /// Argument expressions.
-        args: Vec<TypedExpr>,
-        /// Result type.
-        value_type: ValueType,
-    },
 }
