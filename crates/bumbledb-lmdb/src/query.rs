@@ -25,8 +25,8 @@ use crate::planner_stats::{
     OptimizerFieldStats, OptimizerIndexStats, OptimizerRelationStats, PlannerStatsCacheDiagnostics,
 };
 use crate::query_image::{
-    EncodedColumnBuilder, LftjAtomKey, QueryShapeKey, SortedTrieBuild, encoded_column_builders,
-    finish_column_builders,
+    EncodedColumnBuilder, LftjAtomKey, QueryImageScope, QueryShapeKey, SortedTrieBuild,
+    encoded_column_builders, finish_column_builders,
 };
 use crate::{PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics};
 
@@ -1262,8 +1262,7 @@ impl PlannerStats {
                 continue;
             }
             let relation = image
-                .relations()
-                .get(atom.relation.0 as usize)
+                .relation_by_id(atom.relation)
                 .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
             relations.insert(
                 atom.relation_name.clone(),
@@ -1536,7 +1535,11 @@ impl<'env> ReadTxn<'env> {
         let phase_alloc_start = allocation::snapshot();
         let image = {
             let _span = tracing::debug_span!("bumbledb.query.image").entered();
-            self.query_images.get_or_build(self, schema)?
+            self.query_images.get_or_build_scoped(
+                self,
+                schema,
+                query_image_scope_for_query(schema, &normalized),
+            )?
         };
         timings.query_image_micros = elapsed_micros(phase_start);
         allocations.query_image = allocation_delta_since(phase_alloc_start);
@@ -1777,7 +1780,11 @@ impl<'env> ReadTxn<'env> {
         let phase_alloc_start = allocation::snapshot();
         let image = {
             let _span = tracing::debug_span!("bumbledb.query.image").entered();
-            self.query_images.get_or_build(self, schema)?
+            self.query_images.get_or_build_scoped(
+                self,
+                schema,
+                query_image_scope_for_query(schema, normalized),
+            )?
         };
         timings.query_image_micros = elapsed_micros(phase_start);
         allocations.query_image = allocation_delta_since(phase_alloc_start);
@@ -1995,7 +2002,11 @@ impl<'env> ReadTxn<'env> {
 
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
-        let image = self.query_images.get_or_build(self, schema)?;
+        let image = self.query_images.get_or_build_scoped(
+            self,
+            schema,
+            query_image_scope_for_query(schema, &normalized),
+        )?;
         timings.query_image_micros = elapsed_micros(phase_start);
         allocations.query_image = allocation_delta_since(phase_alloc_start);
 
@@ -2169,6 +2180,10 @@ fn query_shape_key(schema: &StorageSchema, query: &NormalizedQuery) -> QueryShap
     }
     hash_output_plan(&mut hasher, &query.output);
     QueryShapeKey(*hasher.finalize().as_bytes())
+}
+
+fn query_image_scope_for_query(schema: &StorageSchema, query: &NormalizedQuery) -> QueryImageScope {
+    QueryImageScope::relations_all(schema, query.atoms.iter().map(|atom| atom.relation))
 }
 
 fn typed_static_empty_fast_key(
@@ -2507,8 +2522,7 @@ fn static_literal_atoms_prove_empty(
         }
         proof.atoms_checked += 1;
         let relation = image
-            .relations()
-            .get(atom.relation.0 as usize)
+            .relation_by_id(atom.relation)
             .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
         let mut matched = false;
         for row in 0..relation.row_count {
@@ -3642,8 +3656,7 @@ fn try_execute_factorized_count<S: TupleSink>(
             return Ok(false);
         }
         let relation = image
-            .relations()
-            .get(atom.relation.0 as usize)
+            .relation_by_id(atom.relation)
             .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
         let Some(index) = relation
             .indexes()
@@ -4918,8 +4931,7 @@ fn direct_relation(
     relation_id: crate::RelationId,
 ) -> Result<&RelationImage> {
     image
-        .relations()
-        .get(relation_id.0 as usize)
+        .relation_by_id(relation_id)
         .ok_or_else(|| Error::internal(format!("missing direct relation {}", relation_id.0)))
 }
 
@@ -5297,8 +5309,7 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
             .get(atom.id.0 as usize)
             .ok_or_else(|| Error::internal("missing hash probe atom"))?;
         self.image
-            .relations()
-            .get(atom.relation.0 as usize)
+            .relation_by_id(atom.relation)
             .ok_or_else(|| Error::unknown_relation(&atom.relation_name))
     }
 
@@ -5331,8 +5342,7 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
 
         let relation = self
             .image
-            .relations()
-            .get(request.relation.0 as usize)
+            .relation_by_id(request.relation)
             .ok_or_else(|| Error::internal("missing lazy hash relation"))?;
         let build_start = Instant::now();
         let build_alloc_start = allocation::snapshot();
@@ -5722,8 +5732,7 @@ impl<S: TupleSink> MixedExecutor<'_, '_, '_, '_, '_, S> {
 
     fn relation(&self, atom: &NormAtom) -> Result<&RelationImage> {
         self.image
-            .relations()
-            .get(atom.relation.0 as usize)
+            .relation_by_id(atom.relation)
             .ok_or_else(|| Error::unknown_relation(&atom.relation_name))
     }
 
@@ -5756,8 +5765,7 @@ impl<S: TupleSink> MixedExecutor<'_, '_, '_, '_, '_, S> {
 
         let relation = self
             .image
-            .relations()
-            .get(request.relation.0 as usize)
+            .relation_by_id(request.relation)
             .ok_or_else(|| Error::internal("missing mixed hash relation"))?;
         let build_start = Instant::now();
         let build_alloc_start = allocation::snapshot();
@@ -6369,8 +6377,7 @@ fn build_lftj_atom_plan(
     counters: &mut PlanCounters,
 ) -> Result<LftjAtomPlan> {
     let source = image
-        .relations()
-        .get(atom.relation.0 as usize)
+        .relation_by_id(atom.relation)
         .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
     let variables = atom_variables_in_plan_order(atom, variable_order_ids);
     let cache_key = lftj_atom_cache_key(atom, &variables, variable_order_ids, inputs);
@@ -9040,7 +9047,7 @@ fn value_type_name(value_type: &ValueType) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query_image::QueryImageBuilder;
+    use crate::query_image::{QueryImageBuilder, QueryImageScope};
     use crate::{AggregateError, Environment, ExecuteError, QueryError, Row};
     use bumbledb_core::datalog::parse_and_typecheck;
     use bumbledb_core::schema::{
@@ -9830,7 +9837,7 @@ mod tests {
         )?;
         let inputs = InputBindings::new();
 
-        let _warm = env.query_image(&schema)?;
+        let warm = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
         let before = env.query_image_cache_diagnostics();
         let output = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
         let after = env.query_image_cache_diagnostics();
@@ -9839,6 +9846,7 @@ mod tests {
         assert_eq!(after.builds, 1);
         assert_eq!(output.plan.query_image_cache.builds, 1);
         assert!(output.plan.query_image_cache.hits > before.hits);
+        assert_eq!(warm.rows.len(), 3);
         assert_eq!(output.rows.len(), 3);
         Ok(())
     }
@@ -9916,8 +9924,8 @@ mod tests {
         let second = env.read(|txn| txn.execute_query(&schema, &second_query, &inputs))?;
 
         assert_eq!(first.plan.planner_stats.builds, 2);
-        assert_eq!(second.plan.planner_stats.builds, 2);
-        assert!(second.plan.planner_stats.hits >= 1);
+        assert_eq!(second.plan.planner_stats.builds, 1);
+        assert_eq!(second.rows.len(), 3);
         Ok(())
     }
 
@@ -10137,7 +10145,8 @@ mod tests {
 
         let depths = env.read(|txn| {
             let mut normalized = normalize_query(txn, &schema, &query)?;
-            let image = QueryImageBuilder::new(txn, &schema).build()?;
+            let image =
+                QueryImageBuilder::new(txn, &schema, QueryImageScope::full(&schema)).build()?;
             let plan = plan_query(
                 &schema,
                 &mut normalized,
@@ -10201,7 +10210,8 @@ mod tests {
         let specialized = env.read(|txn| {
             let normalized = normalize_query(txn, &schema, &typed)?;
             let encoded_inputs = encode_inputs(txn, &schema, &normalized, &inputs)?;
-            let image = QueryImageBuilder::new(txn, &schema).build()?;
+            let image =
+                QueryImageBuilder::new(txn, &schema, QueryImageScope::full(&schema)).build()?;
             let mut binding = EncodedBinding::new(normalized.vars.len());
             let encoded = txn.encode_query_value(&normalized.vars[0].value_type, &Value::Id(1))?;
             assert!(binding.bind(

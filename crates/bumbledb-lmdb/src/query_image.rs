@@ -15,12 +15,33 @@ use crate::{
 use crate::{HashTrieIndex, IndexSpec, LeafMode};
 
 /// Cache key for an immutable query image.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct QueryImageKey {
     /// Schema fingerprint for the image.
     pub schema: SchemaFingerprint,
     /// Last committed storage transaction ID visible to the image.
     pub tx_id: u64,
+    /// Relation/index/column scope loaded into this image.
+    pub scope: QueryImageScopeKey,
+}
+
+/// Stable cache key for a query-image scope.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct QueryImageScopeKey(pub [u8; 32]);
+
+/// Explicit relation scope for a query image.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueryImageScope {
+    relations: BTreeMap<RelationId, RelationScope>,
+}
+
+/// Explicit field/index scope for one relation image.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RelationScope {
+    columns: BTreeSet<FieldId>,
+    indexes: BTreeSet<AccessId>,
+    include_all_columns: bool,
+    include_all_indexes: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -37,7 +58,95 @@ impl PartialOrd for QueryImageKey {
 
 impl Ord for QueryImageKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (self.schema.0, self.tx_id).cmp(&(other.schema.0, other.tx_id))
+        (self.schema.0, self.tx_id, self.scope).cmp(&(other.schema.0, other.tx_id, other.scope))
+    }
+}
+
+impl QueryImageScope {
+    /// Full-schema image scope.
+    pub fn full(schema: &StorageSchema) -> Self {
+        let relations = schema
+            .descriptor()
+            .relations
+            .iter()
+            .enumerate()
+            .map(|(id, relation)| {
+                let relation_id = RelationId(id as u16);
+                let indexes = schema
+                    .layouts_for_relation(relation_id.0)
+                    .map(|layout| AccessId(layout.index_id))
+                    .collect();
+                (
+                    relation_id,
+                    RelationScope {
+                        columns: (0..relation.fields.len())
+                            .map(|field| FieldId(field as u16))
+                            .collect(),
+                        indexes,
+                        include_all_columns: true,
+                        include_all_indexes: true,
+                    },
+                )
+            })
+            .collect();
+        Self { relations }
+    }
+
+    /// Scope containing all fields and indexes for selected relations.
+    pub fn relations_all(
+        schema: &StorageSchema,
+        relation_ids: impl IntoIterator<Item = RelationId>,
+    ) -> Self {
+        let mut relations = BTreeMap::new();
+        for relation_id in relation_ids {
+            let Some(relation) = schema.descriptor().relations.get(relation_id.0 as usize) else {
+                continue;
+            };
+            let indexes = schema
+                .layouts_for_relation(relation_id.0)
+                .map(|layout| AccessId(layout.index_id))
+                .collect();
+            relations.insert(
+                relation_id,
+                RelationScope {
+                    columns: (0..relation.fields.len())
+                        .map(|field| FieldId(field as u16))
+                        .collect(),
+                    indexes,
+                    include_all_columns: true,
+                    include_all_indexes: true,
+                },
+            );
+        }
+        Self { relations }
+    }
+
+    /// Returns a stable structural cache key for this scope.
+    pub fn key(&self) -> QueryImageScopeKey {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"bumbledb.query_image_scope.v1");
+        for (relation_id, scope) in &self.relations {
+            hasher.update(&relation_id.0.to_be_bytes());
+            hasher.update(&[u8::from(scope.include_all_columns)]);
+            hasher.update(&[u8::from(scope.include_all_indexes)]);
+            hasher.update(&(scope.columns.len() as u64).to_be_bytes());
+            for field in &scope.columns {
+                hasher.update(&field.0.to_be_bytes());
+            }
+            hasher.update(&(scope.indexes.len() as u64).to_be_bytes());
+            for index in &scope.indexes {
+                hasher.update(&index.0.to_be_bytes());
+            }
+        }
+        QueryImageScopeKey(*hasher.finalize().as_bytes())
+    }
+
+    fn relation_scope(&self, relation: RelationId) -> Option<&RelationScope> {
+        self.relations.get(&relation)
+    }
+
+    fn relation_ids(&self) -> impl Iterator<Item = RelationId> + '_ {
+        self.relations.keys().copied()
     }
 }
 
@@ -102,7 +211,7 @@ impl<'a> EncodedRef<'a> {
 #[derive(Clone, Debug)]
 pub struct QueryImage {
     key: QueryImageKey,
-    relations: Vec<RelationImage>,
+    relations: BTreeMap<RelationId, RelationImage>,
     relation_by_name: BTreeMap<String, RelationId>,
     stats: QueryImageStats,
     planner_stats: PlannerStatsCache,
@@ -113,22 +222,28 @@ pub struct QueryImage {
 }
 
 impl QueryImage {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "query image construction records scope and build diagnostics"
+    )]
     fn new(
         schema: &StorageSchema,
         tx_id: u64,
-        relations: Vec<RelationImage>,
+        scope: QueryImageScope,
+        relations: BTreeMap<RelationId, RelationImage>,
         build_micros: u128,
         segment_count: usize,
         segment_bytes: usize,
         built_from_segments: bool,
     ) -> Self {
         let relation_by_name = relations
-            .iter()
+            .values()
             .map(|relation| (relation.name.clone(), relation.id))
             .collect::<BTreeMap<_, _>>();
-        let row_count = relations.iter().map(|relation| relation.row_count).sum();
+        let relation_count = relation_by_name.len();
+        let row_count = relations.values().map(|relation| relation.row_count).sum();
         let encoded_column_bytes = relations
-            .iter()
+            .values()
             .map(RelationImage::encoded_column_bytes)
             .sum();
         let sorted_trie_bytes = segment_bytes.saturating_sub(encoded_column_bytes);
@@ -136,11 +251,12 @@ impl QueryImage {
             key: QueryImageKey {
                 schema: schema.descriptor().fingerprint(),
                 tx_id,
+                scope: scope.key(),
             },
             relations,
             relation_by_name,
             stats: QueryImageStats {
-                relation_count: schema.descriptor().relations.len(),
+                relation_count,
                 row_count,
                 encoded_column_bytes,
                 sorted_trie_bytes,
@@ -160,18 +276,23 @@ impl QueryImage {
 
     /// Returns this image's cache key.
     pub fn key(&self) -> QueryImageKey {
-        self.key
+        self.key.clone()
     }
 
-    /// Returns all relation images in schema declaration order.
-    pub fn relations(&self) -> &[RelationImage] {
-        &self.relations
+    /// Returns all loaded relation images in relation-id order.
+    pub fn relations(&self) -> impl Iterator<Item = &RelationImage> {
+        self.relations.values()
+    }
+
+    /// Looks up a loaded relation image by ID.
+    pub fn relation_by_id(&self, id: RelationId) -> Option<&RelationImage> {
+        self.relations.get(&id)
     }
 
     /// Looks up a relation image by name.
     pub fn relation(&self, name: &str) -> Option<&RelationImage> {
         let id = self.relation_by_name.get(name)?;
-        self.relations.get(id.0 as usize)
+        self.relations.get(id)
     }
 
     /// Returns memory/build statistics for this image.
@@ -323,7 +444,7 @@ impl QueryImage {
     fn content_fingerprint(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
         hasher.update(&self.key.schema.0);
-        for relation in &self.relations {
+        for relation in self.relations.values() {
             hasher.update(relation.name.as_bytes());
             hasher.update(&(relation.row_count as u64).to_be_bytes());
             for field in &relation.fields {
@@ -1056,9 +1177,20 @@ impl QueryImageCache {
         txn: &ReadTxn<'_>,
         schema: &StorageSchema,
     ) -> Result<Arc<QueryImage>> {
+        self.get_or_build_scoped(txn, schema, QueryImageScope::full(schema))
+    }
+
+    /// Returns an existing scoped image for the read snapshot, or builds and caches one.
+    pub fn get_or_build_scoped(
+        &self,
+        txn: &ReadTxn<'_>,
+        schema: &StorageSchema,
+        scope: QueryImageScope,
+    ) -> Result<Arc<QueryImage>> {
         let key = QueryImageKey {
             schema: schema.descriptor().fingerprint(),
             tx_id: txn.last_committed_tx_id()?,
+            scope: scope.key(),
         };
         if let Some(image) = self
             .images
@@ -1072,7 +1204,7 @@ impl QueryImageCache {
         }
         self.misses.fetch_add(1, Ordering::Relaxed);
         let start = Instant::now();
-        let image = Arc::new(QueryImageBuilder::new(txn, schema).build()?);
+        let image = Arc::new(QueryImageBuilder::new(txn, schema, scope).build()?);
         let elapsed = start.elapsed().as_micros() as u64;
         let mut images = self
             .images
@@ -1120,12 +1252,13 @@ impl QueryImageCache {
 pub struct QueryImageBuilder<'a, 'env> {
     txn: &'a ReadTxn<'env>,
     schema: &'a StorageSchema,
+    scope: QueryImageScope,
 }
 
 impl<'a, 'env> QueryImageBuilder<'a, 'env> {
     /// Creates a builder over one read snapshot.
-    pub fn new(txn: &'a ReadTxn<'env>, schema: &'a StorageSchema) -> Self {
-        Self { txn, schema }
+    pub fn new(txn: &'a ReadTxn<'env>, schema: &'a StorageSchema, scope: QueryImageScope) -> Self {
+        Self { txn, schema, scope }
     }
 
     /// Builds the query image.
@@ -1133,26 +1266,38 @@ impl<'a, 'env> QueryImageBuilder<'a, 'env> {
         let _span = tracing::debug_span!("bumbledb.query_image.build").entered();
         let start = Instant::now();
         let tx_id = self.txn.last_committed_tx_id()?;
-        let mut relations = Vec::new();
+        let mut relations = BTreeMap::new();
         let mut segment_count = 0usize;
         let mut segment_bytes = 0usize;
         let mut built_from_segments = true;
-        for (relation_id, relation) in self.schema.descriptor().relations.iter().enumerate() {
+        for relation_id in self.scope.relation_ids() {
+            let relation = self
+                .schema
+                .descriptor()
+                .relations
+                .get(relation_id.0 as usize)
+                .ok_or_else(|| Error::internal("query image scope relation out of bounds"))?;
+            let relation_scope = self
+                .scope
+                .relation_scope(relation_id)
+                .ok_or_else(|| Error::internal("query image relation scope missing"))?;
             let built = RelationImageBuilder::new(
                 self.txn,
                 self.schema,
-                RelationId(relation_id as u16),
+                relation_id,
                 relation,
+                relation_scope.clone(),
             )
             .build()?;
             segment_count += usize::from(built.from_segment);
             segment_bytes += built.segment_bytes;
             built_from_segments &= built.from_segment;
-            relations.push(built.relation);
+            relations.insert(relation_id, built.relation);
         }
         Ok(QueryImage::new(
             self.schema,
             tx_id,
+            self.scope,
             relations,
             start.elapsed().as_micros(),
             segment_count,
@@ -1173,6 +1318,7 @@ struct RelationImageBuilder<'a, 'env, 'schema> {
     schema: &'schema StorageSchema,
     relation_id: RelationId,
     relation: &'schema RelationDescriptor,
+    scope: RelationScope,
 }
 
 impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
@@ -1181,12 +1327,14 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
         schema: &'schema StorageSchema,
         relation_id: RelationId,
         relation: &'schema RelationDescriptor,
+        scope: RelationScope,
     ) -> Self {
         Self {
             txn,
             schema,
             relation_id,
             relation,
+            scope,
         }
     }
 
@@ -1225,6 +1373,9 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
         let indexes = segment
             .indexes
             .iter()
+            .filter(|index| {
+                self.scope.include_all_indexes || self.scope.indexes.contains(&index.access)
+            })
             .map(|index| {
                 let bytes = self.txn.segment_bytes(&index.lmdb_key)?;
                 let layout = self
@@ -1363,6 +1514,10 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
             .fields
             .iter()
             .enumerate()
+            .filter(|(field_id, _)| {
+                self.scope.include_all_columns
+                    || self.scope.columns.contains(&FieldId(*field_id as u16))
+            })
             .map(|(field_id, field)| FieldImage {
                 id: FieldId(field_id as u16),
                 name: field.name.clone(),
@@ -1516,6 +1671,30 @@ mod tests {
         assert_eq!(index.entry_at(2), Some(two.as_slice()));
     }
 
+    #[test]
+    fn scoped_query_image_key_and_relations_are_explicit() -> TestResult {
+        let dir = tempfile::tempdir().map_err(|error| crate::Error::io("tempdir", error))?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(two_relation_schema(), env.max_key_size())?;
+
+        let scoped = env.read(|txn| {
+            env.query_images.get_or_build_scoped(
+                txn,
+                &schema,
+                QueryImageScope::relations_all(&schema, [RelationId(0)]),
+            )
+        })?;
+        let full = env.query_image(&schema)?;
+
+        assert_ne!(scoped.key().scope, full.key().scope);
+        assert_eq!(scoped.stats().relation_count, 1);
+        assert!(scoped.relation("Account").is_some());
+        assert!(scoped.relation("Audit").is_none());
+        assert_eq!(full.stats().relation_count, 2);
+        assert!(full.relation("Audit").is_some());
+        Ok(())
+    }
+
     fn prefix_count_test_index(values: impl IntoIterator<Item = u64>) -> RelationIndexImage {
         let mut bytes = Vec::new();
         for value in values {
@@ -1659,8 +1838,10 @@ mod tests {
         let (env, schema) = seeded_env()?;
 
         env.read(|txn| {
-            let left = QueryImageBuilder::new(txn, &schema).build()?;
-            let right = QueryImageBuilder::new(txn, &schema).build()?;
+            let left =
+                QueryImageBuilder::new(txn, &schema, QueryImageScope::full(&schema)).build()?;
+            let right =
+                QueryImageBuilder::new(txn, &schema, QueryImageScope::full(&schema)).build()?;
             assert_eq!(left.content_fingerprint(), right.content_fingerprint());
             Ok::<_, crate::Error>(())
         })?;
@@ -1768,7 +1949,8 @@ mod tests {
 
             let still_before = read.visible_segments(&schema)?;
             assert_eq!(still_before[0].row_count, 2);
-            let image = QueryImageBuilder::new(read, &schema).build()?;
+            let image =
+                QueryImageBuilder::new(read, &schema, QueryImageScope::full(&schema)).build()?;
             assert_eq!(account_relation(&image)?.row_count, 2);
             Ok::<_, crate::Error>(())
         })?;
@@ -1919,6 +2101,26 @@ mod tests {
             "Currency",
             [826, 840, 978],
         ))
+    }
+
+    fn two_relation_schema() -> SchemaDescriptor {
+        SchemaDescriptor::new(
+            "ScopedAccounts",
+            vec![
+                RelationDescriptor::new(
+                    "Account",
+                    RelationKind::Entity,
+                    vec![FieldDescriptor::new("id", ValueType::U64)],
+                    PrimaryKeyDescriptor::new(["id"]),
+                ),
+                RelationDescriptor::new(
+                    "Audit",
+                    RelationKind::Event,
+                    vec![FieldDescriptor::new("id", ValueType::U64)],
+                    PrimaryKeyDescriptor::new(["id"]),
+                ),
+            ],
+        )
     }
 
     fn account_row(id: u64, currency: u64, active: bool, payload: Vec<u8>, name: &str) -> Row {
