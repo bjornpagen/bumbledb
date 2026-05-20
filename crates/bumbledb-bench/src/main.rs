@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use std::fmt::Write as _;
 use std::fs::File;
 use std::hint::black_box;

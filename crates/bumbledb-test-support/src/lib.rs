@@ -1,5 +1,7 @@
 //! Shared test fixtures, reference model, and assertions for Bumbledb.
 
+#![allow(clippy::result_large_err)]
+
 pub mod assertions;
 pub mod operations;
 pub mod reference;

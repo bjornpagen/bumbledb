@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use bumbledb_core::encoding::TimestampMicros;
 use bumbledb_core::query_builder::{OperandRef, QueryBuilder};
 use bumbledb_core::query_ir::ComparisonOperator;

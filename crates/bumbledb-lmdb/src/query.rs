@@ -16,7 +16,7 @@ use bumbledb_core::schema::{
 
 use crate::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FieldValues,
-    FreeJoinPlan, HashTrieIndex, IdentityValue, IndexSpec, LinearIter, NodeId, NodeImpl,
+    FreeJoinPlan, HashTrieIndex, IdentityValue, IndexSpec, LeafMode, LinearIter, NodeId, NodeImpl,
     OutputPlan, PayloadDemand, PlanEstimates, PlanNode, PrefixProbe, PrefixRows, ProjectPlan,
     ReadTxn, RelationImage, RelationStats, Result, Row, RowId, RowRange, SortedTrieIndex,
     StorageSchema, SubAtom, TrieIter, Value, VarId,
@@ -26,9 +26,10 @@ use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
 use crate::planner_stats::{
     OptimizerFieldStats, OptimizerIndexStats, OptimizerRelationStats, PlannerStatsCacheDiagnostics,
 };
+use crate::query_access::{AccessProbe, AccessSource, encoded_refs};
 use crate::query_image::{
-    EncodedColumnBuilder, LftjAtomKey, QueryImageScope, QueryShapeKey, SortedTrieBuild,
-    encoded_column_builders, finish_column_builders,
+    EncodedColumnBuilder, HashTrieKey, LftjAtomKey, QueryImageScope, QueryShapeKey,
+    SortedTrieBuild, encoded_column_builders, finish_column_builders,
 };
 use crate::{PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics};
 
@@ -1152,36 +1153,9 @@ pub struct PlanCounters {
     pub static_empty_cache_misses: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct EncodedValue {
-    encoded: EncodedOwned,
-}
-
-impl EncodedValue {
-    fn new(encoded: EncodedOwned) -> Self {
-        Self { encoded }
-    }
-
-    fn from_owned(value: &EncodedOwned) -> Self {
-        Self {
-            encoded: value.clone(),
-        }
-    }
-
-    fn from_bytes(value_type: &ValueType, bytes: &[u8]) -> Result<Self> {
-        Ok(Self {
-            encoded: encoded_owned_for_width(value_type.encoded_width(), bytes)?,
-        })
-    }
-
-    fn as_bytes(&self) -> &[u8] {
-        self.encoded.as_bytes()
-    }
-}
-
 #[derive(Clone, Debug)]
 struct EncodedBinding {
-    values: SmallVec<[Option<EncodedValue>; 8]>,
+    values: SmallVec<[Option<EncodedOwned>; 8]>,
 }
 
 impl EncodedBinding {
@@ -1193,13 +1167,13 @@ impl EncodedBinding {
         }
     }
 
-    fn get(&self, variable: usize) -> Option<&EncodedValue> {
+    fn get(&self, variable: usize) -> Option<&EncodedOwned> {
         self.values[variable].as_ref()
     }
 
-    fn bind(&mut self, variable: usize, value: EncodedValue) -> bool {
+    fn bind(&mut self, variable: usize, value: EncodedOwned) -> bool {
         match &self.values[variable] {
-            Some(existing) => existing.encoded == value.encoded,
+            Some(existing) => existing == &value,
             None => {
                 self.values[variable] = Some(value);
                 true
@@ -1428,7 +1402,7 @@ struct HashAtomIndexRequest {
     node_id: usize,
     atom_id: usize,
     relation: crate::RelationId,
-    cache_key: String,
+    access: Option<AccessId>,
     index_name: String,
     fields: Vec<FieldId>,
 }
@@ -1459,7 +1433,6 @@ struct DirectPrefixRangePlan {
     relation: crate::RelationId,
     prefix_fields: SmallVec<[FieldId; 4]>,
     prefix_terms: SmallVec<[NormTerm; 4]>,
-    cache_key: String,
     index_name: String,
 }
 
@@ -1475,7 +1448,6 @@ struct DirectExistenceCheck {
     relation: crate::RelationId,
     fields: SmallVec<[FieldId; 4]>,
     terms: SmallVec<[NormTerm; 4]>,
-    cache_key: String,
     index_name: String,
 }
 
@@ -1487,7 +1459,6 @@ struct DirectChainStep {
     prefix_terms: SmallVec<[NormTerm; 4]>,
     bind_var: usize,
     bind_field: FieldId,
-    cache_key: String,
     index_name: String,
 }
 
@@ -1506,8 +1477,7 @@ impl DirectImageRow {
 
 type SmallParticipants = SmallVec<[usize; 4]>;
 type SmallEncodedPrefix = SmallVec<[EncodedOwned; 8]>;
-type SmallEncodedRefs<'a> = SmallVec<[crate::EncodedRef<'a>; 8]>;
-type SmallEncodedRow = SmallVec<[EncodedValue; 8]>;
+type SmallEncodedRow = SmallVec<[EncodedOwned; 8]>;
 type DirectRangeBounds = (usize, Option<Value>, Option<Value>);
 enum DirectStorageAccess {
     Prefix {
@@ -2169,7 +2139,7 @@ impl<'env> ReadTxn<'env> {
         plan.summary.timings = timings;
         plan.summary.allocations = allocations;
 
-        let mut sink = CountOnlySink::new(&plan.summary.free_join.output);
+        let mut sink = OutputSink::new_count_rows(&plan.summary.free_join.output);
         let execute_start = Instant::now();
         let execute_alloc_start = allocation::snapshot();
         execute_free_join(
@@ -2184,7 +2154,7 @@ impl<'env> ReadTxn<'env> {
         plan.summary.timings.execute_micros = elapsed_micros(execute_start);
         plan.summary.allocations.execute = allocation_delta_since(execute_alloc_start);
 
-        let rows = sink.finish_count();
+        let rows = sink.finish_count()?;
         plan.summary.counters.output_rows = rows as u64;
         if has_aggregate(&normalized) {
             plan.summary.counters.aggregate_groups = rows as u64;
@@ -2555,7 +2525,6 @@ fn hash_output_plan(hasher: &mut blake3::Hasher, output: &OutputPlan) {
             for variable in &project.vars {
                 hash_u16(hasher, variable.0);
             }
-            hash_u8(hasher, u8::from(project.set_semantics));
         }
         OutputPlan::Aggregate(aggregate) => {
             hash_u8(hasher, 2);
@@ -2615,420 +2584,7 @@ fn static_literal_atoms_prove_empty(
             return Ok(proof);
         }
     }
-    let keyword_movie = static_keyword_movie_company_title_proves_empty(image, query, inputs)?;
-    proof.atoms_checked = proof
-        .atoms_checked
-        .saturating_add(keyword_movie.atoms_checked);
-    proof.rows_scanned = proof
-        .rows_scanned
-        .saturating_add(keyword_movie.rows_scanned);
-    if keyword_movie.empty {
-        proof.empty = true;
-        return Ok(proof);
-    }
-    let company_info = static_company_info_movie_intersection_proves_empty(image, query, inputs)?;
-    proof.atoms_checked = proof
-        .atoms_checked
-        .saturating_add(company_info.atoms_checked);
-    proof.rows_scanned = proof.rows_scanned.saturating_add(company_info.rows_scanned);
-    if company_info.empty {
-        proof.empty = true;
-        return Ok(proof);
-    }
     Ok(proof)
-}
-
-fn static_company_info_movie_intersection_proves_empty(
-    image: &crate::QueryImage,
-    query: &NormalizedQuery,
-    inputs: &EncodedInputs,
-) -> Result<StaticEmptyProof> {
-    let mut proof = StaticEmptyProof {
-        empty: false,
-        atoms_checked: 0,
-        rows_scanned: 0,
-    };
-    let Some(company_type_atom) = query
-        .atoms
-        .iter()
-        .find(|atom| atom.relation_name == "CompanyType")
-    else {
-        return Ok(proof);
-    };
-    let Some(info_type_atom) = query
-        .atoms
-        .iter()
-        .find(|atom| atom.relation_name == "InfoType")
-    else {
-        return Ok(proof);
-    };
-    if query
-        .atoms
-        .iter()
-        .find(|atom| atom.relation_name == "MovieCompanies")
-        .is_none()
-        || query
-            .atoms
-            .iter()
-            .find(|atom| atom.relation_name == "MovieInfoIdx")
-            .is_none()
-    {
-        return Ok(proof);
-    }
-    let Some(company_kind) = static_atom_field_value(company_type_atom, "kind", inputs)? else {
-        return Ok(proof);
-    };
-    let Some(info_name) = static_atom_field_value(info_type_atom, "info", inputs)? else {
-        return Ok(proof);
-    };
-
-    let company_type = image
-        .relation("CompanyType")
-        .ok_or_else(|| Error::unknown_relation("CompanyType"))?;
-    let info_type = image
-        .relation("InfoType")
-        .ok_or_else(|| Error::unknown_relation("InfoType"))?;
-    let movie_companies = image
-        .relation("MovieCompanies")
-        .ok_or_else(|| Error::unknown_relation("MovieCompanies"))?;
-    let movie_info_idx = image
-        .relation("MovieInfoIdx")
-        .ok_or_else(|| Error::unknown_relation("MovieInfoIdx"))?;
-
-    let Some(company_type_by_kind) = relation_index_with_leading_field(company_type, "kind") else {
-        return Ok(proof);
-    };
-    let Some(info_type_by_info) = relation_index_with_leading_field(info_type, "info") else {
-        return Ok(proof);
-    };
-    let Some(movie_companies_by_type) =
-        relation_index_with_leading_field(movie_companies, "company_type")
-    else {
-        return Ok(proof);
-    };
-    let Some(movie_info_by_type) = relation_index_with_leading_field(movie_info_idx, "info_type")
-    else {
-        return Ok(proof);
-    };
-
-    let company_type_id = relation_field_id(company_type, "id")?;
-    let info_type_id = relation_field_id(info_type, "id")?;
-    let mc_movie = relation_field_id(movie_companies, "movie")?;
-    let mii_movie = relation_field_id(movie_info_idx, "movie")?;
-
-    let mut company_movies = BTreeSet::new();
-    proof.atoms_checked += 4;
-    for company_type_entry in company_type_by_kind.entries_with_prefix(company_kind.as_bytes()) {
-        proof.rows_scanned += 1;
-        let Some(company_type_bytes) =
-            company_type_by_kind.component_bytes(company_type_entry, company_type_id)
-        else {
-            continue;
-        };
-        for movie_company_entry in movie_companies_by_type.entries_with_prefix(company_type_bytes) {
-            proof.rows_scanned += 1;
-            if let Some(movie) =
-                movie_companies_by_type.component_bytes(movie_company_entry, mc_movie)
-            {
-                company_movies.insert(movie.to_vec());
-            }
-        }
-    }
-    if company_movies.is_empty() {
-        proof.empty = true;
-        return Ok(proof);
-    }
-
-    for info_type_entry in info_type_by_info.entries_with_prefix(info_name.as_bytes()) {
-        proof.rows_scanned += 1;
-        let Some(info_type_bytes) =
-            info_type_by_info.component_bytes(info_type_entry, info_type_id)
-        else {
-            continue;
-        };
-        for movie_info_entry in movie_info_by_type.entries_with_prefix(info_type_bytes) {
-            proof.rows_scanned += 1;
-            if let Some(movie) = movie_info_by_type.component_bytes(movie_info_entry, mii_movie)
-                && company_movies.contains(movie)
-            {
-                return Ok(proof);
-            }
-        }
-    }
-    proof.empty = true;
-    Ok(proof)
-}
-
-fn static_keyword_movie_company_title_proves_empty(
-    image: &crate::QueryImage,
-    query: &NormalizedQuery,
-    inputs: &EncodedInputs,
-) -> Result<StaticEmptyProof> {
-    let mut proof = StaticEmptyProof {
-        empty: false,
-        atoms_checked: 0,
-        rows_scanned: 0,
-    };
-    let Some(keyword_atom) = query
-        .atoms
-        .iter()
-        .find(|atom| atom.relation_name == "Keyword")
-    else {
-        return Ok(proof);
-    };
-    if query
-        .atoms
-        .iter()
-        .find(|atom| atom.relation_name == "MovieKeyword")
-        .is_none()
-    {
-        return Ok(proof);
-    }
-    let Some(title_atom) = query
-        .atoms
-        .iter()
-        .find(|atom| atom.relation_name == "Title")
-    else {
-        return Ok(proof);
-    };
-    if query
-        .atoms
-        .iter()
-        .find(|atom| atom.relation_name == "MovieCompanies")
-        .is_none()
-    {
-        return Ok(proof);
-    }
-    let Some(company_name_atom) = query
-        .atoms
-        .iter()
-        .find(|atom| atom.relation_name == "CompanyName")
-    else {
-        return Ok(proof);
-    };
-
-    let Some(keyword_literal) = static_atom_field_value(keyword_atom, "keyword", inputs)? else {
-        return Ok(proof);
-    };
-    let Some(country_literal) = static_atom_field_value(company_name_atom, "country_code", inputs)?
-    else {
-        return Ok(proof);
-    };
-
-    let keyword_relation = image
-        .relation("Keyword")
-        .ok_or_else(|| Error::unknown_relation("Keyword"))?;
-    let movie_keyword_relation = image
-        .relation("MovieKeyword")
-        .ok_or_else(|| Error::unknown_relation("MovieKeyword"))?;
-    let title_relation = image
-        .relation("Title")
-        .ok_or_else(|| Error::unknown_relation("Title"))?;
-    let movie_companies_relation = image
-        .relation("MovieCompanies")
-        .ok_or_else(|| Error::unknown_relation("MovieCompanies"))?;
-    let company_name_relation = image
-        .relation("CompanyName")
-        .ok_or_else(|| Error::unknown_relation("CompanyName"))?;
-
-    let Some(keyword_index) = relation_index_with_leading_field(keyword_relation, "keyword") else {
-        return Ok(proof);
-    };
-    let Some(movie_keyword_index) =
-        relation_index_with_leading_field(movie_keyword_relation, "keyword")
-    else {
-        return Ok(proof);
-    };
-    let Some(title_primary) = relation_index_with_leading_field(title_relation, "id") else {
-        return Ok(proof);
-    };
-    let Some(movie_companies_index) =
-        relation_index_with_leading_field(movie_companies_relation, "movie")
-    else {
-        return Ok(proof);
-    };
-    let Some(company_primary) = relation_index_with_leading_field(company_name_relation, "id")
-    else {
-        return Ok(proof);
-    };
-
-    let keyword_id = relation_field_id(keyword_relation, "id")?;
-    let mk_movie = relation_field_id(movie_keyword_relation, "movie")?;
-    let mc_company = relation_field_id(movie_companies_relation, "company")?;
-    let company_country = relation_field_id(company_name_relation, "country_code")?;
-
-    let mut saw_candidate_movie = false;
-    proof.atoms_checked += 5;
-    for keyword_entry in keyword_index.entries_with_prefix(keyword_literal.as_bytes()) {
-        proof.rows_scanned += 1;
-        let Some(keyword_id_bytes) = keyword_index.component_bytes(keyword_entry, keyword_id)
-        else {
-            continue;
-        };
-        for movie_keyword_entry in movie_keyword_index.entries_with_prefix(keyword_id_bytes) {
-            proof.rows_scanned += 1;
-            let Some(movie_bytes) =
-                movie_keyword_index.component_bytes(movie_keyword_entry, mk_movie)
-            else {
-                continue;
-            };
-            if !title_movie_passes_static_predicates(
-                title_primary,
-                title_relation,
-                title_atom,
-                query,
-                inputs,
-                movie_bytes,
-            )? {
-                continue;
-            }
-            for company_entry in movie_companies_index.entries_with_prefix(movie_bytes) {
-                proof.rows_scanned += 1;
-                let Some(company_bytes) =
-                    movie_companies_index.component_bytes(company_entry, mc_company)
-                else {
-                    continue;
-                };
-                if company_primary
-                    .entries_with_prefix(company_bytes)
-                    .inspect(|_| proof.rows_scanned += 1)
-                    .any(|entry| {
-                        company_primary
-                            .component_bytes(entry, company_country)
-                            .is_some_and(|bytes| bytes == country_literal.as_bytes())
-                    })
-                {
-                    return Ok(proof);
-                }
-            }
-            saw_candidate_movie = true;
-        }
-    }
-    proof.empty = saw_candidate_movie;
-    Ok(proof)
-}
-
-fn title_movie_passes_static_predicates(
-    title_primary: &crate::query_image::RelationIndexImage,
-    title_relation: &RelationImage,
-    title_atom: &NormAtom,
-    query: &NormalizedQuery,
-    inputs: &EncodedInputs,
-    movie_bytes: &[u8],
-) -> Result<bool> {
-    if let Some(entry) = title_primary.entries_with_prefix(movie_bytes).next() {
-        for field in &title_atom.fields {
-            let NormTerm::Var(variable) = field.term else {
-                continue;
-            };
-            let Some(bytes) = title_primary.component_bytes(entry, field.field) else {
-                continue;
-            };
-            if !single_variable_predicates_pass(
-                query,
-                inputs,
-                variable.0 as usize,
-                &field.value_type,
-                bytes,
-            )? {
-                return Ok(false);
-            }
-        }
-        let _ = title_relation;
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-fn single_variable_predicates_pass(
-    query: &NormalizedQuery,
-    inputs: &EncodedInputs,
-    variable: usize,
-    value_type: &ValueType,
-    bytes: &[u8],
-) -> Result<bool> {
-    for predicate in &query.predicates {
-        let (left, op, right) = match (&predicate.operands[0], &predicate.operands[1]) {
-            (NormOperand::Var(var), other) if var.0 as usize == variable => {
-                (bytes, predicate.op, comparison_operand_bytes(other, inputs))
-            }
-            (other, NormOperand::Var(var)) if var.0 as usize == variable => {
-                let Some(left) = comparison_operand_bytes(other, inputs) else {
-                    continue;
-                };
-                if encoded_comparison_supported(predicate.op, value_type)
-                    && !compare_encoded_values(left, predicate.op, bytes)
-                {
-                    return Ok(false);
-                }
-                continue;
-            }
-            _ => continue,
-        };
-        let Some(right) = right else {
-            continue;
-        };
-        if encoded_comparison_supported(op, value_type) && !compare_encoded_values(left, op, right)
-        {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-fn comparison_operand_bytes<'a>(
-    operand: &'a NormOperand,
-    inputs: &'a EncodedInputs,
-) -> Option<&'a [u8]> {
-    match operand {
-        NormOperand::Input(input) => inputs.get(*input).map(EncodedOwned::as_bytes),
-        NormOperand::Literal(literal) => Some(literal.as_bytes()),
-        NormOperand::Var(_) => None,
-    }
-}
-
-fn static_atom_field_value<'a>(
-    atom: &'a NormAtom,
-    field_name: &str,
-    inputs: &'a EncodedInputs,
-) -> Result<Option<&'a EncodedOwned>> {
-    let Some(field) = atom
-        .fields
-        .iter()
-        .find(|field| field.field_name == field_name)
-    else {
-        return Ok(None);
-    };
-    Ok(match &field.term {
-        NormTerm::Input(input) => inputs.get(*input),
-        NormTerm::Literal(literal) => Some(literal),
-        NormTerm::Var(_) | NormTerm::Wildcard => None,
-    })
-}
-
-fn relation_field_id(relation: &RelationImage, field_name: &str) -> Result<FieldId> {
-    relation
-        .fields
-        .iter()
-        .find(|field| field.name == field_name)
-        .map(|field| field.id)
-        .ok_or_else(|| Error::unknown_field(&relation.name, field_name))
-}
-
-fn relation_index_with_leading_field<'a>(
-    relation: &'a RelationImage,
-    field_name: &str,
-) -> Option<&'a crate::query_image::RelationIndexImage> {
-    let field = relation
-        .fields
-        .iter()
-        .find(|field| field.name == field_name)?
-        .id;
-    relation
-        .indexes()
-        .iter()
-        .filter(|index| index.fields.first() == Some(&field))
-        .max_by_key(|index| index.component_count())
 }
 
 fn static_atom_row_matches(
@@ -3216,7 +2772,6 @@ fn output_plan_from_typed_find(query: &TypedQuery) -> OutputPlan {
                     TypedFindTerm::Aggregate { .. } => None,
                 })
                 .collect(),
-            set_semantics: true,
         })
     }
 }
@@ -3603,8 +3158,8 @@ fn bind_direct_storage_row(
             NormTerm::Var(variable) => {
                 let encoded =
                     txn.encode_query_value(&query.vars[variable.0 as usize].value_type, value)?;
-                let encoded = EncodedValue::from_bytes(
-                    &query.vars[variable.0 as usize].value_type,
+                let encoded = encoded_owned_for_width(
+                    query.vars[variable.0 as usize].value_type.encoded_width(),
                     &encoded,
                 )?;
                 if !binding.bind(variable.0 as usize, encoded) {
@@ -3686,7 +3241,6 @@ fn is_mixed_hash_lftj_plan(plan: &ExecutionPlan) -> bool {
         match node.implementation {
             NodeImpl::HashProbe | NodeImpl::Hybrid => has_hash = true,
             NodeImpl::SortedLeapfrog => has_lftj = true,
-            _ => return false,
         }
     }
     has_hash && has_lftj
@@ -3709,7 +3263,7 @@ fn try_execute_factorized_count<S: TupleSink>(
     }) {
         return Ok(false);
     }
-    if try_execute_movie_link_bridge_count(image, txn, query, plan, sink)? {
+    if try_execute_bridge_factorized_count(image, txn, query, plan, sink)? {
         return Ok(true);
     }
     let OutputPlan::Aggregate(output) = &query.output else {
@@ -3813,7 +3367,7 @@ fn try_execute_factorized_count<S: TupleSink>(
     Ok(true)
 }
 
-fn try_execute_movie_link_bridge_count<S: TupleSink>(
+fn try_execute_bridge_factorized_count<S: TupleSink>(
     image: &crate::QueryImage,
     txn: &ReadTxn<'_>,
     query: &NormalizedQuery,
@@ -3829,73 +3383,42 @@ fn try_execute_movie_link_bridge_count<S: TupleSink>(
     {
         return Ok(false);
     }
-    if !query
-        .atoms
-        .iter()
-        .any(|atom| atom.relation_name == "MovieLink")
-        || query
-            .atoms
-            .iter()
-            .filter(|atom| atom.relation_name == "MovieCompanies")
-            .count()
-            < 2
-        || query
-            .atoms
-            .iter()
-            .filter(|atom| atom.relation_name == "MovieInfoIdx")
-            .count()
-            < 2
-    {
-        return Ok(false);
-    }
-    let movie_link = image
-        .relation("MovieLink")
-        .ok_or_else(|| Error::unknown_relation("MovieLink"))?;
-    let movie_companies = image
-        .relation("MovieCompanies")
-        .ok_or_else(|| Error::unknown_relation("MovieCompanies"))?;
-    let movie_info_idx = image
-        .relation("MovieInfoIdx")
-        .ok_or_else(|| Error::unknown_relation("MovieInfoIdx"))?;
-    let movie_link_movie = relation_field_id(movie_link, "movie")?;
-    let movie_link_linked = relation_field_id(movie_link, "linked_movie")?;
-    let Some(movie_companies_by_movie) =
-        relation_index_with_leading_field(movie_companies, "movie")
-    else {
+    let Some(bridge_plan) = bridge_factorized_count_plan(image, query)? else {
         return Ok(false);
     };
-    let Some(movie_info_by_movie) = relation_index_with_leading_field(movie_info_idx, "movie")
-    else {
-        return Ok(false);
-    };
+    let driver_relation = image
+        .relation_by_id(bridge_plan.driver.relation)
+        .ok_or_else(|| Error::unknown_relation(&bridge_plan.driver.relation_name))?;
 
     let mut total = 0u64;
-    for row in 0..movie_link.row_count {
+    for row in 0..driver_relation.row_count {
         let row = RowId(row as u32);
-        let Some(movie1) = movie_link.encoded_bytes(row, movie_link_movie) else {
-            continue;
-        };
-        let Some(movie2) = movie_link.encoded_bytes(row, movie_link_linked) else {
-            continue;
-        };
-        let c1 = movie_companies_by_movie.prefix_count(movie1) as u64;
-        let c2 = movie_companies_by_movie.prefix_count(movie2) as u64;
-        let i1 = movie_info_by_movie.prefix_count(movie1) as u64;
-        let i2 = movie_info_by_movie.prefix_count(movie2) as u64;
-        plan.summary.counters.direct_kernel_probes += 4;
+        let mut product = 1u64;
+        for factor in &bridge_plan.factors {
+            let Some(endpoint_value) =
+                driver_relation.encoded_bytes(row, bridge_plan.endpoint_fields[factor.endpoint])
+            else {
+                product = 0;
+                break;
+            };
+            plan.summary.counters.direct_kernel_probes += 1;
+            let count = factor.index.prefix_count(endpoint_value) as u64;
+            if count == 0 {
+                product = 0;
+                break;
+            }
+            product = product
+                .checked_mul(count)
+                .ok_or_else(|| Error::integer_overflow("bridge factorized count"))?;
+        }
         total = total
-            .checked_add(
-                c1.checked_mul(c2)
-                    .and_then(|value| value.checked_mul(i1))
-                    .and_then(|value| value.checked_mul(i2))
-                    .ok_or_else(|| Error::integer_overflow("movie link bridge count"))?,
-            )
-            .ok_or_else(|| Error::integer_overflow("movie link bridge count"))?;
+            .checked_add(product)
+            .ok_or_else(|| Error::integer_overflow("bridge factorized count"))?;
     }
     plan.summary.direct_kernel = Some(DirectKernelSummary {
         kind: DirectKernelKind::CountOnly,
-        target: "movie_link_bridge_count".to_owned(),
-        steps: 1,
+        target: "bridge_factorized_count".to_owned(),
+        steps: bridge_plan.factors.len() + 1,
     });
     plan.summary.counters.factorized_counted_bindings = plan
         .summary
@@ -3913,6 +3436,127 @@ fn try_execute_movie_link_bridge_count<S: TupleSink>(
         )?;
     }
     Ok(true)
+}
+
+struct BridgeFactor<'a> {
+    endpoint: usize,
+    index: &'a crate::query_image::RelationIndexImage,
+}
+
+struct BridgeFactorizedCountPlan<'a> {
+    driver: &'a NormAtom,
+    endpoint_fields: [FieldId; 2],
+    factors: Vec<BridgeFactor<'a>>,
+}
+
+fn bridge_factorized_count_plan<'a>(
+    image: &'a crate::QueryImage,
+    query: &'a NormalizedQuery,
+) -> Result<Option<BridgeFactorizedCountPlan<'a>>> {
+    for driver in &query.atoms {
+        let driver_vars = atom_variables(driver);
+        if driver_vars.len() != 2 {
+            continue;
+        }
+        let mut driver_vars = driver_vars.into_iter();
+        let (Some(first), Some(second)) = (driver_vars.next(), driver_vars.next()) else {
+            continue;
+        };
+        let endpoints = [first, second];
+        let Some(endpoint_fields) = bridge_endpoint_fields(driver, endpoints) else {
+            continue;
+        };
+        let mut variable_degrees = vec![0usize; query.vars.len()];
+        for atom in &query.atoms {
+            if atom.id == driver.id {
+                continue;
+            }
+            for variable in atom_variables(atom) {
+                variable_degrees[variable] += 1;
+            }
+        }
+        let mut factors = Vec::new();
+        let mut covered = true;
+        for atom in &query.atoms {
+            if atom.id == driver.id {
+                continue;
+            }
+            let vars = atom_variables(atom);
+            let Some(endpoint) = bridge_factor_endpoint(&vars, endpoints, &variable_degrees) else {
+                covered = false;
+                break;
+            };
+            let Some(prefix_field) = atom.fields.iter().find_map(|field| {
+                matches!(field.term, NormTerm::Var(var) if var.0 as usize == endpoints[endpoint])
+                    .then_some(field.field)
+            }) else {
+                covered = false;
+                break;
+            };
+            let relation = image
+                .relation_by_id(atom.relation)
+                .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
+            let Some(index) = relation
+                .indexes()
+                .iter()
+                .filter(|index| index.fields.first() == Some(&prefix_field))
+                .max_by_key(|index| index.component_count())
+            else {
+                covered = false;
+                break;
+            };
+            factors.push(BridgeFactor { endpoint, index });
+        }
+        if covered
+            && factors.len() >= 2
+            && factors.iter().any(|factor| factor.endpoint == 0)
+            && factors.iter().any(|factor| factor.endpoint == 1)
+        {
+            return Ok(Some(BridgeFactorizedCountPlan {
+                driver,
+                endpoint_fields,
+                factors,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn bridge_endpoint_fields(atom: &NormAtom, endpoints: [usize; 2]) -> Option<[FieldId; 2]> {
+    let first = atom.fields.iter().find_map(|field| {
+        matches!(field.term, NormTerm::Var(var) if var.0 as usize == endpoints[0])
+            .then_some(field.field)
+    })?;
+    let second = atom.fields.iter().find_map(|field| {
+        matches!(field.term, NormTerm::Var(var) if var.0 as usize == endpoints[1])
+            .then_some(field.field)
+    })?;
+    Some([first, second])
+}
+
+fn bridge_factor_endpoint(
+    vars: &BTreeSet<usize>,
+    endpoints: [usize; 2],
+    variable_degrees: &[usize],
+) -> Option<usize> {
+    let mut endpoint = None;
+    for variable in vars {
+        let current = if *variable == endpoints[0] {
+            0
+        } else if *variable == endpoints[1] {
+            1
+        } else {
+            if variable_degrees.get(*variable).copied().unwrap_or_default() > 1 {
+                return None;
+            }
+            continue;
+        };
+        if endpoint.is_some_and(|existing| existing != current) {
+            return None;
+        }
+        endpoint = Some(current);
+    }
+    endpoint
 }
 
 fn atom_variable_degree(query: &NormalizedQuery, variable: usize) -> usize {
@@ -4147,15 +3791,11 @@ fn build_hash_atom_index_requests(
                 fields.push(field);
             }
         }
-        let key = format!(
-            "relation={};access={};fields={:?}",
-            atom.relation.0, access.0, fields
-        );
         out.push(HashAtomIndexRequest {
             node_id,
             atom_id,
             relation: atom.relation,
-            cache_key: key,
+            access: Some(access),
             index_name: format!("{}_hash", atom.relation_name),
             fields,
         });
@@ -4181,15 +3821,11 @@ fn build_hash_atom_index_requests(
             };
             fields.push(field.field);
         }
-        let key = format!(
-            "relation={};access={};fields={:?}",
-            atom.relation.0, access.0, fields
-        );
         out.push(HashAtomIndexRequest {
             node_id: usize::MAX,
             atom_id,
             relation: atom.relation,
-            cache_key: key,
+            access: Some(access),
             index_name: format!("{}_hash", atom.relation_name),
             fields,
         });
@@ -4227,10 +3863,6 @@ fn hash_participants_by_variable(
     participants
 }
 
-fn encoded_refs(prefix: &[EncodedOwned]) -> SmallEncodedRefs<'_> {
-    prefix.iter().map(EncodedOwned::as_ref).collect()
-}
-
 fn try_direct_kernel(query: &NormalizedQuery) -> Option<DirectKernelPlan> {
     try_direct_prefix_range_kernel(query).or_else(|| try_direct_chain_kernel(query))
 }
@@ -4263,7 +3895,6 @@ fn try_direct_prefix_range_kernel(query: &NormalizedQuery) -> Option<DirectKerne
         kind: DirectKernel::PrefixRange(DirectPrefixRangePlan {
             atom_id: atom.id.0 as usize,
             relation: atom.relation,
-            cache_key: direct_cache_key("prefix_range", atom.relation, &prefix_fields),
             index_name: direct_index_name(&atom.relation_name, "prefix_range"),
             prefix_fields,
             prefix_terms,
@@ -4326,7 +3957,6 @@ fn try_direct_chain_kernel(query: &NormalizedQuery) -> Option<DirectKernelPlan> 
             existence_checks.push(DirectExistenceCheck {
                 atom_id: atom.id.0 as usize,
                 relation: atom.relation,
-                cache_key: direct_cache_key("chain_exists", atom.relation, &fields),
                 index_name: direct_index_name(&atom.relation_name, "chain_exists"),
                 fields,
                 terms,
@@ -4356,7 +3986,6 @@ fn try_direct_chain_kernel(query: &NormalizedQuery) -> Option<DirectKernelPlan> 
         steps.push(DirectChainStep {
             atom_id: atom.id.0 as usize,
             relation: atom.relation,
-            cache_key: direct_cache_key("chain_step", atom.relation, &prefix_fields),
             index_name: direct_index_name(&atom.relation_name, "chain_step"),
             prefix_fields,
             prefix_terms,
@@ -4392,10 +4021,6 @@ fn direct_term_is_bound(term: &NormTerm, bound: &BTreeSet<usize>) -> bool {
         NormTerm::Input(_) | NormTerm::Literal(_) => true,
         NormTerm::Wildcard => false,
     }
-}
-
-fn direct_cache_key(kind: &str, relation: crate::RelationId, fields: &[FieldId]) -> String {
-    format!("direct={kind};relation={};fields={fields:?}", relation.0)
 }
 
 fn direct_index_name(relation: &str, kind: &str) -> String {
@@ -4451,7 +4076,7 @@ fn execute_direct_prefix_range<'txn, 'query, S: TupleSink>(
         image,
         kernel.relation,
         &kernel.prefix_fields,
-        &kernel.cache_key,
+        None,
         &kernel.index_name,
         &mut plan.summary.counters,
     )?;
@@ -4461,7 +4086,7 @@ fn execute_direct_prefix_range<'txn, 'query, S: TupleSink>(
         &EncodedBinding::new(query.vars.len()),
     )?;
     let refs = encoded_refs(&prefix);
-    let row_count = index.count(&refs);
+    let row_count = AccessSource::HashTrie(index.as_ref()).count(&refs)?;
     plan.summary.counters.direct_kernel_probes += 1;
     if row_count == 0 {
         return Ok(());
@@ -4557,14 +4182,14 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 self.image,
                 check.relation,
                 &check.fields,
-                &check.cache_key,
+                None,
                 &check.index_name,
                 &mut self.plan.summary.counters,
             )?;
             let prefix = direct_prefix(&check.terms, self.inputs, &self.binding)?;
             let refs = encoded_refs(&prefix);
             self.plan.summary.counters.direct_kernel_probes += 1;
-            if index.count(&refs) == 0 {
+            if !AccessSource::HashTrie(index.as_ref()).exists(&refs)? {
                 return Ok(());
             }
             let relation = direct_relation(self.image, check.relation)?;
@@ -4635,8 +4260,8 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 let Some(value) = row.get(step.bind_field) else {
                     return Err(Error::internal("missing direct chain image bind field"));
                 };
-                let encoded = EncodedValue::from_bytes(
-                    &self.query.vars[step.bind_var].value_type,
+                let encoded = encoded_owned_for_width(
+                    self.query.vars[step.bind_var].value_type.encoded_width(),
                     value.as_bytes(),
                 )?;
                 if !self.binding.bind(step.bind_var, encoded) {
@@ -4675,8 +4300,10 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 let encoded = self
                     .txn
                     .encode_query_value(&self.query.vars[step.bind_var].value_type, value)?;
-                let encoded =
-                    EncodedValue::from_bytes(&self.query.vars[step.bind_var].value_type, &encoded)?;
+                let encoded = encoded_owned_for_width(
+                    self.query.vars[step.bind_var].value_type.encoded_width(),
+                    &encoded,
+                )?;
                 if !self.binding.bind(step.bind_var, encoded) {
                     continue;
                 }
@@ -4692,7 +4319,7 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             self.image,
             step.relation,
             &step.prefix_fields,
-            &step.cache_key,
+            None,
             &step.index_name,
             &mut self.plan.summary.counters,
         )?;
@@ -4718,8 +4345,10 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             let bytes = relation
                 .encoded_bytes(row, step.bind_field)
                 .ok_or_else(|| Error::internal("missing direct chain bind field"))?;
-            let value =
-                EncodedValue::from_bytes(&self.query.vars[step.bind_var].value_type, bytes)?;
+            let value = encoded_owned_for_width(
+                self.query.vars[step.bind_var].value_type.encoded_width(),
+                bytes,
+            )?;
             if !self.binding.bind(step.bind_var, value) {
                 continue;
             }
@@ -4955,12 +4584,13 @@ fn direct_hash_index(
     image: &crate::QueryImage,
     relation_id: crate::RelationId,
     fields: &[FieldId],
-    cache_key: &str,
+    access: Option<AccessId>,
     index_name: &str,
     counters: &mut PlanCounters,
 ) -> Result<Arc<HashTrieIndex>> {
     let relation = direct_relation(image, relation_id)?;
-    let cached = image.cached_hash_trie(cache_key, || {
+    let key = HashTrieKey::new(&image.key(), relation_id, access, fields, LeafMode::Rows);
+    let cached = image.cached_hash_trie(key, || {
         crate::query_image::build_hash_trie_index(
             relation,
             IndexSpec::new(index_name, fields.iter().copied()),
@@ -4990,11 +4620,12 @@ fn direct_prefix(
                     .ok_or_else(|| Error::internal("missing direct input"))?,
             ),
             NormTerm::Literal(value) => prefix.push(value.clone()),
-            NormTerm::Var(variable) => prefix.push(encoded_owned_for_value(
+            NormTerm::Var(variable) => prefix.push(
                 binding
                     .get(variable.0 as usize)
+                    .cloned()
                     .ok_or_else(|| Error::internal("missing direct bound variable"))?,
-            )?),
+            ),
             NormTerm::Wildcard => {
                 return Err(Error::internal("wildcard cannot be a direct prefix"));
             }
@@ -5027,7 +4658,7 @@ fn bind_atom_variables(
         let bytes = relation
             .encoded_bytes(row, field.field)
             .ok_or_else(|| Error::internal("missing direct variable field"))?;
-        let value = EncodedValue::from_bytes(&field.value_type, bytes)?;
+        let value = encoded_owned_for_width(field.value_type.encoded_width(), bytes)?;
         if !binding.bind(variable, value) {
             continue;
         }
@@ -5183,7 +4814,7 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
         let Some(value) = self.variable_value_from_row(driver, row, variable)? else {
             return Ok(());
         };
-        if !emitted.insert(value.encoded.clone()) {
+        if !emitted.insert(value.clone()) {
             return Ok(());
         }
         if !self.binding.bind(variable, value) {
@@ -5303,11 +4934,7 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
 
     fn term_bound_value(&self, term: &NormTerm) -> Result<Option<EncodedOwned>> {
         Ok(match term {
-            NormTerm::Var(variable) => self
-                .binding
-                .get(variable.0 as usize)
-                .map(encoded_owned_for_value)
-                .transpose()?,
+            NormTerm::Var(variable) => self.binding.get(variable.0 as usize).cloned(),
             NormTerm::Input(input) => self.inputs.get(*input).cloned(),
             NormTerm::Literal(value) => Some(value.clone()),
             NormTerm::Wildcard => None,
@@ -5353,10 +4980,10 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
         atom_id: usize,
         row: RowId,
         variable: usize,
-    ) -> Result<Option<EncodedValue>> {
+    ) -> Result<Option<EncodedOwned>> {
         let atom = &self.plan.relation_atoms[atom_id];
         let relation = self.relation(atom)?;
-        let mut out = None;
+        let mut out: Option<EncodedOwned> = None;
         for field in atom
             .fields
             .iter()
@@ -5366,13 +4993,12 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
                 .encoded_bytes(row, field.field)
                 .ok_or_else(|| Error::internal("missing hash probe variable field"))?;
             if let Some(existing) = &out {
-                let existing: &EncodedValue = existing;
                 if existing.as_bytes() != bytes {
                     return Ok(None);
                 }
             } else {
-                out = Some(EncodedValue::from_bytes(
-                    &self.query.vars[variable].value_type,
+                out = Some(encoded_owned_for_width(
+                    self.query.vars[variable].value_type.encoded_width(),
                     bytes,
                 )?);
             }
@@ -5423,7 +5049,14 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
             .ok_or_else(|| Error::internal("missing lazy hash relation"))?;
         let build_start = Instant::now();
         let build_alloc_start = allocation::snapshot();
-        let cached = self.image.cached_hash_trie(&request.cache_key, || {
+        let key = HashTrieKey::new(
+            &self.image.key(),
+            request.relation,
+            request.access,
+            &request.fields,
+            LeafMode::Rows,
+        );
+        let cached = self.image.cached_hash_trie(key, || {
             crate::query_image::build_hash_trie_index(
                 relation,
                 IndexSpec::new(&request.index_name, request.fields.clone()),
@@ -5454,10 +5087,6 @@ impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
         self.atom_indexes.push(index.clone());
         Ok(index)
     }
-}
-
-fn encoded_owned_for_value(value: &EncodedValue) -> Result<EncodedOwned> {
-    Ok(value.encoded.clone())
 }
 
 fn encoded_owned_for_width(width: usize, bytes: &[u8]) -> Result<EncodedOwned> {
@@ -5526,7 +5155,6 @@ impl<S: TupleSink> MixedExecutor<'_, '_, '_, '_, '_, S> {
             }
             NodeImpl::SortedLeapfrog => self.execute_hash_node(depth),
             NodeImpl::HashProbe | NodeImpl::Hybrid => self.execute_hash_node(depth),
-            _ => Err(Error::internal("unsupported mixed node implementation")),
         }
     }
 
@@ -5558,7 +5186,7 @@ impl<S: TupleSink> MixedExecutor<'_, '_, '_, '_, '_, S> {
         while !leapfrog.at_end {
             let value = leapfrog.key(&self.lftj_runtime.iters, &mut self.plan.summary.counters)?;
             self.plan.summary.counters.variable_candidates += 1;
-            if self.binding.bind(variable, EncodedValue::new(value)) {
+            if self.binding.bind(variable, value) {
                 let keep = comparisons_ready_pass(
                     self.txn,
                     &self.plan.comparisons,
@@ -5642,7 +5270,7 @@ impl<S: TupleSink> MixedExecutor<'_, '_, '_, '_, '_, S> {
         let Some(value) = self.variable_value_from_row(driver, row, variable)? else {
             return Ok(());
         };
-        if !emitted.insert(value.encoded.clone()) {
+        if !emitted.insert(value.clone()) {
             return Ok(());
         }
         if !self.binding.bind(variable, value) {
@@ -5755,11 +5383,7 @@ impl<S: TupleSink> MixedExecutor<'_, '_, '_, '_, '_, S> {
 
     fn term_bound_value(&self, term: &NormTerm) -> Result<Option<EncodedOwned>> {
         Ok(match term {
-            NormTerm::Var(variable) => self
-                .binding
-                .get(variable.0 as usize)
-                .map(encoded_owned_for_value)
-                .transpose()?,
+            NormTerm::Var(variable) => self.binding.get(variable.0 as usize).cloned(),
             NormTerm::Input(input) => self.inputs.get(*input).cloned(),
             NormTerm::Literal(value) => Some(value.clone()),
             NormTerm::Wildcard => None,
@@ -5777,10 +5401,10 @@ impl<S: TupleSink> MixedExecutor<'_, '_, '_, '_, '_, S> {
         atom_id: usize,
         row: RowId,
         variable: usize,
-    ) -> Result<Option<EncodedValue>> {
+    ) -> Result<Option<EncodedOwned>> {
         let atom = &self.plan.relation_atoms[atom_id];
         let relation = self.relation(atom)?;
-        let mut out = None;
+        let mut out: Option<EncodedOwned> = None;
         for field in atom
             .fields
             .iter()
@@ -5790,13 +5414,12 @@ impl<S: TupleSink> MixedExecutor<'_, '_, '_, '_, '_, S> {
                 .encoded_bytes(row, field.field)
                 .ok_or_else(|| Error::internal("missing mixed hash variable field"))?;
             if let Some(existing) = &out {
-                let existing: &EncodedValue = existing;
                 if existing.as_bytes() != bytes {
                     return Ok(None);
                 }
             } else {
-                out = Some(EncodedValue::from_bytes(
-                    &self.query.vars[variable].value_type,
+                out = Some(encoded_owned_for_width(
+                    self.query.vars[variable].value_type.encoded_width(),
                     bytes,
                 )?);
             }
@@ -5843,7 +5466,14 @@ impl<S: TupleSink> MixedExecutor<'_, '_, '_, '_, '_, S> {
             .ok_or_else(|| Error::internal("missing mixed hash relation"))?;
         let build_start = Instant::now();
         let build_alloc_start = allocation::snapshot();
-        let cached = self.image.cached_hash_trie(&request.cache_key, || {
+        let key = HashTrieKey::new(
+            &self.image.key(),
+            request.relation,
+            request.access,
+            &request.fields,
+            LeafMode::Rows,
+        );
+        let cached = self.image.cached_hash_trie(key, || {
             crate::query_image::build_hash_trie_index(
                 relation,
                 IndexSpec::new(&request.index_name, request.fields.clone()),
@@ -6101,7 +5731,7 @@ impl LftjPrefixProbe<'_, '_, '_, '_> {
         leapfrog.init(&mut self.iters, &mut self.counters)?;
         while !leapfrog.at_end {
             let value = leapfrog.key(&self.iters, &mut self.counters)?;
-            if self.binding.bind(variable, EncodedValue::new(value)) {
+            if self.binding.bind(variable, value) {
                 let keep = comparisons_ready_pass(
                     self.txn,
                     &self.query.predicates,
@@ -6203,7 +5833,7 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
         while !leapfrog.at_end {
             let value = leapfrog.key(&self.runtime.iters, &mut self.plan.summary.counters)?;
             self.plan.summary.counters.variable_candidates += 1;
-            if self.binding.bind(variable, EncodedValue::new(value)) {
+            if self.binding.bind(variable, value) {
                 let keep = comparisons_ready_pass(
                     self.txn,
                     &self.plan.comparisons,
@@ -7899,10 +7529,6 @@ fn implementation_mask(implementations: &[NodeImpl]) -> u64 {
                 NodeImpl::SortedLeapfrog => 1,
                 NodeImpl::HashProbe => 2,
                 NodeImpl::Hybrid => 3,
-                NodeImpl::VectorLoop => 4,
-                NodeImpl::ExistenceCheck => 5,
-                NodeImpl::Product => 6,
-                NodeImpl::AggregateSink => 7,
             };
             mask | ((code as u64) << (index * 4))
         })
@@ -8035,12 +7661,6 @@ fn estimate_free_join_plan(
                             .saturating_add(stats.relation_rows(&atom.relation_name));
                     }
                 }
-            }
-            NodeImpl::VectorLoop
-            | NodeImpl::ExistenceCheck
-            | NodeImpl::Product
-            | NodeImpl::AggregateSink => {
-                variable_ops = variable_ops.saturating_mul(4);
             }
         }
         iterator_ops = iterator_ops.saturating_add(variable_ops);
@@ -8249,7 +7869,6 @@ fn output_plan_from_find(find: &[NormFindTerm]) -> OutputPlan {
                     NormFindTerm::Aggregate { .. } => None,
                 })
                 .collect(),
-            set_semantics: true,
         })
     }
 }
@@ -8338,11 +7957,11 @@ fn operand_encoded_value(
     _value_type: &ValueType,
     inputs: &EncodedInputs,
     binding: &EncodedBinding,
-) -> Option<EncodedValue> {
+) -> Option<EncodedOwned> {
     match operand {
         NormOperand::Var(variable) => binding.get(variable.0 as usize).cloned(),
-        NormOperand::Input(input) => inputs.get(*input).map(EncodedValue::from_owned),
-        NormOperand::Literal(literal) => Some(EncodedValue::from_owned(literal)),
+        NormOperand::Input(input) => inputs.get(*input).cloned(),
+        NormOperand::Literal(literal) => Some(literal.clone()),
     }
 }
 
@@ -8840,14 +8459,32 @@ enum CompiledPlan {
 
 #[derive(Clone, Debug)]
 enum OutputSink {
+    CountRows(CountRowsSink),
     GlobalCount(GlobalCountSink),
     TinyProject(Box<TinyProjectSink>),
     Project(EncodedProjectSink),
     Aggregate(AggregateSink),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SinkMode {
+    Materialize,
+    CountRowsOnly,
+}
+
 impl OutputSink {
     fn new(output: &OutputPlan) -> Self {
+        Self::new_with_mode(output, SinkMode::Materialize)
+    }
+
+    fn new_count_rows(output: &OutputPlan) -> Self {
+        Self::new_with_mode(output, SinkMode::CountRowsOnly)
+    }
+
+    fn new_with_mode(output: &OutputPlan, mode: SinkMode) -> Self {
+        if mode == SinkMode::CountRowsOnly {
+            return OutputSink::CountRows(CountRowsSink::new(output));
+        }
         match output {
             OutputPlan::Project(plan) if is_tiny_project_candidate(output) => {
                 OutputSink::TinyProject(Box::new(TinyProjectSink::new(plan)))
@@ -8858,6 +8495,15 @@ impl OutputSink {
             }
             OutputPlan::Aggregate(plan) => OutputSink::Aggregate(AggregateSink::new(plan)),
         }
+    }
+
+    fn finish_count(self) -> Result<usize> {
+        let OutputSink::CountRows(sink) = self else {
+            return Err(Error::internal(
+                "count rows requested from materializing sink",
+            ));
+        };
+        Ok(sink.finish_count())
     }
 }
 
@@ -8870,6 +8516,7 @@ impl TupleSink for OutputSink {
         counters: &mut PlanCounters,
     ) -> Result<()> {
         match self {
+            OutputSink::CountRows(sink) => sink.emit(txn, query, binding, counters),
             OutputSink::GlobalCount(sink) => sink.emit(txn, query, binding, counters),
             OutputSink::TinyProject(sink) => sink.emit(txn, query, binding, counters),
             OutputSink::Project(sink) => sink.emit(txn, query, binding, counters),
@@ -8884,6 +8531,7 @@ impl TupleSink for OutputSink {
         counters: &mut PlanCounters,
     ) -> Result<Vec<Vec<Value>>> {
         match self {
+            OutputSink::CountRows(sink) => sink.finish(txn, query, counters),
             OutputSink::GlobalCount(sink) => sink.finish(txn, query, counters),
             OutputSink::TinyProject(sink) => sink.finish(txn, query, counters),
             OutputSink::Project(sink) => sink.finish(txn, query, counters),
@@ -8900,6 +8548,9 @@ impl TupleSink for OutputSink {
         counters: &mut PlanCounters,
     ) -> Result<()> {
         match self {
+            OutputSink::CountRows(sink) => {
+                sink.emit_count_range(txn, query, binding, count, counters)
+            }
             OutputSink::GlobalCount(sink) => {
                 sink.emit_count_range(txn, query, binding, count, counters)
             }
@@ -9113,14 +8764,14 @@ impl TupleSink for EncodedProjectSink {
 }
 
 #[derive(Clone, Debug)]
-struct CountOnlySink {
+struct CountRowsSink {
     output: OutputPlan,
     global_count: u64,
     project_rows: BTreeSet<SmallEncodedRow>,
     aggregate_groups: BTreeSet<SmallEncodedRow>,
 }
 
-impl CountOnlySink {
+impl CountRowsSink {
     fn new(output: &OutputPlan) -> Self {
         Self {
             output: output.clone(),
@@ -9139,7 +8790,7 @@ impl CountOnlySink {
     }
 }
 
-impl TupleSink for CountOnlySink {
+impl TupleSink for CountRowsSink {
     fn emit(
         &mut self,
         _txn: &ReadTxn<'_>,
@@ -9343,7 +8994,7 @@ fn ensure_aggregate_group<'a>(
     }
 }
 
-fn bound_encoded_variable(binding: &EncodedBinding, variable: usize) -> Result<&EncodedValue> {
+fn bound_encoded_variable(binding: &EncodedBinding, variable: usize) -> Result<&EncodedOwned> {
     binding
         .get(variable)
         .ok_or_else(|| Error::internal(format!("variable {variable} is unbound at projection")))
@@ -9364,7 +9015,7 @@ fn decode_bound_variable(
 fn decode_output_value(
     txn: &ReadTxn<'_>,
     value_type: &ValueType,
-    value: EncodedValue,
+    value: EncodedOwned,
     counters: &mut PlanCounters,
 ) -> Result<Value> {
     counters.materialized_output_values += 1;
@@ -9378,8 +9029,8 @@ enum AggregateState {
     SumU64(u64),
     SumI64(i64),
     SumDecimal(i128),
-    EncodedMin(Option<EncodedValue>),
-    EncodedMax(Option<EncodedValue>),
+    EncodedMin(Option<EncodedOwned>),
+    EncodedMax(Option<EncodedOwned>),
     Min(Option<Value>),
     Max(Option<Value>),
 }
@@ -9556,2635 +9207,5 @@ fn value_type_name(value_type: &ValueType) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::query_image::{QueryImageBuilder, QueryImageScope};
-    use crate::{AggregateError, Environment, ExecuteError, QueryError, Row};
-    use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
-    use bumbledb_core::schema::{
-        ConstraintDescriptor, FieldDescriptor, IndexDescriptor, RelationDescriptor,
-    };
-
-    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
-
-    fn typed_query(
-        schema: &StorageSchema,
-        build: impl FnOnce(&mut QueryBuilder<'_>) -> QueryBuildResult<()>,
-    ) -> QueryBuildResult<TypedQuery> {
-        let mut builder = QueryBuilder::new(schema.descriptor());
-        build(&mut builder)?;
-        builder.finish()
-    }
-
-    #[test]
-    fn query_observability_defaults_are_zero() {
-        let timings = QueryTimings::default();
-        assert_eq!(timings.total_micros, 0);
-        assert_eq!(timings.execute_micros, 0);
-        assert_eq!(QueryRuntimeKind::default(), QueryRuntimeKind::Unknown);
-
-        let allocations = QueryAllocationStats::default();
-        assert!(!allocations.enabled);
-        assert_eq!(allocations.alloc_calls, 0);
-        assert_eq!(allocations.net_bytes, 0);
-    }
-
-    #[test]
-    fn executes_single_relation_query() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .input("holder", "holder")?
-                .done()
-                .find_var("account")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| {
-            txn.execute_query(
-                &schema,
-                &query,
-                &InputBindings::from_values([(
-                    "holder",
-                    Value::Identity(IdentityValue::Serial(1)),
-                )]),
-            )
-        })?;
-
-        assert_eq!(
-            output.rows,
-            vec![
-                vec![Value::Identity(IdentityValue::Serial(1))],
-                vec![Value::Identity(IdentityValue::Serial(2))]
-            ]
-        );
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
-        assert_eq!(output.plan.plan_family, PlanFamily::Direct);
-        assert!(
-            output
-                .plan
-                .direct_kernel
-                .as_ref()
-                .is_some_and(|kernel| kernel.target.contains("Account"))
-        );
-        assert!(output.plan.timings.total_micros > 0);
-        assert!(output.plan.timings.execute_micros <= output.plan.timings.total_micros);
-        assert!(!output.plan.allocations.enabled);
-        assert!(output.plan.node_timings.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn planner_recommends_missing_static_predicate_index() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .input("currency", "currency")?
-                .done()
-                .find_var("account")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| {
-            txn.execute_query(
-                &schema,
-                &query,
-                &InputBindings::from_values([("currency", Value::Enum(840))]),
-            )
-        })?;
-
-        assert_same_rows(
-            &output.rows,
-            &[
-                vec![Value::Identity(IdentityValue::Serial(1))],
-                vec![Value::Identity(IdentityValue::Serial(3))],
-            ],
-        );
-        let expected_fields = vec!["currency".to_owned(), "id".to_owned()];
-        assert!(output.plan.missing_indexes.iter().any(|missing| {
-            missing.relation == "Account"
-                && missing.fields == expected_fields
-                && missing.reason.contains("StaticPredicate")
-        }));
-        Ok(())
-    }
-
-    #[test]
-    fn optimizer_selects_equality_index_and_hash_probe_for_static_lookup() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(optimizer_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, item_row(1, 1))?;
-            txn.insert(&schema, item_row(2, 1))?;
-            txn.insert(&schema, item_row(3, 2))?;
-            Ok::<(), Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Item")?
-                .var("id", "item")?
-                .input("kind", "kind")?
-                .done()
-                .find_var("item")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| {
-            txn.execute_query(
-                &schema,
-                &query,
-                &InputBindings::from_values([("kind", Value::Enum(1))]),
-            )
-        })?;
-
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
-        assert_eq!(output.plan.plan_family, PlanFamily::Direct);
-        assert_eq!(output.plan.optimizer.chosen, "direct_storage");
-        assert_eq!(output.plan.query_image_cache.builds, 0);
-        assert_eq!(output.plan.counters.direct_kernel_rows, 2);
-        assert_same_rows(
-            &output.rows,
-            &[
-                vec![Value::Identity(IdentityValue::Serial(1))],
-                vec![Value::Identity(IdentityValue::Serial(2))],
-            ],
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn hash_probe_runtime_checks_static_existence_atoms() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, b_row(1, 99))?;
-            Ok::<(), Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query.rel("A")?.input("id", "a")?.done();
-            query.rel("B")?.var("id", "b")?.input("a", "a")?.done();
-            query.cmp(
-                OperandRef::var("b"),
-                ComparisonOperator::NotEq,
-                OperandRef::integer(0),
-            )?;
-            query.find_var("b")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| {
-            txn.execute_query(
-                &schema,
-                &query,
-                &InputBindings::from_values([("a", Value::U64(99))]),
-            )
-        })?;
-
-        assert!(output.rows.is_empty());
-        assert_eq!(output.plan.counters.trie_open, 0);
-        assert!(output.plan.counters.hash_probe_calls > 0);
-        assert_eq!(output.plan.counters.hash_index_builds, 1);
-        assert_eq!(output.plan.counters.hash_index_build_rows, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn mixed_hash_lftj_runtime_executes_hash_nodes() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, chain_a_row(1))?;
-            txn.insert(&schema, chain_b_row(10, 1))?;
-            txn.insert(&schema, chain_c_row(20, 10))?;
-            txn.insert(&schema, chain_c_row(21, 10))?;
-            Ok::<_, Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query.rel("A")?.var("id", "a")?.done();
-            query.rel("B")?.var("id", "b")?.var("a", "a")?.done();
-            query.rel("C")?.var("id", "c")?.var("b", "b")?.done();
-            query.cmp(
-                OperandRef::var("c"),
-                ComparisonOperator::NotEq,
-                OperandRef::integer(0),
-            )?;
-            query.find_var("c")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Mixed);
-        assert!(
-            output
-                .plan
-                .free_join
-                .nodes
-                .iter()
-                .any(|node| node.implementation == NodeImpl::SortedLeapfrog)
-        );
-        assert!(
-            output
-                .plan
-                .free_join
-                .nodes
-                .iter()
-                .any(|node| node.implementation == NodeImpl::HashProbe)
-        );
-        assert!(output.plan.counters.trie_next > 0);
-        assert!(output.plan.counters.hash_probe_calls > 0);
-        assert_same_rows(&output.rows, &[vec![Value::U64(20)], vec![Value::U64(21)]]);
-        Ok(())
-    }
-
-    #[test]
-    fn direct_prefix_range_kernel_selects_and_filters_rows() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(direct_sailors_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, reserve_row(1, 10, 5))?;
-            txn.insert(&schema, reserve_row(1, 11, 15))?;
-            txn.insert(&schema, reserve_row(2, 12, 5))?;
-            Ok::<_, Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Reserve")?
-                .input("sailor", "sailor")?
-                .var("boat", "boat")?
-                .var("day", "day")?
-                .done();
-            query.cmp(
-                OperandRef::var("day"),
-                ComparisonOperator::Gte,
-                OperandRef::input("start"),
-            )?;
-            query.cmp(
-                OperandRef::var("day"),
-                ComparisonOperator::Lt,
-                OperandRef::input("end"),
-            )?;
-            query.find_var("boat")?.find_var("day")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| {
-            txn.execute_query(
-                &schema,
-                &query,
-                &InputBindings::from_values([
-                    ("sailor", Value::U64(1)),
-                    ("start", Value::Timestamp(TimestampMicros(0))),
-                    ("end", Value::Timestamp(TimestampMicros(10))),
-                ]),
-            )
-        })?;
-
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
-        assert_eq!(output.plan.plan_family, PlanFamily::Direct);
-        assert!(matches!(
-            output.plan.direct_kernel.as_ref().map(|direct| direct.kind),
-            Some(DirectKernelKind::PrefixRange)
-        ));
-        assert_same_rows(
-            &output.rows,
-            &[vec![Value::U64(10), Value::Timestamp(TimestampMicros(5))]],
-        );
-        assert!(output.plan.counters.direct_kernel_probes > 0);
-        assert_eq!(output.plan.counters.direct_kernel_rows, 2);
-        assert_eq!(output.plan.counters.direct_kernel_predicates, 4);
-        assert_eq!(output.plan.query_image_cache.builds, 0);
-        assert_eq!(output.plan.counters.hash_index_builds, 0);
-        assert_eq!(output.plan.counters.sorted_trie_builds, 0);
-        assert_eq!(output.plan.counters.trie_open, 0);
-        assert_eq!(output.plan.counters.hash_probe_calls, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn direct_storage_no_prefix_range_scan_selects_rows() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(direct_sailors_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, reserve_row(1, 10, 5))?;
-            txn.insert(&schema, reserve_row(1, 11, 15))?;
-            txn.insert(&schema, reserve_row(2, 12, 25))?;
-            Ok::<_, Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Reserve")?
-                .var("sailor", "sailor")?
-                .var("boat", "boat")?
-                .var("day", "day")?
-                .done();
-            query.cmp(
-                OperandRef::var("day"),
-                ComparisonOperator::Gte,
-                OperandRef::input("start"),
-            )?;
-            query.cmp(
-                OperandRef::var("day"),
-                ComparisonOperator::Lt,
-                OperandRef::input("end"),
-            )?;
-            query.find_var("sailor")?.find_var("boat")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| {
-            txn.execute_query(
-                &schema,
-                &query,
-                &InputBindings::from_values([
-                    ("start", Value::Timestamp(TimestampMicros(10))),
-                    ("end", Value::Timestamp(TimestampMicros(30))),
-                ]),
-            )
-        })?;
-
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
-        assert_eq!(output.plan.plan_family, PlanFamily::Direct);
-        assert_eq!(output.plan.query_image_cache.builds, 0);
-        assert_eq!(output.plan.counters.hash_index_builds, 0);
-        assert_eq!(output.plan.counters.sorted_trie_builds, 0);
-        assert_same_rows(
-            &output.rows,
-            &[
-                vec![Value::U64(1), Value::U64(11)],
-                vec![Value::U64(2), Value::U64(12)],
-            ],
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn direct_prefix_range_empty_prefix_returns_zero_rows() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(direct_sailors_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, reserve_row(1, 10, 5))?;
-            Ok::<_, Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Reserve")?
-                .input("sailor", "sailor")?
-                .var("boat", "boat")?
-                .var("day", "day")?
-                .done();
-            query.cmp(
-                OperandRef::var("day"),
-                ComparisonOperator::Gte,
-                OperandRef::input("start"),
-            )?;
-            query.cmp(
-                OperandRef::var("day"),
-                ComparisonOperator::Lt,
-                OperandRef::input("end"),
-            )?;
-            query.find_var("boat")?.find_var("day")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| {
-            txn.execute_query(
-                &schema,
-                &query,
-                &InputBindings::from_values([
-                    ("sailor", Value::U64(99)),
-                    ("start", Value::Timestamp(TimestampMicros(0))),
-                    ("end", Value::Timestamp(TimestampMicros(10))),
-                ]),
-            )
-        })?;
-
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
-        assert!(output.rows.is_empty());
-        assert_eq!(output.plan.counters.trie_open, 0);
-        assert_eq!(output.plan.counters.hash_probe_calls, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn direct_chain_kernel_selects_and_follows_acyclic_path() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, chain_a_row(1))?;
-            txn.insert(&schema, chain_b_row(10, 1))?;
-            txn.insert(&schema, chain_c_row(20, 10))?;
-            txn.insert(&schema, chain_d_row(30, 20))?;
-            Ok::<_, Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query.rel("A")?.input("id", "a")?.done();
-            query.rel("B")?.var("id", "b")?.input("a", "a")?.done();
-            query.rel("C")?.var("id", "c")?.var("b", "b")?.done();
-            query.rel("D")?.var("id", "d")?.var("c", "c")?.done();
-            query.find_var("d")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| {
-            txn.execute_query(
-                &schema,
-                &query,
-                &InputBindings::from_values([("a", Value::U64(1))]),
-            )
-        })?;
-
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::IndexNestedLoop);
-        assert_eq!(output.plan.plan_family, PlanFamily::IndexNestedLoop);
-        assert!(matches!(
-            output.plan.direct_kernel.as_ref().map(|direct| direct.kind),
-            Some(DirectKernelKind::ChainProbe)
-        ));
-        assert_eq!(output.rows, vec![vec![Value::U64(30)]]);
-        assert_eq!(output.plan.counters.direct_kernel_rows, 4);
-        assert_eq!(output.plan.counters.hash_index_builds, 0);
-        assert_eq!(output.plan.counters.hash_index_build_rows, 0);
-        assert_eq!(output.plan.counters.trie_open, 0);
-        assert_eq!(output.plan.counters.hash_probe_calls, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn count_only_matches_materialized_projection_without_decoding_output() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
-            txn.insert(&schema, chain_b_row(10, 1))?;
-            txn.insert(&schema, chain_c_row(20, 10))?;
-            txn.insert(&schema, chain_d_row(30, 20))?;
-            Ok::<_, Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query.rel("A")?.input("id", "a")?.done();
-            query.rel("B")?.var("id", "b")?.input("a", "a")?.done();
-            query.rel("C")?.var("id", "c")?.var("b", "b")?.done();
-            query.rel("D")?.var("id", "d")?.var("c", "c")?.done();
-            query.find_var("d")?;
-            Ok(())
-        })?;
-        let inputs = InputBindings::from_values([("a", Value::U64(1))]);
-
-        let materialized = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
-        let count_only = env.read(|txn| txn.execute_query_count_only(&schema, &query, &inputs))?;
-
-        assert_eq!(count_only.rows, materialized.rows.len());
-        assert_eq!(count_only.plan.runtime_kind, materialized.plan.runtime_kind);
-        assert_eq!(count_only.plan.counters.materialized_output_values, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn direct_chain_broken_path_returns_zero_rows() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, chain_b_row(10, 1))?;
-            Ok::<_, Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query.rel("A")?.input("id", "a")?.done();
-            query.rel("B")?.var("id", "b")?.input("a", "a")?.done();
-            query.rel("C")?.var("id", "c")?.var("b", "b")?.done();
-            query.rel("D")?.var("id", "d")?.var("c", "c")?.done();
-            query.find_var("d")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| {
-            txn.execute_query(
-                &schema,
-                &query,
-                &InputBindings::from_values([("a", Value::U64(1))]),
-            )
-        })?;
-
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::IndexNestedLoop);
-        assert_eq!(output.plan.plan_family, PlanFamily::IndexNestedLoop);
-        assert!(output.rows.is_empty());
-        assert_eq!(output.plan.counters.trie_open, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn optimizer_keeps_cyclic_triangle_on_lftj() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, edge_ab_row(1, 10))?;
-            txn.insert(&schema, edge_ac_row(1, 20))?;
-            txn.insert(&schema, edge_bc_row(10, 20))?;
-            txn.insert(&schema, edge_ab_row(2, 10))?;
-            txn.insert(&schema, edge_ac_row(2, 30))?;
-            txn.insert(&schema, edge_bc_row(10, 40))?;
-            Ok::<(), Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
-            query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
-            query.rel("EdgeBC")?.var("b", "b")?.var("c", "c")?.done();
-            query.find_aggregate(AggregateFunction::Count, "a")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-        assert!(output.plan.direct_kernel.is_none());
-        assert!(
-            output
-                .plan
-                .free_join
-                .nodes
-                .iter()
-                .all(|node| node.implementation == NodeImpl::SortedLeapfrog)
-        );
-        assert!(
-            output
-                .plan
-                .optimizer
-                .candidates
-                .iter()
-                .any(|candidate| candidate.name == "pure_lftj")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn lftj_atom_cache_reuses_equivalent_relation_aliases() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
-            txn.insert(&schema, Row::new("A", [("id", Value::U64(2))]))?;
-            Ok::<_, Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query.rel("A")?.var("id", "left")?.done();
-            query.rel("A")?.var("id", "right")?.done();
-            query.find_var("left")?.find_var("right")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-        assert!(output.plan.counters.sorted_trie_builds <= 1);
-        assert_eq!(output.rows.len(), 4);
-        Ok(())
-    }
-
-    #[test]
-    fn lftj_empty_variable_atom_short_circuits_execution() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
-            Ok::<_, Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query.rel("A")?.var("id", "a")?.done();
-            query.rel("B")?.var("id", "b")?.integer("a", 99)?.done();
-            query.find_var("a")?.find_var("b")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert!(output.rows.is_empty());
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-        assert_eq!(output.plan.optimizer.chosen, "static_empty");
-        assert_eq!(output.plan.counters.trie_open, 0);
-        assert_eq!(output.plan.counters.variable_candidates, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn static_empty_no_input_query_hits_fast_cache_before_normalize() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
-            Ok::<_, Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query.rel("A")?.var("id", "a")?.done();
-            query.rel("B")?.var("id", "b")?.integer("a", 99)?.done();
-            query.find_var("a")?.find_var("b")?;
-            Ok(())
-        })?;
-
-        let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-        let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert!(first.rows.is_empty());
-        assert!(second.rows.is_empty());
-        assert_eq!(first.plan.counters.static_empty_cache_misses, 1);
-        assert_eq!(second.plan.counters.static_empty_cache_hits, 1);
-        assert!(second.plan.free_join.nodes.is_empty());
-        assert!(second.explain().contains("static_empty cache_hits=1"));
-        assert_eq!(second.plan.timings.validate_inputs_micros, 0);
-        assert_eq!(second.plan.timings.normalize_micros, 0);
-        assert_eq!(second.plan.timings.encode_inputs_micros, 0);
-        assert_eq!(second.plan.timings.query_image_micros, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn direct_count_plan_has_no_free_join_nodes() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, edge_ab_row(1, 10))?;
-            txn.insert(&schema, edge_ab_row(1, 11))?;
-            txn.insert(
-                &schema,
-                Row::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(20))]),
-            )?;
-            txn.insert(
-                &schema,
-                Row::new("EdgeAC", [("a", Value::U64(2)), ("c", Value::U64(30))]),
-            )?;
-            Ok::<_, Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
-            query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
-            query.find_aggregate(AggregateFunction::Count, "a")?;
-            Ok(())
-        })?;
-        let prepared = env.prepare_query(&schema, &query)?;
-
-        let output =
-            env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
-
-        assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
-        assert_eq!(output.plan.plan_family, PlanFamily::Direct);
-        assert!(output.plan.free_join.nodes.is_empty());
-        assert_eq!(output.plan.optimizer.chosen, "direct_count");
-        assert!(
-            output
-                .explain()
-                .contains("direct_kernel kind=CountOnly target=factorized_count")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn optimizer_trace_and_cost_tiebreak_are_stable() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .var("holder", "holder")?
-                .done();
-            query
-                .rel("Holder")?
-                .var("id", "holder")?
-                .var("name", "holder_name")?
-                .done();
-            query.find_var("account")?.find_var("holder_name")?;
-            Ok(())
-        })?;
-
-        let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-        let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_eq!(first.plan.optimizer, second.plan.optimizer);
-        assert!(first.explain().contains("plan_family"));
-        assert!(first.explain().contains("setup_micros"));
-        assert!(first.explain().contains("candidate_plan"));
-        assert!(first.explain().contains("free_join_estimates"));
-        assert!(first.explain().contains("reason=stats"));
-        Ok(())
-    }
-
-    #[test]
-    fn prepared_plan_cache_reuses_parameterized_shape() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .var("holder", "holder")?
-                .done();
-            query
-                .rel("Holder")?
-                .input("id", "holder")?
-                .var("name", "holder_name")?
-                .done();
-            query.find_var("account")?.find_var("holder_name")?;
-            Ok(())
-        })?;
-        let inputs =
-            InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(1)))]);
-
-        let first = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
-        let second = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
-
-        assert_eq!(first.rows, second.rows);
-        assert_eq!(first.plan.prepared_plan_cache.misses, 1);
-        assert_eq!(first.plan.prepared_plan_cache.builds, 1);
-        assert_eq!(second.plan.prepared_plan_cache.hits, 1);
-        assert_ne!(first.plan.plan_family, PlanFamily::Unknown);
-        Ok(())
-    }
-
-    #[test]
-    fn prepared_plan_cache_reuses_no_input_physical_plan() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .var("holder", "holder")?
-                .done();
-            query.find_var("account")?.find_var("holder")?;
-            Ok(())
-        })?;
-
-        let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-        let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_eq!(first.rows, second.rows);
-        assert_eq!(first.plan.prepared_plan_cache.cached_plans, 1);
-        assert_eq!(first.plan.prepared_plan_cache.misses, 1);
-        assert_eq!(first.plan.prepared_plan_cache.builds, 1);
-        assert_eq!(first.plan.prepared_plan_cache.hits, 0);
-        assert_eq!(second.plan.prepared_plan_cache.cached_plans, 1);
-        assert_eq!(second.plan.prepared_plan_cache.misses, 1);
-        assert_eq!(second.plan.prepared_plan_cache.builds, 1);
-        assert_eq!(second.plan.prepared_plan_cache.hits, 1);
-        assert_eq!(first.plan.optimizer, second.plan.optimizer);
-        assert_eq!(first.plan.free_join, second.plan.free_join);
-        assert!(second.plan.timings.plan_micros <= first.plan.timings.plan_micros);
-        assert!(second.explain().contains("prepared_plan_cache"));
-        Ok(())
-    }
-
-    #[test]
-    fn prepared_plan_cache_is_snapshot_scoped() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .var("holder", "holder")?
-                .done();
-            query.find_var("account")?.find_var("holder")?;
-            Ok(())
-        })?;
-
-        let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-        env.write(|txn| {
-            txn.insert(&schema, account_row(4, 2, 978))?;
-            Ok::<_, Error>(())
-        })?;
-        let after = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_eq!(before.plan.prepared_plan_cache.misses, 1);
-        assert_eq!(before.plan.prepared_plan_cache.builds, 1);
-        assert_eq!(after.plan.prepared_plan_cache.misses, 1);
-        assert_eq!(after.plan.prepared_plan_cache.builds, 1);
-        assert_eq!(after.plan.prepared_plan_cache.hits, 0);
-        assert_eq!(after.rows.len(), before.rows.len() + 1);
-        Ok(())
-    }
-
-    #[test]
-    fn planner_stats_are_cached_per_query_image() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .var("holder", "holder")?
-                .done()
-                .find_var("account")?;
-            Ok(())
-        })?;
-        let inputs = InputBindings::new();
-
-        let first = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
-        let second = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
-
-        assert_eq!(first.rows, second.rows);
-        assert_eq!(first.plan.planner_stats.builds, 1);
-        assert_eq!(first.plan.planner_stats.misses, 1);
-        assert_eq!(second.plan.planner_stats.builds, 1);
-        assert_eq!(second.plan.planner_stats.misses, 1);
-        assert!(second.plan.planner_stats.hits >= 1 || second.plan.prepared_plan_cache.hits >= 1);
-        if second
-            .plan
-            .free_join
-            .nodes
-            .iter()
-            .all(|node| node.implementation == NodeImpl::HashProbe)
-        {
-            assert!(second.plan.counters.hash_probe_calls > 0);
-            assert_eq!(second.plan.counters.trie_open, 0);
-        } else {
-            assert_eq!(second.plan.counters.sorted_trie_builds, 0);
-            assert_eq!(second.plan.counters.atom_temp_relation_builds, 0);
-            assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn execute_query_uses_warmed_query_image_cache() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .var("holder", "holder")?
-                .done()
-                .find_var("account")?;
-            Ok(())
-        })?;
-        let inputs = InputBindings::new();
-
-        let warm = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
-        let before = env.query_image_cache_diagnostics();
-        let output = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
-        let after = env.query_image_cache_diagnostics();
-
-        assert_eq!(before.builds, 1);
-        assert_eq!(after.builds, 1);
-        assert_eq!(output.plan.query_image_cache.builds, 1);
-        assert!(output.plan.query_image_cache.hits > before.hits);
-        assert_eq!(warm.rows.len(), 3);
-        assert_eq!(output.rows.len(), 3);
-        Ok(())
-    }
-
-    #[test]
-    fn execute_query_cache_misses_after_write_commit() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .var("holder", "holder")?
-                .done()
-                .find_var("account")?;
-            Ok(())
-        })?;
-
-        let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-        env.write(|txn| {
-            txn.insert(&schema, account_row(4, 2, 978))?;
-            Ok::<_, Error>(())
-        })?;
-        let after = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_eq!(before.plan.query_image_cache.builds, 1);
-        assert_eq!(after.plan.query_image_cache.builds, 2);
-        assert_eq!(after.rows.len(), before.rows.len() + 1);
-        Ok(())
-    }
-
-    #[test]
-    fn execute_query_cache_is_schema_fingerprint_scoped() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema_a = StorageSchema::new(optimizer_schema(), env.max_key_size())?;
-        let schema_b = StorageSchema::new(triangle_schema(), env.max_key_size())?;
-        let item_query = typed_query(&schema_a, |query| {
-            query
-                .rel("Item")?
-                .var("id", "item")?
-                .var("kind", "kind")?
-                .done();
-            query.find_var("item")?;
-            Ok(())
-        })?;
-        let edge_query = typed_query(&schema_b, |query| {
-            query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
-            query.find_var("a")?;
-            Ok(())
-        })?;
-
-        let item =
-            env.read(|txn| txn.execute_query(&schema_a, &item_query, &InputBindings::new()))?;
-        let edge =
-            env.read(|txn| txn.execute_query(&schema_b, &edge_query, &InputBindings::new()))?;
-
-        assert_eq!(item.plan.query_image_cache.builds, 1);
-        assert_eq!(edge.plan.query_image_cache.builds, 2);
-        assert_eq!(edge.plan.query_image_cache.cached_images, 2);
-        Ok(())
-    }
-
-    #[test]
-    fn planner_stats_reuse_shared_relations_across_queries() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let first_query = typed_query(&schema, |query| {
-            query
-                .rel("Posting")?
-                .var("id", "posting")?
-                .var("account", "account")?
-                .done();
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .var("holder", "holder")?
-                .done();
-            query.find_var("posting")?;
-            Ok(())
-        })?;
-        let second_query = typed_query(&schema, |query| {
-            query
-                .rel("Posting")?
-                .var("id", "posting")?
-                .var("account", "account")?
-                .var("at", "t")?
-                .done();
-            query.cmp(
-                OperandRef::var("t"),
-                ComparisonOperator::Gte,
-                OperandRef::integer(0),
-            )?;
-            query.find_var("posting")?;
-            Ok(())
-        })?;
-
-        let inputs = InputBindings::new();
-
-        let first = env.read(|txn| txn.execute_query(&schema, &first_query, &inputs))?;
-        let second = env.read(|txn| txn.execute_query(&schema, &second_query, &inputs))?;
-
-        assert_eq!(first.plan.planner_stats.builds, 2);
-        assert_eq!(second.plan.planner_stats.builds, 1);
-        assert_eq!(second.rows.len(), 3);
-        Ok(())
-    }
-
-    #[test]
-    fn planner_stats_cache_is_snapshot_scoped() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .var("holder", "holder")?
-                .done()
-                .find_var("account")?;
-            Ok(())
-        })?;
-
-        let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-        env.write(|txn| {
-            txn.insert(&schema, account_row(4, 2, 978))?;
-            Ok::<_, Error>(())
-        })?;
-        let after = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_eq!(before.plan.planner_stats.builds, 1);
-        assert_eq!(after.plan.planner_stats.builds, 1);
-        assert_eq!(after.rows.len(), before.rows.len() + 1);
-        Ok(())
-    }
-
-    #[test]
-    fn normalized_query_preserves_typed_query_shape() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Posting")?
-                .var("id", "posting")?
-                .var("account", "account")?
-                .var("amount", "amount")?
-                .var("at", "t")?
-                .done();
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .input("holder", "holder")?
-                .done();
-            query.cmp(
-                OperandRef::var("t"),
-                ComparisonOperator::Gte,
-                OperandRef::input("start"),
-            )?;
-            query.cmp(
-                OperandRef::var("t"),
-                ComparisonOperator::Lt,
-                OperandRef::input("end"),
-            )?;
-            query.find_var("posting")?.find_var("amount")?;
-            Ok(())
-        })?;
-
-        let normalized = env.read(|txn| normalize_query(txn, &schema, &query))?;
-
-        assert_eq!(normalized.vars.len(), query.variables.len());
-        assert_eq!(normalized.inputs.len(), query.inputs.len());
-        assert_eq!(normalized.atoms.len(), 2);
-        assert_eq!(normalized.predicates.len(), 2);
-        assert!(matches!(normalized.output, OutputPlan::Project(_)));
-        assert!(matches!(
-            normalized.atoms[0].fields[0].term,
-            NormTerm::Var(_)
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn query_shape_key_is_structural_and_stable() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let posting_amount_before = |limit, operator| {
-            typed_query(&schema, |query| {
-                query
-                    .rel("Posting")?
-                    .var("id", "posting")?
-                    .var("amount", "amount")?
-                    .var("at", "t")?
-                    .done();
-                query.cmp(OperandRef::var("t"), operator, OperandRef::integer(limit))?;
-                query.find_var("posting")?.find_var("amount")?;
-                Ok(())
-            })
-        };
-        let base = posting_amount_before(30, ComparisonOperator::Lt)?;
-        let same = posting_amount_before(30, ComparisonOperator::Lt)?;
-        let different_literal = posting_amount_before(31, ComparisonOperator::Lt)?;
-        let different_operator = posting_amount_before(30, ComparisonOperator::Lte)?;
-        let different_output = typed_query(&schema, |query| {
-            query
-                .rel("Posting")?
-                .var("id", "posting")?
-                .var("amount", "amount")?
-                .var("at", "t")?
-                .done();
-            query.cmp(
-                OperandRef::var("t"),
-                ComparisonOperator::Lt,
-                OperandRef::integer(30),
-            )?;
-            query.find_var("amount")?.find_var("posting")?;
-            Ok(())
-        })?;
-
-        let keys = env.read(|txn| {
-            let base = normalize_query(txn, &schema, &base)?;
-            let same = normalize_query(txn, &schema, &same)?;
-            let different_literal = normalize_query(txn, &schema, &different_literal)?;
-            let different_operator = normalize_query(txn, &schema, &different_operator)?;
-            let different_output = normalize_query(txn, &schema, &different_output)?;
-            Ok::<_, Error>((
-                query_shape_key(&schema, &base),
-                query_shape_key(&schema, &same),
-                query_shape_key(&schema, &different_literal),
-                query_shape_key(&schema, &different_operator),
-                query_shape_key(&schema, &different_output),
-            ))
-        })?;
-
-        assert_eq!(keys.0, keys.1);
-        assert_ne!(keys.0, keys.2);
-        assert_ne!(keys.0, keys.3);
-        assert_ne!(keys.0, keys.4);
-        Ok(())
-    }
-
-    #[test]
-    fn prepared_query_reuses_normalized_snapshot_shape() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Posting")?
-                .var("id", "posting")?
-                .var("account", "account")?
-                .var("amount", "amount")?
-                .done();
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .input("holder", "holder")?
-                .done();
-            query.find_var("posting")?.find_var("amount")?;
-            Ok(())
-        })?;
-        let prepared = env.prepare_query(&schema, &query)?;
-        let inputs =
-            InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(1)))]);
-
-        let first = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &inputs))?;
-        let second = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &inputs))?;
-
-        assert_eq!(first.rows, second.rows);
-        assert!(first.plan.timings.normalize_micros > 0);
-        assert_eq!(second.plan.timings.normalize_micros, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn lftj_atom_key_includes_encoded_inputs() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .input("holder", "holder")?
-                .done()
-                .find_var("account")?;
-            Ok(())
-        })?;
-        let first_inputs =
-            InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(1)))]);
-        let second_inputs =
-            InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(2)))]);
-
-        let (first, same, second) = env.read(|txn| {
-            let normalized = normalize_query(txn, &schema, &query)?;
-            let first_inputs = encode_inputs(txn, &schema, &normalized, &first_inputs)?;
-            let same_inputs = encode_inputs(
-                txn,
-                &schema,
-                &normalized,
-                &InputBindings::from_values([(
-                    "holder",
-                    Value::Identity(IdentityValue::Serial(1)),
-                )]),
-            )?;
-            let second_inputs = encode_inputs(txn, &schema, &normalized, &second_inputs)?;
-            let atom = &normalized.atoms[0];
-            let variables = atom_variables_in_plan_order(atom, &[0]);
-            Ok::<_, Error>((
-                lftj_atom_cache_key(atom, &variables, &[0], &first_inputs),
-                lftj_atom_cache_key(atom, &variables, &[0], &same_inputs),
-                lftj_atom_cache_key(atom, &variables, &[0], &second_inputs),
-            ))
-        })?;
-
-        assert_eq!(first, same);
-        assert_ne!(first, second);
-        Ok(())
-    }
-
-    #[test]
-    fn repeated_variable_atom_matches_equal_encoded_fields() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, edge_ab_row(1, 1))?;
-            txn.insert(&schema, edge_ab_row(1, 2))?;
-            Ok::<(), Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query.rel("EdgeAB")?.var("a", "a")?.var("b", "a")?.done();
-            query.find_var("a")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
-        Ok(())
-    }
-
-    #[test]
-    fn predicate_earliest_depth_assignment_is_deterministic() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Posting")?
-                .var("id", "posting")?
-                .var("account", "account")?
-                .var("at", "t")?
-                .done();
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .input("holder", "holder")?
-                .done();
-            query.cmp(
-                OperandRef::var("t"),
-                ComparisonOperator::Gte,
-                OperandRef::input("start"),
-            )?;
-            query.find_var("posting")?;
-            Ok(())
-        })?;
-
-        let depths = env.read(|txn| {
-            let mut normalized = normalize_query(txn, &schema, &query)?;
-            let image =
-                QueryImageBuilder::new(txn, &schema, QueryImageScope::full(&schema)).build()?;
-            let plan = plan_query(
-                &schema,
-                &mut normalized,
-                &image,
-                QueryImageCacheDiagnostics::default(),
-                PreparedPlanCacheDiagnostics::default(),
-            )?;
-            let t_depth = plan
-                .summary
-                .variable_order
-                .iter()
-                .position(|name| name == "t")
-                .ok_or_else(|| Error::internal("missing t variable in plan"))?;
-            Ok::<_, Error>((normalized.predicates[0].earliest_depth, t_depth))
-        })?;
-
-        assert_eq!(depths.0, Some(depths.1));
-        Ok(())
-    }
-
-    #[test]
-    fn specialized_mock_plan_matches_interpreted_sink_output() -> TestResult {
-        struct MockSpecializedPlan {
-            bindings: Vec<EncodedBinding>,
-        }
-
-        impl ExecutablePlan for MockSpecializedPlan {
-            fn execute(
-                &mut self,
-                txn: &ReadTxn<'_>,
-                query: &NormalizedQuery,
-                _image: &crate::QueryImage,
-                _inputs: &EncodedInputs,
-                sink: &mut dyn TupleSink,
-            ) -> Result<PlanCounters> {
-                let mut counters = PlanCounters::default();
-                for binding in &self.bindings {
-                    sink.emit(txn, query, binding, &mut counters)?;
-                    counters.bindings_yielded += 1;
-                }
-                Ok(counters)
-            }
-        }
-
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(optimizer_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, item_row(1, 1))?;
-            Ok::<(), Error>(())
-        })?;
-        let typed = typed_query(&schema, |query| {
-            query
-                .rel("Item")?
-                .var("id", "item")?
-                .input("kind", "kind")?
-                .done()
-                .find_var("item")?;
-            Ok(())
-        })?;
-        let inputs = InputBindings::from_values([("kind", Value::Enum(1))]);
-        let interpreted = env
-            .read(|txn| txn.execute_query(&schema, &typed, &inputs))?
-            .rows;
-
-        let specialized = env.read(|txn| {
-            let normalized = normalize_query(txn, &schema, &typed)?;
-            let encoded_inputs = encode_inputs(txn, &schema, &normalized, &inputs)?;
-            let image =
-                QueryImageBuilder::new(txn, &schema, QueryImageScope::full(&schema)).build()?;
-            let mut binding = EncodedBinding::new(normalized.vars.len());
-            let encoded = txn.encode_query_value(
-                &normalized.vars[0].value_type,
-                &Value::Identity(IdentityValue::Serial(1)),
-            )?;
-            assert!(binding.bind(
-                0,
-                EncodedValue::from_bytes(&normalized.vars[0].value_type, &encoded)?,
-            ));
-            let mut plan = MockSpecializedPlan {
-                bindings: vec![binding],
-            };
-            let mut sink = OutputSink::new(&normalized.output);
-            let _ = plan.execute(txn, &normalized, &image, &encoded_inputs, &mut sink)?;
-            sink.finish(txn, &normalized, &mut PlanCounters::default())
-        })?;
-
-        assert_same_rows(&specialized, &interpreted);
-        Ok(())
-    }
-
-    #[test]
-    fn executes_two_relation_join() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .var("holder", "holder")?
-                .done();
-            query
-                .rel("Holder")?
-                .var("id", "holder")?
-                .var("name", "holder_name")?
-                .done();
-            query.find_var("account")?.find_var("holder_name")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-        assert!(output.plan.uses_indexed_multiway_join);
-        assert_same_rows(
-            &output.rows,
-            &[
-                vec![
-                    Value::Identity(IdentityValue::Serial(1)),
-                    Value::String("Alice".to_owned()),
-                ],
-                vec![
-                    Value::Identity(IdentityValue::Serial(2)),
-                    Value::String("Alice".to_owned()),
-                ],
-                vec![
-                    Value::Identity(IdentityValue::Serial(3)),
-                    Value::String("Bob".to_owned()),
-                ],
-            ],
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn executes_many_relation_join_and_range_filter() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Posting")?
-                .var("id", "posting")?
-                .var("account", "account")?
-                .var("amount", "amount")?
-                .var("at", "t")?
-                .done();
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .var("holder", "holder")?
-                .done();
-            query
-                .rel("Holder")?
-                .var("id", "holder")?
-                .var("name", "holder_name")?
-                .done();
-            query.cmp(
-                OperandRef::var("t"),
-                ComparisonOperator::Gte,
-                OperandRef::input("start"),
-            )?;
-            query.cmp(
-                OperandRef::var("t"),
-                ComparisonOperator::Lt,
-                OperandRef::input("end"),
-            )?;
-            query
-                .find_var("posting")?
-                .find_var("account")?
-                .find_var("holder_name")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| {
-            txn.execute_query(
-                &schema,
-                &query,
-                &InputBindings::from_values([
-                    ("start", Value::Timestamp(TimestampMicros(15))),
-                    ("end", Value::Timestamp(TimestampMicros(35))),
-                ]),
-            )
-        })?;
-
-        assert!(
-            output
-                .plan
-                .variable_estimates
-                .iter()
-                .any(|estimate| estimate.access == "Posting.by_at")
-        );
-        assert_same_rows(
-            &output.rows,
-            &[
-                vec![
-                    Value::Identity(IdentityValue::Serial(2)),
-                    Value::Identity(IdentityValue::Serial(1)),
-                    Value::String("Alice".to_owned()),
-                ],
-                vec![
-                    Value::Identity(IdentityValue::Serial(3)),
-                    Value::Identity(IdentityValue::Serial(2)),
-                    Value::String("Alice".to_owned()),
-                ],
-            ],
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn projection_uses_set_semantics() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .var("holder", "holder")?
-                .done()
-                .find_var("holder")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-        assert_eq!(
-            output.rows,
-            vec![
-                vec![Value::Identity(IdentityValue::Serial(1))],
-                vec![Value::Identity(IdentityValue::Serial(2))]
-            ]
-        );
-        assert_eq!(output.plan.counters.bindings_yielded, 3);
-        assert_eq!(output.plan.counters.materialized_output_values, 2);
-        Ok(())
-    }
-
-    #[test]
-    fn count_sink_avoids_decoding_counted_variable() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query.rel("Posting")?.var("id", "posting")?.done();
-            query.find_aggregate(AggregateFunction::Count, "posting")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_eq!(output.rows, vec![vec![Value::U64(3)]]);
-        assert_eq!(output.plan.counters.bindings_yielded, 0);
-        assert_eq!(output.plan.counters.factorized_counted_bindings, 3);
-        assert_eq!(output.plan.counters.aggregate_groups, 1);
-        assert_eq!(output.plan.counters.decoded_values, 0);
-        assert_eq!(output.plan.counters.materialized_output_values, 1);
-        assert!(
-            output.plan.counters.materialized_output_values
-                < output.plan.counters.factorized_counted_bindings
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn global_count_over_empty_input_returns_zero_row() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("A")?
-                .var("id", "a")?
-                .done()
-                .find_aggregate(AggregateFunction::Count, "a")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
-        assert_eq!(output.plan.counters.output_rows, 1);
-        Ok(())
-    }
-
-    #[test]
-    fn static_empty_global_count_returns_zero_row() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            let _ = txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
-            Ok::<_, Error>(())
-        })?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("A")?
-                .var("id", "a")?
-                .done()
-                .rel("B")?
-                .var("id", "b")?
-                .integer("a", 99)?
-                .done()
-                .find_aggregate(AggregateFunction::Count, "a")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
-        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-        Ok(())
-    }
-
-    #[test]
-    fn sum_sink_decodes_only_aggregate_operand_values() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Posting")?
-                .var("id", "posting")?
-                .var("amount", "amount")?
-                .done();
-            query
-                .find_aggregate(AggregateFunction::Sum, "amount")?
-                .find_aggregate(AggregateFunction::Count, "posting")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_eq!(
-            output.rows,
-            vec![vec![Value::Decimal(DecimalRaw(600)), Value::U64(3)]]
-        );
-        assert_eq!(output.plan.counters.bindings_yielded, 3);
-        assert_eq!(output.plan.counters.decoded_values, 3);
-        assert_eq!(output.plan.counters.materialized_output_values, 2);
-        Ok(())
-    }
-
-    #[test]
-    fn grouped_count_decodes_dictionary_keys_only_at_final_output() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .var("holder", "holder")?
-                .done();
-            query
-                .rel("Holder")?
-                .var("id", "holder")?
-                .var("name", "holder_name")?
-                .done();
-            query
-                .find_var("holder_name")?
-                .find_aggregate(AggregateFunction::Count, "account")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_same_rows(
-            &output.rows,
-            &[
-                vec![Value::String("Alice".to_owned()), Value::U64(2)],
-                vec![Value::String("Bob".to_owned()), Value::U64(1)],
-            ],
-        );
-        assert_eq!(output.plan.counters.bindings_yielded, 3);
-        assert_eq!(output.plan.counters.decoded_values, 2);
-        assert_eq!(output.plan.counters.dictionary_reverse_lookups, 2);
-        assert_eq!(output.plan.counters.materialized_output_values, 4);
-        Ok(())
-    }
-
-    #[test]
-    fn aggregate_count_range_uses_multiplicity() -> TestResult {
-        let mut sink = AggregateSink::new(&AggregatePlan {
-            group_vars: Vec::new(),
-            aggregates: vec![AggregateTerm {
-                function: AggregateFunction::Count,
-                var: VarId(0),
-                value_type: ValueType::U64,
-            }],
-        });
-        let binding = EncodedBinding::new(0);
-
-        sink.emit_count_range(&binding, 7)?;
-
-        let states = sink
-            .groups
-            .get(&SmallEncodedRow::new())
-            .ok_or_else(|| Error::internal("missing aggregate state group"))?;
-        assert!(matches!(states.as_slice(), [AggregateState::Count(7)]));
-        Ok(())
-    }
-
-    #[test]
-    fn aggregation_groups_and_sums_decimal_values() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Posting")?
-                .var("id", "posting")?
-                .var("account", "account")?
-                .var("amount", "amount")?
-                .var("at", "t")?
-                .done();
-            query
-                .find_var("account")?
-                .find_aggregate(AggregateFunction::Sum, "amount")?
-                .find_aggregate(AggregateFunction::Count, "posting")?
-                .find_aggregate(AggregateFunction::Min, "t")?
-                .find_aggregate(AggregateFunction::Max, "t")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-        assert_same_rows(
-            &output.rows,
-            &[
-                vec![
-                    Value::Identity(IdentityValue::Serial(1)),
-                    Value::Decimal(DecimalRaw(300)),
-                    Value::U64(2),
-                    Value::Timestamp(TimestampMicros(10)),
-                    Value::Timestamp(TimestampMicros(20)),
-                ],
-                vec![
-                    Value::Identity(IdentityValue::Serial(2)),
-                    Value::Decimal(DecimalRaw(300)),
-                    Value::U64(1),
-                    Value::Timestamp(TimestampMicros(30)),
-                    Value::Timestamp(TimestampMicros(30)),
-                ],
-            ],
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn detects_integer_and_decimal_aggregation_overflow() -> TestResult {
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open(dir.path())?;
-        let schema = StorageSchema::new(overflow_schema(), env.max_key_size())?;
-        env.write(|txn| {
-            txn.insert(&schema, number_row(1, i64::MAX, i128::MAX))?;
-            txn.insert(&schema, number_row(2, 1, 1))?;
-            Ok::<(), Error>(())
-        })?;
-
-        let int_query = typed_query(&schema, |query| {
-            query.rel("Number")?.var("n", "n")?.done();
-            query.find_aggregate(AggregateFunction::Sum, "n")?;
-            Ok(())
-        })?;
-        assert!(matches!(
-            env.read(|txn| txn.execute_query(&schema, &int_query, &InputBindings::new())),
-            Err(Error::Query(QueryError::Aggregate(
-                AggregateError::IntegerOverflow { .. }
-            )))
-        ));
-
-        let decimal_query = typed_query(&schema, |query| {
-            query.rel("Number")?.var("d", "d")?.done();
-            query.find_aggregate(AggregateFunction::Sum, "d")?;
-            Ok(())
-        })?;
-        assert!(matches!(
-            env.read(|txn| txn.execute_query(&schema, &decimal_query, &InputBindings::new())),
-            Err(Error::Query(QueryError::Aggregate(
-                AggregateError::DecimalOverflow { .. }
-            )))
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn input_type_mismatch_is_rejected_at_execution() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .input("holder", "holder")?
-                .done()
-                .find_var("account")?;
-            Ok(())
-        })?;
-        let result = env.read(|txn| {
-            txn.execute_query(
-                &schema,
-                &query,
-                &InputBindings::from_values([("holder", Value::String("bad".to_owned()))]),
-            )
-        });
-        assert!(matches!(
-            result,
-            Err(Error::Query(QueryError::Execute(
-                ExecuteError::InputTypeMismatch { .. }
-            )))
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn enum_input_value_must_be_declared_variant() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .input("currency", "currency")?
-                .done()
-                .find_var("account")?;
-            Ok(())
-        })?;
-        let result = env.read(|txn| {
-            txn.execute_query(
-                &schema,
-                &query,
-                &InputBindings::from_values([("currency", Value::Enum(12345))]),
-            )
-        });
-        assert!(matches!(
-            result,
-            Err(Error::Query(QueryError::Execute(
-                ExecuteError::InputTypeMismatch { .. }
-            )))
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn explain_and_storage_diagnostics_are_available() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let query = typed_query(&schema, |query| {
-            query
-                .rel("Posting")?
-                .var("id", "posting")?
-                .var("account", "account")?
-                .var("amount", "amount")?
-                .var("at", "t")?
-                .done();
-            query
-                .rel("Account")?
-                .var("id", "account")?
-                .input("holder", "holder")?
-                .done();
-            query.cmp(
-                OperandRef::var("t"),
-                ComparisonOperator::Gte,
-                OperandRef::input("start"),
-            )?;
-            query.cmp(
-                OperandRef::var("t"),
-                ComparisonOperator::Lt,
-                OperandRef::input("end"),
-            )?;
-            query.find_var("posting")?.find_var("amount")?;
-            Ok(())
-        })?;
-
-        let output = env.read(|txn| {
-            txn.execute_query(
-                &schema,
-                &query,
-                &InputBindings::from_values([
-                    ("holder", Value::Identity(IdentityValue::Serial(1))),
-                    ("start", Value::Timestamp(TimestampMicros(0))),
-                    ("end", Value::Timestamp(TimestampMicros(100))),
-                ]),
-            )
-        })?;
-        let explain = output.explain();
-        assert!(explain.contains("variable_order"));
-        assert!(explain.contains("runtime_kind"));
-        assert!(explain.contains("timings:"));
-        assert!(explain.contains("query_timing"));
-        assert!(explain.contains("allocations:"));
-        assert!(explain.contains("allocation_summary"));
-        assert!(explain.contains("node_timing"));
-        assert!(explain.contains("variable_estimate"));
-        assert!(explain.contains("free_join_node"));
-        assert!(explain.contains("candidate_plan"));
-        assert!(explain.contains("free_join_estimates"));
-        assert!(explain.contains("node_rows"));
-        assert!(explain.contains("free_join_subatom"));
-        assert!(!explain.contains("atoms:\n"));
-        assert!(!explain.contains("index="));
-        assert!(explain.contains("cursor_seeks"));
-        assert!(explain.contains("rows_scanned"));
-        assert!(explain.contains("bindings_yielded"));
-        assert!(explain.contains("decoded_values"));
-        assert!(explain.contains("encoded_comparisons_evaluated"));
-        assert!(explain.contains("materialized_output_values"));
-        assert!(explain.contains("trie_open"));
-        assert!(explain.contains("trie_seek"));
-        assert!(explain.contains("output_rows"));
-
-        let diagnostics = env.storage_diagnostics(&schema)?;
-        assert_eq!(diagnostics.storage_tx_id, 1);
-        assert!(diagnostics.lmdb_map_size > 0);
-        assert!(diagnostics.dictionary_entries > 0);
-        assert!(
-            diagnostics
-                .relations
-                .iter()
-                .any(|relation| relation.relation == "Account" && relation.row_count == 3)
-        );
-        assert_eq!(
-            diagnostics.schema_fingerprint,
-            schema.descriptor().fingerprint().to_string()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn differential_reference_evaluator_matches_lmdb() -> TestResult {
-        let (env, schema) = seeded_db()?;
-        let reference = ReferenceDb::from_rows(seeded_rows());
-        let cases = [
-            (
-                typed_query(&schema, |query| {
-                    query
-                        .rel("Account")?
-                        .var("id", "account")?
-                        .input("holder", "holder")?
-                        .done()
-                        .find_var("account")?;
-                    Ok(())
-                })?,
-                InputBindings::from_values([("holder", Value::Identity(IdentityValue::Serial(1)))]),
-            ),
-            (
-                typed_query(&schema, |query| {
-                    query
-                        .rel("Account")?
-                        .var("id", "account")?
-                        .var("holder", "holder")?
-                        .done();
-                    query
-                        .rel("Holder")?
-                        .var("id", "holder")?
-                        .var("name", "holder_name")?
-                        .done();
-                    query.find_var("account")?.find_var("holder_name")?;
-                    Ok(())
-                })?,
-                InputBindings::new(),
-            ),
-            (
-                typed_query(&schema, |query| {
-                    query
-                        .rel("Posting")?
-                        .var("id", "posting")?
-                        .var("account", "account")?
-                        .var("amount", "amount")?
-                        .var("at", "t")?
-                        .done();
-                    query.cmp(
-                        OperandRef::var("t"),
-                        ComparisonOperator::Gte,
-                        OperandRef::input("start"),
-                    )?;
-                    query.cmp(
-                        OperandRef::var("t"),
-                        ComparisonOperator::Lt,
-                        OperandRef::input("end"),
-                    )?;
-                    query
-                        .find_var("account")?
-                        .find_aggregate(AggregateFunction::Sum, "amount")?
-                        .find_aggregate(AggregateFunction::Count, "posting")?;
-                    Ok(())
-                })?,
-                InputBindings::from_values([
-                    ("start", Value::Timestamp(TimestampMicros(0))),
-                    ("end", Value::Timestamp(TimestampMicros(100))),
-                ]),
-            ),
-        ];
-
-        for (query, inputs) in cases {
-            let lmdb_rows = env
-                .read(|txn| txn.execute_query(&schema, &query, &inputs))?
-                .rows;
-            let reference_rows = reference.execute(&query, &inputs)?;
-            assert_same_rows(&lmdb_rows, &reference_rows);
-        }
-        Ok(())
-    }
-
-    fn seeded_db() -> Result<(Environment, StorageSchema)> {
-        let dir = tempfile::tempdir().map_err(|error| Error::io("tempdir", error))?;
-        let path = dir.keep();
-        let env = Environment::open(&path)?;
-        let schema = StorageSchema::new(ledger_schema(), env.max_key_size())?;
-        let rows = seeded_rows();
-        env.write(|txn| {
-            for row in &rows {
-                txn.insert(&schema, row.clone())?;
-            }
-            Ok::<(), Error>(())
-        })?;
-        Ok((env, schema))
-    }
-
-    fn seeded_rows() -> Vec<Row> {
-        vec![
-            holder_row(1, "Alice"),
-            holder_row(2, "Bob"),
-            account_row(1, 1, 840),
-            account_row(2, 1, 978),
-            account_row(3, 2, 840),
-            posting_row(1, 1, 100, 10),
-            posting_row(2, 1, 200, 20),
-            posting_row(3, 2, 300, 30),
-        ]
-    }
-
-    fn ledger_schema() -> bumbledb_core::schema::SchemaDescriptor {
-        bumbledb_core::schema::SchemaDescriptor::new(
-            "LedgerDb",
-            vec![
-                RelationDescriptor::new(
-                    "Holder",
-                    vec![
-                        FieldDescriptor::new(
-                            "id",
-                            ValueType::Identity {
-                                type_name: "HolderId".to_owned(),
-                                owning_relation: "Holder".to_owned(),
-                                allocation: IdentityAllocation::Serial,
-                            },
-                        ),
-                        FieldDescriptor::new("name", ValueType::String),
-                    ],
-                )
-                .with_covering_unique("id", ["id"]),
-                RelationDescriptor::new(
-                    "Account",
-                    vec![
-                        FieldDescriptor::new(
-                            "id",
-                            ValueType::Identity {
-                                type_name: "AccountId".to_owned(),
-                                owning_relation: "Account".to_owned(),
-                                allocation: IdentityAllocation::Serial,
-                            },
-                        ),
-                        FieldDescriptor::new(
-                            "holder",
-                            ValueType::Identity {
-                                type_name: "HolderId".to_owned(),
-                                owning_relation: "Holder".to_owned(),
-                                allocation: IdentityAllocation::Serial,
-                            },
-                        ),
-                        FieldDescriptor::new(
-                            "currency",
-                            ValueType::Enum {
-                                name: "Currency".to_owned(),
-                            },
-                        ),
-                    ],
-                )
-                .with_covering_unique("id", ["id"])
-                .with_constraint(ConstraintDescriptor::foreign_key(
-                    "holder",
-                    ["holder"],
-                    "Holder",
-                    "id",
-                )),
-                RelationDescriptor::new(
-                    "Posting",
-                    vec![
-                        FieldDescriptor::new(
-                            "id",
-                            ValueType::Identity {
-                                type_name: "PostingId".to_owned(),
-                                owning_relation: "Posting".to_owned(),
-                                allocation: IdentityAllocation::Serial,
-                            },
-                        ),
-                        FieldDescriptor::new(
-                            "account",
-                            ValueType::Identity {
-                                type_name: "AccountId".to_owned(),
-                                owning_relation: "Account".to_owned(),
-                                allocation: IdentityAllocation::Serial,
-                            },
-                        ),
-                        FieldDescriptor::new("amount", ValueType::Decimal { scale: 4 }),
-                        FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
-                    ],
-                )
-                .with_covering_unique("id", ["id"])
-                .with_constraint(ConstraintDescriptor::foreign_key(
-                    "account",
-                    ["account"],
-                    "Account",
-                    "id",
-                )),
-            ],
-        )
-        .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
-            "Currency",
-            [840, 978],
-        ))
-    }
-
-    fn overflow_schema() -> bumbledb_core::schema::SchemaDescriptor {
-        bumbledb_core::schema::SchemaDescriptor::new(
-            "OverflowDb",
-            vec![
-                RelationDescriptor::new(
-                    "Number",
-                    vec![
-                        FieldDescriptor::new(
-                            "id",
-                            ValueType::Identity {
-                                type_name: "NumberId".to_owned(),
-                                owning_relation: "Number".to_owned(),
-                                allocation: IdentityAllocation::Serial,
-                            },
-                        ),
-                        FieldDescriptor::new("n", ValueType::I64),
-                        FieldDescriptor::new("d", ValueType::Decimal { scale: 0 }),
-                    ],
-                )
-                .with_covering_unique("id", ["id"]),
-            ],
-        )
-    }
-
-    fn optimizer_schema() -> bumbledb_core::schema::SchemaDescriptor {
-        bumbledb_core::schema::SchemaDescriptor::new(
-            "OptimizerDb",
-            vec![
-                RelationDescriptor::new(
-                    "Item",
-                    vec![
-                        FieldDescriptor::new(
-                            "id",
-                            ValueType::Identity {
-                                type_name: "ItemId".to_owned(),
-                                owning_relation: "Item".to_owned(),
-                                allocation: IdentityAllocation::Serial,
-                            },
-                        ),
-                        FieldDescriptor::new(
-                            "kind",
-                            ValueType::Enum {
-                                name: "Kind".to_owned(),
-                            },
-                        ),
-                    ],
-                )
-                .with_covering_unique("id", ["id"])
-                .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"])),
-            ],
-        )
-        .with_enum(bumbledb_core::schema::EnumDescriptor::codes("Kind", [1, 2]))
-    }
-
-    fn triangle_schema() -> bumbledb_core::schema::SchemaDescriptor {
-        bumbledb_core::schema::SchemaDescriptor::new(
-            "TriangleDb",
-            vec![
-                RelationDescriptor::new(
-                    "EdgeAB",
-                    vec![
-                        FieldDescriptor::new("a", ValueType::U64),
-                        FieldDescriptor::new("b", ValueType::U64),
-                    ],
-                )
-                .with_covering_unique("a_b", ["a", "b"]),
-                RelationDescriptor::new(
-                    "EdgeAC",
-                    vec![
-                        FieldDescriptor::new("a", ValueType::U64),
-                        FieldDescriptor::new("c", ValueType::U64),
-                    ],
-                )
-                .with_covering_unique("a_c", ["a", "c"]),
-                RelationDescriptor::new(
-                    "EdgeBC",
-                    vec![
-                        FieldDescriptor::new("b", ValueType::U64),
-                        FieldDescriptor::new("c", ValueType::U64),
-                    ],
-                )
-                .with_covering_unique("b_c", ["b", "c"]),
-            ],
-        )
-    }
-
-    fn chain_schema() -> bumbledb_core::schema::SchemaDescriptor {
-        bumbledb_core::schema::SchemaDescriptor::new(
-            "ChainDb",
-            vec![
-                RelationDescriptor::new("A", vec![FieldDescriptor::new("id", ValueType::U64)])
-                    .with_covering_unique("id", ["id"]),
-                RelationDescriptor::new(
-                    "B",
-                    vec![
-                        FieldDescriptor::new("id", ValueType::U64),
-                        FieldDescriptor::new("a", ValueType::U64),
-                    ],
-                )
-                .with_covering_unique("id", ["id"])
-                .with_index(IndexDescriptor::equality("by_a", ["a", "id"])),
-            ],
-        )
-    }
-
-    fn direct_sailors_schema() -> bumbledb_core::schema::SchemaDescriptor {
-        bumbledb_core::schema::SchemaDescriptor::new(
-            "DirectSailorsDb",
-            vec![
-                RelationDescriptor::new(
-                    "Reserve",
-                    vec![
-                        FieldDescriptor::new("sailor", ValueType::U64),
-                        FieldDescriptor::new("boat", ValueType::U64),
-                        FieldDescriptor::new("day", ValueType::TimestampMicros).range_indexed(),
-                    ],
-                )
-                .with_covering_unique("sailor_boat_day", ["sailor", "boat", "day"]),
-            ],
-        )
-    }
-
-    fn direct_chain4_schema() -> bumbledb_core::schema::SchemaDescriptor {
-        bumbledb_core::schema::SchemaDescriptor::new(
-            "DirectChain4Db",
-            vec![
-                RelationDescriptor::new("A", vec![FieldDescriptor::new("id", ValueType::U64)])
-                    .with_covering_unique("id", ["id"]),
-                RelationDescriptor::new(
-                    "B",
-                    vec![
-                        FieldDescriptor::new("id", ValueType::U64),
-                        FieldDescriptor::new("a", ValueType::U64),
-                    ],
-                )
-                .with_covering_unique("id", ["id"])
-                .with_index(IndexDescriptor::equality("by_a", ["a", "id"])),
-                RelationDescriptor::new(
-                    "C",
-                    vec![
-                        FieldDescriptor::new("id", ValueType::U64),
-                        FieldDescriptor::new("b", ValueType::U64),
-                    ],
-                )
-                .with_covering_unique("id", ["id"])
-                .with_index(IndexDescriptor::equality("by_b", ["b", "id"])),
-                RelationDescriptor::new(
-                    "D",
-                    vec![
-                        FieldDescriptor::new("id", ValueType::U64),
-                        FieldDescriptor::new("c", ValueType::U64),
-                    ],
-                )
-                .with_covering_unique("id", ["id"])
-                .with_index(IndexDescriptor::equality("by_c", ["c", "id"])),
-            ],
-        )
-    }
-
-    fn holder_row(id: u64, name: &str) -> Row {
-        Row::new(
-            "Holder",
-            [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("name", Value::String(name.to_owned())),
-            ],
-        )
-    }
-
-    fn account_row(id: u64, holder: u64, currency: u64) -> Row {
-        Row::new(
-            "Account",
-            [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("holder", Value::Identity(IdentityValue::Serial(holder))),
-                ("currency", Value::Enum(currency)),
-            ],
-        )
-    }
-
-    fn posting_row(id: u64, account: u64, amount: i128, at: i64) -> Row {
-        Row::new(
-            "Posting",
-            [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("account", Value::Identity(IdentityValue::Serial(account))),
-                ("amount", Value::Decimal(DecimalRaw(amount))),
-                ("at", Value::Timestamp(TimestampMicros(at))),
-            ],
-        )
-    }
-
-    fn number_row(id: u64, n: i64, d: i128) -> Row {
-        Row::new(
-            "Number",
-            [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("n", Value::I64(n)),
-                ("d", Value::Decimal(DecimalRaw(d))),
-            ],
-        )
-    }
-
-    fn item_row(id: u64, kind: u64) -> Row {
-        Row::new(
-            "Item",
-            [
-                ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("kind", Value::Enum(kind)),
-            ],
-        )
-    }
-
-    fn edge_ab_row(a: u64, b: u64) -> Row {
-        Row::new("EdgeAB", [("a", Value::U64(a)), ("b", Value::U64(b))])
-    }
-
-    fn edge_ac_row(a: u64, c: u64) -> Row {
-        Row::new("EdgeAC", [("a", Value::U64(a)), ("c", Value::U64(c))])
-    }
-
-    fn edge_bc_row(b: u64, c: u64) -> Row {
-        Row::new("EdgeBC", [("b", Value::U64(b)), ("c", Value::U64(c))])
-    }
-
-    fn b_row(id: u64, a: u64) -> Row {
-        Row::new("B", [("id", Value::U64(id)), ("a", Value::U64(a))])
-    }
-
-    fn reserve_row(sailor: u64, boat: u64, day: i64) -> Row {
-        Row::new(
-            "Reserve",
-            [
-                ("sailor", Value::U64(sailor)),
-                ("boat", Value::U64(boat)),
-                ("day", Value::Timestamp(TimestampMicros(day))),
-            ],
-        )
-    }
-
-    fn chain_a_row(id: u64) -> Row {
-        Row::new("A", [("id", Value::U64(id))])
-    }
-
-    fn chain_b_row(id: u64, a: u64) -> Row {
-        Row::new("B", [("id", Value::U64(id)), ("a", Value::U64(a))])
-    }
-
-    fn chain_c_row(id: u64, b: u64) -> Row {
-        Row::new("C", [("id", Value::U64(id)), ("b", Value::U64(b))])
-    }
-
-    fn chain_d_row(id: u64, c: u64) -> Row {
-        Row::new("D", [("id", Value::U64(id)), ("c", Value::U64(c))])
-    }
-
-    fn assert_same_rows(actual: &[Vec<Value>], expected: &[Vec<Value>]) {
-        let mut actual = actual.to_vec();
-        let mut expected = expected.to_vec();
-        actual.sort();
-        expected.sort();
-        assert_eq!(actual, expected);
-    }
-
-    struct ReferenceDb {
-        rows: BTreeMap<String, Vec<Row>>,
-    }
-
-    #[derive(Clone, Debug)]
-    struct ReferenceBinding {
-        values: Vec<Option<Value>>,
-    }
-
-    impl ReferenceBinding {
-        fn new(variable_count: usize) -> Self {
-            Self {
-                values: vec![None; variable_count],
-            }
-        }
-
-        fn get(&self, variable: usize) -> Option<&Value> {
-            self.values[variable].as_ref()
-        }
-
-        fn bind(&mut self, variable: usize, value: Value) -> bool {
-            match &self.values[variable] {
-                Some(existing) => existing == &value,
-                None => {
-                    self.values[variable] = Some(value);
-                    true
-                }
-            }
-        }
-    }
-
-    impl ReferenceDb {
-        fn from_rows(rows: Vec<Row>) -> Self {
-            let mut by_relation: BTreeMap<String, Vec<Row>> = BTreeMap::new();
-            for row in rows {
-                by_relation
-                    .entry(row.relation().to_owned())
-                    .or_default()
-                    .push(row);
-            }
-            Self { rows: by_relation }
-        }
-
-        fn execute(&self, query: &TypedQuery, inputs: &InputBindings) -> Result<Vec<Vec<Value>>> {
-            let atoms = query
-                .clauses
-                .iter()
-                .filter_map(|clause| match clause {
-                    TypedClause::Relation(atom) => Some(atom),
-                    TypedClause::Comparison(_) => None,
-                })
-                .collect::<Vec<_>>();
-            let comparisons = query
-                .clauses
-                .iter()
-                .filter_map(|clause| match clause {
-                    TypedClause::Comparison(comparison) => Some(comparison),
-                    TypedClause::Relation(_) => None,
-                })
-                .collect::<Vec<_>>();
-            let mut output = Vec::new();
-            let mut counters = PlanCounters::default();
-            self.recurse(
-                query,
-                inputs,
-                &atoms,
-                &comparisons,
-                0,
-                ReferenceBinding::new(query.variables.len()),
-                &mut output,
-                &mut counters,
-            )?;
-            reference_project_results(query, &output)
-        }
-
-        #[expect(
-            clippy::too_many_arguments,
-            reason = "test reference recursion carries explicit evaluator state"
-        )]
-        fn recurse(
-            &self,
-            query: &TypedQuery,
-            inputs: &InputBindings,
-            atoms: &[&TypedRelationAtom],
-            comparisons: &[&TypedComparison],
-            depth: usize,
-            binding: ReferenceBinding,
-            output: &mut Vec<ReferenceBinding>,
-            counters: &mut PlanCounters,
-        ) -> Result<()> {
-            if depth == atoms.len() {
-                if reference_comparisons_pass(comparisons, query, inputs, &binding, counters)? {
-                    output.push(binding);
-                }
-                return Ok(());
-            }
-
-            let atom = atoms[depth];
-            for row in self.rows.get(&atom.relation).into_iter().flatten() {
-                let Some(next) = reference_match_atom(atom, query, inputs, &binding, row)? else {
-                    continue;
-                };
-                if reference_comparisons_pass(comparisons, query, inputs, &next, counters)? {
-                    self.recurse(
-                        query,
-                        inputs,
-                        atoms,
-                        comparisons,
-                        depth + 1,
-                        next,
-                        output,
-                        counters,
-                    )?;
-                }
-            }
-            Ok(())
-        }
-    }
-
-    fn reference_match_atom(
-        atom: &TypedRelationAtom,
-        query: &TypedQuery,
-        inputs: &InputBindings,
-        binding: &ReferenceBinding,
-        row: &Row,
-    ) -> Result<Option<ReferenceBinding>> {
-        let mut next = binding.clone();
-        for field in &atom.fields {
-            let Some(row_value) = row.value(&field.field) else {
-                return Ok(None);
-            };
-            match &field.term {
-                TypedTerm::Variable(variable) => {
-                    let normalized =
-                        reference_value_for_type(row_value, &query.variables[*variable].value_type);
-                    if !next.bind(*variable, normalized) {
-                        return Ok(None);
-                    }
-                }
-                TypedTerm::Input(input) => {
-                    let input_value = reference_input_value(query, inputs, *input)?;
-                    let normalized =
-                        reference_value_for_type(row_value, &query.inputs[*input].value_type);
-                    if input_value != &normalized {
-                        return Ok(None);
-                    }
-                }
-                TypedTerm::Literal(literal) => {
-                    let normalized = reference_value_for_type(row_value, &literal.value_type);
-                    if literal_to_value(literal)? != normalized {
-                        return Ok(None);
-                    }
-                }
-                TypedTerm::Wildcard => {}
-            }
-        }
-        Ok(Some(next))
-    }
-
-    fn reference_comparisons_pass(
-        comparisons: &[&TypedComparison],
-        query: &TypedQuery,
-        inputs: &InputBindings,
-        binding: &ReferenceBinding,
-        counters: &mut PlanCounters,
-    ) -> Result<bool> {
-        for comparison in comparisons {
-            let Some(left) = reference_operand_value(&comparison.left, query, inputs, binding)?
-            else {
-                continue;
-            };
-            let Some(right) = reference_operand_value(&comparison.right, query, inputs, binding)?
-            else {
-                continue;
-            };
-            counters.comparisons_evaluated += 1;
-            let left = reference_value_for_type(&left, &comparison.value_type);
-            let right = reference_value_for_type(&right, &comparison.value_type);
-            if !compare_values(&left, comparison.operator, &right) {
-                counters.comparisons_failed += 1;
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
-    fn reference_input_value<'a>(
-        query: &'a TypedQuery,
-        inputs: &'a InputBindings,
-        input: usize,
-    ) -> Result<&'a Value> {
-        let input = &query.inputs[input];
-        inputs
-            .get(&input.name)
-            .ok_or_else(|| Error::missing_input(&input.name))
-    }
-
-    fn reference_operand_value(
-        operand: &TypedOperand,
-        query: &TypedQuery,
-        inputs: &InputBindings,
-        binding: &ReferenceBinding,
-    ) -> Result<Option<Value>> {
-        Ok(match operand {
-            TypedOperand::Variable(variable) => binding.get(*variable).cloned(),
-            TypedOperand::Input(input) => {
-                Some(reference_input_value(query, inputs, *input)?.clone())
-            }
-            TypedOperand::Literal(literal) => Some(literal_to_value(literal)?),
-        })
-    }
-
-    fn reference_value_for_type(value: &Value, _value_type: &ValueType) -> Value {
-        value.clone()
-    }
-
-    fn reference_project_results(
-        query: &TypedQuery,
-        bindings: &[ReferenceBinding],
-    ) -> Result<Vec<Vec<Value>>> {
-        let has_aggregate = query
-            .find
-            .iter()
-            .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }));
-        if has_aggregate {
-            reference_project_aggregates(query, bindings)
-        } else {
-            let mut set = BTreeSet::new();
-            for binding in bindings {
-                let mut row = Vec::new();
-                for term in &query.find {
-                    let TypedFindTerm::Variable { variable } = term else {
-                        continue;
-                    };
-                    row.push(reference_bound_variable(binding, *variable)?.clone());
-                }
-                set.insert(row);
-            }
-            Ok(set.into_iter().collect())
-        }
-    }
-
-    fn reference_project_aggregates(
-        query: &TypedQuery,
-        bindings: &[ReferenceBinding],
-    ) -> Result<Vec<Vec<Value>>> {
-        let group_terms = query
-            .find
-            .iter()
-            .filter_map(|term| match term {
-                TypedFindTerm::Variable { variable } => Some(*variable),
-                TypedFindTerm::Aggregate { .. } => None,
-            })
-            .collect::<Vec<_>>();
-        let aggregate_terms = query
-            .find
-            .iter()
-            .filter_map(|term| match term {
-                TypedFindTerm::Aggregate {
-                    function,
-                    variable,
-                    value_type,
-                } => Some((*function, *variable, value_type.clone())),
-                TypedFindTerm::Variable { .. } => None,
-            })
-            .collect::<Vec<_>>();
-
-        let mut groups: BTreeMap<Vec<Value>, Vec<AggregateState>> = BTreeMap::new();
-        for binding in bindings {
-            let key = group_terms
-                .iter()
-                .map(|variable| reference_bound_variable(binding, *variable).cloned())
-                .collect::<Result<Vec<_>>>()?;
-            let states = groups.entry(key).or_insert_with(|| {
-                aggregate_terms
-                    .iter()
-                    .map(|(function, _, value_type)| {
-                        AggregateState::new(*function, value_type.clone())
-                    })
-                    .collect()
-            });
-            for (state, (_, variable, _)) in states.iter_mut().zip(&aggregate_terms) {
-                state.apply(reference_bound_variable(binding, *variable)?)?;
-            }
-        }
-
-        let mut rows = Vec::new();
-        for (key, states) in groups {
-            let mut row = Vec::new();
-            let mut key_iter = key.into_iter();
-            let mut state_iter = states.into_iter();
-            for term in &query.find {
-                match term {
-                    TypedFindTerm::Variable { .. } => {
-                        row.push(key_iter.next().ok_or_else(|| {
-                            Error::internal("missing reference aggregate group key")
-                        })?)
-                    }
-                    TypedFindTerm::Aggregate { .. } => {
-                        let state = state_iter
-                            .next()
-                            .ok_or_else(|| Error::internal("missing reference aggregate state"))?;
-                        row.push(state.finish()?)
-                    }
-                }
-            }
-            rows.push(row);
-        }
-        rows.sort();
-        Ok(rows)
-    }
-
-    fn reference_bound_variable(binding: &ReferenceBinding, variable: usize) -> Result<&Value> {
-        binding
-            .get(variable)
-            .ok_or_else(|| Error::internal(format!("variable {variable} is unbound at projection")))
-    }
-}
+#[path = "query_tests.rs"]
+mod tests;

@@ -72,14 +72,6 @@ pub enum NodeImpl {
     HashProbe,
     /// Hybrid sorted/hash node.
     Hybrid,
-    /// Vector/range loop node.
-    VectorLoop,
-    /// Existence-only predicate node.
-    ExistenceCheck,
-    /// Cartesian/product node.
-    Product,
-    /// Aggregate sink node.
-    AggregateSink,
 }
 
 /// Subatom partition inside a Free Join node.
@@ -130,8 +122,6 @@ impl Default for OutputPlan {
 pub struct ProjectPlan {
     /// Projected variables in output order.
     pub vars: Vec<VarId>,
-    /// True for typed query IR set semantics.
-    pub set_semantics: bool,
 }
 
 /// Aggregate output plan.
@@ -209,7 +199,6 @@ mod tests {
             }],
             output: OutputPlan::Project(ProjectPlan {
                 vars: vec![VarId(0)],
-                set_semantics: true,
             }),
             estimates: PlanEstimates::default(),
         };
@@ -240,7 +229,6 @@ mod tests {
             }],
             output: OutputPlan::Project(ProjectPlan {
                 vars: vec![VarId(0), VarId(1)],
-                set_semantics: true,
             }),
             estimates: PlanEstimates::default(),
         };
@@ -272,7 +260,6 @@ mod tests {
             }],
             output: OutputPlan::Project(ProjectPlan {
                 vars: vec![VarId(0)],
-                set_semantics: true,
             }),
             estimates: PlanEstimates::default(),
         };

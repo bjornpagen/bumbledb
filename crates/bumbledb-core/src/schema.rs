@@ -1,5 +1,7 @@
 //! Typed schema descriptors and current index layout generation.
 
+#![allow(clippy::result_large_err)]
+
 use std::collections::BTreeSet;
 use std::fmt;
 

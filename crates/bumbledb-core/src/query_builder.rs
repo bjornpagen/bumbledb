@@ -625,7 +625,10 @@ mod tests {
     #[test]
     fn rejects_unknown_relation() {
         let schema = schema();
-        let error = QueryBuilder::new(&schema).rel("Missing").unwrap_err();
+        let mut builder = QueryBuilder::new(&schema);
+        let result = builder.rel("Missing");
+        assert!(result.is_err(), "missing relation should fail");
+        let Err(error) = result else { return };
         assert_eq!(
             error,
             QueryBuildError::UnknownRelation {
@@ -637,10 +640,12 @@ mod tests {
     #[test]
     fn rejects_unknown_field() {
         let schema = schema();
-        let error = QueryBuilder::new(&schema)
+        let mut builder = QueryBuilder::new(&schema);
+        let result = builder
             .rel("Account")
-            .and_then(|atom| atom.var("missing", "x"))
-            .unwrap_err();
+            .and_then(|atom| atom.var("missing", "x"));
+        assert!(result.is_err(), "missing field should fail");
+        let Err(error) = result else { return };
         assert_eq!(
             error,
             QueryBuildError::UnknownField {
@@ -653,10 +658,12 @@ mod tests {
     #[test]
     fn rejects_variable_type_conflict() {
         let schema = schema();
-        let error = QueryBuilder::new(&schema)
+        let mut builder = QueryBuilder::new(&schema);
+        let result = builder
             .rel("Account")
-            .and_then(|atom| atom.var("id", "x")?.var("currency", "x"))
-            .unwrap_err();
+            .and_then(|atom| atom.var("id", "x")?.var("currency", "x"));
+        assert!(result.is_err(), "variable type conflict should fail");
+        let Err(error) = result else { return };
         assert!(matches!(
             error,
             QueryBuildError::VariableTypeConflict { .. }
@@ -666,17 +673,22 @@ mod tests {
     #[test]
     fn rejects_input_type_conflict() {
         let schema = schema();
-        let error = QueryBuilder::new(&schema)
+        let mut builder = QueryBuilder::new(&schema);
+        let result = builder
             .rel("Account")
-            .and_then(|atom| atom.input("id", "x")?.input("currency", "x"))
-            .unwrap_err();
+            .and_then(|atom| atom.input("id", "x")?.input("currency", "x"));
+        assert!(result.is_err(), "input type conflict should fail");
+        let Err(error) = result else { return };
         assert!(matches!(error, QueryBuildError::InputTypeConflict { .. }));
     }
 
     #[test]
     fn rejects_unbound_projection() {
         let schema = schema();
-        let error = QueryBuilder::new(&schema).find_var("missing").unwrap_err();
+        let mut builder = QueryBuilder::new(&schema);
+        let result = builder.find_var("missing");
+        assert!(result.is_err(), "unbound projection should fail");
+        let Err(error) = result else { return };
         assert_eq!(
             error,
             QueryBuildError::UnboundProjectionVariable {
@@ -688,12 +700,14 @@ mod tests {
     #[test]
     fn rejects_invalid_aggregate_type() {
         let schema = schema();
-        let error = QueryBuilder::new(&schema)
+        let mut builder = QueryBuilder::new(&schema);
+        let result = builder
             .rel("Holder")
             .and_then(|atom| atom.var("name", "name"))
             .map(RelationAtomBuilder::done)
-            .and_then(|builder| builder.find_aggregate(AggregateFunction::Sum, "name"))
-            .unwrap_err();
+            .and_then(|builder| builder.find_aggregate(AggregateFunction::Sum, "name"));
+        assert!(result.is_err(), "invalid aggregate type should fail");
+        let Err(error) = result else { return };
         assert!(matches!(
             error,
             QueryBuildError::InvalidAggregateType { .. }

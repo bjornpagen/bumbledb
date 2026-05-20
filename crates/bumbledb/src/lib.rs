@@ -3,6 +3,8 @@
 //! This facade exposes the embedded database shell while the lower-level crates
 //! carry the experimental schema, storage, and query internals.
 
+#![allow(clippy::result_large_err)]
+
 use std::marker::PhantomData;
 use std::path::Path;
 

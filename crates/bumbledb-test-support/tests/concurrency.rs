@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use std::sync::{Arc, Barrier};
 use std::thread;
 

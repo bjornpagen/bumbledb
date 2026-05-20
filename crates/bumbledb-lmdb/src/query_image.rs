@@ -51,6 +51,44 @@ pub(crate) struct QueryShapeKey(pub(crate) [u8; 32]);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct LftjAtomKey(pub(crate) [u8; 32]);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct HashTrieKey(pub(crate) [u8; 32]);
+
+impl HashTrieKey {
+    pub(crate) fn new(
+        image: &QueryImageKey,
+        relation: RelationId,
+        access: Option<AccessId>,
+        fields: &[FieldId],
+        leaf_mode: LeafMode,
+    ) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"bumbledb.hash_trie_key.v1");
+        hasher.update(&image.schema.0);
+        hasher.update(&image.tx_id.to_be_bytes());
+        hasher.update(&image.scope.0);
+        hasher.update(&relation.0.to_be_bytes());
+        match access {
+            Some(access) => {
+                hasher.update(&[1]);
+                hasher.update(&access.0.to_be_bytes());
+            }
+            None => {
+                hasher.update(&[0]);
+            }
+        }
+        hasher.update(&(fields.len() as u64).to_be_bytes());
+        for field in fields {
+            hasher.update(&field.0.to_be_bytes());
+        }
+        hasher.update(&[match leaf_mode {
+            LeafMode::Rows => 1,
+            LeafMode::CountOnly => 2,
+        }]);
+        HashTrieKey(*hasher.finalize().as_bytes())
+    }
+}
+
 impl PartialOrd for QueryImageKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
@@ -219,7 +257,7 @@ pub struct QueryImage {
     prepared_plans: PreparedPlanCache,
     static_empty_queries: Arc<RwLock<BTreeSet<QueryShapeKey>>>,
     sorted_trie_cache: Arc<RwLock<BTreeMap<LftjAtomKey, Arc<SortedTrieIndex>>>>,
-    hash_trie_cache: Arc<RwLock<BTreeMap<String, Arc<HashTrieIndex>>>>,
+    hash_trie_cache: Arc<RwLock<BTreeMap<HashTrieKey, Arc<HashTrieIndex>>>>,
 }
 
 impl QueryImage {
@@ -412,15 +450,14 @@ impl QueryImage {
 
     pub(crate) fn cached_hash_trie(
         &self,
-        key: impl AsRef<str>,
+        key: HashTrieKey,
         build: impl FnOnce() -> Result<HashTrieIndex>,
     ) -> Result<CachedHashTrie> {
-        let key = key.as_ref();
         if let Some(index) = self
             .hash_trie_cache
             .read()
             .map_err(|_| Error::internal("hash trie cache read lock poisoned"))?
-            .get(key)
+            .get(&key)
             .cloned()
         {
             return Ok(CachedHashTrie { index, hit: true });
@@ -431,13 +468,13 @@ impl QueryImage {
             .hash_trie_cache
             .write()
             .map_err(|_| Error::internal("hash trie cache write lock poisoned"))?;
-        if let Some(existing) = cache.get(key).cloned() {
+        if let Some(existing) = cache.get(&key).cloned() {
             return Ok(CachedHashTrie {
                 index: existing,
                 hit: true,
             });
         }
-        cache.insert(key.to_owned(), index.clone());
+        cache.insert(key, index.clone());
         Ok(CachedHashTrie { index, hit: false })
     }
 

@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use bumbledb_core::encoding::TimestampMicros;
 use bumbledb_lmdb::{Environment, IdentityValue, InputBindings, StorageSchema, Value};
 use bumbledb_test_support::assertions::{assert_invariants, assert_same_rows, execute_sorted};

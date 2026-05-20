@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use bumbledb_lmdb::{Environment, StorageSchema};
 use bumbledb_test_support::assertions::assert_invariants;
 use bumbledb_test_support::rows::generated_ledger_rows;

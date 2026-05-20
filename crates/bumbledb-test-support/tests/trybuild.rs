@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 #[test]
 fn transaction_lifetime_ui_tests() {
     let tests = trybuild::TestCases::new();

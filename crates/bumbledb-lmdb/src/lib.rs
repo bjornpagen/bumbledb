@@ -3,6 +3,8 @@
 //! This crate intentionally keeps all LMDB details behind opaque environment and
 //! transaction types. Higher layers should not depend on raw LMDB handles.
 
+#![allow(clippy::result_large_err)]
+
 pub mod allocation;
 pub mod benchmark;
 mod error;
@@ -14,6 +16,7 @@ mod free_join;
 mod hash_trie;
 mod planner_stats;
 mod query;
+mod query_access;
 mod query_image;
 mod sorted_trie;
 mod storage;

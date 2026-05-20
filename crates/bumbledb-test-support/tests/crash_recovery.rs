@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use std::process::Command;
 
 use bumbledb_lmdb::{Environment, StorageSchema};

@@ -763,7 +763,6 @@ impl WriteTxn<'_> {
                     name,
                     target_relation,
                     target_constraint,
-                    fields: _,
                     ..
                 } = constraint
                 else {

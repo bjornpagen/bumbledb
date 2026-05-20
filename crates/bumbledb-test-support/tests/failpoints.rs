@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use std::sync::{Mutex, OnceLock};
 
 use bumbledb_lmdb::failpoints::{self, Failpoint};
