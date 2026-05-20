@@ -58,7 +58,7 @@ fn failpoint_delete_and_bulk_are_atomic() -> Result<(), Box<dyn std::error::Erro
 
     failpoints::set(Failpoint::BeforeCommit);
     assert!(matches!(
-        env.write(|txn| txn.delete(&schema, bumbledb_test_support::rows::account(3, 2, 840))),
+        env.write(|txn| txn.delete(&schema, bumbledb_test_support::rows::account(3, 2, 1))),
         Err(Error::Test(TestError::InjectedFailpoint { .. }))
     ));
     failpoints::clear();
@@ -71,7 +71,7 @@ fn failpoint_delete_and_bulk_are_atomic() -> Result<(), Box<dyn std::error::Erro
     assert!(matches!(
         env.bulk_load(
             &schema,
-            vec![holder(1, "x"), account(1, 1, 840), posting(1, 1, 10, 1)]
+            vec![holder(1, "x"), account(1, 1, 1), posting(1, 1, 10, 1)]
         ),
         Err(Error::Test(TestError::InjectedFailpoint { .. }))
     ));

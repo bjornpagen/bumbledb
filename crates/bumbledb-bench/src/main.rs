@@ -2683,7 +2683,7 @@ fn sailors_rows(sailors: u64) -> Vec<Row> {
             [
                 ("id", Value::Identity(IdentityValue::Serial(bid))),
                 ("name", Value::String(format!("boat-{bid}"))),
-                ("color", Value::Enum((bid % 3) + 1)),
+                ("color", Value::Enum(((bid % 3) + 1) as u8)),
             ],
         ));
     }
@@ -2714,7 +2714,7 @@ fn join_stress_rows(n: u64) -> Vec<Row> {
             "A",
             [
                 ("id", Value::Identity(IdentityValue::Serial(id))),
-                ("k", Value::Enum(id % 10)),
+                ("k", Value::Enum((id % 10) as u8)),
             ],
         ));
         rows.push(Row::new(
@@ -2725,7 +2725,7 @@ fn join_stress_rows(n: u64) -> Vec<Row> {
                     "a",
                     Value::Identity(IdentityValue::Serial(((id - 1) % n) + 1)),
                 ),
-                ("k", Value::Enum(id % 10)),
+                ("k", Value::Enum((id % 10) as u8)),
             ],
         ));
         rows.push(Row::new(
@@ -2736,7 +2736,7 @@ fn join_stress_rows(n: u64) -> Vec<Row> {
                     "b",
                     Value::Identity(IdentityValue::Serial(((id - 1) % n) + 1)),
                 ),
-                ("k", Value::Enum(id % 10)),
+                ("k", Value::Enum((id % 10) as u8)),
             ],
         ));
         rows.push(Row::new(
@@ -2747,7 +2747,7 @@ fn join_stress_rows(n: u64) -> Vec<Row> {
                     "c",
                     Value::Identity(IdentityValue::Serial(((id - 1) % n) + 1)),
                 ),
-                ("k", Value::Enum(id % 10)),
+                ("k", Value::Enum((id % 10) as u8)),
             ],
         ));
     }
@@ -3053,7 +3053,8 @@ pub(crate) fn rf(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Erro
 
 pub(crate) fn symbol(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
     match required_value(row, field)? {
-        Value::Enum(v) | Value::U64(v) => Ok(*v as i64),
+        Value::Enum(v) => Ok(i64::from(*v)),
+        Value::U64(v) => Ok(*v as i64),
         other => Err(unexpected_value(field, "symbol", other)),
     }
 }

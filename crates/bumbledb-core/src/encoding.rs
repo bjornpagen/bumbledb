@@ -34,6 +34,17 @@ pub fn decode_bool(bytes: &[u8]) -> Result<bool, EncodingError> {
     Ok(bytes[0] != 0)
 }
 
+/// Encodes an enum code as a one-byte ordered value.
+pub fn encode_enum(value: u8) -> [u8; 1] {
+    [value]
+}
+
+/// Decodes an enum code encoded by [`encode_enum`].
+pub fn decode_enum(bytes: &[u8]) -> Result<u8, EncodingError> {
+    let bytes = exact::<1>(bytes)?;
+    Ok(bytes[0])
+}
+
 /// Encodes a `u64` in big-endian order.
 pub fn encode_u64(value: u64) -> [u8; 8] {
     value.to_be_bytes()
@@ -109,6 +120,10 @@ mod tests {
     fn primitive_encodings_round_trip() -> Result<(), EncodingError> {
         assert!(!decode_bool(&encode_bool(false))?);
         assert!(decode_bool(&encode_bool(true))?);
+
+        for value in [0, 1, u8::MAX] {
+            assert_eq!(decode_enum(&encode_enum(value))?, value);
+        }
 
         for value in [0, 1, u64::MAX / 2, u64::MAX] {
             assert_eq!(decode_u64(&encode_u64(value))?, value);

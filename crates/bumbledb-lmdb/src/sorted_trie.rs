@@ -452,11 +452,11 @@ mod tests {
 
         let mut iter = index.iter();
         iter.open();
-        assert_eq!(key_bytes(&iter)?, 840u64.to_be_bytes().as_slice());
+        assert_eq!(key_bytes(&iter)?, &[1]);
         assert_eq!(iter.count(), 2);
         assert_eq!(iter.current_rows(), &[RowId(0), RowId(2)]);
         iter.next();
-        assert_eq!(key_bytes(&iter)?, 978u64.to_be_bytes().as_slice());
+        assert_eq!(key_bytes(&iter)?, &[2]);
         assert_eq!(iter.count(), 1);
         assert_eq!(iter.current_rows(), &[RowId(1)]);
         iter.next();
@@ -471,13 +471,13 @@ mod tests {
             .relation("Account")
             .ok_or_else(|| crate::Error::internal("missing Account relation"))?;
         let index = SortedTrieIndex::build(account, IndexSpec::new("by_currency", [FieldId(1)]))?;
-        let target = EncodedOwned::Eight(900u64.to_be_bytes());
+        let target = EncodedOwned::One([2]);
 
         let mut iter = index.iter();
         iter.open();
         iter.seek(target.as_ref());
-        assert_eq!(key_bytes(&iter)?, 978u64.to_be_bytes().as_slice());
-        let target = EncodedOwned::Eight(999u64.to_be_bytes());
+        assert_eq!(key_bytes(&iter)?, &[2]);
+        let target = EncodedOwned::One([3]);
         iter.seek(target.as_ref());
         assert!(iter.at_end());
         Ok(())
@@ -496,7 +496,7 @@ mod tests {
 
         let mut iter = index.iter();
         iter.open();
-        assert_eq!(key_bytes(&iter)?, 840u64.to_be_bytes().as_slice());
+        assert_eq!(key_bytes(&iter)?, &[1]);
         iter.open();
         assert_eq!(iter.depth(), 1);
         assert_eq!(key_bytes(&iter)?, &[1]);
@@ -511,9 +511,9 @@ mod tests {
         assert_eq!(key_bytes(&iter)?, &[1]);
         iter.up();
         assert_eq!(iter.depth(), 0);
-        assert_eq!(key_bytes(&iter)?, 840u64.to_be_bytes().as_slice());
+        assert_eq!(key_bytes(&iter)?, &[1]);
         iter.next();
-        assert_eq!(key_bytes(&iter)?, 978u64.to_be_bytes().as_slice());
+        assert_eq!(key_bytes(&iter)?, &[2]);
         Ok(())
     }
 
@@ -601,7 +601,7 @@ mod tests {
         )
         .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
             "Currency",
-            [840, 978],
+            [1, 2],
         ))
     }
 
@@ -611,7 +611,7 @@ mod tests {
                 "Account",
                 [
                     ("id", Value::Identity(IdentityValue::Serial(1))),
-                    ("currency", Value::Enum(840)),
+                    ("currency", Value::Enum(1)),
                     ("active", Value::Bool(true)),
                 ],
             ),
@@ -619,7 +619,7 @@ mod tests {
                 "Account",
                 [
                     ("id", Value::Identity(IdentityValue::Serial(2))),
-                    ("currency", Value::Enum(978)),
+                    ("currency", Value::Enum(2)),
                     ("active", Value::Bool(false)),
                 ],
             ),
@@ -627,7 +627,7 @@ mod tests {
                 "Account",
                 [
                     ("id", Value::Identity(IdentityValue::Serial(3))),
-                    ("currency", Value::Enum(840)),
+                    ("currency", Value::Enum(1)),
                     ("active", Value::Bool(true)),
                 ],
             ),

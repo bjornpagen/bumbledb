@@ -430,7 +430,7 @@ mod tests {
         let image = account_image()?;
         let account = account_relation(&image)?;
         let index = HashTrieIndex::build(account, IndexSpec::new("by_currency", [FieldId(1)]))?;
-        let key = EncodedOwned::Eight(840u64.to_be_bytes());
+        let key = EncodedOwned::One([1]);
 
         assert!(index.exists(&[key.as_ref()]));
         assert_eq!(index.count(&[key.as_ref()]), 2);
@@ -450,7 +450,7 @@ mod tests {
             IndexSpec::new("exists_currency", [FieldId(1)]),
             LeafMode::CountOnly,
         )?;
-        let key = EncodedOwned::Eight(840u64.to_be_bytes());
+        let key = EncodedOwned::One([1]);
 
         assert!(index.exists(&[key.as_ref()]));
         assert_eq!(index.count(&[key.as_ref()]), 2);
@@ -466,7 +466,7 @@ mod tests {
             account,
             IndexSpec::new("currency_active", [FieldId(1), FieldId(2)]),
         )?;
-        let currency = EncodedOwned::Eight(840u64.to_be_bytes());
+        let currency = EncodedOwned::One([1]);
         let active = EncodedOwned::One([1]);
 
         assert_eq!(index.count(&[currency.as_ref()]), 2);
@@ -501,7 +501,7 @@ mod tests {
 
         let by_currency =
             HashTrieIndex::build(account, IndexSpec::new("by_currency", [FieldId(1)]))?;
-        let currency = EncodedOwned::Eight(840u64.to_be_bytes());
+        let currency = EncodedOwned::One([1]);
         assert_eq!(
             by_currency
                 .rows_for_prefix(&[currency.as_ref()])
@@ -578,7 +578,7 @@ mod tests {
         )
         .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
             "Currency",
-            [840, 978],
+            [1, 2],
         ))
     }
 
@@ -588,7 +588,7 @@ mod tests {
                 "Account",
                 [
                     ("id", Value::Identity(IdentityValue::Serial(1))),
-                    ("currency", Value::Enum(840)),
+                    ("currency", Value::Enum(1)),
                     ("active", Value::Bool(true)),
                 ],
             ),
@@ -596,7 +596,7 @@ mod tests {
                 "Account",
                 [
                     ("id", Value::Identity(IdentityValue::Serial(2))),
-                    ("currency", Value::Enum(978)),
+                    ("currency", Value::Enum(2)),
                     ("active", Value::Bool(false)),
                 ],
             ),
@@ -604,7 +604,7 @@ mod tests {
                 "Account",
                 [
                     ("id", Value::Identity(IdentityValue::Serial(3))),
-                    ("currency", Value::Enum(840)),
+                    ("currency", Value::Enum(1)),
                     ("active", Value::Bool(true)),
                 ],
             ),

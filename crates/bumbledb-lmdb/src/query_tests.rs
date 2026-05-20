@@ -91,7 +91,7 @@ fn planner_recommends_missing_static_predicate_index() -> TestResult {
         txn.execute_query(
             &schema,
             &query,
-            &InputBindings::from_values([("currency", Value::Enum(840))]),
+            &InputBindings::from_values([("currency", Value::Enum(1))]),
         )
     })?;
 
@@ -1098,7 +1098,7 @@ fn prepared_plan_cache_is_snapshot_scoped() -> TestResult {
 
     let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     env.write(|txn| {
-        txn.insert(&schema, account_row(4, 2, 978))?;
+        txn.insert(&schema, account_row(4, 2, 2))?;
         Ok::<_, Error>(())
     })?;
     let after = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
@@ -1195,7 +1195,7 @@ fn execute_query_cache_misses_after_write_commit() -> TestResult {
 
     let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     env.write(|txn| {
-        txn.insert(&schema, account_row(4, 2, 978))?;
+        txn.insert(&schema, account_row(4, 2, 2))?;
         Ok::<_, Error>(())
     })?;
     let after = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
@@ -1295,7 +1295,7 @@ fn planner_stats_cache_is_snapshot_scoped() -> TestResult {
 
     let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     env.write(|txn| {
-        txn.insert(&schema, account_row(4, 2, 978))?;
+        txn.insert(&schema, account_row(4, 2, 2))?;
         Ok::<_, Error>(())
     })?;
     let after = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
@@ -2450,7 +2450,7 @@ fn enum_input_value_must_be_declared_variant() -> TestResult {
         txn.execute_query(
             &schema,
             &query,
-            &InputBindings::from_values([("currency", Value::Enum(12345))]),
+            &InputBindings::from_values([("currency", Value::Enum(123))]),
         )
     });
     assert!(matches!(
@@ -2844,11 +2844,11 @@ fn q24_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
     )
 }
 
-fn dim_row(id: u64, kind: u64) -> Row {
+fn dim_row(id: u64, kind: u8) -> Row {
     Row::new("Dim", [("id", Value::U64(id)), ("kind", Value::Enum(kind))])
 }
 
-fn other_dim_row(id: u64, kind: u64) -> Row {
+fn other_dim_row(id: u64, kind: u8) -> Row {
     Row::new(
         "OtherDim",
         [("id", Value::U64(id)), ("kind", Value::Enum(kind))],
@@ -2894,9 +2894,9 @@ fn seeded_rows() -> Vec<Row> {
     vec![
         holder_row(1, "Alice"),
         holder_row(2, "Bob"),
-        account_row(1, 1, 840),
-        account_row(2, 1, 978),
-        account_row(3, 2, 840),
+        account_row(1, 1, 1),
+        account_row(2, 1, 2),
+        account_row(3, 2, 1),
         posting_row(1, 1, 100, 10),
         posting_row(2, 1, 200, 20),
         posting_row(3, 2, 300, 30),
@@ -2990,7 +2990,7 @@ fn ledger_schema() -> bumbledb_core::schema::SchemaDescriptor {
     )
     .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
         "Currency",
-        [840, 978],
+        [1, 2],
     ))
 }
 
@@ -3163,7 +3163,7 @@ fn holder_row(id: u64, name: &str) -> Row {
     )
 }
 
-fn account_row(id: u64, holder: u64, currency: u64) -> Row {
+fn account_row(id: u64, holder: u64, currency: u8) -> Row {
     Row::new(
         "Account",
         [
@@ -3197,7 +3197,7 @@ fn number_row(id: u64, n: i64, d: i128) -> Row {
     )
 }
 
-fn item_row(id: u64, kind: u64) -> Row {
+fn item_row(id: u64, kind: u8) -> Row {
     Row::new(
         "Item",
         [

@@ -470,8 +470,8 @@ fn literal_fits_type(schema: &SchemaDescriptor, literal: &Literal, expected: &Va
         (Literal::String(_), ValueType::String) => true,
         (Literal::Integer(value), ValueType::Enum { name }) => {
             *value >= 0
-                && *value <= u64::MAX as i128
-                && schema.enum_contains_code(name, *value as u64)
+                && *value <= u8::MAX as i128
+                && schema.enum_contains_code(name, *value as u8)
         }
         (Literal::Integer(value), ValueType::U64) => *value >= 0 && *value <= u64::MAX as i128,
         (
@@ -713,6 +713,27 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn rejects_enum_literal_outside_byte_width() {
+        let schema = schema();
+        let mut builder = QueryBuilder::new(&schema);
+        let result = builder
+            .rel("Account")
+            .and_then(|atom| atom.var("currency", "currency"))
+            .map(RelationAtomBuilder::done)
+            .and_then(|builder| {
+                builder.cmp(
+                    OperandRef::var("currency"),
+                    ComparisonOperator::Eq,
+                    OperandRef::integer(256),
+                )
+            });
+        assert!(matches!(
+            result,
+            Err(QueryBuildError::LiteralTypeMismatch { .. })
+        ));
+    }
+
     fn schema() -> SchemaDescriptor {
         SchemaDescriptor::new(
             "QueryBuilderDb",
@@ -763,7 +784,7 @@ mod tests {
                 )),
             ],
         )
-        .with_enum(EnumDescriptor::codes("Currency", [840, 978]))
+        .with_enum(EnumDescriptor::codes("Currency", [1, 2]))
     }
 
     fn id_type(name: &str, relation: &str) -> ValueType {

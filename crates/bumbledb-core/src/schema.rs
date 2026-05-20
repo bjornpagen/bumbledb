@@ -55,7 +55,7 @@ pub enum SchemaError {
 
     /// An enum variant code was declared more than once.
     #[error("duplicate enum code {code} in enum {enum_name}")]
-    DuplicateEnumCode { enum_name: String, code: u64 },
+    DuplicateEnumCode { enum_name: String, code: u8 },
 
     /// A field referred to an unknown enum domain.
     #[error("relation {relation}.{field} references unknown enum {enum_name}")]
@@ -235,7 +235,7 @@ impl SchemaDescriptor {
     }
 
     /// Returns true if an enum domain contains an encoded code.
-    pub fn enum_contains_code(&self, name: &str, code: u64) -> bool {
+    pub fn enum_contains_code(&self, name: &str, code: u8) -> bool {
         self.enum_descriptor(name)
             .is_some_and(|enum_descriptor| enum_descriptor.contains_code(code))
     }
@@ -673,7 +673,7 @@ impl EnumDescriptor {
     }
 
     /// Creates an enum domain from numeric codes with generated variant names.
-    pub fn codes(name: impl Into<String>, codes: impl IntoIterator<Item = u64>) -> Self {
+    pub fn codes(name: impl Into<String>, codes: impl IntoIterator<Item = u8>) -> Self {
         Self {
             name: name.into(),
             variants: codes
@@ -684,7 +684,7 @@ impl EnumDescriptor {
     }
 
     /// Returns true if this enum contains a variant code.
-    pub fn contains_code(&self, code: u64) -> bool {
+    pub fn contains_code(&self, code: u8) -> bool {
         self.variants.iter().any(|variant| variant.code == code)
     }
 
@@ -728,12 +728,12 @@ pub struct EnumVariantDescriptor {
     /// Variant label.
     pub name: String,
     /// Stable encoded code.
-    pub code: u64,
+    pub code: u8,
 }
 
 impl EnumVariantDescriptor {
     /// Creates an enum variant.
-    pub fn new(name: impl Into<String>, code: u64) -> Self {
+    pub fn new(name: impl Into<String>, code: u8) -> Self {
         Self {
             name: name.into(),
             code,
@@ -742,7 +742,7 @@ impl EnumVariantDescriptor {
 
     fn push_canonical(&self, out: &mut Vec<u8>) {
         push_str(out, &self.name);
-        push_u64(out, self.code);
+        push_u8(out, self.code);
     }
 }
 
@@ -999,10 +999,10 @@ impl ValueType {
     pub fn encoded_width(&self) -> usize {
         match self {
             ValueType::Bool => 1,
+            ValueType::Enum { .. } => 1,
             ValueType::U64
             | ValueType::I64
             | ValueType::TimestampMicros
-            | ValueType::Enum { .. }
             | ValueType::String
             | ValueType::Bytes => 8,
             ValueType::Decimal { .. } => 16,
@@ -1388,10 +1388,6 @@ fn push_u32(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_be_bytes());
 }
 
-fn push_u64(out: &mut Vec<u8>, value: u64) {
-    out.extend_from_slice(&value.to_be_bytes());
-}
-
 fn push_str(out: &mut Vec<u8>, value: &str) {
     push_u32(out, value.len() as u32);
     out.extend_from_slice(value.as_bytes());
@@ -1547,6 +1543,14 @@ mod tests {
             .ok_or_else(|| std::io::Error::other("missing SourceDocument.payload component"))?;
         assert!(payload.value_type.is_interned_placeholder());
         assert_eq!(payload.encoded_width, 8);
+
+        let account_covering = find_layout(&layouts, "Account", "covering")?;
+        let currency = account_covering
+            .components
+            .iter()
+            .find(|component| component.field_name == "currency")
+            .ok_or_else(|| std::io::Error::other("missing Account.currency component"))?;
+        assert_eq!(currency.encoded_width, 1);
         Ok(())
     }
 
@@ -1941,7 +1945,7 @@ mod tests {
                 .with_covering_unique("child_parent", ["child", "parent"]),
             ],
         )
-        .with_enum(EnumDescriptor::codes("Currency", [840, 978]))
+        .with_enum(EnumDescriptor::codes("Currency", [1, 2]))
     }
 
     fn valid_schema() -> SchemaDescriptor {

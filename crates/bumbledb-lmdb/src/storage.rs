@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bumbledb_core::encoding::{
-    DecimalRaw, InternId, TimestampMicros, decode_bool, decode_decimal, decode_i64,
-    decode_intern_id, decode_timestamp, decode_u64, encode_bool, encode_decimal, encode_i64,
-    encode_intern_id, encode_timestamp, encode_u64,
+    DecimalRaw, InternId, TimestampMicros, decode_bool, decode_decimal, decode_enum, decode_i64,
+    decode_intern_id, decode_timestamp, decode_u64, encode_bool, encode_decimal, encode_enum,
+    encode_i64, encode_intern_id, encode_timestamp, encode_u64,
 };
 use bumbledb_core::schema::{
     ConstraintDescriptor, CurrentIndexLayout, FieldDescriptor, IdentityAllocation, IndexComponent,
@@ -107,8 +107,8 @@ pub enum Value {
     Timestamp(TimestampMicros),
     /// Fixed-scale decimal raw value.
     Decimal(DecimalRaw),
-    /// Closed enum represented as a stable `u64` code.
-    Enum(u64),
+    /// Closed enum represented as a stable one-byte code.
+    Enum(u8),
     /// String to intern.
     String(String),
     /// Bytes to intern.
@@ -1435,7 +1435,7 @@ fn encode_value_for_type(
         ) => encode_u64(*value).to_vec(),
         (ValueType::TimestampMicros, Value::Timestamp(value)) => encode_timestamp(*value).to_vec(),
         (ValueType::Decimal { .. }, Value::Decimal(value)) => encode_decimal(*value).to_vec(),
-        (ValueType::Enum { .. }, Value::Enum(value)) => encode_u64(*value).to_vec(),
+        (ValueType::Enum { .. }, Value::Enum(value)) => encode_enum(*value).to_vec(),
         (ValueType::String, Value::String(value)) => {
             encode_intern_id(InternId(intern(DICT_STRING, value.as_bytes())?)).to_vec()
         }
@@ -1661,7 +1661,7 @@ fn decode_value(
             decode_decimal(bytes).map_err(|_| Error::corrupt("decimal width invalid"))?,
         ),
         ValueType::Enum { .. } => {
-            Value::Enum(decode_u64(bytes).map_err(|_| Error::corrupt("enum width invalid"))?)
+            Value::Enum(decode_enum(bytes).map_err(|_| Error::corrupt("enum width invalid"))?)
         }
         ValueType::String => {
             let InternId(id) = decode_intern_id(bytes)
@@ -2078,7 +2078,7 @@ mod tests {
             assert_eq!(account, 1);
 
             txn.insert(&schema, holder_row(holder, "Alice"))?;
-            txn.insert(&schema, account_row(account, holder, 840))?;
+            txn.insert(&schema, account_row(account, holder, 1))?;
             Ok::<(), Error>(())
         })?;
 
@@ -2106,11 +2106,7 @@ mod tests {
                 &holder_row(1, "Alice"),
                 COVERING_ACCESS_NAME
             )?);
-            assert!(txn.current_index_entry_exists(
-                &schema,
-                &account_row(1, 1, 840),
-                "by_holder"
-            )?);
+            assert!(txn.current_index_entry_exists(&schema, &account_row(1, 1, 1), "by_holder")?);
             assert!(txn.dictionary_string_id("Alice")?.is_some());
             Ok::<(), Error>(())
         })?;
@@ -2173,7 +2169,7 @@ mod tests {
             Err(Error::Constraint(ConstraintError::UniqueViolation { .. }))
         ));
 
-        let fk = env.write(|txn| txn.insert(&schema, account_row(1, 999, 840)));
+        let fk = env.write(|txn| txn.insert(&schema, account_row(1, 999, 1)));
         assert!(matches!(
             fk,
             Err(Error::Constraint(
@@ -2203,7 +2199,7 @@ mod tests {
             Ok::<(), Error>(())
         })?;
 
-        let invalid = env.write(|txn| txn.insert(&schema, account_row(1, 1, 12345)));
+        let invalid = env.write(|txn| txn.insert(&schema, account_row(1, 1, 123)));
         assert!(matches!(
             invalid,
             Err(Error::Constraint(ConstraintError::TypeMismatch { .. }))
@@ -2307,6 +2303,131 @@ mod tests {
     }
 
     #[test]
+    fn enum_foreign_key_insert_and_restrict_delete() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = enum_fk_schema(&env)?;
+
+        let missing_currency = env.write(|txn| {
+            txn.insert(
+                &schema,
+                Row::new(
+                    "Account",
+                    [("id", Value::U64(1)), ("currency", Value::Enum(1))],
+                ),
+            )
+        });
+        assert!(matches!(
+            missing_currency,
+            Err(Error::Constraint(
+                ConstraintError::ForeignKeyViolation { .. }
+            ))
+        ));
+
+        env.write(|txn| {
+            txn.insert(&schema, Row::new("Currency", [("code", Value::Enum(1))]))?;
+            txn.insert(
+                &schema,
+                Row::new(
+                    "Account",
+                    [("id", Value::U64(1)), ("currency", Value::Enum(1))],
+                ),
+            )?;
+            Ok::<(), Error>(())
+        })?;
+
+        let restricted =
+            env.write(|txn| txn.delete(&schema, Row::new("Currency", [("code", Value::Enum(1))])));
+        assert!(matches!(
+            restricted,
+            Err(Error::Constraint(ConstraintError::RestrictViolation { .. }))
+        ));
+
+        env.read(|txn| {
+            let account = collect_rows(txn.scan_relation(&schema, "Account")?)?;
+            assert_eq!(
+                account,
+                [Row::new(
+                    "Account",
+                    [("id", Value::U64(1)), ("currency", Value::Enum(1))]
+                )]
+            );
+            Ok::<(), Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn compound_enum_foreign_key_insert_and_restrict_delete() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = compound_enum_fk_schema(&env)?;
+
+        let missing_policy = env.write(|txn| {
+            txn.insert(
+                &schema,
+                Row::new(
+                    "Account",
+                    [
+                        ("id", Value::U64(1)),
+                        ("country", Value::Enum(1)),
+                        ("currency", Value::Enum(2)),
+                    ],
+                ),
+            )
+        });
+        assert!(matches!(
+            missing_policy,
+            Err(Error::Constraint(
+                ConstraintError::ForeignKeyViolation { .. }
+            ))
+        ));
+
+        env.write(|txn| {
+            txn.insert(
+                &schema,
+                Row::new(
+                    "Policy",
+                    [("country", Value::Enum(1)), ("currency", Value::Enum(2))],
+                ),
+            )?;
+            txn.insert(
+                &schema,
+                Row::new(
+                    "Account",
+                    [
+                        ("id", Value::U64(1)),
+                        ("country", Value::Enum(1)),
+                        ("currency", Value::Enum(2)),
+                    ],
+                ),
+            )?;
+            Ok::<(), Error>(())
+        })?;
+
+        let restricted = env.write(|txn| {
+            txn.delete(
+                &schema,
+                Row::new(
+                    "Policy",
+                    [("country", Value::Enum(1)), ("currency", Value::Enum(2))],
+                ),
+            )
+        });
+        assert!(matches!(
+            restricted,
+            Err(Error::Constraint(ConstraintError::RestrictViolation { .. }))
+        ));
+
+        env.read(|txn| {
+            assert_eq!(txn.relation_row_count(&schema, "Policy")?, 1);
+            assert_eq!(txn.relation_row_count(&schema, "Account")?, 1);
+            Ok::<(), Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
     fn exact_delete_then_insert_updates_current_entries_and_counts() -> TestResult {
         let dir = tempfile::tempdir()?;
         let env = Environment::open(dir.path())?;
@@ -2314,17 +2435,17 @@ mod tests {
 
         env.write(|txn| {
             txn.insert(&schema, holder_row(1, "Alice"))?;
-            txn.insert(&schema, account_row(1, 1, 840))?;
+            txn.insert(&schema, account_row(1, 1, 1))?;
             Ok::<(), Error>(())
         })?;
 
         env.write(|txn| {
             assert_eq!(
-                txn.delete(&schema, account_row(1, 1, 840))?,
+                txn.delete(&schema, account_row(1, 1, 1))?,
                 DeleteOutcome::Deleted
             );
             assert_eq!(
-                txn.insert(&schema, account_row(1, 1, 978))?,
+                txn.insert(&schema, account_row(1, 1, 2))?,
                 InsertOutcome::Inserted
             );
             Ok::<(), Error>(())
@@ -2340,19 +2461,19 @@ mod tests {
             );
             assert!(!txn.current_index_entry_exists(
                 &schema,
-                &account_row(1, 1, 840),
+                &account_row(1, 1, 1),
                 COVERING_ACCESS_NAME
             )?);
             assert!(txn.current_index_entry_exists(
                 &schema,
-                &account_row(1, 1, 978),
+                &account_row(1, 1, 2),
                 COVERING_ACCESS_NAME
             )?);
             Ok::<(), Error>(())
         })?;
 
         env.write(|txn| {
-            txn.insert(&schema, account_row(2, 1, 840))?;
+            txn.insert(&schema, account_row(2, 1, 1))?;
             Ok::<(), Error>(())
         })?;
         Ok(())
@@ -2366,7 +2487,7 @@ mod tests {
 
         env.write(|txn| {
             txn.insert(&schema, holder_row(1, "Alice"))?;
-            txn.insert(&schema, account_row(1, 1, 840))?;
+            txn.insert(&schema, account_row(1, 1, 1))?;
             Ok::<(), Error>(())
         })?;
 
@@ -2377,7 +2498,7 @@ mod tests {
         ));
 
         env.write(|txn| {
-            txn.delete(&schema, account_row(1, 1, 840))?;
+            txn.delete(&schema, account_row(1, 1, 1))?;
             txn.delete(&schema, holder_row(1, "Alice"))?;
             Ok::<(), Error>(())
         })?;
@@ -2402,7 +2523,7 @@ mod tests {
 
         env.write(|txn| {
             txn.insert(&schema, holder_row(1, "Alice"))?;
-            txn.insert(&schema, account_row(1, 1, 840))?;
+            txn.insert(&schema, account_row(1, 1, 1))?;
             txn.insert(&schema, tag_row(1, 7))?;
             Ok::<(), Error>(())
         })?;
@@ -2454,14 +2575,14 @@ mod tests {
         env.write(|txn| {
             txn.insert(&schema, holder_row(1, "Alice"))?;
             txn.insert(&schema, holder_row(2, "Bob"))?;
-            txn.insert(&schema, account_row(1, 1, 840))?;
-            txn.insert(&schema, account_row(2, 1, 978))?;
+            txn.insert(&schema, account_row(1, 1, 1))?;
+            txn.insert(&schema, account_row(2, 1, 2))?;
             Ok::<(), Error>(())
         })?;
 
         env.read(|txn| {
             assert!(txn.exact_row_exists(&schema, &holder_row(1, "Alice"))?);
-            assert!(txn.exact_row_exists(&schema, &account_row(1, 1, 840))?);
+            assert!(txn.exact_row_exists(&schema, &account_row(1, 1, 1))?);
 
             let access_paths = schema.access_paths("Account")?;
             assert!(
@@ -2486,7 +2607,7 @@ mod tests {
             );
 
             let full = collect_rows(txn.scan_relation(&schema, "Account")?)?;
-            assert_same_rows(&full, &[account_row(1, 1, 840), account_row(2, 1, 978)])?;
+            assert_same_rows(&full, &[account_row(1, 1, 1), account_row(2, 1, 2)])?;
 
             let by_holder_items = collect_items(txn.scan_prefix(
                 &schema,
@@ -2502,7 +2623,7 @@ mod tests {
                     .iter()
                     .map(|item| item.row.clone())
                     .collect::<Vec<_>>(),
-                &[account_row(1, 1, 840), account_row(2, 1, 978)],
+                &[account_row(1, 1, 1), account_row(2, 1, 2)],
             )?;
             assert!(
                 by_holder_items
@@ -2525,7 +2646,7 @@ mod tests {
                 Some(Value::Timestamp(TimestampMicros(15))),
                 Some(Value::Timestamp(TimestampMicros(31))),
             )?)?;
-            assert_same_rows(&ranged, &[account_row(2, 1, 978)])?;
+            assert_same_rows(&ranged, &[account_row(2, 1, 2)])?;
 
             for path in access_paths {
                 let rows = collect_rows(txn.scan_prefix(
@@ -2534,19 +2655,16 @@ mod tests {
                     &path.index_name,
                     &FieldValues::new("Account", std::iter::empty::<(&str, Value)>()),
                 )?)?;
-                assert_same_rows(&rows, &[account_row(1, 1, 840), account_row(2, 1, 978)])?;
+                assert_same_rows(&rows, &[account_row(1, 1, 1), account_row(2, 1, 2)])?;
             }
 
             env.write(|write| {
-                write.insert(&schema, account_row(3, 2, 840))?;
+                write.insert(&schema, account_row(3, 2, 1))?;
                 Ok::<(), Error>(())
             })?;
 
             let still_two = collect_rows(txn.scan_relation(&schema, "Account")?)?;
-            assert_same_rows(
-                &still_two,
-                &[account_row(1, 1, 840), account_row(2, 1, 978)],
-            )?;
+            assert_same_rows(&still_two, &[account_row(1, 1, 1), account_row(2, 1, 2)])?;
             Ok::<(), Error>(())
         })?;
 
@@ -2555,9 +2673,9 @@ mod tests {
             assert_same_rows(
                 &now_three,
                 &[
-                    account_row(1, 1, 840),
-                    account_row(2, 1, 978),
-                    account_row(3, 2, 840),
+                    account_row(1, 1, 1),
+                    account_row(2, 1, 2),
+                    account_row(3, 2, 1),
                 ],
             )?;
             Ok::<(), Error>(())
@@ -2599,6 +2717,112 @@ mod tests {
                     )),
                 ],
             ),
+            env.max_key_size(),
+        )
+    }
+
+    fn enum_fk_schema(env: &Environment) -> Result<StorageSchema> {
+        StorageSchema::new(
+            SchemaDescriptor::new(
+                "EnumFkDb",
+                vec![
+                    RelationDescriptor::new(
+                        "Currency",
+                        vec![FieldDescriptor::new(
+                            "code",
+                            ValueType::Enum {
+                                name: "Currency".to_owned(),
+                            },
+                        )],
+                    )
+                    .with_covering_unique("code", ["code"]),
+                    RelationDescriptor::new(
+                        "Account",
+                        vec![
+                            FieldDescriptor::new("id", ValueType::U64),
+                            FieldDescriptor::new(
+                                "currency",
+                                ValueType::Enum {
+                                    name: "Currency".to_owned(),
+                                },
+                            ),
+                        ],
+                    )
+                    .with_covering_unique("id", ["id"])
+                    .with_constraint(ConstraintDescriptor::foreign_key(
+                        "currency",
+                        ["currency"],
+                        "Currency",
+                        "code",
+                    )),
+                ],
+            )
+            .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
+                "Currency",
+                [1, 2, 3],
+            )),
+            env.max_key_size(),
+        )
+    }
+
+    fn compound_enum_fk_schema(env: &Environment) -> Result<StorageSchema> {
+        StorageSchema::new(
+            SchemaDescriptor::new(
+                "CompoundEnumFkDb",
+                vec![
+                    RelationDescriptor::new(
+                        "Policy",
+                        vec![
+                            FieldDescriptor::new(
+                                "country",
+                                ValueType::Enum {
+                                    name: "Country".to_owned(),
+                                },
+                            ),
+                            FieldDescriptor::new(
+                                "currency",
+                                ValueType::Enum {
+                                    name: "Currency".to_owned(),
+                                },
+                            ),
+                        ],
+                    )
+                    .with_covering_unique("by_country_currency", ["country", "currency"]),
+                    RelationDescriptor::new(
+                        "Account",
+                        vec![
+                            FieldDescriptor::new("id", ValueType::U64),
+                            FieldDescriptor::new(
+                                "country",
+                                ValueType::Enum {
+                                    name: "Country".to_owned(),
+                                },
+                            ),
+                            FieldDescriptor::new(
+                                "currency",
+                                ValueType::Enum {
+                                    name: "Currency".to_owned(),
+                                },
+                            ),
+                        ],
+                    )
+                    .with_covering_unique("id", ["id"])
+                    .with_constraint(ConstraintDescriptor::foreign_key(
+                        "policy",
+                        ["country", "currency"],
+                        "Policy",
+                        "by_country_currency",
+                    )),
+                ],
+            )
+            .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
+                "Country",
+                [1, 2, 3],
+            ))
+            .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
+                "Currency",
+                [1, 2, 3],
+            )),
             env.max_key_size(),
         )
     }
@@ -2694,7 +2918,7 @@ mod tests {
         )
         .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
             "Currency",
-            [840, 978, 999],
+            [1, 2, 3],
         ))
         .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
             "Tag",
@@ -2712,7 +2936,7 @@ mod tests {
         )
     }
 
-    fn account_row(id: u64, holder: u64, currency: u64) -> Row {
+    fn account_row(id: u64, holder: u64, currency: u8) -> Row {
         Row::new(
             "Account",
             [
@@ -2727,7 +2951,7 @@ mod tests {
         )
     }
 
-    fn tag_row(account: u64, tag: u64) -> Row {
+    fn tag_row(account: u64, tag: u8) -> Row {
         Row::new(
             "AccountTag",
             [
@@ -2754,7 +2978,7 @@ mod tests {
         Ok(())
     }
 
-    fn row_keys(rows: &[Row]) -> Result<Vec<(u64, u64, u64, i64)>> {
+    fn row_keys(rows: &[Row]) -> Result<Vec<(u64, u64, u8, i64)>> {
         rows.iter()
             .map(|row| {
                 let id = match required_value(row, "id")? {

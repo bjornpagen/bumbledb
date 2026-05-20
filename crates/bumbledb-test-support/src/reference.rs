@@ -403,7 +403,7 @@ fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
         (Literal::String(value), ValueType::String) => Value::String(value.clone()),
         (Literal::Integer(value), ValueType::U64) => Value::U64(*value as u64),
         (Literal::Integer(value), ValueType::I64) => Value::I64(*value as i64),
-        (Literal::Integer(value), ValueType::Enum { .. }) => Value::Enum(*value as u64),
+        (Literal::Integer(value), ValueType::Enum { .. }) => Value::Enum(*value as u8),
         (
             Literal::Integer(value),
             ValueType::Identity {

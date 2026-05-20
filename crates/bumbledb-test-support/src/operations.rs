@@ -13,7 +13,7 @@ pub fn valid_ledger_rows_strategy() -> impl Strategy<Value = Vec<Row>> {
             rows.push(holder(id, format!("holder-{id}")));
         }
         for id in 1..=count {
-            rows.push(account(id, id, 840));
+            rows.push(account(id, id, 1));
         }
         for id in 1..=count {
             rows.push(posting(id, id, id as i128 * 100, id as i64 * 10));

@@ -49,7 +49,7 @@ fn readers_see_stable_snapshots_while_writer_commits() -> Result<(), Box<dyn std
     barrier.wait();
     env.write(|txn| {
         txn.insert(&schema, holder(99, "late-holder"))?;
-        txn.insert(&schema, account(99, 99, 840))?;
+        txn.insert(&schema, account(99, 99, 1))?;
         Ok::<(), bumbledb_lmdb::Error>(())
     })?;
     barrier.wait();

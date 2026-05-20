@@ -1784,7 +1784,7 @@ mod tests {
         let account = account_relation(&image)?;
         assert_eq!(account.row_count, 2);
         assert_eq!(account.fields.len(), 5);
-        assert_eq!(account.encoded_column_bytes(), 2 * (8 + 8 + 1 + 8 + 8));
+        assert_eq!(account.encoded_column_bytes(), 2 * (8 + 1 + 1 + 8 + 8));
         assert_eq!(account.stats.row_count, account.row_count);
         assert_eq!(account.stats.field_count, account.fields.len());
         assert_eq!(
@@ -1808,6 +1808,7 @@ mod tests {
             }
         );
         assert_eq!(field(account, FieldId(0))?.encoded_width(), 8);
+        assert_eq!(field(account, FieldId(1))?.encoded_width(), 1);
         assert_eq!(field(account, FieldId(2))?.encoded_width(), 1);
         assert_eq!(column(account, FieldId(0))?.len(), 2);
         assert_eq!(column(account, FieldId(0))?.field(), FieldId(0));
@@ -1901,8 +1902,8 @@ mod tests {
         env.bulk_load(
             &schema,
             vec![
-                account_row(1, 840, true, vec![1, 2, 3], "Cash USD"),
-                account_row(2, 978, false, vec![4, 5, 6], "Cash EUR"),
+                account_row(1, 1, true, vec![1, 2, 3], "Cash USD"),
+                account_row(2, 2, false, vec![4, 5, 6], "Cash EUR"),
             ],
         )?;
 
@@ -1937,7 +1938,7 @@ mod tests {
                     "Account",
                     [
                         ("id", Value::Identity(IdentityValue::Serial(3))),
-                        ("currency", Value::Enum(826)),
+                        ("currency", Value::Enum(3)),
                         ("active", Value::Bool(true)),
                         ("payload", Value::Bytes(vec![7, 8, 9])),
                         ("name", Value::String("Cash GBP".to_owned())),
@@ -1963,8 +1964,8 @@ mod tests {
         env.bulk_load(
             &schema,
             [
-                account_row(1, 840, true, vec![1, 2, 3], "Cash USD"),
-                account_row(2, 978, false, vec![4, 5, 6], "Cash EUR"),
+                account_row(1, 1, true, vec![1, 2, 3], "Cash USD"),
+                account_row(2, 2, false, vec![4, 5, 6], "Cash EUR"),
             ],
         )?;
         drop(env);
@@ -1987,10 +1988,7 @@ mod tests {
             assert_eq!(before[0].row_count, 2);
 
             env.write(|write| {
-                write.insert(
-                    &schema,
-                    account_row(3, 826, true, vec![7, 8, 9], "Cash GBP"),
-                )?;
+                write.insert(&schema, account_row(3, 3, true, vec![7, 8, 9], "Cash GBP"))?;
                 Ok::<_, crate::Error>(())
             })?;
 
@@ -2012,18 +2010,9 @@ mod tests {
         let (env, schema) = seeded_env()?;
 
         env.write(|txn| {
-            txn.delete(
-                &schema,
-                account_row(2, 978, false, vec![4, 5, 6], "Cash EUR"),
-            )?;
-            txn.insert(
-                &schema,
-                account_row(2, 826, true, vec![9, 9, 9], "Cash GBP"),
-            )?;
-            txn.delete(
-                &schema,
-                account_row(1, 840, true, vec![1, 2, 3], "Cash USD"),
-            )?;
+            txn.delete(&schema, account_row(2, 2, false, vec![4, 5, 6], "Cash EUR"))?;
+            txn.insert(&schema, account_row(2, 3, true, vec![9, 9, 9], "Cash GBP"))?;
+            txn.delete(&schema, account_row(1, 1, true, vec![1, 2, 3], "Cash USD"))?;
             Ok::<_, crate::Error>(())
         })?;
 
@@ -2036,7 +2025,7 @@ mod tests {
             let rows = decode_relation_rows(txn, account)?;
             assert_eq!(
                 rows,
-                vec![account_row(2, 826, true, vec![9, 9, 9], "Cash GBP")]
+                vec![account_row(2, 3, true, vec![9, 9, 9], "Cash GBP")]
             );
             let segments = txn.visible_segments(&schema)?;
             assert_eq!(segments[0].row_count, 1);
@@ -2068,14 +2057,8 @@ mod tests {
         let env = Environment::open(&path)?;
         let schema = StorageSchema::new(account_schema(true), env.max_key_size())?;
         env.write(|txn| {
-            txn.insert(
-                &schema,
-                account_row(1, 840, true, vec![1, 2, 3], "Cash USD"),
-            )?;
-            txn.insert(
-                &schema,
-                account_row(2, 978, false, vec![4, 5, 6], "Cash EUR"),
-            )?;
+            txn.insert(&schema, account_row(1, 1, true, vec![1, 2, 3], "Cash USD"))?;
+            txn.insert(&schema, account_row(2, 2, false, vec![4, 5, 6], "Cash EUR"))?;
             Ok::<_, crate::Error>(())
         })?;
         Ok((env, schema))
@@ -2149,7 +2132,7 @@ mod tests {
         )
         .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
             "Currency",
-            [826, 840, 978],
+            [1, 2, 3],
         ))
     }
 
@@ -2168,7 +2151,7 @@ mod tests {
         )
     }
 
-    fn account_row(id: u64, currency: u64, active: bool, payload: Vec<u8>, name: &str) -> Row {
+    fn account_row(id: u64, currency: u8, active: bool, payload: Vec<u8>, name: &str) -> Row {
         Row::new(
             "Account",
             [

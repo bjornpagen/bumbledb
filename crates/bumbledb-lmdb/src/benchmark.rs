@@ -223,7 +223,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
     )
     .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
         "Currency",
-        [840],
+        [1],
     ))
     .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
         "Tag",
@@ -280,7 +280,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
             [
                 ("id", Value::Identity(IdentityValue::Serial(id))),
                 ("holder", Value::Identity(IdentityValue::Serial(id))),
-                ("currency", Value::Enum(840)),
+                ("currency", Value::Enum(1)),
             ],
         ));
     }
@@ -327,7 +327,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
                         "posting",
                         Value::Identity(IdentityValue::Serial(posting_id)),
                     ),
-                    ("tag", Value::Enum(1 + offset)),
+                    ("tag", Value::Enum((1 + offset) as u8)),
                 ],
             ));
             posting_id += 1;
@@ -554,7 +554,8 @@ mod tests {
 
     fn symbol(row: &Row, field: &str) -> Result<i64> {
         match required_value(row, field)? {
-            Value::Enum(value) | Value::U64(value) => Ok(*value as i64),
+            Value::Enum(value) => Ok(i64::from(*value)),
+            Value::U64(value) => Ok(*value as i64),
             other => Err(unexpected_value("symbol", other)),
         }
     }

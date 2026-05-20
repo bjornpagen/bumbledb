@@ -10536,7 +10536,7 @@ fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
                 ..
             },
         ) => Value::Identity(IdentityValue::Application(*value as u64)),
-        (Literal::Integer(value), ValueType::Enum { .. }) => Value::Enum(*value as u64),
+        (Literal::Integer(value), ValueType::Enum { .. }) => Value::Enum(*value as u8),
         (Literal::Integer(value), ValueType::TimestampMicros) => {
             Value::Timestamp(TimestampMicros(*value as i64))
         }
