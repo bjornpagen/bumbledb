@@ -65,7 +65,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Account",
                 vec![
-                    serial_id_field("AccountId", "Account"),
+                    serial_key_field("AccountId", "Account"),
                     serial_field("HolderId", "holder", "Holder"),
                     FieldDescriptor::new(
                         "currency",
@@ -85,7 +85,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "JournalEntry",
                 vec![
-                    serial_id_field("JournalEntryId", "JournalEntry"),
+                    serial_key_field("JournalEntryId", "JournalEntry"),
                     serial_field("SourceDocumentId", "source", "SourceDocument"),
                     FieldDescriptor::new("created_at", ValueType::TimestampMicros).range_indexed(),
                 ],
@@ -100,7 +100,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Posting",
                 vec![
-                    serial_id_field("PostingId", "Posting"),
+                    serial_key_field("PostingId", "Posting"),
                     serial_field("JournalEntryId", "entry", "JournalEntry"),
                     serial_field("AccountId", "account", "Account"),
                     serial_field("InstrumentId", "instrument", "Instrument"),
@@ -199,7 +199,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "ExchangeRate",
                 vec![
-                    serial_id_field("ExchangeRateId", "ExchangeRate"),
+                    serial_key_field("ExchangeRateId", "ExchangeRate"),
                     serial_field("InstrumentId", "base", "Instrument"),
                     serial_field("InstrumentId", "quote", "Instrument"),
                     FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
@@ -399,12 +399,12 @@ fn postings_for_holder_range_query(schema: &SchemaDescriptor) -> QueryBuildResul
 }
 
 fn entity(name: &str, id_type: &str, fields: Vec<FieldDescriptor>) -> RelationDescriptor {
-    let mut all = vec![serial_id_field(id_type, name)];
+    let mut all = vec![serial_key_field(id_type, name)];
     all.extend(fields);
     RelationDescriptor::new(name, all).with_covering_unique("id", ["id"])
 }
 
-fn serial_id_field(id_type: &str, relation: &str) -> FieldDescriptor {
+fn serial_key_field(id_type: &str, relation: &str) -> FieldDescriptor {
     FieldDescriptor::new(
         "id",
         ValueType::Serial {

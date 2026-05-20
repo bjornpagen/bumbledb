@@ -1,6 +1,6 @@
 # Rosetta Stone
 
-This document is the normative product and architecture contract for Bumbledb v2.
+This document is the normative product and architecture contract for Bumbledb v3.
 
 ## Product Thesis
 
@@ -14,8 +14,8 @@ Bumbledb competes on one battlefield: embedded, read-heavy, single-writer, multi
 
 - The current executable query surface is typed query IR.
 - The Datalog frontend was deleted intentionally.
-- No query text parser is part of v2.
-- Logica is the intended future frontend, but it is not implemented in v2.
+- No query text parser is part of v3.
+- Logica is the intended future frontend, but it is not implemented in v3.
 - Future Logica lowering must target `query_ir`; it must not reintroduce Datalog as an intermediate layer.
 - SQL is not supported.
 
@@ -40,7 +40,7 @@ Bumbledb competes on one battlefield: embedded, read-heavy, single-writer, multi
 
 ## Compatibility Policy
 
-Bumbledb v2 is not compatible with v1 databases.
+Bumbledb v3 is not compatible with v1 or v2 databases.
 
 There is no migration path except ETL into a new database. There is no attempt to read old fingerprints, translate old descriptors, preserve old index names, or tolerate partial schema drift.
 
@@ -105,6 +105,8 @@ ConstraintDescriptor::ForeignKey {
 }
 ```
 
+Foreign keys are generic exact-key constraints. They can target single-field or compound unique constraints, including enum fields and mixed serial-plus-enum keys. FK compatibility is positional exact `ValueType` equality.
+
 ## Serial Model
 
 Nominal serial types are preserved, but `Id` and `Ref` field types are gone.
@@ -136,7 +138,7 @@ Supported persistent types:
 - `Bytes`
 - `Serial { type_name, owning_relation }`
 
-There is no `Code` type. Open numeric domains use `U64`. Closed domains use `Enum`.
+There is no `Code` type and no persistent UUID type. Open numeric domains use `U64`. Closed domains use one-byte `Enum` values. Enum codes must be in `0..=255`.
 
 There are no nulls. Optional facts are represented by absent tuples in separate relations.
 

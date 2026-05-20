@@ -13,7 +13,7 @@ use csv::{ReaderBuilder, StringRecord};
 use rusqlite::Connection;
 
 use crate::{
-    BenchQuery, Config, Dataset, SqlParam, i64v, id, rf, serial_field, serial_id_field, symbol,
+    BenchQuery, Config, Dataset, SqlParam, i64v, id, rf, serial_field, serial_key_field, symbol,
     text, ts, u64v,
 };
 
@@ -546,7 +546,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "AkaName",
             vec![
-                serial_id_field("AkaNameId", "AkaName"),
+                serial_key_field("AkaNameId", "AkaName"),
                 serial_field("NameId", "person", "Name"),
                 job_string_field("name"),
                 job_string_field("imdb_index"),
@@ -562,7 +562,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "AkaTitle",
             vec![
-                serial_id_field("AkaTitleId", "AkaTitle"),
+                serial_key_field("AkaTitleId", "AkaTitle"),
                 serial_field("TitleId", "movie", "Title"),
                 job_string_field("title"),
                 job_string_field("imdb_index"),
@@ -582,7 +582,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "CastInfo",
             vec![
-                serial_id_field("CastInfoId", "CastInfo"),
+                serial_key_field("CastInfoId", "CastInfo"),
                 serial_field("NameId", "person", "Name"),
                 serial_field("TitleId", "movie", "Title"),
                 serial_field("CharNameId", "person_role", "CharName"),
@@ -610,7 +610,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "CharName",
             vec![
-                serial_id_field("CharNameId", "CharName"),
+                serial_key_field("CharNameId", "CharName"),
                 job_string_field("name"),
                 job_string_field("imdb_index"),
                 job_i64_field("imdb_id"),
@@ -622,7 +622,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "CompCastType",
             vec![
-                serial_id_field("CompCastTypeId", "CompCastType"),
+                serial_key_field("CompCastTypeId", "CompCastType"),
                 job_string_field("kind"),
             ],
         )
@@ -630,7 +630,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "CompanyName",
             vec![
-                serial_id_field("CompanyNameId", "CompanyName"),
+                serial_key_field("CompanyNameId", "CompanyName"),
                 job_string_field("name"),
                 job_string_field("country_code"),
                 job_i64_field("imdb_id"),
@@ -646,7 +646,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "CompanyType",
             vec![
-                serial_id_field("CompanyTypeId", "CompanyType"),
+                serial_key_field("CompanyTypeId", "CompanyType"),
                 job_string_field("kind"),
             ],
         )
@@ -654,7 +654,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "CompleteCast",
             vec![
-                serial_id_field("CompleteCastId", "CompleteCast"),
+                serial_key_field("CompleteCastId", "CompleteCast"),
                 serial_field("TitleId", "movie", "Title"),
                 serial_field("CompCastTypeId", "subject", "CompCastType"),
                 serial_field("CompCastTypeId", "status", "CompCastType"),
@@ -671,7 +671,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "InfoType",
             vec![
-                serial_id_field("InfoTypeId", "InfoType"),
+                serial_key_field("InfoTypeId", "InfoType"),
                 job_string_field("info"),
             ],
         )
@@ -679,7 +679,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "Keyword",
             vec![
-                serial_id_field("KeywordId", "Keyword"),
+                serial_key_field("KeywordId", "Keyword"),
                 job_string_field("keyword"),
                 job_string_field("phonetic_code"),
             ],
@@ -691,7 +691,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "KindType",
             vec![
-                serial_id_field("KindTypeId", "KindType"),
+                serial_key_field("KindTypeId", "KindType"),
                 job_string_field("kind"),
             ],
         )
@@ -699,7 +699,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "LinkType",
             vec![
-                serial_id_field("LinkTypeId", "LinkType"),
+                serial_key_field("LinkTypeId", "LinkType"),
                 job_string_field("link"),
             ],
         )
@@ -707,7 +707,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "MovieCompanies",
             vec![
-                serial_id_field("MovieCompaniesId", "MovieCompanies"),
+                serial_key_field("MovieCompaniesId", "MovieCompanies"),
                 serial_field("TitleId", "movie", "Title"),
                 serial_field("CompanyNameId", "company", "CompanyName"),
                 serial_field("CompanyTypeId", "company_type", "CompanyType"),
@@ -729,7 +729,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "MovieInfo",
             vec![
-                serial_id_field("MovieInfoId", "MovieInfo"),
+                serial_key_field("MovieInfoId", "MovieInfo"),
                 serial_field("TitleId", "movie", "Title"),
                 serial_field("InfoTypeId", "info_type", "InfoType"),
                 job_string_field("info"),
@@ -747,7 +747,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "MovieInfoIdx",
             vec![
-                serial_id_field("MovieInfoIdxId", "MovieInfoIdx"),
+                serial_key_field("MovieInfoIdxId", "MovieInfoIdx"),
                 serial_field("TitleId", "movie", "Title"),
                 serial_field("InfoTypeId", "info_type", "InfoType"),
                 job_string_field("info"),
@@ -765,7 +765,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "MovieKeyword",
             vec![
-                serial_id_field("MovieKeywordId", "MovieKeyword"),
+                serial_key_field("MovieKeywordId", "MovieKeyword"),
                 serial_field("TitleId", "movie", "Title"),
                 serial_field("KeywordId", "keyword", "Keyword"),
             ],
@@ -781,7 +781,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "MovieLink",
             vec![
-                serial_id_field("MovieLinkId", "MovieLink"),
+                serial_key_field("MovieLinkId", "MovieLink"),
                 serial_field("TitleId", "movie", "Title"),
                 serial_field("TitleId", "linked_movie", "Title"),
                 serial_field("LinkTypeId", "link_type", "LinkType"),
@@ -802,7 +802,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "Name",
             vec![
-                serial_id_field("NameId", "Name"),
+                serial_key_field("NameId", "Name"),
                 job_string_field("name"),
                 job_string_field("imdb_index"),
                 job_i64_field("imdb_id"),
@@ -817,7 +817,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "PersonInfo",
             vec![
-                serial_id_field("PersonInfoId", "PersonInfo"),
+                serial_key_field("PersonInfoId", "PersonInfo"),
                 serial_field("NameId", "person", "Name"),
                 serial_field("InfoTypeId", "info_type", "InfoType"),
                 job_string_field("info"),
@@ -835,7 +835,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "RoleType",
             vec![
-                serial_id_field("RoleTypeId", "RoleType"),
+                serial_key_field("RoleTypeId", "RoleType"),
                 job_string_field("role"),
             ],
         )
@@ -843,7 +843,7 @@ fn job_schema() -> SchemaDescriptor {
         job_relation(
             "Title",
             vec![
-                serial_id_field("TitleId", "Title"),
+                serial_key_field("TitleId", "Title"),
                 job_string_field("title"),
                 job_string_field("imdb_index"),
                 serial_field("KindTypeId", "kind", "KindType"),
@@ -1698,7 +1698,7 @@ fn imdb_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Title",
                 vec![
-                    serial_id_field("TitleId", "Title"),
+                    serial_key_field("TitleId", "Title"),
                     FieldDescriptor::new("title_type", ValueType::U64),
                     FieldDescriptor::new("primary_title", ValueType::String),
                     FieldDescriptor::new("start_year", ValueType::I64).range_indexed(),
@@ -1708,7 +1708,7 @@ fn imdb_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Name",
                 vec![
-                    serial_id_field("NameId", "Name"),
+                    serial_key_field("NameId", "Name"),
                     FieldDescriptor::new("name", ValueType::String),
                     FieldDescriptor::new("birth_year", ValueType::I64).range_indexed(),
                 ],
@@ -2168,7 +2168,7 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                 RelationDescriptor::new(
                     "Player",
                     vec![
-                        serial_id_field("PlayerId", "Player"),
+                        serial_key_field("PlayerId", "Player"),
                         FieldDescriptor::new("first", ValueType::String),
                         FieldDescriptor::new("last", ValueType::String),
                     ],
@@ -2177,7 +2177,7 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                 RelationDescriptor::new(
                     "Team",
                     vec![
-                        serial_id_field("TeamId", "Team"),
+                        serial_key_field("TeamId", "Team"),
                         FieldDescriptor::new("year", ValueType::I64).range_indexed(),
                         FieldDescriptor::new("league", ValueType::String),
                         FieldDescriptor::new("name", ValueType::String),
@@ -2290,7 +2290,7 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                 RelationDescriptor::new(
                     "Person",
                     vec![
-                        serial_id_field("PersonId", "Person"),
+                        serial_key_field("PersonId", "Person"),
                         FieldDescriptor::new("first", ValueType::String),
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
@@ -2299,7 +2299,7 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                 RelationDescriptor::new(
                     "Post",
                     vec![
-                        serial_id_field("PostId", "Post"),
+                        serial_key_field("PostId", "Post"),
                         serial_field("PersonId", "creator", "Person"),
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],

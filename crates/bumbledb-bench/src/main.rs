@@ -2071,7 +2071,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
                 RelationDescriptor::new(
                     "Sailor",
                     vec![
-                        serial_id_field("SailorId", "Sailor"),
+                        serial_key_field("SailorId", "Sailor"),
                         FieldDescriptor::new("name", ValueType::String),
                         FieldDescriptor::new("rating", ValueType::U64).range_indexed(),
                         FieldDescriptor::new("age", ValueType::I64),
@@ -2081,7 +2081,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
                 RelationDescriptor::new(
                     "Boat",
                     vec![
-                        serial_id_field("BoatId", "Boat"),
+                        serial_key_field("BoatId", "Boat"),
                         FieldDescriptor::new("name", ValueType::String),
                         FieldDescriptor::new(
                             "color",
@@ -2184,7 +2184,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                 RelationDescriptor::new(
                     "A",
                     vec![
-                        serial_id_field("AId", "A"),
+                        serial_key_field("AId", "A"),
                         FieldDescriptor::new(
                             "k",
                             ValueType::Enum {
@@ -2197,7 +2197,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                 RelationDescriptor::new(
                     "B",
                     vec![
-                        serial_id_field("BId", "B"),
+                        serial_key_field("BId", "B"),
                         serial_field("AId", "a", "A"),
                         FieldDescriptor::new(
                             "k",
@@ -2212,7 +2212,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                 RelationDescriptor::new(
                     "C",
                     vec![
-                        serial_id_field("CId", "C"),
+                        serial_key_field("CId", "C"),
                         serial_field("BId", "b", "B"),
                         FieldDescriptor::new(
                             "k",
@@ -2227,7 +2227,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                 RelationDescriptor::new(
                     "D",
                     vec![
-                        serial_id_field("DId", "D"),
+                        serial_key_field("DId", "D"),
                         serial_field("CId", "c", "C"),
                         FieldDescriptor::new(
                             "k",
@@ -2310,7 +2310,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                 RelationDescriptor::new(
                     "Customer",
                     vec![
-                        serial_id_field("CustomerId", "Customer"),
+                        serial_key_field("CustomerId", "Customer"),
                         FieldDescriptor::new("nation", ValueType::U64),
                     ],
                 )
@@ -2319,7 +2319,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                 RelationDescriptor::new(
                     "Supplier",
                     vec![
-                        serial_id_field("SupplierId", "Supplier"),
+                        serial_key_field("SupplierId", "Supplier"),
                         FieldDescriptor::new("nation", ValueType::U64),
                     ],
                 )
@@ -2328,7 +2328,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                 RelationDescriptor::new(
                     "Part",
                     vec![
-                        serial_id_field("PartId", "Part"),
+                        serial_key_field("PartId", "Part"),
                         FieldDescriptor::new("brand", ValueType::U64),
                     ],
                 )
@@ -2336,7 +2336,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                 RelationDescriptor::new(
                     "Orders",
                     vec![
-                        serial_id_field("OrderId", "Orders"),
+                        serial_key_field("OrderId", "Orders"),
                         serial_field("CustomerId", "customer", "Customer"),
                         FieldDescriptor::new("order_date", ValueType::TimestampMicros)
                             .range_indexed(),
@@ -2352,7 +2352,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                 RelationDescriptor::new(
                     "LineItem",
                     vec![
-                        serial_id_field("LineItemId", "LineItem"),
+                        serial_key_field("LineItemId", "LineItem"),
                         serial_field("OrderId", "order", "Orders"),
                         serial_field("PartId", "part", "Part"),
                         serial_field("SupplierId", "supplier", "Supplier"),
@@ -3075,7 +3075,7 @@ fn unexpected_value(field: &str, expected: &str, actual: &Value) -> Box<dyn std:
     bench_error(format!("expected {expected} {field}, got {actual:?}"))
 }
 
-pub(crate) fn serial_id_field(id_type: &str, relation: &str) -> FieldDescriptor {
+pub(crate) fn serial_key_field(id_type: &str, relation: &str) -> FieldDescriptor {
     FieldDescriptor::new(
         "id",
         ValueType::Serial {
