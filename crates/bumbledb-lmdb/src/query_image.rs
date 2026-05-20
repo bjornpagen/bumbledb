@@ -1027,6 +1027,7 @@ fn exact_array<const N: usize>(bytes: &[u8]) -> Result<[u8; N]> {
 #[derive(Default)]
 pub struct QueryImageCache {
     images: RwLock<BTreeMap<QueryImageKey, Arc<QueryImage>>>,
+    static_empty_fast: RwLock<BTreeSet<QueryShapeKey>>,
     hits: AtomicU64,
     misses: AtomicU64,
     builds: AtomicU64,
@@ -1096,6 +1097,22 @@ impl QueryImageCache {
             builds: self.builds.load(Ordering::Relaxed),
             build_micros: self.build_micros.load(Ordering::Relaxed),
         }
+    }
+
+    pub(crate) fn static_empty_fast_cached(&self, key: QueryShapeKey) -> Result<bool> {
+        Ok(self
+            .static_empty_fast
+            .read()
+            .map_err(|_| Error::internal("static-empty fast cache read lock poisoned"))?
+            .contains(&key))
+    }
+
+    pub(crate) fn insert_static_empty_fast(&self, key: QueryShapeKey) -> Result<()> {
+        self.static_empty_fast
+            .write()
+            .map_err(|_| Error::internal("static-empty fast cache write lock poisoned"))?
+            .insert(key);
+        Ok(())
     }
 }
 

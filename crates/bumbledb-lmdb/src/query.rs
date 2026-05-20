@@ -1394,6 +1394,26 @@ impl<'env> ReadTxn<'env> {
     ) -> Result<QueryOutput> {
         let total_start = Instant::now();
         let total_alloc_start = allocation::snapshot();
+        let static_empty_fast_key = if query.inputs.is_empty() {
+            Some(typed_static_empty_fast_key(
+                schema,
+                self.last_committed_tx_id()?,
+                query,
+            ))
+        } else {
+            None
+        };
+        if let Some(cache_key) = static_empty_fast_key
+            && self.query_images.static_empty_fast_cached(cache_key)?
+        {
+            return Ok(static_empty_output_from_typed(
+                query,
+                self.query_images.diagnostics(),
+                total_start,
+                total_alloc_start,
+                true,
+            ));
+        }
         let mut timings = QueryTimings::default();
         let mut allocations = QueryAllocationStats::default();
 
@@ -1489,6 +1509,9 @@ impl<'env> ReadTxn<'env> {
         };
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
             image.insert_static_empty(prepared_cache_key)?;
+            if let Some(cache_key) = static_empty_fast_key {
+                self.query_images.insert_static_empty_fast(cache_key)?;
+            }
             let mut plan = static_empty_plan(
                 &normalized,
                 query_image_cache,
@@ -1608,6 +1631,29 @@ impl<'env> ReadTxn<'env> {
     ) -> Result<QueryCountOutput> {
         let total_start = Instant::now();
         let total_alloc_start = allocation::snapshot();
+        let static_empty_fast_key = if query.inputs.is_empty() {
+            Some(typed_static_empty_fast_key(
+                schema,
+                self.last_committed_tx_id()?,
+                query,
+            ))
+        } else {
+            None
+        };
+        if let Some(cache_key) = static_empty_fast_key
+            && self.query_images.static_empty_fast_cached(cache_key)?
+        {
+            return Ok(QueryCountOutput {
+                rows: 0,
+                plan: static_empty_plan_from_typed(
+                    query,
+                    self.query_images.diagnostics(),
+                    total_start,
+                    total_alloc_start,
+                    true,
+                ),
+            });
+        }
         let mut timings = QueryTimings::default();
         let mut allocations = QueryAllocationStats::default();
 
@@ -1666,6 +1712,9 @@ impl<'env> ReadTxn<'env> {
         };
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
             image.insert_static_empty(prepared_cache_key)?;
+            if let Some(cache_key) = static_empty_fast_key {
+                self.query_images.insert_static_empty_fast(cache_key)?;
+            }
             let mut plan = static_empty_plan(
                 &normalized,
                 query_image_cache,
@@ -1802,6 +1851,134 @@ fn query_shape_key(schema: &StorageSchema, query: &NormalizedQuery) -> QueryShap
     }
     hash_output_plan(&mut hasher, &query.output);
     QueryShapeKey(*hasher.finalize().as_bytes())
+}
+
+fn typed_static_empty_fast_key(
+    schema: &StorageSchema,
+    tx_id: u64,
+    query: &TypedQuery,
+) -> QueryShapeKey {
+    let mut hasher = blake3::Hasher::new();
+    hash_bytes_len_prefixed(&mut hasher, b"bumbledb.static_empty_typed.v1");
+    hasher.update(&schema.descriptor().fingerprint().0);
+    hash_u64(&mut hasher, tx_id);
+    hash_typed_query(&mut hasher, query);
+    QueryShapeKey(*hasher.finalize().as_bytes())
+}
+
+fn hash_typed_query(hasher: &mut blake3::Hasher, query: &TypedQuery) {
+    hash_u64(hasher, query.variables.len() as u64);
+    for variable in &query.variables {
+        hash_u64(hasher, variable.id as u64);
+        hash_bytes_len_prefixed(hasher, variable.name.as_bytes());
+        hash_value_type(hasher, &variable.value_type);
+    }
+    hash_u64(hasher, query.inputs.len() as u64);
+    for input in &query.inputs {
+        hash_u64(hasher, input.id as u64);
+        hash_bytes_len_prefixed(hasher, input.name.as_bytes());
+        hash_value_type(hasher, &input.value_type);
+    }
+    hash_u64(hasher, query.find.len() as u64);
+    for term in &query.find {
+        hash_typed_find_term(hasher, term);
+    }
+    hash_u64(hasher, query.clauses.len() as u64);
+    for clause in &query.clauses {
+        match clause {
+            TypedClause::Relation(atom) => {
+                hash_u8(hasher, 1);
+                hash_u64(hasher, atom.relation_id as u64);
+                hash_bytes_len_prefixed(hasher, atom.relation.as_bytes());
+                hash_u64(hasher, atom.fields.len() as u64);
+                for field in &atom.fields {
+                    hash_u64(hasher, field.field_id as u64);
+                    hash_bytes_len_prefixed(hasher, field.field.as_bytes());
+                    hash_value_type(hasher, &field.value_type);
+                    hash_typed_term(hasher, &field.term);
+                }
+            }
+            TypedClause::Comparison(comparison) => {
+                hash_u8(hasher, 2);
+                hash_typed_operand(hasher, &comparison.left);
+                hash_comparison_operator(hasher, comparison.operator);
+                hash_typed_operand(hasher, &comparison.right);
+                hash_value_type(hasher, &comparison.value_type);
+            }
+        }
+    }
+}
+
+fn hash_typed_find_term(hasher: &mut blake3::Hasher, term: &TypedFindTerm) {
+    match term {
+        TypedFindTerm::Variable { variable } => {
+            hash_u8(hasher, 1);
+            hash_u64(hasher, *variable as u64);
+        }
+        TypedFindTerm::Aggregate {
+            function,
+            variable,
+            value_type,
+        } => {
+            hash_u8(hasher, 2);
+            hash_aggregate_function(hasher, *function);
+            hash_u64(hasher, *variable as u64);
+            hash_value_type(hasher, value_type);
+        }
+    }
+}
+
+fn hash_typed_term(hasher: &mut blake3::Hasher, term: &TypedTerm) {
+    match term {
+        TypedTerm::Variable(variable) => {
+            hash_u8(hasher, 1);
+            hash_u64(hasher, *variable as u64);
+        }
+        TypedTerm::Input(input) => {
+            hash_u8(hasher, 2);
+            hash_u64(hasher, *input as u64);
+        }
+        TypedTerm::Wildcard => hash_u8(hasher, 3),
+        TypedTerm::Literal(literal) => {
+            hash_u8(hasher, 4);
+            hash_typed_literal(hasher, literal);
+        }
+    }
+}
+
+fn hash_typed_operand(hasher: &mut blake3::Hasher, operand: &TypedOperand) {
+    match operand {
+        TypedOperand::Variable(variable) => {
+            hash_u8(hasher, 1);
+            hash_u64(hasher, *variable as u64);
+        }
+        TypedOperand::Input(input) => {
+            hash_u8(hasher, 2);
+            hash_u64(hasher, *input as u64);
+        }
+        TypedOperand::Literal(literal) => {
+            hash_u8(hasher, 3);
+            hash_typed_literal(hasher, literal);
+        }
+    }
+}
+
+fn hash_typed_literal(hasher: &mut blake3::Hasher, literal: &TypedLiteral) {
+    hash_value_type(hasher, &literal.value_type);
+    match &literal.literal {
+        Literal::Bool(value) => {
+            hash_u8(hasher, 1);
+            hash_u8(hasher, u8::from(*value));
+        }
+        Literal::Integer(value) => {
+            hash_u8(hasher, 2);
+            hasher.update(&value.to_be_bytes());
+        }
+        Literal::String(value) => {
+            hash_u8(hasher, 3);
+            hash_bytes_len_prefixed(hasher, value.as_bytes());
+        }
+    }
 }
 
 fn hash_u8(hasher: &mut blake3::Hasher, value: u8) {
@@ -2501,6 +2678,138 @@ fn static_empty_plan(
         counters: PlanCounters::default(),
         uses_indexed_multiway_join: query.atoms.len() > 1,
     }
+}
+
+fn static_empty_output_from_typed(
+    query: &TypedQuery,
+    query_image_cache: QueryImageCacheDiagnostics,
+    total_start: Instant,
+    total_alloc_start: allocation::AllocationSnapshot,
+    cache_hit: bool,
+) -> QueryOutput {
+    QueryOutput {
+        columns: result_columns_from_typed(query),
+        rows: Vec::new(),
+        plan: static_empty_plan_from_typed(
+            query,
+            query_image_cache,
+            total_start,
+            total_alloc_start,
+            cache_hit,
+        ),
+    }
+}
+
+fn static_empty_plan_from_typed(
+    query: &TypedQuery,
+    query_image_cache: QueryImageCacheDiagnostics,
+    total_start: Instant,
+    total_alloc_start: allocation::AllocationSnapshot,
+    cache_hit: bool,
+) -> QueryPlan {
+    let mut counters = PlanCounters::default();
+    if cache_hit {
+        counters.static_empty_cache_hits = 1;
+    }
+    let timings = QueryTimings {
+        total_micros: elapsed_micros(total_start),
+        ..QueryTimings::default()
+    };
+    let allocations =
+        QueryAllocationStats::default().with_total(allocation_delta_since(total_alloc_start));
+    QueryPlan {
+        variable_order: Vec::new(),
+        variable_estimates: Vec::new(),
+        missing_indexes: Vec::new(),
+        optimizer: OptimizerTrace {
+            chosen: "static_empty".to_owned(),
+            candidates: Vec::new(),
+        },
+        plan_family: PlanFamily::StaticEmpty,
+        query_image_cache,
+        planner_stats: PlannerStatsCacheDiagnostics::default(),
+        prepared_plan_cache: PreparedPlanCacheDiagnostics::default(),
+        node_rows: Vec::new(),
+        node_timings: Vec::new(),
+        free_join: FreeJoinPlan {
+            nodes: Vec::new(),
+            output: output_plan_from_typed_find(query),
+            estimates: PlanEstimates::default(),
+        },
+        direct_kernel: None,
+        runtime_kind: QueryRuntimeKind::StaticEmpty,
+        timings,
+        allocations,
+        counters,
+        uses_indexed_multiway_join: typed_relation_clause_count(query) > 1,
+    }
+}
+
+fn result_columns_from_typed(query: &TypedQuery) -> Vec<ResultColumn> {
+    query
+        .find
+        .iter()
+        .map(|term| match term {
+            TypedFindTerm::Variable { variable } => {
+                ResultColumn::Variable(query.variables[*variable].name.clone())
+            }
+            TypedFindTerm::Aggregate {
+                function, variable, ..
+            } => ResultColumn::Aggregate {
+                function: *function,
+                variable: query.variables[*variable].name.clone(),
+            },
+        })
+        .collect()
+}
+
+fn output_plan_from_typed_find(query: &TypedQuery) -> OutputPlan {
+    if query
+        .find
+        .iter()
+        .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }))
+    {
+        let mut group_vars = Vec::new();
+        let mut aggregates = Vec::new();
+        for term in &query.find {
+            match term {
+                TypedFindTerm::Variable { variable } => group_vars.push(VarId(*variable as u16)),
+                TypedFindTerm::Aggregate {
+                    function,
+                    variable,
+                    value_type,
+                } => aggregates.push(AggregateTerm {
+                    function: *function,
+                    var: VarId(*variable as u16),
+                    value_type: value_type.clone(),
+                }),
+            }
+        }
+        OutputPlan::Aggregate(AggregatePlan {
+            group_vars,
+            aggregates,
+        })
+    } else {
+        OutputPlan::Project(ProjectPlan {
+            vars: query
+                .find
+                .iter()
+                .filter_map(|term| match term {
+                    TypedFindTerm::Variable { variable } => Some(VarId(*variable as u16)),
+                    TypedFindTerm::Aggregate { .. } => None,
+                })
+                .collect(),
+            set_semantics: true,
+        })
+    }
+}
+
+fn typed_relation_clause_count(query: &TypedQuery) -> usize {
+    query
+        .clauses
+        .iter()
+        .filter(|clause| matches!(clause, TypedClause::Relation(_)))
+        .count()
 }
 
 #[expect(
@@ -8975,6 +9284,39 @@ mod tests {
         assert_eq!(output.plan.optimizer.chosen, "static_empty");
         assert_eq!(output.plan.counters.trie_open, 0);
         assert_eq!(output.plan.counters.variable_candidates, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn static_empty_no_input_query_hits_fast_cache_before_normalize() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
+        env.write(|txn| {
+            txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
+            Ok::<_, Error>(())
+        })?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find ?a ?b
+            where
+              A(id: ?a)
+              B(id: ?b, a: 99)
+            "#,
+        )?;
+
+        let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+        let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+        assert!(first.rows.is_empty());
+        assert!(second.rows.is_empty());
+        assert_eq!(first.plan.counters.static_empty_cache_misses, 1);
+        assert_eq!(second.plan.counters.static_empty_cache_hits, 1);
+        assert_eq!(second.plan.timings.validate_inputs_micros, 0);
+        assert_eq!(second.plan.timings.normalize_micros, 0);
+        assert_eq!(second.plan.timings.encode_inputs_micros, 0);
+        assert_eq!(second.plan.timings.query_image_micros, 0);
         Ok(())
     }
 
