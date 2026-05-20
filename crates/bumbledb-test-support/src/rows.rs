@@ -1,7 +1,7 @@
 //! Deterministic row fixtures.
 
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
-use bumbledb_lmdb::{IdentityValue, KeyValues, Row, Value};
+use bumbledb_lmdb::{IdentityValue, Row, Value};
 
 /// Holder row.
 pub fn holder(id: u64, name: impl Into<String>) -> Row {
@@ -59,22 +59,6 @@ pub fn number(id: u64, n: i64, d: i128) -> Row {
             ("n", Value::I64(n)),
             ("d", Value::Decimal(DecimalRaw(d))),
         ],
-    )
-}
-
-/// Holder primary key.
-pub fn holder_key(id: u64) -> KeyValues {
-    KeyValues::new(
-        "Holder",
-        [("id", Value::Identity(IdentityValue::Serial(id)))],
-    )
-}
-
-/// Account primary key.
-pub fn account_key(id: u64) -> KeyValues {
-    KeyValues::new(
-        "Account",
-        [("id", Value::Identity(IdentityValue::Serial(id)))],
     )
 }
 

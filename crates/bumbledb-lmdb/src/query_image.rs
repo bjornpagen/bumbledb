@@ -1545,7 +1545,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{AccessId, Environment, IdentityValue, KeyValues, Row, Value};
+    use crate::{AccessId, Environment, IdentityValue, Row, Value};
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -1981,10 +1981,7 @@ mod tests {
             )?;
             txn.delete(
                 &schema,
-                KeyValues::new(
-                    "Account",
-                    [("id", Value::Identity(IdentityValue::Serial(1)))],
-                ),
+                account_row(1, 840, true, vec![1, 2, 3], "Cash USD"),
             )?;
             Ok::<_, crate::Error>(())
         })?;

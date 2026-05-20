@@ -14,8 +14,6 @@ pub enum Failpoint {
     BeforeDictionaryPut,
     /// After writing dictionary forward/reverse entries.
     AfterDictionaryPut,
-    /// After writing a current row record.
-    AfterCurrentRowPut,
     /// After writing a current index entry.
     AfterCurrentIndexPut,
     /// After writing a unique guard.
@@ -35,7 +33,6 @@ impl Failpoint {
         match self {
             Failpoint::BeforeDictionaryPut => "before_dictionary_put",
             Failpoint::AfterDictionaryPut => "after_dictionary_put",
-            Failpoint::AfterCurrentRowPut => "after_current_row_put",
             Failpoint::AfterCurrentIndexPut => "after_current_index_put",
             Failpoint::AfterUniqueGuardPut => "after_unique_guard_put",
             Failpoint::AfterStatsUpdate => "after_stats_update",

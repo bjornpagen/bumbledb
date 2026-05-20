@@ -54,9 +54,7 @@ pub use sorted_trie::{
     EncodedOwned, IndexSpec, LinearIter, SortedTrieIndex, SortedTrieIter, TrieFrame, TrieIter,
     TrieLevel, TrieStats,
 };
-pub use storage::{
-    EncodedComponent, FieldValues, IdentityValue, IndexScan, KeyValues, Row, ScanItem, Value,
-};
+pub use storage::{EncodedComponent, FieldValues, IdentityValue, IndexScan, Row, ScanItem, Value};
 pub use storage_schema::{
     AccessPathDescriptor, BulkLoadReport, ColumnSegmentDescriptor, IndexSegmentDescriptor,
     IndexStatsSummary, SegmentDescriptor, StorageSchema,

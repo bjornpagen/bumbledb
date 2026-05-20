@@ -17,7 +17,6 @@ use crate::{
 };
 
 const NS_CURRENT_TUPLE: u8 = 0x10;
-const NS_CURRENT_ROW: u8 = 0x11;
 const NS_UNIQUE_GUARD: u8 = 0x20;
 const NS_HISTORY: u8 = 0x30;
 
@@ -80,29 +79,6 @@ pub struct FieldValues {
 
 impl FieldValues {
     /// Creates index-prefix field values for `relation`.
-    pub fn new(
-        relation: impl Into<String>,
-        values: impl IntoIterator<Item = (impl Into<String>, Value)>,
-    ) -> Self {
-        Self {
-            relation: relation.into(),
-            values: values
-                .into_iter()
-                .map(|(field, value)| (field.into(), value))
-                .collect(),
-        }
-    }
-}
-
-/// Primary-key values for delete and row lookup operations.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct KeyValues {
-    relation: String,
-    values: BTreeMap<String, Value>,
-}
-
-impl KeyValues {
-    /// Creates primary-key values for `relation`.
     pub fn new(
         relation: impl Into<String>,
         values: impl IntoIterator<Item = (impl Into<String>, Value)>,
@@ -304,46 +280,22 @@ impl IndexScan<'_, '_, '_> {
     }
 }
 
-#[derive(Clone, Debug)]
-struct EncodedRow {
-    fields: BTreeMap<String, Vec<u8>>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EncodedTuple {
+    relation: RelationId,
+    bytes: Vec<u8>,
 }
 
-impl EncodedRow {
+impl EncodedTuple {
     fn field(&self, relation: &RelationDescriptor, name: &str) -> Result<&[u8]> {
-        self.fields
-            .get(name)
-            .map(Vec::as_slice)
-            .ok_or_else(|| Error::missing_field(&relation.name, name))
+        let (offset, width) = field_layout(relation, name)?;
+        self.bytes
+            .get(offset..offset + width)
+            .ok_or_else(|| Error::corrupt("encoded tuple width does not match schema"))
     }
 
-    fn payload(&self, relation: &RelationDescriptor) -> Result<Vec<u8>> {
-        let mut out = Vec::new();
-        for field in &relation.fields {
-            out.extend_from_slice(self.field(relation, &field.name)?);
-        }
-        Ok(out)
-    }
-
-    fn from_payload(relation: &RelationDescriptor, payload: &[u8]) -> Result<Self> {
-        let expected = relation
-            .fields
-            .iter()
-            .map(|field| field.value_type.encoded_width())
-            .sum::<usize>();
-        if payload.len() != expected {
-            return Err(Error::corrupt("row payload width does not match schema"));
-        }
-
-        let mut offset = 0;
-        let mut fields = BTreeMap::new();
-        for field in &relation.fields {
-            let width = field.value_type.encoded_width();
-            fields.insert(field.name.clone(), payload[offset..offset + width].to_vec());
-            offset += width;
-        }
-
-        Ok(Self { fields })
+    fn bytes(&self) -> &[u8] {
+        &self.bytes
     }
 }
 
@@ -455,114 +407,116 @@ impl WriteTxn<'_> {
     pub fn replace(&mut self, schema: &StorageSchema, row: Row) -> Result<()> {
         let (relation_id, relation) = schema.relation(&row.relation)?;
         validate_row_values(schema.descriptor(), relation, &row)?;
-        let new_encoded = self.encode_row(relation, &row, InternMode::Create)?;
-        let primary = primary_bytes(relation, &new_encoded)?;
-        let row_key = current_row_key(relation_id, &primary);
-        let Some(old_payload) = self.dbs.index.get(&self.txn, row_key.as_slice())? else {
+        let new_encoded = self.encode_row(relation_id, relation, &row, InternMode::Create)?;
+        let Some(old_encoded) = self.find_current_tuple_by_covering_prefix(
+            schema,
+            relation_id,
+            relation,
+            &new_encoded,
+        )?
+        else {
             return Err(Error::not_found(&relation.name));
         };
-        let old_payload = old_payload.to_vec();
-        let old_encoded = EncodedRow::from_payload(relation, &old_payload)?;
 
         self.check_foreign_keys(schema, relation, &new_encoded)?;
-        self.check_unique_constraints(relation_id, relation, &new_encoded, &primary)?;
+        self.check_unique_constraints(
+            relation_id,
+            relation,
+            &new_encoded,
+            Some(old_encoded.bytes()),
+        )?;
 
         self.delete_current_indexes(schema, relation_id, relation, &old_encoded)?;
         self.delete_unique_guards(relation_id, relation, &old_encoded)?;
         self.insert_current_indexes(schema, relation_id, relation, &new_encoded)?;
-        self.insert_unique_guards(relation_id, relation, &new_encoded, &primary)?;
-        self.dbs.index.put(
-            &mut self.txn,
-            row_key.as_slice(),
-            new_encoded.payload(relation)?.as_slice(),
-        )?;
-        crate::failpoints::check(crate::failpoints::Failpoint::AfterCurrentRowPut)?;
+        self.insert_unique_guards(relation_id, relation, &new_encoded)?;
 
-        self.append_history(
-            b'R',
-            relation_id,
-            &primary,
-            Some(&old_payload),
-            Some(&new_encoded.payload(relation)?),
-        )?;
+        self.append_history(b'R', relation_id, Some(&old_encoded), Some(&new_encoded))?;
         self.record_relation_segment_change(schema, relation_id, relation)?;
         Ok(())
     }
 
     /// Deletes an existing primary-keyed row.
     #[tracing::instrument(name = "bumbledb.delete", skip_all)]
-    pub fn delete(&mut self, schema: &StorageSchema, key: KeyValues) -> Result<()> {
-        self.delete_inner(schema, key)
+    pub fn delete(&mut self, schema: &StorageSchema, row: Row) -> Result<()> {
+        self.delete_inner(schema, row)
     }
 
     /// Deletes an existing composite set/edge tuple.
     pub fn delete_tuple(&mut self, schema: &StorageSchema, row: Row) -> Result<()> {
-        let (_, relation) = schema.relation(&row.relation)?;
-        let key_values = covering_unique_fields(relation)?
-            .iter()
-            .map(|field| {
-                row.values
-                    .get(field)
-                    .cloned()
-                    .map(|value| (field.clone(), value))
-                    .ok_or_else(|| Error::missing_field(&relation.name, field))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        self.delete_inner(schema, KeyValues::new(row.relation, key_values))
+        self.delete_inner(schema, row)
     }
 
     fn insert_inner(&mut self, schema: &StorageSchema, row: Row) -> Result<()> {
         let (relation_id, relation) = schema.relation(&row.relation)?;
         validate_row_values(schema.descriptor(), relation, &row)?;
-        let encoded = self.encode_row(relation, &row, InternMode::Create)?;
-        let primary = primary_bytes(relation, &encoded)?;
-        let row_key = current_row_key(relation_id, &primary);
+        let encoded = self.encode_row(relation_id, relation, &row, InternMode::Create)?;
 
-        if self.dbs.index.get(&self.txn, row_key.as_slice())?.is_some() {
+        if self
+            .find_current_tuple_by_covering_prefix(schema, relation_id, relation, &encoded)?
+            .is_some()
+        {
             return Err(Error::duplicate_tuple(&relation.name));
         }
 
         self.check_foreign_keys(schema, relation, &encoded)?;
-        self.check_unique_constraints(relation_id, relation, &encoded, &primary)?;
+        self.check_unique_constraints(relation_id, relation, &encoded, None)?;
 
-        self.dbs.index.put(
-            &mut self.txn,
-            row_key.as_slice(),
-            encoded.payload(relation)?.as_slice(),
-        )?;
-        crate::failpoints::check(crate::failpoints::Failpoint::AfterCurrentRowPut)?;
         self.insert_current_indexes(schema, relation_id, relation, &encoded)?;
-        self.insert_unique_guards(relation_id, relation, &encoded, &primary)?;
+        self.insert_unique_guards(relation_id, relation, &encoded)?;
         adjust_relation_row_count(self, relation_id, 1)?;
-        self.append_history(
-            b'I',
-            relation_id,
-            &primary,
-            None,
-            Some(&encoded.payload(relation)?),
-        )?;
+        self.append_history(b'I', relation_id, None, Some(&encoded))?;
         self.record_relation_segment_change(schema, relation_id, relation)?;
         Ok(())
     }
 
-    fn delete_inner(&mut self, schema: &StorageSchema, key: KeyValues) -> Result<()> {
-        let (relation_id, relation) = schema.relation(&key.relation)?;
-        let primary = self.encode_primary_key(relation, &key.values, InternMode::Existing)?;
-        let row_key = current_row_key(relation_id, &primary);
-        let Some(old_payload) = self.dbs.index.get(&self.txn, row_key.as_slice())? else {
+    fn delete_inner(&mut self, schema: &StorageSchema, row: Row) -> Result<()> {
+        let (relation_id, relation) = schema.relation(&row.relation)?;
+        validate_row_values(schema.descriptor(), relation, &row)?;
+        let old_encoded = self.encode_row(relation_id, relation, &row, InternMode::Existing)?;
+        let covering = schema
+            .covering_layout(&relation.name)
+            .ok_or_else(|| Error::unknown_index(&relation.name, COVERING_ACCESS_NAME))?;
+        let covering_key = current_index_key(covering, relation, &old_encoded)?;
+        if self
+            .dbs
+            .index
+            .get(&self.txn, covering_key.as_slice())?
+            .is_none()
+        {
             return Err(Error::not_found(&relation.name));
         };
-        let old_payload = old_payload.to_vec();
-        let old_encoded = EncodedRow::from_payload(relation, &old_payload)?;
 
         self.check_delete_restrictions(schema, relation, &old_encoded)?;
         self.delete_current_indexes(schema, relation_id, relation, &old_encoded)?;
         self.delete_unique_guards(relation_id, relation, &old_encoded)?;
-        self.dbs.index.delete(&mut self.txn, row_key.as_slice())?;
         adjust_relation_row_count(self, relation_id, -1)?;
-        self.append_history(b'D', relation_id, &primary, Some(&old_payload), None)?;
+        self.append_history(b'D', relation_id, Some(&old_encoded), None)?;
         self.record_relation_segment_change(schema, relation_id, relation)?;
         Ok(())
+    }
+
+    fn find_current_tuple_by_covering_prefix(
+        &self,
+        schema: &StorageSchema,
+        relation_id: u16,
+        relation: &RelationDescriptor,
+        tuple: &EncodedTuple,
+    ) -> Result<Option<EncodedTuple>> {
+        let covering = schema
+            .covering_layout(&relation.name)
+            .ok_or_else(|| Error::unknown_index(&relation.name, COVERING_ACCESS_NAME))?;
+        let mut prefix = current_index_prefix(relation_id, covering.index_id);
+        for field_name in &covering.leading_fields {
+            prefix.extend_from_slice(tuple.field(relation, field_name)?);
+        }
+
+        let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
+        let Some((key, _)) = iter.next().transpose()? else {
+            return Ok(None);
+        };
+        let (encoded, _) = decode_index_key(relation, covering, key)?;
+        Ok(Some(encoded))
     }
 
     fn record_relation_segment_change(
@@ -742,10 +696,11 @@ impl WriteTxn<'_> {
 
     fn encode_row(
         &mut self,
+        relation_id: u16,
         relation: &RelationDescriptor,
         row: &Row,
         mode: InternMode,
-    ) -> Result<EncodedRow> {
+    ) -> Result<EncodedTuple> {
         let known_fields = relation
             .fields
             .iter()
@@ -757,37 +712,18 @@ impl WriteTxn<'_> {
             }
         }
 
-        let mut fields = BTreeMap::new();
+        let mut bytes = Vec::with_capacity(tuple_width(relation));
         for field in &relation.fields {
             let value = row
                 .values
                 .get(&field.name)
                 .ok_or_else(|| Error::missing_field(&relation.name, &field.name))?;
-            fields.insert(
-                field.name.clone(),
-                self.encode_value(relation, field, value, &mode)?,
-            );
+            bytes.extend_from_slice(&self.encode_value(relation, field, value, &mode)?);
         }
-        Ok(EncodedRow { fields })
-    }
-
-    fn encode_primary_key(
-        &mut self,
-        relation: &RelationDescriptor,
-        values: &BTreeMap<String, Value>,
-        mode: InternMode,
-    ) -> Result<Vec<u8>> {
-        let mut out = Vec::new();
-        for field_name in covering_unique_fields(relation)? {
-            let field = relation
-                .field(field_name)
-                .ok_or_else(|| Error::unknown_field(&relation.name, field_name))?;
-            let value = values
-                .get(field_name)
-                .ok_or_else(|| Error::missing_field(&relation.name, field_name))?;
-            out.extend_from_slice(&self.encode_value(relation, field, value, &mode)?);
-        }
-        Ok(out)
+        Ok(EncodedTuple {
+            relation: RelationId(relation_id),
+            bytes,
+        })
     }
 
     fn encode_value(
@@ -809,7 +745,7 @@ impl WriteTxn<'_> {
         &self,
         schema: &StorageSchema,
         relation: &RelationDescriptor,
-        row: &EncodedRow,
+        row: &EncodedTuple,
     ) -> Result<()> {
         for constraint in &relation.constraints {
             let ConstraintDescriptor::ForeignKey {
@@ -849,17 +785,27 @@ impl WriteTxn<'_> {
         &self,
         relation_id: u16,
         relation: &RelationDescriptor,
-        row: &EncodedRow,
-        primary: &[u8],
+        row: &EncodedTuple,
+        allowed_existing: Option<&[u8]>,
     ) -> Result<()> {
         for (constraint_id, constraint) in relation.constraints.iter().enumerate() {
-            let ConstraintDescriptor::Unique { name, fields, .. } = constraint else {
+            let ConstraintDescriptor::Unique {
+                name,
+                fields,
+                covering,
+                ..
+            } = constraint
+            else {
                 continue;
             };
             let key = unique_guard_key(relation_id, constraint_id as u16, relation, row, fields)?;
-            if let Some(existing_primary) = self.dbs.index.get(&self.txn, key.as_slice())?
-                && existing_primary != primary
-            {
+            if let Some(existing_tuple) = self.dbs.index.get(&self.txn, key.as_slice())? {
+                if allowed_existing == Some(existing_tuple) {
+                    continue;
+                }
+                if *covering {
+                    return Err(Error::duplicate_tuple(&relation.name));
+                }
                 return Err(Error::unique_violation(&relation.name, name));
             }
         }
@@ -870,7 +816,7 @@ impl WriteTxn<'_> {
         &self,
         schema: &StorageSchema,
         relation: &RelationDescriptor,
-        row: &EncodedRow,
+        row: &EncodedTuple,
     ) -> Result<()> {
         for (source_relation_id, source_relation) in schema
             .descriptor
@@ -927,7 +873,7 @@ impl WriteTxn<'_> {
         schema: &StorageSchema,
         relation_id: u16,
         relation: &RelationDescriptor,
-        row: &EncodedRow,
+        row: &EncodedTuple,
     ) -> Result<()> {
         for layout in schema.layouts_for_relation(relation_id) {
             tracing::trace!(relation = %relation.name, index = %layout.index_name, "put current index entry");
@@ -944,7 +890,7 @@ impl WriteTxn<'_> {
         schema: &StorageSchema,
         relation_id: u16,
         relation: &RelationDescriptor,
-        row: &EncodedRow,
+        row: &EncodedTuple,
     ) -> Result<()> {
         for layout in schema.layouts_for_relation(relation_id) {
             tracing::trace!(relation = %relation.name, index = %layout.index_name, "delete current index entry");
@@ -959,15 +905,16 @@ impl WriteTxn<'_> {
         &mut self,
         relation_id: u16,
         relation: &RelationDescriptor,
-        row: &EncodedRow,
-        primary: &[u8],
+        row: &EncodedTuple,
     ) -> Result<()> {
         for (constraint_id, constraint) in relation.constraints.iter().enumerate() {
             let ConstraintDescriptor::Unique { fields, .. } = constraint else {
                 continue;
             };
             let key = unique_guard_key(relation_id, constraint_id as u16, relation, row, fields)?;
-            self.dbs.index.put(&mut self.txn, key.as_slice(), primary)?;
+            self.dbs
+                .index
+                .put(&mut self.txn, key.as_slice(), row.bytes())?;
             crate::failpoints::check(crate::failpoints::Failpoint::AfterUniqueGuardPut)?;
         }
         Ok(())
@@ -977,7 +924,7 @@ impl WriteTxn<'_> {
         &mut self,
         relation_id: u16,
         relation: &RelationDescriptor,
-        row: &EncodedRow,
+        row: &EncodedTuple,
     ) -> Result<()> {
         for (constraint_id, constraint) in relation.constraints.iter().enumerate() {
             let ConstraintDescriptor::Unique { fields, .. } = constraint else {
@@ -993,9 +940,8 @@ impl WriteTxn<'_> {
         &mut self,
         op: u8,
         relation_id: u16,
-        primary: &[u8],
-        old: Option<&[u8]>,
-        new: Option<&[u8]>,
+        old: Option<&EncodedTuple>,
+        new: Option<&EncodedTuple>,
     ) -> Result<()> {
         let tx_id = self.ensure_tx_id()?;
         let seq = self.history_seq;
@@ -1011,9 +957,8 @@ impl WriteTxn<'_> {
         let mut value = Vec::new();
         value.push(op);
         push_u16(&mut value, relation_id);
-        push_bytes(&mut value, primary);
-        push_optional_bytes(&mut value, old);
-        push_optional_bytes(&mut value, new);
+        push_optional_bytes(&mut value, old.map(EncodedTuple::bytes));
+        push_optional_bytes(&mut value, new.map(EncodedTuple::bytes));
 
         self.dbs
             .index
@@ -1104,23 +1049,6 @@ fn relation_sort_key(schema: &StorageSchema, relation_name: &str) -> usize {
 }
 
 impl<'env> ReadTxn<'env> {
-    /// Looks up a row by primary key using the authoritative current row store.
-    pub fn get_row(&self, schema: &StorageSchema, key: &KeyValues) -> Result<Option<Row>> {
-        let (relation_id, relation) = schema.relation(&key.relation)?;
-        let primary = self.encode_primary_key_existing(relation, &key.values)?;
-        let row_key = current_row_key(relation_id, &primary);
-        let Some(payload) = self.dbs.index.get(&self.txn, row_key.as_slice())? else {
-            return Ok(None);
-        };
-        let encoded = EncodedRow::from_payload(relation, payload)?;
-        Ok(Some(decode_encoded_row(
-            self.dbs.dict,
-            &self.txn,
-            relation,
-            &encoded,
-        )?))
-    }
-
     /// Scans a whole relation through the primary covering index.
     pub fn scan_relation<'borrow, 'schema>(
         &'borrow self,
@@ -1432,24 +1360,18 @@ impl<'env> ReadTxn<'env> {
         row: &Row,
         index_name: &str,
     ) -> Result<bool> {
-        let (_, relation) = schema.relation(&row.relation)?;
+        let (relation_id, relation) = schema.relation(&row.relation)?;
         let layout = schema.layout(&row.relation, index_name).ok_or_else(|| {
             Error::internal(format!("missing index {}.{index_name}", row.relation))
         })?;
-        let encoded = self.encode_row_existing(relation, row)?;
+        let encoded = self.encode_row_existing(relation_id, relation, row)?;
         let key = current_index_key(layout, relation, &encoded)?;
         Ok(self.dbs.index.get(&self.txn, key.as_slice())?.is_some())
     }
 
-    /// Checks whether a row exists by primary key.
-    pub fn row_exists(&self, schema: &StorageSchema, key: &KeyValues) -> Result<bool> {
-        let (relation_id, relation) = schema.relation(&key.relation)?;
-        let primary = self.encode_primary_key_existing(relation, &key.values)?;
-        Ok(self
-            .dbs
-            .index
-            .get(&self.txn, current_row_key(relation_id, &primary).as_slice())?
-            .is_some())
+    /// Checks whether the exact row exists in the covering access path.
+    pub fn exact_row_exists(&self, schema: &StorageSchema, row: &Row) -> Result<bool> {
+        self.current_index_entry_exists(schema, row, COVERING_ACCESS_NAME)
     }
 
     /// Looks up an interned string ID.
@@ -1554,43 +1476,27 @@ impl<'env> ReadTxn<'env> {
         })
     }
 
-    fn encode_row_existing(&self, relation: &RelationDescriptor, row: &Row) -> Result<EncodedRow> {
-        let mut fields = BTreeMap::new();
+    fn encode_row_existing(
+        &self,
+        relation_id: u16,
+        relation: &RelationDescriptor,
+        row: &Row,
+    ) -> Result<EncodedTuple> {
+        let mut bytes = Vec::with_capacity(tuple_width(relation));
         for field in &relation.fields {
             let value = row
                 .values
                 .get(&field.name)
                 .ok_or_else(|| Error::missing_field(&relation.name, &field.name))?;
-            fields.insert(
-                field.name.clone(),
-                encode_value_with(relation, field, value, |kind, raw| {
-                    lookup_intern_value(&self.dbs.dict, &self.txn, kind, raw)?
-                        .ok_or_else(|| Error::dictionary_value_not_found(dict_kind_name(kind)))
-                })?,
-            );
-        }
-        Ok(EncodedRow { fields })
-    }
-
-    fn encode_primary_key_existing(
-        &self,
-        relation: &RelationDescriptor,
-        values: &BTreeMap<String, Value>,
-    ) -> Result<Vec<u8>> {
-        let mut out = Vec::new();
-        for field_name in covering_unique_fields(relation)? {
-            let field = relation
-                .field(field_name)
-                .ok_or_else(|| Error::unknown_field(&relation.name, field_name))?;
-            let value = values
-                .get(field_name)
-                .ok_or_else(|| Error::missing_field(&relation.name, field_name))?;
-            out.extend_from_slice(&encode_value_with(relation, field, value, |kind, raw| {
+            bytes.extend_from_slice(&encode_value_with(relation, field, value, |kind, raw| {
                 lookup_intern_value(&self.dbs.dict, &self.txn, kind, raw)?
                     .ok_or_else(|| Error::dictionary_value_not_found(dict_kind_name(kind)))
             })?);
         }
-        Ok(out)
+        Ok(EncodedTuple {
+            relation: RelationId(relation_id),
+            bytes,
+        })
     }
 }
 
@@ -1751,10 +1657,10 @@ fn decode_index_scan_item(
 }
 
 fn decode_index_key(
-    _relation: &RelationDescriptor,
+    relation: &RelationDescriptor,
     layout: &CurrentIndexLayout,
     key: &[u8],
-) -> Result<(EncodedRow, Vec<EncodedComponent>)> {
+) -> Result<(EncodedTuple, Vec<EncodedComponent>)> {
     let prefix_len = current_index_prefix(layout.relation_id, layout.index_id).len();
     if key.len() != layout.encoded_len {
         return Err(Error::corrupt("index key width does not match layout"));
@@ -1765,7 +1671,8 @@ fn decode_index_key(
         return Err(Error::corrupt("index key prefix does not match layout"));
     }
 
-    let mut fields = BTreeMap::new();
+    let mut tuple = vec![0; tuple_width(relation)];
+    let mut seen = vec![false; relation.fields.len()];
     let mut components = Vec::with_capacity(layout.components.len());
     let mut offset = prefix_len;
 
@@ -1775,7 +1682,15 @@ fn decode_index_key(
             .get(offset..end)
             .ok_or_else(|| Error::corrupt("index key component is truncated"))?
             .to_vec();
-        fields.insert(component.field_name.clone(), bytes.clone());
+        let (field_id, field_offset, width) =
+            field_layout_with_id(relation, &component.field_name)?;
+        if width != component.encoded_width {
+            return Err(Error::corrupt(
+                "index key component width does not match field",
+            ));
+        }
+        tuple[field_offset..field_offset + width].copy_from_slice(&bytes);
+        seen[field_id] = true;
         components.push(EncodedComponent {
             field_name: component.field_name.clone(),
             bytes,
@@ -1783,7 +1698,17 @@ fn decode_index_key(
         offset = end;
     }
 
-    Ok((EncodedRow { fields }, components))
+    if seen.iter().any(|seen| !seen) {
+        return Err(Error::corrupt("index key does not cover full tuple"));
+    }
+
+    Ok((
+        EncodedTuple {
+            relation: RelationId(layout.relation_id),
+            bytes: tuple,
+        },
+        components,
+    ))
 }
 
 fn encoded_index_item(
@@ -1808,7 +1733,7 @@ fn decode_encoded_row(
     dict: crate::RawDatabase,
     txn: &heed::RoTxn,
     relation: &RelationDescriptor,
-    encoded: &EncodedRow,
+    encoded: &EncodedTuple,
 ) -> Result<Row> {
     let mut values = BTreeMap::new();
     for field in &relation.fields {
@@ -1906,29 +1831,32 @@ fn value_type_name(value_type: &ValueType) -> String {
     }
 }
 
-fn primary_bytes(relation: &RelationDescriptor, row: &EncodedRow) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    for field in covering_unique_fields(relation)? {
-        out.extend_from_slice(row.field(relation, field)?);
-    }
-    Ok(out)
+fn tuple_width(relation: &RelationDescriptor) -> usize {
+    relation
+        .fields
+        .iter()
+        .map(|field| field.value_type.encoded_width())
+        .sum()
 }
 
-fn covering_unique_fields(relation: &RelationDescriptor) -> Result<&[String]> {
-    relation
-        .constraints
-        .iter()
-        .find_map(|constraint| match constraint {
-            ConstraintDescriptor::Unique {
-                fields,
-                covering: true,
-                ..
-            } => Some(fields.as_slice()),
-            ConstraintDescriptor::Unique { .. } | ConstraintDescriptor::ForeignKey { .. } => None,
-        })
-        .ok_or_else(|| {
-            Error::internal(format!("relation {} has no covering unique", relation.name))
-        })
+fn field_layout(relation: &RelationDescriptor, name: &str) -> Result<(usize, usize)> {
+    let (_, offset, width) = field_layout_with_id(relation, name)?;
+    Ok((offset, width))
+}
+
+fn field_layout_with_id(
+    relation: &RelationDescriptor,
+    name: &str,
+) -> Result<(usize, usize, usize)> {
+    let mut offset = 0;
+    for (field_id, field) in relation.fields.iter().enumerate() {
+        let width = field.value_type.encoded_width();
+        if field.name == name {
+            return Ok((field_id, offset, width));
+        }
+        offset += width;
+    }
+    Err(Error::missing_field(&relation.name, name))
 }
 
 fn target_unique_constraint<'a>(
@@ -1955,13 +1883,6 @@ fn target_unique_constraint<'a>(
         })
 }
 
-fn current_row_key(relation_id: u16, primary: &[u8]) -> Vec<u8> {
-    let mut key = vec![NS_CURRENT_ROW];
-    push_u16(&mut key, relation_id);
-    key.extend_from_slice(primary);
-    key
-}
-
 fn current_index_prefix(relation_id: u16, index_id: u16) -> Vec<u8> {
     let mut key = vec![NS_CURRENT_TUPLE];
     push_u16(&mut key, relation_id);
@@ -1972,8 +1893,13 @@ fn current_index_prefix(relation_id: u16, index_id: u16) -> Vec<u8> {
 fn current_index_key(
     layout: &CurrentIndexLayout,
     relation: &RelationDescriptor,
-    row: &EncodedRow,
+    row: &EncodedTuple,
 ) -> Result<Vec<u8>> {
+    if row.relation.0 != layout.relation_id {
+        return Err(Error::corrupt(
+            "encoded tuple relation does not match index layout",
+        ));
+    }
     let mut key = current_index_prefix(layout.relation_id, layout.index_id);
     for component in &layout.components {
         key.extend_from_slice(row.field(relation, &component.field_name)?);
@@ -2065,7 +1991,7 @@ fn unique_guard_key(
     relation_id: u16,
     constraint_id: u16,
     relation: &RelationDescriptor,
-    row: &EncodedRow,
+    row: &EncodedTuple,
     fields: &[String],
 ) -> Result<Vec<u8>> {
     let mut key = vec![NS_UNIQUE_GUARD];
@@ -2311,7 +2237,7 @@ mod tests {
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 1);
             assert_eq!(txn.relation_row_count(&schema, "Holder")?, 1);
-            assert!(txn.row_exists(&schema, &holder_key(1))?);
+            assert!(txn.exact_row_exists(&schema, &holder_row(1, "Alice"))?);
             assert!(txn.dictionary_string_id("Alice")?.is_some());
             Ok::<(), Error>(())
         })?;
@@ -2441,7 +2367,7 @@ mod tests {
         let restricted = env.write(|txn| {
             txn.delete(
                 &schema,
-                KeyValues::new("Parent", [("a", Value::U64(10)), ("b", Value::U64(20))]),
+                Row::new("Parent", [("a", Value::U64(10)), ("b", Value::U64(20))]),
             )
         });
         assert!(matches!(
@@ -2450,10 +2376,20 @@ mod tests {
         ));
 
         env.write(|txn| {
-            txn.delete(&schema, KeyValues::new("Child", [("id", Value::U64(1))]))?;
             txn.delete(
                 &schema,
-                KeyValues::new("Parent", [("a", Value::U64(10)), ("b", Value::U64(20))]),
+                Row::new(
+                    "Child",
+                    [
+                        ("id", Value::U64(1)),
+                        ("parent_a", Value::U64(10)),
+                        ("parent_b", Value::U64(20)),
+                    ],
+                ),
+            )?;
+            txn.delete(
+                &schema,
+                Row::new("Parent", [("a", Value::U64(10)), ("b", Value::U64(20))]),
             )?;
             Ok::<(), Error>(())
         })?;
@@ -2529,15 +2465,15 @@ mod tests {
             Ok::<(), Error>(())
         })?;
 
-        let restricted = env.write(|txn| txn.delete(&schema, holder_key(1)));
+        let restricted = env.write(|txn| txn.delete(&schema, holder_row(1, "Alice")));
         assert!(matches!(
             restricted,
             Err(Error::Constraint(ConstraintError::RestrictViolation { .. }))
         ));
 
         env.write(|txn| {
-            txn.delete(&schema, account_key(1))?;
-            txn.delete(&schema, holder_key(1))?;
+            txn.delete(&schema, account_row(1, 1, 840))?;
+            txn.delete(&schema, holder_row(1, "Alice"))?;
             Ok::<(), Error>(())
         })?;
 
@@ -2546,7 +2482,7 @@ mod tests {
             assert_eq!(txn.history_entry_count()?, 4);
             assert_eq!(txn.relation_row_count(&schema, "Holder")?, 0);
             assert_eq!(txn.relation_row_count(&schema, "Account")?, 0);
-            assert!(!txn.row_exists(&schema, &holder_key(1))?);
+            assert!(!txn.exact_row_exists(&schema, &holder_row(1, "Alice"))?);
             assert_eq!(txn.index_entry_count(&schema, "Account", "by_holder")?, 0);
             Ok::<(), Error>(())
         })?;
@@ -2607,14 +2543,8 @@ mod tests {
         })?;
 
         env.read(|txn| {
-            assert_eq!(
-                txn.get_row(&schema, &holder_key(1))?,
-                Some(holder_row(1, "Alice"))
-            );
-            assert_eq!(
-                txn.get_row(&schema, &account_key(1))?,
-                Some(account_row(1, 1, 840))
-            );
+            assert!(txn.exact_row_exists(&schema, &holder_row(1, "Alice"))?);
+            assert!(txn.exact_row_exists(&schema, &account_row(1, 1, 840))?);
 
             let access_paths = schema.access_paths("Account")?;
             assert!(
@@ -2887,20 +2817,6 @@ mod tests {
                 ("account", Value::Identity(IdentityValue::Serial(account))),
                 ("tag", Value::Enum(tag)),
             ],
-        )
-    }
-
-    fn holder_key(id: u64) -> KeyValues {
-        KeyValues::new(
-            "Holder",
-            [("id", Value::Identity(IdentityValue::Serial(id)))],
-        )
-    }
-
-    fn account_key(id: u64) -> KeyValues {
-        KeyValues::new(
-            "Account",
-            [("id", Value::Identity(IdentityValue::Serial(id)))],
         )
     }
 

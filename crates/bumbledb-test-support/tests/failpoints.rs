@@ -15,7 +15,6 @@ fn failpoints_abort_insert_replace_delete_and_bulk_load() -> Result<(), Box<dyn 
     for failpoint in [
         Failpoint::BeforeDictionaryPut,
         Failpoint::AfterDictionaryPut,
-        Failpoint::AfterCurrentRowPut,
         Failpoint::AfterCurrentIndexPut,
         Failpoint::AfterUniqueGuardPut,
         Failpoint::AfterStatsUpdate,
@@ -57,7 +56,7 @@ fn failpoint_replace_delete_and_bulk_are_atomic() -> Result<(), Box<dyn std::err
     env.bulk_load(&schema, seeded_ledger_rows())?;
     assert_invariants(&env, &schema)?;
 
-    failpoints::set(Failpoint::AfterCurrentRowPut);
+    failpoints::set(Failpoint::AfterCurrentIndexPut);
     assert!(matches!(
         env.write(|txn| txn.replace(&schema, account(1, 1, 999))),
         Err(Error::Test(TestError::InjectedFailpoint { .. }))
@@ -67,7 +66,7 @@ fn failpoint_replace_delete_and_bulk_are_atomic() -> Result<(), Box<dyn std::err
 
     failpoints::set(Failpoint::BeforeCommit);
     assert!(matches!(
-        env.write(|txn| txn.delete(&schema, bumbledb_test_support::rows::account_key(3))),
+        env.write(|txn| txn.delete(&schema, bumbledb_test_support::rows::account(3, 2, 840))),
         Err(Error::Test(TestError::InjectedFailpoint { .. }))
     ));
     failpoints::clear();
