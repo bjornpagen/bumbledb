@@ -759,10 +759,14 @@ fn run_dataset(
     let bumble_load = timed(|| match &dataset.row_source {
         Some(source) => bumble_env.write(|txn| {
             txn.bulk_load_streaming(&bumble_schema, |txn| {
+                let mut inserted = 0;
                 open::stream_rows(source, |row| {
-                    txn.insert(&bumble_schema, row)?;
+                    if txn.insert(&bumble_schema, row)? == bumbledb_lmdb::InsertOutcome::Inserted {
+                        inserted += 1;
+                    }
                     Ok(())
-                })
+                })?;
+                Ok::<usize, Box<dyn std::error::Error>>(inserted)
             })
         }),
         None => bumble_env

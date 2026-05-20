@@ -54,7 +54,10 @@ pub use sorted_trie::{
     EncodedOwned, IndexSpec, LinearIter, SortedTrieIndex, SortedTrieIter, TrieFrame, TrieIter,
     TrieLevel, TrieStats,
 };
-pub use storage::{EncodedComponent, FieldValues, IdentityValue, IndexScan, Row, ScanItem, Value};
+pub use storage::{
+    DeleteOutcome, EncodedComponent, FieldValues, IdentityValue, IndexScan, InsertOutcome, Row,
+    ScanItem, Value,
+};
 pub use storage_schema::{
     AccessPathDescriptor, BulkLoadReport, ColumnSegmentDescriptor, IndexSegmentDescriptor,
     IndexStatsSummary, SegmentDescriptor, StorageSchema,
@@ -646,29 +649,28 @@ mod tests {
     }
 
     #[test]
-    fn bulk_load_failure_is_atomic() -> TestResult {
+    fn bulk_load_duplicate_rows_count_only_inserted() -> TestResult {
         let schema = StorageSchema::new(benchmark_schema(), 511)?;
         let dir = tempfile::tempdir()?;
         let env = Environment::open_with_schema(dir.path(), &schema)?;
         let mut rows = benchmark_rows(2);
+        let distinct = rows.len();
         rows.push(rows[0].clone());
 
-        let result = env.bulk_load(&schema, rows);
-        assert!(matches!(
-            result,
-            Err(Error::Constraint(ConstraintError::DuplicateTuple { .. }))
-        ));
+        let report = env.bulk_load(&schema, rows)?;
+        assert_eq!(report.rows_inserted, distinct);
 
         let diagnostics = env.storage_diagnostics(&schema)?;
-        assert_eq!(diagnostics.storage_tx_id, 0);
-        assert_eq!(diagnostics.dictionary_entries, 0);
+        assert_eq!(diagnostics.storage_tx_id, 1);
         let segments = env.read(|txn| txn.visible_segments(&schema))?;
-        assert!(segments.is_empty());
-        assert!(
+        assert!(!segments.is_empty());
+        assert_eq!(
             diagnostics
                 .relations
                 .iter()
-                .all(|relation| relation.row_count == 0)
+                .map(|relation| relation.row_count)
+                .sum::<u64>(),
+            distinct as u64
         );
         Ok(())
     }
@@ -705,8 +707,8 @@ mod tests {
         let env = Environment::open_with_schema(dir.path(), &schema)?;
         env.bulk_load(&schema, benchmark_rows(4))?;
 
-        let failed = env.bulk_load(&schema, vec![benchmark_rows(1)[0].clone()]);
-        assert!(failed.is_err());
+        let duplicate_report = env.bulk_load(&schema, vec![benchmark_rows(1)[0].clone()])?;
+        assert_eq!(duplicate_report.rows_inserted, 0);
 
         let backup_dir = tempfile::tempdir()?;
         env.backup_to_path(backup_dir.path())?;

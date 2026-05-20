@@ -16,8 +16,6 @@ pub enum Failpoint {
     AfterDictionaryPut,
     /// After writing a current index entry.
     AfterCurrentIndexPut,
-    /// After writing a unique guard.
-    AfterUniqueGuardPut,
     /// After updating stats metadata.
     AfterStatsUpdate,
     /// After appending a history record.
@@ -34,7 +32,6 @@ impl Failpoint {
             Failpoint::BeforeDictionaryPut => "before_dictionary_put",
             Failpoint::AfterDictionaryPut => "after_dictionary_put",
             Failpoint::AfterCurrentIndexPut => "after_current_index_put",
-            Failpoint::AfterUniqueGuardPut => "after_unique_guard_put",
             Failpoint::AfterStatsUpdate => "after_stats_update",
             Failpoint::AfterHistoryAppend => "after_history_append",
             Failpoint::BeforeCommit => "before_commit",

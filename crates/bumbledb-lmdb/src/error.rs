@@ -102,20 +102,6 @@ impl Error {
         .into()
     }
 
-    pub(crate) fn duplicate_tuple(relation: impl Into<String>) -> Self {
-        ConstraintError::DuplicateTuple {
-            relation: relation.into(),
-        }
-        .into()
-    }
-
-    pub(crate) fn not_found(relation: impl Into<String>) -> Self {
-        ConstraintError::NotFound {
-            relation: relation.into(),
-        }
-        .into()
-    }
-
     pub(crate) fn storage_format_mismatch(expected: u32, found: u32) -> Self {
         OpenError::StorageFormatMismatch { expected, found }.into()
     }
@@ -358,14 +344,6 @@ pub enum TransactionError {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ConstraintError {
-    /// Duplicate primary/composite key.
-    #[error("duplicate tuple in relation {relation}")]
-    DuplicateTuple { relation: String },
-
-    /// Tuple not found.
-    #[error("tuple not found in relation {relation}")]
-    NotFound { relation: String },
-
     /// Unique constraint violation.
     #[error("unique constraint {relation}.{constraint} violated")]
     UniqueViolation {

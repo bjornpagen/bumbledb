@@ -5,19 +5,6 @@ use proptest::prelude::*;
 
 use crate::rows::{account, holder, posting};
 
-/// Random test operation.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Operation {
-    /// Insert one row.
-    Insert(Row),
-    /// Replace one row.
-    Replace(Row),
-    /// Delete holder by ID.
-    DeleteHolder(u64),
-    /// Delete account by ID.
-    DeleteAccount(u64),
-}
-
 /// Small valid row batches with FK order preserved.
 pub fn valid_ledger_rows_strategy() -> impl Strategy<Value = Vec<Row>> {
     (1u64..8).prop_map(|count| {

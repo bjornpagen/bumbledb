@@ -1971,11 +1971,15 @@ mod tests {
     }
 
     #[test]
-    fn replace_and_delete_publish_visible_segments() -> TestResult {
+    fn exact_delete_and_insert_publish_visible_segments() -> TestResult {
         let (env, schema) = seeded_env()?;
 
         env.write(|txn| {
-            txn.replace(
+            txn.delete(
+                &schema,
+                account_row(2, 978, false, vec![4, 5, 6], "Cash EUR"),
+            )?;
+            txn.insert(
                 &schema,
                 account_row(2, 826, true, vec![9, 9, 9], "Cash GBP"),
             )?;

@@ -22,7 +22,7 @@ pub(crate) const COVERING_ACCESS_NAME: &str = "covering";
 /// Bulk ETL load report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BulkLoadReport {
-    /// Number of logical rows inserted.
+    /// Number of rows newly inserted; exact duplicates are not counted.
     pub rows_inserted: usize,
     /// Storage transaction ID after the bulk load committed.
     pub storage_tx_id: u64,

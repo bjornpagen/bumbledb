@@ -7,8 +7,7 @@ use bumbledb_test_support::rows::{account, holder, posting, seeded_ledger_rows};
 use bumbledb_test_support::schemas::ledger_schema;
 
 #[test]
-fn failpoints_abort_insert_replace_delete_and_bulk_load() -> Result<(), Box<dyn std::error::Error>>
-{
+fn failpoints_abort_insert_delete_and_bulk_load() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = lock()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -16,14 +15,13 @@ fn failpoints_abort_insert_replace_delete_and_bulk_load() -> Result<(), Box<dyn 
         Failpoint::BeforeDictionaryPut,
         Failpoint::AfterDictionaryPut,
         Failpoint::AfterCurrentIndexPut,
-        Failpoint::AfterUniqueGuardPut,
         Failpoint::AfterStatsUpdate,
         Failpoint::AfterHistoryAppend,
         Failpoint::BeforeCommit,
     ] {
         failpoint_insert_is_atomic(failpoint)?;
     }
-    failpoint_replace_delete_and_bulk_are_atomic()?;
+    failpoint_delete_and_bulk_are_atomic()?;
     Ok(())
 }
 
@@ -49,19 +47,11 @@ fn failpoint_insert_is_atomic(failpoint: Failpoint) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-fn failpoint_replace_delete_and_bulk_are_atomic() -> Result<(), Box<dyn std::error::Error>> {
+fn failpoint_delete_and_bulk_are_atomic() -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(ledger_schema(), env.max_key_size())?;
     env.bulk_load(&schema, seeded_ledger_rows())?;
-    assert_invariants(&env, &schema)?;
-
-    failpoints::set(Failpoint::AfterCurrentIndexPut);
-    assert!(matches!(
-        env.write(|txn| txn.replace(&schema, account(1, 1, 999))),
-        Err(Error::Test(TestError::InjectedFailpoint { .. }))
-    ));
-    failpoints::clear();
     assert_invariants(&env, &schema)?;
 
     failpoints::set(Failpoint::BeforeCommit);
