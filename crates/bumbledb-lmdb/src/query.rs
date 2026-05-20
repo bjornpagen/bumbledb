@@ -488,6 +488,15 @@ impl QueryPlan {
                 direct.kind, direct.target, direct.steps
             ));
         }
+        if self.runtime_kind == QueryRuntimeKind::StaticEmpty {
+            out.push_str(&format!(
+                "static_empty cache_hits={} cache_misses={} atoms_checked={} rows_scanned={}\n",
+                self.counters.static_empty_cache_hits,
+                self.counters.static_empty_cache_misses,
+                self.counters.static_empty_atoms_checked,
+                self.counters.static_empty_rows_scanned,
+            ));
+        }
         out.push_str("free_join_plan:\n");
         for node in &self.free_join.nodes {
             out.push_str(&format!(
@@ -9622,10 +9631,57 @@ mod tests {
         assert!(second.rows.is_empty());
         assert_eq!(first.plan.counters.static_empty_cache_misses, 1);
         assert_eq!(second.plan.counters.static_empty_cache_hits, 1);
+        assert!(second.plan.free_join.nodes.is_empty());
+        assert!(second.explain().contains("static_empty cache_hits=1"));
         assert_eq!(second.plan.timings.validate_inputs_micros, 0);
         assert_eq!(second.plan.timings.normalize_micros, 0);
         assert_eq!(second.plan.timings.encode_inputs_micros, 0);
         assert_eq!(second.plan.timings.query_image_micros, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn direct_count_plan_has_no_free_join_nodes() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
+        env.write(|txn| {
+            txn.insert(&schema, edge_ab_row(1, 10))?;
+            txn.insert(&schema, edge_ab_row(1, 11))?;
+            txn.insert(
+                &schema,
+                Row::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(20))]),
+            )?;
+            txn.insert(
+                &schema,
+                Row::new("EdgeAC", [("a", Value::U64(2)), ("c", Value::U64(30))]),
+            )?;
+            Ok::<_, Error>(())
+        })?;
+        let query = parse_and_typecheck(
+            schema.descriptor(),
+            r#"
+            find count(?a)
+            where
+              EdgeAB(a: ?a, b: ?b)
+              EdgeAC(a: ?a, c: ?c)
+            "#,
+        )?;
+        let prepared = env.prepare_query(&schema, &query)?;
+
+        let output =
+            env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
+
+        assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
+        assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
+        assert_eq!(output.plan.plan_family, PlanFamily::Direct);
+        assert!(output.plan.free_join.nodes.is_empty());
+        assert_eq!(output.plan.optimizer.chosen, "direct_count");
+        assert!(
+            output
+                .explain()
+                .contains("direct_kernel kind=CountOnly target=factorized_count")
+        );
         Ok(())
     }
 
