@@ -521,7 +521,7 @@ fn write_u32(db: &RawDatabase, txn: &mut RwTxn, key: &[u8], value: u32) -> Resul
 mod tests {
     use super::*;
     use crate::benchmark::{benchmark_queries, benchmark_rows, benchmark_schema};
-    use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, RelationKind, ValueType};
+    use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, ValueType};
 
     const MARKER_KEY: &[u8] = b"test_marker";
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -777,19 +777,20 @@ mod tests {
 
     fn changed_schema() -> bumbledb_core::schema::SchemaDescriptor {
         let mut schema = benchmark_schema();
-        schema.relations.push(RelationDescriptor::new(
-            "Extra",
-            RelationKind::Entity,
-            vec![FieldDescriptor::new(
-                "id",
-                ValueType::Identity {
-                    type_name: "ExtraId".to_owned(),
-                    owning_relation: "Extra".to_owned(),
-                    allocation: bumbledb_core::schema::IdentityAllocation::Serial,
-                },
-            )],
-            bumbledb_core::schema::PrimaryKeyDescriptor::new(["id"]),
-        ));
+        schema.relations.push(
+            RelationDescriptor::new(
+                "Extra",
+                vec![FieldDescriptor::new(
+                    "id",
+                    ValueType::Identity {
+                        type_name: "ExtraId".to_owned(),
+                        owning_relation: "Extra".to_owned(),
+                        allocation: bumbledb_core::schema::IdentityAllocation::Serial,
+                    },
+                )],
+            )
+            .with_covering_unique("id", ["id"]),
+        );
         schema
     }
 }

@@ -537,8 +537,7 @@ fn type_name(value_type: &ValueType) -> String {
 mod tests {
     use super::*;
     use crate::schema::{
-        EnumDescriptor, FieldDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
-        SchemaDescriptor,
+        ConstraintDescriptor, EnumDescriptor, FieldDescriptor, RelationDescriptor, SchemaDescriptor,
     };
 
     #[test]
@@ -707,16 +706,14 @@ mod tests {
             vec![
                 RelationDescriptor::new(
                     "Holder",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("id", id_type("HolderId", "Holder")),
                         FieldDescriptor::new("name", ValueType::String),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "Account",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("id", id_type("AccountId", "Account")),
                         FieldDescriptor::new("holder", id_type("HolderId", "Holder")),
@@ -727,19 +724,30 @@ mod tests {
                             },
                         ),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "holder",
+                    ["holder"],
+                    "Holder",
+                    "id",
+                )),
                 RelationDescriptor::new(
                     "Posting",
-                    RelationKind::Event,
                     vec![
                         FieldDescriptor::new("id", id_type("PostingId", "Posting")),
                         FieldDescriptor::new("account", id_type("AccountId", "Account")),
                         FieldDescriptor::new("amount", ValueType::Decimal { scale: 2 }),
                         FieldDescriptor::new("at", ValueType::TimestampMicros),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "account",
+                    ["account"],
+                    "Account",
+                    "id",
+                )),
             ],
         )
         .with_enum(EnumDescriptor::codes("Currency", [840, 978]))

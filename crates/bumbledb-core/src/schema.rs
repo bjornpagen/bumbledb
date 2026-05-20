@@ -35,26 +35,6 @@ pub enum SchemaError {
     #[error("relation {relation} references unknown field {field}")]
     UnknownField { relation: String, field: String },
 
-    /// A primary key had no fields.
-    #[error("relation {relation} primary key must not be empty")]
-    EmptyPrimaryKey { relation: String },
-
-    /// A primary key declared the same field more than once.
-    #[error("relation {relation} primary key declares duplicate field {field}")]
-    DuplicatePrimaryKeyField { relation: String, field: String },
-
-    /// Generated ID metadata was invalid.
-    #[error("invalid generated id for {relation}.{field}: {reason}")]
-    InvalidGeneratedId {
-        relation: String,
-        field: String,
-        reason: String,
-    },
-
-    /// A relation kind was used with an invalid schema shape.
-    #[error("invalid relation kind for {relation}: {reason}")]
-    InvalidRelationKind { relation: String, reason: String },
-
     /// An enum domain name was empty.
     #[error("enum name must not be empty")]
     EmptyEnumName,
@@ -83,25 +63,6 @@ pub enum SchemaError {
         enum_name: String,
     },
 
-    /// A foreign-key reference named an unknown target relation.
-    #[error("relation {relation}.{field} references unknown target relation {target_relation}")]
-    UnknownRefTarget {
-        relation: String,
-        field: String,
-        target_relation: String,
-    },
-
-    /// A foreign-key reference did not match its target primary-key type.
-    #[error(
-        "relation {relation}.{field} reference type is incompatible with {target_relation}.{target_field}"
-    )]
-    RefTypeMismatch {
-        relation: String,
-        field: String,
-        target_relation: String,
-        target_field: String,
-    },
-
     /// A constraint name was empty.
     #[error("constraint name must not be empty in relation {relation}")]
     EmptyConstraintName { relation: String },
@@ -119,6 +80,52 @@ pub enum SchemaError {
         relation: String,
         constraint: String,
         reason: String,
+    },
+
+    /// A relation did not declare one covering unique constraint.
+    #[error("relation {relation} must declare exactly one covering unique constraint")]
+    MissingCoveringConstraint { relation: String },
+
+    /// A relation declared more than one covering unique constraint.
+    #[error("relation {relation} declares multiple covering unique constraints: {constraints:?}")]
+    MultipleCoveringConstraints {
+        relation: String,
+        constraints: Vec<String>,
+    },
+
+    /// A foreign-key constraint targeted an unknown named constraint.
+    #[error(
+        "constraint {relation}.{constraint} targets unknown constraint {target_relation}.{target_constraint}"
+    )]
+    UnknownTargetConstraint {
+        relation: String,
+        constraint: String,
+        target_relation: String,
+        target_constraint: String,
+    },
+
+    /// A foreign-key constraint did not target a unique constraint.
+    #[error(
+        "constraint {relation}.{constraint} targets non-unique constraint {target_relation}.{target_constraint}"
+    )]
+    ForeignKeyTargetNotUnique {
+        relation: String,
+        constraint: String,
+        target_relation: String,
+        target_constraint: String,
+    },
+
+    /// A foreign-key source field type did not match its target field type.
+    #[error(
+        "constraint {relation}.{constraint} field {source_field} type {source_type} is incompatible with {target_field} type {target_type}"
+    )]
+    ForeignKeyTypeMismatch {
+        relation: String,
+        constraint: String,
+        source_field: String,
+        target_field: String,
+        source_type: String,
+        target_type: String,
     },
 
     /// An explicit index name was empty.
@@ -183,16 +190,6 @@ impl SchemaDescriptor {
     /// Adds a closed enum domain.
     pub fn with_enum(mut self, enum_descriptor: EnumDescriptor) -> Self {
         self.enums.push(enum_descriptor);
-        self
-    }
-
-    /// Adds explicit single-field FK constraints for cross-relation identity fields.
-    pub fn with_ref_foreign_keys(mut self) -> Self {
-        self.relations = self
-            .relations
-            .into_iter()
-            .map(RelationDescriptor::with_ref_foreign_keys)
-            .collect();
         self
     }
 
@@ -291,7 +288,7 @@ impl SchemaDescriptor {
 
     fn canonical_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        push_str(&mut out, "bumbledb.schema.v1");
+        push_str(&mut out, "bumbledb.schema.v2");
         push_str(&mut out, &self.name);
         push_u32(&mut out, self.enums.len() as u32);
         for enum_descriptor in &self.enums {
@@ -344,11 +341,8 @@ impl SchemaDescriptor {
             self.validate_field_type(relation, field)?;
         }
 
-        self.validate_primary_key(relation)?;
-        self.validate_generated_id(relation)?;
         self.validate_constraints(relation)?;
         self.validate_indexes(relation)?;
-        self.validate_relation_kind(relation)?;
 
         Ok(())
     }
@@ -370,95 +364,10 @@ impl SchemaDescriptor {
         Ok(())
     }
 
-    fn validate_primary_key(&self, relation: &RelationDescriptor) -> Result<()> {
-        if relation.primary_key.fields.is_empty() {
-            return Err(SchemaError::EmptyPrimaryKey {
-                relation: relation.name.clone(),
-            });
-        }
-        let mut seen = BTreeSet::new();
-        for field_name in &relation.primary_key.fields {
-            let field = relation
-                .field(field_name)
-                .ok_or_else(|| SchemaError::UnknownField {
-                    relation: relation.name.clone(),
-                    field: field_name.clone(),
-                })?;
-            if !seen.insert(field_name.clone()) {
-                return Err(SchemaError::DuplicatePrimaryKeyField {
-                    relation: relation.name.clone(),
-                    field: field_name.clone(),
-                });
-            }
-            if !field.value_type.is_key_eligible() {
-                return Err(SchemaError::InvalidIndex {
-                    relation: relation.name.clone(),
-                    index: "primary".to_owned(),
-                    reason: format!("field {field_name} is not key-eligible"),
-                });
-            }
-        }
-        Ok(())
-    }
-
-    fn validate_generated_id(&self, relation: &RelationDescriptor) -> Result<()> {
-        let Some(generated_id) = &relation.generated_id else {
-            return Ok(());
-        };
-        let field =
-            relation
-                .field(&generated_id.field)
-                .ok_or_else(|| SchemaError::InvalidGeneratedId {
-                    relation: relation.name.clone(),
-                    field: generated_id.field.clone(),
-                    reason: "field does not exist".to_owned(),
-                })?;
-        if relation.primary_key.fields.len() != 1
-            || relation.primary_key.fields.first() != Some(&generated_id.field)
-        {
-            return Err(SchemaError::InvalidGeneratedId {
-                relation: relation.name.clone(),
-                field: generated_id.field.clone(),
-                reason: "generated IDs require a single-field primary key on the generated field"
-                    .to_owned(),
-            });
-        }
-        match &field.value_type {
-            ValueType::Identity {
-                owning_relation: target,
-                allocation: IdentityAllocation::Serial,
-                ..
-            } if target == &relation.name => Ok(()),
-            ValueType::Identity { .. } => Err(SchemaError::InvalidGeneratedId {
-                relation: relation.name.clone(),
-                field: generated_id.field.clone(),
-                reason:
-                    "generated ID field must use a serial identity type for its owning relation"
-                        .to_owned(),
-            }),
-            _ => Err(SchemaError::InvalidGeneratedId {
-                relation: relation.name.clone(),
-                field: generated_id.field.clone(),
-                reason: "generated ID field must have an identity type".to_owned(),
-            }),
-        }
-    }
-
-    fn validate_relation_kind(&self, relation: &RelationDescriptor) -> Result<()> {
-        if matches!(relation.kind, RelationKind::Edge | RelationKind::Set)
-            && relation.generated_id.is_some()
-        {
-            return Err(SchemaError::InvalidRelationKind {
-                relation: relation.name.clone(),
-                reason: "edge and set relations must not use generated IDs".to_owned(),
-            });
-        }
-        Ok(())
-    }
-
     fn validate_constraints(&self, relation: &RelationDescriptor) -> Result<()> {
         let mut names = BTreeSet::new();
         let mut unique_field_sets = BTreeSet::new();
+        let mut covering_constraints = Vec::new();
         for constraint in &relation.constraints {
             let constraint_name = constraint.name();
             if constraint_name.is_empty() {
@@ -473,7 +382,14 @@ impl SchemaDescriptor {
                 });
             }
             match constraint {
-                ConstraintDescriptor::Unique { name, fields } => {
+                ConstraintDescriptor::Unique {
+                    name,
+                    fields,
+                    covering,
+                } => {
+                    if *covering {
+                        covering_constraints.push(name.clone());
+                    }
                     if fields.is_empty() {
                         return Err(SchemaError::InvalidConstraint {
                             relation: relation.name.clone(),
@@ -516,7 +432,7 @@ impl SchemaDescriptor {
                     name,
                     fields,
                     target_relation,
-                    target_fields,
+                    target_constraint,
                     on_delete,
                     on_update,
                 } => {
@@ -534,19 +450,21 @@ impl SchemaDescriptor {
                         name,
                         fields,
                         target_relation,
-                        target_fields,
+                        target_constraint,
                     )?;
-                }
-                ConstraintDescriptor::Check { name } => {
-                    return Err(SchemaError::InvalidConstraint {
-                        relation: relation.name.clone(),
-                        constraint: name.clone(),
-                        reason: "check constraints are reserved but not implemented".to_owned(),
-                    });
                 }
             }
         }
-        Ok(())
+        match covering_constraints.as_slice() {
+            [_] => Ok(()),
+            [] => Err(SchemaError::MissingCoveringConstraint {
+                relation: relation.name.clone(),
+            }),
+            _ => Err(SchemaError::MultipleCoveringConstraints {
+                relation: relation.name.clone(),
+                constraints: covering_constraints,
+            }),
+        }
     }
 
     fn validate_foreign_key_constraint(
@@ -555,20 +473,13 @@ impl SchemaDescriptor {
         name: &str,
         fields: &[String],
         target_relation: &str,
-        target_fields: &[String],
+        target_constraint: &str,
     ) -> Result<()> {
         if fields.is_empty() {
             return Err(SchemaError::InvalidConstraint {
                 relation: relation.name.clone(),
                 constraint: name.to_owned(),
                 reason: "foreign-key field list must not be empty".to_owned(),
-            });
-        }
-        if fields.len() != target_fields.len() {
-            return Err(SchemaError::InvalidConstraint {
-                relation: relation.name.clone(),
-                constraint: name.to_owned(),
-                reason: "foreign-key source and target field counts must match".to_owned(),
             });
         }
         let target = self
@@ -580,11 +491,33 @@ impl SchemaDescriptor {
                 constraint: name.to_owned(),
                 reason: format!("unknown target relation {target_relation}"),
             })?;
-        if target.primary_key.fields.as_slice() != target_fields {
+        let target_unique = target
+            .constraints
+            .iter()
+            .find(|constraint| constraint.name() == target_constraint)
+            .ok_or_else(|| SchemaError::UnknownTargetConstraint {
+                relation: relation.name.clone(),
+                constraint: name.to_owned(),
+                target_relation: target_relation.to_owned(),
+                target_constraint: target_constraint.to_owned(),
+            })?;
+        let ConstraintDescriptor::Unique {
+            fields: target_fields,
+            ..
+        } = target_unique
+        else {
+            return Err(SchemaError::ForeignKeyTargetNotUnique {
+                relation: relation.name.clone(),
+                constraint: name.to_owned(),
+                target_relation: target_relation.to_owned(),
+                target_constraint: target_constraint.to_owned(),
+            });
+        };
+        if fields.len() != target_fields.len() {
             return Err(SchemaError::InvalidConstraint {
                 relation: relation.name.clone(),
                 constraint: name.to_owned(),
-                reason: "foreign keys must target the target primary key".to_owned(),
+                reason: "foreign-key source and target field counts must match".to_owned(),
             });
         }
 
@@ -620,12 +553,13 @@ impl SchemaDescriptor {
                         field: target_field_name.clone(),
                     })?;
             if !foreign_key_types_compatible(&source_field.value_type, &target_field.value_type) {
-                return Err(SchemaError::InvalidConstraint {
+                return Err(SchemaError::ForeignKeyTypeMismatch {
                     relation: relation.name.clone(),
                     constraint: name.to_owned(),
-                    reason: format!(
-                        "field {source_field_name} is incompatible with {target_relation}.{target_field_name}"
-                    ),
+                    source_field: source_field_name.clone(),
+                    target_field: format!("{target_relation}.{target_field_name}"),
+                    source_type: source_field.value_type.to_string(),
+                    target_type: target_field.value_type.to_string(),
                 });
             }
         }
@@ -821,14 +755,8 @@ impl EnumVariantDescriptor {
 pub struct RelationDescriptor {
     /// Relation name.
     pub name: String,
-    /// Relation kind.
-    pub kind: RelationKind,
     /// Fields in declaration order.
     pub fields: Vec<FieldDescriptor>,
-    /// Primary identity fields.
-    pub primary_key: PrimaryKeyDescriptor,
-    /// Generated ID metadata for entity/event relations.
-    pub generated_id: Option<GeneratedIdDescriptor>,
     /// Explicit constraints.
     pub constraints: Vec<ConstraintDescriptor>,
     /// Explicit physical indexes.
@@ -837,27 +765,13 @@ pub struct RelationDescriptor {
 
 impl RelationDescriptor {
     /// Creates a new relation descriptor.
-    pub fn new(
-        name: impl Into<String>,
-        kind: RelationKind,
-        fields: Vec<FieldDescriptor>,
-        primary_key: PrimaryKeyDescriptor,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, fields: Vec<FieldDescriptor>) -> Self {
         Self {
             name: name.into(),
-            kind,
             fields,
-            primary_key,
-            generated_id: None,
             constraints: Vec::new(),
             indexes: Vec::new(),
         }
-    }
-
-    /// Adds generated ID metadata.
-    pub fn with_generated_id(mut self, generated_id: GeneratedIdDescriptor) -> Self {
-        self.generated_id = Some(generated_id);
-        self
     }
 
     /// Adds an explicit constraint.
@@ -866,31 +780,20 @@ impl RelationDescriptor {
         self
     }
 
-    /// Adds an explicit physical index.
-    pub fn with_index(mut self, index: IndexDescriptor) -> Self {
-        self.indexes.push(index);
+    /// Adds the relation's single covering unique constraint.
+    pub fn with_covering_unique(
+        mut self,
+        name: impl Into<String>,
+        fields: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.constraints
+            .push(ConstraintDescriptor::unique_covering(name, fields));
         self
     }
 
-    /// Adds one explicit foreign-key constraint for each identity field owned by another relation.
-    pub fn with_ref_foreign_keys(mut self) -> Self {
-        for field in &self.fields {
-            let ValueType::Identity {
-                owning_relation, ..
-            } = &field.value_type
-            else {
-                continue;
-            };
-            if owning_relation == &self.name {
-                continue;
-            }
-            self.constraints.push(ConstraintDescriptor::foreign_key(
-                format!("ref_{}", field.name),
-                [field.name.clone()],
-                owning_relation.clone(),
-                ["id".to_owned()],
-            ));
-        }
+    /// Adds an explicit physical index.
+    pub fn with_index(mut self, index: IndexDescriptor) -> Self {
+        self.indexes.push(index);
         self
     }
 
@@ -903,7 +806,7 @@ impl RelationDescriptor {
         let mut candidates = vec![IndexCandidate {
             name: "primary".to_owned(),
             kind: IndexKind::Primary,
-            fields: self.primary_key.fields.clone(),
+            fields: self.covering_unique_fields().unwrap_or_default().to_vec(),
         }];
 
         let mut seen = BTreeSet::new();
@@ -924,7 +827,7 @@ impl RelationDescriptor {
 
         for constraint in &self.constraints {
             match constraint {
-                ConstraintDescriptor::Unique { name, fields } => {
+                ConstraintDescriptor::Unique { name, fields, .. } => {
                     if seen.insert(fields.clone()) {
                         candidates.push(IndexCandidate {
                             name: format!("unique_{name}"),
@@ -940,7 +843,6 @@ impl RelationDescriptor {
                         fields: fields.clone(),
                     });
                 }
-                ConstraintDescriptor::Check { .. } => {}
             }
         }
 
@@ -998,7 +900,7 @@ impl RelationDescriptor {
             | IndexKind::Range
             | IndexKind::Equality
             | IndexKind::Permutation => {
-                for field_name in &self.primary_key.fields {
+                for field_name in self.covering_unique_fields().unwrap_or(&[]) {
                     let field =
                         self.field(field_name)
                             .ok_or_else(|| SchemaError::UnknownField {
@@ -1015,6 +917,21 @@ impl RelationDescriptor {
         Ok(components)
     }
 
+    fn covering_unique_fields(&self) -> Option<&[String]> {
+        self.constraints
+            .iter()
+            .find_map(|constraint| match constraint {
+                ConstraintDescriptor::Unique {
+                    fields,
+                    covering: true,
+                    ..
+                } => Some(fields.as_slice()),
+                ConstraintDescriptor::Unique { .. } | ConstraintDescriptor::ForeignKey { .. } => {
+                    None
+                }
+            })
+    }
+
     fn index_covers_full_row(&self, components: &[IndexComponent]) -> bool {
         let names = components
             .iter()
@@ -1027,21 +944,10 @@ impl RelationDescriptor {
 
     fn push_canonical(&self, out: &mut Vec<u8>) {
         push_str(out, &self.name);
-        push_u8(out, self.kind as u8);
 
         push_u32(out, self.fields.len() as u32);
         for field in &self.fields {
             field.push_canonical(out);
-        }
-
-        self.primary_key.push_canonical(out);
-
-        match &self.generated_id {
-            Some(generated_id) => {
-                push_u8(out, 1);
-                generated_id.push_canonical(out);
-            }
-            None => push_u8(out, 0),
         }
 
         push_u32(out, self.constraints.len() as u32);
@@ -1054,19 +960,6 @@ impl RelationDescriptor {
             index.push_canonical(out);
         }
     }
-}
-
-/// Relation role.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RelationKind {
-    /// Entity relation with generated or application-provided identity.
-    Entity = 1,
-    /// Event relation with generated or application-provided identity.
-    Event = 2,
-    /// Edge relation, usually composite-keyed.
-    Edge = 3,
-    /// Pure set relation, usually composite-keyed.
-    Set = 4,
 }
 
 /// Field descriptor.
@@ -1240,43 +1133,9 @@ impl IdentityAllocation {
     }
 }
 
-/// Primary key descriptor.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrimaryKeyDescriptor {
-    /// Primary key fields in key order.
-    pub fields: Vec<String>,
-}
-
-impl PrimaryKeyDescriptor {
-    /// Creates a primary key descriptor.
-    pub fn new(fields: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        Self {
-            fields: fields.into_iter().map(Into::into).collect(),
-        }
-    }
-
-    fn push_canonical(&self, out: &mut Vec<u8>) {
-        push_string_list(out, &self.fields);
-    }
-}
-
-/// Generated ID metadata.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GeneratedIdDescriptor {
-    /// Field receiving generated IDs.
-    pub field: String,
-}
-
-impl GeneratedIdDescriptor {
-    /// Creates generated ID metadata for `field`.
-    pub fn new(field: impl Into<String>) -> Self {
-        Self {
-            field: field.into(),
-        }
-    }
-
-    fn push_canonical(&self, out: &mut Vec<u8>) {
-        push_str(out, &self.field);
+impl fmt::Display for ValueType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
     }
 }
 
@@ -1284,18 +1143,20 @@ impl GeneratedIdDescriptor {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConstraintDescriptor {
     /// Unique key constraint.
-    Unique { name: String, fields: Vec<String> },
+    Unique {
+        name: String,
+        fields: Vec<String>,
+        covering: bool,
+    },
     /// Foreign key constraint.
     ForeignKey {
         name: String,
         fields: Vec<String>,
         target_relation: String,
-        target_fields: Vec<String>,
+        target_constraint: String,
         on_delete: ForeignKeyAction,
         on_update: ForeignKeyAction,
     },
-    /// Reserved check constraint descriptor.
-    Check { name: String },
 }
 
 /// Foreign-key referential action.
@@ -1314,51 +1175,63 @@ impl ConstraintDescriptor {
         Self::Unique {
             name: name.into(),
             fields: fields.into_iter().map(Into::into).collect(),
+            covering: false,
         }
     }
 
-    /// Creates a foreign-key constraint targeting explicit fields.
+    /// Creates a covering unique constraint.
+    pub fn unique_covering(
+        name: impl Into<String>,
+        fields: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self::Unique {
+            name: name.into(),
+            fields: fields.into_iter().map(Into::into).collect(),
+            covering: true,
+        }
+    }
+
+    /// Creates a foreign-key constraint targeting a named unique constraint.
     pub fn foreign_key(
         name: impl Into<String>,
         fields: impl IntoIterator<Item = impl Into<String>>,
         target_relation: impl Into<String>,
-        target_fields: impl IntoIterator<Item = impl Into<String>>,
+        target_constraint: impl Into<String>,
     ) -> Self {
         Self::ForeignKey {
             name: name.into(),
             fields: fields.into_iter().map(Into::into).collect(),
             target_relation: target_relation.into(),
-            target_fields: target_fields.into_iter().map(Into::into).collect(),
+            target_constraint: target_constraint.into(),
             on_delete: ForeignKeyAction::Restrict,
             on_update: ForeignKeyAction::Restrict,
         }
     }
 
-    /// Creates a reserved check constraint descriptor.
-    pub fn check(name: impl Into<String>) -> Self {
-        Self::Check { name: name.into() }
-    }
-
     fn name(&self) -> &str {
         match self {
             ConstraintDescriptor::Unique { name, .. }
-            | ConstraintDescriptor::ForeignKey { name, .. }
-            | ConstraintDescriptor::Check { name } => name,
+            | ConstraintDescriptor::ForeignKey { name, .. } => name,
         }
     }
 
     fn push_canonical(&self, out: &mut Vec<u8>) {
         match self {
-            ConstraintDescriptor::Unique { name, fields } => {
+            ConstraintDescriptor::Unique {
+                name,
+                fields,
+                covering,
+            } => {
                 push_u8(out, 1);
                 push_str(out, name);
                 push_string_list(out, fields);
+                push_u8(out, u8::from(*covering));
             }
             ConstraintDescriptor::ForeignKey {
                 name,
                 fields,
                 target_relation,
-                target_fields,
+                target_constraint,
                 on_delete,
                 on_update,
             } => {
@@ -1366,13 +1239,9 @@ impl ConstraintDescriptor {
                 push_str(out, name);
                 push_string_list(out, fields);
                 push_str(out, target_relation);
-                push_string_list(out, target_fields);
+                push_str(out, target_constraint);
                 on_delete.push_canonical(out);
                 on_update.push_canonical(out);
-            }
-            ConstraintDescriptor::Check { name } => {
-                push_u8(out, 3);
-                push_str(out, name);
             }
         }
     }
@@ -1557,7 +1426,6 @@ fn generated_index_names(relation: &RelationDescriptor) -> BTreeSet<String> {
             ConstraintDescriptor::ForeignKey { name, .. } => {
                 names.insert(format!("by_fk_{name}"));
             }
-            ConstraintDescriptor::Check { .. } => {}
         }
     }
     names
@@ -1693,14 +1561,15 @@ mod tests {
     fn rejects_oversized_index_layouts() {
         let schema = SchemaDescriptor::new(
             "TooWide",
-            vec![RelationDescriptor::new(
-                "Wide",
-                RelationKind::Entity,
-                (0..80)
-                    .map(|index| FieldDescriptor::new(format!("f{index}"), ValueType::Uuid))
-                    .collect(),
-                PrimaryKeyDescriptor::new(["f0"]),
-            )],
+            vec![
+                RelationDescriptor::new(
+                    "Wide",
+                    (0..80)
+                        .map(|index| FieldDescriptor::new(format!("f{index}"), ValueType::Uuid))
+                        .collect(),
+                )
+                .with_covering_unique("id", ["f0"]),
+            ],
         );
 
         assert!(matches!(
@@ -1716,7 +1585,6 @@ mod tests {
             vec![
                 RelationDescriptor::new(
                     "Account",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("id", identity("AccountId", "Account")),
                         FieldDescriptor::new(
@@ -1726,8 +1594,8 @@ mod tests {
                             },
                         ),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
+                .with_covering_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality(
                     "bad_currency",
                     ["currency", "currency"],
@@ -1768,32 +1636,32 @@ mod tests {
     }
 
     #[test]
-    fn validation_rejects_empty_primary_key() {
+    fn validation_rejects_missing_covering_unique() {
         let mut schema = valid_schema();
-        schema.relations[0].primary_key.fields.clear();
+        schema.relations[0].constraints.retain(|constraint| {
+            !matches!(
+                constraint,
+                ConstraintDescriptor::Unique { covering: true, .. }
+            )
+        });
         assert!(matches!(
             schema.validate(),
-            Err(SchemaError::EmptyPrimaryKey { relation }) if relation == "Parent"
+            Err(SchemaError::MissingCoveringConstraint { relation }) if relation == "Parent"
         ));
     }
 
     #[test]
-    fn validation_rejects_duplicate_primary_key_fields() {
+    fn validation_rejects_multiple_covering_uniques() {
         let mut schema = valid_schema();
-        schema.relations[1].primary_key.fields = vec!["id".to_owned(), "id".to_owned()];
+        schema.relations[0]
+            .constraints
+            .push(ConstraintDescriptor::unique_covering(
+                "id_code",
+                ["id", "code"],
+            ));
         assert!(matches!(
             schema.validate(),
-            Err(SchemaError::DuplicatePrimaryKeyField { relation, field }) if relation == "Child" && field == "id"
-        ));
-    }
-
-    #[test]
-    fn validation_rejects_invalid_generated_id() {
-        let mut schema = valid_schema();
-        schema.relations[0].generated_id = Some(GeneratedIdDescriptor::new("missing"));
-        assert!(matches!(
-            schema.validate(),
-            Err(SchemaError::InvalidGeneratedId { relation, field, .. }) if relation == "Parent" && field == "missing"
+            Err(SchemaError::MultipleCoveringConstraints { relation, .. }) if relation == "Parent"
         ));
     }
 
@@ -1806,7 +1674,7 @@ mod tests {
                 "missing_parent",
                 ["parent"],
                 "Missing",
-                ["id"],
+                "id",
             ));
         assert!(matches!(
             schema.validate(),
@@ -1831,7 +1699,7 @@ mod tests {
     #[test]
     fn validation_rejects_empty_unique_fields() {
         let mut schema = valid_schema();
-        schema.relations[0].constraints[0] = ConstraintDescriptor::unique("code", [] as [&str; 0]);
+        schema.relations[0].constraints[1] = ConstraintDescriptor::unique("code", [] as [&str; 0]);
         assert!(matches!(
             schema.validate(),
             Err(SchemaError::InvalidConstraint { relation, constraint, .. })
@@ -1942,7 +1810,7 @@ mod tests {
     fn validation_rejects_foreign_key_arity_mismatch() {
         let mut schema = compound_fk_schema();
         schema.relations[1].constraints[0] =
-            ConstraintDescriptor::foreign_key("parent", ["parent_a"], "Parent", ["a", "b"]);
+            ConstraintDescriptor::foreign_key("parent", ["parent_a"], "Parent", "by_ab");
         assert!(matches!(
             schema.validate(),
             Err(SchemaError::InvalidConstraint { relation, constraint, .. })
@@ -1951,12 +1819,52 @@ mod tests {
     }
 
     #[test]
+    fn validation_rejects_unknown_target_constraint() {
+        let mut schema = compound_fk_schema();
+        schema.relations[1].constraints[0] = ConstraintDescriptor::foreign_key(
+            "parent",
+            ["parent_a", "parent_b"],
+            "Parent",
+            "missing",
+        );
+        assert!(matches!(
+            schema.validate(),
+            Err(SchemaError::UnknownTargetConstraint { relation, constraint, .. })
+                if relation == "Child" && constraint == "parent"
+        ));
+    }
+
+    #[test]
+    fn fingerprint_changes_when_covering_flag_changes() {
+        let schema = valid_schema();
+        let mut changed = valid_schema();
+        changed.relations[0].constraints[0] = ConstraintDescriptor::unique("id", ["id"]);
+        assert_ne!(schema.fingerprint(), changed.fingerprint());
+    }
+
+    #[test]
+    fn fingerprint_changes_when_fk_target_constraint_changes() {
+        let schema = compound_fk_schema();
+        let mut changed = compound_fk_schema();
+        changed.relations[0]
+            .constraints
+            .push(ConstraintDescriptor::unique("by_ba", ["b", "a"]));
+        changed.relations[1].constraints[0] = ConstraintDescriptor::foreign_key(
+            "parent",
+            ["parent_b", "parent_a"],
+            "Parent",
+            "by_ba",
+        );
+        assert_ne!(schema.fingerprint(), changed.fingerprint());
+    }
+
+    #[test]
     fn validation_rejects_foreign_key_type_mismatch() {
         let mut schema = compound_fk_schema();
         schema.relations[1].fields[1] = FieldDescriptor::new("parent_a", ValueType::String);
         assert!(matches!(
             schema.validate(),
-            Err(SchemaError::InvalidConstraint { relation, constraint, .. })
+            Err(SchemaError::ForeignKeyTypeMismatch { relation, constraint, .. })
                 if relation == "Child" && constraint == "parent"
         ));
     }
@@ -1967,7 +1875,6 @@ mod tests {
             vec![
                 RelationDescriptor::new(
                     "Account",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("id", identity("AccountId", "Account")),
                         FieldDescriptor::new("holder", identity("HolderId", "Holder")),
@@ -1978,17 +1885,21 @@ mod tests {
                             },
                         ),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
-                .with_generated_id(GeneratedIdDescriptor::new("id"))
+                .with_covering_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::unique(
                     "holder_currency",
                     ["holder", "currency"],
                 ))
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "holder",
+                    ["holder"],
+                    "Holder",
+                    "id",
+                ))
                 .with_index(IndexDescriptor::equality("by_currency", ["currency", "id"])),
                 RelationDescriptor::new(
                     "Posting",
-                    RelationKind::Event,
                     vec![
                         FieldDescriptor::new("id", identity("PostingId", "Posting")),
                         FieldDescriptor::new("entry", identity("JournalEntryId", "JournalEntry")),
@@ -1997,39 +1908,39 @@ mod tests {
                         FieldDescriptor::new("amount", ValueType::Decimal { scale: 4 }),
                         FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
-                .with_generated_id(GeneratedIdDescriptor::new("id")),
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "account",
+                    ["account"],
+                    "Account",
+                    "id",
+                )),
                 RelationDescriptor::new(
                     "Holder",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("id", identity("HolderId", "Holder")),
                         FieldDescriptor::new("name", ValueType::String),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
-                .with_generated_id(GeneratedIdDescriptor::new("id"))
+                .with_covering_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::unique("name", ["name"])),
                 RelationDescriptor::new(
                     "SourceDocument",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("id", identity("SourceDocumentId", "SourceDocument")),
                         FieldDescriptor::new("payload", ValueType::Bytes),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
-                .with_generated_id(GeneratedIdDescriptor::new("id")),
+                .with_covering_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "OrgParent",
-                    RelationKind::Edge,
                     vec![
                         FieldDescriptor::new("child", identity("OrgId", "Org")),
                         FieldDescriptor::new("parent", identity("OrgId", "Org")),
                     ],
-                    PrimaryKeyDescriptor::new(["child", "parent"]),
-                ),
+                )
+                .with_covering_unique("child_parent", ["child", "parent"]),
             ],
         )
         .with_enum(EnumDescriptor::codes("Currency", [840, 978]))
@@ -2041,26 +1952,28 @@ mod tests {
             vec![
                 RelationDescriptor::new(
                     "Parent",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("id", identity("ParentId", "Parent")),
                         FieldDescriptor::new("code", ValueType::U64),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
-                .with_generated_id(GeneratedIdDescriptor::new("id"))
+                .with_covering_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::unique("code", ["code"]))
                 .with_index(IndexDescriptor::equality("by_code_exact", ["code", "id"])),
                 RelationDescriptor::new(
                     "Child",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("id", identity("ChildId", "Child")),
                         FieldDescriptor::new("parent", identity("ParentId", "Parent")),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
-                .with_generated_id(GeneratedIdDescriptor::new("id")),
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "parent",
+                    ["parent"],
+                    "Parent",
+                    "id",
+                )),
             ],
         )
     }
@@ -2071,28 +1984,26 @@ mod tests {
             vec![
                 RelationDescriptor::new(
                     "Parent",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("a", ValueType::U64),
                         FieldDescriptor::new("b", ValueType::U64),
                     ],
-                    PrimaryKeyDescriptor::new(["a", "b"]),
-                ),
+                )
+                .with_covering_unique("by_ab", ["a", "b"]),
                 RelationDescriptor::new(
                     "Child",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("id", ValueType::U64),
                         FieldDescriptor::new("parent_a", ValueType::U64),
                         FieldDescriptor::new("parent_b", ValueType::U64),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
+                .with_covering_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "parent",
                     ["parent_a", "parent_b"],
                     "Parent",
-                    ["a", "b"],
+                    "by_ab",
                 )),
             ],
         )

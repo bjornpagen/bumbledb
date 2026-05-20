@@ -411,8 +411,7 @@ fn accumulate_stats(node: &HashNode, stats: &mut HashTrieStats) {
 #[cfg(test)]
 mod tests {
     use bumbledb_core::schema::{
-        FieldDescriptor, IdentityAllocation, PrimaryKeyDescriptor, RelationDescriptor,
-        RelationKind, SchemaDescriptor, ValueType,
+        FieldDescriptor, IdentityAllocation, RelationDescriptor, SchemaDescriptor, ValueType,
     };
 
     use super::*;
@@ -556,28 +555,29 @@ mod tests {
     fn account_schema() -> SchemaDescriptor {
         SchemaDescriptor::new(
             "Accounts",
-            vec![RelationDescriptor::new(
-                "Account",
-                RelationKind::Entity,
-                vec![
-                    FieldDescriptor::new(
-                        "id",
-                        ValueType::Identity {
-                            type_name: "AccountId".to_owned(),
-                            owning_relation: "Account".to_owned(),
-                            allocation: IdentityAllocation::Serial,
-                        },
-                    ),
-                    FieldDescriptor::new(
-                        "currency",
-                        ValueType::Enum {
-                            name: "Currency".to_owned(),
-                        },
-                    ),
-                    FieldDescriptor::new("active", ValueType::Bool),
-                ],
-                PrimaryKeyDescriptor::new(["id"]),
-            )],
+            vec![
+                RelationDescriptor::new(
+                    "Account",
+                    vec![
+                        FieldDescriptor::new(
+                            "id",
+                            ValueType::Identity {
+                                type_name: "AccountId".to_owned(),
+                                owning_relation: "Account".to_owned(),
+                                allocation: IdentityAllocation::Serial,
+                            },
+                        ),
+                        FieldDescriptor::new(
+                            "currency",
+                            ValueType::Enum {
+                                name: "Currency".to_owned(),
+                            },
+                        ),
+                        FieldDescriptor::new("active", ValueType::Bool),
+                    ],
+                )
+                .with_covering_unique("id", ["id"]),
+            ],
         )
         .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
             "Currency",

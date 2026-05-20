@@ -7685,12 +7685,28 @@ fn recommended_index_fields(
     field: &str,
 ) -> Vec<String> {
     let mut fields = vec![field.to_owned()];
-    for primary in &relation.primary_key.fields {
+    for primary in covering_unique_fields(relation) {
         if !fields.iter().any(|field| field == primary) {
             fields.push(primary.clone());
         }
     }
     fields
+}
+
+fn covering_unique_fields(relation: &bumbledb_core::schema::RelationDescriptor) -> &[String] {
+    relation
+        .constraints
+        .iter()
+        .find_map(|constraint| match constraint {
+            bumbledb_core::schema::ConstraintDescriptor::Unique {
+                fields,
+                covering: true,
+                ..
+            } => Some(fields.as_slice()),
+            bumbledb_core::schema::ConstraintDescriptor::Unique { .. }
+            | bumbledb_core::schema::ConstraintDescriptor::ForeignKey { .. } => None,
+        })
+        .unwrap_or(&[])
 }
 
 fn optimize_free_join_plan(
@@ -9544,7 +9560,7 @@ mod tests {
     use crate::{AggregateError, Environment, ExecuteError, QueryError, Row};
     use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
     use bumbledb_core::schema::{
-        FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
+        ConstraintDescriptor, FieldDescriptor, IndexDescriptor, RelationDescriptor,
     };
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -11453,7 +11469,6 @@ mod tests {
             vec![
                 RelationDescriptor::new(
                     "Holder",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new(
                             "id",
@@ -11465,12 +11480,10 @@ mod tests {
                         ),
                         FieldDescriptor::new("name", ValueType::String),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
-                .with_generated_id(bumbledb_core::schema::GeneratedIdDescriptor::new("id")),
+                .with_covering_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "Account",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new(
                             "id",
@@ -11495,12 +11508,16 @@ mod tests {
                             },
                         ),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
-                .with_generated_id(bumbledb_core::schema::GeneratedIdDescriptor::new("id")),
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "holder",
+                    ["holder"],
+                    "Holder",
+                    "id",
+                )),
                 RelationDescriptor::new(
                     "Posting",
-                    RelationKind::Event,
                     vec![
                         FieldDescriptor::new(
                             "id",
@@ -11521,38 +11538,43 @@ mod tests {
                         FieldDescriptor::new("amount", ValueType::Decimal { scale: 4 }),
                         FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
-                .with_generated_id(bumbledb_core::schema::GeneratedIdDescriptor::new("id")),
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "account",
+                    ["account"],
+                    "Account",
+                    "id",
+                )),
             ],
         )
         .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
             "Currency",
             [840, 978],
         ))
-        .with_ref_foreign_keys()
     }
 
     fn overflow_schema() -> bumbledb_core::schema::SchemaDescriptor {
         bumbledb_core::schema::SchemaDescriptor::new(
             "OverflowDb",
-            vec![RelationDescriptor::new(
-                "Number",
-                RelationKind::Entity,
-                vec![
-                    FieldDescriptor::new(
-                        "id",
-                        ValueType::Identity {
-                            type_name: "NumberId".to_owned(),
-                            owning_relation: "Number".to_owned(),
-                            allocation: IdentityAllocation::Serial,
-                        },
-                    ),
-                    FieldDescriptor::new("n", ValueType::I64),
-                    FieldDescriptor::new("d", ValueType::Decimal { scale: 0 }),
-                ],
-                PrimaryKeyDescriptor::new(["id"]),
-            )],
+            vec![
+                RelationDescriptor::new(
+                    "Number",
+                    vec![
+                        FieldDescriptor::new(
+                            "id",
+                            ValueType::Identity {
+                                type_name: "NumberId".to_owned(),
+                                owning_relation: "Number".to_owned(),
+                                allocation: IdentityAllocation::Serial,
+                            },
+                        ),
+                        FieldDescriptor::new("n", ValueType::I64),
+                        FieldDescriptor::new("d", ValueType::Decimal { scale: 0 }),
+                    ],
+                )
+                .with_covering_unique("id", ["id"]),
+            ],
         )
     }
 
@@ -11562,7 +11584,6 @@ mod tests {
             vec![
                 RelationDescriptor::new(
                     "Item",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new(
                             "id",
@@ -11579,13 +11600,12 @@ mod tests {
                             },
                         ),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
+                .with_covering_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"])),
             ],
         )
         .with_enum(bumbledb_core::schema::EnumDescriptor::codes("Kind", [1, 2]))
-        .with_ref_foreign_keys()
     }
 
     fn triangle_schema() -> bumbledb_core::schema::SchemaDescriptor {
@@ -11594,31 +11614,28 @@ mod tests {
             vec![
                 RelationDescriptor::new(
                     "EdgeAB",
-                    RelationKind::Edge,
                     vec![
                         FieldDescriptor::new("a", ValueType::U64),
                         FieldDescriptor::new("b", ValueType::U64),
                     ],
-                    PrimaryKeyDescriptor::new(["a", "b"]),
-                ),
+                )
+                .with_covering_unique("a_b", ["a", "b"]),
                 RelationDescriptor::new(
                     "EdgeAC",
-                    RelationKind::Edge,
                     vec![
                         FieldDescriptor::new("a", ValueType::U64),
                         FieldDescriptor::new("c", ValueType::U64),
                     ],
-                    PrimaryKeyDescriptor::new(["a", "c"]),
-                ),
+                )
+                .with_covering_unique("a_c", ["a", "c"]),
                 RelationDescriptor::new(
                     "EdgeBC",
-                    RelationKind::Edge,
                     vec![
                         FieldDescriptor::new("b", ValueType::U64),
                         FieldDescriptor::new("c", ValueType::U64),
                     ],
-                    PrimaryKeyDescriptor::new(["b", "c"]),
-                ),
+                )
+                .with_covering_unique("b_c", ["b", "c"]),
             ],
         )
     }
@@ -11627,21 +11644,16 @@ mod tests {
         bumbledb_core::schema::SchemaDescriptor::new(
             "ChainDb",
             vec![
-                RelationDescriptor::new(
-                    "A",
-                    RelationKind::Entity,
-                    vec![FieldDescriptor::new("id", ValueType::U64)],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                RelationDescriptor::new("A", vec![FieldDescriptor::new("id", ValueType::U64)])
+                    .with_covering_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "B",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("id", ValueType::U64),
                         FieldDescriptor::new("a", ValueType::U64),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
+                .with_covering_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality("by_a", ["a", "id"])),
             ],
         )
@@ -11650,16 +11662,17 @@ mod tests {
     fn direct_sailors_schema() -> bumbledb_core::schema::SchemaDescriptor {
         bumbledb_core::schema::SchemaDescriptor::new(
             "DirectSailorsDb",
-            vec![RelationDescriptor::new(
-                "Reserve",
-                RelationKind::Edge,
-                vec![
-                    FieldDescriptor::new("sailor", ValueType::U64),
-                    FieldDescriptor::new("boat", ValueType::U64),
-                    FieldDescriptor::new("day", ValueType::TimestampMicros).range_indexed(),
-                ],
-                PrimaryKeyDescriptor::new(["sailor", "boat", "day"]),
-            )],
+            vec![
+                RelationDescriptor::new(
+                    "Reserve",
+                    vec![
+                        FieldDescriptor::new("sailor", ValueType::U64),
+                        FieldDescriptor::new("boat", ValueType::U64),
+                        FieldDescriptor::new("day", ValueType::TimestampMicros).range_indexed(),
+                    ],
+                )
+                .with_covering_unique("sailor_boat_day", ["sailor", "boat", "day"]),
+            ],
         )
     }
 
@@ -11667,41 +11680,34 @@ mod tests {
         bumbledb_core::schema::SchemaDescriptor::new(
             "DirectChain4Db",
             vec![
-                RelationDescriptor::new(
-                    "A",
-                    RelationKind::Entity,
-                    vec![FieldDescriptor::new("id", ValueType::U64)],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                RelationDescriptor::new("A", vec![FieldDescriptor::new("id", ValueType::U64)])
+                    .with_covering_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "B",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("id", ValueType::U64),
                         FieldDescriptor::new("a", ValueType::U64),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
+                .with_covering_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality("by_a", ["a", "id"])),
                 RelationDescriptor::new(
                     "C",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("id", ValueType::U64),
                         FieldDescriptor::new("b", ValueType::U64),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
+                .with_covering_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality("by_b", ["b", "id"])),
                 RelationDescriptor::new(
                     "D",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new("id", ValueType::U64),
                         FieldDescriptor::new("c", ValueType::U64),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
+                .with_covering_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality("by_c", ["c", "id"])),
             ],
         )

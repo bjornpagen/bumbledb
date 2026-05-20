@@ -1,8 +1,8 @@
 //! Reusable schemas for tests.
 
 use bumbledb_core::schema::{
-    EnumDescriptor, FieldDescriptor, GeneratedIdDescriptor, IdentityAllocation,
-    PrimaryKeyDescriptor, RelationDescriptor, RelationKind, SchemaDescriptor, ValueType,
+    ConstraintDescriptor, EnumDescriptor, FieldDescriptor, IdentityAllocation, RelationDescriptor,
+    SchemaDescriptor, ValueType,
 };
 
 /// Canonical small ledger schema used by most correctness tests.
@@ -12,21 +12,15 @@ pub fn ledger_schema() -> SchemaDescriptor {
         vec![
             RelationDescriptor::new(
                 "Holder",
-                RelationKind::Entity,
                 vec![
                     FieldDescriptor::new("id", id_type("HolderId", "Holder")),
                     FieldDescriptor::new("name", ValueType::String),
                 ],
-                PrimaryKeyDescriptor::new(["id"]),
             )
-            .with_generated_id(GeneratedIdDescriptor::new("id"))
-            .with_constraint(bumbledb_core::schema::ConstraintDescriptor::unique(
-                "name",
-                ["name"],
-            )),
+            .with_covering_unique("id", ["id"])
+            .with_constraint(ConstraintDescriptor::unique("name", ["name"])),
             RelationDescriptor::new(
                 "Account",
-                RelationKind::Entity,
                 vec![
                     FieldDescriptor::new("id", id_type("AccountId", "Account")),
                     FieldDescriptor::new(
@@ -44,16 +38,20 @@ pub fn ledger_schema() -> SchemaDescriptor {
                         },
                     ),
                 ],
-                PrimaryKeyDescriptor::new(["id"]),
             )
-            .with_generated_id(GeneratedIdDescriptor::new("id"))
-            .with_constraint(bumbledb_core::schema::ConstraintDescriptor::unique(
+            .with_covering_unique("id", ["id"])
+            .with_constraint(ConstraintDescriptor::unique(
                 "holder_currency",
                 ["holder", "currency"],
+            ))
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "holder",
+                ["holder"],
+                "Holder",
+                "id",
             )),
             RelationDescriptor::new(
                 "Posting",
-                RelationKind::Event,
                 vec![
                     FieldDescriptor::new("id", id_type("PostingId", "Posting")),
                     FieldDescriptor::new(
@@ -67,12 +65,16 @@ pub fn ledger_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("amount", ValueType::Decimal { scale: 4 }),
                     FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
                 ],
-                PrimaryKeyDescriptor::new(["id"]),
             )
-            .with_generated_id(GeneratedIdDescriptor::new("id")),
+            .with_covering_unique("id", ["id"])
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "account",
+                ["account"],
+                "Account",
+                "id",
+            )),
             RelationDescriptor::new(
                 "AccountTag",
-                RelationKind::Edge,
                 vec![
                     FieldDescriptor::new(
                         "account",
@@ -89,41 +91,48 @@ pub fn ledger_schema() -> SchemaDescriptor {
                         },
                     ),
                 ],
-                PrimaryKeyDescriptor::new(["account", "tag"]),
-            ),
+            )
+            .with_covering_unique("account_tag", ["account", "tag"])
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "account",
+                ["account"],
+                "Account",
+                "id",
+            )),
         ],
     )
     .with_enum(EnumDescriptor::codes("Currency", [840, 978, 999]))
     .with_enum(EnumDescriptor::codes("Tag", [1, 2, 3, 7, 8]))
-    .with_ref_foreign_keys()
 }
 
 /// Schema for aggregation overflow tests.
 pub fn overflow_schema() -> SchemaDescriptor {
     SchemaDescriptor::new(
         "OverflowDb",
-        vec![RelationDescriptor::new(
-            "Number",
-            RelationKind::Entity,
-            vec![
-                FieldDescriptor::new("id", id_type("NumberId", "Number")),
-                FieldDescriptor::new("n", ValueType::I64),
-                FieldDescriptor::new("d", ValueType::Decimal { scale: 0 }),
-            ],
-            PrimaryKeyDescriptor::new(["id"]),
-        )],
+        vec![
+            RelationDescriptor::new(
+                "Number",
+                vec![
+                    FieldDescriptor::new("id", id_type("NumberId", "Number")),
+                    FieldDescriptor::new("n", ValueType::I64),
+                    FieldDescriptor::new("d", ValueType::Decimal { scale: 0 }),
+                ],
+            )
+            .with_covering_unique("id", ["id"]),
+        ],
     )
 }
 
 /// Returns a schema changed enough to produce a different fingerprint.
 pub fn changed_ledger_schema() -> SchemaDescriptor {
     let mut schema = ledger_schema();
-    schema.relations.push(RelationDescriptor::new(
-        "Extra",
-        RelationKind::Entity,
-        vec![FieldDescriptor::new("id", id_type("ExtraId", "Extra"))],
-        PrimaryKeyDescriptor::new(["id"]),
-    ));
+    schema.relations.push(
+        RelationDescriptor::new(
+            "Extra",
+            vec![FieldDescriptor::new("id", id_type("ExtraId", "Extra"))],
+        )
+        .with_covering_unique("id", ["id"]),
+    );
     schema
 }
 

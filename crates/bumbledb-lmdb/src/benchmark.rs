@@ -4,8 +4,8 @@ use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
 use bumbledb_core::query_ir::{ComparisonOperator, TypedQuery};
 use bumbledb_core::schema::{
-    FieldDescriptor, IdentityAllocation, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor,
-    RelationKind, SchemaDescriptor, ValueType,
+    ConstraintDescriptor, FieldDescriptor, IdentityAllocation, IndexDescriptor, RelationDescriptor,
+    SchemaDescriptor, ValueType,
 };
 
 use crate::{IdentityValue, Row, Value};
@@ -64,7 +64,6 @@ pub fn benchmark_schema() -> SchemaDescriptor {
             ),
             RelationDescriptor::new(
                 "Account",
-                RelationKind::Entity,
                 vec![
                     id_field("AccountId", "Account"),
                     ref_field("HolderId", "holder", "Holder"),
@@ -75,23 +74,31 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                         },
                     ),
                 ],
-                PrimaryKeyDescriptor::new(["id"]),
             )
-            .with_generated_id(bumbledb_core::schema::GeneratedIdDescriptor::new("id")),
+            .with_covering_unique("id", ["id"])
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "holder",
+                ["holder"],
+                "Holder",
+                "id",
+            )),
             RelationDescriptor::new(
                 "JournalEntry",
-                RelationKind::Event,
                 vec![
                     id_field("JournalEntryId", "JournalEntry"),
                     ref_field("SourceDocumentId", "source", "SourceDocument"),
                     FieldDescriptor::new("created_at", ValueType::TimestampMicros).range_indexed(),
                 ],
-                PrimaryKeyDescriptor::new(["id"]),
             )
-            .with_generated_id(bumbledb_core::schema::GeneratedIdDescriptor::new("id")),
+            .with_covering_unique("id", ["id"])
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "source",
+                ["source"],
+                "SourceDocument",
+                "id",
+            )),
             RelationDescriptor::new(
                 "Posting",
-                RelationKind::Event,
                 vec![
                     id_field("PostingId", "Posting"),
                     ref_field("JournalEntryId", "entry", "JournalEntry"),
@@ -100,12 +107,28 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("amount", ValueType::Decimal { scale: 4 }),
                     FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
                 ],
-                PrimaryKeyDescriptor::new(["id"]),
             )
-            .with_generated_id(bumbledb_core::schema::GeneratedIdDescriptor::new("id")),
+            .with_covering_unique("id", ["id"])
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "entry",
+                ["entry"],
+                "JournalEntry",
+                "id",
+            ))
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "account",
+                ["account"],
+                "Account",
+                "id",
+            ))
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "instrument",
+                ["instrument"],
+                "Instrument",
+                "id",
+            )),
             RelationDescriptor::new(
                 "PostingTag",
-                RelationKind::Edge,
                 vec![
                     ref_field("PostingId", "posting", "Posting"),
                     FieldDescriptor::new(
@@ -115,21 +138,37 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                         },
                     ),
                 ],
-                PrimaryKeyDescriptor::new(["posting", "tag"]),
             )
+            .with_covering_unique("posting_tag", ["posting", "tag"])
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "posting",
+                ["posting"],
+                "Posting",
+                "id",
+            ))
             .with_index(IndexDescriptor::permutation("by_tag", ["tag", "posting"])),
             RelationDescriptor::new(
                 "OrgParent",
-                RelationKind::Edge,
                 vec![
                     ref_field("OrgId", "child", "Org"),
                     ref_field("OrgId", "parent", "Org"),
                 ],
-                PrimaryKeyDescriptor::new(["child", "parent"]),
-            ),
+            )
+            .with_covering_unique("child_parent", ["child", "parent"])
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "child",
+                ["child"],
+                "Org",
+                "id",
+            ))
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "parent",
+                ["parent"],
+                "Org",
+                "id",
+            )),
             RelationDescriptor::new(
                 "AuthorizationEdge",
-                RelationKind::Edge,
                 vec![
                     ref_field("OrgId", "subject", "Org"),
                     ref_field("OrgId", "object", "Org"),
@@ -140,11 +179,25 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                         },
                     ),
                 ],
-                PrimaryKeyDescriptor::new(["subject", "object", "permission"]),
-            ),
+            )
+            .with_covering_unique(
+                "subject_object_permission",
+                ["subject", "object", "permission"],
+            )
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "subject",
+                ["subject"],
+                "Org",
+                "id",
+            ))
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "object",
+                ["object"],
+                "Org",
+                "id",
+            )),
             RelationDescriptor::new(
                 "ExchangeRate",
-                RelationKind::Event,
                 vec![
                     id_field("ExchangeRateId", "ExchangeRate"),
                     ref_field("InstrumentId", "base", "Instrument"),
@@ -152,9 +205,20 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
                     FieldDescriptor::new("rate", ValueType::Decimal { scale: 8 }),
                 ],
-                PrimaryKeyDescriptor::new(["id"]),
             )
-            .with_generated_id(bumbledb_core::schema::GeneratedIdDescriptor::new("id")),
+            .with_covering_unique("id", ["id"])
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "base",
+                ["base"],
+                "Instrument",
+                "id",
+            ))
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "quote",
+                ["quote"],
+                "Instrument",
+                "id",
+            )),
         ],
     )
     .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
@@ -169,7 +233,6 @@ pub fn benchmark_schema() -> SchemaDescriptor {
         "Permission",
         [7],
     ))
-    .with_ref_foreign_keys()
 }
 
 /// Generates deterministic benchmark rows.
@@ -347,13 +410,7 @@ fn postings_for_holder_range_query(schema: &SchemaDescriptor) -> QueryBuildResul
 fn entity(name: &str, id_type: &str, fields: Vec<FieldDescriptor>) -> RelationDescriptor {
     let mut all = vec![id_field(id_type, name)];
     all.extend(fields);
-    RelationDescriptor::new(
-        name,
-        RelationKind::Entity,
-        all,
-        PrimaryKeyDescriptor::new(["id"]),
-    )
-    .with_generated_id(bumbledb_core::schema::GeneratedIdDescriptor::new("id"))
+    RelationDescriptor::new(name, all).with_covering_unique("id", ["id"])
 }
 
 fn id_field(id_type: &str, relation: &str) -> FieldDescriptor {

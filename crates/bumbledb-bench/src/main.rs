@@ -9,8 +9,8 @@ use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
 use bumbledb_core::query_ir::{AggregateFunction, ComparisonOperator, TypedFindTerm, TypedQuery};
 use bumbledb_core::schema::{
-    EnumDescriptor, FieldDescriptor, IdentityAllocation, IndexDescriptor, PrimaryKeyDescriptor,
-    RelationDescriptor, RelationKind, SchemaDescriptor, ValueType,
+    ConstraintDescriptor, EnumDescriptor, FieldDescriptor, IdentityAllocation, IndexDescriptor,
+    RelationDescriptor, SchemaDescriptor, ValueType,
 };
 use bumbledb_lmdb::{
     AllocationPhaseStats, Environment, IdentityValue, InputBindings, PlanCounters,
@@ -2012,18 +2012,16 @@ fn sailors_dataset(scale: u64) -> Dataset {
             vec![
                 RelationDescriptor::new(
                     "Sailor",
-                    RelationKind::Entity,
                     vec![
                         id_field("SailorId", "Sailor"),
                         FieldDescriptor::new("name", ValueType::String),
                         FieldDescriptor::new("rating", ValueType::U64).range_indexed(),
                         FieldDescriptor::new("age", ValueType::I64),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "Boat",
-                    RelationKind::Entity,
                     vec![
                         id_field("BoatId", "Boat"),
                         FieldDescriptor::new("name", ValueType::String),
@@ -2034,23 +2032,33 @@ fn sailors_dataset(scale: u64) -> Dataset {
                             },
                         ),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
+                .with_covering_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality("by_color", ["color", "id"])),
                 RelationDescriptor::new(
                     "Reserve",
-                    RelationKind::Edge,
                     vec![
                         ref_field("SailorId", "sailor", "Sailor"),
                         ref_field("BoatId", "boat", "Boat"),
                         FieldDescriptor::new("day", ValueType::TimestampMicros).range_indexed(),
                     ],
-                    PrimaryKeyDescriptor::new(["sailor", "boat", "day"]),
-                ),
+                )
+                .with_covering_unique("sailor_boat_day", ["sailor", "boat", "day"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "sailor",
+                    ["sailor"],
+                    "Sailor",
+                    "id",
+                ))
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "boat",
+                    ["boat"],
+                    "Boat",
+                    "id",
+                )),
             ],
         )
-        .with_enum(EnumDescriptor::codes("Color", [1, 2, 3]))
-        .with_ref_foreign_keys(),
+        .with_enum(EnumDescriptor::codes("Color", [1, 2, 3])),
         rows: sailors_rows(sailors),
         row_source: None,
         sqlite_schema: r#"
@@ -2117,7 +2125,6 @@ fn join_stress_dataset(scale: u64) -> Dataset {
             vec![
                 RelationDescriptor::new(
                     "A",
-                    RelationKind::Entity,
                     vec![
                         id_field("AId", "A"),
                         FieldDescriptor::new(
@@ -2127,11 +2134,10 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                             },
                         ),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "B",
-                    RelationKind::Entity,
                     vec![
                         id_field("BId", "B"),
                         ref_field("AId", "a", "A"),
@@ -2142,11 +2148,11 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                             },
                         ),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key("a", ["a"], "A", "id")),
                 RelationDescriptor::new(
                     "C",
-                    RelationKind::Entity,
                     vec![
                         id_field("CId", "C"),
                         ref_field("BId", "b", "B"),
@@ -2157,11 +2163,11 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                             },
                         ),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key("b", ["b"], "B", "id")),
                 RelationDescriptor::new(
                     "D",
-                    RelationKind::Entity,
                     vec![
                         id_field("DId", "D"),
                         ref_field("CId", "c", "C"),
@@ -2172,30 +2178,33 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                             },
                         ),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key("c", ["c"], "C", "id")),
                 RelationDescriptor::new(
                     "EdgeAB",
-                    RelationKind::Edge,
                     vec![ref_field("AId", "a", "A"), ref_field("BId", "b", "B")],
-                    PrimaryKeyDescriptor::new(["a", "b"]),
-                ),
+                )
+                .with_covering_unique("a_b", ["a", "b"])
+                .with_constraint(ConstraintDescriptor::foreign_key("a", ["a"], "A", "id"))
+                .with_constraint(ConstraintDescriptor::foreign_key("b", ["b"], "B", "id")),
                 RelationDescriptor::new(
                     "EdgeAC",
-                    RelationKind::Edge,
                     vec![ref_field("AId", "a", "A"), ref_field("CId", "c", "C")],
-                    PrimaryKeyDescriptor::new(["a", "c"]),
-                ),
+                )
+                .with_covering_unique("a_c", ["a", "c"])
+                .with_constraint(ConstraintDescriptor::foreign_key("a", ["a"], "A", "id"))
+                .with_constraint(ConstraintDescriptor::foreign_key("c", ["c"], "C", "id")),
                 RelationDescriptor::new(
                     "EdgeBC",
-                    RelationKind::Edge,
                     vec![ref_field("BId", "b", "B"), ref_field("CId", "c", "C")],
-                    PrimaryKeyDescriptor::new(["b", "c"]),
-                ),
+                )
+                .with_covering_unique("b_c", ["b", "c"])
+                .with_constraint(ConstraintDescriptor::foreign_key("b", ["b"], "B", "id"))
+                .with_constraint(ConstraintDescriptor::foreign_key("c", ["c"], "C", "id")),
             ],
         )
-        .with_enum(EnumDescriptor::codes("K", 0..10))
-        .with_ref_foreign_keys(),
+        .with_enum(EnumDescriptor::codes("K", 0..10)),
         rows: join_stress_rows(n),
         row_source: None,
         sqlite_schema: r#"
@@ -2242,47 +2251,48 @@ fn tpch_dataset(scale: u64) -> Dataset {
             vec![
                 RelationDescriptor::new(
                     "Customer",
-                    RelationKind::Entity,
                     vec![
                         id_field("CustomerId", "Customer"),
                         FieldDescriptor::new("nation", ValueType::U64),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
+                .with_covering_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality("by_nation", ["nation", "id"])),
                 RelationDescriptor::new(
                     "Supplier",
-                    RelationKind::Entity,
                     vec![
                         id_field("SupplierId", "Supplier"),
                         FieldDescriptor::new("nation", ValueType::U64),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
+                .with_covering_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality("by_nation", ["nation", "id"])),
                 RelationDescriptor::new(
                     "Part",
-                    RelationKind::Entity,
                     vec![
                         id_field("PartId", "Part"),
                         FieldDescriptor::new("brand", ValueType::U64),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "Orders",
-                    RelationKind::Entity,
                     vec![
                         id_field("OrderId", "Orders"),
                         ref_field("CustomerId", "customer", "Customer"),
                         FieldDescriptor::new("order_date", ValueType::TimestampMicros)
                             .range_indexed(),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "customer",
+                    ["customer"],
+                    "Customer",
+                    "id",
+                )),
                 RelationDescriptor::new(
                     "LineItem",
-                    RelationKind::Entity,
                     vec![
                         id_field("LineItemId", "LineItem"),
                         ref_field("OrderId", "order", "Orders"),
@@ -2293,11 +2303,28 @@ fn tpch_dataset(scale: u64) -> Dataset {
                         FieldDescriptor::new("ship_date", ValueType::TimestampMicros)
                             .range_indexed(),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "order",
+                    ["order"],
+                    "Orders",
+                    "id",
+                ))
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "part",
+                    ["part"],
+                    "Part",
+                    "id",
+                ))
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "supplier",
+                    ["supplier"],
+                    "Supplier",
+                    "id",
+                )),
             ],
-        )
-        .with_ref_foreign_keys(),
+        ),
         rows: tpch_rows(n),
         row_source: None,
         sqlite_schema: r#"

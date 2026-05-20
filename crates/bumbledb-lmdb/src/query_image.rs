@@ -1533,8 +1533,7 @@ mod tests {
     use std::sync::Arc;
 
     use bumbledb_core::schema::{
-        FieldDescriptor, IdentityAllocation, PrimaryKeyDescriptor, RelationDescriptor,
-        RelationKind, SchemaDescriptor, ValueType,
+        FieldDescriptor, IdentityAllocation, RelationDescriptor, SchemaDescriptor, ValueType,
     };
 
     use super::*;
@@ -2097,12 +2096,7 @@ mod tests {
         }
         SchemaDescriptor::new(
             "Accounts",
-            vec![RelationDescriptor::new(
-                "Account",
-                RelationKind::Entity,
-                fields,
-                PrimaryKeyDescriptor::new(["id"]),
-            )],
+            vec![RelationDescriptor::new("Account", fields).with_covering_unique("id", ["id"])],
         )
         .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
             "Currency",
@@ -2116,16 +2110,11 @@ mod tests {
             vec![
                 RelationDescriptor::new(
                     "Account",
-                    RelationKind::Entity,
                     vec![FieldDescriptor::new("id", ValueType::U64)],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
-                RelationDescriptor::new(
-                    "Audit",
-                    RelationKind::Event,
-                    vec![FieldDescriptor::new("id", ValueType::U64)],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"]),
+                RelationDescriptor::new("Audit", vec![FieldDescriptor::new("id", ValueType::U64)])
+                    .with_covering_unique("id", ["id"]),
             ],
         )
     }

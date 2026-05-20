@@ -5,8 +5,8 @@ use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
 use bumbledb_core::query_ir::{AggregateFunction, ComparisonOperator, Literal, TypedQuery};
 use bumbledb_core::schema::{
-    FieldDescriptor, IndexDescriptor, PrimaryKeyDescriptor, RelationDescriptor, RelationKind,
-    SchemaDescriptor, ValueType,
+    ConstraintDescriptor, FieldDescriptor, IndexDescriptor, RelationDescriptor, SchemaDescriptor,
+    ValueType,
 };
 use bumbledb_lmdb::{IdentityValue, Row, Value};
 use csv::{ReaderBuilder, StringRecord};
@@ -562,12 +562,10 @@ fn stream_job_rows(
 
     Ok(emitted)
 }
-
 fn job_schema() -> SchemaDescriptor {
     let mut relations = vec![
-        RelationDescriptor::new(
+        job_relation(
             "AkaName",
-            RelationKind::Entity,
             vec![
                 id_field("AkaNameId", "AkaName"),
                 ref_field("NameId", "person", "Name"),
@@ -577,15 +575,13 @@ fn job_schema() -> SchemaDescriptor {
                 job_string_field("name_pcode_nf"),
                 job_string_field("surname_pcode"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
             "by_person_id",
             ["person", "id"],
         )),
-        RelationDescriptor::new(
+        job_relation(
             "AkaTitle",
-            RelationKind::Entity,
             vec![
                 id_field("AkaTitleId", "AkaTitle"),
                 ref_field("TitleId", "movie", "Title"),
@@ -599,15 +595,13 @@ fn job_schema() -> SchemaDescriptor {
                 job_range_i64_field("episode_nr"),
                 job_string_field("note"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
             "by_movie_kind",
             ["movie", "kind", "id"],
         )),
-        RelationDescriptor::new(
+        job_relation(
             "CastInfo",
-            RelationKind::Entity,
             vec![
                 id_field("CastInfoId", "CastInfo"),
                 ref_field("NameId", "person", "Name"),
@@ -617,7 +611,6 @@ fn job_schema() -> SchemaDescriptor {
                 job_i64_field("nr_order"),
                 ref_field("RoleTypeId", "role", "RoleType"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
             "by_movie_role_person",
@@ -635,9 +628,8 @@ fn job_schema() -> SchemaDescriptor {
             "by_role_movie",
             ["role", "movie", "person", "id"],
         )),
-        RelationDescriptor::new(
+        job_relation(
             "CharName",
-            RelationKind::Entity,
             vec![
                 id_field("CharNameId", "CharName"),
                 job_string_field("name"),
@@ -646,22 +638,18 @@ fn job_schema() -> SchemaDescriptor {
                 job_string_field("name_pcode_nf"),
                 job_string_field("surname_pcode"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation("by_name", ["name", "id"])),
-        RelationDescriptor::new(
+        job_relation(
             "CompCastType",
-            RelationKind::Entity,
             vec![
                 id_field("CompCastTypeId", "CompCastType"),
                 job_string_field("kind"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation("by_kind", ["kind", "id"])),
-        RelationDescriptor::new(
+        job_relation(
             "CompanyName",
-            RelationKind::Entity,
             vec![
                 id_field("CompanyNameId", "CompanyName"),
                 job_string_field("name"),
@@ -670,33 +658,28 @@ fn job_schema() -> SchemaDescriptor {
                 job_string_field("name_pcode_nf"),
                 job_string_field("name_pcode_sf"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
             "by_country",
             ["country_code", "id"],
         ))
         .with_index(IndexDescriptor::permutation("by_name", ["name", "id"])),
-        RelationDescriptor::new(
+        job_relation(
             "CompanyType",
-            RelationKind::Entity,
             vec![
                 id_field("CompanyTypeId", "CompanyType"),
                 job_string_field("kind"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation("by_kind", ["kind", "id"])),
-        RelationDescriptor::new(
+        job_relation(
             "CompleteCast",
-            RelationKind::Entity,
             vec![
                 id_field("CompleteCastId", "CompleteCast"),
                 ref_field("TitleId", "movie", "Title"),
                 ref_field("CompCastTypeId", "subject", "CompCastType"),
                 ref_field("CompCastTypeId", "status", "CompCastType"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
             "by_movie_subject_status",
@@ -706,44 +689,35 @@ fn job_schema() -> SchemaDescriptor {
             "by_subject_status",
             ["subject", "status", "movie", "id"],
         )),
-        RelationDescriptor::new(
+        job_relation(
             "InfoType",
-            RelationKind::Entity,
             vec![id_field("InfoTypeId", "InfoType"), job_string_field("info")],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation("by_info", ["info", "id"])),
-        RelationDescriptor::new(
+        job_relation(
             "Keyword",
-            RelationKind::Entity,
             vec![
                 id_field("KeywordId", "Keyword"),
                 job_string_field("keyword"),
                 job_string_field("phonetic_code"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
             "by_keyword",
             ["keyword", "id"],
         )),
-        RelationDescriptor::new(
+        job_relation(
             "KindType",
-            RelationKind::Entity,
             vec![id_field("KindTypeId", "KindType"), job_string_field("kind")],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation("by_kind", ["kind", "id"])),
-        RelationDescriptor::new(
+        job_relation(
             "LinkType",
-            RelationKind::Entity,
             vec![id_field("LinkTypeId", "LinkType"), job_string_field("link")],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation("by_link", ["link", "id"])),
-        RelationDescriptor::new(
+        job_relation(
             "MovieCompanies",
-            RelationKind::Entity,
             vec![
                 id_field("MovieCompaniesId", "MovieCompanies"),
                 ref_field("TitleId", "movie", "Title"),
@@ -751,7 +725,6 @@ fn job_schema() -> SchemaDescriptor {
                 ref_field("CompanyTypeId", "company_type", "CompanyType"),
                 job_string_field("note"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
             "by_movie_company_type",
@@ -765,9 +738,8 @@ fn job_schema() -> SchemaDescriptor {
             "by_company_type_movie",
             ["company_type", "movie", "company", "id"],
         )),
-        RelationDescriptor::new(
+        job_relation(
             "MovieInfo",
-            RelationKind::Entity,
             vec![
                 id_field("MovieInfoId", "MovieInfo"),
                 ref_field("TitleId", "movie", "Title"),
@@ -775,7 +747,6 @@ fn job_schema() -> SchemaDescriptor {
                 job_string_field("info"),
                 job_string_field("note"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
             "by_movie_type",
@@ -785,9 +756,8 @@ fn job_schema() -> SchemaDescriptor {
             "by_type_movie",
             ["info_type", "movie", "id"],
         )),
-        RelationDescriptor::new(
+        job_relation(
             "MovieInfoIdx",
-            RelationKind::Entity,
             vec![
                 id_field("MovieInfoIdxId", "MovieInfoIdx"),
                 ref_field("TitleId", "movie", "Title"),
@@ -795,7 +765,6 @@ fn job_schema() -> SchemaDescriptor {
                 job_string_field("info"),
                 job_string_field("note"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
             "by_movie_type",
@@ -805,15 +774,13 @@ fn job_schema() -> SchemaDescriptor {
             "by_type_movie",
             ["info_type", "movie", "id"],
         )),
-        RelationDescriptor::new(
+        job_relation(
             "MovieKeyword",
-            RelationKind::Entity,
             vec![
                 id_field("MovieKeywordId", "MovieKeyword"),
                 ref_field("TitleId", "movie", "Title"),
                 ref_field("KeywordId", "keyword", "Keyword"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
             "by_movie_keyword",
@@ -823,16 +790,14 @@ fn job_schema() -> SchemaDescriptor {
             "by_keyword_movie",
             ["keyword", "movie", "id"],
         )),
-        RelationDescriptor::new(
+        job_relation(
             "MovieLink",
-            RelationKind::Entity,
             vec![
                 id_field("MovieLinkId", "MovieLink"),
                 ref_field("TitleId", "movie", "Title"),
                 ref_field("TitleId", "linked_movie", "Title"),
                 ref_field("LinkTypeId", "link_type", "LinkType"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
             "by_movie_linked",
@@ -846,9 +811,8 @@ fn job_schema() -> SchemaDescriptor {
             "by_link_type_movie",
             ["link_type", "movie", "linked_movie", "id"],
         )),
-        RelationDescriptor::new(
+        job_relation(
             "Name",
-            RelationKind::Entity,
             vec![
                 id_field("NameId", "Name"),
                 job_string_field("name"),
@@ -859,13 +823,11 @@ fn job_schema() -> SchemaDescriptor {
                 job_string_field("name_pcode_nf"),
                 job_string_field("surname_pcode"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation("by_gender", ["gender", "id"]))
         .with_index(IndexDescriptor::permutation("by_name", ["name", "id"])),
-        RelationDescriptor::new(
+        job_relation(
             "PersonInfo",
-            RelationKind::Entity,
             vec![
                 id_field("PersonInfoId", "PersonInfo"),
                 ref_field("NameId", "person", "Name"),
@@ -873,7 +835,6 @@ fn job_schema() -> SchemaDescriptor {
                 job_string_field("info"),
                 job_string_field("note"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
             "by_person_info_type",
@@ -883,16 +844,13 @@ fn job_schema() -> SchemaDescriptor {
             "by_info_type_person",
             ["info_type", "person", "id"],
         )),
-        RelationDescriptor::new(
+        job_relation(
             "RoleType",
-            RelationKind::Entity,
             vec![id_field("RoleTypeId", "RoleType"), job_string_field("role")],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation("by_role", ["role", "id"])),
-        RelationDescriptor::new(
+        job_relation(
             "Title",
-            RelationKind::Entity,
             vec![
                 id_field("TitleId", "Title"),
                 job_string_field("title"),
@@ -906,7 +864,6 @@ fn job_schema() -> SchemaDescriptor {
                 job_range_i64_field("episode_nr"),
                 job_string_field("series_years"),
             ],
-            PrimaryKeyDescriptor::new(["id"]),
         )
         .with_index(IndexDescriptor::permutation(
             "by_kind_year",
@@ -922,7 +879,34 @@ fn job_schema() -> SchemaDescriptor {
         )),
     ];
     relations.sort_by_key(|relation| job_relation_order(&relation.name));
-    SchemaDescriptor::new("JoinOrderBenchmarkDb", relations).with_ref_foreign_keys()
+    add_identity_foreign_keys(SchemaDescriptor::new("JoinOrderBenchmarkDb", relations))
+}
+
+fn job_relation(name: impl Into<String>, fields: Vec<FieldDescriptor>) -> RelationDescriptor {
+    RelationDescriptor::new(name, fields).with_covering_unique("id", ["id"])
+}
+
+fn add_identity_foreign_keys(mut schema: SchemaDescriptor) -> SchemaDescriptor {
+    for relation in &mut schema.relations {
+        for field in relation.fields.clone() {
+            let ValueType::Identity {
+                owning_relation, ..
+            } = field.value_type
+            else {
+                continue;
+            };
+            if owning_relation == relation.name {
+                continue;
+            }
+            relation.constraints.push(ConstraintDescriptor::foreign_key(
+                field.name.clone(),
+                [field.name],
+                owning_relation,
+                "id",
+            ));
+        }
+    }
+    schema
 }
 
 fn job_relation_order(name: &str) -> usize {
@@ -1726,55 +1710,69 @@ fn imdb_schema() -> SchemaDescriptor {
         vec![
             RelationDescriptor::new(
                 "Title",
-                RelationKind::Entity,
                 vec![
                     id_field("TitleId", "Title"),
                     FieldDescriptor::new("title_type", ValueType::U64),
                     FieldDescriptor::new("primary_title", ValueType::String),
                     FieldDescriptor::new("start_year", ValueType::I64).range_indexed(),
                 ],
-                bumbledb_core::schema::PrimaryKeyDescriptor::new(["id"]),
-            ),
+            )
+            .with_covering_unique("id", ["id"]),
             RelationDescriptor::new(
                 "Name",
-                RelationKind::Entity,
                 vec![
                     id_field("NameId", "Name"),
                     FieldDescriptor::new("name", ValueType::String),
                     FieldDescriptor::new("birth_year", ValueType::I64).range_indexed(),
                 ],
-                bumbledb_core::schema::PrimaryKeyDescriptor::new(["id"]),
-            ),
+            )
+            .with_covering_unique("id", ["id"]),
             RelationDescriptor::new(
                 "TitleRating",
-                RelationKind::Entity,
                 vec![
                     ref_field("TitleId", "title", "Title"),
                     FieldDescriptor::new("rating", ValueType::I64).range_indexed(),
                     FieldDescriptor::new("votes", ValueType::I64),
                 ],
-                bumbledb_core::schema::PrimaryKeyDescriptor::new(["title"]),
-            ),
+            )
+            .with_covering_unique("title", ["title"])
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "title",
+                ["title"],
+                "Title",
+                "id",
+            )),
             RelationDescriptor::new(
                 "Principal",
-                RelationKind::Edge,
                 vec![
                     ref_field("TitleId", "title", "Title"),
                     ref_field("NameId", "name", "Name"),
                     FieldDescriptor::new("category", ValueType::U64),
                     FieldDescriptor::new("ordering", ValueType::U64),
                 ],
-                bumbledb_core::schema::PrimaryKeyDescriptor::new([
-                    "title", "name", "category", "ordering",
-                ]),
             )
+            .with_covering_unique(
+                "title_name_category_ordering",
+                ["title", "name", "category", "ordering"],
+            )
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "title",
+                ["title"],
+                "Title",
+                "id",
+            ))
+            .with_constraint(ConstraintDescriptor::foreign_key(
+                "name",
+                ["name"],
+                "Name",
+                "id",
+            ))
             .with_index(IndexDescriptor::permutation(
                 "by_category",
                 ["category", "title", "name"],
             )),
         ],
     )
-    .with_ref_foreign_keys()
 }
 
 fn build_imdb_person_high_rated_titles(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
@@ -2185,28 +2183,25 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
             vec![
                 RelationDescriptor::new(
                     "Player",
-                    RelationKind::Entity,
                     vec![
                         id_field("PlayerId", "Player"),
                         FieldDescriptor::new("first", ValueType::String),
                         FieldDescriptor::new("last", ValueType::String),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "Team",
-                    RelationKind::Entity,
                     vec![
                         id_field("TeamId", "Team"),
                         FieldDescriptor::new("year", ValueType::I64).range_indexed(),
                         FieldDescriptor::new("league", ValueType::String),
                         FieldDescriptor::new("name", ValueType::String),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "Batting",
-                    RelationKind::Edge,
                     vec![
                         ref_field("PlayerId", "player", "Player"),
                         ref_field("TeamId", "team", "Team"),
@@ -2214,30 +2209,52 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                         FieldDescriptor::new("games", ValueType::I64),
                         FieldDescriptor::new("hits", ValueType::I64),
                     ],
-                    PrimaryKeyDescriptor::new(["player", "team", "year"]),
                 )
+                .with_covering_unique("player_team_year", ["player", "team", "year"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "player",
+                    ["player"],
+                    "Player",
+                    "id",
+                ))
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "team",
+                    ["team"],
+                    "Team",
+                    "id",
+                ))
                 .with_index(IndexDescriptor::permutation(
                     "by_year",
                     ["year", "player", "team"],
                 )),
                 RelationDescriptor::new(
                     "Salary",
-                    RelationKind::Edge,
                     vec![
                         ref_field("PlayerId", "player", "Player"),
                         ref_field("TeamId", "team", "Team"),
                         FieldDescriptor::new("year", ValueType::I64).range_indexed(),
                         FieldDescriptor::new("salary", ValueType::I64),
                     ],
-                    PrimaryKeyDescriptor::new(["player", "team", "year"]),
                 )
+                .with_covering_unique("player_team_year", ["player", "team", "year"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "player",
+                    ["player"],
+                    "Player",
+                    "id",
+                ))
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "team",
+                    ["team"],
+                    "Team",
+                    "id",
+                ))
                 .with_index(IndexDescriptor::permutation(
                     "by_year",
                     ["year", "player", "team"],
                 )),
             ],
-        )
-        .with_ref_foreign_keys(),
+        ),
         rows,
         row_source: None,
         sqlite_schema: r#"
@@ -2288,55 +2305,80 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
             vec![
                 RelationDescriptor::new(
                     "Person",
-                    RelationKind::Entity,
                     vec![
                         id_field("PersonId", "Person"),
                         FieldDescriptor::new("first", ValueType::String),
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "Post",
-                    RelationKind::Entity,
                     vec![
                         id_field("PostId", "Post"),
                         ref_field("PersonId", "creator", "Person"),
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
-                ),
+                )
+                .with_covering_unique("id", ["id"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "creator",
+                    ["creator"],
+                    "Person",
+                    "id",
+                )),
                 RelationDescriptor::new(
                     "Knows",
-                    RelationKind::Edge,
                     vec![
                         ref_field("PersonId", "person1", "Person"),
                         ref_field("PersonId", "person2", "Person"),
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
-                    PrimaryKeyDescriptor::new(["person1", "person2"]),
                 )
+                .with_covering_unique("person1_person2", ["person1", "person2"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "person1",
+                    ["person1"],
+                    "Person",
+                    "id",
+                ))
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "person2",
+                    ["person2"],
+                    "Person",
+                    "id",
+                ))
                 .with_index(IndexDescriptor::permutation(
                     "by_person2_person1",
                     ["person2", "person1"],
                 )),
                 RelationDescriptor::new(
                     "Likes",
-                    RelationKind::Edge,
                     vec![
                         ref_field("PersonId", "person", "Person"),
                         ref_field("PostId", "post", "Post"),
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
-                    PrimaryKeyDescriptor::new(["person", "post"]),
                 )
+                .with_covering_unique("person_post", ["person", "post"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "person",
+                    ["person"],
+                    "Person",
+                    "id",
+                ))
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "post",
+                    ["post"],
+                    "Post",
+                    "id",
+                ))
                 .with_index(IndexDescriptor::permutation(
                     "by_post_person",
                     ["post", "person"],
                 )),
             ],
-        )
-        .with_ref_foreign_keys(),
+        ),
         rows,
         row_source: None,
         sqlite_schema: r#"

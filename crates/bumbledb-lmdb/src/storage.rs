@@ -356,12 +356,20 @@ impl WriteTxn<'_> {
     #[tracing::instrument(name = "bumbledb.alloc_id", skip_all, fields(relation = relation_name))]
     pub fn alloc_id(&mut self, schema: &StorageSchema, relation_name: &str) -> Result<u64> {
         let (relation_id, relation) = schema.relation(relation_name)?;
-        let generated = relation.generated_id.as_ref().ok_or_else(|| {
-            Error::internal(format!("relation {relation_name} has no generated ID"))
-        })?;
-        if relation.field(&generated.field).is_none() {
-            return Err(Error::unknown_field(&relation.name, &generated.field));
-        }
+        let _field = relation
+            .fields
+            .iter()
+            .find(|field| {
+                matches!(
+                    &field.value_type,
+                    bumbledb_core::schema::ValueType::Identity {
+                        owning_relation,
+                        allocation: bumbledb_core::schema::IdentityAllocation::Serial,
+                        ..
+                    } if owning_relation == &relation.name
+                )
+            })
+            .ok_or_else(|| Error::internal(format!("relation {relation_name} has no serial ID")))?;
 
         let key = next_id_key(relation_id);
         let next = read_u64_meta(self, &key)?.unwrap_or(1);
@@ -489,9 +497,7 @@ impl WriteTxn<'_> {
     /// Deletes an existing composite set/edge tuple.
     pub fn delete_tuple(&mut self, schema: &StorageSchema, row: Row) -> Result<()> {
         let (_, relation) = schema.relation(&row.relation)?;
-        let key_values = relation
-            .primary_key
-            .fields
+        let key_values = covering_unique_fields(relation)?
             .iter()
             .map(|field| {
                 row.values
@@ -771,7 +777,7 @@ impl WriteTxn<'_> {
         mode: InternMode,
     ) -> Result<Vec<u8>> {
         let mut out = Vec::new();
-        for field_name in &relation.primary_key.fields {
+        for field_name in covering_unique_fields(relation)? {
             let field = relation
                 .field(field_name)
                 .ok_or_else(|| Error::unknown_field(&relation.name, field_name))?;
@@ -809,24 +815,24 @@ impl WriteTxn<'_> {
                 name,
                 fields,
                 target_relation,
-                target_fields,
+                target_constraint,
                 ..
             } = constraint
             else {
                 continue;
             };
             let (target_relation_id, target) = schema.relation(target_relation)?;
-            if target.primary_key.fields.as_slice() != target_fields.as_slice() {
-                return Err(Error::internal(
-                    "foreign key target fields must be primary key",
-                ));
-            }
-            let target_primary = fields
+            let (target_constraint_id, _) = target_unique_constraint(target, target_constraint)?;
+            let target_unique = fields
                 .iter()
                 .map(|field| row.field(relation, field))
                 .collect::<Result<Vec<_>>>()?
                 .concat();
-            let key = current_row_key(target_relation_id, &target_primary);
+            let key = unique_guard_key_from_encoded(
+                target_relation_id,
+                target_constraint_id as u16,
+                &target_unique,
+            );
             if self.dbs.index.get(&self.txn, key.as_slice())?.is_none() {
                 return Err(Error::foreign_key_violation(
                     &relation.name,
@@ -846,7 +852,7 @@ impl WriteTxn<'_> {
         primary: &[u8],
     ) -> Result<()> {
         for (constraint_id, constraint) in relation.constraints.iter().enumerate() {
-            let ConstraintDescriptor::Unique { name, fields } = constraint else {
+            let ConstraintDescriptor::Unique { name, fields, .. } = constraint else {
                 continue;
             };
             let key = unique_guard_key(relation_id, constraint_id as u16, relation, row, fields)?;
@@ -876,7 +882,8 @@ impl WriteTxn<'_> {
                 let ConstraintDescriptor::ForeignKey {
                     name,
                     target_relation,
-                    target_fields,
+                    target_constraint,
+                    fields: _,
                     ..
                 } = constraint
                 else {
@@ -885,9 +892,10 @@ impl WriteTxn<'_> {
                 if target_relation != &relation.name {
                     continue;
                 }
-                if target_fields.as_slice() != relation.primary_key.fields.as_slice() {
+                let Ok((_, target_fields)) = target_unique_constraint(relation, target_constraint)
+                else {
                     continue;
-                }
+                };
                 let target_primary = target_fields
                     .iter()
                     .map(|field| row.field(relation, field))
@@ -1566,7 +1574,7 @@ impl<'env> ReadTxn<'env> {
         values: &BTreeMap<String, Value>,
     ) -> Result<Vec<u8>> {
         let mut out = Vec::new();
-        for field_name in &relation.primary_key.fields {
+        for field_name in covering_unique_fields(relation)? {
             let field = relation
                 .field(field_name)
                 .ok_or_else(|| Error::unknown_field(&relation.name, field_name))?;
@@ -1906,10 +1914,51 @@ fn value_type_name(value_type: &ValueType) -> String {
 
 fn primary_bytes(relation: &RelationDescriptor, row: &EncodedRow) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    for field in &relation.primary_key.fields {
+    for field in covering_unique_fields(relation)? {
         out.extend_from_slice(row.field(relation, field)?);
     }
     Ok(out)
+}
+
+fn covering_unique_fields(relation: &RelationDescriptor) -> Result<&[String]> {
+    relation
+        .constraints
+        .iter()
+        .find_map(|constraint| match constraint {
+            ConstraintDescriptor::Unique {
+                fields,
+                covering: true,
+                ..
+            } => Some(fields.as_slice()),
+            ConstraintDescriptor::Unique { .. } | ConstraintDescriptor::ForeignKey { .. } => None,
+        })
+        .ok_or_else(|| {
+            Error::internal(format!("relation {} has no covering unique", relation.name))
+        })
+}
+
+fn target_unique_constraint<'a>(
+    relation: &'a RelationDescriptor,
+    name: &str,
+) -> Result<(usize, &'a [String])> {
+    relation
+        .constraints
+        .iter()
+        .enumerate()
+        .find_map(|(index, constraint)| match constraint {
+            ConstraintDescriptor::Unique {
+                name: constraint_name,
+                fields,
+                ..
+            } if constraint_name == name => Some((index, fields.as_slice())),
+            ConstraintDescriptor::Unique { .. } | ConstraintDescriptor::ForeignKey { .. } => None,
+        })
+        .ok_or_else(|| {
+            Error::internal(format!(
+                "relation {} has no unique constraint {name}",
+                relation.name
+            ))
+        })
 }
 
 fn current_row_key(relation_id: u16, primary: &[u8]) -> Vec<u8> {
@@ -2032,6 +2081,18 @@ fn unique_guard_key(
         key.extend_from_slice(row.field(relation, field)?);
     }
     Ok(key)
+}
+
+fn unique_guard_key_from_encoded(
+    relation_id: u16,
+    constraint_id: u16,
+    encoded_fields: &[u8],
+) -> Vec<u8> {
+    let mut key = vec![NS_UNIQUE_GUARD];
+    push_u16(&mut key, relation_id);
+    push_u16(&mut key, constraint_id);
+    key.extend_from_slice(encoded_fields);
+    key
 }
 
 fn read_u64_meta(txn: &WriteTxn<'_>, key: &[u8]) -> Result<Option<u64>> {
@@ -2196,10 +2257,7 @@ fn push_optional_bytes(out: &mut Vec<u8>, bytes: Option<&[u8]>) {
 mod tests {
     use super::*;
     use crate::{ConstraintError, Environment};
-    use bumbledb_core::schema::{
-        ConstraintDescriptor, FieldDescriptor, GeneratedIdDescriptor, IndexDescriptor,
-        PrimaryKeyDescriptor, RelationKind,
-    };
+    use bumbledb_core::schema::{ConstraintDescriptor, FieldDescriptor, IndexDescriptor};
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -2653,28 +2711,26 @@ mod tests {
                 vec![
                     RelationDescriptor::new(
                         "Parent",
-                        RelationKind::Entity,
                         vec![
                             FieldDescriptor::new("a", ValueType::U64),
                             FieldDescriptor::new("b", ValueType::U64),
                         ],
-                        PrimaryKeyDescriptor::new(["a", "b"]),
-                    ),
+                    )
+                    .with_covering_unique("by_ab", ["a", "b"]),
                     RelationDescriptor::new(
                         "Child",
-                        RelationKind::Entity,
                         vec![
                             FieldDescriptor::new("id", ValueType::U64),
                             FieldDescriptor::new("parent_a", ValueType::U64),
                             FieldDescriptor::new("parent_b", ValueType::U64),
                         ],
-                        PrimaryKeyDescriptor::new(["id"]),
                     )
+                    .with_covering_unique("id", ["id"])
                     .with_constraint(ConstraintDescriptor::foreign_key(
                         "parent",
                         ["parent_a", "parent_b"],
                         "Parent",
-                        ["a", "b"],
+                        "by_ab",
                     )),
                 ],
             ),
@@ -2688,7 +2744,6 @@ mod tests {
             vec![
                 RelationDescriptor::new(
                     "Holder",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new(
                             "id",
@@ -2700,13 +2755,11 @@ mod tests {
                         ),
                         FieldDescriptor::new("name", ValueType::String),
                     ],
-                    bumbledb_core::schema::PrimaryKeyDescriptor::new(["id"]),
                 )
-                .with_generated_id(GeneratedIdDescriptor::new("id"))
+                .with_covering_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::unique("name", ["name"])),
                 RelationDescriptor::new(
                     "Account",
-                    RelationKind::Entity,
                     vec![
                         FieldDescriptor::new(
                             "id",
@@ -2732,17 +2785,21 @@ mod tests {
                         ),
                         FieldDescriptor::new("opened", ValueType::TimestampMicros).range_indexed(),
                     ],
-                    PrimaryKeyDescriptor::new(["id"]),
                 )
-                .with_generated_id(GeneratedIdDescriptor::new("id"))
+                .with_covering_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality("by_holder", ["holder"]))
                 .with_constraint(ConstraintDescriptor::unique(
                     "holder_currency",
                     ["holder", "currency"],
+                ))
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "holder",
+                    ["holder"],
+                    "Holder",
+                    "id",
                 )),
                 RelationDescriptor::new(
                     "AccountTag",
-                    RelationKind::Edge,
                     vec![
                         FieldDescriptor::new(
                             "account",
@@ -2759,8 +2816,14 @@ mod tests {
                             },
                         ),
                     ],
-                    PrimaryKeyDescriptor::new(["account", "tag"]),
                 )
+                .with_covering_unique("account_tag", ["account", "tag"])
+                .with_constraint(ConstraintDescriptor::foreign_key(
+                    "account",
+                    ["account"],
+                    "Account",
+                    "id",
+                ))
                 .with_index(IndexDescriptor::equality("by_account", ["account"])),
             ],
         )
@@ -2772,7 +2835,6 @@ mod tests {
             "Tag",
             [1, 2, 3, 7],
         ))
-        .with_ref_foreign_keys()
     }
 
     fn holder_row(id: u64, name: &str) -> Row {
