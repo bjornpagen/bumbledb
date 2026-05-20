@@ -937,6 +937,9 @@ fn job_relation_order(name: &str) -> usize {
 }
 
 fn job_queries() -> Vec<BenchQuery> {
+    // Bumbledb follows set/Codd aggregate semantics: global count over an empty
+    // input returns a single row containing 0. Keep equivalent SQLite COUNT(*)
+    // queries free of HAVING COUNT(*) > 0, or empty JOB slices will mismatch.
     vec![
         BenchQuery {
             name: "job_broad_cast_keyword_company",
