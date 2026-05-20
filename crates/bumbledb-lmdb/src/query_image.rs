@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -556,6 +557,55 @@ impl RelationIndexImage {
 
     /// Returns encoded entries matching a leading component prefix.
     pub fn entries_with_prefix<'a>(&'a self, prefix: &'a [u8]) -> RelationIndexPrefixIter<'a> {
+        let range = self.prefix_range(prefix);
+        RelationIndexPrefixIter {
+            index: self,
+            prefix,
+            position: range.start,
+            end: range.end,
+        }
+    }
+
+    /// Returns the half-open entry-position range matching a leading component prefix.
+    pub fn prefix_range(&self, prefix: &[u8]) -> Range<usize> {
+        debug_assert!(prefix.len() <= self.encoded_len.saturating_sub(self.prefix_len));
+        let start = self.lower_bound_prefix(prefix);
+        let end = self.upper_bound_prefix(prefix);
+        start..end
+    }
+
+    /// Returns the number of encoded index entries matching a leading component prefix.
+    pub fn prefix_count(&self, prefix: &[u8]) -> usize {
+        debug_assert!(prefix.len() <= self.encoded_len.saturating_sub(self.prefix_len));
+        let entry_count = self.bytes.len() / self.encoded_len;
+        let mut position = self.lower_bound_prefix(prefix);
+        let start = position;
+        while position < entry_count {
+            let Some(entry) = self.entry(position) else {
+                break;
+            };
+            let Some(key) = self.entry_prefix(entry, prefix.len()) else {
+                break;
+            };
+            if key != prefix {
+                break;
+            }
+            position += 1;
+        }
+        position.saturating_sub(start)
+    }
+
+    /// Returns true when any encoded index entry matches a leading component prefix.
+    pub fn prefix_exists(&self, prefix: &[u8]) -> bool {
+        self.prefix_count(prefix) != 0
+    }
+
+    /// Returns an encoded entry by entry position.
+    pub fn entry_at(&self, position: usize) -> Option<&[u8]> {
+        self.entry(position)
+    }
+
+    fn lower_bound_prefix(&self, prefix: &[u8]) -> usize {
         let entry_count = self.bytes.len() / self.encoded_len;
         let mut low = 0usize;
         let mut high = entry_count;
@@ -569,12 +619,24 @@ impl RelationIndexImage {
                 high = mid;
             }
         }
-        RelationIndexPrefixIter {
-            index: self,
-            prefix,
-            position: low,
-            end: entry_count,
+        low
+    }
+
+    fn upper_bound_prefix(&self, prefix: &[u8]) -> usize {
+        let entry_count = self.bytes.len() / self.encoded_len;
+        let mut low = 0usize;
+        let mut high = entry_count;
+        while low < high {
+            let mid = low + (high - low) / 2;
+            let entry = self.entry(mid).unwrap_or(&[]);
+            let key = self.entry_prefix(entry, prefix.len()).unwrap_or(&[]);
+            if key <= prefix {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
         }
+        low
     }
 
     fn entry(&self, position: usize) -> Option<&[u8]> {
@@ -1295,7 +1357,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{Environment, KeyValues, Row, Value};
+    use crate::{AccessId, Environment, KeyValues, Row, Value};
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -1399,6 +1461,52 @@ mod tests {
         assert!(column.is_empty());
         assert_eq!(column.len(), 0);
         Ok(())
+    }
+
+    #[test]
+    fn relation_index_prefix_count_matches_iterator() {
+        let index = prefix_count_test_index([1, 1, 2, 4]);
+        let one = 1u64.to_be_bytes();
+        let two = 2u64.to_be_bytes();
+        let three = 3u64.to_be_bytes();
+        let zero = 0u64.to_be_bytes();
+        let five = 5u64.to_be_bytes();
+
+        assert_eq!(index.prefix_range(&one), 0..2);
+        assert_eq!(index.prefix_count(&one), 2);
+        assert!(index.prefix_exists(&one));
+        assert_eq!(index.entries_with_prefix(&one).count(), 2);
+
+        assert_eq!(index.prefix_range(&two), 2..3);
+        assert_eq!(index.prefix_count(&two), 1);
+        assert_eq!(index.entries_with_prefix(&two).count(), 1);
+
+        assert_eq!(index.prefix_count(&three), 0);
+        assert_eq!(index.entries_with_prefix(&three).count(), 0);
+        assert_eq!(index.prefix_count(&zero), 0);
+        assert_eq!(index.prefix_count(&five), 0);
+        assert_eq!(index.prefix_count(&[]), 4);
+        assert_eq!(index.entries_with_prefix(&[]).count(), 4);
+        assert_eq!(index.entry_at(2), Some(two.as_slice()));
+    }
+
+    fn prefix_count_test_index(values: impl IntoIterator<Item = u64>) -> RelationIndexImage {
+        let mut bytes = Vec::new();
+        for value in values {
+            bytes.extend_from_slice(&value.to_be_bytes());
+        }
+        RelationIndexImage {
+            access: AccessId(0),
+            fields: vec![FieldId(0)],
+            components: vec![RelationIndexComponent {
+                field: FieldId(0),
+                offset: 0,
+                width: 8,
+            }],
+            encoded_len: 8,
+            prefix_len: 0,
+            bytes,
+        }
     }
 
     #[test]

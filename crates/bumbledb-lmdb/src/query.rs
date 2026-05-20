@@ -2748,7 +2748,7 @@ fn try_execute_factorized_count<S: TupleSink>(
         let mut product = 1u64;
         for (_, index, _) in &fact_indexes {
             plan.summary.counters.direct_kernel_probes += 1;
-            let count = index.entries_with_prefix(&central_value).count() as u64;
+            let count = index.prefix_count(&central_value) as u64;
             if count == 0 {
                 product = 0;
                 break;
@@ -2850,10 +2850,10 @@ fn try_execute_movie_link_bridge_count<S: TupleSink>(
         let Some(movie2) = movie_link.encoded_bytes(row, movie_link_linked) else {
             continue;
         };
-        let c1 = movie_companies_by_movie.entries_with_prefix(movie1).count() as u64;
-        let c2 = movie_companies_by_movie.entries_with_prefix(movie2).count() as u64;
-        let i1 = movie_info_by_movie.entries_with_prefix(movie1).count() as u64;
-        let i2 = movie_info_by_movie.entries_with_prefix(movie2).count() as u64;
+        let c1 = movie_companies_by_movie.prefix_count(movie1) as u64;
+        let c2 = movie_companies_by_movie.prefix_count(movie2) as u64;
+        let i1 = movie_info_by_movie.prefix_count(movie1) as u64;
+        let i2 = movie_info_by_movie.prefix_count(movie2) as u64;
         plan.summary.counters.direct_kernel_probes += 4;
         total = total
             .checked_add(
