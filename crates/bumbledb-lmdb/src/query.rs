@@ -8085,12 +8085,18 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
                 self.plan.summary.counters.bindings_completed += 1;
                 self.plan.summary.counters.lftj_completed_bindings += 1;
                 let _span = tracing::trace_span!("bumbledb.query.sink.emit").entered();
-                self.sink.emit(
-                    self.txn,
+                if !self.sink.emit_project_batch(
                     self.query,
                     &self.binding,
                     &mut self.plan.summary.counters,
-                )?;
+                )? {
+                    self.sink.emit(
+                        self.txn,
+                        self.query,
+                        &self.binding,
+                        &mut self.plan.summary.counters,
+                    )?;
+                }
             }
             return Ok(());
         }
@@ -10546,6 +10552,15 @@ trait TupleSink {
         Ok(false)
     }
 
+    fn emit_project_batch(
+        &mut self,
+        _query: &NormalizedQuery,
+        _binding: &EncodedBinding,
+        _counters: &mut PlanCounters,
+    ) -> Result<bool> {
+        Ok(false)
+    }
+
     fn finish(
         self,
         txn: &ReadTxn<'_>,
@@ -10688,6 +10703,19 @@ impl TupleSink for OutputSink {
         let row_width = sink.push_binding(query, binding, counters)?;
         counters.direct_batch_rows += 1;
         counters.direct_batch_row_bytes = counters.direct_batch_row_bytes.saturating_add(row_width);
+        Ok(true)
+    }
+
+    fn emit_project_batch(
+        &mut self,
+        query: &NormalizedQuery,
+        binding: &EncodedBinding,
+        counters: &mut PlanCounters,
+    ) -> Result<bool> {
+        let OutputSink::Project(sink) = self else {
+            return Ok(false);
+        };
+        sink.push_binding(query, binding, counters)?;
         Ok(true)
     }
 }

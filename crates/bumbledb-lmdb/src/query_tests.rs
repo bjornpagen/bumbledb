@@ -1709,8 +1709,9 @@ fn executes_two_relation_join() -> TestResult {
     assert!(output.plan.counters.lftj_next_calls > 0);
     assert!(output.plan.counters.lftj_key_reads > 0);
     assert!(output.plan.counters.lftj_completed_bindings > 0);
+    assert_eq!(output.plan.counters.sink_emit_calls, 0);
     assert_eq!(
-        output.plan.counters.sink_emit_calls,
+        output.plan.counters.encoded_project_rows_seen,
         output.plan.counters.bindings_yielded
     );
     assert_same_rows(
