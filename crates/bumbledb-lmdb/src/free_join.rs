@@ -70,8 +70,6 @@ pub enum NodeImpl {
     SortedLeapfrog,
     /// Hash probe node.
     HashProbe,
-    /// Hybrid sorted/hash node.
-    Hybrid,
 }
 
 /// Subatom partition inside a Free Join node.
@@ -229,37 +227,6 @@ mod tests {
             }],
             output: OutputPlan::Project(ProjectPlan {
                 vars: vec![VarId(0), VarId(1)],
-            }),
-            estimates: PlanEstimates::default(),
-        };
-
-        plan.validate()?;
-        assert!(!plan.is_pure_lftj());
-        Ok(())
-    }
-
-    #[test]
-    fn validates_manual_hybrid_plan_shape() -> Result<()> {
-        let plan = FreeJoinPlan {
-            nodes: vec![PlanNode {
-                id: NodeId(0),
-                bind_vars: vec![VarId(0)],
-                subatoms: vec![SubAtom {
-                    atom_id: AtomId(0),
-                    relation: RelationId(0),
-                    fields: vec![FieldId(0)],
-                    vars: vec![VarId(0)],
-                    access: AccessId(0),
-                }],
-                implementation: NodeImpl::Hybrid,
-                payload: PayloadDemand {
-                    existence_only_relations: vec![RelationId(1)],
-                    row_id_demands: vec![RelationId(0)],
-                    ..PayloadDemand::default()
-                },
-            }],
-            output: OutputPlan::Project(ProjectPlan {
-                vars: vec![VarId(0)],
             }),
             estimates: PlanEstimates::default(),
         };

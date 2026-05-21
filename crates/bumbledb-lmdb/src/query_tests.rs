@@ -199,7 +199,7 @@ fn hash_probe_runtime_checks_static_existence_atoms() -> TestResult {
 }
 
 #[test]
-fn mixed_hash_lftj_runtime_executes_hash_nodes() -> TestResult {
+fn partial_hash_probe_shape_falls_back_to_lftj() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
@@ -225,7 +225,8 @@ fn mixed_hash_lftj_runtime_executes_hash_nodes() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Mixed);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
     assert!(
         output
             .plan
@@ -234,16 +235,8 @@ fn mixed_hash_lftj_runtime_executes_hash_nodes() -> TestResult {
             .iter()
             .any(|node| node.implementation == NodeImpl::SortedLeapfrog)
     );
-    assert!(
-        output
-            .plan
-            .free_join
-            .nodes
-            .iter()
-            .any(|node| node.implementation == NodeImpl::HashProbe)
-    );
     assert!(output.plan.counters.trie_next > 0);
-    assert!(output.plan.counters.hash_probe_calls > 0);
+    assert_eq!(output.plan.counters.hash_probe_calls, 0);
     assert_same_rows(&output.rows, &[vec![Value::U64(20)], vec![Value::U64(21)]]);
     Ok(())
 }
@@ -904,7 +897,7 @@ fn factorized_count_supports_range_filter() -> TestResult {
 }
 
 #[test]
-fn factorized_count_supports_mixed_literal_and_range_filters() -> TestResult {
+fn factorized_count_supports_literal_and_range_filters() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
