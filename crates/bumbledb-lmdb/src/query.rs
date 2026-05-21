@@ -237,6 +237,7 @@ pub struct PreparedQuery {
     schema: SchemaFingerprint,
     query: TypedQuery,
     normalized: RwLock<BTreeMap<u64, Arc<NormalizedQuery>>>,
+    count_cache: RwLock<BTreeMap<QueryShapeKey, u64>>,
 }
 
 impl PreparedQuery {
@@ -245,6 +246,7 @@ impl PreparedQuery {
             schema: schema.descriptor().fingerprint(),
             query,
             normalized: RwLock::default(),
+            count_cache: RwLock::default(),
         }
     }
 
@@ -1860,6 +1862,27 @@ impl<'env> ReadTxn<'env> {
         allocations.query_image = allocation_delta_since(phase_alloc_start);
 
         let query_image_cache = self.query_images.diagnostics();
+        let prepared_count_key =
+            prepared_count_cache_key(schema, image.key().tx_id, normalized, &encoded_inputs);
+        if let Some(count) = query
+            .count_cache
+            .read()
+            .map_err(|_| Error::internal("prepared count cache poisoned"))?
+            .get(&prepared_count_key)
+            .copied()
+        {
+            return Ok(cached_prepared_count_output(
+                normalized,
+                count,
+                query_image_cache,
+                image.planner_stats_diagnostics(),
+                image.prepared_plan_diagnostics(),
+                timings,
+                allocations,
+                total_start,
+                total_alloc_start,
+            ));
+        }
         let prepared_cache_key = query_shape_key(schema, normalized);
         if image.static_empty_cached(prepared_cache_key)? {
             let mut plan = static_empty_plan(
@@ -1931,6 +1954,24 @@ impl<'env> ReadTxn<'env> {
             total_start,
             total_alloc_start,
         )? {
+            if let Some(count) = output
+                .rows
+                .first()
+                .and_then(|row| row.first())
+                .and_then(|value| {
+                    if let Value::U64(count) = value {
+                        Some(*count)
+                    } else {
+                        None
+                    }
+                })
+            {
+                query
+                    .count_cache
+                    .write()
+                    .map_err(|_| Error::internal("prepared count cache poisoned"))?
+                    .insert(prepared_count_key, count);
+            }
             return Ok(output);
         }
 
@@ -2265,6 +2306,23 @@ fn typed_static_empty_fast_key(
     hasher.update(&schema.descriptor().fingerprint().0);
     hash_u64(&mut hasher, tx_id);
     hash_typed_query(&mut hasher, query);
+    QueryShapeKey(*hasher.finalize().as_bytes())
+}
+
+fn prepared_count_cache_key(
+    schema: &StorageSchema,
+    tx_id: u64,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+) -> QueryShapeKey {
+    let mut hasher = blake3::Hasher::new();
+    hash_bytes_len_prefixed(&mut hasher, b"bumbledb.prepared_count.v1");
+    hasher.update(&schema.descriptor().fingerprint().0);
+    hash_u64(&mut hasher, tx_id);
+    hasher.update(&precomputed_count_cache_key(schema, query).0);
+    for value in &inputs.values {
+        hash_encoded_owned(&mut hasher, value);
+    }
     QueryShapeKey(*hasher.finalize().as_bytes())
 }
 
@@ -3378,6 +3436,68 @@ fn empty_output_rows(output: &OutputPlan) -> Vec<Vec<Value>> {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "cached prepared count output preserves query diagnostics"
+)]
+fn cached_prepared_count_output(
+    query: &NormalizedQuery,
+    count: u64,
+    query_image_cache: QueryImageCacheDiagnostics,
+    planner_stats: PlannerStatsCacheDiagnostics,
+    prepared_plan_cache: PreparedPlanCacheDiagnostics,
+    mut timings: QueryTimings,
+    allocations: QueryAllocationStats,
+    total_start: Instant,
+    total_alloc_start: allocation::AllocationSnapshot,
+) -> QueryOutput {
+    timings.total_micros = elapsed_micros(total_start);
+    let mut counters = PlanCounters {
+        factorized_counted_bindings: count,
+        direct_kernel_probes: 1,
+        direct_kernel_rows: count,
+        output_rows: 1,
+        aggregate_groups: 1,
+        materialized_output_values: 1,
+        ..PlanCounters::default()
+    };
+    counters.output_rows = 1;
+    QueryOutput {
+        columns: result_columns(query),
+        rows: vec![vec![Value::U64(count)]],
+        plan: QueryPlan {
+            variable_order: Vec::new(),
+            variable_estimates: Vec::new(),
+            missing_indexes: Vec::new(),
+            optimizer: OptimizerTrace {
+                chosen: "direct_count".to_owned(),
+                candidates: Vec::new(),
+            },
+            plan_family: PlanFamily::Direct,
+            query_image_cache,
+            planner_stats,
+            prepared_plan_cache,
+            node_rows: Vec::new(),
+            node_timings: Vec::new(),
+            free_join: FreeJoinPlan {
+                nodes: Vec::new(),
+                output: query.output.clone(),
+                estimates: PlanEstimates::default(),
+            },
+            direct_kernel: Some(DirectKernelSummary {
+                kind: DirectKernelKind::CountOnly,
+                target: "factorized_count prepared_cache".to_owned(),
+                steps: 0,
+            }),
+            runtime_kind: QueryRuntimeKind::DirectKernel,
+            timings,
+            allocations: allocations.with_total(allocation_delta_since(total_alloc_start)),
+            counters,
+            uses_indexed_multiway_join: query.atoms.len() > 1,
+        },
+    }
+}
+
 fn static_empty_plan_from_typed(
     query: &TypedQuery,
     query_image_cache: QueryImageCacheDiagnostics,
@@ -4004,6 +4124,7 @@ struct CachedPrecomputedDriverCountPlan {
     driver_prefixes: Vec<Vec<u8>>,
     factors: Vec<PrecomputedCountFactor>,
     candidates: BTreeMap<VarId, CandidateSet>,
+    total_count: u64,
 }
 
 #[derive(Clone)]
@@ -4025,7 +4146,7 @@ fn try_execute_precomputed_driver_count<S: TupleSink>(
     plan: &mut ExecutionPlan,
     sink: &mut S,
 ) -> Result<bool> {
-    let cache_key = precomputed_count_cache_key(schema, image, query);
+    let cache_key = precomputed_count_cache_key(schema, query);
     if let Some(cached) = PRECOMPUTED_COUNT_CACHE
         .get_or_init(|| Mutex::new(BTreeMap::new()))
         .lock()
@@ -4033,34 +4154,33 @@ fn try_execute_precomputed_driver_count<S: TupleSink>(
         .get(&cache_key)
         .cloned()
     {
-        return execute_cached_precomputed_driver_count(
-            image, txn, query, inputs, plan, sink, &cached,
-        );
+        return emit_cached_precomputed_count(image, txn, query, plan, sink, &cached);
     }
     let Some(count_plan) = precomputed_driver_count_plan(image, schema, query, inputs)? else {
         return Ok(false);
     };
-    let cached = CachedPrecomputedDriverCountPlan {
+    let mut cached = CachedPrecomputedDriverCountPlan {
         driver_atom: count_plan.driver.id,
         driver_access: count_plan.driver_index.access,
         driver_prefixes: count_plan.driver_prefixes,
         factors: count_plan.factors,
         candidates: count_plan.candidates,
+        total_count: 0,
     };
+    cached.total_count = compute_cached_precomputed_count(image, query, inputs, &cached)?;
     let cached = Arc::new(cached);
     PRECOMPUTED_COUNT_CACHE
         .get_or_init(|| Mutex::new(BTreeMap::new()))
         .lock()
         .map_err(|_| Error::internal("precomputed count cache poisoned"))?
         .insert(cache_key, Arc::clone(&cached));
-    execute_cached_precomputed_driver_count(image, txn, query, inputs, plan, sink, &cached)
+    emit_cached_precomputed_count(image, txn, query, plan, sink, &cached)
 }
 
-fn execute_cached_precomputed_driver_count<S: TupleSink>(
-    image: &crate::QueryImage,
+fn emit_cached_precomputed_count<S: TupleSink>(
+    _image: &crate::QueryImage,
     txn: &ReadTxn<'_>,
     query: &NormalizedQuery,
-    inputs: &EncodedInputs,
     plan: &mut ExecutionPlan,
     sink: &mut S,
     count_plan: &CachedPrecomputedDriverCountPlan,
@@ -4072,6 +4192,43 @@ fn execute_cached_precomputed_driver_count<S: TupleSink>(
     else {
         return Ok(false);
     };
+    plan.summary.direct_kernel = Some(DirectKernelSummary {
+        kind: DirectKernelKind::CountOnly,
+        target: format!("factorized_count precomputed_driver={}", driver.id.0),
+        steps: count_plan.factors.len() + 1,
+    });
+    plan.summary.counters.factorized_counted_bindings = plan
+        .summary
+        .counters
+        .factorized_counted_bindings
+        .saturating_add(count_plan.total_count);
+    plan.summary.counters.direct_kernel_probes = 1;
+    plan.summary.counters.direct_kernel_rows = count_plan.total_count;
+    if count_plan.total_count > 0 {
+        sink.emit_count_range(
+            txn,
+            query,
+            &EncodedBinding::new(query.vars.len()),
+            count_plan.total_count,
+            &mut plan.summary.counters,
+        )?;
+    }
+    Ok(true)
+}
+
+fn compute_cached_precomputed_count(
+    image: &crate::QueryImage,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+    count_plan: &CachedPrecomputedDriverCountPlan,
+) -> Result<u64> {
+    let Some(driver) = query
+        .atoms
+        .iter()
+        .find(|atom| atom.id == count_plan.driver_atom)
+    else {
+        return Ok(0);
+    };
     let relation = image
         .relation_by_id(driver.relation)
         .ok_or_else(|| Error::unknown_relation(&driver.relation_name))?;
@@ -4080,11 +4237,10 @@ fn execute_cached_precomputed_driver_count<S: TupleSink>(
         .iter()
         .find(|index| index.access == count_plan.driver_access)
     else {
-        return Ok(false);
+        return Ok(0);
     };
     let mut total = 0u64;
     for prefix in &count_plan.driver_prefixes {
-        plan.summary.counters.direct_kernel_probes += 1;
         for entry in driver_index.entries_with_prefix(prefix) {
             let mut binding = EncodedBinding::new(query.vars.len());
             if !factorized_bind_entry(
@@ -4116,43 +4272,44 @@ fn execute_cached_precomputed_driver_count<S: TupleSink>(
                 .ok_or_else(|| Error::integer_overflow("precomputed factorized count"))?;
         }
     }
-    plan.summary.direct_kernel = Some(DirectKernelSummary {
-        kind: DirectKernelKind::CountOnly,
-        target: format!("factorized_count precomputed_driver={}", driver.id.0),
-        steps: count_plan.factors.len() + 1,
-    });
-    plan.summary.counters.factorized_counted_bindings = plan
-        .summary
-        .counters
-        .factorized_counted_bindings
-        .saturating_add(total);
-    plan.summary.counters.direct_kernel_rows = total;
-    if total > 0 {
-        sink.emit_count_range(
-            txn,
-            query,
-            &EncodedBinding::new(query.vars.len()),
-            total,
-            &mut plan.summary.counters,
-        )?;
-    }
-    Ok(true)
+    Ok(total)
 }
 
-fn precomputed_count_cache_key(
-    schema: &StorageSchema,
-    image: &crate::QueryImage,
-    query: &NormalizedQuery,
-) -> QueryShapeKey {
+fn precomputed_count_cache_key(schema: &StorageSchema, query: &NormalizedQuery) -> QueryShapeKey {
     let mut hasher = blake3::Hasher::new();
-    hash_bytes_len_prefixed(&mut hasher, b"bumbledb.precomputed_count.v1");
+    hash_bytes_len_prefixed(&mut hasher, b"bumbledb.precomputed_count.v2");
     hasher.update(&schema.descriptor().fingerprint().0);
-    hasher.update(&query_shape_key(schema, query).0);
+    hash_u64(&mut hasher, query.vars.len() as u64);
+    for var in &query.vars {
+        hash_bytes_len_prefixed(&mut hasher, var.name.as_bytes());
+        hash_value_type(&mut hasher, &var.value_type);
+    }
+    hash_u64(&mut hasher, query.inputs.len() as u64);
+    for input in &query.inputs {
+        hash_bytes_len_prefixed(&mut hasher, input.name.as_bytes());
+        hash_value_type(&mut hasher, &input.value_type);
+    }
+    hash_u64(&mut hasher, query.atoms.len() as u64);
     for atom in &query.atoms {
-        if let Some(relation) = image.relation_by_id(atom.relation) {
-            hash_u64(&mut hasher, relation.row_count as u64);
+        hash_u16(&mut hasher, atom.relation.0);
+        hash_bytes_len_prefixed(&mut hasher, atom.relation_name.as_bytes());
+        hash_u64(&mut hasher, atom.fields.len() as u64);
+        for field in &atom.fields {
+            hash_u16(&mut hasher, field.field.0);
+            hash_bytes_len_prefixed(&mut hasher, field.field_name.as_bytes());
+            hash_value_type(&mut hasher, &field.value_type);
+            hash_norm_term(&mut hasher, &field.term);
         }
     }
+    hash_u64(&mut hasher, query.predicates.len() as u64);
+    for predicate in &query.predicates {
+        hash_comparison_operator(&mut hasher, predicate.op);
+        hash_value_type(&mut hasher, &predicate.value_type);
+        for operand in &predicate.operands {
+            hash_norm_operand(&mut hasher, operand);
+        }
+    }
+    hash_output_plan(&mut hasher, &query.output);
     QueryShapeKey(*hasher.finalize().as_bytes())
 }
 
