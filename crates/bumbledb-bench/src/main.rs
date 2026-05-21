@@ -1156,7 +1156,13 @@ fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
         runtime = ?plan.runtime_kind,
         total_micros = timings.total_micros,
         plan_micros = timings.plan_micros,
+        static_semijoin_proof_micros = timings.static_semijoin_proof_micros,
+        direct_count_micros = timings.direct_count_micros,
+        prepared_count_cache_micros = timings
+            .prepared_count_cache_lookup_micros
+            .saturating_add(timings.prepared_count_cache_emit_micros),
         execute_micros = timings.execute_micros,
+        unaccounted_micros = timings.unaccounted_micros,
         sink_finish_micros = timings.sink_finish_micros,
         allocations_enabled = plan.allocations.enabled,
         "benchmark query profile"
@@ -1530,15 +1536,15 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Phase Timing\n\n");
-    out.push_str("| dataset | query | runtime | total us | validate us | normalize us | encode us | image us | plan us | lftj build us | hash index us | execute us | lftj exec us | hash exec us | sink emit us | sink finish us | decode us |\n");
+    out.push_str("| dataset | query | runtime | total us | validate us | normalize us | encode us | image us | static empty lookup us | static literal proof us | static semijoin proof us | direct count us | direct storage us | prepared count cache lookup us | prepared count cache emit us | plan us | lftj build us | hash index us | execute us | lftj exec us | hash exec us | sink emit us | sink finish us | decode us | unaccounted us |\n");
     out.push_str(
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
     );
     for result in results {
         let timings = result.timings;
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             markdown_escape(&result.runtime_kind),
@@ -1547,6 +1553,13 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             timings.normalize_micros,
             timings.encode_inputs_micros,
             timings.query_image_micros,
+            timings.static_empty_lookup_micros,
+            timings.static_literal_proof_micros,
+            timings.static_semijoin_proof_micros,
+            timings.direct_count_micros,
+            timings.direct_storage_micros,
+            timings.prepared_count_cache_lookup_micros,
+            timings.prepared_count_cache_emit_micros,
             timings.plan_micros,
             timings.lftj_build_micros,
             timings.hash_index_micros,
@@ -1556,6 +1569,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             timings.sink_emit_micros,
             timings.sink_finish_micros,
             timings.decode_micros,
+            timings.unaccounted_micros,
         );
     }
     out.push_str("\n## Allocation Summary\n\n");
@@ -1783,13 +1797,23 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         let allocations = result.allocations;
         let _ = write!(
             out,
-            ",\"phase_timing\":{{\"scope\":\"{}\",\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"hash_index_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"hash_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{}}},\"allocations\":{{\"scope\":\"{}\",\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
+            ",\"phase_timing\":{{\"scope\":\"{}\",\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"static_empty_lookup_us\":{},\"static_literal_proof_us\":{},\"static_semijoin_proof_us\":{},\"direct_count_us\":{},\"direct_storage_us\":{},\"prepared_count_cache_lookup_us\":{},\"prepared_count_cache_emit_us\":{},\"prepared_count_cache_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"hash_index_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"hash_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{},\"unaccounted_us\":{}}},\"allocations\":{{\"scope\":\"{}\",\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
             json_escape(&result.allocation_scope),
             timings.total_micros,
             timings.validate_inputs_micros,
             timings.normalize_micros,
             timings.encode_inputs_micros,
             timings.query_image_micros,
+            timings.static_empty_lookup_micros,
+            timings.static_literal_proof_micros,
+            timings.static_semijoin_proof_micros,
+            timings.direct_count_micros,
+            timings.direct_storage_micros,
+            timings.prepared_count_cache_lookup_micros,
+            timings.prepared_count_cache_emit_micros,
+            timings
+                .prepared_count_cache_lookup_micros
+                .saturating_add(timings.prepared_count_cache_emit_micros),
             timings.plan_micros,
             timings.lftj_build_micros,
             timings.hash_index_micros,
@@ -1799,6 +1823,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             timings.sink_emit_micros,
             timings.sink_finish_micros,
             timings.decode_micros,
+            timings.unaccounted_micros,
             json_escape(&result.allocation_scope),
             allocations.enabled,
             allocations.alloc_calls,
@@ -3136,7 +3161,9 @@ mod tests {
             timings: QueryTimings {
                 total_micros: 10,
                 execute_micros: 4,
+                direct_count_micros: 4,
                 sink_finish_micros: 1,
+                unaccounted_micros: 5,
                 ..QueryTimings::default()
             },
             allocations: QueryAllocationStats::default(),
@@ -3189,6 +3216,10 @@ mod tests {
         assert!(markdown.contains("| joinstress | triangle_count |"));
         assert!(markdown.contains("| pure_lftj | Lftj | FreeJoinLftj |"));
         assert!(markdown.contains("## Phase Timing"));
+        assert!(markdown.contains("static semijoin proof us"));
+        assert!(markdown.contains("direct count us"));
+        assert!(markdown.contains("prepared count cache lookup us"));
+        assert!(markdown.contains("unaccounted us"));
         assert!(markdown.contains("## Measurement Contract"));
         assert!(markdown.contains("bumbledb.correctness_execution"));
         assert!(markdown.contains("## Allocation Summary"));
@@ -3231,7 +3262,11 @@ mod tests {
             count_only_fallback_reason: String::new(),
             timings: QueryTimings {
                 total_micros: 20,
+                static_semijoin_proof_micros: 12,
+                prepared_count_cache_lookup_micros: 1,
+                prepared_count_cache_emit_micros: 2,
                 hash_execute_micros: 4,
+                unaccounted_micros: 7,
                 ..QueryTimings::default()
             },
             allocations: QueryAllocationStats::default(),
@@ -3291,6 +3326,9 @@ mod tests {
         assert!(!json.contains("\"prepare\""));
         assert!(json.contains("\"query_image_built_during_query\":true"));
         assert!(json.contains("\"phase_timing\""));
+        assert!(json.contains("\"static_semijoin_proof_us\":12"));
+        assert!(json.contains("\"prepared_count_cache_us\":3"));
+        assert!(json.contains("\"unaccounted_us\":7"));
         assert!(json.contains("\"allocations\""));
         assert!(json.contains("\"phases\""));
         assert!(json.contains("\"size_class_allocs\""));

@@ -363,12 +363,19 @@ impl QueryPlan {
         ));
         out.push_str("timings:\n");
         out.push_str(&format!(
-            "  query_timing total_micros={} validate_inputs_micros={} normalize_micros={} encode_inputs_micros={} query_image_micros={} plan_micros={} lftj_build_micros={} hash_index_micros={} execute_micros={} lftj_execute_micros={} hash_execute_micros={} sink_emit_micros={} sink_finish_micros={} decode_micros={}\n",
+            "  query_timing total_micros={} validate_inputs_micros={} normalize_micros={} encode_inputs_micros={} query_image_micros={} static_empty_lookup_micros={} static_literal_proof_micros={} static_semijoin_proof_micros={} direct_count_micros={} direct_storage_micros={} prepared_count_cache_lookup_micros={} prepared_count_cache_emit_micros={} plan_micros={} lftj_build_micros={} hash_index_micros={} execute_micros={} lftj_execute_micros={} hash_execute_micros={} sink_emit_micros={} sink_finish_micros={} decode_micros={} unaccounted_micros={}\n",
             self.timings.total_micros,
             self.timings.validate_inputs_micros,
             self.timings.normalize_micros,
             self.timings.encode_inputs_micros,
             self.timings.query_image_micros,
+            self.timings.static_empty_lookup_micros,
+            self.timings.static_literal_proof_micros,
+            self.timings.static_semijoin_proof_micros,
+            self.timings.direct_count_micros,
+            self.timings.direct_storage_micros,
+            self.timings.prepared_count_cache_lookup_micros,
+            self.timings.prepared_count_cache_emit_micros,
             self.timings.plan_micros,
             self.timings.lftj_build_micros,
             self.timings.hash_index_micros,
@@ -377,7 +384,8 @@ impl QueryPlan {
             self.timings.hash_execute_micros,
             self.timings.sink_emit_micros,
             self.timings.sink_finish_micros,
-            self.timings.decode_micros
+            self.timings.decode_micros,
+            self.timings.unaccounted_micros
         ));
         out.push_str("allocations:\n");
         out.push_str(&format!(
@@ -799,6 +807,20 @@ pub struct QueryTimings {
     pub encode_inputs_micros: u128,
     /// QueryImage acquisition time.
     pub query_image_micros: u128,
+    /// Static-empty cache lookup time.
+    pub static_empty_lookup_micros: u128,
+    /// Static literal atom proof time.
+    pub static_literal_proof_micros: u128,
+    /// Static semijoin proof time.
+    pub static_semijoin_proof_micros: u128,
+    /// Direct count kernel execution time.
+    pub direct_count_micros: u128,
+    /// Direct storage projection execution time.
+    pub direct_storage_micros: u128,
+    /// Prepared count cache lookup time.
+    pub prepared_count_cache_lookup_micros: u128,
+    /// Prepared count cache result emission time.
+    pub prepared_count_cache_emit_micros: u128,
     /// Planning time.
     pub plan_micros: u128,
     /// LFTJ atom plan/index preparation time.
@@ -817,6 +839,42 @@ pub struct QueryTimings {
     pub sink_finish_micros: u128,
     /// Decode timing, zero until per-decode timing is enabled.
     pub decode_micros: u128,
+    /// Inclusive total minus non-overlapping known top-level phases.
+    pub unaccounted_micros: u128,
+}
+
+impl QueryTimings {
+    /// Returns the non-overlapping phase total used for unaccounted timing.
+    pub fn accounted_micros(&self) -> u128 {
+        let direct_runtime = self
+            .direct_count_micros
+            .saturating_add(self.direct_storage_micros);
+        let runtime_micros = if direct_runtime > 0 {
+            direct_runtime
+        } else {
+            self.execute_micros
+        };
+        self.validate_inputs_micros
+            .saturating_add(self.normalize_micros)
+            .saturating_add(self.encode_inputs_micros)
+            .saturating_add(self.query_image_micros)
+            .saturating_add(self.static_empty_lookup_micros)
+            .saturating_add(self.static_literal_proof_micros)
+            .saturating_add(self.static_semijoin_proof_micros)
+            .saturating_add(self.prepared_count_cache_lookup_micros)
+            .saturating_add(self.prepared_count_cache_emit_micros)
+            .saturating_add(self.plan_micros)
+            .saturating_add(self.lftj_build_micros)
+            .saturating_add(self.hash_index_micros)
+            .saturating_add(runtime_micros)
+            .saturating_add(self.sink_finish_micros)
+            .saturating_add(self.decode_micros)
+    }
+
+    /// Refreshes unaccounted timing from the current total and known phases.
+    pub fn refresh_unaccounted(&mut self) {
+        self.unaccounted_micros = self.total_micros.saturating_sub(self.accounted_micros());
+    }
 }
 
 /// Allocation counters for one query phase.
@@ -1529,6 +1587,8 @@ impl<'env> ReadTxn<'env> {
     ) -> Result<QueryOutput> {
         let total_start = Instant::now();
         let total_alloc_start = allocation::snapshot();
+        let mut timings = QueryTimings::default();
+        let mut allocations = QueryAllocationStats::default();
         let static_empty_fast_key = if query.inputs.is_empty() {
             Some(typed_static_empty_fast_key(
                 schema,
@@ -1538,19 +1598,23 @@ impl<'env> ReadTxn<'env> {
         } else {
             None
         };
-        if let Some(cache_key) = static_empty_fast_key
-            && self.query_images.static_empty_fast_cached(cache_key)?
-        {
-            return Ok(static_empty_output_from_typed(
-                query,
-                self.query_images.diagnostics(),
-                total_start,
-                total_alloc_start,
-                true,
-            ));
+        if let Some(cache_key) = static_empty_fast_key {
+            let lookup_start = Instant::now();
+            let cache_hit = self.query_images.static_empty_fast_cached(cache_key)?;
+            timings.static_empty_lookup_micros = timings
+                .static_empty_lookup_micros
+                .saturating_add(elapsed_recorded_micros(lookup_start));
+            if cache_hit {
+                return Ok(static_empty_output_from_typed(
+                    query,
+                    self.query_images.diagnostics(),
+                    timings,
+                    total_start,
+                    total_alloc_start,
+                    true,
+                ));
+            }
         }
-        let mut timings = QueryTimings::default();
-        let mut allocations = QueryAllocationStats::default();
 
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
@@ -1617,7 +1681,12 @@ impl<'env> ReadTxn<'env> {
 
         let query_image_cache = self.query_images.diagnostics();
         let prepared_cache_key = query_shape_key(schema, &normalized);
-        if image.static_empty_cached(prepared_cache_key)? {
+        let lookup_start = Instant::now();
+        let static_empty_cached = image.static_empty_cached(prepared_cache_key)?;
+        timings.static_empty_lookup_micros = timings
+            .static_empty_lookup_micros
+            .saturating_add(elapsed_recorded_micros(lookup_start));
+        if static_empty_cached {
             let mut plan = static_empty_plan(
                 &normalized,
                 query_image_cache,
@@ -1628,7 +1697,7 @@ impl<'env> ReadTxn<'env> {
             plan.allocations = allocations;
             plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
             plan.counters.static_empty_cache_hits = 1;
-            plan.timings.total_micros = elapsed_micros(total_start);
+            finish_timings(&mut plan.timings, total_start);
             let total_alloc = allocation_delta_since(total_alloc_start);
             plan.allocations = plan.allocations.with_total(total_alloc);
             return Ok(QueryOutput {
@@ -1637,8 +1706,12 @@ impl<'env> ReadTxn<'env> {
                 plan,
             });
         }
-        let static_empty_proof =
-            static_query_proves_empty(image.as_ref(), &normalized, &encoded_inputs)?;
+        let static_empty_proof = static_query_proves_empty_timed(
+            image.as_ref(),
+            &normalized,
+            &encoded_inputs,
+            &mut timings,
+        )?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
             if normalized.inputs.is_empty() {
                 image.insert_static_empty(prepared_cache_key)?;
@@ -1663,7 +1736,7 @@ impl<'env> ReadTxn<'env> {
                 plan.counters.static_semijoin_candidate_values = proof.candidate_values;
                 plan.counters.static_semijoin_rounds = proof.rounds;
             }
-            plan.timings.total_micros = elapsed_micros(total_start);
+            finish_timings(&mut plan.timings, total_start);
             let total_alloc = allocation_delta_since(total_alloc_start);
             plan.allocations = plan.allocations.with_total(total_alloc);
             return Ok(QueryOutput {
@@ -1749,7 +1822,7 @@ impl<'env> ReadTxn<'env> {
         if has_aggregate(&normalized) {
             plan.summary.counters.aggregate_groups = rows.len() as u64;
         }
-        plan.summary.timings.total_micros = elapsed_micros(total_start);
+        finish_timings(&mut plan.summary.timings, total_start);
         let total_alloc = allocation_delta_since(total_alloc_start);
         plan.summary.allocations = plan.summary.allocations.with_total(total_alloc);
         plan.summary.refresh_node_timings();
@@ -1772,6 +1845,8 @@ impl<'env> ReadTxn<'env> {
         let typed = query.query();
         let total_start = Instant::now();
         let total_alloc_start = allocation::snapshot();
+        let mut timings = QueryTimings::default();
+        let mut allocations = QueryAllocationStats::default();
         let static_empty_fast_key = if typed.inputs.is_empty() {
             Some(typed_static_empty_fast_key(
                 schema,
@@ -1781,19 +1856,23 @@ impl<'env> ReadTxn<'env> {
         } else {
             None
         };
-        if let Some(cache_key) = static_empty_fast_key
-            && self.query_images.static_empty_fast_cached(cache_key)?
-        {
-            return Ok(static_empty_output_from_typed(
-                typed,
-                self.query_images.diagnostics(),
-                total_start,
-                total_alloc_start,
-                true,
-            ));
+        if let Some(cache_key) = static_empty_fast_key {
+            let lookup_start = Instant::now();
+            let cache_hit = self.query_images.static_empty_fast_cached(cache_key)?;
+            timings.static_empty_lookup_micros = timings
+                .static_empty_lookup_micros
+                .saturating_add(elapsed_recorded_micros(lookup_start));
+            if cache_hit {
+                return Ok(static_empty_output_from_typed(
+                    typed,
+                    self.query_images.diagnostics(),
+                    timings,
+                    total_start,
+                    total_alloc_start,
+                    true,
+                ));
+            }
         }
-        let mut timings = QueryTimings::default();
-        let mut allocations = QueryAllocationStats::default();
 
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
@@ -1864,14 +1943,19 @@ impl<'env> ReadTxn<'env> {
         let query_image_cache = self.query_images.diagnostics();
         let prepared_count_key =
             prepared_count_cache_key(schema, image.key().tx_id, normalized, &encoded_inputs);
-        if let Some(count) = query
+        let lookup_start = Instant::now();
+        let prepared_count = query
             .count_cache
             .read()
             .map_err(|_| Error::internal("prepared count cache poisoned"))?
             .get(&prepared_count_key)
-            .copied()
-        {
-            return Ok(cached_prepared_count_output(
+            .copied();
+        timings.prepared_count_cache_lookup_micros = timings
+            .prepared_count_cache_lookup_micros
+            .saturating_add(elapsed_recorded_micros(lookup_start));
+        if let Some(count) = prepared_count {
+            let emit_start = Instant::now();
+            let mut output = cached_prepared_count_output(
                 normalized,
                 count,
                 query_image_cache,
@@ -1881,10 +1965,22 @@ impl<'env> ReadTxn<'env> {
                 allocations,
                 total_start,
                 total_alloc_start,
-            ));
+            );
+            output.plan.timings.prepared_count_cache_emit_micros = output
+                .plan
+                .timings
+                .prepared_count_cache_emit_micros
+                .saturating_add(elapsed_recorded_micros(emit_start));
+            finish_timings(&mut output.plan.timings, total_start);
+            return Ok(output);
         }
         let prepared_cache_key = query_shape_key(schema, normalized);
-        if image.static_empty_cached(prepared_cache_key)? {
+        let lookup_start = Instant::now();
+        let static_empty_cached = image.static_empty_cached(prepared_cache_key)?;
+        timings.static_empty_lookup_micros = timings
+            .static_empty_lookup_micros
+            .saturating_add(elapsed_recorded_micros(lookup_start));
+        if static_empty_cached {
             let mut plan = static_empty_plan(
                 normalized,
                 query_image_cache,
@@ -1895,7 +1991,7 @@ impl<'env> ReadTxn<'env> {
             plan.allocations = allocations;
             plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
             plan.counters.static_empty_cache_hits = 1;
-            plan.timings.total_micros = elapsed_micros(total_start);
+            finish_timings(&mut plan.timings, total_start);
             let total_alloc = allocation_delta_since(total_alloc_start);
             plan.allocations = plan.allocations.with_total(total_alloc);
             return Ok(QueryOutput {
@@ -1904,8 +2000,12 @@ impl<'env> ReadTxn<'env> {
                 plan,
             });
         }
-        let static_empty_proof =
-            static_query_proves_empty(image.as_ref(), normalized, &encoded_inputs)?;
+        let static_empty_proof = static_query_proves_empty_timed(
+            image.as_ref(),
+            normalized,
+            &encoded_inputs,
+            &mut timings,
+        )?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
             if normalized.inputs.is_empty() {
                 image.insert_static_empty(prepared_cache_key)?;
@@ -1930,7 +2030,7 @@ impl<'env> ReadTxn<'env> {
                 plan.counters.static_semijoin_candidate_values = proof.candidate_values;
                 plan.counters.static_semijoin_rounds = proof.rounds;
             }
-            plan.timings.total_micros = elapsed_micros(total_start);
+            finish_timings(&mut plan.timings, total_start);
             let total_alloc = allocation_delta_since(total_alloc_start);
             plan.allocations = plan.allocations.with_total(total_alloc);
             return Ok(QueryOutput {
@@ -2035,7 +2135,7 @@ impl<'env> ReadTxn<'env> {
         if has_aggregate(normalized) {
             plan.summary.counters.aggregate_groups = rows.len() as u64;
         }
-        plan.summary.timings.total_micros = elapsed_micros(total_start);
+        finish_timings(&mut plan.summary.timings, total_start);
         let total_alloc = allocation_delta_since(total_alloc_start);
         plan.summary.allocations = plan.summary.allocations.with_total(total_alloc);
         plan.summary.refresh_node_timings();
@@ -2068,6 +2168,8 @@ impl<'env> ReadTxn<'env> {
     ) -> Result<QueryCountOutput> {
         let total_start = Instant::now();
         let total_alloc_start = allocation::snapshot();
+        let mut timings = QueryTimings::default();
+        let mut allocations = QueryAllocationStats::default();
         let static_empty_fast_key = if query.inputs.is_empty() {
             Some(typed_static_empty_fast_key(
                 schema,
@@ -2077,22 +2179,26 @@ impl<'env> ReadTxn<'env> {
         } else {
             None
         };
-        if let Some(cache_key) = static_empty_fast_key
-            && self.query_images.static_empty_fast_cached(cache_key)?
-        {
-            return Ok(QueryCountOutput {
-                rows: 0,
-                plan: static_empty_plan_from_typed(
-                    query,
-                    self.query_images.diagnostics(),
-                    total_start,
-                    total_alloc_start,
-                    true,
-                ),
-            });
+        if let Some(cache_key) = static_empty_fast_key {
+            let lookup_start = Instant::now();
+            let cache_hit = self.query_images.static_empty_fast_cached(cache_key)?;
+            timings.static_empty_lookup_micros = timings
+                .static_empty_lookup_micros
+                .saturating_add(elapsed_recorded_micros(lookup_start));
+            if cache_hit {
+                return Ok(QueryCountOutput {
+                    rows: 0,
+                    plan: static_empty_plan_from_typed(
+                        query,
+                        self.query_images.diagnostics(),
+                        timings,
+                        total_start,
+                        total_alloc_start,
+                        true,
+                    ),
+                });
+            }
         }
-        let mut timings = QueryTimings::default();
-        let mut allocations = QueryAllocationStats::default();
 
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
@@ -2124,7 +2230,12 @@ impl<'env> ReadTxn<'env> {
 
         let query_image_cache = self.query_images.diagnostics();
         let prepared_cache_key = query_shape_key(schema, &normalized);
-        if image.static_empty_cached(prepared_cache_key)? {
+        let lookup_start = Instant::now();
+        let static_empty_cached = image.static_empty_cached(prepared_cache_key)?;
+        timings.static_empty_lookup_micros = timings
+            .static_empty_lookup_micros
+            .saturating_add(elapsed_recorded_micros(lookup_start));
+        if static_empty_cached {
             let mut plan = static_empty_plan(
                 &normalized,
                 query_image_cache,
@@ -2135,15 +2246,19 @@ impl<'env> ReadTxn<'env> {
             plan.allocations = allocations;
             plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
             plan.counters.static_empty_cache_hits = 1;
-            plan.timings.total_micros = elapsed_micros(total_start);
+            finish_timings(&mut plan.timings, total_start);
             plan.allocations = plan
                 .allocations
                 .with_total(allocation_delta_since(total_alloc_start));
             return Ok(QueryCountOutput { rows: 0, plan });
         }
 
-        let static_empty_proof =
-            static_query_proves_empty(image.as_ref(), &normalized, &encoded_inputs)?;
+        let static_empty_proof = static_query_proves_empty_timed(
+            image.as_ref(),
+            &normalized,
+            &encoded_inputs,
+            &mut timings,
+        )?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
             if normalized.inputs.is_empty() {
                 image.insert_static_empty(prepared_cache_key)?;
@@ -2168,7 +2283,7 @@ impl<'env> ReadTxn<'env> {
                 plan.counters.static_semijoin_candidate_values = proof.candidate_values;
                 plan.counters.static_semijoin_rounds = proof.rounds;
             }
-            plan.timings.total_micros = elapsed_micros(total_start);
+            finish_timings(&mut plan.timings, total_start);
             plan.allocations = plan
                 .allocations
                 .with_total(allocation_delta_since(total_alloc_start));
@@ -2225,7 +2340,7 @@ impl<'env> ReadTxn<'env> {
         if has_aggregate(&normalized) {
             plan.summary.counters.aggregate_groups = rows as u64;
         }
-        plan.summary.timings.total_micros = elapsed_micros(total_start);
+        finish_timings(&mut plan.summary.timings, total_start);
         plan.summary.allocations = plan
             .summary
             .allocations
@@ -2240,6 +2355,15 @@ impl<'env> ReadTxn<'env> {
 
 fn elapsed_micros(start: Instant) -> u128 {
     start.elapsed().as_micros()
+}
+
+fn elapsed_recorded_micros(start: Instant) -> u128 {
+    start.elapsed().as_micros().max(1)
+}
+
+fn finish_timings(timings: &mut QueryTimings, total_start: Instant) {
+    timings.total_micros = elapsed_micros(total_start);
+    timings.refresh_unaccounted();
 }
 
 fn allocation_delta_since(start: allocation::AllocationSnapshot) -> AllocationPhaseStats {
@@ -2655,16 +2779,25 @@ struct StaticRangeConstraint {
 
 type StaticSemijoinProbes<'a> = (&'a RelationIndexImage, Vec<StaticSemijoinProbe>);
 
-fn static_query_proves_empty(
+fn static_query_proves_empty_timed(
     image: &crate::QueryImage,
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
+    timings: &mut QueryTimings,
 ) -> Result<Option<StaticEmptyProof>> {
+    let literal_start = Instant::now();
     let mut proof = static_literal_atoms_prove_empty(image, query, inputs)?;
+    timings.static_literal_proof_micros = timings
+        .static_literal_proof_micros
+        .saturating_add(elapsed_recorded_micros(literal_start));
     if proof.empty {
         return Ok(Some(proof));
     }
+    let semijoin_start = Instant::now();
     let semijoin = static_semijoin_proves_empty(image, query, inputs)?;
+    timings.static_semijoin_proof_micros = timings
+        .static_semijoin_proof_micros
+        .saturating_add(elapsed_recorded_micros(semijoin_start));
     proof.atoms_checked = proof.atoms_checked.saturating_add(semijoin.atoms_checked);
     proof.rows_scanned = proof.rows_scanned.saturating_add(semijoin.rows_scanned);
     proof.prefixes_probed = semijoin.prefixes_probed;
@@ -3412,6 +3545,7 @@ fn static_empty_plan(
 fn static_empty_output_from_typed(
     query: &TypedQuery,
     query_image_cache: QueryImageCacheDiagnostics,
+    timings: QueryTimings,
     total_start: Instant,
     total_alloc_start: allocation::AllocationSnapshot,
     cache_hit: bool,
@@ -3422,6 +3556,7 @@ fn static_empty_output_from_typed(
         plan: static_empty_plan_from_typed(
             query,
             query_image_cache,
+            timings,
             total_start,
             total_alloc_start,
             cache_hit,
@@ -3451,7 +3586,7 @@ fn cached_prepared_count_output(
     total_start: Instant,
     total_alloc_start: allocation::AllocationSnapshot,
 ) -> QueryOutput {
-    timings.total_micros = elapsed_micros(total_start);
+    finish_timings(&mut timings, total_start);
     let mut counters = PlanCounters {
         factorized_counted_bindings: count,
         direct_kernel_probes: 1,
@@ -3501,6 +3636,7 @@ fn cached_prepared_count_output(
 fn static_empty_plan_from_typed(
     query: &TypedQuery,
     query_image_cache: QueryImageCacheDiagnostics,
+    mut timings: QueryTimings,
     total_start: Instant,
     total_alloc_start: allocation::AllocationSnapshot,
     cache_hit: bool,
@@ -3509,10 +3645,7 @@ fn static_empty_plan_from_typed(
     if cache_hit {
         counters.static_empty_cache_hits = 1;
     }
-    let timings = QueryTimings {
-        total_micros: elapsed_micros(total_start),
-        ..QueryTimings::default()
-    };
+    finish_timings(&mut timings, total_start);
     let allocations =
         QueryAllocationStats::default().with_total(allocation_delta_since(total_alloc_start));
     QueryPlan {
@@ -3675,6 +3808,7 @@ fn try_execute_direct_count_query(
         return Ok(None);
     }
     timings.execute_micros = elapsed_micros(execute_start);
+    timings.direct_count_micros = timings.execute_micros;
     allocations.execute = allocation_delta_since(execute_alloc_start);
     if plan.summary.direct_kernel.is_none() {
         plan.summary.direct_kernel = Some(DirectKernelSummary {
@@ -3699,7 +3833,7 @@ fn try_execute_direct_count_query(
     if has_aggregate(query) {
         plan.summary.counters.aggregate_groups = rows.len() as u64;
     }
-    plan.summary.timings.total_micros = elapsed_micros(total_start);
+    finish_timings(&mut plan.summary.timings, total_start);
     let total_alloc = allocation_delta_since(total_alloc_start);
     plan.summary.allocations = plan.summary.allocations.with_total(total_alloc);
     Ok(Some(QueryOutput {
@@ -3780,6 +3914,7 @@ fn try_execute_direct_storage_project(
         sink.emit(txn, query, &binding, &mut counters)?;
     }
     timings.execute_micros = elapsed_micros(execute_start);
+    timings.direct_storage_micros = timings.execute_micros;
     allocations.execute = allocation_delta_since(execute_alloc_start);
 
     let finish_start = Instant::now();
@@ -3788,7 +3923,7 @@ fn try_execute_direct_storage_project(
     timings.sink_finish_micros = elapsed_micros(finish_start);
     allocations.sink_finish = allocation_delta_since(finish_alloc_start);
     counters.output_rows = rows.len() as u64;
-    timings.total_micros = elapsed_micros(total_start);
+    finish_timings(&mut timings, total_start);
     allocations = allocations.with_total(allocation_delta_since(total_alloc_start));
 
     Ok(Some(QueryOutput {

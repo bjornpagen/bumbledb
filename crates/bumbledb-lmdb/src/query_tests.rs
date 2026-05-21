@@ -22,12 +22,27 @@ fn query_observability_defaults_are_zero() {
     let timings = QueryTimings::default();
     assert_eq!(timings.total_micros, 0);
     assert_eq!(timings.execute_micros, 0);
+    assert_eq!(timings.unaccounted_micros, 0);
     assert_eq!(QueryRuntimeKind::default(), QueryRuntimeKind::Unknown);
 
     let allocations = QueryAllocationStats::default();
     assert!(!allocations.enabled);
     assert_eq!(allocations.alloc_calls, 0);
     assert_eq!(allocations.net_bytes, 0);
+}
+
+#[test]
+fn query_timing_unaccounted_saturates_to_zero() {
+    let mut timings = QueryTimings {
+        total_micros: 5,
+        validate_inputs_micros: 4,
+        execute_micros: 4,
+        ..QueryTimings::default()
+    };
+
+    timings.refresh_unaccounted();
+
+    assert_eq!(timings.unaccounted_micros, 0);
 }
 
 #[test]
@@ -1835,6 +1850,7 @@ fn static_semijoin_dimension_row_exists_but_fact_is_empty() -> TestResult {
     assert!(output.rows.is_empty());
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(output.plan.counters.static_semijoin_rounds > 0);
+    assert!(output.plan.timings.static_semijoin_proof_micros > 0);
     Ok(())
 }
 
