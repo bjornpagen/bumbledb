@@ -29,6 +29,12 @@ fn query_observability_defaults_are_zero() {
     assert!(!allocations.enabled);
     assert_eq!(allocations.alloc_calls, 0);
     assert_eq!(allocations.net_bytes, 0);
+
+    let counters = PlanCounters::default();
+    assert_eq!(counters.sink_emit_calls, 0);
+    assert_eq!(counters.encoded_project_rows_seen, 0);
+    assert_eq!(counters.lftj_next_calls, 0);
+    assert_eq!(counters.direct_chain_step_rows, 0);
 }
 
 #[test]
@@ -296,6 +302,10 @@ fn direct_prefix_range_kernel_selects_and_filters_rows() -> TestResult {
     assert!(output.plan.counters.direct_kernel_probes > 0);
     assert_eq!(output.plan.counters.direct_kernel_rows, 2);
     assert_eq!(output.plan.counters.direct_kernel_predicates, 4);
+    assert_eq!(output.plan.counters.direct_storage_output_rows, 1);
+    assert_eq!(output.plan.counters.direct_bind_attempts, 2);
+    assert_eq!(output.plan.counters.direct_bind_successes, 2);
+    assert_eq!(output.plan.counters.sink_emit_calls, 1);
     assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
     assert_eq!(output.plan.query_image_cache.builds, 0);
     assert_eq!(output.plan.counters.hash_index_builds, 0);
@@ -447,6 +457,10 @@ fn direct_chain_kernel_selects_and_follows_acyclic_path() -> TestResult {
     ));
     assert_eq!(output.rows, vec![vec![Value::U64(30)]]);
     assert_eq!(output.plan.counters.direct_kernel_rows, 4);
+    assert!(output.plan.counters.direct_chain_steps > 0);
+    assert_eq!(output.plan.counters.direct_chain_output_rows, 1);
+    assert_eq!(output.plan.counters.direct_chain_output_values, 1);
+    assert_eq!(output.plan.counters.sink_emit_calls, 1);
     assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
     assert_eq!(output.plan.counters.materialized_output_values, 1);
     assert_eq!(output.plan.counters.dictionary_reverse_lookups, 0);
@@ -1688,6 +1702,13 @@ fn executes_two_relation_join() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     assert!(output.plan.uses_indexed_multiway_join);
+    assert!(output.plan.counters.lftj_next_calls > 0);
+    assert!(output.plan.counters.lftj_key_reads > 0);
+    assert!(output.plan.counters.lftj_completed_bindings > 0);
+    assert_eq!(
+        output.plan.counters.sink_emit_calls,
+        output.plan.counters.bindings_yielded
+    );
     assert_same_rows(
         &output.rows,
         &[
@@ -1793,6 +1814,10 @@ fn projection_deduplicates_results() -> TestResult {
     );
     assert_eq!(output.plan.counters.bindings_yielded, 3);
     assert_eq!(output.plan.counters.materialized_output_values, 2);
+    assert_eq!(output.plan.counters.encoded_project_rows_seen, 3);
+    assert_eq!(output.plan.counters.encoded_project_rows_inserted, 2);
+    assert_eq!(output.plan.counters.encoded_project_duplicate_rows, 1);
+    assert_eq!(output.plan.counters.project_decode_values, 2);
     Ok(())
 }
 
@@ -1852,6 +1877,8 @@ fn count_sink_avoids_decoding_counted_variable() -> TestResult {
     assert_eq!(output.plan.counters.aggregate_groups, 1);
     assert_eq!(output.plan.counters.decoded_values, 0);
     assert_eq!(output.plan.counters.materialized_output_values, 1);
+    assert_eq!(output.plan.counters.encoded_project_rows_seen, 0);
+    assert_eq!(output.plan.counters.encoded_project_rows_inserted, 0);
     assert!(
         output.plan.counters.materialized_output_values
             < output.plan.counters.factorized_counted_bindings

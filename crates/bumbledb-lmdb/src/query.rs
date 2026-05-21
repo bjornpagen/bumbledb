@@ -1219,6 +1219,16 @@ pub struct PlanCounters {
     pub aggregate_groups: u64,
     /// Number of final output rows.
     pub output_rows: u64,
+    /// Number of complete bindings that reached an output boundary.
+    pub bindings_completed: u64,
+    /// Number of sink emit calls.
+    pub sink_emit_calls: u64,
+    /// Number of sink count-range emit calls.
+    pub sink_emit_count_range_calls: u64,
+    /// Number of aggregate sink emit calls.
+    pub aggregate_emit_calls: u64,
+    /// Number of aggregate sink count-range emit calls.
+    pub aggregate_count_range_calls: u64,
     /// Number of variable-domain intersections performed.
     pub trie_intersections: u64,
     /// Number of candidate variable values produced after intersection.
@@ -1235,14 +1245,32 @@ pub struct PlanCounters {
     pub materialized_output_values: u64,
     /// Number of trie iterator open operations.
     pub trie_open: u64,
+    /// Number of LFTJ iterator open operations.
+    pub lftj_open_calls: u64,
     /// Number of trie iterator up operations.
     pub trie_up: u64,
+    /// Number of LFTJ iterator up operations.
+    pub lftj_up_calls: u64,
     /// Number of trie iterator next operations.
     pub trie_next: u64,
+    /// Number of LFTJ iterator next operations.
+    pub lftj_next_calls: u64,
     /// Number of trie iterator seek operations.
     pub trie_seek: u64,
+    /// Number of LFTJ iterator seek operations.
+    pub lftj_seek_calls: u64,
     /// Number of trie iterator key reads.
     pub trie_key_reads: u64,
+    /// Number of LFTJ iterator key reads.
+    pub lftj_key_reads: u64,
+    /// Number of LFTJ candidate values considered.
+    pub lftj_candidate_values: u64,
+    /// Number of successful LFTJ variable binds.
+    pub lftj_bind_successes: u64,
+    /// Number of rejected LFTJ variable binds.
+    pub lftj_bind_rejects: u64,
+    /// Number of LFTJ completed bindings.
+    pub lftj_completed_bindings: u64,
     /// Number of sorted trie cache hits while preparing query atom indexes.
     pub sorted_trie_cache_hits: u64,
     /// Number of sorted trie cache misses while preparing query atom indexes.
@@ -1283,6 +1311,30 @@ pub struct PlanCounters {
     pub direct_kernel_rows: u64,
     /// Number of predicates evaluated by direct kernels.
     pub direct_kernel_predicates: u64,
+    /// Number of direct variable bind attempts.
+    pub direct_bind_attempts: u64,
+    /// Number of successful direct variable binds.
+    pub direct_bind_successes: u64,
+    /// Number of direct chain steps entered.
+    pub direct_chain_steps: u64,
+    /// Number of direct chain step rows observed.
+    pub direct_chain_step_rows: u64,
+    /// Number of direct chain output rows emitted.
+    pub direct_chain_output_rows: u64,
+    /// Number of direct chain output values emitted.
+    pub direct_chain_output_values: u64,
+    /// Number of direct storage output rows emitted.
+    pub direct_storage_output_rows: u64,
+    /// Number of encoded projection rows observed before dedup.
+    pub encoded_project_rows_seen: u64,
+    /// Number of encoded projection rows inserted after dedup.
+    pub encoded_project_rows_inserted: u64,
+    /// Number of duplicate encoded projection rows observed.
+    pub encoded_project_duplicate_rows: u64,
+    /// Number of encoded row bytes observed by projection sink.
+    pub encoded_project_row_bytes: u64,
+    /// Number of projection values decoded at output boundary.
+    pub project_decode_values: u64,
     /// Number of static-empty proof atoms checked.
     pub static_empty_atoms_checked: u64,
     /// Number of relation/index rows inspected by static-empty proof.
@@ -4377,9 +4429,11 @@ fn try_execute_direct_storage_project(
         let item = item?;
         counters.direct_kernel_rows += 1;
         let mut binding = EncodedBinding::new(query.vars.len());
+        counters.direct_bind_attempts += 1;
         if !bind_direct_storage_row(txn, query, encoded_inputs, atom, &item.row, &mut binding)? {
             continue;
         }
+        counters.direct_bind_successes += 1;
         let before = counters.comparisons_evaluated;
         if !comparisons_ready_pass(
             txn,
@@ -4398,6 +4452,11 @@ fn try_execute_direct_storage_project(
             .direct_kernel_predicates
             .saturating_add(counters.comparisons_evaluated.saturating_sub(before));
         counters.bindings_yielded += 1;
+        counters.bindings_completed += 1;
+        counters.direct_storage_output_rows += 1;
+        counters.direct_chain_output_values = counters
+            .direct_chain_output_values
+            .saturating_add(query.find.len() as u64);
         sink.emit(txn, query, &binding, &mut counters)?;
     }
     timings.execute_micros = elapsed_micros(execute_start);
@@ -7219,6 +7278,14 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 );
             if keep {
                 self.plan.summary.counters.bindings_yielded += 1;
+                self.plan.summary.counters.bindings_completed += 1;
+                self.plan.summary.counters.direct_chain_output_rows += 1;
+                self.plan.summary.counters.direct_chain_output_values = self
+                    .plan
+                    .summary
+                    .counters
+                    .direct_chain_output_values
+                    .saturating_add(self.query.find.len() as u64);
                 let _span = tracing::trace_span!("bumbledb.query.sink.emit").entered();
                 self.sink.emit(
                     self.txn,
@@ -7230,10 +7297,12 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             return Ok(());
         }
         let step = &self.kernel.steps[depth];
+        self.plan.summary.counters.direct_chain_steps += 1;
         if let Some(rows) =
             self.image_rows_for_terms(step.atom_id, &step.prefix_fields, &step.prefix_terms)?
         {
             for row in rows {
+                self.plan.summary.counters.direct_chain_step_rows += 1;
                 let atom = &self.plan.relation_atoms[step.atom_id];
                 if !self.image_row_satisfies_atom(atom, &row)? {
                     continue;
@@ -7245,9 +7314,11 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                     self.query.vars[step.bind_var].value_type.encoded_width(),
                     value.as_bytes(),
                 )?;
+                self.plan.summary.counters.direct_bind_attempts += 1;
                 if !self.binding.bind(step.bind_var, encoded) {
                     continue;
                 }
+                self.plan.summary.counters.direct_bind_successes += 1;
                 if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
                     rows.actual_rows = rows.actual_rows.saturating_add(1);
                 }
@@ -7263,6 +7334,7 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             &step.prefix_terms,
         )? {
             for row in rows {
+                self.plan.summary.counters.direct_chain_step_rows += 1;
                 let atom = &self.plan.relation_atoms[step.atom_id];
                 if !self.storage_row_satisfies_atom(atom, &row)? {
                     continue;
@@ -7285,9 +7357,11 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                     self.query.vars[step.bind_var].value_type.encoded_width(),
                     &encoded,
                 )?;
+                self.plan.summary.counters.direct_bind_attempts += 1;
                 if !self.binding.bind(step.bind_var, encoded) {
                     continue;
                 }
+                self.plan.summary.counters.direct_bind_successes += 1;
                 if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
                     rows.actual_rows = rows.actual_rows.saturating_add(1);
                 }
@@ -7314,6 +7388,7 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
         let relation = direct_relation(self.image, step.relation)?;
         for row in index.rows_for_prefix(&refs) {
             self.plan.summary.counters.direct_kernel_rows += 1;
+            self.plan.summary.counters.direct_chain_step_rows += 1;
             if !direct_row_satisfies_atom(
                 relation,
                 &self.plan.relation_atoms[step.atom_id],
@@ -7330,9 +7405,11 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 self.query.vars[step.bind_var].value_type.encoded_width(),
                 bytes,
             )?;
+            self.plan.summary.counters.direct_bind_attempts += 1;
             if !self.binding.bind(step.bind_var, value) {
                 continue;
             }
+            self.plan.summary.counters.direct_bind_successes += 1;
             if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
                 rows.actual_rows = rows.actual_rows.saturating_add(1);
             }
@@ -7991,6 +8068,8 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
                 &mut self.plan.summary.counters,
             )? {
                 self.plan.summary.counters.bindings_yielded += 1;
+                self.plan.summary.counters.bindings_completed += 1;
+                self.plan.summary.counters.lftj_completed_bindings += 1;
                 let _span = tracing::trace_span!("bumbledb.query.sink.emit").entered();
                 self.sink.emit(
                     self.txn,
@@ -8014,6 +8093,7 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
         for atom_id in &participants {
             self.runtime.iters[*atom_id].open();
             self.plan.summary.counters.trie_open += 1;
+            self.plan.summary.counters.lftj_open_calls += 1;
         }
 
         let mut leapfrog = LeapfrogState::new(participants.clone());
@@ -8023,6 +8103,7 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
             for atom_id in participants.iter().rev() {
                 self.runtime.iters[*atom_id].up();
                 self.plan.summary.counters.trie_up += 1;
+                self.plan.summary.counters.lftj_up_calls += 1;
             }
             if count > 0 {
                 self.plan.summary.counters.factorized_counted_bindings = self
@@ -8044,7 +8125,9 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
         while !leapfrog.at_end {
             let value = leapfrog.key(&self.runtime.iters, &mut self.plan.summary.counters)?;
             self.plan.summary.counters.variable_candidates += 1;
+            self.plan.summary.counters.lftj_candidate_values += 1;
             if self.binding.bind(variable, value) {
+                self.plan.summary.counters.lftj_bind_successes += 1;
                 let keep = comparisons_ready_pass(
                     self.txn,
                     &self.plan.comparisons,
@@ -8060,6 +8143,8 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
                     self.execute(depth + 1)?;
                 }
                 self.binding.unbind(variable);
+            } else {
+                self.plan.summary.counters.lftj_bind_rejects += 1;
             }
             leapfrog.next(&mut self.runtime.iters, &mut self.plan.summary.counters)?;
         }
@@ -8067,6 +8152,7 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
         for atom_id in participants.iter().rev() {
             self.runtime.iters[*atom_id].up();
             self.plan.summary.counters.trie_up += 1;
+            self.plan.summary.counters.lftj_up_calls += 1;
         }
         Ok(())
     }
@@ -8177,6 +8263,7 @@ impl LeapfrogState {
         let id = self.iter_ids[self.p];
         iters[id].next();
         counters.trie_next += 1;
+        counters.lftj_next_calls += 1;
         if iters[id].at_end() {
             self.at_end = true;
             return Ok(());
@@ -8212,6 +8299,7 @@ impl LeapfrogState {
             }
             iters[id].seek(max.as_ref());
             counters.trie_seek += 1;
+            counters.lftj_seek_calls += 1;
             if iters[id].at_end() {
                 self.at_end = true;
                 return Ok(());
@@ -8232,6 +8320,7 @@ fn key_owned(iter: &LftjTrieIter<'_>, counters: &mut PlanCounters) -> Result<Enc
 fn key_owned_opt(iter: &LftjTrieIter<'_>, counters: &mut PlanCounters) -> Option<EncodedOwned> {
     let key = iter.key()?;
     counters.trie_key_reads += 1;
+    counters.lftj_key_reads += 1;
     Some(EncodedOwned::from_ref(key))
 }
 
@@ -10498,6 +10587,7 @@ impl TupleSink for OutputSink {
         binding: &EncodedBinding,
         counters: &mut PlanCounters,
     ) -> Result<()> {
+        counters.sink_emit_calls += 1;
         match self {
             OutputSink::CountRows(sink) => sink.emit(txn, query, binding, counters),
             OutputSink::GlobalCount(sink) => sink.emit(txn, query, binding, counters),
@@ -10528,6 +10618,7 @@ impl TupleSink for OutputSink {
         count: u64,
         counters: &mut PlanCounters,
     ) -> Result<()> {
+        counters.sink_emit_count_range_calls += 1;
         match self {
             OutputSink::CountRows(sink) => {
                 sink.emit_count_range(txn, query, binding, count, counters)
@@ -10564,6 +10655,7 @@ impl TupleSink for GlobalCountSink {
         _binding: &EncodedBinding,
         _counters: &mut PlanCounters,
     ) -> Result<()> {
+        _counters.aggregate_emit_calls += 1;
         self.emit_count_range(_txn, _query, _binding, 1, _counters)
     }
 
@@ -10575,6 +10667,7 @@ impl TupleSink for GlobalCountSink {
         count: u64,
         _counters: &mut PlanCounters,
     ) -> Result<()> {
+        _counters.aggregate_count_range_calls += 1;
         self.count = self
             .count
             .checked_add(count)
@@ -10614,14 +10707,22 @@ impl TupleSink for EncodedProjectSink {
         _txn: &ReadTxn<'_>,
         _query: &NormalizedQuery,
         binding: &EncodedBinding,
-        _counters: &mut PlanCounters,
+        counters: &mut PlanCounters,
     ) -> Result<()> {
         let row = self
             .vars
             .iter()
             .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
             .collect::<Result<SmallEncodedRow>>()?;
-        self.rows.insert(row);
+        counters.encoded_project_rows_seen += 1;
+        counters.encoded_project_row_bytes = counters
+            .encoded_project_row_bytes
+            .saturating_add(row.iter().map(|value| value.as_bytes().len() as u64).sum());
+        if self.rows.insert(row) {
+            counters.encoded_project_rows_inserted += 1;
+        } else {
+            counters.encoded_project_duplicate_rows += 1;
+        }
         Ok(())
     }
 
@@ -10639,6 +10740,7 @@ impl TupleSink for EncodedProjectSink {
                 row.into_iter()
                     .zip(&self.vars)
                     .map(|(value, variable)| {
+                        counters.project_decode_values += 1;
                         decode_output_value(
                             txn,
                             &query.vars[variable.0 as usize].value_type,
@@ -10792,6 +10894,7 @@ impl TupleSink for AggregateSink {
         binding: &EncodedBinding,
         counters: &mut PlanCounters,
     ) -> Result<()> {
+        counters.aggregate_emit_calls += 1;
         if self.count_only() {
             return self.emit_count_range(binding, 1);
         }
@@ -10810,13 +10913,14 @@ impl TupleSink for AggregateSink {
         _query: &NormalizedQuery,
         binding: &EncodedBinding,
         count: u64,
-        _counters: &mut PlanCounters,
+        counters: &mut PlanCounters,
     ) -> Result<()> {
+        counters.aggregate_count_range_calls += 1;
         if self.count_only() {
             return self.emit_count_range(binding, count);
         }
         for _ in 0..count {
-            self.emit(_txn, _query, binding, _counters)?;
+            self.emit(_txn, _query, binding, counters)?;
         }
         Ok(())
     }

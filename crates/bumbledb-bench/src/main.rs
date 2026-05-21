@@ -682,6 +682,11 @@ struct BenchmarkRunResult {
     direct_kernel_probes: u64,
     direct_kernel_rows: u64,
     direct_kernel_predicates: u64,
+    query_image_relation_count: usize,
+    query_image_row_count: usize,
+    query_image_encoded_column_bytes: usize,
+    query_image_sorted_trie_bytes: usize,
+    query_image_hash_trie_bytes: usize,
     gate: GateOutcome,
 }
 
@@ -737,6 +742,11 @@ impl TimingStats {
 
 #[derive(Clone, Copy, Debug)]
 struct QueryImageBenchStats {
+    relation_count: usize,
+    row_count: usize,
+    encoded_column_bytes: usize,
+    sorted_trie_bytes: usize,
+    hash_trie_bytes: usize,
     build_micros: u128,
     segment_count: usize,
     segment_bytes: usize,
@@ -746,6 +756,11 @@ struct QueryImageBenchStats {
 impl QueryImageBenchStats {
     fn empty() -> Self {
         Self {
+            relation_count: 0,
+            row_count: 0,
+            encoded_column_bytes: 0,
+            sorted_trie_bytes: 0,
+            hash_trie_bytes: 0,
             build_micros: 0,
             segment_count: 0,
             segment_bytes: 0,
@@ -840,6 +855,11 @@ fn run_dataset(
     } else {
         let query_image = bumble_env.query_image(&bumble_schema)?;
         QueryImageBenchStats {
+            relation_count: query_image.stats().relation_count,
+            row_count: query_image.stats().row_count,
+            encoded_column_bytes: query_image.stats().encoded_column_bytes,
+            sorted_trie_bytes: query_image.stats().sorted_trie_bytes,
+            hash_trie_bytes: query_image.stats().hash_trie_bytes,
             build_micros: query_image.stats().build_micros,
             segment_count: query_image.stats().segment_count,
             segment_bytes: query_image.stats().segment_bytes,
@@ -1091,10 +1111,14 @@ fn run_dataset(
         emit_profile_summary(dataset.name, query.name, &bumble_output);
         if format.includes_text() {
             println!(
-                "query={} rows={} cache_mode={} prepared_result_cache_hits={} static_empty_cache_hits={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
+                "query={} rows={} cache_mode={} sink_emit_calls={} encoded_project_rows_seen={} lftj_next_calls={} direct_chain_step_rows={} prepared_result_cache_hits={} static_empty_cache_hits={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
                 query.name,
                 bumble_output.rows.len(),
                 result.cache_mode,
+                result.counters.sink_emit_calls,
+                result.counters.encoded_project_rows_seen,
+                result.counters.lftj_next_calls,
+                result.counters.direct_chain_step_rows,
                 result.prepared_result_cache_hits,
                 result.static_empty_cache_hits,
                 bumble_cold_execution,
@@ -1290,6 +1314,11 @@ fn benchmark_result(
         direct_kernel_probes: output.plan.counters.direct_kernel_probes,
         direct_kernel_rows: output.plan.counters.direct_kernel_rows,
         direct_kernel_predicates: output.plan.counters.direct_kernel_predicates,
+        query_image_relation_count: query_image_stats.relation_count,
+        query_image_row_count: query_image_stats.row_count,
+        query_image_encoded_column_bytes: query_image_stats.encoded_column_bytes,
+        query_image_sorted_trie_bytes: query_image_stats.sorted_trie_bytes,
+        query_image_hash_trie_bytes: query_image_stats.hash_trie_bytes,
         gate,
     }
 }
@@ -1763,6 +1792,28 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             if result.gate.passed { "pass" } else { "fail" },
         );
     }
+    out.push_str("\n## Mechanics Counters\n\n");
+    out.push_str("| dataset | query | runtime | sink emits | project seen | project dupes | lftj next | lftj seek | lftj keys | direct chain step rows | direct chain output rows | direct storage output rows |\n");
+    out.push_str("|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    for result in results {
+        let counters = &result.counters;
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            markdown_escape(result.dataset),
+            markdown_escape(result.query),
+            markdown_escape(&result.runtime_kind),
+            counters.sink_emit_calls,
+            counters.encoded_project_rows_seen,
+            counters.encoded_project_duplicate_rows,
+            counters.lftj_next_calls,
+            counters.lftj_seek_calls,
+            counters.lftj_key_reads,
+            counters.direct_chain_step_rows,
+            counters.direct_chain_output_rows,
+            counters.direct_storage_output_rows,
+        );
+    }
     out.push_str("\n## Cache Diagnostics\n\n");
     out.push_str("| dataset | query | cache mode | prepared result allowed | prepared result cache hits | static empty cache hits | query image sample cache hits |\n");
     out.push_str("|---|---|---|---|---:|---:|---:|\n");
@@ -2129,14 +2180,45 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"direct_kernel_probes\":{},\"direct_kernel_rows\":{},\"direct_kernel_predicates\":{},\"static_empty_atoms_checked\":{},\"static_empty_rows_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{},\"prepared_result_cache_hits\":{},\"prepared_result_cache_misses\":{},\"prepared_result_cache_inserts\":{},\"prepared_result_cache_bypasses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"sink_emit_count_range_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_rows_seen\":{},\"encoded_project_rows_inserted\":{},\"encoded_project_duplicate_rows\":{},\"encoded_project_row_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"direct_kernel_probes\":{},\"direct_kernel_rows\":{},\"direct_kernel_predicates\":{},\"direct_bind_attempts\":{},\"direct_bind_successes\":{},\"direct_chain_steps\":{},\"direct_chain_step_rows\":{},\"direct_chain_output_rows\":{},\"direct_chain_output_values\":{},\"direct_storage_output_rows\":{},\"query_image_relations_loaded\":{},\"query_image_rows_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{},\"hash_trie_bytes\":{},\"static_empty_atoms_checked\":{},\"static_empty_rows_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{},\"prepared_result_cache_hits\":{},\"prepared_result_cache_misses\":{},\"prepared_result_cache_inserts\":{},\"prepared_result_cache_bypasses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.counters.cursor_seeks,
             result.counters.rows_scanned,
             result.dictionary_reverse_lookups,
             result.materialized_values,
+            result.counters.bindings_completed,
+            result.counters.sink_emit_calls,
+            result.counters.sink_emit_count_range_calls,
+            result.counters.aggregate_emit_calls,
+            result.counters.aggregate_count_range_calls,
+            result.counters.encoded_project_rows_seen,
+            result.counters.encoded_project_rows_inserted,
+            result.counters.encoded_project_duplicate_rows,
+            result.counters.encoded_project_row_bytes,
+            result.counters.project_decode_values,
+            result.counters.lftj_open_calls,
+            result.counters.lftj_up_calls,
+            result.counters.lftj_next_calls,
+            result.counters.lftj_seek_calls,
+            result.counters.lftj_key_reads,
+            result.counters.lftj_candidate_values,
+            result.counters.lftj_bind_successes,
+            result.counters.lftj_bind_rejects,
+            result.counters.lftj_completed_bindings,
             result.direct_kernel_probes,
             result.direct_kernel_rows,
             result.direct_kernel_predicates,
+            result.counters.direct_bind_attempts,
+            result.counters.direct_bind_successes,
+            result.counters.direct_chain_steps,
+            result.counters.direct_chain_step_rows,
+            result.counters.direct_chain_output_rows,
+            result.counters.direct_chain_output_values,
+            result.counters.direct_storage_output_rows,
+            result.query_image_relation_count,
+            result.query_image_row_count,
+            result.query_image_encoded_column_bytes,
+            result.query_image_sorted_trie_bytes,
+            result.query_image_hash_trie_bytes,
             result.counters.static_empty_atoms_checked,
             result.counters.static_empty_rows_scanned,
             result.counters.static_empty_cache_hits,
@@ -3477,6 +3559,11 @@ mod tests {
             direct_kernel_probes: 0,
             direct_kernel_rows: 0,
             direct_kernel_predicates: 0,
+            query_image_relation_count: 1,
+            query_image_row_count: 3,
+            query_image_encoded_column_bytes: 128,
+            query_image_sorted_trie_bytes: 0,
+            query_image_hash_trie_bytes: 0,
             gate: GateOutcome {
                 passed: true,
                 notes: vec!["ok".to_owned()],
@@ -3491,6 +3578,8 @@ mod tests {
         assert!(markdown.contains("direct count us"));
         assert!(markdown.contains("prepared count cache lookup us"));
         assert!(markdown.contains("unaccounted us"));
+        assert!(markdown.contains("## Mechanics Counters"));
+        assert!(markdown.contains("sink emits"));
         assert!(markdown.contains("## Cache Diagnostics"));
         assert!(
             markdown
@@ -3582,6 +3671,11 @@ mod tests {
             direct_kernel_probes: 0,
             direct_kernel_rows: 0,
             direct_kernel_predicates: 0,
+            query_image_relation_count: 1,
+            query_image_row_count: 2,
+            query_image_encoded_column_bytes: 1,
+            query_image_sorted_trie_bytes: 0,
+            query_image_hash_trie_bytes: 0,
             gate: GateOutcome {
                 passed: true,
                 notes: vec!["ok".to_owned()],
@@ -3612,6 +3706,10 @@ mod tests {
         assert!(json.contains("\"static_semijoin_proof_us\":12"));
         assert!(json.contains("\"prepared_count_cache_us\":3"));
         assert!(json.contains("\"unaccounted_us\":7"));
+        assert!(json.contains("\"sink_emit_calls\""));
+        assert!(json.contains("\"encoded_project_rows_seen\""));
+        assert!(json.contains("\"lftj_next_calls\""));
+        assert!(json.contains("\"direct_chain_step_rows\""));
         assert!(json.contains("\"allocations\""));
         assert!(json.contains("\"phases\""));
         assert!(json.contains("\"size_class_allocs\""));
