@@ -10689,15 +10689,49 @@ impl TupleSink for GlobalCountSink {
 #[derive(Clone, Debug)]
 struct EncodedProjectSink {
     vars: Vec<VarId>,
-    rows: BTreeSet<SmallEncodedRow>,
+    layout: Option<EncodedProjectionLayout>,
+    rows: Vec<u8>,
+    row_count: usize,
+}
+
+#[derive(Clone, Debug)]
+struct EncodedProjectionLayout {
+    vars: Vec<VarId>,
+    offsets: Vec<usize>,
+    widths: Vec<usize>,
+    row_width: usize,
 }
 
 impl EncodedProjectSink {
     fn new(plan: &ProjectPlan) -> Self {
         Self {
             vars: plan.vars.clone(),
-            rows: BTreeSet::new(),
+            layout: None,
+            rows: Vec::new(),
+            row_count: 0,
         }
+    }
+
+    fn ensure_layout(&mut self, query: &NormalizedQuery) {
+        if self.layout.is_some() {
+            return;
+        }
+        let mut offsets = Vec::with_capacity(self.vars.len());
+        let mut widths = Vec::with_capacity(self.vars.len());
+        let mut row_width = 0usize;
+        for variable in &self.vars {
+            offsets.push(row_width);
+            let width = query.vars[variable.0 as usize].value_type.encoded_width();
+            widths.push(width);
+            row_width = row_width.saturating_add(width);
+        }
+        let layout = EncodedProjectionLayout {
+            vars: self.vars.clone(),
+            offsets,
+            widths,
+            row_width,
+        };
+        self.layout = Some(layout);
     }
 }
 
@@ -10705,24 +10739,28 @@ impl TupleSink for EncodedProjectSink {
     fn emit(
         &mut self,
         _txn: &ReadTxn<'_>,
-        _query: &NormalizedQuery,
+        query: &NormalizedQuery,
         binding: &EncodedBinding,
         counters: &mut PlanCounters,
     ) -> Result<()> {
-        let row = self
-            .vars
-            .iter()
-            .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
-            .collect::<Result<SmallEncodedRow>>()?;
+        self.ensure_layout(query);
+        let layout = self
+            .layout
+            .as_ref()
+            .ok_or_else(|| Error::internal("projection layout missing"))?;
+        let start_len = self.rows.len();
+        self.rows.resize(start_len + layout.row_width, 0);
+        for (ordinal, variable) in layout.vars.iter().enumerate() {
+            let value = bound_encoded_variable(binding, variable.0 as usize)?;
+            let offset = start_len + layout.offsets[ordinal];
+            let width = layout.widths[ordinal];
+            self.rows[offset..offset + width].copy_from_slice(value.as_bytes());
+        }
+        self.row_count += 1;
         counters.encoded_project_rows_seen += 1;
         counters.encoded_project_row_bytes = counters
             .encoded_project_row_bytes
-            .saturating_add(row.iter().map(|value| value.as_bytes().len() as u64).sum());
-        if self.rows.insert(row) {
-            counters.encoded_project_rows_inserted += 1;
-        } else {
-            counters.encoded_project_duplicate_rows += 1;
-        }
+            .saturating_add(layout.row_width as u64);
         Ok(())
     }
 
@@ -10732,14 +10770,72 @@ impl TupleSink for EncodedProjectSink {
         query: &NormalizedQuery,
         counters: &mut PlanCounters,
     ) -> Result<Vec<Vec<Value>>> {
-        let _span =
-            tracing::debug_span!("bumbledb.query.project", rows = self.rows.len()).entered();
-        self.rows
+        let EncodedProjectSink {
+            vars,
+            layout,
+            rows,
+            row_count,
+        } = self;
+        let layout = layout.unwrap_or_else(|| {
+            let mut offsets = Vec::with_capacity(vars.len());
+            let mut widths = Vec::with_capacity(vars.len());
+            let mut row_width = 0usize;
+            for variable in &vars {
+                offsets.push(row_width);
+                let width = query.vars[variable.0 as usize].value_type.encoded_width();
+                widths.push(width);
+                row_width = row_width.saturating_add(width);
+            }
+            EncodedProjectionLayout {
+                vars: vars.clone(),
+                offsets,
+                widths,
+                row_width,
+            }
+        });
+        let _span = tracing::debug_span!(
+            "bumbledb.query.project",
+            rows = row_count,
+            row_width = layout.row_width
+        )
+        .entered();
+        if row_count == 0 {
+            return Ok(Vec::new());
+        }
+        let row_slice = |row: usize| {
+            let start = row * layout.row_width;
+            &rows[start..start + layout.row_width]
+        };
+        let mut order = (0..row_count).collect::<Vec<_>>();
+        order.sort_by(|left, right| row_slice(*left).cmp(row_slice(*right)));
+        let mut unique = Vec::with_capacity(order.len());
+        for row in order {
+            if unique
+                .last()
+                .is_some_and(|existing| row_slice(*existing) == row_slice(row))
+            {
+                continue;
+            }
+            unique.push(row);
+        }
+        counters.encoded_project_rows_inserted = counters
+            .encoded_project_rows_inserted
+            .saturating_add(unique.len() as u64);
+        counters.encoded_project_duplicate_rows = counters
+            .encoded_project_duplicate_rows
+            .saturating_add(row_count.saturating_sub(unique.len()) as u64);
+        unique
             .into_iter()
-            .map(|row| {
-                row.into_iter()
-                    .zip(&self.vars)
-                    .map(|(value, variable)| {
+            .map(|row_index| {
+                let bytes = row_slice(row_index);
+                layout
+                    .vars
+                    .iter()
+                    .enumerate()
+                    .map(|(index, variable)| {
+                        let offset = layout.offsets[index];
+                        let width = layout.widths[index];
+                        let value = encoded_owned_for_width(width, &bytes[offset..offset + width])?;
                         counters.project_decode_values += 1;
                         decode_output_value(
                             txn,
