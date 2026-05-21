@@ -2077,6 +2077,133 @@ fn static_semijoin_non_empty_query_is_not_proven_empty() -> TestResult {
 }
 
 #[test]
+fn static_semijoin_red_boat_like_wide_projection_skips_and_preserves_rows() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, dim_row(1, 1))?;
+        txn.insert(&schema, fact_row(1, 10))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Dim")?
+            .var("id", "dim")?
+            .integer("kind", 1)?
+            .done();
+        query
+            .rel("Fact")?
+            .var("dim", "dim")?
+            .var("item", "item")?
+            .done();
+        query.find_var("dim")?.find_var("item")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert_same_rows(&output.rows, &[vec![Value::U64(1), Value::U64(10)]]);
+    assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert_eq!(output.plan.counters.static_semijoin_skipped, 1);
+    assert_eq!(
+        output.plan.counters.static_semijoin_skipped_reason,
+        StaticSemijoinSkipReason::OutputTooBroad
+    );
+    assert_eq!(output.plan.counters.static_semijoin_rounds, 0);
+    Ok(())
+}
+
+#[test]
+fn static_semijoin_tag_lookup_like_direct_chain_projection_skips() -> TestResult {
+    let (env, schema) = seeded_db()?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Posting")?
+            .var("id", "posting")?
+            .var("account", "account")?
+            .done();
+        query
+            .rel("Account")?
+            .var("id", "account")?
+            .var("holder", "holder")?
+            .done();
+        query.cmp(
+            OperandRef::var("account"),
+            ComparisonOperator::Eq,
+            OperandRef::input("account"),
+        )?;
+        query.find_var("posting")?.find_var("holder")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| {
+        txn.execute_query(
+            &schema,
+            &query,
+            &InputBindings::from_values([("account", Value::Serial(1))]),
+        )
+    })?;
+
+    assert_same_rows(
+        &output.rows,
+        &[
+            vec![Value::Serial(1), Value::Serial(1)],
+            vec![Value::Serial(2), Value::Serial(1)],
+        ],
+    );
+    assert_eq!(output.plan.counters.static_semijoin_skipped, 1);
+    assert_eq!(
+        output.plan.counters.static_semijoin_skipped_reason,
+        StaticSemijoinSkipReason::OutputTooBroad
+    );
+    Ok(())
+}
+
+#[test]
+fn static_semijoin_tpch_like_non_empty_materialized_projection_skips() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, dim_row(1, 1))?;
+        txn.insert(&schema, fact_row(1, 10))?;
+        txn.insert(&schema, other_dim_row(10, 2))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Dim")?
+            .var("id", "supplier")?
+            .integer("kind", 1)?
+            .done();
+        query
+            .rel("Fact")?
+            .var("dim", "supplier")?
+            .var("item", "line")?
+            .done();
+        query
+            .rel("OtherDim")?
+            .var("id", "line")?
+            .var("kind", "status")?
+            .done();
+        query.find_var("line")?.find_var("status")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert_same_rows(&output.rows, &[vec![Value::U64(10), Value::Enum(2)]]);
+    assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert_eq!(output.plan.counters.static_semijoin_skipped, 1);
+    assert_eq!(
+        output.plan.counters.static_semijoin_skipped_reason,
+        StaticSemijoinSkipReason::OutputTooBroad
+    );
+    Ok(())
+}
+
+#[test]
 fn static_semijoin_q24_like_empty_shape_proves_empty() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
@@ -2225,6 +2352,7 @@ fn static_semijoin_q24_like_empty_shape_proves_empty() -> TestResult {
     assert!(output.rows.is_empty());
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(output.plan.counters.static_semijoin_candidate_values > 0);
+    assert_eq!(output.plan.counters.static_semijoin_skipped, 0);
     Ok(())
 }
 
@@ -2362,6 +2490,7 @@ fn static_semijoin_range_index_q16_like_count_proves_empty() -> TestResult {
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(output.plan.counters.static_semijoin_prefixes_probed > 0);
     assert!(output.plan.counters.static_semijoin_candidate_values > 0);
+    assert_eq!(output.plan.counters.static_semijoin_skipped, 0);
     Ok(())
 }
 

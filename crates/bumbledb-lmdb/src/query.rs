@@ -33,12 +33,14 @@ use crate::{PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics};
 
 const HASH_BUILD_ROWS_PER_MICRO: u64 = 5;
 const TINY_PROJECT_THRESHOLD: usize = 32;
-const STATIC_SEMIJOIN_MAX_PROBES: u64 = 50_000;
-const STATIC_SEMIJOIN_MAX_SCANNED_ROWS: u64 = 100_000;
-const STATIC_SEMIJOIN_MAX_CANDIDATES: usize = 50_000;
+const STATIC_SEMIJOIN_MAX_PROBES: u64 = 2_048;
+const STATIC_SEMIJOIN_MAX_SCANNED_ROWS: u64 = 2_048;
+const STATIC_SEMIJOIN_MAX_SEED_CANDIDATES: usize = 1_024;
+const STATIC_SEMIJOIN_MAX_CANDIDATES: usize = 1_024;
+const STATIC_SEMIJOIN_MAX_OUTPUT_VARS: usize = 1;
 const FACTORIZED_COUNT_MAX_CANDIDATES: usize = 50_000;
-const STATIC_SEMIJOIN_MAX_ROUNDS: u64 = 8;
-const STATIC_SEMIJOIN_SCAN_THRESHOLD: usize = 1_000;
+const STATIC_SEMIJOIN_MAX_ROUNDS: u64 = 4;
+const STATIC_SEMIJOIN_SCAN_THRESHOLD: usize = 256;
 
 /// Query input bindings keyed by input name without `$`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -739,6 +741,14 @@ impl QueryPlan {
             "  static_semijoin_rounds: {}\n",
             self.counters.static_semijoin_rounds
         ));
+        out.push_str(&format!(
+            "  static_semijoin_skipped: {}\n",
+            self.counters.static_semijoin_skipped
+        ));
+        out.push_str(&format!(
+            "  static_semijoin_skipped_reason: {}\n",
+            self.counters.static_semijoin_skipped_reason.as_str()
+        ));
         out.push_str(&format!("  output_rows: {}\n", self.counters.output_rows));
         out
     }
@@ -1131,6 +1141,34 @@ pub struct NodeRowEstimate {
     pub actual_rows: u64,
 }
 
+/// Reason static semijoin proof did not run after cheap preflight.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StaticSemijoinSkipReason {
+    /// Proof was not skipped.
+    #[default]
+    NotSkipped,
+    /// Query has fewer than two relation atoms.
+    TooFewAtoms,
+    /// Query has no static literal/input/range seed.
+    NoStaticConstraint,
+    /// Query output shape is too broad for speculative empty proof.
+    OutputTooBroad,
+    /// No exact low-cardinality seed could be produced cheaply.
+    NoCheapExactSeed,
+}
+
+impl StaticSemijoinSkipReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotSkipped => "not_skipped",
+            Self::TooFewAtoms => "too_few_atoms",
+            Self::NoStaticConstraint => "no_static_constraint",
+            Self::OutputTooBroad => "output_too_broad",
+            Self::NoCheapExactSeed => "no_cheap_exact_seed",
+        }
+    }
+}
+
 /// Execution counters for the Free Join query executor.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlanCounters {
@@ -1236,6 +1274,10 @@ pub struct PlanCounters {
     pub static_semijoin_candidate_values: u64,
     /// Number of static semijoin propagation rounds completed.
     pub static_semijoin_rounds: u64,
+    /// Number of static semijoin proof attempts skipped by preflight.
+    pub static_semijoin_skipped: u64,
+    /// Last reason static semijoin proof was skipped.
+    pub static_semijoin_skipped_reason: StaticSemijoinSkipReason,
 }
 
 #[derive(Clone, Debug)]
@@ -1728,13 +1770,8 @@ impl<'env> ReadTxn<'env> {
             plan.timings = timings;
             plan.allocations = allocations;
             plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
-            if let Some(proof) = static_empty_proof {
-                plan.counters.static_empty_cache_misses = 1;
-                plan.counters.static_empty_atoms_checked = proof.atoms_checked;
-                plan.counters.static_empty_rows_scanned = proof.rows_scanned;
-                plan.counters.static_semijoin_prefixes_probed = proof.prefixes_probed;
-                plan.counters.static_semijoin_candidate_values = proof.candidate_values;
-                plan.counters.static_semijoin_rounds = proof.rounds;
+            if let Some(proof) = &static_empty_proof {
+                record_static_proof_counters(&mut plan.counters, proof);
             }
             finish_timings(&mut plan.timings, total_start);
             let total_alloc = allocation_delta_since(total_alloc_start);
@@ -1760,6 +1797,10 @@ impl<'env> ReadTxn<'env> {
             total_start,
             total_alloc_start,
         )? {
+            let mut output = output;
+            if let Some(proof) = &static_empty_proof {
+                record_static_proof_counters(&mut output.plan.counters, proof);
+            }
             return Ok(output);
         }
 
@@ -1821,6 +1862,9 @@ impl<'env> ReadTxn<'env> {
         plan.summary.counters.output_rows = rows.len() as u64;
         if has_aggregate(&normalized) {
             plan.summary.counters.aggregate_groups = rows.len() as u64;
+        }
+        if let Some(proof) = &static_empty_proof {
+            record_static_proof_counters(&mut plan.summary.counters, proof);
         }
         finish_timings(&mut plan.summary.timings, total_start);
         let total_alloc = allocation_delta_since(total_alloc_start);
@@ -2022,13 +2066,8 @@ impl<'env> ReadTxn<'env> {
             plan.timings = timings;
             plan.allocations = allocations;
             plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
-            if let Some(proof) = static_empty_proof {
-                plan.counters.static_empty_cache_misses = 1;
-                plan.counters.static_empty_atoms_checked = proof.atoms_checked;
-                plan.counters.static_empty_rows_scanned = proof.rows_scanned;
-                plan.counters.static_semijoin_prefixes_probed = proof.prefixes_probed;
-                plan.counters.static_semijoin_candidate_values = proof.candidate_values;
-                plan.counters.static_semijoin_rounds = proof.rounds;
+            if let Some(proof) = &static_empty_proof {
+                record_static_proof_counters(&mut plan.counters, proof);
             }
             finish_timings(&mut plan.timings, total_start);
             let total_alloc = allocation_delta_since(total_alloc_start);
@@ -2054,6 +2093,7 @@ impl<'env> ReadTxn<'env> {
             total_start,
             total_alloc_start,
         )? {
+            let mut output = output;
             if let Some(count) = output
                 .rows
                 .first()
@@ -2071,6 +2111,9 @@ impl<'env> ReadTxn<'env> {
                     .write()
                     .map_err(|_| Error::internal("prepared count cache poisoned"))?
                     .insert(prepared_count_key, count);
+            }
+            if let Some(proof) = &static_empty_proof {
+                record_static_proof_counters(&mut output.plan.counters, proof);
             }
             return Ok(output);
         }
@@ -2134,6 +2177,9 @@ impl<'env> ReadTxn<'env> {
         plan.summary.counters.output_rows = rows.len() as u64;
         if has_aggregate(normalized) {
             plan.summary.counters.aggregate_groups = rows.len() as u64;
+        }
+        if let Some(proof) = &static_empty_proof {
+            record_static_proof_counters(&mut plan.summary.counters, proof);
         }
         finish_timings(&mut plan.summary.timings, total_start);
         let total_alloc = allocation_delta_since(total_alloc_start);
@@ -2275,13 +2321,8 @@ impl<'env> ReadTxn<'env> {
             plan.timings = timings;
             plan.allocations = allocations;
             plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
-            if let Some(proof) = static_empty_proof {
-                plan.counters.static_empty_cache_misses = 1;
-                plan.counters.static_empty_atoms_checked = proof.atoms_checked;
-                plan.counters.static_empty_rows_scanned = proof.rows_scanned;
-                plan.counters.static_semijoin_prefixes_probed = proof.prefixes_probed;
-                plan.counters.static_semijoin_candidate_values = proof.candidate_values;
-                plan.counters.static_semijoin_rounds = proof.rounds;
+            if let Some(proof) = &static_empty_proof {
+                record_static_proof_counters(&mut plan.counters, proof);
             }
             finish_timings(&mut plan.timings, total_start);
             plan.allocations = plan
@@ -2340,6 +2381,9 @@ impl<'env> ReadTxn<'env> {
         if has_aggregate(&normalized) {
             plan.summary.counters.aggregate_groups = rows as u64;
         }
+        if let Some(proof) = &static_empty_proof {
+            record_static_proof_counters(&mut plan.summary.counters, proof);
+        }
         finish_timings(&mut plan.summary.timings, total_start);
         plan.summary.allocations = plan
             .summary
@@ -2364,6 +2408,19 @@ fn elapsed_recorded_micros(start: Instant) -> u128 {
 fn finish_timings(timings: &mut QueryTimings, total_start: Instant) {
     timings.total_micros = elapsed_micros(total_start);
     timings.refresh_unaccounted();
+}
+
+fn record_static_proof_counters(counters: &mut PlanCounters, proof: &StaticEmptyProof) {
+    counters.static_empty_cache_misses = 1;
+    counters.static_empty_atoms_checked = proof.atoms_checked;
+    counters.static_empty_rows_scanned = proof.rows_scanned;
+    counters.static_semijoin_prefixes_probed = proof.prefixes_probed;
+    counters.static_semijoin_candidate_values = proof.candidate_values;
+    counters.static_semijoin_rounds = proof.rounds;
+    if proof.semijoin_skipped {
+        counters.static_semijoin_skipped = 1;
+        counters.static_semijoin_skipped_reason = proof.semijoin_skipped_reason;
+    }
 }
 
 fn allocation_delta_since(start: allocation::AllocationSnapshot) -> AllocationPhaseStats {
@@ -2735,6 +2792,7 @@ fn hash_output_plan(hasher: &mut blake3::Hasher, output: &OutputPlan) {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
 struct StaticEmptyProof {
     empty: bool,
     atoms_checked: u64,
@@ -2742,6 +2800,8 @@ struct StaticEmptyProof {
     prefixes_probed: u64,
     candidate_values: u64,
     rounds: u64,
+    semijoin_skipped: bool,
+    semijoin_skipped_reason: StaticSemijoinSkipReason,
 }
 
 #[derive(Clone, Debug)]
@@ -2794,6 +2854,14 @@ fn static_query_proves_empty_timed(
         return Ok(Some(proof));
     }
     let semijoin_start = Instant::now();
+    if let Some(reason) = static_semijoin_skip_reason(image, query, inputs)? {
+        timings.static_semijoin_proof_micros = timings
+            .static_semijoin_proof_micros
+            .saturating_add(elapsed_recorded_micros(semijoin_start));
+        proof.semijoin_skipped = true;
+        proof.semijoin_skipped_reason = reason;
+        return Ok(Some(proof));
+    }
     let semijoin = static_semijoin_proves_empty(image, query, inputs)?;
     timings.static_semijoin_proof_micros = timings
         .static_semijoin_proof_micros
@@ -2804,7 +2872,66 @@ fn static_query_proves_empty_timed(
     proof.candidate_values = semijoin.candidate_values;
     proof.rounds = semijoin.rounds;
     proof.empty = semijoin.empty;
+    proof.semijoin_skipped = semijoin.semijoin_skipped;
+    proof.semijoin_skipped_reason = semijoin.semijoin_skipped_reason;
     Ok(Some(proof))
+}
+
+fn static_semijoin_skip_reason(
+    image: &crate::QueryImage,
+    query: &NormalizedQuery,
+    inputs: &EncodedInputs,
+) -> Result<Option<StaticSemijoinSkipReason>> {
+    if query.atoms.len() < 2 {
+        return Ok(Some(StaticSemijoinSkipReason::TooFewAtoms));
+    }
+    if !static_semijoin_output_allowed(&query.output) {
+        return Ok(Some(StaticSemijoinSkipReason::OutputTooBroad));
+    }
+    if !query
+        .atoms
+        .iter()
+        .any(|atom| atom_has_static_constraint(query, atom))
+    {
+        return Ok(Some(StaticSemijoinSkipReason::NoStaticConstraint));
+    }
+
+    let empty_candidates = BTreeMap::new();
+    for atom in &query.atoms {
+        if !atom_has_static_constraint(query, atom) {
+            continue;
+        }
+        let relation = image
+            .relation_by_id(atom.relation)
+            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
+        let mut proof = StaticEmptyProof::default();
+        let Some(seed_candidates) = enumerate_static_atom_candidates(
+            relation,
+            query,
+            atom,
+            inputs,
+            &empty_candidates,
+            &mut proof,
+            false,
+            STATIC_SEMIJOIN_MAX_SEED_CANDIDATES,
+        )?
+        else {
+            continue;
+        };
+        if total_raw_candidate_values(&seed_candidates) <= STATIC_SEMIJOIN_MAX_SEED_CANDIDATES {
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(StaticSemijoinSkipReason::NoCheapExactSeed))
+}
+
+fn static_semijoin_output_allowed(output: &OutputPlan) -> bool {
+    match output {
+        OutputPlan::Aggregate(plan) if is_global_count_plan(plan) => true,
+        OutputPlan::Project(plan) => plan.vars.len() <= STATIC_SEMIJOIN_MAX_OUTPUT_VARS,
+        OutputPlan::Aggregate(_) => false,
+    }
 }
 
 fn static_literal_atoms_prove_empty(
@@ -2812,14 +2939,7 @@ fn static_literal_atoms_prove_empty(
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
 ) -> Result<StaticEmptyProof> {
-    let mut proof = StaticEmptyProof {
-        empty: false,
-        atoms_checked: 0,
-        rows_scanned: 0,
-        prefixes_probed: 0,
-        candidate_values: 0,
-        rounds: 0,
-    };
+    let mut proof = StaticEmptyProof::default();
     let _span = tracing::debug_span!("bumbledb.query.static_empty.prove").entered();
     for atom in &query.atoms {
         if !atom
@@ -2854,14 +2974,7 @@ fn static_semijoin_proves_empty(
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
 ) -> Result<StaticEmptyProof> {
-    let mut proof = StaticEmptyProof {
-        empty: false,
-        atoms_checked: 0,
-        rows_scanned: 0,
-        prefixes_probed: 0,
-        candidate_values: 0,
-        rounds: 0,
-    };
+    let mut proof = StaticEmptyProof::default();
     if query.atoms.len() < 2 {
         return Ok(proof);
     }
@@ -5263,14 +5376,7 @@ fn factorized_static_candidates(
     inputs: &EncodedInputs,
 ) -> Result<Option<BTreeMap<VarId, CandidateSet>>> {
     let mut candidates = BTreeMap::new();
-    let mut proof = StaticEmptyProof {
-        empty: false,
-        atoms_checked: 0,
-        rows_scanned: 0,
-        prefixes_probed: 0,
-        candidate_values: 0,
-        rounds: 0,
-    };
+    let mut proof = StaticEmptyProof::default();
     for atom in &query.atoms {
         if !atom_has_static_constraint(query, atom) {
             continue;
