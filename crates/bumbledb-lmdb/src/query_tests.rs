@@ -1489,6 +1489,49 @@ fn prepared_query_reuses_normalized_snapshot_shape() -> TestResult {
 }
 
 #[test]
+fn prepared_result_cache_options_control_count_cache() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, edge_ab_row(1, 10))?;
+        txn.insert(&schema, edge_ab_row(1, 11))?;
+        txn.insert(
+            &schema,
+            Row::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(20))]),
+        )?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
+        query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
+        query.find_aggregate(AggregateFunction::Count, "a")?;
+        Ok(())
+    })?;
+    let prepared = env.prepare_query(&schema, &query)?;
+
+    let first =
+        env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
+    let cached =
+        env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
+    let disabled = env.read(|txn| {
+        txn.execute_prepared_query_with_options(
+            &schema,
+            &prepared,
+            &InputBindings::new(),
+            QueryExecutionOptions::without_result_caches(),
+        )
+    })?;
+
+    assert_eq!(first.rows, vec![vec![Value::U64(2)]]);
+    assert_eq!(cached.rows, first.rows);
+    assert!(cached.plan.timings.prepared_count_cache_emit_micros > 0);
+    assert_eq!(disabled.rows, first.rows);
+    assert_eq!(disabled.plan.timings.prepared_count_cache_emit_micros, 0);
+    Ok(())
+}
+
+#[test]
 fn lftj_atom_key_includes_encoded_inputs() -> TestResult {
     let (env, schema) = seeded_db()?;
     let query = typed_query(&schema, |query| {

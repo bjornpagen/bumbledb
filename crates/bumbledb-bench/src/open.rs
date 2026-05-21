@@ -2979,6 +2979,7 @@ mod tests {
             trace_format: crate::TraceFormat::Fmt,
             format: crate::OutputFormat::Json,
             compare_mode: crate::CompareMode::Materialized,
+            cache_mode: crate::CacheMode::PreparedPlan,
             fail_gates: false,
         };
         let results = crate::run_dataset(dataset, &config)?;

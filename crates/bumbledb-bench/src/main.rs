@@ -16,7 +16,8 @@ use bumbledb_core::schema::{
 };
 use bumbledb_lmdb::{
     AllocationPhaseStats, Environment, InputBindings, PlanCounters, QueryAllocationStats,
-    QueryOutput, QueryPlan, QueryTimings, ResultColumn, Row, StorageSchema, Value,
+    QueryExecutionOptions, QueryOutput, QueryPlan, QueryTimings, ResultColumn, Row, StorageSchema,
+    Value,
 };
 use rusqlite::{Connection, params_from_iter};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -74,11 +75,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !config.format.is_json_only() {
         println!("BumbleDB benchmark suite");
         println!(
-            "scale={} open_limit={:?} repeats={} warmup={} datasets={:?} queries={:?} open_datasets={}",
+            "scale={} open_limit={:?} repeats={} warmup={} cache_mode={} datasets={:?} queries={:?} open_datasets={}",
             config.scale,
             config.open_limit,
             config.repeats,
             config.warmup,
+            config.cache_mode.as_str(),
             config.datasets,
             config.queries,
             config.has_open_datasets()
@@ -181,6 +183,36 @@ impl CompareMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CacheMode {
+    Recompute,
+    PreparedPlan,
+    PreparedResult,
+}
+
+impl CacheMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            CacheMode::Recompute => "recompute",
+            CacheMode::PreparedPlan => "prepared-plan",
+            CacheMode::PreparedResult => "prepared-result",
+        }
+    }
+
+    fn execution_options(self) -> QueryExecutionOptions {
+        match self {
+            CacheMode::PreparedResult => QueryExecutionOptions::cached(),
+            CacheMode::Recompute | CacheMode::PreparedPlan => {
+                QueryExecutionOptions::without_result_caches()
+            }
+        }
+    }
+
+    fn prepared_result_cache_allowed(self) -> bool {
+        self == CacheMode::PreparedResult
+    }
+}
+
 #[derive(Debug)]
 struct Config {
     scale: u64,
@@ -200,6 +232,7 @@ struct Config {
     trace_format: TraceFormat,
     format: OutputFormat,
     compare_mode: CompareMode,
+    cache_mode: CacheMode,
     fail_gates: bool,
 }
 
@@ -229,6 +262,7 @@ impl Config {
         let mut format = OutputFormat::Text;
         let mut format_explicit = false;
         let mut compare_mode = CompareMode::Materialized;
+        let mut cache_mode = CacheMode::PreparedPlan;
         let mut fail_gates = false;
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -302,6 +336,14 @@ impl Config {
                         }
                     }
                 }
+                "--cache-mode" => {
+                    cache_mode = match next_arg(&mut args, "--cache-mode")?.as_str() {
+                        "recompute" => CacheMode::Recompute,
+                        "prepared-plan" => CacheMode::PreparedPlan,
+                        "prepared-result" => CacheMode::PreparedResult,
+                        other => return Err(bench_error(format!("unknown --cache-mode {other}"))),
+                    }
+                }
                 "--markdown" => {
                     format_explicit = true;
                     format = OutputFormat::Markdown;
@@ -313,7 +355,7 @@ impl Config {
                 "--fail-gates" => fail_gates = true,
                 "--help" | "-h" => {
                     println!(
-                        "usage: cargo run -p bumbledb-bench --release -- [--preset quick|nonjob|job|job-sample|job-full] [--scale N] [--open-limit N|--open-full] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--compare-mode materialized|rows] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
+                        "usage: cargo run -p bumbledb-bench --release -- [--preset quick|nonjob|job|job-sample|job-full] [--scale N] [--open-limit N|--open-full] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--compare-mode materialized|rows] [--cache-mode recompute|prepared-plan|prepared-result] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
                     );
                     return Ok(None);
                 }
@@ -338,6 +380,7 @@ impl Config {
             trace_format,
             format,
             compare_mode,
+            cache_mode,
             fail_gates,
         };
         config.apply_preset(format_explicit)?;
@@ -597,6 +640,11 @@ struct BenchmarkRunResult {
     runtime_kind: String,
     plan_family: String,
     compare_mode: String,
+    cache_mode: String,
+    prepared_result_cache_allowed: bool,
+    prepared_result_cache_hits: u64,
+    static_empty_cache_hits: u64,
+    query_image_sample_cache_hits: u64,
     bumbledb_materialized_rows: bool,
     sqlite_materialized_rows: bool,
     count_only_supported: bool,
@@ -662,6 +710,13 @@ struct QueryTimingSamples {
     sqlite_warmup: TimingStats,
     bumbledb_samples: TimingStats,
     sqlite_samples: TimingStats,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CacheHitStats {
+    prepared_result_cache_hits: u64,
+    static_empty_cache_hits: u64,
+    query_image_cache_hits: u64,
 }
 
 impl TimingStats {
@@ -842,18 +897,42 @@ fn run_dataset(
         let prepared = bumble_env.prepare_query(&bumble_schema, &typed)?;
         let inputs = InputBindings::from_values(query.inputs.clone());
         let params = query.sqlite_params.clone();
+        let execution_options = config.cache_mode.execution_options();
 
-        let materialized_once = timed(|| {
-            bumble_env.read(|txn| txn.execute_prepared_query(&bumble_schema, &prepared, &inputs))
+        let materialized_once = timed(|| match config.cache_mode {
+            CacheMode::Recompute => bumble_env.read(|txn| {
+                txn.execute_query_with_options(&bumble_schema, &typed, &inputs, execution_options)
+            }),
+            CacheMode::PreparedPlan | CacheMode::PreparedResult => bumble_env.read(|txn| {
+                txn.execute_prepared_query_with_options(
+                    &bumble_schema,
+                    &prepared,
+                    &inputs,
+                    execution_options,
+                )
+            }),
         })?;
         let materialized_output = materialized_once.value;
         let (bumble_cold_execution, bumble_output) = match config.compare_mode {
             CompareMode::Materialized => (materialized_once.elapsed, materialized_output.clone()),
             CompareMode::Rows => {
-                let count_once = timed(|| {
-                    bumble_env.read(|txn| {
-                        txn.execute_prepared_query_count_only(&bumble_schema, &prepared, &inputs)
-                    })
+                let count_once = timed(|| match config.cache_mode {
+                    CacheMode::Recompute => bumble_env.read(|txn| {
+                        txn.execute_query_count_only_with_options(
+                            &bumble_schema,
+                            &typed,
+                            &inputs,
+                            execution_options,
+                        )
+                    }),
+                    CacheMode::PreparedPlan | CacheMode::PreparedResult => bumble_env.read(|txn| {
+                        txn.execute_prepared_query_count_only_with_options(
+                            &bumble_schema,
+                            &prepared,
+                            &inputs,
+                            execution_options,
+                        )
+                    }),
                 })?;
                 (
                     count_once.elapsed,
@@ -879,48 +958,114 @@ fn run_dataset(
             .into());
         }
 
-        let bumble_warmup = timed_samples(config.warmup, || match config.compare_mode {
-            CompareMode::Materialized => {
-                let rows = bumble_env
-                    .read(|txn| txn.execute_prepared_query(&bumble_schema, &prepared, &inputs))?
-                    .rows;
-                black_box(rows.len());
-                Ok::<_, bumbledb_lmdb::Error>(())
-            }
-            CompareMode::Rows => {
-                let rows = bumble_env
-                    .read(|txn| {
-                        txn.execute_prepared_query_count_only(&bumble_schema, &prepared, &inputs)
-                    })?
-                    .rows;
-                black_box(rows);
-                Ok::<_, bumbledb_lmdb::Error>(())
-            }
-        })?;
+        let (bumble_warmup, _) =
+            timed_bumbledb_samples(config.warmup, || match config.compare_mode {
+                CompareMode::Materialized => {
+                    let output = match config.cache_mode {
+                        CacheMode::Recompute => bumble_env.read(|txn| {
+                            txn.execute_query_with_options(
+                                &bumble_schema,
+                                &typed,
+                                &inputs,
+                                execution_options,
+                            )
+                        })?,
+                        CacheMode::PreparedPlan | CacheMode::PreparedResult => {
+                            bumble_env.read(|txn| {
+                                txn.execute_prepared_query_with_options(
+                                    &bumble_schema,
+                                    &prepared,
+                                    &inputs,
+                                    execution_options,
+                                )
+                            })?
+                        }
+                    };
+                    black_box(output.rows.len());
+                    Ok::<_, bumbledb_lmdb::Error>(output.plan)
+                }
+                CompareMode::Rows => {
+                    let output = match config.cache_mode {
+                        CacheMode::Recompute => bumble_env.read(|txn| {
+                            txn.execute_query_count_only_with_options(
+                                &bumble_schema,
+                                &typed,
+                                &inputs,
+                                execution_options,
+                            )
+                        })?,
+                        CacheMode::PreparedPlan | CacheMode::PreparedResult => {
+                            bumble_env.read(|txn| {
+                                txn.execute_prepared_query_count_only_with_options(
+                                    &bumble_schema,
+                                    &prepared,
+                                    &inputs,
+                                    execution_options,
+                                )
+                            })?
+                        }
+                    };
+                    black_box(output.rows);
+                    Ok::<_, bumbledb_lmdb::Error>(output.plan)
+                }
+            })?;
         let sqlite_warmup = timed_samples(config.warmup, || {
             let rows = sqlite_count(&mut sqlite, query.sqlite, &params)?;
             black_box(rows);
             Ok::<_, Box<dyn std::error::Error>>(())
         })?;
 
-        let bumble_samples = timed_samples(config.repeats, || match config.compare_mode {
-            CompareMode::Materialized => {
-                let rows = bumble_env
-                    .read(|txn| txn.execute_prepared_query(&bumble_schema, &prepared, &inputs))?
-                    .rows;
-                black_box(rows.len());
-                Ok::<_, bumbledb_lmdb::Error>(())
-            }
-            CompareMode::Rows => {
-                let rows = bumble_env
-                    .read(|txn| {
-                        txn.execute_prepared_query_count_only(&bumble_schema, &prepared, &inputs)
-                    })?
-                    .rows;
-                black_box(rows);
-                Ok::<_, bumbledb_lmdb::Error>(())
-            }
-        })?;
+        let (bumble_samples, bumble_sample_cache_hits) =
+            timed_bumbledb_samples(config.repeats, || match config.compare_mode {
+                CompareMode::Materialized => {
+                    let output = match config.cache_mode {
+                        CacheMode::Recompute => bumble_env.read(|txn| {
+                            txn.execute_query_with_options(
+                                &bumble_schema,
+                                &typed,
+                                &inputs,
+                                execution_options,
+                            )
+                        })?,
+                        CacheMode::PreparedPlan | CacheMode::PreparedResult => {
+                            bumble_env.read(|txn| {
+                                txn.execute_prepared_query_with_options(
+                                    &bumble_schema,
+                                    &prepared,
+                                    &inputs,
+                                    execution_options,
+                                )
+                            })?
+                        }
+                    };
+                    black_box(output.rows.len());
+                    Ok::<_, bumbledb_lmdb::Error>(output.plan)
+                }
+                CompareMode::Rows => {
+                    let output = match config.cache_mode {
+                        CacheMode::Recompute => bumble_env.read(|txn| {
+                            txn.execute_query_count_only_with_options(
+                                &bumble_schema,
+                                &typed,
+                                &inputs,
+                                execution_options,
+                            )
+                        })?,
+                        CacheMode::PreparedPlan | CacheMode::PreparedResult => {
+                            bumble_env.read(|txn| {
+                                txn.execute_prepared_query_count_only_with_options(
+                                    &bumble_schema,
+                                    &prepared,
+                                    &inputs,
+                                    execution_options,
+                                )
+                            })?
+                        }
+                    };
+                    black_box(output.rows);
+                    Ok::<_, bumbledb_lmdb::Error>(output.plan)
+                }
+            })?;
         let sqlite_samples = timed_samples(config.repeats, || {
             let rows = sqlite_count(&mut sqlite, query.sqlite, &params)?;
             black_box(rows);
@@ -933,6 +1078,8 @@ fn run_dataset(
             &typed,
             &bumble_output,
             config.compare_mode,
+            config.cache_mode,
+            bumble_sample_cache_hits,
             QueryTimingSamples {
                 bumbledb_correctness_execution: materialized_once.elapsed,
                 sqlite_correctness_execution: sqlite_cold_execution,
@@ -948,9 +1095,12 @@ fn run_dataset(
         emit_profile_summary(dataset.name, query.name, &bumble_output);
         if format.includes_text() {
             println!(
-                "query={} rows={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
+                "query={} rows={} cache_mode={} prepared_result_cache_hits={} static_empty_cache_hits={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
                 query.name,
                 bumble_output.rows.len(),
+                result.cache_mode,
+                result.prepared_result_cache_hits,
+                result.static_empty_cache_hits,
                 bumble_cold_execution,
                 result.bumbledb_samples.samples,
                 result.bumbledb_avg,
@@ -994,6 +1144,29 @@ fn timed_samples<E>(samples: u64, mut f: impl FnMut() -> Result<(), E>) -> Resul
     Ok(TimingStats::from_samples(durations))
 }
 
+fn timed_bumbledb_samples<E>(
+    samples: u64,
+    mut f: impl FnMut() -> Result<QueryPlan, E>,
+) -> Result<(TimingStats, CacheHitStats), E> {
+    let mut durations = Vec::with_capacity(samples.min(usize::MAX as u64) as usize);
+    let mut cache_hits = CacheHitStats::default();
+    for _ in 0..samples {
+        let start = Instant::now();
+        let plan = f()?;
+        durations.push(start.elapsed());
+        if plan.timings.prepared_count_cache_emit_micros > 0 {
+            cache_hits.prepared_result_cache_hits += 1;
+        }
+        if plan.counters.static_empty_cache_hits > 0 {
+            cache_hits.static_empty_cache_hits += 1;
+        }
+        if plan.query_image_cache.hits > 0 {
+            cache_hits.query_image_cache_hits += 1;
+        }
+    }
+    Ok((TimingStats::from_samples(durations), cache_hits))
+}
+
 fn duration_avg(duration: Duration, samples: u64) -> Duration {
     if samples == 0 {
         return Duration::ZERO;
@@ -1019,12 +1192,18 @@ fn sqlite_count(
     Ok(rows)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "benchmark result assembly keeps measured dimensions explicit"
+)]
 fn benchmark_result(
     dataset: &'static str,
     query: &BenchQuery,
     typed: &TypedQuery,
     output: &QueryOutput,
     compare_mode: CompareMode,
+    cache_mode: CacheMode,
+    cache_hits: CacheHitStats,
     timing: QueryTimingSamples,
     query_image_stats: QueryImageBenchStats,
 ) -> BenchmarkRunResult {
@@ -1071,6 +1250,11 @@ fn benchmark_result(
         runtime_kind: format!("{:?}", output.plan.runtime_kind),
         plan_family: format!("{:?}", output.plan.plan_family),
         compare_mode: compare_mode.as_str().to_owned(),
+        cache_mode: cache_mode.as_str().to_owned(),
+        prepared_result_cache_allowed: cache_mode.prepared_result_cache_allowed(),
+        prepared_result_cache_hits: cache_hits.prepared_result_cache_hits,
+        static_empty_cache_hits: cache_hits.static_empty_cache_hits,
+        query_image_sample_cache_hits: cache_hits.query_image_cache_hits,
         bumbledb_materialized_rows: compare_mode == CompareMode::Materialized,
         sqlite_materialized_rows: false,
         count_only_supported: compare_mode == CompareMode::Rows,
@@ -1520,6 +1704,22 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             if result.gate.passed { "pass" } else { "fail" },
         );
     }
+    out.push_str("\n## Cache Diagnostics\n\n");
+    out.push_str("| dataset | query | cache mode | prepared result allowed | prepared result cache hits | static empty cache hits | query image sample cache hits |\n");
+    out.push_str("|---|---|---|---|---:|---:|---:|\n");
+    for result in results {
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} | {} | {} | {} |",
+            markdown_escape(result.dataset),
+            markdown_escape(result.query),
+            markdown_escape(&result.cache_mode),
+            result.prepared_result_cache_allowed,
+            result.prepared_result_cache_hits,
+            result.static_empty_cache_hits,
+            result.query_image_sample_cache_hits,
+        );
+    }
     out.push_str("\n## Measurement Contract\n\n");
     out.push_str("| dataset | query | allocation scope | query image scope | cold execution uses correctness output | count cold warmed by correctness |\n");
     out.push_str("|---|---|---|---|---|---|\n");
@@ -1735,7 +1935,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"result\":{{\"logical_rows\":{},\"materialized_rows\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"bumbledb_materialized_rows\":{},\"sqlite_materialized_rows\":{},\"count_only_supported\":{},\"count_only_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
+            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"result\":{{\"logical_rows\":{},\"materialized_rows\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"cache_mode\":\"{}\",\"prepared_result_cache_allowed\":{},\"prepared_result_cache_hit\":{},\"prepared_result_cache_hits\":{},\"static_empty_cache_hit\":{},\"static_empty_cache_hits\":{},\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"bumbledb_materialized_rows\":{},\"sqlite_materialized_rows\":{},\"count_only_supported\":{},\"count_only_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
             json_escape(result.dataset),
             json_escape(result.query),
             result.rows,
@@ -1751,6 +1951,14 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             json_escape(&result.runtime_kind),
             json_escape(&result.plan_family),
             json_escape(&result.compare_mode),
+            json_escape(&result.cache_mode),
+            result.prepared_result_cache_allowed,
+            result.prepared_result_cache_hits > 0,
+            result.prepared_result_cache_hits,
+            result.static_empty_cache_hits > 0,
+            result.static_empty_cache_hits,
+            result.query_image_sample_cache_hits > 0,
+            result.query_image_sample_cache_hits,
             result.bumbledb_materialized_rows,
             result.sqlite_materialized_rows,
             result.count_only_supported,
@@ -3154,6 +3362,11 @@ mod tests {
             runtime_kind: "Lftj".to_owned(),
             plan_family: "FreeJoinLftj".to_owned(),
             compare_mode: "materialized".to_owned(),
+            cache_mode: "prepared-plan".to_owned(),
+            prepared_result_cache_allowed: false,
+            prepared_result_cache_hits: 0,
+            static_empty_cache_hits: 0,
+            query_image_sample_cache_hits: 1,
             bumbledb_materialized_rows: true,
             sqlite_materialized_rows: false,
             count_only_supported: false,
@@ -3220,6 +3433,11 @@ mod tests {
         assert!(markdown.contains("direct count us"));
         assert!(markdown.contains("prepared count cache lookup us"));
         assert!(markdown.contains("unaccounted us"));
+        assert!(markdown.contains("## Cache Diagnostics"));
+        assert!(
+            markdown
+                .contains("| joinstress | triangle_count | prepared-plan | false | 0 | 0 | 1 |")
+        );
         assert!(markdown.contains("## Measurement Contract"));
         assert!(markdown.contains("bumbledb.correctness_execution"));
         assert!(markdown.contains("## Allocation Summary"));
@@ -3256,6 +3474,11 @@ mod tests {
             runtime_kind: "HashProbe".to_owned(),
             plan_family: "HashProbe".to_owned(),
             compare_mode: "rows".to_owned(),
+            cache_mode: "prepared-result".to_owned(),
+            prepared_result_cache_allowed: true,
+            prepared_result_cache_hits: 1,
+            static_empty_cache_hits: 0,
+            query_image_sample_cache_hits: 1,
             bumbledb_materialized_rows: false,
             sqlite_materialized_rows: false,
             count_only_supported: true,
@@ -3316,6 +3539,11 @@ mod tests {
         assert!(json.contains("\"runtime\":\"HashProbe\""));
         assert!(json.contains("\"plan_family\":\"HashProbe\""));
         assert!(json.contains("\"compare_mode\":\"rows\""));
+        assert!(json.contains("\"cache_mode\":\"prepared-result\""));
+        assert!(json.contains("\"prepared_result_cache_allowed\":true"));
+        assert!(json.contains("\"prepared_result_cache_hit\":true"));
+        assert!(json.contains("\"prepared_result_cache_hits\":1"));
+        assert!(json.contains("\"query_image_cache_hit\":true"));
         assert!(json.contains("\"count_only_supported\":true"));
         assert!(json.contains("\"allocation_scope\":\"bumbledb.count_cold_execution\""));
         assert!(json.contains("\"query_image_scope\":\"full_schema\""));
@@ -3346,6 +3574,8 @@ mod tests {
                 "balances_by_instrument",
                 "--warmup",
                 "2",
+                "--cache-mode",
+                "prepared-result",
                 "--open-limit",
                 "123",
                 "--job-dir",
@@ -3365,6 +3595,7 @@ mod tests {
         );
         assert_eq!(config.open_limit, Some(123));
         assert_eq!(config.warmup, 2);
+        assert_eq!(config.cache_mode, CacheMode::PreparedResult);
         assert_eq!(config.job_dir.as_deref(), Some("/tmp/job"));
         assert!(config.has_open_datasets());
         assert_eq!(config.format, OutputFormat::Json);

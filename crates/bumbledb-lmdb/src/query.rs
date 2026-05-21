@@ -225,6 +225,39 @@ pub struct QueryOutput {
     pub plan: QueryPlan,
 }
 
+/// Explicit per-query execution cache controls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QueryExecutionOptions {
+    /// Allows prepared count/result cache hits and inserts.
+    pub allow_prepared_result_cache: bool,
+    /// Allows static-empty result cache hits and inserts.
+    pub allow_static_empty_fast_cache: bool,
+}
+
+impl QueryExecutionOptions {
+    /// Default cached execution behavior.
+    pub const fn cached() -> Self {
+        Self {
+            allow_prepared_result_cache: true,
+            allow_static_empty_fast_cache: true,
+        }
+    }
+
+    /// Recompute result-producing optimizations while keeping normal plan/image caches available.
+    pub const fn without_result_caches() -> Self {
+        Self {
+            allow_prepared_result_cache: false,
+            allow_static_empty_fast_cache: false,
+        }
+    }
+}
+
+impl Default for QueryExecutionOptions {
+    fn default() -> Self {
+        Self::cached()
+    }
+}
+
 /// Count-only query output used by benchmark row-count comparisons.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryCountOutput {
@@ -1631,19 +1664,32 @@ impl<'env> ReadTxn<'env> {
         query: &TypedQuery,
         inputs: &InputBindings,
     ) -> Result<QueryOutput> {
+        self.execute_query_with_options(schema, query, inputs, QueryExecutionOptions::default())
+    }
+
+    /// Executes a typed positive query IR with explicit cache controls.
+    #[tracing::instrument(name = "bumbledb.query.execute_with_options", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
+    pub fn execute_query_with_options(
+        &self,
+        schema: &StorageSchema,
+        query: &TypedQuery,
+        inputs: &InputBindings,
+        options: QueryExecutionOptions,
+    ) -> Result<QueryOutput> {
         let total_start = Instant::now();
         let total_alloc_start = allocation::snapshot();
         let mut timings = QueryTimings::default();
         let mut allocations = QueryAllocationStats::default();
-        let static_empty_fast_key = if query.inputs.is_empty() {
-            Some(typed_static_empty_fast_key(
-                schema,
-                self.last_committed_tx_id()?,
-                query,
-            ))
-        } else {
-            None
-        };
+        let static_empty_fast_key =
+            if options.allow_static_empty_fast_cache && query.inputs.is_empty() {
+                Some(typed_static_empty_fast_key(
+                    schema,
+                    self.last_committed_tx_id()?,
+                    query,
+                ))
+            } else {
+                None
+            };
         if let Some(cache_key) = static_empty_fast_key {
             let lookup_start = Instant::now();
             let cache_hit = self.query_images.static_empty_fast_cached(cache_key)?;
@@ -1748,7 +1794,7 @@ impl<'env> ReadTxn<'env> {
         timings.static_empty_lookup_micros = timings
             .static_empty_lookup_micros
             .saturating_add(elapsed_recorded_micros(lookup_start));
-        if static_empty_cached {
+        if options.allow_static_empty_fast_cache && static_empty_cached {
             let mut plan = static_empty_plan(
                 &normalized,
                 query_image_cache,
@@ -1776,7 +1822,7 @@ impl<'env> ReadTxn<'env> {
             &mut timings,
         )?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
-            if normalized.inputs.is_empty() {
+            if options.allow_static_empty_fast_cache && normalized.inputs.is_empty() {
                 image.insert_static_empty(prepared_cache_key)?;
                 if let Some(cache_key) = static_empty_fast_key {
                     self.query_images.insert_static_empty_fast(cache_key)?;
@@ -1907,20 +1953,38 @@ impl<'env> ReadTxn<'env> {
         query: &PreparedQuery,
         inputs: &InputBindings,
     ) -> Result<QueryOutput> {
+        self.execute_prepared_query_with_options(
+            schema,
+            query,
+            inputs,
+            QueryExecutionOptions::default(),
+        )
+    }
+
+    /// Executes a prepared typed positive query IR with explicit cache controls.
+    #[tracing::instrument(name = "bumbledb.query.execute_prepared_with_options", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
+    pub fn execute_prepared_query_with_options(
+        &self,
+        schema: &StorageSchema,
+        query: &PreparedQuery,
+        inputs: &InputBindings,
+        options: QueryExecutionOptions,
+    ) -> Result<QueryOutput> {
         let typed = query.query();
         let total_start = Instant::now();
         let total_alloc_start = allocation::snapshot();
         let mut timings = QueryTimings::default();
         let mut allocations = QueryAllocationStats::default();
-        let static_empty_fast_key = if typed.inputs.is_empty() {
-            Some(typed_static_empty_fast_key(
-                schema,
-                self.last_committed_tx_id()?,
-                typed,
-            ))
-        } else {
-            None
-        };
+        let static_empty_fast_key =
+            if options.allow_static_empty_fast_cache && typed.inputs.is_empty() {
+                Some(typed_static_empty_fast_key(
+                    schema,
+                    self.last_committed_tx_id()?,
+                    typed,
+                ))
+            } else {
+                None
+            };
         if let Some(cache_key) = static_empty_fast_key {
             let lookup_start = Instant::now();
             let cache_hit = self.query_images.static_empty_fast_cached(cache_key)?;
@@ -2024,16 +2088,21 @@ impl<'env> ReadTxn<'env> {
         )? {
             return Ok(output);
         }
-        let lookup_start = Instant::now();
-        let prepared_count = query
-            .count_cache
-            .read()
-            .map_err(|_| Error::internal("prepared count cache poisoned"))?
-            .get(&prepared_count_key)
-            .copied();
-        timings.prepared_count_cache_lookup_micros = timings
-            .prepared_count_cache_lookup_micros
-            .saturating_add(elapsed_recorded_micros(lookup_start));
+        let prepared_count = if options.allow_prepared_result_cache {
+            let lookup_start = Instant::now();
+            let prepared_count = query
+                .count_cache
+                .read()
+                .map_err(|_| Error::internal("prepared count cache poisoned"))?
+                .get(&prepared_count_key)
+                .copied();
+            timings.prepared_count_cache_lookup_micros = timings
+                .prepared_count_cache_lookup_micros
+                .saturating_add(elapsed_recorded_micros(lookup_start));
+            prepared_count
+        } else {
+            None
+        };
         if let Some(count) = prepared_count {
             let emit_start = Instant::now();
             let mut output = cached_prepared_count_output(
@@ -2061,7 +2130,7 @@ impl<'env> ReadTxn<'env> {
         timings.static_empty_lookup_micros = timings
             .static_empty_lookup_micros
             .saturating_add(elapsed_recorded_micros(lookup_start));
-        if static_empty_cached {
+        if options.allow_static_empty_fast_cache && static_empty_cached {
             let mut plan = static_empty_plan(
                 normalized,
                 query_image_cache,
@@ -2089,7 +2158,7 @@ impl<'env> ReadTxn<'env> {
             &mut timings,
         )?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
-            if normalized.inputs.is_empty() {
+            if options.allow_static_empty_fast_cache && normalized.inputs.is_empty() {
                 image.insert_static_empty(prepared_cache_key)?;
                 if let Some(cache_key) = static_empty_fast_key {
                     self.query_images.insert_static_empty_fast(cache_key)?;
@@ -2132,17 +2201,19 @@ impl<'env> ReadTxn<'env> {
             total_alloc_start,
         )? {
             let mut output = output;
-            if let Some(count) = output
-                .rows
-                .first()
-                .and_then(|row| row.first())
-                .and_then(|value| {
-                    if let Value::U64(count) = value {
-                        Some(*count)
-                    } else {
-                        None
-                    }
-                })
+            if options.allow_prepared_result_cache
+                && let Some(count) =
+                    output
+                        .rows
+                        .first()
+                        .and_then(|row| row.first())
+                        .and_then(|value| {
+                            if let Value::U64(count) = value {
+                                Some(*count)
+                            } else {
+                                None
+                            }
+                        })
             {
                 query
                     .count_cache
@@ -2239,7 +2310,24 @@ impl<'env> ReadTxn<'env> {
         query: &PreparedQuery,
         inputs: &InputBindings,
     ) -> Result<QueryCountOutput> {
-        self.execute_query_count_only(schema, query.query(), inputs)
+        self.execute_prepared_query_count_only_with_options(
+            schema,
+            query,
+            inputs,
+            QueryExecutionOptions::default(),
+        )
+    }
+
+    /// Executes a prepared typed query count-only with explicit cache controls.
+    #[tracing::instrument(name = "bumbledb.query.execute_prepared_count_with_options", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
+    pub fn execute_prepared_query_count_only_with_options(
+        &self,
+        schema: &StorageSchema,
+        query: &PreparedQuery,
+        inputs: &InputBindings,
+        options: QueryExecutionOptions,
+    ) -> Result<QueryCountOutput> {
+        self.execute_query_count_only_with_options(schema, query.query(), inputs, options)
     }
 
     /// Executes a typed query and returns only the output row count.
@@ -2250,19 +2338,37 @@ impl<'env> ReadTxn<'env> {
         query: &TypedQuery,
         inputs: &InputBindings,
     ) -> Result<QueryCountOutput> {
+        self.execute_query_count_only_with_options(
+            schema,
+            query,
+            inputs,
+            QueryExecutionOptions::default(),
+        )
+    }
+
+    /// Executes a typed query count-only with explicit cache controls.
+    #[tracing::instrument(name = "bumbledb.query.execute_count_with_options", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
+    pub fn execute_query_count_only_with_options(
+        &self,
+        schema: &StorageSchema,
+        query: &TypedQuery,
+        inputs: &InputBindings,
+        options: QueryExecutionOptions,
+    ) -> Result<QueryCountOutput> {
         let total_start = Instant::now();
         let total_alloc_start = allocation::snapshot();
         let mut timings = QueryTimings::default();
         let mut allocations = QueryAllocationStats::default();
-        let static_empty_fast_key = if query.inputs.is_empty() {
-            Some(typed_static_empty_fast_key(
-                schema,
-                self.last_committed_tx_id()?,
-                query,
-            ))
-        } else {
-            None
-        };
+        let static_empty_fast_key =
+            if options.allow_static_empty_fast_cache && query.inputs.is_empty() {
+                Some(typed_static_empty_fast_key(
+                    schema,
+                    self.last_committed_tx_id()?,
+                    query,
+                ))
+            } else {
+                None
+            };
         if let Some(cache_key) = static_empty_fast_key {
             let lookup_start = Instant::now();
             let cache_hit = self.query_images.static_empty_fast_cached(cache_key)?;
@@ -2319,7 +2425,7 @@ impl<'env> ReadTxn<'env> {
         timings.static_empty_lookup_micros = timings
             .static_empty_lookup_micros
             .saturating_add(elapsed_recorded_micros(lookup_start));
-        if static_empty_cached {
+        if options.allow_static_empty_fast_cache && static_empty_cached {
             let mut plan = static_empty_plan(
                 &normalized,
                 query_image_cache,
@@ -2345,7 +2451,7 @@ impl<'env> ReadTxn<'env> {
             &mut timings,
         )?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
-            if normalized.inputs.is_empty() {
+            if options.allow_static_empty_fast_cache && normalized.inputs.is_empty() {
                 image.insert_static_empty(prepared_cache_key)?;
                 if let Some(cache_key) = static_empty_fast_key {
                     self.query_images.insert_static_empty_fast(cache_key)?;
