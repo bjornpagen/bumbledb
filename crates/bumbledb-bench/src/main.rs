@@ -2070,7 +2070,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"direct_kernel_probes\":{},\"direct_kernel_rows\":{},\"direct_kernel_predicates\":{},\"static_empty_atoms_checked\":{},\"static_empty_rows_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"direct_kernel_probes\":{},\"direct_kernel_rows\":{},\"direct_kernel_predicates\":{},\"static_empty_atoms_checked\":{},\"static_empty_rows_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{},\"prepared_result_cache_hits\":{},\"prepared_result_cache_misses\":{},\"prepared_result_cache_inserts\":{},\"prepared_result_cache_bypasses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.counters.cursor_seeks,
             result.counters.rows_scanned,
             result.dictionary_reverse_lookups,
@@ -2082,6 +2082,10 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.counters.static_empty_rows_scanned,
             result.counters.static_empty_cache_hits,
             result.counters.static_empty_cache_misses,
+            result.counters.prepared_result_cache_hits,
+            result.counters.prepared_result_cache_misses,
+            result.counters.prepared_result_cache_inserts,
+            result.counters.prepared_result_cache_bypasses,
             result.gate.passed,
         );
         for (note_index, note) in result.gate.notes.iter().enumerate() {
@@ -3543,6 +3547,7 @@ mod tests {
         assert!(json.contains("\"prepared_result_cache_allowed\":true"));
         assert!(json.contains("\"prepared_result_cache_hit\":true"));
         assert!(json.contains("\"prepared_result_cache_hits\":1"));
+        assert!(json.contains("\"prepared_result_cache_bypasses\":0"));
         assert!(json.contains("\"query_image_cache_hit\":true"));
         assert!(json.contains("\"count_only_supported\":true"));
         assert!(json.contains("\"allocation_scope\":\"bumbledb.count_cold_execution\""));

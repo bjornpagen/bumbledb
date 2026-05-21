@@ -783,6 +783,22 @@ impl QueryPlan {
             "  static_semijoin_skipped_reason: {}\n",
             self.counters.static_semijoin_skipped_reason.as_str()
         ));
+        out.push_str(&format!(
+            "  prepared_result_cache_hits: {}\n",
+            self.counters.prepared_result_cache_hits
+        ));
+        out.push_str(&format!(
+            "  prepared_result_cache_misses: {}\n",
+            self.counters.prepared_result_cache_misses
+        ));
+        out.push_str(&format!(
+            "  prepared_result_cache_inserts: {}\n",
+            self.counters.prepared_result_cache_inserts
+        ));
+        out.push_str(&format!(
+            "  prepared_result_cache_bypasses: {}\n",
+            self.counters.prepared_result_cache_bypasses
+        ));
         out.push_str(&format!("  output_rows: {}\n", self.counters.output_rows));
         out
     }
@@ -1315,6 +1331,14 @@ pub struct PlanCounters {
     pub static_semijoin_skipped: u64,
     /// Last reason static semijoin proof was skipped.
     pub static_semijoin_skipped_reason: StaticSemijoinSkipReason,
+    /// Number of prepared result cache hits.
+    pub prepared_result_cache_hits: u64,
+    /// Number of prepared result cache misses.
+    pub prepared_result_cache_misses: u64,
+    /// Number of prepared result cache inserts.
+    pub prepared_result_cache_inserts: u64,
+    /// Number of prepared result cache bypasses.
+    pub prepared_result_cache_bypasses: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -2103,6 +2127,9 @@ impl<'env> ReadTxn<'env> {
         } else {
             None
         };
+        let prepared_result_cache_missed =
+            options.allow_prepared_result_cache && prepared_count.is_none();
+        let prepared_result_cache_bypassed = !options.allow_prepared_result_cache;
         if let Some(count) = prepared_count {
             let emit_start = Instant::now();
             let mut output = cached_prepared_count_output(
@@ -2141,6 +2168,12 @@ impl<'env> ReadTxn<'env> {
             plan.allocations = allocations;
             plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
             plan.counters.static_empty_cache_hits = 1;
+            record_prepared_result_cache_counters(
+                &mut plan.counters,
+                prepared_result_cache_missed,
+                prepared_result_cache_bypassed,
+                false,
+            );
             finish_timings(&mut plan.timings, total_start);
             let total_alloc = allocation_delta_since(total_alloc_start);
             plan.allocations = plan.allocations.with_total(total_alloc);
@@ -2176,6 +2209,12 @@ impl<'env> ReadTxn<'env> {
             if let Some(proof) = &static_empty_proof {
                 record_static_proof_counters(&mut plan.counters, proof);
             }
+            record_prepared_result_cache_counters(
+                &mut plan.counters,
+                prepared_result_cache_missed,
+                prepared_result_cache_bypassed,
+                false,
+            );
             finish_timings(&mut plan.timings, total_start);
             let total_alloc = allocation_delta_since(total_alloc_start);
             plan.allocations = plan.allocations.with_total(total_alloc);
@@ -2201,6 +2240,7 @@ impl<'env> ReadTxn<'env> {
             total_alloc_start,
         )? {
             let mut output = output;
+            let mut inserted_prepared_result = false;
             if options.allow_prepared_result_cache
                 && let Some(count) =
                     output
@@ -2220,10 +2260,17 @@ impl<'env> ReadTxn<'env> {
                     .write()
                     .map_err(|_| Error::internal("prepared count cache poisoned"))?
                     .insert(prepared_count_key, count);
+                inserted_prepared_result = true;
             }
             if let Some(proof) = &static_empty_proof {
                 record_static_proof_counters(&mut output.plan.counters, proof);
             }
+            record_prepared_result_cache_counters(
+                &mut output.plan.counters,
+                prepared_result_cache_missed,
+                prepared_result_cache_bypassed,
+                inserted_prepared_result,
+            );
             return Ok(output);
         }
 
@@ -2290,6 +2337,12 @@ impl<'env> ReadTxn<'env> {
         if let Some(proof) = &static_empty_proof {
             record_static_proof_counters(&mut plan.summary.counters, proof);
         }
+        record_prepared_result_cache_counters(
+            &mut plan.summary.counters,
+            prepared_result_cache_missed,
+            prepared_result_cache_bypassed,
+            false,
+        );
         finish_timings(&mut plan.summary.timings, total_start);
         let total_alloc = allocation_delta_since(total_alloc_start);
         plan.summary.allocations = plan.summary.allocations.with_total(total_alloc);
@@ -2566,6 +2619,17 @@ fn record_static_proof_counters(counters: &mut PlanCounters, proof: &StaticEmpty
         counters.static_semijoin_skipped = 1;
         counters.static_semijoin_skipped_reason = proof.semijoin_skipped_reason;
     }
+}
+
+fn record_prepared_result_cache_counters(
+    counters: &mut PlanCounters,
+    missed: bool,
+    bypassed: bool,
+    inserted: bool,
+) {
+    counters.prepared_result_cache_misses += u64::from(missed);
+    counters.prepared_result_cache_bypasses += u64::from(bypassed);
+    counters.prepared_result_cache_inserts += u64::from(inserted);
 }
 
 fn allocation_delta_since(start: allocation::AllocationSnapshot) -> AllocationPhaseStats {
@@ -3934,6 +3998,7 @@ fn cached_prepared_count_output(
         factorized_counted_bindings: count,
         direct_kernel_probes: 1,
         direct_kernel_rows: count,
+        prepared_result_cache_hits: 1,
         output_rows: 1,
         aggregate_groups: 1,
         materialized_output_values: 1,

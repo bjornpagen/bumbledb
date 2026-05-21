@@ -1524,10 +1524,60 @@ fn prepared_result_cache_options_control_count_cache() -> TestResult {
     })?;
 
     assert_eq!(first.rows, vec![vec![Value::U64(2)]]);
+    assert_eq!(first.plan.counters.prepared_result_cache_misses, 1);
+    assert_eq!(first.plan.counters.prepared_result_cache_inserts, 1);
     assert_eq!(cached.rows, first.rows);
+    assert_eq!(cached.plan.counters.prepared_result_cache_hits, 1);
     assert!(cached.plan.timings.prepared_count_cache_emit_micros > 0);
     assert_eq!(disabled.rows, first.rows);
+    assert_eq!(disabled.plan.counters.prepared_result_cache_bypasses, 1);
     assert_eq!(disabled.plan.timings.prepared_count_cache_emit_micros, 0);
+
+    env.write(|txn| {
+        txn.insert(
+            &schema,
+            Row::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(21))]),
+        )?;
+        Ok::<_, Error>(())
+    })?;
+    let after_write =
+        env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
+    assert_eq!(after_write.rows, vec![vec![Value::U64(4)]]);
+    assert_eq!(after_write.plan.counters.prepared_result_cache_misses, 1);
+    assert_eq!(after_write.plan.counters.prepared_result_cache_inserts, 1);
+    Ok(())
+}
+
+#[test]
+fn prepared_result_cache_key_includes_inputs() -> TestResult {
+    let (env, schema) = seeded_db()?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Account")?
+            .var("id", "account")?
+            .input("holder", "holder")?
+            .done();
+        query.find_aggregate(AggregateFunction::Count, "account")?;
+        Ok(())
+    })?;
+    let prepared = env.prepare_query(&schema, &query)?;
+    let holder_one = InputBindings::from_values([("holder", Value::Serial(1))]);
+    let holder_two = InputBindings::from_values([("holder", Value::Serial(2))]);
+
+    let first = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &holder_one))?;
+    let cached = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &holder_one))?;
+    let different_input =
+        env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &holder_two))?;
+
+    assert_eq!(first.rows, vec![vec![Value::U64(2)]]);
+    assert_eq!(first.plan.counters.prepared_result_cache_misses, 1);
+    assert_eq!(cached.plan.counters.prepared_result_cache_hits, 1);
+    assert_eq!(different_input.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(
+        different_input.plan.counters.prepared_result_cache_misses,
+        1
+    );
+    assert_eq!(different_input.plan.counters.prepared_result_cache_hits, 0);
     Ok(())
 }
 
