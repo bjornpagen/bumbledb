@@ -305,7 +305,9 @@ fn direct_prefix_range_kernel_selects_and_filters_rows() -> TestResult {
     assert_eq!(output.plan.counters.direct_storage_output_rows, 1);
     assert_eq!(output.plan.counters.direct_bind_attempts, 2);
     assert_eq!(output.plan.counters.direct_bind_successes, 2);
-    assert_eq!(output.plan.counters.sink_emit_calls, 1);
+    assert_eq!(output.plan.counters.sink_emit_calls, 0);
+    assert_eq!(output.plan.counters.direct_batch_rows, 1);
+    assert_eq!(output.plan.counters.direct_batch_fallback_rows, 0);
     assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
     assert_eq!(output.plan.query_image_cache.builds, 0);
     assert_eq!(output.plan.counters.hash_index_builds, 0);
@@ -460,7 +462,9 @@ fn direct_chain_kernel_selects_and_follows_acyclic_path() -> TestResult {
     assert!(output.plan.counters.direct_chain_steps > 0);
     assert_eq!(output.plan.counters.direct_chain_output_rows, 1);
     assert_eq!(output.plan.counters.direct_chain_output_values, 1);
-    assert_eq!(output.plan.counters.sink_emit_calls, 1);
+    assert_eq!(output.plan.counters.sink_emit_calls, 0);
+    assert_eq!(output.plan.counters.direct_batch_rows, 1);
+    assert_eq!(output.plan.counters.direct_batch_fallback_rows, 0);
     assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
     assert_eq!(output.plan.counters.materialized_output_values, 1);
     assert_eq!(output.plan.counters.dictionary_reverse_lookups, 0);

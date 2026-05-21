@@ -1325,6 +1325,14 @@ pub struct PlanCounters {
     pub direct_chain_output_values: u64,
     /// Number of direct storage output rows emitted.
     pub direct_storage_output_rows: u64,
+    /// Number of direct rows appended through the direct batch projection path.
+    pub direct_batch_rows: u64,
+    /// Number of encoded bytes appended through the direct batch projection path.
+    pub direct_batch_row_bytes: u64,
+    /// Number of direct rows that fell back to generic sink emission.
+    pub direct_batch_fallback_rows: u64,
+    /// Number of times direct materialization reused an existing encoded binding.
+    pub direct_binding_reuses: u64,
     /// Number of encoded projection rows observed before dedup.
     pub encoded_project_rows_seen: u64,
     /// Number of encoded projection rows inserted after dedup.
@@ -4454,10 +4462,9 @@ fn try_execute_direct_storage_project(
         counters.bindings_yielded += 1;
         counters.bindings_completed += 1;
         counters.direct_storage_output_rows += 1;
-        counters.direct_chain_output_values = counters
-            .direct_chain_output_values
-            .saturating_add(query.find.len() as u64);
-        sink.emit(txn, query, &binding, &mut counters)?;
+        if !sink.emit_direct_project(query, &binding, &mut counters)? {
+            sink.emit(txn, query, &binding, &mut counters)?;
+        }
     }
     timings.execute_micros = elapsed_micros(execute_start);
     timings.direct_storage_micros = timings.execute_micros;
@@ -7286,13 +7293,20 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                     .counters
                     .direct_chain_output_values
                     .saturating_add(self.query.find.len() as u64);
+                self.plan.summary.counters.direct_binding_reuses += 1;
                 let _span = tracing::trace_span!("bumbledb.query.sink.emit").entered();
-                self.sink.emit(
-                    self.txn,
+                if !self.sink.emit_direct_project(
                     self.query,
                     &self.binding,
                     &mut self.plan.summary.counters,
-                )?;
+                )? {
+                    self.sink.emit(
+                        self.txn,
+                        self.query,
+                        &self.binding,
+                        &mut self.plan.summary.counters,
+                    )?;
+                }
             }
             return Ok(());
         }
@@ -10522,6 +10536,16 @@ trait TupleSink {
         Ok(())
     }
 
+    fn emit_direct_project(
+        &mut self,
+        _query: &NormalizedQuery,
+        _binding: &EncodedBinding,
+        counters: &mut PlanCounters,
+    ) -> Result<bool> {
+        counters.direct_batch_fallback_rows += 1;
+        Ok(false)
+    }
+
     fn finish(
         self,
         txn: &ReadTxn<'_>,
@@ -10576,6 +10600,22 @@ impl OutputSink {
             ));
         };
         Ok(sink.finish_count())
+    }
+
+    fn emit_direct_project(
+        &mut self,
+        query: &NormalizedQuery,
+        binding: &EncodedBinding,
+        counters: &mut PlanCounters,
+    ) -> Result<bool> {
+        let OutputSink::Project(sink) = self else {
+            counters.direct_batch_fallback_rows += 1;
+            return Ok(false);
+        };
+        let row_width = sink.push_binding(query, binding, counters)?;
+        counters.direct_batch_rows += 1;
+        counters.direct_batch_row_bytes = counters.direct_batch_row_bytes.saturating_add(row_width);
+        Ok(true)
     }
 }
 
@@ -10633,6 +10673,22 @@ impl TupleSink for OutputSink {
                 sink, txn, query, binding, count, counters,
             ),
         }
+    }
+
+    fn emit_direct_project(
+        &mut self,
+        query: &NormalizedQuery,
+        binding: &EncodedBinding,
+        counters: &mut PlanCounters,
+    ) -> Result<bool> {
+        let OutputSink::Project(sink) = self else {
+            counters.direct_batch_fallback_rows += 1;
+            return Ok(false);
+        };
+        let row_width = sink.push_binding(query, binding, counters)?;
+        counters.direct_batch_rows += 1;
+        counters.direct_batch_row_bytes = counters.direct_batch_row_bytes.saturating_add(row_width);
+        Ok(true)
     }
 }
 
@@ -10733,16 +10789,13 @@ impl EncodedProjectSink {
         };
         self.layout = Some(layout);
     }
-}
 
-impl TupleSink for EncodedProjectSink {
-    fn emit(
+    fn push_binding(
         &mut self,
-        _txn: &ReadTxn<'_>,
         query: &NormalizedQuery,
         binding: &EncodedBinding,
         counters: &mut PlanCounters,
-    ) -> Result<()> {
+    ) -> Result<u64> {
         self.ensure_layout(query);
         let layout = self
             .layout
@@ -10761,7 +10814,19 @@ impl TupleSink for EncodedProjectSink {
         counters.encoded_project_row_bytes = counters
             .encoded_project_row_bytes
             .saturating_add(layout.row_width as u64);
-        Ok(())
+        Ok(layout.row_width as u64)
+    }
+}
+
+impl TupleSink for EncodedProjectSink {
+    fn emit(
+        &mut self,
+        _txn: &ReadTxn<'_>,
+        query: &NormalizedQuery,
+        binding: &EncodedBinding,
+        counters: &mut PlanCounters,
+    ) -> Result<()> {
+        self.push_binding(query, binding, counters).map(|_| ())
     }
 
     fn finish(

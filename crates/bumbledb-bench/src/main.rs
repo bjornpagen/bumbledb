@@ -2180,7 +2180,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"sink_emit_count_range_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_rows_seen\":{},\"encoded_project_rows_inserted\":{},\"encoded_project_duplicate_rows\":{},\"encoded_project_row_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"direct_kernel_probes\":{},\"direct_kernel_rows\":{},\"direct_kernel_predicates\":{},\"direct_bind_attempts\":{},\"direct_bind_successes\":{},\"direct_chain_steps\":{},\"direct_chain_step_rows\":{},\"direct_chain_output_rows\":{},\"direct_chain_output_values\":{},\"direct_storage_output_rows\":{},\"query_image_relations_loaded\":{},\"query_image_rows_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{},\"hash_trie_bytes\":{},\"static_empty_atoms_checked\":{},\"static_empty_rows_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{},\"prepared_result_cache_hits\":{},\"prepared_result_cache_misses\":{},\"prepared_result_cache_inserts\":{},\"prepared_result_cache_bypasses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"sink_emit_count_range_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_rows_seen\":{},\"encoded_project_rows_inserted\":{},\"encoded_project_duplicate_rows\":{},\"encoded_project_row_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"direct_kernel_probes\":{},\"direct_kernel_rows\":{},\"direct_kernel_predicates\":{},\"direct_bind_attempts\":{},\"direct_bind_successes\":{},\"direct_chain_steps\":{},\"direct_chain_step_rows\":{},\"direct_chain_output_rows\":{},\"direct_chain_output_values\":{},\"direct_storage_output_rows\":{},\"direct_batch_rows\":{},\"direct_batch_row_bytes\":{},\"direct_batch_fallback_rows\":{},\"direct_binding_reuses\":{},\"query_image_relations_loaded\":{},\"query_image_rows_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{},\"hash_trie_bytes\":{},\"static_empty_atoms_checked\":{},\"static_empty_rows_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{},\"prepared_result_cache_hits\":{},\"prepared_result_cache_misses\":{},\"prepared_result_cache_inserts\":{},\"prepared_result_cache_bypasses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.counters.cursor_seeks,
             result.counters.rows_scanned,
             result.dictionary_reverse_lookups,
@@ -2214,6 +2214,10 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.counters.direct_chain_output_rows,
             result.counters.direct_chain_output_values,
             result.counters.direct_storage_output_rows,
+            result.counters.direct_batch_rows,
+            result.counters.direct_batch_row_bytes,
+            result.counters.direct_batch_fallback_rows,
+            result.counters.direct_binding_reuses,
             result.query_image_relation_count,
             result.query_image_row_count,
             result.query_image_encoded_column_bytes,
