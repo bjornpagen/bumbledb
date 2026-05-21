@@ -10,7 +10,7 @@ use bumbledb_core::query_ir::{
     AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm,
     TypedLiteral, TypedOperand, TypedQuery, TypedRelationAtom, TypedTerm,
 };
-use bumbledb_core::schema::{CurrentIndexLayout, IndexKind, SchemaFingerprint, ValueType};
+use bumbledb_core::schema::{IndexKind, SchemaFingerprint, ValueType};
 
 use crate::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FieldValues,
@@ -528,11 +528,10 @@ impl QueryPlan {
             ));
         }
         out.push_str(&format!(
-            "free_join_estimates: output_rows={} iterator_ops={} hash_build_rows={} hash_probe_rows={} materialized_values={} memory_bytes={} actual_output_rows={}\n",
+            "free_join_estimates: output_rows={} iterator_ops={} hash_build_rows={} materialized_values={} memory_bytes={} actual_output_rows={}\n",
             self.free_join.estimates.output_rows,
             self.free_join.estimates.iterator_ops,
             self.free_join.estimates.hash_build_rows,
-            self.free_join.estimates.hash_probe_rows,
             self.free_join.estimates.materialized_values,
             self.free_join.estimates.memory_bytes,
             self.counters.output_rows
@@ -716,18 +715,6 @@ impl QueryPlan {
             self.counters.hash_index_build_rows
         ));
         out.push_str(&format!(
-            "  hash_probe_calls: {}\n",
-            self.counters.hash_probe_calls
-        ));
-        out.push_str(&format!(
-            "  hash_probe_hits: {}\n",
-            self.counters.hash_probe_hits
-        ));
-        out.push_str(&format!(
-            "  hash_probe_misses: {}\n",
-            self.counters.hash_probe_misses
-        ));
-        out.push_str(&format!(
             "  hash_rows_returned: {}\n",
             self.counters.hash_rows_returned
         ));
@@ -820,8 +807,6 @@ pub enum QueryRuntimeKind {
     Unknown,
     /// Sorted trie leapfrog executor.
     Lftj,
-    /// Hash probe executor.
-    HashProbe,
     /// Acyclic index nested-loop executor.
     IndexNestedLoop,
     /// Query was proven empty by static literal atom analysis before planning.
@@ -838,8 +823,6 @@ pub enum PlanFamily {
     Unknown,
     /// Direct current-index/storage execution.
     Direct,
-    /// Hash-probe plan family.
-    HashProbe,
     /// Acyclic index nested-loop family.
     IndexNestedLoop,
     /// Free Join/LFTJ family.
@@ -1291,12 +1274,6 @@ pub struct PlanCounters {
     pub hash_index_builds: u64,
     /// Number of source rows used to build hash indexes.
     pub hash_index_build_rows: u64,
-    /// Number of hash prefix probe calls.
-    pub hash_probe_calls: u64,
-    /// Number of hash prefix probes that found at least one row.
-    pub hash_probe_hits: u64,
-    /// Number of hash prefix probes that found no rows.
-    pub hash_probe_misses: u64,
     /// Number of row IDs returned from hash prefix probes.
     pub hash_rows_returned: u64,
     /// Number of bindings emitted by hash probe nodes.
@@ -1577,24 +1554,6 @@ impl TrieIter for LftjTrieIter<'_> {
 struct LftjRuntime<'a> {
     participants_by_variable: Vec<SmallParticipants>,
     iters: Vec<LftjTrieIter<'a>>,
-}
-
-#[derive(Clone, Debug)]
-struct HashAtomIndexRequest {
-    node_id: usize,
-    atom_id: usize,
-    relation: crate::RelationId,
-    access: Option<AccessId>,
-    index_name: String,
-    fields: Vec<FieldId>,
-}
-
-#[derive(Clone)]
-struct HashAtomIndex {
-    node_id: usize,
-    atom_id: usize,
-    index: Arc<HashTrieIndex>,
-    fields: Vec<FieldId>,
 }
 
 #[derive(Clone, Debug)]
@@ -4708,16 +4667,6 @@ fn execute_free_join<'txn, 'query, S: TupleSink>(
         plan.summary.runtime_kind = QueryRuntimeKind::DirectKernel;
         return execute_direct_kernel(image, txn, schema, query, inputs, plan, sink);
     }
-    if plan
-        .summary
-        .free_join
-        .nodes
-        .iter()
-        .all(|node| node.implementation == NodeImpl::HashProbe && node.bind_vars.len() == 1)
-    {
-        plan.summary.runtime_kind = QueryRuntimeKind::HashProbe;
-        return execute_hash_probe(image, txn, schema, query, inputs, plan, sink);
-    }
     if !plan.summary.free_join.is_pure_lftj() {
         return Err(Error::internal("non-pure free join plan has no runtime"));
     }
@@ -6896,175 +6845,6 @@ fn atom_variable_degree(query: &NormalizedQuery, variable: usize) -> usize {
         .count()
 }
 
-fn execute_hash_probe<'txn, 'query, S: TupleSink>(
-    image: &crate::QueryImage,
-    txn: &ReadTxn<'txn>,
-    schema: &StorageSchema,
-    query: &'query NormalizedQuery,
-    inputs: &EncodedInputs,
-    plan: &mut ExecutionPlan,
-    sink: &mut S,
-) -> Result<()> {
-    let index_requests = {
-        let _span = tracing::debug_span!(
-            "bumbledb.query.hash.build_indexes",
-            atoms = plan.relation_atoms.len()
-        )
-        .entered();
-        build_hash_atom_index_requests(schema, plan)?
-    };
-
-    let execute_start = Instant::now();
-    let execute_alloc_start = allocation::snapshot();
-    let result = {
-        let _span =
-            tracing::debug_span!("bumbledb.query.hash.execute", variables = query.vars.len())
-                .entered();
-        let participants_by_variable =
-            hash_participants_by_variable(query.vars.len(), &plan.relation_atoms);
-        let mut executor = HashProbeExecutor {
-            image,
-            txn,
-            query,
-            inputs,
-            plan,
-            index_requests,
-            atom_indexes: Vec::new(),
-            participants_by_variable,
-            binding: EncodedBinding::new(query.vars.len()),
-            sink,
-        };
-        if !executor.static_atoms_pass()? {
-            Ok(())
-        } else {
-            executor.execute(0)
-        }
-    };
-    plan.summary.timings.hash_execute_micros = plan
-        .summary
-        .timings
-        .hash_execute_micros
-        .saturating_add(elapsed_micros(execute_start));
-    plan.summary.allocations.hash_execute = allocation_delta_since(execute_alloc_start);
-    result
-}
-
-fn build_hash_atom_index_requests(
-    schema: &StorageSchema,
-    plan: &mut ExecutionPlan,
-) -> Result<Vec<HashAtomIndexRequest>> {
-    let mut out = Vec::new();
-    let mut requested = BTreeSet::new();
-    let subatoms = plan
-        .summary
-        .free_join
-        .nodes
-        .iter()
-        .flat_map(|node| {
-            node.subatoms.iter().map(move |subatom| {
-                (
-                    node.id.0 as usize,
-                    subatom.atom_id.0 as usize,
-                    subatom.access,
-                    subatom.fields.clone(),
-                )
-            })
-        })
-        .collect::<Vec<_>>();
-    for (node_id, atom_id, access, bind_fields) in subatoms {
-        if !requested.insert((node_id, atom_id, access.0)) {
-            continue;
-        }
-        let atom = &plan.relation_atoms[atom_id];
-        let layout = layout_by_access(schema, atom, access)?;
-        let mut fields = Vec::new();
-        for field_name in &layout.leading_fields {
-            let Some(field) = atom
-                .fields
-                .iter()
-                .find(|field| &field.field_name == field_name)
-            else {
-                break;
-            };
-            fields.push(field.field);
-        }
-        for field in bind_fields {
-            if !fields.contains(&field) {
-                fields.push(field);
-            }
-        }
-        out.push(HashAtomIndexRequest {
-            node_id,
-            atom_id,
-            relation: atom.relation,
-            access: Some(access),
-            index_name: format!("{}_hash", atom.relation_name),
-            fields,
-        });
-    }
-    for atom_id in 0..plan.relation_atoms.len() {
-        if !atom_variables(&plan.relation_atoms[atom_id]).is_empty() {
-            continue;
-        }
-        if requested.iter().any(|(_, id, _)| *id == atom_id) {
-            continue;
-        }
-        let atom = &plan.relation_atoms[atom_id];
-        let access = AccessId(0);
-        let layout = layout_by_access(schema, atom, access)?;
-        let mut fields = Vec::new();
-        for field_name in &layout.leading_fields {
-            let Some(field) = atom
-                .fields
-                .iter()
-                .find(|field| &field.field_name == field_name)
-            else {
-                break;
-            };
-            fields.push(field.field);
-        }
-        out.push(HashAtomIndexRequest {
-            node_id: usize::MAX,
-            atom_id,
-            relation: atom.relation,
-            access: Some(access),
-            index_name: format!("{}_hash", atom.relation_name),
-            fields,
-        });
-    }
-    Ok(out)
-}
-
-fn layout_by_access<'a>(
-    schema: &'a StorageSchema,
-    atom: &NormAtom,
-    access: AccessId,
-) -> Result<&'a CurrentIndexLayout> {
-    schema
-        .layouts()
-        .iter()
-        .find(|layout| layout.relation_id == atom.relation.0 && layout.index_id == access.0)
-        .ok_or_else(|| {
-            Error::internal(format!(
-                "missing access {} for relation {}",
-                access.0, atom.relation_name
-            ))
-        })
-}
-
-fn hash_participants_by_variable(
-    variable_count: usize,
-    atoms: &[NormAtom],
-) -> Vec<SmallParticipants> {
-    let mut participants = vec![SmallParticipants::new(); variable_count];
-    for (atom_id, atom) in atoms.iter().enumerate() {
-        for variable in atom_variables(atom) {
-            participants[variable].push(atom_id);
-        }
-    }
-    participants
-}
-
 fn try_direct_kernel(query: &NormalizedQuery) -> Option<DirectKernelPlan> {
     try_direct_prefix_range_kernel(query).or_else(|| try_direct_chain_kernel(query))
 }
@@ -7913,382 +7693,6 @@ fn direct_row_satisfies_atom(
         }
     }
     Ok(true)
-}
-
-struct HashProbeExecutor<'txn, 'input, 'query, 'plan, S: TupleSink> {
-    image: &'input crate::QueryImage,
-    txn: &'input ReadTxn<'txn>,
-    query: &'query NormalizedQuery,
-    inputs: &'input EncodedInputs,
-    plan: &'plan mut ExecutionPlan,
-    index_requests: Vec<HashAtomIndexRequest>,
-    atom_indexes: Vec<HashAtomIndex>,
-    participants_by_variable: Vec<SmallParticipants>,
-    binding: EncodedBinding,
-    sink: &'plan mut S,
-}
-
-impl<S: TupleSink> HashProbeExecutor<'_, '_, '_, '_, S> {
-    fn static_atoms_pass(&mut self) -> Result<bool> {
-        let static_atoms = self
-            .plan
-            .relation_atoms
-            .iter()
-            .enumerate()
-            .filter_map(|(atom_id, atom)| atom_variables(atom).is_empty().then_some(atom_id))
-            .collect::<SmallParticipants>();
-        for atom_id in static_atoms {
-            if !self.atom_has_matching_row(usize::MAX, atom_id)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
-    fn execute(&mut self, depth: usize) -> Result<()> {
-        if depth == self.plan.variable_order_ids.len() {
-            if comparisons_ready_pass(
-                self.txn,
-                &self.plan.comparisons,
-                self.query,
-                self.inputs,
-                &self.binding,
-                &mut self.plan.summary.counters,
-            )? {
-                self.plan.summary.counters.bindings_yielded += 1;
-                let _span = tracing::trace_span!("bumbledb.query.sink.emit").entered();
-                self.sink.emit(
-                    self.txn,
-                    self.query,
-                    &self.binding,
-                    &mut self.plan.summary.counters,
-                )?;
-            }
-            return Ok(());
-        }
-
-        let variable = self.plan.variable_order_ids[depth];
-        let participants = self.participants(variable);
-        if participants.is_empty() {
-            return Err(Error::internal(format!(
-                "variable {} is not constrained by any hash atom",
-                self.query.vars[variable].name
-            )));
-        }
-        let driver = self.choose_driver(depth, &participants)?;
-        let hash_index = self.hash_index(depth, driver)?;
-        let index = hash_index.index.clone();
-        let prefix = self.hash_prefix(driver, &hash_index.fields)?;
-        let refs = encoded_refs(&prefix);
-        let row_count = index.count(&refs);
-        self.plan.summary.counters.hash_probe_calls += 1;
-        if row_count == 0 {
-            self.plan.summary.counters.hash_probe_misses += 1;
-            return Ok(());
-        }
-        self.plan.summary.counters.hash_probe_hits += 1;
-        self.plan.summary.counters.hash_rows_returned = self
-            .plan
-            .summary
-            .counters
-            .hash_rows_returned
-            .saturating_add(row_count as u64);
-
-        let mut emitted = BTreeSet::new();
-        for row in index.rows_for_prefix(&refs) {
-            self.visit_driver_row(depth, variable, &participants, driver, row, &mut emitted)?;
-        }
-        Ok(())
-    }
-
-    fn visit_driver_row(
-        &mut self,
-        depth: usize,
-        variable: usize,
-        participants: &[usize],
-        driver: usize,
-        row: RowId,
-        emitted: &mut BTreeSet<EncodedOwned>,
-    ) -> Result<()> {
-        if !self.row_satisfies_atom(driver, row)? {
-            return Ok(());
-        }
-        let Some(value) = self.variable_value_from_row(driver, row, variable)? else {
-            return Ok(());
-        };
-        if !emitted.insert(value.clone()) {
-            return Ok(());
-        }
-        if !self.binding.bind(variable, value) {
-            return Ok(());
-        }
-        let mut keep = true;
-        for atom_id in participants {
-            if *atom_id == driver {
-                continue;
-            }
-            if !self.atom_has_matching_row(depth, *atom_id)? {
-                keep = false;
-                break;
-            }
-        }
-        if keep
-            && comparisons_ready_pass(
-                self.txn,
-                &self.plan.comparisons,
-                self.query,
-                self.inputs,
-                &self.binding,
-                &mut self.plan.summary.counters,
-            )?
-        {
-            if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
-                rows.actual_rows = rows.actual_rows.saturating_add(1);
-            }
-            self.plan.summary.counters.hash_distinct_emits += 1;
-            self.execute(depth + 1)?;
-        }
-        self.binding.unbind(variable);
-        Ok(())
-    }
-
-    fn participants(&self, variable: usize) -> SmallParticipants {
-        self.participants_by_variable
-            .get(variable)
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    fn choose_driver(&mut self, depth: usize, participants: &[usize]) -> Result<usize> {
-        let mut best = None;
-        for atom_id in participants {
-            let count = self.probe_atom_count(depth, *atom_id)?;
-            if best.is_none_or(|(_, best_count)| count < best_count) {
-                best = Some((*atom_id, count));
-            }
-        }
-        best.map(|(atom_id, _)| atom_id)
-            .ok_or_else(|| Error::internal("hash probe node has no driver"))
-    }
-
-    fn probe_atom_count(&mut self, depth: usize, atom_id: usize) -> Result<usize> {
-        let index = self.hash_index(depth, atom_id)?;
-        let prefix = self.hash_prefix(atom_id, &index.fields)?;
-        let refs = encoded_refs(&prefix);
-        Ok(index.index.count(&refs))
-    }
-
-    fn atom_has_matching_row(&mut self, depth: usize, atom_id: usize) -> Result<bool> {
-        let hash_index = self.hash_index(depth, atom_id)?;
-        let index = hash_index.index.clone();
-        let prefix = self.hash_prefix(atom_id, &hash_index.fields)?;
-        let refs = encoded_refs(&prefix);
-        let row_count = index.count(&refs);
-        self.plan.summary.counters.hash_probe_calls += 1;
-        if row_count == 0 {
-            self.plan.summary.counters.hash_probe_misses += 1;
-            return Ok(false);
-        }
-        self.plan.summary.counters.hash_probe_hits += 1;
-        self.plan.summary.counters.hash_rows_returned = self
-            .plan
-            .summary
-            .counters
-            .hash_rows_returned
-            .saturating_add(row_count as u64);
-        let mut found = false;
-        let mut error = None;
-        index.for_each_row(&refs, |row| match self.row_satisfies_atom(atom_id, row) {
-            Ok(true) => {
-                found = true;
-                false
-            }
-            Ok(false) => true,
-            Err(err) => {
-                error = Some(err);
-                false
-            }
-        });
-        if let Some(error) = error {
-            return Err(error);
-        }
-        Ok(found)
-    }
-
-    fn hash_prefix(&self, atom_id: usize, fields: &[FieldId]) -> Result<SmallEncodedPrefix> {
-        let atom = &self.plan.relation_atoms[atom_id];
-        let mut prefix = SmallVec::new();
-        for field in fields {
-            let Some(atom_field) = atom
-                .fields
-                .iter()
-                .find(|atom_field| atom_field.field == *field)
-            else {
-                break;
-            };
-            match self.term_bound_value(&atom_field.term)? {
-                Some(value) => prefix.push(value),
-                None => break,
-            }
-        }
-        Ok(prefix)
-    }
-
-    fn term_bound_value(&self, term: &NormTerm) -> Result<Option<EncodedOwned>> {
-        Ok(match term {
-            NormTerm::Var(variable) => self.binding.get(variable.0 as usize).cloned(),
-            NormTerm::Input(input) => self.inputs.get(*input).cloned(),
-            NormTerm::Literal(value) => Some(value.clone()),
-            NormTerm::Wildcard => None,
-        })
-    }
-
-    fn row_satisfies_atom(&self, atom_id: usize, row: RowId) -> Result<bool> {
-        let atom = &self.plan.relation_atoms[atom_id];
-        let relation = self.relation(atom)?;
-        for field in &atom.fields {
-            let bytes = relation
-                .encoded_bytes(row, field.field)
-                .ok_or_else(|| Error::internal("missing hash probe field"))?;
-            match &field.term {
-                NormTerm::Var(variable) => {
-                    if let Some(bound) = self.binding.get(variable.0 as usize)
-                        && bound.as_bytes() != bytes
-                    {
-                        return Ok(false);
-                    }
-                }
-                NormTerm::Input(input) => {
-                    let Some(input) = self.inputs.get(*input) else {
-                        return Ok(false);
-                    };
-                    if input.as_bytes() != bytes {
-                        return Ok(false);
-                    }
-                }
-                NormTerm::Literal(value) => {
-                    if value.as_bytes() != bytes {
-                        return Ok(false);
-                    }
-                }
-                NormTerm::Wildcard => {}
-            }
-        }
-        Ok(true)
-    }
-
-    fn variable_value_from_row(
-        &self,
-        atom_id: usize,
-        row: RowId,
-        variable: usize,
-    ) -> Result<Option<EncodedOwned>> {
-        let atom = &self.plan.relation_atoms[atom_id];
-        let relation = self.relation(atom)?;
-        let mut out: Option<EncodedOwned> = None;
-        for field in atom
-            .fields
-            .iter()
-            .filter(|field| matches!(field.term, NormTerm::Var(var) if var.0 as usize == variable))
-        {
-            let bytes = relation
-                .encoded_bytes(row, field.field)
-                .ok_or_else(|| Error::internal("missing hash probe variable field"))?;
-            if let Some(existing) = &out {
-                if existing.as_bytes() != bytes {
-                    return Ok(None);
-                }
-            } else {
-                out = Some(encoded_owned_for_width(
-                    self.query.vars[variable].value_type.encoded_width(),
-                    bytes,
-                )?);
-            }
-        }
-        Ok(out)
-    }
-
-    fn relation(&self, atom: &NormAtom) -> Result<&RelationImage> {
-        self.plan
-            .relation_atoms
-            .get(atom.id.0 as usize)
-            .ok_or_else(|| Error::internal("missing hash probe atom"))?;
-        self.image
-            .relation_by_id(atom.relation)
-            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))
-    }
-
-    fn hash_index(&mut self, depth: usize, atom_id: usize) -> Result<HashAtomIndex> {
-        if let Some(index) = self
-            .atom_indexes
-            .iter()
-            .find(|index| index.node_id == depth && index.atom_id == atom_id)
-            .or_else(|| {
-                self.atom_indexes
-                    .iter()
-                    .find(|index| index.node_id == usize::MAX && index.atom_id == atom_id)
-            })
-            .cloned()
-        {
-            return Ok(index);
-        }
-
-        let request = self
-            .index_requests
-            .iter()
-            .find(|request| request.node_id == depth && request.atom_id == atom_id)
-            .or_else(|| {
-                self.index_requests
-                    .iter()
-                    .find(|request| request.node_id == usize::MAX && request.atom_id == atom_id)
-            })
-            .cloned()
-            .ok_or_else(|| Error::internal("missing hash atom index request"))?;
-
-        let relation = self
-            .image
-            .relation_by_id(request.relation)
-            .ok_or_else(|| Error::internal("missing lazy hash relation"))?;
-        let build_start = Instant::now();
-        let build_alloc_start = allocation::snapshot();
-        let key = HashTrieKey::new(
-            &self.image.key(),
-            request.relation,
-            request.access,
-            &request.fields,
-            LeafMode::Rows,
-        );
-        let cached = self.image.cached_hash_trie(key, || {
-            crate::query_image::build_hash_trie_index(
-                relation,
-                IndexSpec::new(&request.index_name, request.fields.clone()),
-            )
-        })?;
-        self.plan.summary.timings.hash_index_micros = self
-            .plan
-            .summary
-            .timings
-            .hash_index_micros
-            .saturating_add(elapsed_micros(build_start));
-        self.plan.summary.allocations.hash_index = allocation_delta_since(build_alloc_start);
-        if !cached.hit {
-            self.plan.summary.counters.hash_index_builds += 1;
-            self.plan.summary.counters.hash_index_build_rows = self
-                .plan
-                .summary
-                .counters
-                .hash_index_build_rows
-                .saturating_add(relation.row_count as u64);
-        }
-        let index = HashAtomIndex {
-            node_id: request.node_id,
-            atom_id: request.atom_id,
-            index: cached.index,
-            fields: request.fields,
-        };
-        self.atom_indexes.push(index.clone());
-        Ok(index)
-    }
 }
 
 fn encoded_owned_for_width(width: usize, bytes: &[u8]) -> Result<EncodedOwned> {
@@ -9676,7 +9080,6 @@ fn query_node_timings(
 
 fn plan_family_for_chosen(chosen: &str) -> PlanFamily {
     match chosen {
-        "hash_probe" => PlanFamily::HashProbe,
         "index_nested_loop" => PlanFamily::IndexNestedLoop,
         "pure_lftj" | "aggregate_pushdown" => PlanFamily::FreeJoinLftj,
         "direct_storage" => PlanFamily::Direct,
@@ -10170,30 +9573,11 @@ fn optimize_free_join_plan(
         schema,
         query,
         atoms,
-        variable_order_ids,
         variable_costs,
         stats,
         lftj_impls,
         cyclic,
     )?);
-
-    let probe_impls = probe_node_impls(schema, atoms, variable_order_ids, stats, cyclic)?;
-    if probe_impls
-        .iter()
-        .all(|implementation| *implementation == NodeImpl::HashProbe)
-    {
-        candidates.push(build_plan_candidate(
-            "hash_probe",
-            schema,
-            query,
-            atoms,
-            variable_order_ids,
-            variable_costs,
-            stats,
-            probe_impls,
-            cyclic,
-        )?);
-    }
 
     if has_aggregate(query) {
         candidates.push(build_plan_candidate(
@@ -10201,7 +9585,6 @@ fn optimize_free_join_plan(
             schema,
             query,
             atoms,
-            variable_order_ids,
             variable_costs,
             stats,
             vec![NodeImpl::SortedLeapfrog; variable_order_ids.len()],
@@ -10271,26 +9654,15 @@ fn build_plan_candidate(
     _schema: &StorageSchema,
     query: &NormalizedQuery,
     atoms: &[&NormAtom],
-    variable_order_ids: &[usize],
     variable_costs: &[VariableCost],
     stats: &PlannerStats,
     implementations: Vec<NodeImpl>,
     cyclic: bool,
 ) -> Result<OptimizerCandidate> {
-    let estimates = estimate_free_join_plan(
-        name,
-        query,
-        atoms,
-        variable_order_ids,
-        variable_costs,
-        &implementations,
-        stats,
-        cyclic,
-    );
+    let estimates = estimate_free_join_plan(name, query, atoms, variable_costs, stats, cyclic);
     let cost = CostKey {
         estimated_micros: estimates
             .iterator_ops
-            .saturating_add(estimates.hash_probe_rows)
             .saturating_add(estimates.hash_build_rows / HASH_BUILD_ROWS_PER_MICRO)
             .saturating_add(estimates.materialized_values),
         setup_micros: estimated_setup_micros(name, &estimates),
@@ -10311,8 +9683,7 @@ fn build_plan_candidate(
 fn candidate_rank(name: &str) -> u8 {
     match name {
         "pure_lftj" => 0,
-        "hash_probe" => 1,
-        "aggregate_pushdown" => 2,
+        "aggregate_pushdown" => 1,
         _ => u8::MAX,
     }
 }
@@ -10325,7 +9696,6 @@ fn implementation_mask(implementations: &[NodeImpl]) -> u64 {
         .fold(0u64, |mask, (index, implementation)| {
             let code = match implementation {
                 NodeImpl::SortedLeapfrog => 1,
-                NodeImpl::HashProbe => 2,
             };
             mask | ((code as u64) << (index * 4))
         })
@@ -10406,51 +9776,25 @@ fn build_free_join_plan(
     })
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "plan costing needs query shape, stats, implementations, and cycle context"
-)]
 fn estimate_free_join_plan(
     name: &str,
     query: &NormalizedQuery,
     atoms: &[&NormAtom],
-    variable_order_ids: &[usize],
     variable_costs: &[VariableCost],
-    implementations: &[NodeImpl],
     stats: &PlannerStats,
     cyclic: bool,
 ) -> PlanEstimates {
     let mut iterator_ops = 0u64;
     let mut hash_build_rows = 0u64;
-    let mut hash_probe_rows = 0u64;
-    let mut hash_build_requests = BTreeSet::new();
-    for (node_id, ((cost, implementation), variable)) in variable_costs
-        .iter()
-        .zip(implementations)
-        .zip(variable_order_ids)
-        .enumerate()
-    {
-        let mut variable_ops = cost.estimated_candidates.max(1);
-        match implementation {
-            NodeImpl::SortedLeapfrog => {
-                variable_ops = variable_ops.saturating_mul(if cyclic { 1 } else { 3 });
-            }
-            NodeImpl::HashProbe => {
-                hash_probe_rows = hash_probe_rows.saturating_add(cost.estimated_candidates.max(1));
-                for (atom_id, atom) in atoms.iter().enumerate() {
-                    if atom_contains_variable(atom, *variable)
-                        && hash_build_requests.insert((node_id, atom_id))
-                    {
-                        hash_build_rows = hash_build_rows
-                            .saturating_add(stats.relation_rows(&atom.relation_name));
-                    }
-                }
-            }
-        }
+    for cost in variable_costs {
+        let variable_ops =
+            cost.estimated_candidates
+                .max(1)
+                .saturating_mul(if cyclic { 1 } else { 3 });
         iterator_ops = iterator_ops.saturating_add(variable_ops);
     }
-    for (atom_id, atom) in atoms.iter().enumerate() {
-        if atom_variables(atom).is_empty() && hash_build_requests.insert((usize::MAX, atom_id)) {
+    for atom in atoms {
+        if atom_variables(atom).is_empty() {
             hash_build_rows =
                 hash_build_rows.saturating_add(stats.relation_rows(&atom.relation_name));
         }
@@ -10470,7 +9814,6 @@ fn estimate_free_join_plan(
         output_rows,
         iterator_ops,
         hash_build_rows,
-        hash_probe_rows,
         materialized_values,
         memory_bytes,
     }
@@ -10499,49 +9842,6 @@ fn estimate_materialized_values(query: &NormalizedQuery, output_rows: u64) -> u6
     output_rows
         .saturating_mul(projected_values)
         .max(projected_values)
-}
-
-fn probe_node_impls(
-    schema: &StorageSchema,
-    atoms: &[&NormAtom],
-    variable_order_ids: &[usize],
-    stats: &PlannerStats,
-    cyclic: bool,
-) -> Result<Vec<NodeImpl>> {
-    let mut bound = BTreeSet::new();
-    let mut out = Vec::new();
-    for variable in variable_order_ids {
-        let implementation =
-            if !cyclic && variable_probe_eligible(schema, atoms, stats, &bound, *variable)? {
-                NodeImpl::HashProbe
-            } else {
-                NodeImpl::SortedLeapfrog
-            };
-        out.push(implementation);
-        bound.insert(*variable);
-    }
-    Ok(out)
-}
-
-fn variable_probe_eligible(
-    schema: &StorageSchema,
-    atoms: &[&NormAtom],
-    stats: &PlannerStats,
-    bound: &BTreeSet<usize>,
-    variable: usize,
-) -> Result<bool> {
-    for atom in atoms
-        .iter()
-        .copied()
-        .filter(|atom| atom_contains_variable(atom, variable))
-    {
-        let estimate = estimate_atom_variable_access(schema, stats, bound, atom, variable)?;
-        let relation_rows = stats.relation_rows(&atom.relation_name);
-        if estimate.prefix_len > 0 && estimate.estimated_rows <= relation_rows.max(1).div_ceil(2) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 fn is_cyclic_multiway_query(query: &NormalizedQuery, atoms: &[&NormAtom]) -> bool {

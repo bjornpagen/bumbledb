@@ -121,7 +121,7 @@ fn planner_recommends_missing_static_predicate_index() -> TestResult {
 }
 
 #[test]
-fn optimizer_selects_equality_index_and_hash_probe_for_static_lookup() -> TestResult {
+fn optimizer_selects_direct_storage_for_static_lookup() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(optimizer_schema(), env.max_key_size())?;
@@ -162,7 +162,7 @@ fn optimizer_selects_equality_index_and_hash_probe_for_static_lookup() -> TestRe
 }
 
 #[test]
-fn hash_probe_runtime_checks_static_existence_atoms() -> TestResult {
+fn static_empty_checks_static_existence_atoms() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
@@ -193,13 +193,12 @@ fn hash_probe_runtime_checks_static_existence_atoms() -> TestResult {
     assert!(output.rows.is_empty());
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert_eq!(output.plan.counters.trie_open, 0);
-    assert_eq!(output.plan.counters.hash_probe_calls, 0);
     assert!(output.plan.counters.static_empty_atoms_checked > 0);
     Ok(())
 }
 
 #[test]
-fn partial_hash_probe_shape_falls_back_to_lftj() -> TestResult {
+fn partial_probe_shape_falls_back_to_lftj() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
@@ -236,7 +235,6 @@ fn partial_hash_probe_shape_falls_back_to_lftj() -> TestResult {
             .any(|node| node.implementation == NodeImpl::SortedLeapfrog)
     );
     assert!(output.plan.counters.trie_next > 0);
-    assert_eq!(output.plan.counters.hash_probe_calls, 0);
     assert_same_rows(&output.rows, &[vec![Value::U64(20)], vec![Value::U64(21)]]);
     Ok(())
 }
@@ -303,7 +301,6 @@ fn direct_prefix_range_kernel_selects_and_filters_rows() -> TestResult {
     assert_eq!(output.plan.counters.hash_index_builds, 0);
     assert_eq!(output.plan.counters.sorted_trie_builds, 0);
     assert_eq!(output.plan.counters.trie_open, 0);
-    assert_eq!(output.plan.counters.hash_probe_calls, 0);
     Ok(())
 }
 
@@ -410,7 +407,6 @@ fn direct_prefix_range_empty_prefix_returns_zero_rows() -> TestResult {
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
     assert!(output.rows.is_empty());
     assert_eq!(output.plan.counters.trie_open, 0);
-    assert_eq!(output.plan.counters.hash_probe_calls, 0);
     Ok(())
 }
 
@@ -457,7 +453,6 @@ fn direct_chain_kernel_selects_and_follows_acyclic_path() -> TestResult {
     assert_eq!(output.plan.counters.hash_index_builds, 0);
     assert_eq!(output.plan.counters.hash_index_build_rows, 0);
     assert_eq!(output.plan.counters.trie_open, 0);
-    assert_eq!(output.plan.counters.hash_probe_calls, 0);
     Ok(())
 }
 
@@ -1180,20 +1175,9 @@ fn planner_stats_are_cached_per_query_image() -> TestResult {
     assert_eq!(second.plan.planner_stats.builds, 1);
     assert_eq!(second.plan.planner_stats.misses, 1);
     assert!(second.plan.planner_stats.hits >= 1 || second.plan.prepared_plan_cache.hits >= 1);
-    if second
-        .plan
-        .free_join
-        .nodes
-        .iter()
-        .all(|node| node.implementation == NodeImpl::HashProbe)
-    {
-        assert!(second.plan.counters.hash_probe_calls > 0);
-        assert_eq!(second.plan.counters.trie_open, 0);
-    } else {
-        assert_eq!(second.plan.counters.sorted_trie_builds, 0);
-        assert_eq!(second.plan.counters.atom_temp_relation_builds, 0);
-        assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
-    }
+    assert_eq!(second.plan.counters.sorted_trie_builds, 0);
+    assert_eq!(second.plan.counters.atom_temp_relation_builds, 0);
+    assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
     Ok(())
 }
 

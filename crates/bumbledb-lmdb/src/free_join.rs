@@ -68,8 +68,6 @@ pub struct PlanNode {
 pub enum NodeImpl {
     /// Sorted trie leapfrog node.
     SortedLeapfrog,
-    /// Hash probe node.
-    HashProbe,
 }
 
 /// Subatom partition inside a Free Join node.
@@ -151,8 +149,6 @@ pub struct PlanEstimates {
     pub iterator_ops: u64,
     /// Estimated hash build rows.
     pub hash_build_rows: u64,
-    /// Estimated hash probe rows.
-    pub hash_probe_rows: u64,
     /// Estimated materialized logical values.
     pub materialized_values: u64,
     /// Estimated memory bytes.
@@ -203,36 +199,6 @@ mod tests {
 
         plan.validate()?;
         assert!(plan.is_pure_lftj());
-        Ok(())
-    }
-
-    #[test]
-    fn validates_manual_probe_plan_shape() -> Result<()> {
-        let plan = FreeJoinPlan {
-            nodes: vec![PlanNode {
-                id: NodeId(0),
-                bind_vars: vec![VarId(0), VarId(1)],
-                subatoms: vec![SubAtom {
-                    atom_id: AtomId(0),
-                    relation: RelationId(0),
-                    fields: vec![FieldId(0), FieldId(1)],
-                    vars: vec![VarId(0), VarId(1)],
-                    access: AccessId(0),
-                }],
-                implementation: NodeImpl::HashProbe,
-                payload: PayloadDemand {
-                    projected_vars: vec![VarId(0), VarId(1)],
-                    ..PayloadDemand::default()
-                },
-            }],
-            output: OutputPlan::Project(ProjectPlan {
-                vars: vec![VarId(0), VarId(1)],
-            }),
-            estimates: PlanEstimates::default(),
-        };
-
-        plan.validate()?;
-        assert!(!plan.is_pure_lftj());
         Ok(())
     }
 

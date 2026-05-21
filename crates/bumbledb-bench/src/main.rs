@@ -653,7 +653,6 @@ struct BenchmarkRunResult {
     allocations: QueryAllocationStats,
     iterator_ops: u64,
     hash_build_rows: u64,
-    hash_probe_rows: u64,
     materialized_values: u64,
     dictionary_reverse_lookups: u64,
     counters: PlanCounters,
@@ -678,9 +677,6 @@ struct BenchmarkRunResult {
     sorted_trie_cache_misses: u64,
     sorted_trie_builds: u64,
     atom_temp_relation_builds: u64,
-    hash_probe_calls: u64,
-    hash_probe_hits: u64,
-    hash_probe_misses: u64,
     hash_rows_returned: u64,
     hash_distinct_emits: u64,
     direct_kernel_probes: u64,
@@ -1265,7 +1261,6 @@ fn benchmark_result(
         allocations: output.plan.allocations,
         iterator_ops: output.plan.free_join.estimates.iterator_ops,
         hash_build_rows: output.plan.free_join.estimates.hash_build_rows,
-        hash_probe_rows: output.plan.free_join.estimates.hash_probe_rows,
         materialized_values: output.plan.counters.materialized_output_values,
         dictionary_reverse_lookups: output.plan.counters.dictionary_reverse_lookups,
         counters: output.plan.counters.clone(),
@@ -1290,9 +1285,6 @@ fn benchmark_result(
         sorted_trie_cache_misses: output.plan.counters.sorted_trie_cache_misses,
         sorted_trie_builds: output.plan.counters.sorted_trie_builds,
         atom_temp_relation_builds: output.plan.counters.atom_temp_relation_builds,
-        hash_probe_calls: output.plan.counters.hash_probe_calls,
-        hash_probe_hits: output.plan.counters.hash_probe_hits,
-        hash_probe_misses: output.plan.counters.hash_probe_misses,
         hash_rows_returned: output.plan.counters.hash_rows_returned,
         hash_distinct_emits: output.plan.counters.hash_distinct_emits,
         direct_kernel_probes: output.plan.counters.direct_kernel_probes,
@@ -1721,12 +1713,12 @@ fn job_cache_mode_avg_limit(
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | rows | compare mode | bumbledb materialized | sqlite materialized | count-only | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image segments | image segment bytes | built from segments | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash calls | hash hits | hash misses | hash rows | hash emits | direct probes | direct rows | direct predicates | iterator ops | hash build est | hash probe est | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---|---|---|---|---:|---:|---:|---|---|---|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | rows | compare mode | bumbledb materialized | sqlite materialized | count-only | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image segments | image segment bytes | built from segments | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash rows | hash emits | direct probes | direct rows | direct predicates | iterator ops | hash build est | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---|---|---|---|---:|---:|---:|---|---|---|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.rows,
@@ -1759,9 +1751,6 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.sorted_trie_cache_misses,
             result.sorted_trie_builds,
             result.atom_temp_relation_builds,
-            result.hash_probe_calls,
-            result.hash_probe_hits,
-            result.hash_probe_misses,
             result.hash_rows_returned,
             result.hash_distinct_emits,
             result.direct_kernel_probes,
@@ -1769,7 +1758,6 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.direct_kernel_predicates,
             result.iterator_ops,
             result.hash_build_rows,
-            result.hash_probe_rows,
             result.materialized_values,
             result.dictionary_reverse_lookups,
             if result.gate.passed { "pass" } else { "fail" },
@@ -2279,7 +2267,6 @@ fn print_explain(explain: &str) {
             || line.contains("sorted_trie_build")
             || line.contains("atom_temp_relation")
             || line.contains("hash_index")
-            || line.contains("hash_probe")
             || line.contains("hash_rows")
             || line.contains("hash_distinct")
             || line.contains("direct_kernel")
@@ -3457,7 +3444,6 @@ mod tests {
             allocations: QueryAllocationStats::default(),
             iterator_ops: 7,
             hash_build_rows: 0,
-            hash_probe_rows: 0,
             materialized_values: 1,
             dictionary_reverse_lookups: 0,
             counters: PlanCounters {
@@ -3486,9 +3472,6 @@ mod tests {
             sorted_trie_cache_misses: 1,
             sorted_trie_builds: 1,
             atom_temp_relation_builds: 1,
-            hash_probe_calls: 1,
-            hash_probe_hits: 1,
-            hash_probe_misses: 0,
             hash_rows_returned: 1,
             hash_distinct_emits: 1,
             direct_kernel_probes: 0,
@@ -3545,9 +3528,9 @@ mod tests {
             bumbledb_avg: Duration::from_micros(9),
             sqlite_avg: Duration::from_micros(3),
             sqlite_ratio: 3.0,
-            chosen_plan: "hash_probe".to_owned(),
-            runtime_kind: "HashProbe".to_owned(),
-            plan_family: "HashProbe".to_owned(),
+            chosen_plan: "pure_lftj".to_owned(),
+            runtime_kind: "Lftj".to_owned(),
+            plan_family: "FreeJoinLftj".to_owned(),
             compare_mode: "rows".to_owned(),
             cache_mode: "prepared-result".to_owned(),
             prepared_result_cache_allowed: true,
@@ -3570,7 +3553,6 @@ mod tests {
             allocations: QueryAllocationStats::default(),
             iterator_ops: 1,
             hash_build_rows: 1,
-            hash_probe_rows: 1,
             materialized_values: 2,
             dictionary_reverse_lookups: 0,
             counters: PlanCounters::default(),
@@ -3595,9 +3577,6 @@ mod tests {
             sorted_trie_cache_misses: 0,
             sorted_trie_builds: 0,
             atom_temp_relation_builds: 0,
-            hash_probe_calls: 1,
-            hash_probe_hits: 1,
-            hash_probe_misses: 0,
             hash_rows_returned: 2,
             hash_distinct_emits: 2,
             direct_kernel_probes: 0,
@@ -3611,8 +3590,8 @@ mod tests {
 
         let json = render_json_results(&[result]);
         assert!(json.contains("\"dataset\":\"ledger\""));
-        assert!(json.contains("\"runtime\":\"HashProbe\""));
-        assert!(json.contains("\"plan_family\":\"HashProbe\""));
+        assert!(json.contains("\"runtime\":\"Lftj\""));
+        assert!(json.contains("\"plan_family\":\"FreeJoinLftj\""));
         assert!(json.contains("\"compare_mode\":\"rows\""));
         assert!(json.contains("\"cache_mode\":\"prepared-result\""));
         assert!(json.contains("\"prepared_result_cache_allowed\":true"));
