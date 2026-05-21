@@ -6,6 +6,8 @@ Specialize encoded comparison, equality, range, and intersection operations by e
 
 This is the vectorization/SIMD PRD, but it must be driven by counters and hot paths from PRD 01-05.
 
+The SIMD target is ARM NEON only. Do not implement x86/x86_64 SIMD paths. Do not add SSE, AVX, AVX2, AVX-512, or runtime x86 feature detection. If the active platform is not ARM with NEON support, the scalar fallback remains the implementation.
+
 ## Background
 
 Bumbledb is unusually suitable for width specialization:
@@ -23,7 +25,9 @@ Trace evidence suggests vectorization is promising only after per-binding output
 - No backwards compatibility.
 - No new join algorithm.
 - No unsafe SIMD without scalar fallback and tests.
-- No CPU-specific hard requirement unless guarded by runtime detection.
+- No x86/x86_64 SIMD.
+- No SSE, AVX, AVX2, or AVX-512 code.
+- No CPU-specific hard requirement unless guarded by ARM/NEON detection.
 - No changing encoded ordering semantics.
 - No decoding just to compare values.
 
@@ -80,14 +84,22 @@ Use scalar specialization first if that is simpler. SIMD comes after scalar widt
 
 Allowed SIMD approaches:
 
-- portable standard library APIs if stable and available
-- architecture-specific intrinsics behind `cfg(target_arch)` and runtime detection
+- ARM NEON intrinsics via Rust `std::arch::aarch64` where the target supports them
+- architecture-specific NEON modules behind `cfg(target_arch = "aarch64")` or other ARM cfgs when correct
 - chunked scalar loops that are vectorizer-friendly
 
 Required fallback:
 
 - scalar path for every specialized operation
 - tests must pass without SIMD
+
+Forbidden SIMD approaches:
+
+- `std::arch::x86`
+- `std::arch::x86_64`
+- `is_x86_feature_detected!`
+- SSE/AVX intrinsics
+- x86-only dependencies
 
 ## Target Operations
 
@@ -131,7 +143,9 @@ If column scans are still hot after PRD 03-05:
 - LFTJ specialized intersection matches generic intersection on randomized small fixtures.
 - Static proof specialized scans match generic proof results.
 - Direct predicate specialized checks match generic checks.
-- Tests run on machines without SIMD features.
+- Tests run on machines without NEON features by using the scalar fallback.
+- ARM NEON implementations are behind explicit cfg/runtime guards.
+- Grep active Rust code to ensure no x86 SIMD path was introduced.
 
 ## Required Benchmarks
 
@@ -183,6 +197,7 @@ Optimization targets:
 - non-JOB gates pass
 - JOB 10k gates pass
 - scalar fallback tests pass
+- active Rust code contains no `std::arch::x86`, `std::arch::x86_64`, `is_x86_feature_detected`, `avx`, `sse`, or `x86` SIMD implementation
 - no decoded comparisons are introduced into hot encoded paths
 
 ## Completion Criteria
