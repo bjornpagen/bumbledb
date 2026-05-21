@@ -459,6 +459,8 @@ fn direct_chain_kernel_selects_and_follows_acyclic_path() -> TestResult {
     assert_eq!(output.rows, vec![vec![Value::U64(30)]]);
     assert_eq!(output.plan.counters.direct_kernel_rows, 4);
     assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
+    assert_eq!(output.plan.counters.materialized_output_values, 1);
+    assert_eq!(output.plan.counters.dictionary_reverse_lookups, 0);
     assert_eq!(output.plan.counters.hash_index_builds, 0);
     assert_eq!(output.plan.counters.hash_index_build_rows, 0);
     assert_eq!(output.plan.counters.trie_open, 0);
@@ -1881,6 +1883,45 @@ fn projection_deduplicates_results() -> TestResult {
     );
     assert_eq!(output.plan.counters.bindings_yielded, 3);
     assert_eq!(output.plan.counters.materialized_output_values, 2);
+    Ok(())
+}
+
+#[test]
+fn materialized_projection_does_not_use_prepared_result_cache() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, chain_a_row(1))?;
+        txn.insert(&schema, chain_b_row(10, 1))?;
+        txn.insert(&schema, chain_c_row(20, 10))?;
+        txn.insert(&schema, chain_c_row(21, 10))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query.rel("A")?.var("id", "a")?.done();
+        query.rel("B")?.var("id", "b")?.var("a", "a")?.done();
+        query.rel("C")?.var("id", "c")?.var("b", "b")?.done();
+        query.cmp(
+            OperandRef::var("c"),
+            ComparisonOperator::NotEq,
+            OperandRef::integer(0),
+        )?;
+        query.find_var("c")?;
+        Ok(())
+    })?;
+    let prepared = env.prepare_query(&schema, &query)?;
+
+    let first =
+        env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
+    let second =
+        env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
+
+    assert_same_rows(&first.rows, &[vec![Value::U64(20)], vec![Value::U64(21)]]);
+    assert_eq!(second.rows, first.rows);
+    assert_eq!(second.plan.counters.prepared_result_cache_hits, 0);
+    assert_eq!(second.plan.timings.prepared_count_cache_emit_micros, 0);
+    assert!(second.plan.counters.materialized_output_values <= second.rows.len() as u64);
     Ok(())
 }
 
