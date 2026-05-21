@@ -305,6 +305,7 @@ fn direct_prefix_range_kernel_selects_and_filters_rows() -> TestResult {
     assert!(output.plan.counters.direct_kernel_probes > 0);
     assert_eq!(output.plan.counters.direct_kernel_rows, 2);
     assert_eq!(output.plan.counters.direct_kernel_predicates, 4);
+    assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
     assert_eq!(output.plan.query_image_cache.builds, 0);
     assert_eq!(output.plan.counters.hash_index_builds, 0);
     assert_eq!(output.plan.counters.sorted_trie_builds, 0);
@@ -457,10 +458,53 @@ fn direct_chain_kernel_selects_and_follows_acyclic_path() -> TestResult {
     ));
     assert_eq!(output.rows, vec![vec![Value::U64(30)]]);
     assert_eq!(output.plan.counters.direct_kernel_rows, 4);
+    assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
     assert_eq!(output.plan.counters.hash_index_builds, 0);
     assert_eq!(output.plan.counters.hash_index_build_rows, 0);
     assert_eq!(output.plan.counters.trie_open, 0);
     assert_eq!(output.plan.counters.hash_probe_calls, 0);
+    Ok(())
+}
+
+#[test]
+fn direct_chain_tag_lookup_like_projection_runs_before_static_semijoin() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, chain_a_row(1))?;
+        txn.insert(&schema, chain_b_row(10, 1))?;
+        txn.insert(&schema, chain_c_row(20, 10))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query.rel("A")?.input("id", "a")?.done();
+        query
+            .rel("B")?
+            .var("id", "posting")?
+            .input("a", "a")?
+            .done();
+        query
+            .rel("C")?
+            .var("id", "account")?
+            .var("b", "posting")?
+            .done();
+        query.find_var("posting")?.find_var("account")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| {
+        txn.execute_query(
+            &schema,
+            &query,
+            &InputBindings::from_values([("a", Value::U64(1))]),
+        )
+    })?;
+
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::IndexNestedLoop);
+    assert_eq!(output.plan.plan_family, PlanFamily::IndexNestedLoop);
+    assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
+    assert_same_rows(&output.rows, &[vec![Value::U64(10), Value::U64(20)]]);
     Ok(())
 }
 
@@ -521,8 +565,9 @@ fn direct_chain_broken_path_returns_zero_rows() -> TestResult {
         )
     })?;
 
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-    assert_eq!(output.plan.plan_family, PlanFamily::StaticEmpty);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::IndexNestedLoop);
+    assert_eq!(output.plan.plan_family, PlanFamily::IndexNestedLoop);
+    assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
     assert!(output.rows.is_empty());
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
@@ -1223,7 +1268,7 @@ fn execute_query_cache_is_schema_fingerprint_scoped() -> TestResult {
             .var("id", "item")?
             .var("kind", "kind")?
             .done();
-        query.find_var("item")?;
+        query.find_aggregate(AggregateFunction::Count, "item")?;
         Ok(())
     })?;
     let edge_query = typed_query(&schema_b, |query| {
@@ -1841,13 +1886,13 @@ fn static_semijoin_dimension_row_exists_but_fact_is_empty() -> TestResult {
             .var("dim", "dim")?
             .var("item", "item")?
             .done();
-        query.find_var("item")?;
+        query.find_aggregate(AggregateFunction::Count, "item")?;
         Ok(())
     })?;
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert!(output.rows.is_empty());
+    assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(output.plan.counters.static_semijoin_rounds > 0);
     assert!(output.plan.timings.static_semijoin_proof_micros > 0);
@@ -1887,13 +1932,13 @@ fn static_semijoin_disjoint_central_candidates_prove_empty() -> TestResult {
             .var("dim", "right")?
             .var("item", "item")?
             .done();
-        query.find_var("item")?;
+        query.find_aggregate(AggregateFunction::Count, "item")?;
         Ok(())
     })?;
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert!(output.rows.is_empty());
+    assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(output.plan.counters.static_semijoin_candidate_values > 0);
     Ok(())
@@ -1920,7 +1965,7 @@ fn static_semijoin_enum_literal_proves_empty() -> TestResult {
             .var("dim", "dim")?
             .var("item", "item")?
             .done();
-        query.find_var("item")?;
+        query.find_aggregate(AggregateFunction::Count, "item")?;
         Ok(())
     })?;
 
@@ -1952,7 +1997,7 @@ fn static_semijoin_serial_literal_proves_empty() -> TestResult {
             .var("group", "group")?
             .var("item", "item")?
             .done();
-        query.find_var("item")?;
+        query.find_aggregate(AggregateFunction::Count, "item")?;
         Ok(())
     })?;
 
@@ -1990,13 +2035,13 @@ fn static_semijoin_compound_relation_proves_empty() -> TestResult {
             .var("left", "left")?
             .var("right", "right")?
             .done();
-        query.find_var("left")?;
+        query.find_aggregate(AggregateFunction::Count, "left")?;
         Ok(())
     })?;
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert!(output.rows.is_empty());
+    assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     Ok(())
 }
@@ -2065,13 +2110,13 @@ fn static_semijoin_non_empty_query_is_not_proven_empty() -> TestResult {
             .var("dim", "dim")?
             .var("item", "item")?
             .done();
-        query.find_var("item")?;
+        query.find_aggregate(AggregateFunction::Count, "item")?;
         Ok(())
     })?;
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_same_rows(&output.rows, &[vec![Value::U64(10)]]);
+    assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
     assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     Ok(())
 }
@@ -2097,17 +2142,17 @@ fn static_semijoin_negative_cache_skips_second_failed_proof() -> TestResult {
             .var("dim", "dim")?
             .var("item", "item")?
             .done();
-        query.find_var("item")?;
+        query.find_aggregate(AggregateFunction::Count, "item")?;
         Ok(())
     })?;
 
     let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_same_rows(&first.rows, &[vec![Value::U64(10)]]);
+    assert_eq!(first.rows, vec![vec![Value::U64(1)]]);
     assert!(first.plan.counters.static_semijoin_rounds > 0);
     assert_eq!(first.plan.counters.static_semijoin_skipped, 0);
-    assert_same_rows(&second.rows, &[vec![Value::U64(10)]]);
+    assert_eq!(second.rows, vec![vec![Value::U64(1)]]);
     assert_eq!(second.plan.counters.static_semijoin_rounds, 0);
     assert_eq!(second.plan.counters.static_semijoin_skipped, 1);
     assert_eq!(
@@ -2138,7 +2183,7 @@ fn static_semijoin_negative_cache_is_tx_id_scoped() -> TestResult {
             .var("dim", "dim")?
             .var("item", "item")?
             .done();
-        query.find_var("item")?;
+        query.find_aggregate(AggregateFunction::Count, "item")?;
         Ok(())
     })?;
 
@@ -2152,10 +2197,7 @@ fn static_semijoin_negative_cache_is_tx_id_scoped() -> TestResult {
 
     assert!(first.plan.counters.static_semijoin_rounds > 0);
     assert_eq!(cached.plan.counters.static_semijoin_skipped, 1);
-    assert_same_rows(
-        &after_write.rows,
-        &[vec![Value::U64(10)], vec![Value::U64(11)]],
-    );
+    assert_eq!(after_write.rows, vec![vec![Value::U64(2)]]);
     assert!(after_write.plan.counters.static_semijoin_rounds > 0);
     assert_eq!(after_write.plan.counters.static_semijoin_skipped, 0);
     Ok(())
@@ -2183,7 +2225,7 @@ fn static_semijoin_cache_is_input_scoped_and_reuses_proven_empty() -> TestResult
             .var("dim", "dim")?
             .var("item", "item")?
             .done();
-        query.find_var("item")?;
+        query.find_aggregate(AggregateFunction::Count, "item")?;
         Ok(())
     })?;
     let kind_one = InputBindings::from_values([("kind", Value::Enum(1))]);
@@ -2193,12 +2235,12 @@ fn static_semijoin_cache_is_input_scoped_and_reuses_proven_empty() -> TestResult
     let empty_first = env.read(|txn| txn.execute_query(&schema, &query, &kind_two))?;
     let empty_cached = env.read(|txn| txn.execute_query(&schema, &query, &kind_two))?;
 
-    assert_same_rows(&non_empty.rows, &[vec![Value::U64(10)]]);
+    assert_eq!(non_empty.rows, vec![vec![Value::U64(1)]]);
     assert_ne!(non_empty.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-    assert_eq!(empty_first.rows, Vec::<Vec<Value>>::new());
+    assert_eq!(empty_first.rows, vec![vec![Value::U64(0)]]);
     assert_eq!(empty_first.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(empty_first.plan.counters.static_semijoin_rounds > 0);
-    assert_eq!(empty_cached.rows, Vec::<Vec<Value>>::new());
+    assert_eq!(empty_cached.rows, vec![vec![Value::U64(0)]]);
     assert_eq!(
         empty_cached.plan.runtime_kind,
         QueryRuntimeKind::StaticEmpty
@@ -2228,6 +2270,11 @@ fn static_semijoin_red_boat_like_wide_projection_skips_and_preserves_rows() -> T
             .var("dim", "dim")?
             .var("item", "item")?
             .done();
+        query.cmp(
+            OperandRef::var("item"),
+            ComparisonOperator::NotEq,
+            OperandRef::integer(999),
+        )?;
         query.find_var("dim")?.find_var("item")?;
         Ok(())
     })?;
@@ -2318,6 +2365,11 @@ fn static_semijoin_tpch_like_non_empty_materialized_projection_skips() -> TestRe
             .var("id", "line")?
             .var("kind", "status")?
             .done();
+        query.cmp(
+            OperandRef::var("line"),
+            ComparisonOperator::NotEq,
+            OperandRef::integer(999),
+        )?;
         query.find_var("line")?.find_var("status")?;
         Ok(())
     })?;

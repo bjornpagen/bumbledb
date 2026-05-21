@@ -1727,6 +1727,22 @@ impl<'env> ReadTxn<'env> {
 
         let query_image_cache = self.query_images.diagnostics();
         let prepared_cache_key = query_shape_key(schema, &normalized);
+        if let Some(output) = try_execute_direct_materialized_kernel(
+            image.as_ref(),
+            self,
+            schema,
+            &normalized,
+            &encoded_inputs,
+            query_image_cache,
+            image.planner_stats_diagnostics(),
+            image.prepared_plan_diagnostics(),
+            timings,
+            allocations,
+            total_start,
+            total_alloc_start,
+        )? {
+            return Ok(output);
+        }
         let lookup_start = Instant::now();
         let static_empty_cached = image.static_empty_cached(prepared_cache_key)?;
         timings.static_empty_lookup_micros = timings
@@ -1992,6 +2008,22 @@ impl<'env> ReadTxn<'env> {
         let query_image_cache = self.query_images.diagnostics();
         let prepared_count_key =
             prepared_count_cache_key(schema, image.key().tx_id, normalized, &encoded_inputs);
+        if let Some(output) = try_execute_direct_materialized_kernel(
+            image.as_ref(),
+            self,
+            schema,
+            normalized,
+            &encoded_inputs,
+            query_image_cache,
+            image.planner_stats_diagnostics(),
+            image.prepared_plan_diagnostics(),
+            timings,
+            allocations,
+            total_start,
+            total_alloc_start,
+        )? {
+            return Ok(output);
+        }
         let lookup_start = Instant::now();
         let prepared_count = query
             .count_cache
@@ -3945,6 +3977,117 @@ fn typed_relation_clause_count(query: &TypedQuery) -> usize {
         .iter()
         .filter(|clause| matches!(clause, TypedClause::Relation(_)))
         .count()
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "early direct materialized path needs current execution diagnostics"
+)]
+fn try_execute_direct_materialized_kernel(
+    image: &crate::QueryImage,
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    query: &NormalizedQuery,
+    encoded_inputs: &EncodedInputs,
+    query_image_cache: QueryImageCacheDiagnostics,
+    planner_stats: PlannerStatsCacheDiagnostics,
+    prepared_plan_cache: PreparedPlanCacheDiagnostics,
+    mut timings: QueryTimings,
+    mut allocations: QueryAllocationStats,
+    total_start: Instant,
+    total_alloc_start: allocation::AllocationSnapshot,
+) -> Result<Option<QueryOutput>> {
+    if !matches!(query.output, OutputPlan::Project(_)) {
+        return Ok(None);
+    }
+    let Some(direct_kernel) = try_direct_kernel(query) else {
+        return Ok(None);
+    };
+    let plan_family = match &direct_kernel.kind {
+        DirectKernel::ChainProbe(_) => PlanFamily::IndexNestedLoop,
+        DirectKernel::PrefixRange(_) => PlanFamily::Direct,
+    };
+    let direct_summary = direct_kernel.summary.clone();
+    let mut plan = ExecutionPlan {
+        variable_order_ids: (0..query.vars.len()).collect(),
+        relation_atoms: query.atoms.clone(),
+        comparisons: query.predicates.clone(),
+        direct_kernel: Some(direct_kernel),
+        summary: QueryPlan {
+            variable_order: query.vars.iter().map(|var| var.name.clone()).collect(),
+            variable_estimates: Vec::new(),
+            missing_indexes: Vec::new(),
+            optimizer: OptimizerTrace {
+                chosen: "direct_materialized".to_owned(),
+                candidates: vec![PlanCandidate {
+                    name: "direct_materialized".to_owned(),
+                    family: plan_family,
+                    implementations: Vec::new(),
+                    cost: CostKey {
+                        estimated_micros: 1,
+                        setup_micros: 0,
+                        memory_bytes: 0,
+                        materialization_penalty: 0,
+                        candidate_rank: 0,
+                        implementation_mask: 0,
+                    },
+                    selected: true,
+                    rejected_reason: "selected direct shape before static proof".to_owned(),
+                }],
+            },
+            plan_family,
+            query_image_cache,
+            planner_stats,
+            prepared_plan_cache,
+            node_rows: Vec::new(),
+            node_timings: Vec::new(),
+            free_join: FreeJoinPlan {
+                nodes: Vec::new(),
+                output: query.output.clone(),
+                estimates: PlanEstimates::default(),
+            },
+            direct_kernel: Some(direct_summary),
+            runtime_kind: QueryRuntimeKind::Unknown,
+            timings: QueryTimings::default(),
+            allocations: QueryAllocationStats::default(),
+            counters: PlanCounters::default(),
+            uses_indexed_multiway_join: query.atoms.len() > 1,
+        },
+    };
+    let mut sink = OutputSink::new(&plan.summary.free_join.output);
+    let execute_start = Instant::now();
+    let execute_alloc_start = allocation::snapshot();
+    execute_direct_kernel(
+        image,
+        txn,
+        schema,
+        query,
+        encoded_inputs,
+        &mut plan,
+        &mut sink,
+    )?;
+    timings.execute_micros = elapsed_micros(execute_start);
+    allocations.execute = allocation_delta_since(execute_alloc_start);
+
+    let columns = result_columns(query);
+    let sink_finish_start = Instant::now();
+    let sink_finish_alloc_start = allocation::snapshot();
+    let rows = sink.finish(txn, query, &mut plan.summary.counters)?;
+    timings.sink_finish_micros = elapsed_micros(sink_finish_start);
+    allocations.sink_finish = allocation_delta_since(sink_finish_alloc_start);
+    plan.summary.timings = timings;
+    plan.summary.allocations = allocations;
+    plan.summary.counters.output_rows = rows.len() as u64;
+    finish_timings(&mut plan.summary.timings, total_start);
+    plan.summary.allocations = plan
+        .summary
+        .allocations
+        .with_total(allocation_delta_since(total_alloc_start));
+    Ok(Some(QueryOutput {
+        columns,
+        rows,
+        plan: plan.summary,
+    }))
 }
 
 #[expect(
