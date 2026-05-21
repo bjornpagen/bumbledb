@@ -3076,6 +3076,7 @@ struct StaticRangeConstraint {
 
 type StaticSemijoinProbes<'a> = (&'a RelationIndexImage, Vec<StaticSemijoinProbe>);
 
+// Static proof owns emptiness detection only. It must not count rows or select plans.
 fn static_query_proves_empty_timed(
     image: &crate::QueryImage,
     query: &NormalizedQuery,
@@ -4164,6 +4165,7 @@ fn typed_relation_clause_count(query: &TypedQuery) -> usize {
         .count()
 }
 
+// Direct kernels own simple materialized scans/chains/ranges before speculative proof.
 #[expect(
     clippy::too_many_arguments,
     reason = "early direct materialized path needs current execution diagnostics"
@@ -6593,6 +6595,7 @@ fn factorized_operand_bytes<'a>(
     }
 }
 
+// Factorized count owns global/count-compatible aggregate shapes only.
 fn try_execute_factorized_count<S: TupleSink>(
     image: &crate::QueryImage,
     txn: &ReadTxn<'_>,
@@ -11738,43 +11741,7 @@ trait TupleSink {
         Self: Sized;
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "compiled plan trait is reserved for specialization work"
-    )
-)]
-trait ExecutablePlan {
-    fn execute(
-        &mut self,
-        txn: &ReadTxn<'_>,
-        query: &NormalizedQuery,
-        image: &crate::QueryImage,
-        inputs: &EncodedInputs,
-        sink: &mut dyn TupleSink,
-    ) -> Result<PlanCounters>;
-}
-
-#[expect(
-    dead_code,
-    reason = "compiled plan scaffold is reserved for specialization work"
-)]
-#[derive(Clone, Debug)]
-struct InterpretedFreeJoinPlan {
-    query: NormalizedQuery,
-    plan: FreeJoinPlan,
-}
-
-#[expect(
-    dead_code,
-    reason = "compiled plan enum is reserved for specialization work"
-)]
-enum CompiledPlan {
-    Interpreted(Box<InterpretedFreeJoinPlan>),
-    Specialized(Box<dyn ExecutablePlan + Send + Sync>),
-}
-
+// Output sinks own projection, aggregation, count-only, and dedup materialization.
 #[derive(Clone, Debug)]
 enum OutputSink {
     CountRows(CountRowsSink),
