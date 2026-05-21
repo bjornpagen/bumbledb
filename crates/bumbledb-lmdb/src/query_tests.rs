@@ -52,6 +52,19 @@ fn query_timing_unaccounted_saturates_to_zero() {
 }
 
 #[test]
+fn encoded_width_comparisons_match_byte_order() {
+    assert_eq!(compare_encoded_bytes(&[1], &[2]), std::cmp::Ordering::Less);
+    assert_eq!(
+        compare_encoded_bytes(&1u64.to_be_bytes(), &2u64.to_be_bytes()),
+        std::cmp::Ordering::Less
+    );
+    assert_eq!(
+        compare_encoded_bytes(&[0; 16], &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+        std::cmp::Ordering::Less
+    );
+}
+
+#[test]
 fn executes_single_relation_query() -> TestResult {
     let (env, schema) = seeded_db()?;
     let query = typed_query(&schema, |query| {

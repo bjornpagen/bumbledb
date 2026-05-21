@@ -8252,15 +8252,15 @@ impl LeapfrogState {
             if error.is_some() {
                 return std::cmp::Ordering::Equal;
             }
-            let Some(left) = key_owned_opt(&iters[*left], counters) else {
+            let Some(left) = key_ref_opt(&iters[*left], counters) else {
                 error = Some(missing_trie_key_error());
                 return std::cmp::Ordering::Equal;
             };
-            let Some(right) = key_owned_opt(&iters[*right], counters) else {
+            let Some(right) = key_ref_opt(&iters[*right], counters) else {
                 error = Some(missing_trie_key_error());
                 return std::cmp::Ordering::Equal;
             };
-            left.cmp(&right)
+            compare_encoded_ref(left, right)
         });
         if let Some(error) = error {
             return Err(error);
@@ -8311,10 +8311,10 @@ impl LeapfrogState {
         };
         loop {
             let id = self.iter_ids[self.p];
-            let Some(current) = key_owned_opt(&iters[id], counters) else {
+            let Some(current) = key_ref_opt(&iters[id], counters) else {
                 return Err(missing_trie_key_error());
             };
-            if current == max {
+            if compare_encoded_ref_owned(current, &max) == std::cmp::Ordering::Equal {
                 return Ok(());
             }
             iters[id].seek(max.as_ref());
@@ -8338,10 +8338,63 @@ fn key_owned(iter: &LftjTrieIter<'_>, counters: &mut PlanCounters) -> Result<Enc
 }
 
 fn key_owned_opt(iter: &LftjTrieIter<'_>, counters: &mut PlanCounters) -> Option<EncodedOwned> {
+    key_ref_opt(iter, counters).map(EncodedOwned::from_ref)
+}
+
+fn key_ref_opt<'a>(
+    iter: &'a LftjTrieIter<'a>,
+    counters: &mut PlanCounters,
+) -> Option<crate::EncodedRef<'a>> {
     let key = iter.key()?;
     counters.trie_key_reads += 1;
     counters.lftj_key_reads += 1;
-    Some(EncodedOwned::from_ref(key))
+    Some(key)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EncodedWidth {
+    W1,
+    W8,
+    W16,
+}
+
+fn encoded_width_for_len(len: usize) -> Option<EncodedWidth> {
+    match len {
+        1 => Some(EncodedWidth::W1),
+        8 => Some(EncodedWidth::W8),
+        16 => Some(EncodedWidth::W16),
+        _ => None,
+    }
+}
+
+fn compare_encoded_ref(
+    left: crate::EncodedRef<'_>,
+    right: crate::EncodedRef<'_>,
+) -> std::cmp::Ordering {
+    compare_encoded_bytes(left.as_bytes(), right.as_bytes())
+}
+
+fn compare_encoded_ref_owned(
+    left: crate::EncodedRef<'_>,
+    right: &EncodedOwned,
+) -> std::cmp::Ordering {
+    compare_encoded_bytes(left.as_bytes(), right.as_bytes())
+}
+
+fn compare_encoded_bytes(left: &[u8], right: &[u8]) -> std::cmp::Ordering {
+    match (encoded_width_for_len(left.len()), left.len() == right.len()) {
+        (Some(EncodedWidth::W1), true) => left[0].cmp(&right[0]),
+        (Some(EncodedWidth::W8), true) => {
+            let mut left_bytes = [0u8; 8];
+            let mut right_bytes = [0u8; 8];
+            left_bytes.copy_from_slice(left);
+            right_bytes.copy_from_slice(right);
+            let left = u64::from_be_bytes(left_bytes);
+            let right = u64::from_be_bytes(right_bytes);
+            left.cmp(&right)
+        }
+        (Some(EncodedWidth::W16), true) | (None, _) | (_, false) => left.cmp(right),
+    }
 }
 
 fn missing_trie_key_error() -> Error {
