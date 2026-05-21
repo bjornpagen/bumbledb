@@ -94,3 +94,29 @@ Accepted performance result:
 
 - Non-JOB and JOB gate thresholds remain satisfied.
 - Removing the specialized tiny sink did not create benchmark gate failures.
+
+## Final V5 Artifacts
+
+```text
+/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/opencode/v5-final-nonjob.json
+/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/opencode/v5-final-job-10k.json
+/var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/opencode/v5-final-job-q09-prepared-result.json
+```
+
+Final benchmark summary:
+
+| Suite | Queries | BDB wins | BDB losses | Gate failures |
+|---|---:|---:|---:|---:|
+| Non-JOB | 10 | 2 | 8 | 0 |
+| JOB 10k | 8 | 8 | 0 | 0 |
+
+Final q09/q16/q24 cache behavior:
+
+```text
+q09 prepared-plan: 923us, prepared_result_cache_hits=0, static_semijoin_proof_us=852
+q16 prepared-plan: 606us, static_empty_cache_hits=0, static_semijoin_proof_us=621
+q24 prepared-plan: 634us, static_empty_cache_hits=0, static_semijoin_proof_us=661
+q09 prepared-result: 55us, prepared_result_cache_hits=30
+```
+
+Compatibility statement: no backwards compatibility, no migrations, no permanent disable flags.
