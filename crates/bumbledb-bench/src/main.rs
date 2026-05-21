@@ -1222,6 +1222,8 @@ fn benchmark_result(
         typed,
         output,
         compare_mode,
+        cache_mode,
+        cache_hits,
         bumbledb_avg,
         sqlite_ratio,
         final_output_values,
@@ -1375,6 +1377,8 @@ fn evaluate_gate(
     typed: &TypedQuery,
     output: &QueryOutput,
     compare_mode: CompareMode,
+    cache_mode: CacheMode,
+    cache_hits: CacheHitStats,
     bumbledb_avg: Duration,
     sqlite_ratio: f64,
     final_output_values: u64,
@@ -1385,7 +1389,9 @@ fn evaluate_gate(
     if let Some(gate) = benchmark_gate(dataset, query.name) {
         notes.push(format!("performance gate {}.{}", gate.dataset, gate.query));
         let avg_micros = duration_micros(bumbledb_avg);
-        if let Some(max) = gate.max_bumbledb_avg_micros
+        let max_bumbledb_avg_micros = job_cache_mode_avg_limit(dataset, query.name, cache_mode)
+            .or(gate.max_bumbledb_avg_micros);
+        if let Some(max) = max_bumbledb_avg_micros
             && avg_micros > u128::from(max)
         {
             passed = false;
@@ -1488,20 +1494,56 @@ fn evaluate_gate(
                 passed = false;
                 notes.push("q09 direct kernel target is not factorized_count".to_owned());
             }
+            if cache_mode == CacheMode::PreparedResult {
+                if cache_hits.prepared_result_cache_hits == 0 {
+                    passed = false;
+                    notes.push(
+                        "q09 prepared-result mode did not report result cache hits".to_owned(),
+                    );
+                }
+            } else if cache_hits.prepared_result_cache_hits != 0 {
+                passed = false;
+                notes.push(format!(
+                    "q09 {} mode unexpectedly used {} prepared result cache hit(s)",
+                    cache_mode.as_str(),
+                    cache_hits.prepared_result_cache_hits
+                ));
+            }
         }
-        if dataset == "job" && query.name == "job_q24_voice_keyword_actor" {
+        if dataset == "job"
+            && matches!(
+                query.name,
+                "job_q16_character_title_us" | "job_q24_voice_keyword_actor"
+            )
+        {
             if format!("{:?}", output.plan.runtime_kind) != "StaticEmpty" {
                 passed = false;
                 notes.push(format!(
-                    "q24 runtime_kind {:?} is not StaticEmpty",
-                    output.plan.runtime_kind
+                    "{} runtime_kind {:?} is not StaticEmpty",
+                    query.name, output.plan.runtime_kind
                 ));
             }
             if output.plan.timings.lftj_execute_micros != 0 {
                 passed = false;
                 notes.push(format!(
-                    "q24 lftj_execute_micros {} should be 0",
-                    output.plan.timings.lftj_execute_micros
+                    "{} lftj_execute_micros {} should be 0",
+                    query.name, output.plan.timings.lftj_execute_micros
+                ));
+            }
+            if output.plan.timings.static_semijoin_proof_micros == 0 {
+                passed = false;
+                notes.push(format!(
+                    "{} did not report static semijoin proof time",
+                    query.name
+                ));
+            }
+            if cache_mode != CacheMode::PreparedResult && cache_hits.static_empty_cache_hits != 0 {
+                passed = false;
+                notes.push(format!(
+                    "{} {} mode unexpectedly used {} static-empty cache hit(s)",
+                    query.name,
+                    cache_mode.as_str(),
+                    cache_hits.static_empty_cache_hits
                 ));
             }
         }
@@ -1633,6 +1675,15 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_materialized_values: Some(1),
             allowed_plan_families: &["Direct"],
         },
+        ("job", "job_q16_character_title_us") => BenchmarkGate {
+            dataset,
+            query,
+            max_bumbledb_avg_micros: Some(1_000),
+            max_sqlite_ratio: Some(1.0),
+            max_iterator_ops: None,
+            max_materialized_values: Some(1),
+            allowed_plan_families: &["StaticEmpty"],
+        },
         ("job", "job_q24_voice_keyword_actor") => BenchmarkGate {
             dataset,
             query,
@@ -1645,6 +1696,26 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
         _ => return None,
     };
     Some(gate)
+}
+
+fn job_cache_mode_avg_limit(
+    dataset: &'static str,
+    query: &'static str,
+    cache_mode: CacheMode,
+) -> Option<u64> {
+    if dataset != "job" {
+        return None;
+    }
+    match (query, cache_mode) {
+        ("job_q09_voice_us_actor", _) => Some(3_000),
+        ("job_q16_character_title_us", CacheMode::PreparedResult)
+        | ("job_q24_voice_keyword_actor", CacheMode::PreparedResult) => Some(1_000),
+        ("job_q16_character_title_us", CacheMode::PreparedPlan | CacheMode::Recompute)
+        | ("job_q24_voice_keyword_actor", CacheMode::PreparedPlan | CacheMode::Recompute) => {
+            Some(5_000)
+        }
+        _ => None,
+    }
 }
 
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {

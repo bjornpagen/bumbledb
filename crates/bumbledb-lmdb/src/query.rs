@@ -1843,6 +1843,7 @@ impl<'env> ReadTxn<'env> {
             &normalized,
             &encoded_inputs,
             prepared_cache_key,
+            options.allow_static_empty_fast_cache,
             &mut timings,
         )?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
@@ -2188,6 +2189,7 @@ impl<'env> ReadTxn<'env> {
             normalized,
             &encoded_inputs,
             prepared_cache_key,
+            options.allow_static_empty_fast_cache,
             &mut timings,
         )?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
@@ -2501,6 +2503,7 @@ impl<'env> ReadTxn<'env> {
             &normalized,
             &encoded_inputs,
             prepared_cache_key,
+            options.allow_static_empty_fast_cache,
             &mut timings,
         )?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
@@ -3078,6 +3081,7 @@ fn static_query_proves_empty_timed(
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
     query_shape: QueryShapeKey,
+    allow_static_proof_cache: bool,
     timings: &mut QueryTimings,
 ) -> Result<Option<StaticEmptyProof>> {
     let image_key = image.key();
@@ -3088,7 +3092,9 @@ fn static_query_proves_empty_timed(
         StaticProofKind::StaticLiteral,
     );
     let literal_start = Instant::now();
-    let mut proof = if let Some(cached) = image.cached_static_proof(literal_cache_key)? {
+    let mut proof = if allow_static_proof_cache
+        && let Some(cached) = image.cached_static_proof(literal_cache_key)?
+    {
         match cached {
             StaticProofCacheValue::ProvenEmpty => StaticEmptyProof {
                 empty: true,
@@ -3098,14 +3104,16 @@ fn static_query_proves_empty_timed(
         }
     } else {
         let proof = static_literal_atoms_prove_empty(image, query, inputs)?;
-        image.insert_static_proof(
-            literal_cache_key,
-            if proof.empty {
-                StaticProofCacheValue::ProvenEmpty
-            } else {
-                StaticProofCacheValue::ProvenNotEmptyOrInconclusive
-            },
-        )?;
+        if allow_static_proof_cache {
+            image.insert_static_proof(
+                literal_cache_key,
+                if proof.empty {
+                    StaticProofCacheValue::ProvenEmpty
+                } else {
+                    StaticProofCacheValue::ProvenNotEmptyOrInconclusive
+                },
+            )?;
+        }
         proof
     };
     timings.static_literal_proof_micros = timings
@@ -3121,7 +3129,9 @@ fn static_query_proves_empty_timed(
         inputs,
         StaticProofKind::StaticSemijoin,
     );
-    if let Some(cached) = image.cached_static_proof(semijoin_cache_key)? {
+    if allow_static_proof_cache
+        && let Some(cached) = image.cached_static_proof(semijoin_cache_key)?
+    {
         timings.static_semijoin_proof_micros = timings
             .static_semijoin_proof_micros
             .saturating_add(elapsed_recorded_micros(semijoin_start));
@@ -3142,10 +3152,12 @@ fn static_query_proves_empty_timed(
             .saturating_add(elapsed_recorded_micros(semijoin_start));
         proof.semijoin_skipped = true;
         proof.semijoin_skipped_reason = reason;
-        image.insert_static_proof(
-            semijoin_cache_key,
-            StaticProofCacheValue::ProvenNotEmptyOrInconclusive,
-        )?;
+        if allow_static_proof_cache {
+            image.insert_static_proof(
+                semijoin_cache_key,
+                StaticProofCacheValue::ProvenNotEmptyOrInconclusive,
+            )?;
+        }
         return Ok(Some(proof));
     }
     let semijoin = static_semijoin_proves_empty(image, query, inputs)?;
@@ -3160,14 +3172,16 @@ fn static_query_proves_empty_timed(
     proof.empty = semijoin.empty;
     proof.semijoin_skipped = semijoin.semijoin_skipped;
     proof.semijoin_skipped_reason = semijoin.semijoin_skipped_reason;
-    image.insert_static_proof(
-        semijoin_cache_key,
-        if proof.empty {
-            StaticProofCacheValue::ProvenEmpty
-        } else {
-            StaticProofCacheValue::ProvenNotEmptyOrInconclusive
-        },
-    )?;
+    if allow_static_proof_cache {
+        image.insert_static_proof(
+            semijoin_cache_key,
+            if proof.empty {
+                StaticProofCacheValue::ProvenEmpty
+            } else {
+                StaticProofCacheValue::ProvenNotEmptyOrInconclusive
+            },
+        )?;
+    }
     Ok(Some(proof))
 }
 
