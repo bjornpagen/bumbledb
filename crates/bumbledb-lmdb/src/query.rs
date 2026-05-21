@@ -26,8 +26,9 @@ use crate::planner_stats::{
 };
 use crate::query_access::{AccessProbe, AccessSource, encoded_refs};
 use crate::query_image::{
-    EncodedColumnBuilder, HashTrieKey, LftjAtomKey, QueryImageScope, QueryShapeKey,
-    SortedTrieBuild, encoded_column_builders, finish_column_builders,
+    EncodedColumnBuilder, HashTrieKey, LftjAtomKey, QueryImageKey, QueryImageScope, QueryShapeKey,
+    SortedTrieBuild, StaticProofCacheKey, StaticProofCacheValue, StaticProofKind,
+    encoded_column_builders, finish_column_builders,
 };
 use crate::{PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics};
 
@@ -1155,6 +1156,8 @@ pub enum StaticSemijoinSkipReason {
     OutputTooBroad,
     /// No exact low-cardinality seed could be produced cheaply.
     NoCheapExactSeed,
+    /// A previous proof on the same snapshot/query/input was inconclusive.
+    NegativeCache,
 }
 
 impl StaticSemijoinSkipReason {
@@ -1165,6 +1168,7 @@ impl StaticSemijoinSkipReason {
             Self::NoStaticConstraint => "no_static_constraint",
             Self::OutputTooBroad => "output_too_broad",
             Self::NoCheapExactSeed => "no_cheap_exact_seed",
+            Self::NegativeCache => "negative_cache",
         }
     }
 }
@@ -1752,6 +1756,7 @@ impl<'env> ReadTxn<'env> {
             image.as_ref(),
             &normalized,
             &encoded_inputs,
+            prepared_cache_key,
             &mut timings,
         )?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
@@ -2048,6 +2053,7 @@ impl<'env> ReadTxn<'env> {
             image.as_ref(),
             normalized,
             &encoded_inputs,
+            prepared_cache_key,
             &mut timings,
         )?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
@@ -2303,6 +2309,7 @@ impl<'env> ReadTxn<'env> {
             image.as_ref(),
             &normalized,
             &encoded_inputs,
+            prepared_cache_key,
             &mut timings,
         )?;
         if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
@@ -2471,6 +2478,31 @@ fn query_shape_key(schema: &StorageSchema, query: &NormalizedQuery) -> QueryShap
     }
     hash_output_plan(&mut hasher, &query.output);
     QueryShapeKey(*hasher.finalize().as_bytes())
+}
+
+fn static_proof_cache_key(
+    image: &QueryImageKey,
+    query_shape: QueryShapeKey,
+    inputs: &EncodedInputs,
+    kind: StaticProofKind,
+) -> StaticProofCacheKey {
+    let mut hasher = blake3::Hasher::new();
+    hash_bytes_len_prefixed(&mut hasher, b"bumbledb.static_proof_cache.v1");
+    hasher.update(&image.schema.0);
+    hash_u64(&mut hasher, image.tx_id);
+    hasher.update(&query_shape.0);
+    hash_u8(
+        &mut hasher,
+        match kind {
+            StaticProofKind::StaticLiteral => 1,
+            StaticProofKind::StaticSemijoin => 2,
+        },
+    );
+    hash_u64(&mut hasher, inputs.values.len() as u64);
+    for value in &inputs.values {
+        hash_encoded_owned(&mut hasher, value);
+    }
+    StaticProofCacheKey(*hasher.finalize().as_bytes())
 }
 
 fn query_image_scope_for_query(schema: &StorageSchema, query: &NormalizedQuery) -> QueryImageScope {
@@ -2843,10 +2875,37 @@ fn static_query_proves_empty_timed(
     image: &crate::QueryImage,
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
+    query_shape: QueryShapeKey,
     timings: &mut QueryTimings,
 ) -> Result<Option<StaticEmptyProof>> {
+    let image_key = image.key();
+    let literal_cache_key = static_proof_cache_key(
+        &image_key,
+        query_shape,
+        inputs,
+        StaticProofKind::StaticLiteral,
+    );
     let literal_start = Instant::now();
-    let mut proof = static_literal_atoms_prove_empty(image, query, inputs)?;
+    let mut proof = if let Some(cached) = image.cached_static_proof(literal_cache_key)? {
+        match cached {
+            StaticProofCacheValue::ProvenEmpty => StaticEmptyProof {
+                empty: true,
+                ..StaticEmptyProof::default()
+            },
+            StaticProofCacheValue::ProvenNotEmptyOrInconclusive => StaticEmptyProof::default(),
+        }
+    } else {
+        let proof = static_literal_atoms_prove_empty(image, query, inputs)?;
+        image.insert_static_proof(
+            literal_cache_key,
+            if proof.empty {
+                StaticProofCacheValue::ProvenEmpty
+            } else {
+                StaticProofCacheValue::ProvenNotEmptyOrInconclusive
+            },
+        )?;
+        proof
+    };
     timings.static_literal_proof_micros = timings
         .static_literal_proof_micros
         .saturating_add(elapsed_recorded_micros(literal_start));
@@ -2854,12 +2913,37 @@ fn static_query_proves_empty_timed(
         return Ok(Some(proof));
     }
     let semijoin_start = Instant::now();
+    let semijoin_cache_key = static_proof_cache_key(
+        &image_key,
+        query_shape,
+        inputs,
+        StaticProofKind::StaticSemijoin,
+    );
+    if let Some(cached) = image.cached_static_proof(semijoin_cache_key)? {
+        timings.static_semijoin_proof_micros = timings
+            .static_semijoin_proof_micros
+            .saturating_add(elapsed_recorded_micros(semijoin_start));
+        match cached {
+            StaticProofCacheValue::ProvenEmpty => {
+                proof.empty = true;
+            }
+            StaticProofCacheValue::ProvenNotEmptyOrInconclusive => {
+                proof.semijoin_skipped = true;
+                proof.semijoin_skipped_reason = StaticSemijoinSkipReason::NegativeCache;
+            }
+        }
+        return Ok(Some(proof));
+    }
     if let Some(reason) = static_semijoin_skip_reason(image, query, inputs)? {
         timings.static_semijoin_proof_micros = timings
             .static_semijoin_proof_micros
             .saturating_add(elapsed_recorded_micros(semijoin_start));
         proof.semijoin_skipped = true;
         proof.semijoin_skipped_reason = reason;
+        image.insert_static_proof(
+            semijoin_cache_key,
+            StaticProofCacheValue::ProvenNotEmptyOrInconclusive,
+        )?;
         return Ok(Some(proof));
     }
     let semijoin = static_semijoin_proves_empty(image, query, inputs)?;
@@ -2874,6 +2958,14 @@ fn static_query_proves_empty_timed(
     proof.empty = semijoin.empty;
     proof.semijoin_skipped = semijoin.semijoin_skipped;
     proof.semijoin_skipped_reason = semijoin.semijoin_skipped_reason;
+    image.insert_static_proof(
+        semijoin_cache_key,
+        if proof.empty {
+            StaticProofCacheValue::ProvenEmpty
+        } else {
+            StaticProofCacheValue::ProvenNotEmptyOrInconclusive
+        },
+    )?;
     Ok(Some(proof))
 }
 

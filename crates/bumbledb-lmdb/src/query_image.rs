@@ -54,6 +54,21 @@ pub(crate) struct LftjAtomKey(pub(crate) [u8; 32]);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct HashTrieKey(pub(crate) [u8; 32]);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct StaticProofCacheKey(pub(crate) [u8; 32]);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StaticProofKind {
+    StaticLiteral,
+    StaticSemijoin,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StaticProofCacheValue {
+    ProvenEmpty,
+    ProvenNotEmptyOrInconclusive,
+}
+
 impl HashTrieKey {
     pub(crate) fn new(
         image: &QueryImageKey,
@@ -256,6 +271,7 @@ pub struct QueryImage {
     planner_stats: PlannerStatsCache,
     prepared_plans: PreparedPlanCache,
     static_empty_queries: Arc<RwLock<BTreeSet<QueryShapeKey>>>,
+    static_proof_cache: Arc<RwLock<BTreeMap<StaticProofCacheKey, StaticProofCacheValue>>>,
     sorted_trie_cache: Arc<RwLock<BTreeMap<LftjAtomKey, Arc<SortedTrieIndex>>>>,
     hash_trie_cache: Arc<RwLock<BTreeMap<HashTrieKey, Arc<HashTrieIndex>>>>,
 }
@@ -308,6 +324,7 @@ impl QueryImage {
             planner_stats: PlannerStatsCache::default(),
             prepared_plans: PreparedPlanCache::default(),
             static_empty_queries: Arc::default(),
+            static_proof_cache: Arc::default(),
             sorted_trie_cache: Arc::default(),
             hash_trie_cache: Arc::default(),
         }
@@ -385,6 +402,30 @@ impl QueryImage {
             .write()
             .map_err(|_| Error::internal("static-empty cache write lock poisoned"))?
             .insert(key);
+        Ok(())
+    }
+
+    pub(crate) fn cached_static_proof(
+        &self,
+        key: StaticProofCacheKey,
+    ) -> Result<Option<StaticProofCacheValue>> {
+        Ok(self
+            .static_proof_cache
+            .read()
+            .map_err(|_| Error::internal("static proof cache read lock poisoned"))?
+            .get(&key)
+            .copied())
+    }
+
+    pub(crate) fn insert_static_proof(
+        &self,
+        key: StaticProofCacheKey,
+        value: StaticProofCacheValue,
+    ) -> Result<()> {
+        self.static_proof_cache
+            .write()
+            .map_err(|_| Error::internal("static proof cache write lock poisoned"))?
+            .insert(key, value);
         Ok(())
     }
 

@@ -2077,6 +2077,137 @@ fn static_semijoin_non_empty_query_is_not_proven_empty() -> TestResult {
 }
 
 #[test]
+fn static_semijoin_negative_cache_skips_second_failed_proof() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, dim_row(1, 1))?;
+        txn.insert(&schema, fact_row(1, 10))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Dim")?
+            .var("id", "dim")?
+            .integer("kind", 1)?
+            .done();
+        query
+            .rel("Fact")?
+            .var("dim", "dim")?
+            .var("item", "item")?
+            .done();
+        query.find_var("item")?;
+        Ok(())
+    })?;
+
+    let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+    let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert_same_rows(&first.rows, &[vec![Value::U64(10)]]);
+    assert!(first.plan.counters.static_semijoin_rounds > 0);
+    assert_eq!(first.plan.counters.static_semijoin_skipped, 0);
+    assert_same_rows(&second.rows, &[vec![Value::U64(10)]]);
+    assert_eq!(second.plan.counters.static_semijoin_rounds, 0);
+    assert_eq!(second.plan.counters.static_semijoin_skipped, 1);
+    assert_eq!(
+        second.plan.counters.static_semijoin_skipped_reason,
+        StaticSemijoinSkipReason::NegativeCache
+    );
+    Ok(())
+}
+
+#[test]
+fn static_semijoin_negative_cache_is_tx_id_scoped() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, dim_row(1, 1))?;
+        txn.insert(&schema, fact_row(1, 10))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Dim")?
+            .var("id", "dim")?
+            .integer("kind", 1)?
+            .done();
+        query
+            .rel("Fact")?
+            .var("dim", "dim")?
+            .var("item", "item")?
+            .done();
+        query.find_var("item")?;
+        Ok(())
+    })?;
+
+    let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+    let cached = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+    env.write(|txn| {
+        txn.insert(&schema, fact_row(1, 11))?;
+        Ok::<_, Error>(())
+    })?;
+    let after_write = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert!(first.plan.counters.static_semijoin_rounds > 0);
+    assert_eq!(cached.plan.counters.static_semijoin_skipped, 1);
+    assert_same_rows(
+        &after_write.rows,
+        &[vec![Value::U64(10)], vec![Value::U64(11)]],
+    );
+    assert!(after_write.plan.counters.static_semijoin_rounds > 0);
+    assert_eq!(after_write.plan.counters.static_semijoin_skipped, 0);
+    Ok(())
+}
+
+#[test]
+fn static_semijoin_cache_is_input_scoped_and_reuses_proven_empty() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, dim_row(1, 1))?;
+        txn.insert(&schema, dim_row(2, 2))?;
+        txn.insert(&schema, fact_row(1, 10))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Dim")?
+            .var("id", "dim")?
+            .input("kind", "kind")?
+            .done();
+        query
+            .rel("Fact")?
+            .var("dim", "dim")?
+            .var("item", "item")?
+            .done();
+        query.find_var("item")?;
+        Ok(())
+    })?;
+    let kind_one = InputBindings::from_values([("kind", Value::Enum(1))]);
+    let kind_two = InputBindings::from_values([("kind", Value::Enum(2))]);
+
+    let non_empty = env.read(|txn| txn.execute_query(&schema, &query, &kind_one))?;
+    let empty_first = env.read(|txn| txn.execute_query(&schema, &query, &kind_two))?;
+    let empty_cached = env.read(|txn| txn.execute_query(&schema, &query, &kind_two))?;
+
+    assert_same_rows(&non_empty.rows, &[vec![Value::U64(10)]]);
+    assert_ne!(non_empty.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert_eq!(empty_first.rows, Vec::<Vec<Value>>::new());
+    assert_eq!(empty_first.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert!(empty_first.plan.counters.static_semijoin_rounds > 0);
+    assert_eq!(empty_cached.rows, Vec::<Vec<Value>>::new());
+    assert_eq!(
+        empty_cached.plan.runtime_kind,
+        QueryRuntimeKind::StaticEmpty
+    );
+    assert_eq!(empty_cached.plan.counters.static_semijoin_rounds, 0);
+    Ok(())
+}
+
+#[test]
 fn static_semijoin_red_boat_like_wide_projection_skips_and_preserves_rows() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
