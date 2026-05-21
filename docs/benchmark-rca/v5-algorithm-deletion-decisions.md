@@ -63,3 +63,34 @@ Accepted performance result:
 - Non-JOB and JOB gate thresholds remain satisfied.
 - The v5 baseline already had no full-suite benchmark query selecting HashProbe.
 - Pure LFTJ remains the protected general Free Join backbone.
+
+## Tiny Project Sink
+
+Decision: deleted.
+
+Evidence:
+
+```text
+Artifact: /var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/opencode/v5-no-tiny-project-nonjob.json
+Artifact: /var/folders/fj/10pmb37j1m1cy6d1lfclvvrw0000gn/T/opencode/v5-no-tiny-project-job-10k.json
+```
+
+Results:
+
+- `cargo fmt --all --check`: pass
+- `cargo check --workspace --all-targets --all-features`: pass
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: pass
+- `cargo test --workspace --all-features`: pass
+- non-JOB gates: pass, zero failures
+- JOB 10k gates: pass, zero failures
+- active LMDB Rust code has no `TinyProject`, `TINY_PROJECT_THRESHOLD`, `is_tiny_project_candidate`, or `OutputSink::TinyProject` references
+
+Runtime changes:
+
+- All materialized projections now use the generic encoded project sink.
+- Projection dedup and final-boundary decode behavior remain covered by tests.
+
+Accepted performance result:
+
+- Non-JOB and JOB gate thresholds remain satisfied.
+- Removing the specialized tiny sink did not create benchmark gate failures.
