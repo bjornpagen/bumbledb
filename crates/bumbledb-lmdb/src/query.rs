@@ -254,8 +254,6 @@ pub struct QueryOutput {
 /// Explicit per-query execution cache controls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QueryExecutionOptions {
-    /// Allows prepared count/result cache hits and inserts.
-    pub allow_prepared_result_cache: bool,
     /// Allows static-empty result cache hits and inserts.
     pub allow_static_empty_fast_cache: bool,
 }
@@ -264,15 +262,13 @@ impl QueryExecutionOptions {
     /// Default cached execution behavior.
     pub const fn cached() -> Self {
         Self {
-            allow_prepared_result_cache: true,
             allow_static_empty_fast_cache: true,
         }
     }
 
-    /// Recompute result-producing optimizations while keeping normal plan/image caches available.
-    pub const fn without_result_caches() -> Self {
+    /// Recompute static-empty result shortcuts while keeping normal plan/image caches available.
+    pub const fn without_static_empty_cache() -> Self {
         Self {
-            allow_prepared_result_cache: false,
             allow_static_empty_fast_cache: false,
         }
     }
@@ -787,22 +783,6 @@ impl QueryPlan {
             "  static_semijoin_skipped_reason: {}\n",
             self.counters.static_semijoin_skipped_reason.as_str()
         ));
-        out.push_str(&format!(
-            "  prepared_result_cache_hits: {}\n",
-            self.counters.prepared_result_cache_hits
-        ));
-        out.push_str(&format!(
-            "  prepared_result_cache_misses: {}\n",
-            self.counters.prepared_result_cache_misses
-        ));
-        out.push_str(&format!(
-            "  prepared_result_cache_inserts: {}\n",
-            self.counters.prepared_result_cache_inserts
-        ));
-        out.push_str(&format!(
-            "  prepared_result_cache_bypasses: {}\n",
-            self.counters.prepared_result_cache_bypasses
-        ));
         out.push_str(&format!("  output_rows: {}\n", self.counters.output_rows));
         out
     }
@@ -1086,7 +1066,7 @@ pub enum DirectKernelKind {
     /// Acyclic low-fanout chain probe.
     ChainProbe,
     /// Count-only direct aggregate.
-    CountOnly,
+    CardinalityOnly,
 }
 
 /// Optimizer estimate for one variable in execution order.
@@ -1365,14 +1345,6 @@ pub struct PlanCounters {
     pub static_semijoin_skipped: u64,
     /// Last reason static semijoin proof was skipped.
     pub static_semijoin_skipped_reason: StaticSemijoinSkipReason,
-    /// Number of prepared result cache hits.
-    pub prepared_result_cache_hits: u64,
-    /// Number of prepared result cache misses.
-    pub prepared_result_cache_misses: u64,
-    /// Number of prepared result cache inserts.
-    pub prepared_result_cache_inserts: u64,
-    /// Number of prepared result cache bypasses.
-    pub prepared_result_cache_bypasses: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -2109,8 +2081,6 @@ impl<'env> ReadTxn<'env> {
         )? {
             return Ok(output);
         }
-        let prepared_result_cache_missed = false;
-        let prepared_result_cache_bypassed = !options.allow_prepared_result_cache;
         let prepared_cache_key = query_shape_key(schema, normalized);
         let lookup_start = Instant::now();
         let static_empty_cached = image.static_empty_cached(prepared_cache_key)?;
@@ -2128,12 +2098,6 @@ impl<'env> ReadTxn<'env> {
             plan.allocations = allocations;
             plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
             plan.counters.static_empty_cache_hits = 1;
-            record_prepared_result_cache_counters(
-                &mut plan.counters,
-                prepared_result_cache_missed,
-                prepared_result_cache_bypassed,
-                false,
-            );
             finish_timings(&mut plan.timings, total_start);
             let total_alloc = allocation_delta_since(total_alloc_start);
             plan.allocations = plan.allocations.with_total(total_alloc);
@@ -2172,12 +2136,6 @@ impl<'env> ReadTxn<'env> {
             if let Some(proof) = &static_empty_proof {
                 record_static_proof_counters(&mut plan.counters, proof);
             }
-            record_prepared_result_cache_counters(
-                &mut plan.counters,
-                prepared_result_cache_missed,
-                prepared_result_cache_bypassed,
-                false,
-            );
             finish_timings(&mut plan.timings, total_start);
             let total_alloc = allocation_delta_since(total_alloc_start);
             plan.allocations = plan.allocations.with_total(total_alloc);
@@ -2253,12 +2211,6 @@ impl<'env> ReadTxn<'env> {
         if let Some(proof) = &static_empty_proof {
             record_static_proof_counters(&mut plan.summary.counters, proof);
         }
-        record_prepared_result_cache_counters(
-            &mut plan.summary.counters,
-            prepared_result_cache_missed,
-            prepared_result_cache_bypassed,
-            false,
-        );
         finish_timings(&mut plan.summary.timings, total_start);
         let total_alloc = allocation_delta_since(total_alloc_start);
         plan.summary.allocations = plan.summary.allocations.with_total(total_alloc);
@@ -2272,13 +2224,13 @@ impl<'env> ReadTxn<'env> {
 
     /// Executes a prepared typed query and returns only the output row count.
     #[tracing::instrument(name = "bumbledb.query.execute_prepared_cardinality", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
-    pub fn execute_prepared_result_cardinality(
+    pub fn execute_prepared_query_cardinality(
         &self,
         schema: &StorageSchema,
         query: &PreparedQuery,
         inputs: &InputBindings,
     ) -> Result<QueryResultCardinality> {
-        self.execute_prepared_result_cardinality_with_options(
+        self.execute_prepared_query_cardinality_with_options(
             schema,
             query,
             inputs,
@@ -2286,9 +2238,9 @@ impl<'env> ReadTxn<'env> {
         )
     }
 
-    /// Executes a prepared typed query count-only with explicit cache controls.
+    /// Executes a prepared typed query and returns only result-set cardinality with explicit cache controls.
     #[tracing::instrument(name = "bumbledb.query.execute_prepared_cardinality_with_options", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
-    pub fn execute_prepared_result_cardinality_with_options(
+    pub fn execute_prepared_query_cardinality_with_options(
         &self,
         schema: &StorageSchema,
         query: &PreparedQuery,
@@ -2314,7 +2266,7 @@ impl<'env> ReadTxn<'env> {
         )
     }
 
-    /// Executes a typed query count-only with explicit cache controls.
+    /// Executes a typed query and returns only result-set cardinality with explicit cache controls.
     #[tracing::instrument(name = "bumbledb.query.execute_count_with_options", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
     pub fn execute_result_cardinality_with_options(
         &self,
@@ -2541,17 +2493,6 @@ fn record_static_proof_counters(counters: &mut PlanCounters, proof: &StaticEmpty
         counters.static_semijoin_skipped = 1;
         counters.static_semijoin_skipped_reason = proof.semijoin_skipped_reason;
     }
-}
-
-fn record_prepared_result_cache_counters(
-    counters: &mut PlanCounters,
-    missed: bool,
-    bypassed: bool,
-    inserted: bool,
-) {
-    counters.prepared_result_cache_misses += u64::from(missed);
-    counters.prepared_result_cache_bypasses += u64::from(bypassed);
-    counters.prepared_result_cache_inserts += u64::from(inserted);
 }
 
 fn allocation_delta_since(start: allocation::AllocationSnapshot) -> AllocationPhaseStats {
@@ -8133,10 +8074,10 @@ trait TupleSink {
         Self: Sized;
 }
 
-// Output sinks own projection, aggregation, count-only, and dedup materialization.
+// Output sinks own projection, aggregation, cardinality, and result-set materialization.
 #[derive(Clone, Debug)]
 enum OutputSink {
-    CountRows(CountRowsSink),
+    Cardinality(CardinalitySink),
     Project(EncodedProjectSink),
     Aggregate(AggregateSink),
 }
@@ -8144,7 +8085,7 @@ enum OutputSink {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SinkMode {
     Materialize,
-    CountRowsOnly,
+    CardinalityOnly,
 }
 
 impl OutputSink {
@@ -8153,12 +8094,12 @@ impl OutputSink {
     }
 
     fn new_count_rows(output: &OutputPlan) -> Self {
-        Self::new_with_mode(output, SinkMode::CountRowsOnly)
+        Self::new_with_mode(output, SinkMode::CardinalityOnly)
     }
 
     fn new_with_mode(output: &OutputPlan, mode: SinkMode) -> Self {
-        if mode == SinkMode::CountRowsOnly {
-            return OutputSink::CountRows(CountRowsSink::new(output));
+        if mode == SinkMode::CardinalityOnly {
+            return OutputSink::Cardinality(CardinalitySink::new(output));
         }
         match output {
             OutputPlan::Project(plan) => OutputSink::Project(EncodedProjectSink::new(plan)),
@@ -8167,7 +8108,7 @@ impl OutputSink {
     }
 
     fn finish_count(self) -> Result<usize> {
-        let OutputSink::CountRows(sink) = self else {
+        let OutputSink::Cardinality(sink) = self else {
             return Err(Error::internal(
                 "count rows requested from materializing sink",
             ));
@@ -8202,7 +8143,7 @@ impl TupleSink for OutputSink {
     ) -> Result<()> {
         counters.sink_emit_calls += 1;
         match self {
-            OutputSink::CountRows(sink) => sink.emit(txn, query, binding, counters),
+            OutputSink::Cardinality(sink) => sink.emit(txn, query, binding, counters),
             OutputSink::Project(sink) => sink.emit(txn, query, binding, counters),
             OutputSink::Aggregate(sink) => sink.emit(txn, query, binding, counters),
         }
@@ -8215,7 +8156,7 @@ impl TupleSink for OutputSink {
         counters: &mut PlanCounters,
     ) -> Result<Vec<Vec<Value>>> {
         match self {
-            OutputSink::CountRows(sink) => sink.finish(txn, query, counters),
+            OutputSink::Cardinality(sink) => sink.finish(txn, query, counters),
             OutputSink::Project(sink) => sink.finish(txn, query, counters),
             OutputSink::Aggregate(sink) => sink.finish(txn, query, counters),
         }
@@ -8341,14 +8282,14 @@ impl TupleSink for EncodedProjectSink {
 }
 
 #[derive(Clone, Debug)]
-struct CountRowsSink {
+struct CardinalitySink {
     output: OutputPlan,
     global_count: u64,
     project_rows: BTreeSet<SmallEncodedRow>,
     aggregate_groups: BTreeSet<SmallEncodedRow>,
 }
 
-impl CountRowsSink {
+impl CardinalitySink {
     fn new(output: &OutputPlan) -> Self {
         Self {
             output: output.clone(),
@@ -8367,7 +8308,7 @@ impl CountRowsSink {
     }
 }
 
-impl TupleSink for CountRowsSink {
+impl TupleSink for CardinalitySink {
     fn emit(
         &mut self,
         _txn: &ReadTxn<'_>,

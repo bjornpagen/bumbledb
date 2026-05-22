@@ -1518,7 +1518,7 @@ fn prepared_query_reuses_normalized_snapshot_shape() -> TestResult {
 }
 
 #[test]
-fn prepared_result_cache_options_do_not_cache_aggregate_results() -> TestResult {
+fn cache_options_do_not_cache_aggregate_results() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
@@ -1548,17 +1548,13 @@ fn prepared_result_cache_options_do_not_cache_aggregate_results() -> TestResult 
             &schema,
             &prepared,
             &InputBindings::new(),
-            QueryExecutionOptions::without_result_caches(),
+            QueryExecutionOptions::without_static_empty_cache(),
         )
     })?;
 
     assert_eq!(first.result.tuples, vec![vec![Value::U64(1)]]);
-    assert_eq!(first.plan.counters.prepared_result_cache_misses, 0);
-    assert_eq!(first.plan.counters.prepared_result_cache_inserts, 0);
     assert_eq!(cached.result.tuples, first.result.tuples);
-    assert_eq!(cached.plan.counters.prepared_result_cache_hits, 0);
     assert_eq!(disabled.result.tuples, first.result.tuples);
-    assert_eq!(disabled.plan.counters.prepared_result_cache_bypasses, 1);
 
     env.write(|txn| {
         txn.insert(
@@ -1570,13 +1566,11 @@ fn prepared_result_cache_options_do_not_cache_aggregate_results() -> TestResult 
     let after_write =
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
     assert_eq!(after_write.result.tuples, vec![vec![Value::U64(1)]]);
-    assert_eq!(after_write.plan.counters.prepared_result_cache_misses, 0);
-    assert_eq!(after_write.plan.counters.prepared_result_cache_inserts, 0);
     Ok(())
 }
 
 #[test]
-fn aggregate_domain_results_are_recomputed_for_different_inputs() -> TestResult {
+fn aggregate_domain_results_differ_for_different_inputs() -> TestResult {
     let (env, schema) = seeded_db()?;
     let query = typed_query(&schema, |query| {
         query
@@ -1592,19 +1586,11 @@ fn aggregate_domain_results_are_recomputed_for_different_inputs() -> TestResult 
     let holder_two = InputBindings::from_values([("holder", Value::Serial(2))]);
 
     let first = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &holder_one))?;
-    let cached = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &holder_one))?;
     let different_input =
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &holder_two))?;
 
     assert_eq!(first.result.tuples, vec![vec![Value::U64(2)]]);
-    assert_eq!(first.plan.counters.prepared_result_cache_misses, 0);
-    assert_eq!(cached.plan.counters.prepared_result_cache_hits, 0);
     assert_eq!(different_input.result.tuples, vec![vec![Value::U64(1)]]);
-    assert_eq!(
-        different_input.plan.counters.prepared_result_cache_misses,
-        0
-    );
-    assert_eq!(different_input.plan.counters.prepared_result_cache_hits, 0);
     Ok(())
 }
 
@@ -1857,7 +1843,7 @@ fn projection_deduplicates_results() -> TestResult {
 }
 
 #[test]
-fn materialized_projection_does_not_use_prepared_result_cache() -> TestResult {
+fn materialized_projection_is_recomputed_without_result_cache() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
@@ -1892,7 +1878,6 @@ fn materialized_projection_does_not_use_prepared_result_cache() -> TestResult {
         &[vec![Value::U64(20)], vec![Value::U64(21)]],
     );
     assert_eq!(second.result.tuples, first.result.tuples);
-    assert_eq!(second.plan.counters.prepared_result_cache_hits, 0);
     assert!(second.plan.counters.materialized_output_values <= second.result.tuples.len() as u64);
     Ok(())
 }

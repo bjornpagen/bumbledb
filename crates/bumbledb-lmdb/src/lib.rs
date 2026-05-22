@@ -628,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn bulk_load_duplicate_rows_count_only_inserted() -> TestResult {
+    fn bulk_load_duplicate_rows_count_inserted_once() -> TestResult {
         let schema = StorageSchema::new(benchmark_schema(), 511)?;
         let dir = tempfile::tempdir()?;
         let env = Environment::open_with_schema(dir.path(), &schema)?;

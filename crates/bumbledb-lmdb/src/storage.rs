@@ -122,7 +122,7 @@ impl Value {
     }
 }
 
-/// Encoded component from a covering index key.
+/// Encoded component from an access key.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EncodedComponent {
     /// Field name.
@@ -168,7 +168,7 @@ impl ScanItem {
     }
 }
 
-/// Encoded row component view yielded from a covering index scan.
+/// Encoded row component view yielded from an access scan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct EncodedIndexItem {
     key: Vec<u8>,
@@ -192,7 +192,7 @@ impl EncodedIndexItem {
     }
 }
 
-/// Transaction-scoped scan over one current covering index.
+/// Transaction-scoped scan over one current access path.
 pub struct IndexScan<'borrow, 'env, 'schema> {
     iter: heed::RoPrefix<'borrow, heed::types::Bytes, heed::types::Bytes>,
     txn: &'borrow heed::RoTxn<'env, heed::WithoutTls>,
@@ -203,7 +203,7 @@ pub struct IndexScan<'borrow, 'env, 'schema> {
     range: Option<EncodedRange>,
 }
 
-/// Transaction-scoped encoded scan over one current covering index.
+/// Transaction-scoped encoded scan over one current access path.
 pub(crate) struct EncodedIndexScan<'borrow, 'env, 'schema> {
     iter: heed::RoPrefix<'borrow, heed::types::Bytes, heed::types::Bytes>,
     layout: &'schema CurrentIndexLayout,
@@ -664,7 +664,7 @@ fn relation_sort_key(schema: &StorageSchema, relation_name: &str) -> usize {
 }
 
 impl<'env> ReadTxn<'env> {
-    /// Scans a whole relation through the primary covering index.
+    /// Scans a whole relation through the canonical tuple-set access path.
     pub fn scan_relation<'borrow, 'schema>(
         &'borrow self,
         schema: &'schema StorageSchema,
@@ -676,7 +676,7 @@ impl<'env> ReadTxn<'env> {
         self.scan_index_with_prefix(schema, relation_name, covering, &[], None)
     }
 
-    /// Scans a covering index by a leading-field prefix.
+    /// Scans an access path by a leading-field prefix.
     pub fn scan_prefix<'borrow, 'schema>(
         &'borrow self,
         schema: &'schema StorageSchema,
@@ -739,7 +739,7 @@ impl<'env> ReadTxn<'env> {
         self.scan_index_with_prefix(schema, relation_name, index_name, &[], Some(range))
     }
 
-    /// Scans a covering index by encoded key prefix without decoding logical rows.
+    /// Scans an access path by encoded key prefix without decoding logical rows.
     pub(crate) fn scan_encoded_index_prefix<'borrow, 'schema>(
         &'borrow self,
         schema: &'schema StorageSchema,
@@ -833,7 +833,7 @@ impl<'env> ReadTxn<'env> {
         Ok(count)
     }
 
-    /// Checks whether a current covering index entry exists for a full row.
+    /// Checks whether a current access entry exists for a full row.
     pub fn current_index_entry_exists(
         &self,
         schema: &StorageSchema,

@@ -95,7 +95,7 @@ impl HashTrieKey {
         }
         hasher.update(&[match leaf_mode {
             LeafMode::Rows => 1,
-            LeafMode::CountOnly => 2,
+            LeafMode::CardinalityOnly => 2,
         }]);
         HashTrieKey(*hasher.finalize().as_bytes())
     }
@@ -1452,15 +1452,12 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
         for item in scan {
             let item = item?;
             for (field_id, field) in self.relation.fields.iter().enumerate() {
-                let component_index =
-                    *component_by_field.get(field.name.as_str()).ok_or_else(|| {
-                        Error::corrupt("query image missing covering index component")
-                    })?;
+                let component_index = *component_by_field
+                    .get(field.name.as_str())
+                    .ok_or_else(|| Error::corrupt("query image missing access component"))?;
                 let bytes = item
                     .component(&layout.components, component_index)
-                    .ok_or_else(|| {
-                        Error::corrupt("query image covering index component missing")
-                    })?;
+                    .ok_or_else(|| Error::corrupt("query image access component missing"))?;
                 builders[field_id].append_bytes(bytes)?;
             }
         }

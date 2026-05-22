@@ -187,7 +187,6 @@ impl CompareMode {
 enum CacheMode {
     Recompute,
     PreparedPlan,
-    PreparedResult,
 }
 
 impl CacheMode {
@@ -195,21 +194,14 @@ impl CacheMode {
         match self {
             CacheMode::Recompute => "recompute",
             CacheMode::PreparedPlan => "prepared-plan",
-            CacheMode::PreparedResult => "prepared-result",
         }
     }
 
     fn execution_options(self) -> QueryExecutionOptions {
         match self {
-            CacheMode::PreparedResult => QueryExecutionOptions::cached(),
-            CacheMode::Recompute | CacheMode::PreparedPlan => {
-                QueryExecutionOptions::without_result_caches()
-            }
+            CacheMode::PreparedPlan => QueryExecutionOptions::cached(),
+            CacheMode::Recompute => QueryExecutionOptions::without_static_empty_cache(),
         }
-    }
-
-    fn prepared_result_cache_allowed(self) -> bool {
-        self == CacheMode::PreparedResult
     }
 }
 
@@ -340,7 +332,6 @@ impl Config {
                     cache_mode = match next_arg(&mut args, "--cache-mode")?.as_str() {
                         "recompute" => CacheMode::Recompute,
                         "prepared-plan" => CacheMode::PreparedPlan,
-                        "prepared-result" => CacheMode::PreparedResult,
                         other => return Err(bench_error(format!("unknown --cache-mode {other}"))),
                     }
                 }
@@ -355,7 +346,7 @@ impl Config {
                 "--fail-gates" => fail_gates = true,
                 "--help" | "-h" => {
                     println!(
-                        "usage: cargo run -p bumbledb-bench --release -- [--preset quick|nonjob|job|job-sample|job-full] [--scale N] [--open-limit N|--open-full] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--compare-mode materialized|rows] [--cache-mode recompute|prepared-plan|prepared-result] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
+                        "usage: cargo run -p bumbledb-bench --release -- [--preset quick|nonjob|job|job-sample|job-full] [--scale N] [--open-limit N|--open-full] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--compare-mode materialized|rows] [--cache-mode recompute|prepared-plan] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
                     );
                     return Ok(None);
                 }
@@ -664,8 +655,6 @@ struct BenchmarkRunResult {
     plan_family: String,
     compare_mode: String,
     cache_mode: String,
-    prepared_result_cache_allowed: bool,
-    prepared_result_cache_hits: u64,
     static_empty_cache_hits: u64,
     query_image_sample_cache_hits: u64,
     bumbledb_materialized_rows: bool,
@@ -682,9 +671,6 @@ struct BenchmarkRunResult {
     final_output_values: u64,
     output_contains_dictionary_values: bool,
     query_image_build_micros: u128,
-    query_image_segment_count: usize,
-    query_image_segment_bytes: usize,
-    query_image_built_from_segments: bool,
     query_image_built_during_query: bool,
     query_image_cache_cached_images: usize,
     query_image_cache_hits: u64,
@@ -738,7 +724,6 @@ struct QueryTimingSamples {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct CacheHitStats {
-    prepared_result_cache_hits: u64,
     static_empty_cache_hits: u64,
     query_image_cache_hits: u64,
 }
@@ -771,9 +756,6 @@ struct QueryImageBenchStats {
     sorted_trie_bytes: usize,
     hash_trie_bytes: usize,
     build_micros: u128,
-    segment_count: usize,
-    segment_bytes: usize,
-    built_from_segments: bool,
 }
 
 impl QueryImageBenchStats {
@@ -785,9 +767,6 @@ impl QueryImageBenchStats {
             sorted_trie_bytes: 0,
             hash_trie_bytes: 0,
             build_micros: 0,
-            segment_count: 0,
-            segment_bytes: 0,
-            built_from_segments: false,
         }
     }
 }
@@ -884,9 +863,6 @@ fn run_dataset(
             sorted_trie_bytes: query_image.stats().sorted_trie_bytes,
             hash_trie_bytes: query_image.stats().hash_trie_bytes,
             build_micros: query_image.stats().build_micros,
-            segment_count: 0,
-            segment_bytes: 0,
-            built_from_segments: false,
         }
     };
     if format.includes_text() {
@@ -894,10 +870,7 @@ fn run_dataset(
             println!("query_image eager_build=skipped_for_streaming_dataset");
         } else {
             println!(
-                "query_image segment_count={} segment_bytes={} built_from_segments={} build_micros={}",
-                query_image_stats.segment_count,
-                query_image_stats.segment_bytes,
-                query_image_stats.built_from_segments,
+                "query_image build_micros={}",
                 query_image_stats.build_micros,
             );
         }
@@ -942,7 +915,7 @@ fn run_dataset(
             CacheMode::Recompute => bumble_env.read(|txn| {
                 txn.execute_query_with_options(&bumble_schema, &typed, &inputs, execution_options)
             }),
-            CacheMode::PreparedPlan | CacheMode::PreparedResult => bumble_env.read(|txn| {
+            CacheMode::PreparedPlan => bumble_env.read(|txn| {
                 txn.execute_prepared_query_with_options(
                     &bumble_schema,
                     &prepared,
@@ -964,8 +937,8 @@ fn run_dataset(
                             execution_options,
                         )
                     }),
-                    CacheMode::PreparedPlan | CacheMode::PreparedResult => bumble_env.read(|txn| {
-                        txn.execute_prepared_result_cardinality_with_options(
+                    CacheMode::PreparedPlan => bumble_env.read(|txn| {
+                        txn.execute_prepared_query_cardinality_with_options(
                             &bumble_schema,
                             &prepared,
                             &inputs,
@@ -1020,16 +993,14 @@ fn run_dataset(
                                 execution_options,
                             )
                         })?,
-                        CacheMode::PreparedPlan | CacheMode::PreparedResult => {
-                            bumble_env.read(|txn| {
-                                txn.execute_prepared_query_with_options(
-                                    &bumble_schema,
-                                    &prepared,
-                                    &inputs,
-                                    execution_options,
-                                )
-                            })?
-                        }
+                        CacheMode::PreparedPlan => bumble_env.read(|txn| {
+                            txn.execute_prepared_query_with_options(
+                                &bumble_schema,
+                                &prepared,
+                                &inputs,
+                                execution_options,
+                            )
+                        })?,
                     };
                     black_box(output.result.tuples.len());
                     Ok::<_, bumbledb_lmdb::Error>(output.plan)
@@ -1044,16 +1015,14 @@ fn run_dataset(
                                 execution_options,
                             )
                         })?,
-                        CacheMode::PreparedPlan | CacheMode::PreparedResult => {
-                            bumble_env.read(|txn| {
-                                txn.execute_prepared_result_cardinality_with_options(
-                                    &bumble_schema,
-                                    &prepared,
-                                    &inputs,
-                                    execution_options,
-                                )
-                            })?
-                        }
+                        CacheMode::PreparedPlan => bumble_env.read(|txn| {
+                            txn.execute_prepared_query_cardinality_with_options(
+                                &bumble_schema,
+                                &prepared,
+                                &inputs,
+                                execution_options,
+                            )
+                        })?,
                     };
                     black_box(output.cardinality);
                     Ok::<_, bumbledb_lmdb::Error>(output.plan)
@@ -1077,16 +1046,14 @@ fn run_dataset(
                                 execution_options,
                             )
                         })?,
-                        CacheMode::PreparedPlan | CacheMode::PreparedResult => {
-                            bumble_env.read(|txn| {
-                                txn.execute_prepared_query_with_options(
-                                    &bumble_schema,
-                                    &prepared,
-                                    &inputs,
-                                    execution_options,
-                                )
-                            })?
-                        }
+                        CacheMode::PreparedPlan => bumble_env.read(|txn| {
+                            txn.execute_prepared_query_with_options(
+                                &bumble_schema,
+                                &prepared,
+                                &inputs,
+                                execution_options,
+                            )
+                        })?,
                     };
                     black_box(output.result.tuples.len());
                     Ok::<_, bumbledb_lmdb::Error>(output.plan)
@@ -1101,16 +1068,14 @@ fn run_dataset(
                                 execution_options,
                             )
                         })?,
-                        CacheMode::PreparedPlan | CacheMode::PreparedResult => {
-                            bumble_env.read(|txn| {
-                                txn.execute_prepared_result_cardinality_with_options(
-                                    &bumble_schema,
-                                    &prepared,
-                                    &inputs,
-                                    execution_options,
-                                )
-                            })?
-                        }
+                        CacheMode::PreparedPlan => bumble_env.read(|txn| {
+                            txn.execute_prepared_query_cardinality_with_options(
+                                &bumble_schema,
+                                &prepared,
+                                &inputs,
+                                execution_options,
+                            )
+                        })?,
                     };
                     black_box(output.cardinality);
                     Ok::<_, bumbledb_lmdb::Error>(output.plan)
@@ -1146,7 +1111,7 @@ fn run_dataset(
         emit_profile_summary(dataset.name, query.name, &bumble_output);
         if format.includes_text() {
             println!(
-                "query={} rows={} cache_mode={} sink_emit_calls={} encoded_project_rows_seen={} lftj_next_calls={} direct_chain_step_rows={} prepared_result_cache_hits={} static_empty_cache_hits={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
+                "query={} rows={} cache_mode={} sink_emit_calls={} encoded_project_rows_seen={} lftj_next_calls={} direct_chain_step_rows={} static_empty_cache_hits={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
                 query.name,
                 bumble_output.result.tuples.len(),
                 result.cache_mode,
@@ -1154,7 +1119,6 @@ fn run_dataset(
                 result.counters.encoded_project_rows_seen,
                 result.counters.lftj_next_calls,
                 result.counters.direct_chain_step_rows,
-                result.prepared_result_cache_hits,
                 result.static_empty_cache_hits,
                 bumble_cold_execution,
                 result.bumbledb_samples.samples,
@@ -1380,8 +1344,6 @@ fn benchmark_result(
         plan_family: format!("{:?}", output.plan.plan_family),
         compare_mode: compare_mode.as_str().to_owned(),
         cache_mode: cache_mode.as_str().to_owned(),
-        prepared_result_cache_allowed: cache_mode.prepared_result_cache_allowed(),
-        prepared_result_cache_hits: cache_hits.prepared_result_cache_hits,
         static_empty_cache_hits: cache_hits.static_empty_cache_hits,
         query_image_sample_cache_hits: cache_hits.query_image_cache_hits,
         bumbledb_materialized_rows: compare_mode == CompareMode::Materialized,
@@ -1398,9 +1360,6 @@ fn benchmark_result(
         final_output_values,
         output_contains_dictionary_values,
         query_image_build_micros: query_image_stats.build_micros,
-        query_image_segment_count: query_image_stats.segment_count,
-        query_image_segment_bytes: query_image_stats.segment_bytes,
-        query_image_built_from_segments: query_image_stats.built_from_segments,
         query_image_built_during_query: output.plan.timings.query_image_micros > 0,
         query_image_cache_cached_images: output.plan.query_image_cache.cached_images,
         query_image_cache_hits: output.plan.query_image_cache.hits,
@@ -1619,7 +1578,7 @@ fn evaluate_gate(
                     query.name
                 ));
             }
-            if cache_mode != CacheMode::PreparedResult && cache_hits.static_empty_cache_hits != 0 {
+            if cache_mode != CacheMode::PreparedPlan && cache_hits.static_empty_cache_hits != 0 {
                 passed = false;
                 notes.push(format!(
                     "{} {} mode unexpectedly used {} static-empty cache hit(s)",
@@ -1791,12 +1750,10 @@ fn job_cache_mode_avg_limit(
     }
     match (query, cache_mode) {
         ("job_q09_voice_us_actor", _) => Some(3_000),
-        ("job_q16_character_title_us", CacheMode::PreparedResult)
-        | ("job_q24_voice_keyword_actor", CacheMode::PreparedResult) => Some(1_000),
-        ("job_q16_character_title_us", CacheMode::PreparedPlan | CacheMode::Recompute)
-        | ("job_q24_voice_keyword_actor", CacheMode::PreparedPlan | CacheMode::Recompute) => {
-            Some(5_000)
-        }
+        ("job_q16_character_title_us", CacheMode::PreparedPlan)
+        | ("job_q24_voice_keyword_actor", CacheMode::PreparedPlan) => Some(1_000),
+        ("job_q16_character_title_us", CacheMode::Recompute)
+        | ("job_q24_voice_keyword_actor", CacheMode::Recompute) => Some(5_000),
         _ => None,
     }
 }
@@ -1804,12 +1761,12 @@ fn job_cache_mode_avg_limit(
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | rows | compare mode | bumbledb materialized | sqlite materialized | count-only | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image segments | image segment bytes | built from segments | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash rows | hash emits | direct probes | direct rows | direct predicates | iterator ops | hash build est | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---|---|---|---|---:|---:|---:|---|---|---|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | rows | compare mode | bumbledb materialized | sqlite materialized | cardinality | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash rows | hash emits | direct probes | direct rows | direct predicates | iterator ops | hash build est | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---|---|---|---|---:|---:|---:|---|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.rows,
@@ -1824,9 +1781,6 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             markdown_escape(&result.runtime_kind),
             markdown_escape(&result.plan_family),
             result.query_image_build_micros,
-            result.query_image_segment_count,
-            result.query_image_segment_bytes,
-            result.query_image_built_from_segments,
             result.query_image_built_during_query,
             result.query_image_cache_cached_images,
             result.query_image_cache_hits,
@@ -1877,17 +1831,15 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Cache Diagnostics\n\n");
-    out.push_str("| dataset | query | cache mode | prepared result allowed | prepared result cache hits | static empty cache hits | query image sample cache hits |\n");
-    out.push_str("|---|---|---|---|---:|---:|---:|\n");
+    out.push_str("| dataset | query | cache mode | static empty cache hits | query image sample cache hits |\n");
+    out.push_str("|---|---|---|---:|---:|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             markdown_escape(&result.cache_mode),
-            result.prepared_result_cache_allowed,
-            result.prepared_result_cache_hits,
             result.static_empty_cache_hits,
             result.query_image_sample_cache_hits,
         );
@@ -2104,7 +2056,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_rows\":{},\"materialized_rows\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"cache_mode\":\"{}\",\"prepared_result_cache_allowed\":{},\"prepared_result_cache_hit\":{},\"prepared_result_cache_hits\":{},\"static_empty_cache_hit\":{},\"static_empty_cache_hits\":{},\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"bumbledb_materialized_rows\":{},\"sqlite_materialized_rows\":{},\"cardinality_supported\":{},\"cardinality_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
+            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_rows\":{},\"materialized_rows\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"cache_mode\":\"{}\",\"static_empty_cache_hit\":{},\"static_empty_cache_hits\":{},\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"bumbledb_materialized_rows\":{},\"sqlite_materialized_rows\":{},\"cardinality_supported\":{},\"cardinality_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
             json_escape(result.dataset),
             json_escape(result.query),
             result.rows,
@@ -2122,9 +2074,6 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             json_escape(&result.plan_family),
             json_escape(&result.compare_mode),
             json_escape(&result.cache_mode),
-            result.prepared_result_cache_allowed,
-            result.prepared_result_cache_hits > 0,
-            result.prepared_result_cache_hits,
             result.static_empty_cache_hits > 0,
             result.static_empty_cache_hits,
             result.query_image_sample_cache_hits > 0,
@@ -2234,7 +2183,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_rows_seen\":{},\"encoded_project_rows_inserted\":{},\"encoded_project_duplicate_rows\":{},\"encoded_project_row_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"direct_kernel_probes\":{},\"direct_kernel_rows\":{},\"direct_kernel_predicates\":{},\"direct_bind_attempts\":{},\"direct_bind_successes\":{},\"direct_chain_steps\":{},\"direct_chain_step_rows\":{},\"direct_chain_output_rows\":{},\"direct_chain_output_values\":{},\"direct_storage_output_rows\":{},\"direct_batch_rows\":{},\"direct_batch_row_bytes\":{},\"direct_batch_fallback_rows\":{},\"direct_binding_reuses\":{},\"query_image_relations_loaded\":{},\"query_image_rows_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{},\"hash_trie_bytes\":{},\"static_empty_atoms_checked\":{},\"static_empty_rows_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{},\"prepared_result_cache_hits\":{},\"prepared_result_cache_misses\":{},\"prepared_result_cache_inserts\":{},\"prepared_result_cache_bypasses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_rows_seen\":{},\"encoded_project_rows_inserted\":{},\"encoded_project_duplicate_rows\":{},\"encoded_project_row_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"direct_kernel_probes\":{},\"direct_kernel_rows\":{},\"direct_kernel_predicates\":{},\"direct_bind_attempts\":{},\"direct_bind_successes\":{},\"direct_chain_steps\":{},\"direct_chain_step_rows\":{},\"direct_chain_output_rows\":{},\"direct_chain_output_values\":{},\"direct_storage_output_rows\":{},\"direct_batch_rows\":{},\"direct_batch_row_bytes\":{},\"direct_batch_fallback_rows\":{},\"direct_binding_reuses\":{},\"query_image_relations_loaded\":{},\"query_image_rows_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{},\"hash_trie_bytes\":{},\"static_empty_atoms_checked\":{},\"static_empty_rows_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.counters.cursor_seeks,
             result.counters.rows_scanned,
             result.dictionary_reverse_lookups,
@@ -2280,10 +2229,6 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.counters.static_empty_rows_scanned,
             result.counters.static_empty_cache_hits,
             result.counters.static_empty_cache_misses,
-            result.counters.prepared_result_cache_hits,
-            result.counters.prepared_result_cache_misses,
-            result.counters.prepared_result_cache_inserts,
-            result.counters.prepared_result_cache_bypasses,
             result.gate.passed,
         );
         for (note_index, note) in result.gate.notes.iter().enumerate() {
@@ -3582,8 +3527,6 @@ mod tests {
             plan_family: "FreeJoinLftj".to_owned(),
             compare_mode: "materialized".to_owned(),
             cache_mode: "prepared-plan".to_owned(),
-            prepared_result_cache_allowed: false,
-            prepared_result_cache_hits: 0,
             static_empty_cache_hits: 0,
             query_image_sample_cache_hits: 1,
             bumbledb_materialized_rows: true,
@@ -3610,9 +3553,6 @@ mod tests {
             final_output_values: 1,
             output_contains_dictionary_values: false,
             query_image_build_micros: 3,
-            query_image_segment_count: 4,
-            query_image_segment_bytes: 128,
-            query_image_built_from_segments: true,
             query_image_built_during_query: true,
             query_image_cache_cached_images: 1,
             query_image_cache_hits: 1,
@@ -3654,10 +3594,7 @@ mod tests {
         assert!(markdown.contains("## Mechanics Counters"));
         assert!(markdown.contains("sink emits"));
         assert!(markdown.contains("## Cache Diagnostics"));
-        assert!(
-            markdown
-                .contains("| joinstress | triangle_count | prepared-plan | false | 0 | 0 | 1 |")
-        );
+        assert!(markdown.contains("| joinstress | triangle_count | prepared-plan | 0 | 1 |"));
         assert!(markdown.contains("## Measurement Contract"));
         assert!(markdown.contains("bumbledb.correctness_execution"));
         assert!(markdown.contains("## Allocation Summary"));
@@ -3695,9 +3632,7 @@ mod tests {
             runtime_kind: "Lftj".to_owned(),
             plan_family: "FreeJoinLftj".to_owned(),
             compare_mode: "rows".to_owned(),
-            cache_mode: "prepared-result".to_owned(),
-            prepared_result_cache_allowed: true,
-            prepared_result_cache_hits: 1,
+            cache_mode: "prepared-plan".to_owned(),
             static_empty_cache_hits: 0,
             query_image_sample_cache_hits: 1,
             bumbledb_materialized_rows: false,
@@ -3720,9 +3655,6 @@ mod tests {
             final_output_values: 2,
             output_contains_dictionary_values: false,
             query_image_build_micros: 1,
-            query_image_segment_count: 1,
-            query_image_segment_bytes: 1,
-            query_image_built_from_segments: true,
             query_image_built_during_query: true,
             query_image_cache_cached_images: 1,
             query_image_cache_hits: 1,
@@ -3760,11 +3692,7 @@ mod tests {
         assert!(json.contains("\"plan_family\":\"FreeJoinLftj\""));
         assert!(json.contains("\"compare_mode\":\"rows\""));
         assert!(json.contains("\"correctness_mode\":\"result-set\""));
-        assert!(json.contains("\"cache_mode\":\"prepared-result\""));
-        assert!(json.contains("\"prepared_result_cache_allowed\":true"));
-        assert!(json.contains("\"prepared_result_cache_hit\":true"));
-        assert!(json.contains("\"prepared_result_cache_hits\":1"));
-        assert!(json.contains("\"prepared_result_cache_bypasses\":0"));
+        assert!(json.contains("\"cache_mode\":\"prepared-plan\""));
         assert!(json.contains("\"query_image_cache_hit\":true"));
         assert!(json.contains("\"cardinality_supported\":true"));
         assert!(json.contains("\"allocation_scope\":\"bumbledb.count_cold_execution\""));
@@ -3801,7 +3729,7 @@ mod tests {
                 "--warmup",
                 "2",
                 "--cache-mode",
-                "prepared-result",
+                "prepared-plan",
                 "--open-limit",
                 "123",
                 "--job-dir",
@@ -3821,7 +3749,7 @@ mod tests {
         );
         assert_eq!(config.open_limit, Some(123));
         assert_eq!(config.warmup, 2);
-        assert_eq!(config.cache_mode, CacheMode::PreparedResult);
+        assert_eq!(config.cache_mode, CacheMode::PreparedPlan);
         assert_eq!(config.job_dir.as_deref(), Some("/tmp/job"));
         assert!(config.has_open_datasets());
         assert_eq!(config.format, OutputFormat::Json);

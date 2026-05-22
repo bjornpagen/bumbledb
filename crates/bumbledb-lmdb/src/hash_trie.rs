@@ -75,7 +75,7 @@ pub enum LeafMode {
     /// Store matching row IDs.
     Rows,
     /// Store only matching row counts.
-    CountOnly,
+    CardinalityOnly,
 }
 
 /// Hash trie node.
@@ -86,7 +86,7 @@ pub enum HashNode {
     /// Row set leaf.
     Leaf(RowSet),
     /// Count-only leaf for existence-only relations.
-    CountOnly(u32),
+    CardinalityOnly(u32),
 }
 
 /// Owned row-id set used by hash trie leaves.
@@ -154,7 +154,7 @@ impl RowSet {
 pub struct HashTrieStats {
     /// Number of trie levels.
     pub depth: usize,
-    /// Number of stored rows or count-only entries.
+    /// Number of stored rows or cardinality-only entries.
     pub rows: usize,
     /// Number of internal hash nodes.
     pub inner_nodes: usize,
@@ -209,7 +209,7 @@ impl PrefixProbe for HashTrieIndex {
         find_node(&self.root, prefix).is_some_and(|node| match node {
             HashNode::Inner(map) => !map.is_empty(),
             HashNode::Leaf(rows) => !rows.is_empty(),
-            HashNode::CountOnly(count) => *count > 0,
+            HashNode::CardinalityOnly(count) => *count > 0,
         })
     }
 
@@ -264,7 +264,7 @@ impl Iterator for PrefixRowIter<'_> {
             match node {
                 HashNode::Inner(map) => self.stack.extend(map.values()),
                 HashNode::Leaf(rows) => self.current = RowSetIter::from(rows),
-                HashNode::CountOnly(_) => {}
+                HashNode::CardinalityOnly(_) => {}
             }
         }
     }
@@ -308,9 +308,9 @@ fn insert_row(node: &mut HashNode, keys: &[EncodedOwned], row: RowId, leaf_mode:
                 HashNode::Leaf(rows) => rows.push(row),
                 _ => *node = HashNode::Leaf(RowSet::One(row)),
             },
-            LeafMode::CountOnly => match node {
-                HashNode::CountOnly(count) => *count += 1,
-                _ => *node = HashNode::CountOnly(1),
+            LeafMode::CardinalityOnly => match node {
+                HashNode::CardinalityOnly(count) => *count += 1,
+                _ => *node = HashNode::CardinalityOnly(1),
             },
         }
         return;
@@ -322,7 +322,7 @@ fn insert_row(node: &mut HashNode, keys: &[EncodedOwned], row: RowId, leaf_mode:
                 .or_insert_with(|| HashNode::Inner(HashMap::new()));
             insert_row(child, &keys[1..], row, leaf_mode);
         }
-        HashNode::Leaf(_) | HashNode::CountOnly(_) => {
+        HashNode::Leaf(_) | HashNode::CardinalityOnly(_) => {
             *node = HashNode::Inner(HashMap::new());
             insert_row(node, keys, row, leaf_mode);
         }
@@ -344,7 +344,7 @@ fn count_node(node: &HashNode) -> usize {
     match node {
         HashNode::Inner(map) => map.values().map(count_node).sum(),
         HashNode::Leaf(rows) => rows.len(),
-        HashNode::CountOnly(count) => *count as usize,
+        HashNode::CardinalityOnly(count) => *count as usize,
     }
 }
 
@@ -378,7 +378,7 @@ fn visit_rows(node: &HashNode, visit: &mut impl FnMut(RowId) -> bool) -> bool {
                 true
             }
         },
-        HashNode::CountOnly(_) => true,
+        HashNode::CardinalityOnly(_) => true,
     }
 }
 
@@ -394,7 +394,7 @@ fn accumulate_stats(node: &HashNode, stats: &mut HashTrieStats) {
             stats.leaves += 1;
             stats.rows += rows.len();
         }
-        HashNode::CountOnly(count) => {
+        HashNode::CardinalityOnly(count) => {
             stats.leaves += 1;
             stats.rows += *count as usize;
         }
@@ -438,13 +438,13 @@ mod tests {
     }
 
     #[test]
-    fn count_only_hash_trie_stores_counts_without_rows() -> Result<()> {
+    fn cardinality_only_hash_trie_stores_counts_without_rows() -> Result<()> {
         let image = account_image()?;
         let account = account_relation(&image)?;
         let index = HashTrieIndex::build_with_mode(
             account,
             IndexSpec::new("exists_currency", [FieldId(1)]),
-            LeafMode::CountOnly,
+            LeafMode::CardinalityOnly,
         )?;
         let key = EncodedOwned::One([1]);
 
