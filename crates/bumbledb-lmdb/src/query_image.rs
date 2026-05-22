@@ -291,6 +291,10 @@ impl QueryImage {
             .values()
             .map(RelationImage::encoded_column_bytes)
             .sum();
+        let access_key_bytes = relations
+            .values()
+            .map(RelationImage::access_key_bytes)
+            .sum();
         Self {
             key: QueryImageKey {
                 schema: schema.descriptor().fingerprint(),
@@ -303,6 +307,8 @@ impl QueryImage {
                 relation_count,
                 row_count,
                 encoded_column_bytes,
+                access_key_bytes,
+                access_payload_bytes: 0,
                 sorted_trie_bytes: 0,
                 hash_trie_bytes: 0,
                 build_micros,
@@ -663,6 +669,10 @@ pub struct QueryImageStats {
     pub row_count: usize,
     /// Encoded column bytes stored in relation images.
     pub encoded_column_bytes: usize,
+    /// Encoded access-key bytes stored in relation images.
+    pub access_key_bytes: usize,
+    /// Encoded access payload bytes stored in relation images.
+    pub access_payload_bytes: usize,
     /// Bytes used by sorted trie indexes. Zero until the sorted-trie PRD lands.
     pub sorted_trie_bytes: usize,
     /// Bytes used by hash trie indexes. Zero until the hash-trie PRD lands.
@@ -790,27 +800,14 @@ impl RelationIndexImage {
     /// Returns the number of encoded index entries matching a leading component prefix.
     pub fn prefix_count(&self, prefix: &[u8]) -> usize {
         debug_assert!(prefix.len() <= self.encoded_len.saturating_sub(self.prefix_len));
-        let entry_count = self.bytes.len() / self.encoded_len;
-        let mut position = self.lower_bound_prefix(prefix);
-        let start = position;
-        while position < entry_count {
-            let Some(entry) = self.entry(position) else {
-                break;
-            };
-            let Some(key) = self.entry_prefix(entry, prefix.len()) else {
-                break;
-            };
-            if key != prefix {
-                break;
-            }
-            position += 1;
-        }
-        position.saturating_sub(start)
+        let range = self.prefix_range(prefix);
+        range.end.saturating_sub(range.start)
     }
 
     /// Returns true when any encoded index entry matches a leading component prefix.
     pub fn prefix_exists(&self, prefix: &[u8]) -> bool {
-        self.prefix_count(prefix) != 0
+        let range = self.prefix_range(prefix);
+        range.start < range.end
     }
 
     /// Returns an encoded entry by entry position.
@@ -910,12 +907,12 @@ impl<'a> Iterator for RelationIndexRangeIter<'a> {
 
 impl RelationImage {
     /// Returns the encoded value for `row` and `field`.
-    pub fn encoded(&self, row: RowId, field: FieldId) -> Option<EncodedRef<'_>> {
+    pub(crate) fn encoded(&self, row: RowId, field: FieldId) -> Option<EncodedRef<'_>> {
         self.columns.get(field.0 as usize)?.encoded(row)
     }
 
     /// Returns the encoded bytes for `row` and `field`.
-    pub fn encoded_bytes(&self, row: RowId, field: FieldId) -> Option<&[u8]> {
+    pub(crate) fn encoded_bytes(&self, row: RowId, field: FieldId) -> Option<&[u8]> {
         self.encoded(row, field).map(EncodedRef::as_bytes)
     }
 
@@ -924,27 +921,41 @@ impl RelationImage {
         self.fields.get(field.0 as usize)
     }
 
-    /// Returns column metadata/data by field ID.
-    pub fn column(&self, field: FieldId) -> Option<&ColumnImage> {
-        self.columns.get(field.0 as usize)
-    }
-
     /// Returns durable sorted index images for this relation.
     pub fn indexes(&self) -> &[RelationIndexImage] {
         &self.indexes
     }
 
-    /// Returns all row IDs in this relation image.
-    pub fn all_rows(&self) -> RowRange {
-        RowRange {
-            start: RowId(0),
-            end: RowId(self.row_count as u32),
-        }
-    }
-
     /// Encoded column byte footprint.
     pub fn encoded_column_bytes(&self) -> usize {
         self.columns.iter().map(ColumnImage::byte_len).sum()
+    }
+
+    /// Number of tuples in this relation image.
+    pub fn relation_cardinality(&self) -> usize {
+        self.row_count
+    }
+
+    /// Looks up an access image by ID.
+    pub fn access(&self, access: AccessId) -> Option<&RelationIndexImage> {
+        self.indexes.iter().find(|index| index.access == access)
+    }
+
+    /// Returns true if an access prefix exists.
+    pub fn access_prefix_exists(&self, access: AccessId, prefix: &[u8]) -> bool {
+        self.access(access)
+            .is_some_and(|index| index.prefix_exists(prefix))
+    }
+
+    /// Returns the tuple cardinality under an access prefix.
+    pub fn access_prefix_cardinality(&self, access: AccessId, prefix: &[u8]) -> usize {
+        self.access(access)
+            .map_or(0, |index| index.prefix_count(prefix))
+    }
+
+    /// Encoded access-key byte footprint.
+    pub fn access_key_bytes(&self) -> usize {
+        self.indexes.iter().map(|index| index.bytes.len()).sum()
     }
 }
 
@@ -1039,11 +1050,6 @@ pub(crate) enum EncodedColumnBuilder {
 }
 
 impl EncodedColumnBuilder {
-    #[allow(dead_code)]
-    pub(crate) fn new(field: FieldId, width: usize) -> Result<Self> {
-        Self::with_capacity(field, width, 0)
-    }
-
     pub(crate) fn with_capacity(field: FieldId, width: usize, capacity: usize) -> Result<Self> {
         Ok(match width {
             1 => Self::Bool {
@@ -1071,13 +1077,7 @@ impl EncodedColumnBuilder {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub(crate) fn append_encoded_owned(&mut self, value: &EncodedOwned) -> Result<()> {
-        self.append_bytes(value.as_bytes())
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn append_encoded_ref(&mut self, value: EncodedRef<'_>) -> Result<()> {
         self.append_bytes(value.as_bytes())
     }
 
@@ -1101,12 +1101,6 @@ impl EncodedColumnBuilder {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    #[allow(dead_code)]
     pub(crate) fn byte_len(&self) -> usize {
         self.len() * self.width()
     }
@@ -1598,13 +1592,12 @@ mod tests {
 
     #[test]
     fn encoded_column_builder_appends_width_1() -> TestResult {
-        let mut builder = EncodedColumnBuilder::new(FieldId(2), 1)?;
+        let mut builder = EncodedColumnBuilder::with_capacity(FieldId(2), 1, 0)?;
         builder.append_bytes(&[1])?;
         builder.append_bytes(&[0])?;
 
         assert_eq!(builder.len(), 2);
-        assert!(!builder.is_empty());
-        assert_eq!(builder.byte_len(), 2);
+        assert_eq!(builder.len() * builder.width(), 2);
         match builder.finish() {
             ColumnImage::Bool(column) => {
                 assert_eq!(column.field(), FieldId(2));
@@ -1620,10 +1613,10 @@ mod tests {
     fn encoded_column_builder_appends_width_8() -> TestResult {
         let mut builder = EncodedColumnBuilder::with_capacity(FieldId(1), 8, 2)?;
         builder.append_encoded_owned(&EncodedOwned::Eight(7u64.to_be_bytes()))?;
-        builder.append_encoded_ref(EncodedRef::Eight(&9u64.to_be_bytes()))?;
+        builder.append_bytes(&9u64.to_be_bytes())?;
 
         assert_eq!(builder.len(), 2);
-        assert_eq!(builder.byte_len(), 16);
+        assert_eq!(builder.len() * builder.width(), 16);
         match builder.finish() {
             ColumnImage::Fixed8(column) => {
                 assert_eq!(column.field(), FieldId(1));
@@ -1637,12 +1630,12 @@ mod tests {
 
     #[test]
     fn encoded_column_builder_appends_width_16() -> TestResult {
-        let mut builder = EncodedColumnBuilder::new(FieldId(3), 16)?;
+        let mut builder = EncodedColumnBuilder::with_capacity(FieldId(3), 16, 0)?;
         builder.append_bytes(&1u128.to_be_bytes())?;
         builder.append_bytes(&2u128.to_be_bytes())?;
 
         assert_eq!(builder.len(), 2);
-        assert_eq!(builder.byte_len(), 32);
+        assert_eq!(builder.len() * builder.width(), 32);
         match builder.finish() {
             ColumnImage::Fixed16(column) => {
                 assert_eq!(column.field(), FieldId(3));
@@ -1672,12 +1665,12 @@ mod tests {
 
     #[test]
     fn encoded_column_builder_rejects_bad_width() {
-        assert!(EncodedColumnBuilder::new(FieldId(0), 4).is_err());
+        assert!(EncodedColumnBuilder::with_capacity(FieldId(0), 4, 0).is_err());
     }
 
     #[test]
     fn encoded_column_builder_rejects_bad_flat_length() -> TestResult {
-        let mut builder = EncodedColumnBuilder::new(FieldId(0), 8)?;
+        let mut builder = EncodedColumnBuilder::with_capacity(FieldId(0), 8, 0)?;
 
         assert!(builder.extend_flat_bytes(&[1, 2, 3]).is_err());
         assert!(builder.append_bytes(&[1, 2, 3]).is_err());
@@ -1800,13 +1793,7 @@ mod tests {
         let image = env.query_image(&schema)?;
         let account = account_relation(&image)?;
 
-        assert_eq!(
-            account.all_rows(),
-            RowRange {
-                start: RowId(0),
-                end: RowId(2)
-            }
-        );
+        assert_eq!(account.relation_cardinality(), 2);
         assert_eq!(field(account, FieldId(0))?.encoded_width(), 8);
         assert_eq!(field(account, FieldId(1))?.encoded_width(), 1);
         assert_eq!(field(account, FieldId(2))?.encoded_width(), 1);
@@ -1827,6 +1814,30 @@ mod tests {
             encoded(account, RowId(0), FieldId(2))?,
             EncodedRef::One(_)
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn relation_image_exposes_access_prefix_cardinality() -> TestResult {
+        let (env, schema) = seeded_env()?;
+        let image = env.query_image(&schema)?;
+        let account = account_relation(&image)?;
+        let access = AccessId(
+            schema
+                .layout("Account", "tuple_set")
+                .ok_or_else(|| crate::Error::internal("missing tuple_set access"))?
+                .index_id,
+        );
+        let id_one = 1u64.to_be_bytes();
+        let id_three = 3u64.to_be_bytes();
+
+        assert_eq!(account.relation_cardinality(), 2);
+        assert!(account.access_prefix_exists(access, &id_one));
+        assert_eq!(account.access_prefix_cardinality(access, &id_one), 1);
+        assert!(!account.access_prefix_exists(access, &id_three));
+        assert_eq!(account.access_prefix_cardinality(access, &id_three), 0);
+        assert!(image.stats().access_key_bytes > 0);
+        assert_eq!(image.stats().access_payload_bytes, 0);
         Ok(())
     }
 
@@ -2067,7 +2078,8 @@ mod tests {
 
     fn column(relation: &RelationImage, field: FieldId) -> Result<&ColumnImage> {
         relation
-            .column(field)
+            .columns
+            .get(field.0 as usize)
             .ok_or_else(|| crate::Error::internal(format!("missing column {}", field.0)))
     }
 

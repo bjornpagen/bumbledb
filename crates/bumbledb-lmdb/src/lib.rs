@@ -23,7 +23,7 @@ mod storage;
 mod storage_schema;
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use heed::types::Bytes;
@@ -90,11 +90,6 @@ pub struct Environment {
     env: Env<WithoutTls>,
     dbs: Databases,
     query_images: QueryImageCache,
-    #[expect(
-        dead_code,
-        reason = "environment path is retained for diagnostics/debugging"
-    )]
-    path: PathBuf,
 }
 
 /// Storage diagnostics for the current database snapshot and LMDB environment.
@@ -166,7 +161,6 @@ impl Environment {
             env,
             dbs,
             query_images: QueryImageCache::default(),
-            path: path.to_path_buf(),
         })
     }
 

@@ -1,6 +1,5 @@
 use smallvec::SmallVec;
 
-use crate::query_image::RowSetRef;
 use crate::{EncodedOwned, EncodedRef, HashTrieIndex, PrefixProbe, Result};
 
 pub(crate) type SmallEncodedRefs<'a> = SmallVec<[EncodedRef<'a>; 8]>;
@@ -12,11 +11,6 @@ pub(crate) enum AccessSource<'a> {
 pub(crate) trait AccessProbe {
     fn exists(&self, prefix: &[EncodedRef<'_>]) -> Result<bool>;
     fn count(&self, prefix: &[EncodedRef<'_>]) -> Result<usize>;
-    #[expect(
-        dead_code,
-        reason = "row-set access is part of the shared probe abstraction"
-    )]
-    fn rows<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> Result<RowSetRef<'a>>;
 }
 
 impl AccessProbe for AccessSource<'_> {
@@ -29,12 +23,6 @@ impl AccessProbe for AccessSource<'_> {
     fn count(&self, prefix: &[EncodedRef<'_>]) -> Result<usize> {
         match self {
             AccessSource::HashTrie(index) => Ok(PrefixProbe::count(*index, prefix)),
-        }
-    }
-
-    fn rows<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> Result<RowSetRef<'a>> {
-        match self {
-            AccessSource::HashTrie(index) => Ok(PrefixProbe::rows(*index, prefix)),
         }
     }
 }
