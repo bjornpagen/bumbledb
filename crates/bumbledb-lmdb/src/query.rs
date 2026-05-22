@@ -216,13 +216,37 @@ impl EncodedInputs {
     }
 }
 
+/// One tuple in a query result set.
+pub type ResultTuple = Vec<Value>;
+
+/// Duplicate-free query result set in canonical tuple order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueryResultSet {
+    /// Result columns in projection order.
+    pub columns: Vec<ResultColumn>,
+    /// Result tuples in canonical order.
+    pub tuples: Vec<ResultTuple>,
+}
+
+impl QueryResultSet {
+    /// Builds a canonical result set from possibly unordered tuples.
+    pub fn new(columns: Vec<ResultColumn>, mut tuples: Vec<ResultTuple>) -> Self {
+        tuples.sort();
+        tuples.dedup();
+        Self { columns, tuples }
+    }
+
+    /// Number of tuples in the set.
+    pub fn cardinality(&self) -> usize {
+        self.tuples.len()
+    }
+}
+
 /// Query execution output.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryOutput {
-    /// Result columns in projection order.
-    pub columns: Vec<ResultColumn>,
-    /// Result rows in unspecified order.
-    pub rows: Vec<Vec<Value>>,
+    /// Duplicate-free result set.
+    pub result: QueryResultSet,
     /// Physical plan and counters.
     pub plan: QueryPlan,
 }
@@ -260,11 +284,11 @@ impl Default for QueryExecutionOptions {
     }
 }
 
-/// Count-only query output used by benchmark row-count comparisons.
+/// Result-set cardinality output.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct QueryCountOutput {
-    /// Number of logical output rows.
-    pub rows: usize,
+pub struct QueryResultCardinality {
+    /// Number of logical output tuples.
+    pub cardinality: usize,
     /// Physical plan and counters.
     pub plan: QueryPlan,
 }
@@ -1825,8 +1849,10 @@ impl<'env> ReadTxn<'env> {
             let total_alloc = allocation_delta_since(total_alloc_start);
             plan.allocations = plan.allocations.with_total(total_alloc);
             return Ok(QueryOutput {
-                columns: result_columns(&normalized),
-                rows: empty_output_rows(&normalized.output),
+                result: QueryResultSet::new(
+                    result_columns(&normalized),
+                    empty_output_rows(&normalized.output),
+                ),
                 plan,
             });
         }
@@ -1861,8 +1887,10 @@ impl<'env> ReadTxn<'env> {
             let total_alloc = allocation_delta_since(total_alloc_start);
             plan.allocations = plan.allocations.with_total(total_alloc);
             return Ok(QueryOutput {
-                columns: result_columns(&normalized),
-                rows: empty_output_rows(&normalized.output),
+                result: QueryResultSet::new(
+                    result_columns(&normalized),
+                    empty_output_rows(&normalized.output),
+                ),
                 plan,
             });
         }
@@ -1935,8 +1963,7 @@ impl<'env> ReadTxn<'env> {
         plan.summary.refresh_node_timings();
         tracing::debug!(?plan.summary.counters, "free join query executed");
         Ok(QueryOutput {
-            columns,
-            rows,
+            result: QueryResultSet::new(columns, rows),
             plan: plan.summary,
         })
     }
@@ -2111,8 +2138,10 @@ impl<'env> ReadTxn<'env> {
             let total_alloc = allocation_delta_since(total_alloc_start);
             plan.allocations = plan.allocations.with_total(total_alloc);
             return Ok(QueryOutput {
-                columns: result_columns(normalized),
-                rows: empty_output_rows(&normalized.output),
+                result: QueryResultSet::new(
+                    result_columns(normalized),
+                    empty_output_rows(&normalized.output),
+                ),
                 plan,
             });
         }
@@ -2153,8 +2182,10 @@ impl<'env> ReadTxn<'env> {
             let total_alloc = allocation_delta_since(total_alloc_start);
             plan.allocations = plan.allocations.with_total(total_alloc);
             return Ok(QueryOutput {
-                columns: result_columns(normalized),
-                rows: empty_output_rows(&normalized.output),
+                result: QueryResultSet::new(
+                    result_columns(normalized),
+                    empty_output_rows(&normalized.output),
+                ),
                 plan,
             });
         }
@@ -2234,21 +2265,20 @@ impl<'env> ReadTxn<'env> {
         plan.summary.refresh_node_timings();
         tracing::debug!(?plan.summary.counters, "free join query executed");
         Ok(QueryOutput {
-            columns,
-            rows,
+            result: QueryResultSet::new(columns, rows),
             plan: plan.summary,
         })
     }
 
     /// Executes a prepared typed query and returns only the output row count.
     #[tracing::instrument(name = "bumbledb.query.execute_prepared_count", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
-    pub fn execute_prepared_query_count_only(
+    pub fn execute_prepared_result_cardinality(
         &self,
         schema: &StorageSchema,
         query: &PreparedQuery,
         inputs: &InputBindings,
-    ) -> Result<QueryCountOutput> {
-        self.execute_prepared_query_count_only_with_options(
+    ) -> Result<QueryResultCardinality> {
+        self.execute_prepared_result_cardinality_with_options(
             schema,
             query,
             inputs,
@@ -2258,25 +2288,25 @@ impl<'env> ReadTxn<'env> {
 
     /// Executes a prepared typed query count-only with explicit cache controls.
     #[tracing::instrument(name = "bumbledb.query.execute_prepared_count_with_options", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
-    pub fn execute_prepared_query_count_only_with_options(
+    pub fn execute_prepared_result_cardinality_with_options(
         &self,
         schema: &StorageSchema,
         query: &PreparedQuery,
         inputs: &InputBindings,
         options: QueryExecutionOptions,
-    ) -> Result<QueryCountOutput> {
-        self.execute_query_count_only_with_options(schema, query.query(), inputs, options)
+    ) -> Result<QueryResultCardinality> {
+        self.execute_result_cardinality_with_options(schema, query.query(), inputs, options)
     }
 
     /// Executes a typed query and returns only the output row count.
     #[tracing::instrument(name = "bumbledb.query.execute_count", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
-    pub fn execute_query_count_only(
+    pub fn execute_result_cardinality(
         &self,
         schema: &StorageSchema,
         query: &TypedQuery,
         inputs: &InputBindings,
-    ) -> Result<QueryCountOutput> {
-        self.execute_query_count_only_with_options(
+    ) -> Result<QueryResultCardinality> {
+        self.execute_result_cardinality_with_options(
             schema,
             query,
             inputs,
@@ -2286,13 +2316,13 @@ impl<'env> ReadTxn<'env> {
 
     /// Executes a typed query count-only with explicit cache controls.
     #[tracing::instrument(name = "bumbledb.query.execute_count_with_options", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
-    pub fn execute_query_count_only_with_options(
+    pub fn execute_result_cardinality_with_options(
         &self,
         schema: &StorageSchema,
         query: &TypedQuery,
         inputs: &InputBindings,
         options: QueryExecutionOptions,
-    ) -> Result<QueryCountOutput> {
+    ) -> Result<QueryResultCardinality> {
         let total_start = Instant::now();
         let total_alloc_start = allocation::snapshot();
         let mut timings = QueryTimings::default();
@@ -2314,8 +2344,8 @@ impl<'env> ReadTxn<'env> {
                 .static_empty_lookup_micros
                 .saturating_add(elapsed_recorded_micros(lookup_start));
             if cache_hit {
-                return Ok(QueryCountOutput {
-                    rows: 0,
+                return Ok(QueryResultCardinality {
+                    cardinality: 0,
                     plan: static_empty_plan_from_typed(
                         query,
                         self.query_images.diagnostics(),
@@ -2378,7 +2408,10 @@ impl<'env> ReadTxn<'env> {
             plan.allocations = plan
                 .allocations
                 .with_total(allocation_delta_since(total_alloc_start));
-            return Ok(QueryCountOutput { rows: 0, plan });
+            return Ok(QueryResultCardinality {
+                cardinality: 0,
+                plan,
+            });
         }
 
         let static_empty_proof = static_query_proves_empty_timed(
@@ -2412,7 +2445,10 @@ impl<'env> ReadTxn<'env> {
             plan.allocations = plan
                 .allocations
                 .with_total(allocation_delta_since(total_alloc_start));
-            return Ok(QueryCountOutput { rows: 0, plan });
+            return Ok(QueryResultCardinality {
+                cardinality: 0,
+                plan,
+            });
         }
 
         let phase_start = Instant::now();
@@ -2474,8 +2510,8 @@ impl<'env> ReadTxn<'env> {
             .allocations
             .with_total(allocation_delta_since(total_alloc_start));
         plan.summary.refresh_node_timings();
-        Ok(QueryCountOutput {
-            rows,
+        Ok(QueryResultCardinality {
+            cardinality: rows,
             plan: plan.summary,
         })
     }
@@ -3854,8 +3890,10 @@ fn static_empty_output_from_typed(
     cache_hit: bool,
 ) -> QueryOutput {
     QueryOutput {
-        columns: result_columns_from_typed(query),
-        rows: empty_output_rows(&output_plan_from_typed_find(query)),
+        result: QueryResultSet::new(
+            result_columns_from_typed(query),
+            empty_output_rows(&output_plan_from_typed_find(query)),
+        ),
         plan: static_empty_plan_from_typed(
             query,
             query_image_cache,
@@ -4094,8 +4132,7 @@ fn try_execute_direct_materialized_kernel(
         .allocations
         .with_total(allocation_delta_since(total_alloc_start));
     Ok(Some(QueryOutput {
-        columns,
-        rows,
+        result: QueryResultSet::new(columns, rows),
         plan: plan.summary,
     }))
 }
@@ -4190,8 +4227,7 @@ fn try_execute_direct_storage_project(
     allocations = allocations.with_total(allocation_delta_since(total_alloc_start));
 
     Ok(Some(QueryOutput {
-        columns: result_columns(query),
-        rows,
+        result: QueryResultSet::new(result_columns(query), rows),
         plan: QueryPlan {
             variable_order: query.vars.iter().map(|var| var.name.clone()).collect(),
             variable_estimates: Vec::new(),

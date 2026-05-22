@@ -105,7 +105,8 @@ pub fn execute_sorted(
 ) -> Result<Vec<Vec<Value>>> {
     Ok(sorted_rows(
         env.read(|txn| txn.execute_query(schema, query, inputs))?
-            .rows,
+            .result
+            .tuples,
     ))
 }
 

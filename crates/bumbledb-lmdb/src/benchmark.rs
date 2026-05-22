@@ -464,7 +464,7 @@ mod tests {
         let sqlite_rows = run_sqlite_query(&rows, query.sqlite, 1, 0, 1000)?;
         let comparison = BenchmarkComparison {
             query: query.name.to_owned(),
-            bumbledb_rows: bumbledb.rows.len(),
+            bumbledb_rows: bumbledb.result.tuples.len(),
             sqlite_rows,
             explain: bumbledb.explain(),
         };

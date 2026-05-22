@@ -382,7 +382,8 @@ fn execute(
 ) -> bumbledb_lmdb::Result<Vec<Vec<Value>>> {
     Ok(env
         .read(|txn| txn.execute_query(schema, query, &inputs))?
-        .rows)
+        .result
+        .tuples)
 }
 
 fn inputs(values: impl IntoIterator<Item = (&'static str, Value)>) -> InputBindings {

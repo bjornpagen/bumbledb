@@ -16,8 +16,8 @@ use bumbledb_core::schema::{
 };
 use bumbledb_lmdb::{
     AllocationPhaseStats, Environment, InputBindings, PlanCounters, QueryAllocationStats,
-    QueryExecutionOptions, QueryOutput, QueryPlan, QueryTimings, ResultColumn, Row, StorageSchema,
-    Value,
+    QueryExecutionOptions, QueryOutput, QueryPlan, QueryResultSet, QueryTimings, ResultColumn, Row,
+    StorageSchema, Value,
 };
 use rusqlite::{Connection, params_from_iter};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -647,8 +647,8 @@ struct BenchmarkRunResult {
     query_image_sample_cache_hits: u64,
     bumbledb_materialized_rows: bool,
     sqlite_materialized_rows: bool,
-    count_only_supported: bool,
-    count_only_fallback_reason: String,
+    cardinality_supported: bool,
+    cardinality_fallback_reason: String,
     timings: QueryTimings,
     allocations: QueryAllocationStats,
     iterator_ops: u64,
@@ -934,7 +934,7 @@ fn run_dataset(
             CompareMode::Rows => {
                 let count_once = timed(|| match config.cache_mode {
                     CacheMode::Recompute => bumble_env.read(|txn| {
-                        txn.execute_query_count_only_with_options(
+                        txn.execute_result_cardinality_with_options(
                             &bumble_schema,
                             &typed,
                             &inputs,
@@ -942,7 +942,7 @@ fn run_dataset(
                         )
                     }),
                     CacheMode::PreparedPlan | CacheMode::PreparedResult => bumble_env.read(|txn| {
-                        txn.execute_prepared_query_count_only_with_options(
+                        txn.execute_prepared_result_cardinality_with_options(
                             &bumble_schema,
                             &prepared,
                             &inputs,
@@ -952,9 +952,8 @@ fn run_dataset(
                 })?;
                 (
                     count_once.elapsed,
-                    count_output_as_query_output(
-                        materialized_output.columns.clone(),
-                        count_once.value.rows,
+                    cardinality_plan_as_query_output(
+                        materialized_output.result.clone(),
                         count_once.value.plan,
                     ),
                 )
@@ -963,12 +962,12 @@ fn run_dataset(
         let sqlite_once = timed(|| sqlite_count(&mut sqlite, query.sqlite, &params))?;
         let sqlite_cold_execution = sqlite_once.elapsed;
         let sqlite_once = sqlite_once.value;
-        if materialized_output.rows.len() != sqlite_once {
+        if materialized_output.result.tuples.len() != sqlite_once {
             return Err(format!(
                 "{}:{} row mismatch bumbledb={} sqlite={}",
                 dataset.name,
                 query.name,
-                materialized_output.rows.len(),
+                materialized_output.result.tuples.len(),
                 sqlite_once
             )
             .into());
@@ -997,13 +996,13 @@ fn run_dataset(
                             })?
                         }
                     };
-                    black_box(output.rows.len());
+                    black_box(output.result.tuples.len());
                     Ok::<_, bumbledb_lmdb::Error>(output.plan)
                 }
                 CompareMode::Rows => {
                     let output = match config.cache_mode {
                         CacheMode::Recompute => bumble_env.read(|txn| {
-                            txn.execute_query_count_only_with_options(
+                            txn.execute_result_cardinality_with_options(
                                 &bumble_schema,
                                 &typed,
                                 &inputs,
@@ -1012,7 +1011,7 @@ fn run_dataset(
                         })?,
                         CacheMode::PreparedPlan | CacheMode::PreparedResult => {
                             bumble_env.read(|txn| {
-                                txn.execute_prepared_query_count_only_with_options(
+                                txn.execute_prepared_result_cardinality_with_options(
                                     &bumble_schema,
                                     &prepared,
                                     &inputs,
@@ -1021,7 +1020,7 @@ fn run_dataset(
                             })?
                         }
                     };
-                    black_box(output.rows);
+                    black_box(output.cardinality);
                     Ok::<_, bumbledb_lmdb::Error>(output.plan)
                 }
             })?;
@@ -1054,13 +1053,13 @@ fn run_dataset(
                             })?
                         }
                     };
-                    black_box(output.rows.len());
+                    black_box(output.result.tuples.len());
                     Ok::<_, bumbledb_lmdb::Error>(output.plan)
                 }
                 CompareMode::Rows => {
                     let output = match config.cache_mode {
                         CacheMode::Recompute => bumble_env.read(|txn| {
-                            txn.execute_query_count_only_with_options(
+                            txn.execute_result_cardinality_with_options(
                                 &bumble_schema,
                                 &typed,
                                 &inputs,
@@ -1069,7 +1068,7 @@ fn run_dataset(
                         })?,
                         CacheMode::PreparedPlan | CacheMode::PreparedResult => {
                             bumble_env.read(|txn| {
-                                txn.execute_prepared_query_count_only_with_options(
+                                txn.execute_prepared_result_cardinality_with_options(
                                     &bumble_schema,
                                     &prepared,
                                     &inputs,
@@ -1078,7 +1077,7 @@ fn run_dataset(
                             })?
                         }
                     };
-                    black_box(output.rows);
+                    black_box(output.cardinality);
                     Ok::<_, bumbledb_lmdb::Error>(output.plan)
                 }
             })?;
@@ -1113,7 +1112,7 @@ fn run_dataset(
             println!(
                 "query={} rows={} cache_mode={} sink_emit_calls={} encoded_project_rows_seen={} lftj_next_calls={} direct_chain_step_rows={} prepared_result_cache_hits={} static_empty_cache_hits={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
                 query.name,
-                bumble_output.rows.len(),
+                bumble_output.result.tuples.len(),
                 result.cache_mode,
                 result.counters.sink_emit_calls,
                 result.counters.encoded_project_rows_seen,
@@ -1224,9 +1223,10 @@ fn benchmark_result(
     timing: QueryTimingSamples,
     query_image_stats: QueryImageBenchStats,
 ) -> BenchmarkRunResult {
-    let final_output_values = (output.rows.len() * output.columns.len()) as u64;
+    let final_output_values = (output.result.tuples.len() * output.result.columns.len()) as u64;
     let output_contains_dictionary_values = output
-        .rows
+        .result
+        .tuples
         .iter()
         .flatten()
         .any(|value| matches!(value, Value::String(_) | Value::Bytes(_)));
@@ -1249,7 +1249,7 @@ fn benchmark_result(
     BenchmarkRunResult {
         dataset,
         query: query.name,
-        rows: output.rows.len(),
+        rows: output.result.tuples.len(),
         bumbledb_correctness_execution: timing.bumbledb_correctness_execution,
         sqlite_correctness_execution: timing.sqlite_correctness_execution,
         bumbledb_cold_execution: timing.bumbledb_cold_execution,
@@ -1276,8 +1276,8 @@ fn benchmark_result(
         query_image_sample_cache_hits: cache_hits.query_image_cache_hits,
         bumbledb_materialized_rows: compare_mode == CompareMode::Materialized,
         sqlite_materialized_rows: false,
-        count_only_supported: compare_mode == CompareMode::Rows,
-        count_only_fallback_reason: String::new(),
+        cardinality_supported: compare_mode == CompareMode::Rows,
+        cardinality_fallback_reason: String::new(),
         timings: output.plan.timings,
         allocations: output.plan.allocations,
         iterator_ops: output.plan.free_join.estimates.iterator_ops,
@@ -1320,16 +1320,8 @@ fn benchmark_result(
     }
 }
 
-fn count_output_as_query_output(
-    columns: Vec<ResultColumn>,
-    rows: usize,
-    plan: QueryPlan,
-) -> QueryOutput {
-    QueryOutput {
-        columns,
-        rows: (0..rows).map(|_| Vec::new()).collect(),
-        plan,
-    }
+fn cardinality_plan_as_query_output(result: QueryResultSet, plan: QueryPlan) -> QueryOutput {
+    QueryOutput { result, plan }
 }
 
 fn allocation_scope(compare_mode: CompareMode) -> &'static str {
@@ -1356,7 +1348,7 @@ fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
     tracing::debug!(
         dataset,
         query,
-        rows = output.rows.len(),
+        rows = output.result.tuples.len(),
         runtime = ?plan.runtime_kind,
         total_micros = timings.total_micros,
         plan_micros = timings.plan_micros,
@@ -1547,6 +1539,7 @@ fn evaluate_gate(
         ));
     }
     let has_aggregate = output
+        .result
         .columns
         .iter()
         .any(|column| matches!(column, ResultColumn::Aggregate { .. }));
@@ -1713,7 +1706,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             markdown_escape(&result.compare_mode),
             result.bumbledb_materialized_rows,
             result.sqlite_materialized_rows,
-            result.count_only_supported,
+            result.cardinality_supported,
             duration_micros(result.bumbledb_avg),
             duration_micros(result.sqlite_avg),
             result.sqlite_ratio,
@@ -2001,7 +1994,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"result\":{{\"logical_rows\":{},\"materialized_rows\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"cache_mode\":\"{}\",\"prepared_result_cache_allowed\":{},\"prepared_result_cache_hit\":{},\"prepared_result_cache_hits\":{},\"static_empty_cache_hit\":{},\"static_empty_cache_hits\":{},\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"bumbledb_materialized_rows\":{},\"sqlite_materialized_rows\":{},\"count_only_supported\":{},\"count_only_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
+            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"result\":{{\"logical_rows\":{},\"materialized_rows\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"cache_mode\":\"{}\",\"prepared_result_cache_allowed\":{},\"prepared_result_cache_hit\":{},\"prepared_result_cache_hits\":{},\"static_empty_cache_hit\":{},\"static_empty_cache_hits\":{},\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"bumbledb_materialized_rows\":{},\"sqlite_materialized_rows\":{},\"cardinality_supported\":{},\"cardinality_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
             json_escape(result.dataset),
             json_escape(result.query),
             result.rows,
@@ -2027,8 +2020,8 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.query_image_sample_cache_hits,
             result.bumbledb_materialized_rows,
             result.sqlite_materialized_rows,
-            result.count_only_supported,
-            json_escape(&result.count_only_fallback_reason),
+            result.cardinality_supported,
+            json_escape(&result.cardinality_fallback_reason),
             result.query_image_built_during_query,
             json_escape(&result.allocation_scope),
             json_escape(&result.query_image_scope),
@@ -3466,8 +3459,8 @@ mod tests {
             query_image_sample_cache_hits: 1,
             bumbledb_materialized_rows: true,
             sqlite_materialized_rows: false,
-            count_only_supported: false,
-            count_only_fallback_reason: String::new(),
+            cardinality_supported: false,
+            cardinality_fallback_reason: String::new(),
             timings: QueryTimings {
                 total_micros: 10,
                 execute_micros: 4,
@@ -3579,8 +3572,8 @@ mod tests {
             query_image_sample_cache_hits: 1,
             bumbledb_materialized_rows: false,
             sqlite_materialized_rows: false,
-            count_only_supported: true,
-            count_only_fallback_reason: String::new(),
+            cardinality_supported: true,
+            cardinality_fallback_reason: String::new(),
             timings: QueryTimings {
                 total_micros: 20,
                 static_semijoin_proof_micros: 12,
@@ -3642,7 +3635,7 @@ mod tests {
         assert!(json.contains("\"prepared_result_cache_hits\":1"));
         assert!(json.contains("\"prepared_result_cache_bypasses\":0"));
         assert!(json.contains("\"query_image_cache_hit\":true"));
-        assert!(json.contains("\"count_only_supported\":true"));
+        assert!(json.contains("\"cardinality_supported\":true"));
         assert!(json.contains("\"allocation_scope\":\"bumbledb.count_cold_execution\""));
         assert!(json.contains("\"query_image_scope\":\"full_schema\""));
         assert!(json.contains("\"cold_execution_uses_correctness_output\":false"));

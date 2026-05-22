@@ -42,9 +42,9 @@ pub use query::{
     AllocationPhaseStats, CostKey, InputBindings, InputId, MissingIndexRecommendation,
     NodeRowEstimate, NormAtom, NormAtomField, NormFindTerm, NormInput, NormOperand, NormPredicate,
     NormTerm, NormVar, NormalizedQuery, OptimizerTrace, PlanCandidate, PlanCounters, PlanFamily,
-    PredicateId, PreparedQuery, QueryAllocationStats, QueryCountOutput, QueryExecutionOptions,
-    QueryNodeTiming, QueryOutput, QueryPlan, QueryRuntimeKind, QueryTimings, ResultColumn,
-    VariableEstimate,
+    PredicateId, PreparedQuery, QueryAllocationStats, QueryExecutionOptions, QueryNodeTiming,
+    QueryOutput, QueryPlan, QueryResultCardinality, QueryResultSet, QueryRuntimeKind, QueryTimings,
+    ResultColumn, ResultTuple, VariableEstimate,
 };
 pub use query_image::{
     ColumnImage, EncodedRef, FieldId, FieldImage, FixedColumn, PreparedPlanCacheDiagnostics,
@@ -617,10 +617,12 @@ mod tests {
         ]);
         let row_result = row_env
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
-            .rows;
+            .result
+            .tuples;
         let bulk_result = bulk_env
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
-            .rows;
+            .result
+            .tuples;
         assert_eq!(sorted_rows(row_result), sorted_rows(bulk_result));
         Ok(())
     }
@@ -709,13 +711,16 @@ mod tests {
 
         let original = env
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
-            .rows;
+            .result
+            .tuples;
         let backup_rows = backup
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
-            .rows;
+            .result
+            .tuples;
         let compact_rows = compact
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
-            .rows;
+            .result
+            .tuples;
 
         assert_eq!(sorted_rows(original.clone()), sorted_rows(backup_rows));
         assert_eq!(sorted_rows(original), sorted_rows(compact_rows));

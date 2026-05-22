@@ -52,6 +52,21 @@ fn query_timing_unaccounted_saturates_to_zero() {
 }
 
 #[test]
+fn query_result_set_sorts_and_deduplicates_tuples() {
+    let set = QueryResultSet::new(
+        vec![ResultColumn::Variable("id".to_owned())],
+        vec![
+            vec![Value::U64(2)],
+            vec![Value::U64(1)],
+            vec![Value::U64(1)],
+        ],
+    );
+
+    assert_eq!(set.cardinality(), 2);
+    assert_eq!(set.tuples, vec![vec![Value::U64(1)], vec![Value::U64(2)]]);
+}
+
+#[test]
 fn encoded_width_comparisons_match_byte_order() {
     assert_eq!(compare_encoded_bytes(&[1], &[2]), std::cmp::Ordering::Less);
     assert_eq!(
@@ -86,7 +101,7 @@ fn executes_single_relation_query() -> TestResult {
     })?;
 
     assert_eq!(
-        output.rows,
+        output.result.tuples,
         vec![vec![Value::Serial(1)], vec![Value::Serial(2)]]
     );
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
@@ -127,7 +142,7 @@ fn planner_recommends_missing_static_predicate_index() -> TestResult {
     })?;
 
     assert_same_rows(
-        &output.rows,
+        &output.result.tuples,
         &[vec![Value::Serial(1)], vec![Value::Serial(3)]],
     );
     let expected_fields = vec!["currency".to_owned(), "id".to_owned()];
@@ -174,7 +189,7 @@ fn optimizer_selects_direct_storage_for_static_lookup() -> TestResult {
     assert_eq!(output.plan.query_image_cache.builds, 0);
     assert_eq!(output.plan.counters.direct_kernel_rows, 2);
     assert_same_rows(
-        &output.rows,
+        &output.result.tuples,
         &[vec![Value::Serial(1)], vec![Value::Serial(2)]],
     );
     Ok(())
@@ -209,7 +224,7 @@ fn static_empty_checks_static_existence_atoms() -> TestResult {
         )
     })?;
 
-    assert!(output.rows.is_empty());
+    assert!(output.result.tuples.is_empty());
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert_eq!(output.plan.counters.trie_open, 0);
     assert!(output.plan.counters.static_empty_atoms_checked > 0);
@@ -254,7 +269,10 @@ fn partial_probe_shape_falls_back_to_lftj() -> TestResult {
             .any(|node| node.implementation == NodeImpl::SortedLeapfrog)
     );
     assert!(output.plan.counters.trie_next > 0);
-    assert_same_rows(&output.rows, &[vec![Value::U64(20)], vec![Value::U64(21)]]);
+    assert_same_rows(
+        &output.result.tuples,
+        &[vec![Value::U64(20)], vec![Value::U64(21)]],
+    );
     Ok(())
 }
 
@@ -309,7 +327,7 @@ fn direct_prefix_range_kernel_selects_and_filters_rows() -> TestResult {
         Some(DirectKernelKind::PrefixRange)
     ));
     assert_same_rows(
-        &output.rows,
+        &output.result.tuples,
         &[vec![Value::U64(10), Value::Timestamp(TimestampMicros(5))]],
     );
     assert!(output.plan.counters.direct_kernel_probes > 0);
@@ -378,7 +396,7 @@ fn direct_storage_no_prefix_range_scan_selects_rows() -> TestResult {
     assert_eq!(output.plan.counters.hash_index_builds, 0);
     assert_eq!(output.plan.counters.sorted_trie_builds, 0);
     assert_same_rows(
-        &output.rows,
+        &output.result.tuples,
         &[
             vec![Value::U64(1), Value::U64(11)],
             vec![Value::U64(2), Value::U64(12)],
@@ -430,7 +448,7 @@ fn direct_prefix_range_empty_prefix_returns_zero_rows() -> TestResult {
     })?;
 
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
-    assert!(output.rows.is_empty());
+    assert!(output.result.tuples.is_empty());
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
 }
@@ -470,7 +488,7 @@ fn direct_chain_kernel_selects_and_follows_acyclic_path() -> TestResult {
         output.plan.direct_kernel.as_ref().map(|direct| direct.kind),
         Some(DirectKernelKind::ChainProbe)
     ));
-    assert_eq!(output.rows, vec![vec![Value::U64(30)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(30)]]);
     assert_eq!(output.plan.counters.direct_kernel_rows, 4);
     assert!(output.plan.counters.direct_chain_steps > 0);
     assert_eq!(output.plan.counters.direct_chain_output_rows, 1);
@@ -525,12 +543,15 @@ fn direct_chain_tag_lookup_like_projection_runs_before_static_semijoin() -> Test
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::IndexNestedLoop);
     assert_eq!(output.plan.plan_family, PlanFamily::IndexNestedLoop);
     assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
-    assert_same_rows(&output.rows, &[vec![Value::U64(10), Value::U64(20)]]);
+    assert_same_rows(
+        &output.result.tuples,
+        &[vec![Value::U64(10), Value::U64(20)]],
+    );
     Ok(())
 }
 
 #[test]
-fn count_only_matches_materialized_projection_without_decoding_output() -> TestResult {
+fn cardinality_matches_materialized_projection_without_decoding_output() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
@@ -552,11 +573,14 @@ fn count_only_matches_materialized_projection_without_decoding_output() -> TestR
     let inputs = InputBindings::from_values([("a", Value::U64(1))]);
 
     let materialized = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
-    let count_only = env.read(|txn| txn.execute_query_count_only(&schema, &query, &inputs))?;
+    let cardinality = env.read(|txn| txn.execute_result_cardinality(&schema, &query, &inputs))?;
 
-    assert_eq!(count_only.rows, materialized.rows.len());
-    assert_eq!(count_only.plan.runtime_kind, materialized.plan.runtime_kind);
-    assert_eq!(count_only.plan.counters.materialized_output_values, 0);
+    assert_eq!(cardinality.cardinality, materialized.result.tuples.len());
+    assert_eq!(
+        cardinality.plan.runtime_kind,
+        materialized.plan.runtime_kind
+    );
+    assert_eq!(cardinality.plan.counters.materialized_output_values, 0);
     Ok(())
 }
 
@@ -589,7 +613,7 @@ fn direct_chain_broken_path_returns_zero_rows() -> TestResult {
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::IndexNestedLoop);
     assert_eq!(output.plan.plan_family, PlanFamily::IndexNestedLoop);
     assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
-    assert!(output.rows.is_empty());
+    assert!(output.result.tuples.is_empty());
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
 }
@@ -618,7 +642,7 @@ fn optimizer_keeps_cyclic_triangle_on_lftj() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(1)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(output.plan.direct_kernel.is_none());
     assert!(
@@ -661,7 +685,7 @@ fn lftj_atom_cache_reuses_equivalent_relation_aliases() -> TestResult {
 
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(output.plan.counters.sorted_trie_builds <= 1);
-    assert_eq!(output.rows.len(), 4);
+    assert_eq!(output.result.tuples.len(), 4);
     Ok(())
 }
 
@@ -683,7 +707,7 @@ fn lftj_empty_variable_atom_short_circuits_execution() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert!(output.rows.is_empty());
+    assert!(output.result.tuples.is_empty());
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert_eq!(output.plan.optimizer.chosen, "static_empty");
     assert_eq!(output.plan.counters.trie_open, 0);
@@ -710,8 +734,8 @@ fn static_empty_no_input_query_hits_fast_cache_before_normalize() -> TestResult 
     let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert!(first.rows.is_empty());
-    assert!(second.rows.is_empty());
+    assert!(first.result.tuples.is_empty());
+    assert!(second.result.tuples.is_empty());
     assert_eq!(first.plan.counters.static_empty_cache_misses, 1);
     assert_eq!(second.plan.counters.static_empty_cache_hits, 1);
     assert!(second.plan.free_join.nodes.is_empty());
@@ -752,7 +776,7 @@ fn domain_count_falls_back_to_lftj_until_fast_paths_are_rebuilt() -> TestResult 
     let output =
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(1)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
     assert!(output.plan.direct_kernel.is_none());
@@ -790,7 +814,7 @@ fn domain_count_serial_literal_filter_uses_lftj() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(2)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
@@ -826,7 +850,7 @@ fn domain_count_enum_literal_filter_uses_lftj() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(2)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
@@ -911,7 +935,7 @@ fn domain_count_range_filter_uses_lftj() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(2)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
@@ -1019,7 +1043,7 @@ fn domain_count_literal_and_range_filters_use_lftj() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(1)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
@@ -1052,7 +1076,7 @@ fn domain_count_unsafe_cycle_uses_generic_lftj() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(1)]]);
     assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
 }
@@ -1109,7 +1133,7 @@ fn prepared_plan_cache_reuses_parameterized_shape() -> TestResult {
     let first = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
     let second = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
 
-    assert_eq!(first.rows, second.rows);
+    assert_eq!(first.result.tuples, second.result.tuples);
     assert_eq!(first.plan.prepared_plan_cache.misses, 1);
     assert_eq!(first.plan.prepared_plan_cache.builds, 1);
     assert_eq!(second.plan.prepared_plan_cache.hits, 1);
@@ -1133,7 +1157,7 @@ fn prepared_plan_cache_reuses_no_input_physical_plan() -> TestResult {
     let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(first.rows, second.rows);
+    assert_eq!(first.result.tuples, second.result.tuples);
     assert_eq!(first.plan.prepared_plan_cache.cached_plans, 1);
     assert_eq!(first.plan.prepared_plan_cache.misses, 1);
     assert_eq!(first.plan.prepared_plan_cache.builds, 1);
@@ -1174,7 +1198,7 @@ fn prepared_plan_cache_is_snapshot_scoped() -> TestResult {
     assert_eq!(after.plan.prepared_plan_cache.misses, 1);
     assert_eq!(after.plan.prepared_plan_cache.builds, 1);
     assert_eq!(after.plan.prepared_plan_cache.hits, 0);
-    assert_eq!(after.rows.len(), before.rows.len() + 1);
+    assert_eq!(after.result.tuples.len(), before.result.tuples.len() + 1);
     Ok(())
 }
 
@@ -1195,7 +1219,7 @@ fn planner_stats_are_cached_per_query_image() -> TestResult {
     let first = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
     let second = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
 
-    assert_eq!(first.rows, second.rows);
+    assert_eq!(first.result.tuples, second.result.tuples);
     assert_eq!(first.plan.planner_stats.builds, 1);
     assert_eq!(first.plan.planner_stats.misses, 1);
     assert_eq!(second.plan.planner_stats.builds, 1);
@@ -1230,8 +1254,8 @@ fn execute_query_uses_warmed_query_image_cache() -> TestResult {
     assert_eq!(after.builds, 1);
     assert_eq!(output.plan.query_image_cache.builds, 1);
     assert!(output.plan.query_image_cache.hits > before.hits);
-    assert_eq!(warm.rows.len(), 3);
-    assert_eq!(output.rows.len(), 3);
+    assert_eq!(warm.result.tuples.len(), 3);
+    assert_eq!(output.result.tuples.len(), 3);
     Ok(())
 }
 
@@ -1257,7 +1281,7 @@ fn execute_query_cache_misses_after_write_commit() -> TestResult {
 
     assert_eq!(before.plan.query_image_cache.builds, 1);
     assert_eq!(after.plan.query_image_cache.builds, 2);
-    assert_eq!(after.rows.len(), before.rows.len() + 1);
+    assert_eq!(after.result.tuples.len(), before.result.tuples.len() + 1);
     Ok(())
 }
 
@@ -1331,7 +1355,7 @@ fn planner_stats_reuse_shared_relations_across_queries() -> TestResult {
 
     assert_eq!(first.plan.planner_stats.builds, 2);
     assert_eq!(second.plan.planner_stats.builds, 1);
-    assert_eq!(second.rows.len(), 3);
+    assert_eq!(second.result.tuples.len(), 3);
     Ok(())
 }
 
@@ -1357,7 +1381,7 @@ fn planner_stats_cache_is_snapshot_scoped() -> TestResult {
 
     assert_eq!(before.plan.planner_stats.builds, 1);
     assert_eq!(after.plan.planner_stats.builds, 1);
-    assert_eq!(after.rows.len(), before.rows.len() + 1);
+    assert_eq!(after.result.tuples.len(), before.result.tuples.len() + 1);
     Ok(())
 }
 
@@ -1487,7 +1511,7 @@ fn prepared_query_reuses_normalized_snapshot_shape() -> TestResult {
     let first = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &inputs))?;
     let second = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &inputs))?;
 
-    assert_eq!(first.rows, second.rows);
+    assert_eq!(first.result.tuples, second.result.tuples);
     assert!(first.plan.timings.normalize_micros > 0);
     assert_eq!(second.plan.timings.normalize_micros, 0);
     Ok(())
@@ -1528,12 +1552,12 @@ fn prepared_result_cache_options_do_not_cache_aggregate_results() -> TestResult 
         )
     })?;
 
-    assert_eq!(first.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(first.result.tuples, vec![vec![Value::U64(1)]]);
     assert_eq!(first.plan.counters.prepared_result_cache_misses, 0);
     assert_eq!(first.plan.counters.prepared_result_cache_inserts, 0);
-    assert_eq!(cached.rows, first.rows);
+    assert_eq!(cached.result.tuples, first.result.tuples);
     assert_eq!(cached.plan.counters.prepared_result_cache_hits, 0);
-    assert_eq!(disabled.rows, first.rows);
+    assert_eq!(disabled.result.tuples, first.result.tuples);
     assert_eq!(disabled.plan.counters.prepared_result_cache_bypasses, 1);
 
     env.write(|txn| {
@@ -1545,7 +1569,7 @@ fn prepared_result_cache_options_do_not_cache_aggregate_results() -> TestResult 
     })?;
     let after_write =
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
-    assert_eq!(after_write.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(after_write.result.tuples, vec![vec![Value::U64(1)]]);
     assert_eq!(after_write.plan.counters.prepared_result_cache_misses, 0);
     assert_eq!(after_write.plan.counters.prepared_result_cache_inserts, 0);
     Ok(())
@@ -1572,10 +1596,10 @@ fn aggregate_domain_results_are_recomputed_for_different_inputs() -> TestResult 
     let different_input =
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &holder_two))?;
 
-    assert_eq!(first.rows, vec![vec![Value::U64(2)]]);
+    assert_eq!(first.result.tuples, vec![vec![Value::U64(2)]]);
     assert_eq!(first.plan.counters.prepared_result_cache_misses, 0);
     assert_eq!(cached.plan.counters.prepared_result_cache_hits, 0);
-    assert_eq!(different_input.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(different_input.result.tuples, vec![vec![Value::U64(1)]]);
     assert_eq!(
         different_input.plan.counters.prepared_result_cache_misses,
         0
@@ -1641,7 +1665,7 @@ fn repeated_variable_atom_matches_equal_encoded_fields() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(1)]]);
     Ok(())
 }
 
@@ -1721,7 +1745,7 @@ fn executes_two_relation_join() -> TestResult {
         output.plan.counters.bindings_yielded
     );
     assert_same_rows(
-        &output.rows,
+        &output.result.tuples,
         &[
             vec![Value::Serial(1), Value::String("Alice".to_owned())],
             vec![Value::Serial(2), Value::String("Alice".to_owned())],
@@ -1788,7 +1812,7 @@ fn executes_many_relation_join_and_range_filter() -> TestResult {
             .any(|estimate| estimate.access == "Posting.by_at")
     );
     assert_same_rows(
-        &output.rows,
+        &output.result.tuples,
         &[
             vec![
                 Value::Serial(2),
@@ -1820,7 +1844,7 @@ fn projection_deduplicates_results() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     assert_eq!(
-        output.rows,
+        output.result.tuples,
         vec![vec![Value::Serial(1)], vec![Value::Serial(2)]]
     );
     assert_eq!(output.plan.counters.bindings_yielded, 3);
@@ -1863,10 +1887,13 @@ fn materialized_projection_does_not_use_prepared_result_cache() -> TestResult {
     let second =
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
 
-    assert_same_rows(&first.rows, &[vec![Value::U64(20)], vec![Value::U64(21)]]);
-    assert_eq!(second.rows, first.rows);
+    assert_same_rows(
+        &first.result.tuples,
+        &[vec![Value::U64(20)], vec![Value::U64(21)]],
+    );
+    assert_eq!(second.result.tuples, first.result.tuples);
     assert_eq!(second.plan.counters.prepared_result_cache_hits, 0);
-    assert!(second.plan.counters.materialized_output_values <= second.rows.len() as u64);
+    assert!(second.plan.counters.materialized_output_values <= second.result.tuples.len() as u64);
     Ok(())
 }
 
@@ -1881,7 +1908,7 @@ fn count_sink_avoids_decoding_counted_variable() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(3)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(3)]]);
     assert_eq!(output.plan.counters.bindings_yielded, 3);
     assert_eq!(output.plan.counters.aggregate_groups, 1);
     assert_eq!(output.plan.counters.decoded_values, 0);
@@ -1910,7 +1937,7 @@ fn global_count_over_empty_input_returns_zero_row() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.counters.output_rows, 1);
     Ok(())
 }
@@ -1928,7 +1955,7 @@ fn grouped_count_over_empty_input_returns_no_rows() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert!(output.rows.is_empty());
+    assert!(output.result.tuples.is_empty());
     Ok(())
 }
 
@@ -1952,7 +1979,7 @@ fn count_distinct_ignores_duplicate_existential_witnesses() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(1)]]);
     Ok(())
 }
 
@@ -1974,7 +2001,7 @@ fn sum_over_domain_counts_distinct_domain_tuples_with_same_value() -> TestResult
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::I64(10)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::I64(10)]]);
     Ok(())
 }
 
@@ -2002,7 +2029,7 @@ fn static_empty_global_count_returns_zero_row() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     Ok(())
 }
@@ -2034,7 +2061,7 @@ fn static_semijoin_dimension_row_exists_but_fact_is_empty() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(output.plan.counters.static_semijoin_rounds > 0);
     assert!(output.plan.timings.static_semijoin_proof_micros > 0);
@@ -2080,7 +2107,7 @@ fn static_semijoin_disjoint_central_candidates_prove_empty() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(output.plan.counters.static_semijoin_candidate_values > 0);
     Ok(())
@@ -2183,7 +2210,7 @@ fn static_semijoin_compound_relation_proves_empty() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     Ok(())
 }
@@ -2258,7 +2285,7 @@ fn static_semijoin_non_empty_query_is_not_proven_empty() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(1)]]);
     assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     Ok(())
 }
@@ -2291,10 +2318,10 @@ fn static_semijoin_negative_cache_skips_second_failed_proof() -> TestResult {
     let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(first.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(first.result.tuples, vec![vec![Value::U64(1)]]);
     assert!(first.plan.counters.static_semijoin_rounds > 0);
     assert_eq!(first.plan.counters.static_semijoin_skipped, 0);
-    assert_eq!(second.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(second.result.tuples, vec![vec![Value::U64(1)]]);
     assert_eq!(second.plan.counters.static_semijoin_rounds, 0);
     assert_eq!(second.plan.counters.static_semijoin_skipped, 1);
     assert_eq!(
@@ -2339,7 +2366,7 @@ fn static_semijoin_negative_cache_is_tx_id_scoped() -> TestResult {
 
     assert!(first.plan.counters.static_semijoin_rounds > 0);
     assert_eq!(cached.plan.counters.static_semijoin_skipped, 1);
-    assert_eq!(after_write.rows, vec![vec![Value::U64(2)]]);
+    assert_eq!(after_write.result.tuples, vec![vec![Value::U64(2)]]);
     assert!(after_write.plan.counters.static_semijoin_rounds > 0);
     assert_eq!(after_write.plan.counters.static_semijoin_skipped, 0);
     Ok(())
@@ -2377,12 +2404,12 @@ fn static_semijoin_cache_is_input_scoped_and_reuses_proven_empty() -> TestResult
     let empty_first = env.read(|txn| txn.execute_query(&schema, &query, &kind_two))?;
     let empty_cached = env.read(|txn| txn.execute_query(&schema, &query, &kind_two))?;
 
-    assert_eq!(non_empty.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(non_empty.result.tuples, vec![vec![Value::U64(1)]]);
     assert_ne!(non_empty.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-    assert_eq!(empty_first.rows, vec![vec![Value::U64(0)]]);
+    assert_eq!(empty_first.result.tuples, vec![vec![Value::U64(0)]]);
     assert_eq!(empty_first.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(empty_first.plan.counters.static_semijoin_rounds > 0);
-    assert_eq!(empty_cached.rows, vec![vec![Value::U64(0)]]);
+    assert_eq!(empty_cached.result.tuples, vec![vec![Value::U64(0)]]);
     assert_eq!(
         empty_cached.plan.runtime_kind,
         QueryRuntimeKind::StaticEmpty
@@ -2423,7 +2450,10 @@ fn static_semijoin_red_boat_like_wide_projection_skips_and_preserves_rows() -> T
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_same_rows(&output.rows, &[vec![Value::U64(1), Value::U64(10)]]);
+    assert_same_rows(
+        &output.result.tuples,
+        &[vec![Value::U64(1), Value::U64(10)]],
+    );
     assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert_eq!(output.plan.counters.static_semijoin_skipped, 1);
     assert_eq!(
@@ -2466,7 +2496,7 @@ fn static_semijoin_tag_lookup_like_direct_chain_projection_skips() -> TestResult
     })?;
 
     assert_same_rows(
-        &output.rows,
+        &output.result.tuples,
         &[
             vec![Value::Serial(1), Value::Serial(1)],
             vec![Value::Serial(2), Value::Serial(1)],
@@ -2518,7 +2548,10 @@ fn static_semijoin_tpch_like_non_empty_materialized_projection_skips() -> TestRe
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_same_rows(&output.rows, &[vec![Value::U64(10), Value::Enum(2)]]);
+    assert_same_rows(
+        &output.result.tuples,
+        &[vec![Value::U64(10), Value::Enum(2)]],
+    );
     assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert_eq!(output.plan.counters.static_semijoin_skipped, 1);
     assert_eq!(
@@ -2674,7 +2707,7 @@ fn static_semijoin_q24_like_empty_shape_proves_empty() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert!(output.rows.is_empty());
+    assert!(output.result.tuples.is_empty());
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(output.plan.counters.static_semijoin_candidate_values > 0);
     assert_eq!(output.plan.counters.static_semijoin_skipped, 0);
@@ -2811,7 +2844,7 @@ fn static_semijoin_range_index_q16_like_count_proves_empty() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
+    assert_eq!(output.result.tuples, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(output.plan.counters.static_semijoin_prefixes_probed > 0);
     assert!(output.plan.counters.static_semijoin_candidate_values > 0);
@@ -2837,7 +2870,7 @@ fn sum_sink_decodes_only_aggregate_operand_values() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(
-        output.rows,
+        output.result.tuples,
         vec![vec![Value::Decimal(DecimalRaw(600)), Value::U64(3)]]
     );
     assert_eq!(output.plan.counters.bindings_yielded, 3);
@@ -2869,7 +2902,7 @@ fn grouped_count_decodes_dictionary_keys_only_at_final_output() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_same_rows(
-        &output.rows,
+        &output.result.tuples,
         &[
             vec![Value::String("Alice".to_owned()), Value::U64(2)],
             vec![Value::String("Bob".to_owned()), Value::U64(1)],
@@ -2905,7 +2938,7 @@ fn aggregation_groups_and_sums_decimal_values() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_same_rows(
-        &output.rows,
+        &output.result.tuples,
         &[
             vec![
                 Value::Serial(1),
@@ -3012,7 +3045,7 @@ fn serial_input_accepts_serial_value() -> TestResult {
         )
     })?;
 
-    assert!(!output.rows.is_empty());
+    assert!(!output.result.tuples.is_empty());
     Ok(())
 }
 
@@ -3227,7 +3260,8 @@ fn differential_reference_evaluator_matches_lmdb() -> TestResult {
     for (query, inputs) in cases {
         let lmdb_rows = env
             .read(|txn| txn.execute_query(&schema, &query, &inputs))?
-            .rows;
+            .result
+            .tuples;
         let reference_rows = reference.execute(&query, &inputs)?;
         assert_same_rows(&lmdb_rows, &reference_rows);
     }
