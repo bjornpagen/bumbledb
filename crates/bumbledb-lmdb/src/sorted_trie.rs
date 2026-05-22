@@ -2,7 +2,8 @@ use std::time::Instant;
 
 use smallvec::SmallVec;
 
-use crate::{EncodedRef, FieldId, RelationId, RelationImage, Result, RowId, RowRange};
+use crate::query_image::{RowId, RowRange};
+use crate::{EncodedRef, FieldId, RelationId, RelationImage, Result};
 
 /// Owned fixed-width encoded value used in trie levels.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

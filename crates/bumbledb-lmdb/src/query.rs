@@ -12,12 +12,14 @@ use bumbledb_core::query_ir::{
 };
 use bumbledb_core::schema::{IndexKind, SchemaFingerprint, ValueType};
 
+use crate::hash_trie::PrefixRows;
+use crate::query_image::{RowId, RowRange};
 use crate::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FieldValues,
     FreeJoinPlan, HashTrieIndex, IndexSpec, LeafMode, LinearIter, NodeId, NodeImpl, OutputPlan,
-    PayloadDemand, PlanEstimates, PlanNode, PrefixProbe, PrefixRows, ProjectPlan, ReadTxn,
-    RelationImage, RelationIndexImage, RelationStats, Result, Row, RowId, RowRange,
-    SortedTrieIndex, StorageSchema, SubAtom, TrieIter, Value, VarId,
+    PayloadDemand, PlanEstimates, PlanNode, PrefixProbe, ProjectPlan, ReadTxn, RelationImage,
+    RelationIndexImage, RelationStats, Result, Row, SortedTrieIndex, StorageSchema, SubAtom,
+    TrieIter, Value, VarId,
 };
 
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};

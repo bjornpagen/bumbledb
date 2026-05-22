@@ -3,10 +3,10 @@
 use std::collections::BTreeMap;
 
 use bumbledb_core::schema::{
-    CurrentIndexLayout, IndexComponent, IndexKind, RelationDescriptor, SchemaDescriptor, ValueType,
+    CurrentIndexLayout, IndexComponent, IndexKind, RelationDescriptor, SchemaDescriptor,
 };
 
-use crate::{AccessId, Error, FieldId, RelationId, Result};
+use crate::{AccessId, Error, RelationId, Result};
 
 /// Compiled storage schema for the LMDB write/read layer.
 #[derive(Clone, Debug)]
@@ -28,68 +28,6 @@ pub struct BulkLoadReport {
     pub storage_tx_id: u64,
     /// Number of interned dictionary values after the load committed.
     pub dictionary_entries: usize,
-}
-
-/// Durable relation segment metadata visible to query-image builders.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SegmentDescriptor {
-    /// Relation this segment belongs to.
-    pub relation: RelationId,
-    /// Monotonic segment ID within the relation.
-    pub segment_id: u64,
-    /// Inclusive storage transaction ID where this segment becomes visible.
-    pub tx_start: u64,
-    /// Exclusive storage transaction ID where this segment stops being visible.
-    pub tx_end: Option<u64>,
-    /// Number of rows represented by this segment.
-    pub row_count: usize,
-    /// Encoded fixed-width column chunks.
-    pub columns: Vec<ColumnSegmentDescriptor>,
-    /// Encoded index chunks.
-    pub indexes: Vec<IndexSegmentDescriptor>,
-}
-
-/// Durable encoded column chunk descriptor.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ColumnSegmentDescriptor {
-    /// Field represented by this column chunk.
-    pub field: FieldId,
-    /// Logical value type.
-    pub value_type: ValueType,
-    /// Fixed encoded width.
-    pub width: usize,
-    /// LMDB key containing contiguous encoded column bytes.
-    pub lmdb_key: Vec<u8>,
-    /// Stored byte length.
-    pub byte_len: usize,
-}
-
-/// Durable encoded index chunk descriptor.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IndexSegmentDescriptor {
-    /// Access path represented by this index chunk.
-    pub access: AccessId,
-    /// Leading fields in index order.
-    pub fields: Vec<FieldId>,
-    /// Index access kind.
-    pub kind: IndexKind,
-    /// LMDB key containing encoded index bytes.
-    pub lmdb_key: Vec<u8>,
-    /// Stored byte length.
-    pub byte_len: usize,
-    /// Lightweight index statistics summary.
-    pub stats: IndexStatsSummary,
-}
-
-/// Durable index segment statistics summary.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct IndexStatsSummary {
-    /// Number of encoded entries in the index segment.
-    pub row_count: usize,
-    /// Number of leading fields represented by this index.
-    pub depth: usize,
-    /// Stored index chunk bytes.
-    pub byte_len: usize,
 }
 
 impl StorageSchema {

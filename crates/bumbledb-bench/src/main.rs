@@ -861,9 +861,9 @@ fn run_dataset(
             sorted_trie_bytes: query_image.stats().sorted_trie_bytes,
             hash_trie_bytes: query_image.stats().hash_trie_bytes,
             build_micros: query_image.stats().build_micros,
-            segment_count: query_image.stats().segment_count,
-            segment_bytes: query_image.stats().segment_bytes,
-            built_from_segments: query_image.stats().built_from_segments,
+            segment_count: 0,
+            segment_bytes: 0,
+            built_from_segments: false,
         }
     };
     if format.includes_text() {

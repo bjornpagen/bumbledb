@@ -1,6 +1,7 @@
 use smallvec::SmallVec;
 
-use crate::{EncodedOwned, EncodedRef, HashTrieIndex, PrefixProbe, Result, RowSetRef};
+use crate::query_image::RowSetRef;
+use crate::{EncodedOwned, EncodedRef, HashTrieIndex, PrefixProbe, Result};
 
 pub(crate) type SmallEncodedRefs<'a> = SmallVec<[EncodedRef<'a>; 8]>;
 

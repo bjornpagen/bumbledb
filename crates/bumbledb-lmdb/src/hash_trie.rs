@@ -3,10 +3,8 @@ use std::ops::Range;
 
 use smallvec::SmallVec;
 
-use crate::{
-    EncodedOwned, EncodedRef, FieldId, IndexSpec, RelationId, RelationImage, Result, RowId,
-    RowRange, RowSetRef,
-};
+use crate::query_image::{RowId, RowRange, RowSetRef};
+use crate::{EncodedOwned, EncodedRef, FieldId, IndexSpec, RelationId, RelationImage, Result};
 
 type NodeStack<'a> = SmallVec<[&'a HashNode; 8]>;
 type KeyStack = SmallVec<[EncodedOwned; 8]>;

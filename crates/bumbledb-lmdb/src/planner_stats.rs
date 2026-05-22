@@ -4,8 +4,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+use crate::query_image::RowId;
 use crate::{
-    AccessId, EncodedOwned, Error, FieldId, RelationId, RelationImage, Result, RowId, StorageSchema,
+    AccessId, EncodedOwned, Error, FieldId, RelationId, RelationImage, Result, StorageSchema,
 };
 
 const FIELD_STATS_SAMPLE_ROWS: usize = 4096;

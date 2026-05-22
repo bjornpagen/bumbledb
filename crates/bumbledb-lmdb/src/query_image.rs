@@ -9,10 +9,7 @@ use bumbledb_core::schema::{RelationDescriptor, SchemaFingerprint, ValueType};
 use crate::planner_stats::{PlannerStatsCache, PlannerStatsCacheDiagnostics};
 use crate::query::ExecutionPlan;
 use crate::storage_schema::TUPLE_SET_ACCESS_NAME;
-use crate::{
-    AccessId, EncodedOwned, Error, ReadTxn, Result, SegmentDescriptor, SortedTrieIndex,
-    StorageSchema,
-};
+use crate::{AccessId, EncodedOwned, Error, ReadTxn, Result, SortedTrieIndex, StorageSchema};
 use crate::{HashTrieIndex, IndexSpec, LeafMode};
 
 /// Cache key for an immutable query image.
@@ -277,19 +274,12 @@ pub struct QueryImage {
 }
 
 impl QueryImage {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "query image construction records scope and build diagnostics"
-    )]
     fn new(
         schema: &StorageSchema,
         tx_id: u64,
         scope: QueryImageScope,
         relations: BTreeMap<RelationId, RelationImage>,
         build_micros: u128,
-        segment_count: usize,
-        segment_bytes: usize,
-        built_from_segments: bool,
     ) -> Self {
         let relation_by_name = relations
             .values()
@@ -301,7 +291,6 @@ impl QueryImage {
             .values()
             .map(RelationImage::encoded_column_bytes)
             .sum();
-        let sorted_trie_bytes = segment_bytes.saturating_sub(encoded_column_bytes);
         Self {
             key: QueryImageKey {
                 schema: schema.descriptor().fingerprint(),
@@ -314,11 +303,8 @@ impl QueryImage {
                 relation_count,
                 row_count,
                 encoded_column_bytes,
-                sorted_trie_bytes,
+                sorted_trie_bytes: 0,
                 hash_trie_bytes: 0,
-                segment_count,
-                segment_bytes,
-                built_from_segments,
                 build_micros,
             },
             planner_stats: PlannerStatsCache::default(),
@@ -681,12 +667,6 @@ pub struct QueryImageStats {
     pub sorted_trie_bytes: usize,
     /// Bytes used by hash trie indexes. Zero until the hash-trie PRD lands.
     pub hash_trie_bytes: usize,
-    /// Number of durable relation segments used by this image.
-    pub segment_count: usize,
-    /// Bytes read from durable column/index segments for this image.
-    pub segment_bytes: usize,
-    /// True when every relation image was built from visible segment metadata.
-    pub built_from_segments: bool,
     /// Build elapsed time in microseconds.
     pub build_micros: u128,
 }
@@ -1101,6 +1081,7 @@ impl EncodedColumnBuilder {
         self.append_bytes(value.as_bytes())
     }
 
+    #[cfg(test)]
     pub(crate) fn extend_flat_bytes(&mut self, bytes: &[u8]) -> Result<()> {
         let width = self.width();
         if width == 0 || !bytes.len().is_multiple_of(width) {
@@ -1178,17 +1159,11 @@ pub enum ColumnImage {
 }
 
 impl ColumnImage {
+    #[cfg(test)]
     pub(crate) fn from_flat_bytes(field: FieldId, width: usize, bytes: &[u8]) -> Result<Self> {
         let mut builder = EncodedColumnBuilder::with_capacity(field, width, bytes.len() / width)?;
         builder.extend_flat_bytes(bytes)?;
         Ok(builder.finish())
-    }
-
-    pub(crate) fn from_segment_bytes(field: FieldId, width: usize, bytes: Vec<u8>) -> Result<Self> {
-        if width == 0 || !bytes.len().is_multiple_of(width) {
-            return Err(Error::corrupt("segment column byte width mismatch"));
-        }
-        Self::from_flat_bytes(field, width, &bytes)
     }
 
     fn encoded(&self, row: RowId) -> Option<EncodedRef<'_>> {
@@ -1390,9 +1365,6 @@ impl<'a, 'env> QueryImageBuilder<'a, 'env> {
         let start = Instant::now();
         let tx_id = self.txn.last_committed_tx_id()?;
         let mut relations = BTreeMap::new();
-        let mut segment_count = 0usize;
-        let mut segment_bytes = 0usize;
-        let mut built_from_segments = true;
         for relation_id in self.scope.relation_ids() {
             let relation = self
                 .schema
@@ -1412,9 +1384,6 @@ impl<'a, 'env> QueryImageBuilder<'a, 'env> {
                 relation_scope.clone(),
             )
             .build()?;
-            segment_count += usize::from(built.from_segment);
-            segment_bytes += built.segment_bytes;
-            built_from_segments &= built.from_segment;
             relations.insert(relation_id, built.relation);
         }
         Ok(QueryImage::new(
@@ -1423,17 +1392,12 @@ impl<'a, 'env> QueryImageBuilder<'a, 'env> {
             self.scope,
             relations,
             start.elapsed().as_micros(),
-            segment_count,
-            segment_bytes,
-            built_from_segments,
         ))
     }
 }
 
 struct BuiltRelationImage {
     relation: RelationImage,
-    from_segment: bool,
-    segment_bytes: usize,
 }
 
 struct RelationImageBuilder<'a, 'env, 'schema> {
@@ -1467,115 +1431,7 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
             relation = %self.relation.name,
         )
         .entered();
-        if let Some(segment) =
-            self.txn
-                .visible_relation_segment(self.schema, self.relation_id, self.relation)?
-        {
-            return self.build_from_segment(&segment);
-        }
-
         self.build_from_current_index()
-    }
-
-    fn build_from_segment(self, segment: &SegmentDescriptor) -> Result<BuiltRelationImage> {
-        let fields = self.field_images();
-        let mut segment_bytes = 0usize;
-        let columns = fields
-            .iter()
-            .map(|field| {
-                let descriptor = segment
-                    .columns
-                    .iter()
-                    .find(|column| column.field == field.id)
-                    .ok_or_else(|| Error::corrupt("segment column descriptor missing"))?;
-                let bytes = self.txn.segment_bytes(&descriptor.lmdb_key)?;
-                segment_bytes += bytes.len();
-                ColumnImage::from_segment_bytes(field.id, field.width, bytes)
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let indexes = segment
-            .indexes
-            .iter()
-            .filter(|index| {
-                self.scope.include_all_indexes || self.scope.indexes.contains(&index.access)
-            })
-            .map(|index| {
-                let bytes = self.txn.segment_bytes(&index.lmdb_key)?;
-                let layout = self
-                    .schema
-                    .layouts()
-                    .iter()
-                    .find(|layout| {
-                        layout.relation_id == self.relation_id.0
-                            && layout.index_id == index.access.0
-                    })
-                    .ok_or_else(|| Error::unknown_index(&self.relation.name, "segment"))?;
-                let prefix_len = layout.encoded_len
-                    - layout
-                        .components
-                        .iter()
-                        .map(|component| component.encoded_width)
-                        .sum::<usize>();
-                let mut offset = prefix_len;
-                let components = layout
-                    .components
-                    .iter()
-                    .map(|component| {
-                        let Some(field) = self
-                            .relation
-                            .fields
-                            .iter()
-                            .position(|field| field.name == component.field_name)
-                            .map(|field| FieldId(field as u16))
-                        else {
-                            return Ok(None);
-                        };
-                        let image_component = RelationIndexComponent {
-                            field,
-                            offset,
-                            width: component.encoded_width,
-                        };
-                        offset += component.encoded_width;
-                        Ok(Some(image_component))
-                    })
-                    .collect::<Result<Option<Vec<_>>>>()?;
-                let Some(components) = components else {
-                    return Ok(None);
-                };
-                segment_bytes += bytes.len();
-                Ok(Some(RelationIndexImage {
-                    access: index.access,
-                    fields: index.fields.clone(),
-                    components,
-                    encoded_len: layout.encoded_len,
-                    prefix_len,
-                    bytes,
-                }))
-            })
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-        let encoded_column_bytes = columns.iter().map(ColumnImage::byte_len).sum();
-        Ok(BuiltRelationImage {
-            relation: RelationImage {
-                id: self.relation_id,
-                name: self.relation.name.clone(),
-                row_count: segment.row_count,
-                fields,
-                columns,
-                indexes,
-                sorted_index_count: segment.indexes.len(),
-                hash_index_count: 0,
-                stats: RelationStats {
-                    row_count: segment.row_count,
-                    field_count: self.relation.fields.len(),
-                    encoded_column_bytes,
-                },
-            },
-            from_segment: true,
-            segment_bytes,
-        })
     }
 
     fn build_from_current_index(self) -> Result<BuiltRelationImage> {
@@ -1707,8 +1563,6 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
                     encoded_column_bytes,
                 },
             },
-            from_segment: false,
-            segment_bytes: 0,
         })
     }
 
@@ -1832,7 +1686,7 @@ mod tests {
 
     #[test]
     fn column_image_rejects_segment_length_mismatch() {
-        assert!(ColumnImage::from_segment_bytes(FieldId(0), 8, vec![1, 2, 3]).is_err());
+        assert!(ColumnImage::from_flat_bytes(FieldId(0), 8, &[1, 2, 3]).is_err());
     }
 
     #[test]
@@ -1925,9 +1779,6 @@ mod tests {
         assert_eq!(image.stats().row_count, 2);
         assert_eq!(image.stats().sorted_trie_bytes, 0);
         assert_eq!(image.stats().hash_trie_bytes, 0);
-        assert_eq!(image.stats().segment_count, 0);
-        assert_eq!(image.stats().segment_bytes, 0);
-        assert!(!image.stats().built_from_segments);
         assert_eq!(diagnostics.relations[0].row_count, 2);
 
         let account = account_relation(&image)?;
@@ -2122,8 +1973,6 @@ mod tests {
         let reopened = Environment::open(&path)?;
         let image = reopened.query_image(&schema)?;
 
-        assert!(!image.stats().built_from_segments);
-        assert_eq!(image.stats().segment_count, 0);
         assert_eq!(account_relation(&image)?.row_count, 2);
         Ok(())
     }
@@ -2162,7 +2011,6 @@ mod tests {
 
         let image = env.query_image(&schema)?;
         let account = account_relation(&image)?;
-        assert!(!image.stats().built_from_segments);
         assert_eq!(account.row_count, 1);
 
         env.read(|txn| {
