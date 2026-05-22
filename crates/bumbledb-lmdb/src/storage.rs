@@ -16,7 +16,8 @@ use crate::{
     ReadTxn, RelationId, Result, SegmentDescriptor, StorageSchema, WriteTxn,
 };
 
-const NS_CURRENT_TUPLE: u8 = 0x10;
+const NS_CANONICAL_FACT: u8 = 0x10;
+const NS_ACCESS_ENTRY: u8 = 0x11;
 const NS_HISTORY: u8 = 0x30;
 
 const SEGMENT_META_PREFIX: &[u8] = b"segment:meta:";
@@ -284,12 +285,12 @@ impl IndexScan<'_, '_, '_> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct EncodedTuple {
+struct EncodedFact {
     relation: RelationId,
     bytes: Vec<u8>,
 }
 
-impl EncodedTuple {
+impl EncodedFact {
     fn field(&self, relation: &RelationDescriptor, name: &str) -> Result<&[u8]> {
         let (offset, width) = field_layout(relation, name)?;
         self.bytes
@@ -371,7 +372,7 @@ impl WriteTxn<'_> {
         validate_row_values(schema.descriptor(), relation, &row)?;
         let encoded = self.encode_row(relation_id, relation, &row, InternMode::Create)?;
 
-        if self.exact_current_tuple_exists(schema, relation, &encoded)? {
+        if self.exact_current_tuple_exists(relation_id, &encoded)? {
             return Ok(InsertOutcome::AlreadyPresent);
         }
 
@@ -379,6 +380,7 @@ impl WriteTxn<'_> {
         self.check_unique_constraints(schema, relation, &encoded)?;
 
         self.insert_current_indexes(schema, relation_id, relation, &encoded)?;
+        self.insert_canonical_fact(relation_id, &encoded)?;
         adjust_relation_row_count(self, relation_id, 1)?;
         self.append_history(b'I', relation_id, None, Some(&encoded))?;
         self.record_relation_segment_change(schema, relation_id, relation)?;
@@ -397,29 +399,34 @@ impl WriteTxn<'_> {
             }
             Err(error) => return Err(error),
         };
-        if !self.exact_current_tuple_exists(schema, relation, &old_encoded)? {
+        if !self.exact_current_tuple_exists(relation_id, &old_encoded)? {
             return Ok(DeleteOutcome::Absent);
         };
 
         self.check_delete_restrictions(schema, relation, &old_encoded)?;
         self.delete_current_indexes(schema, relation_id, relation, &old_encoded)?;
+        self.delete_canonical_fact(relation_id, &old_encoded)?;
         adjust_relation_row_count(self, relation_id, -1)?;
         self.append_history(b'D', relation_id, Some(&old_encoded), None)?;
         self.record_relation_segment_change(schema, relation_id, relation)?;
         Ok(DeleteOutcome::Deleted)
     }
 
-    fn exact_current_tuple_exists(
-        &self,
-        schema: &StorageSchema,
-        relation: &RelationDescriptor,
-        tuple: &EncodedTuple,
-    ) -> Result<bool> {
-        let covering = schema
-            .tuple_set_layout(&relation.name)
-            .ok_or_else(|| Error::unknown_index(&relation.name, TUPLE_SET_ACCESS_NAME))?;
-        let key = current_index_key(covering, relation, tuple)?;
+    fn exact_current_tuple_exists(&self, relation_id: u16, fact: &EncodedFact) -> Result<bool> {
+        let key = canonical_fact_key(relation_id, fact);
         Ok(self.dbs.index.get(&self.txn, key.as_slice())?.is_some())
+    }
+
+    fn insert_canonical_fact(&mut self, relation_id: u16, fact: &EncodedFact) -> Result<()> {
+        let key = canonical_fact_key(relation_id, fact);
+        self.dbs.index.put(&mut self.txn, key.as_slice(), &[])?;
+        Ok(())
+    }
+
+    fn delete_canonical_fact(&mut self, relation_id: u16, fact: &EncodedFact) -> Result<()> {
+        let key = canonical_fact_key(relation_id, fact);
+        self.dbs.index.delete(&mut self.txn, key.as_slice())?;
+        Ok(())
     }
 
     fn record_relation_segment_change(
@@ -603,7 +610,7 @@ impl WriteTxn<'_> {
         relation: &RelationDescriptor,
         row: &Row,
         mode: InternMode,
-    ) -> Result<EncodedTuple> {
+    ) -> Result<EncodedFact> {
         let known_fields = relation
             .fields
             .iter()
@@ -623,7 +630,7 @@ impl WriteTxn<'_> {
                 .ok_or_else(|| Error::missing_field(&relation.name, &field.name))?;
             bytes.extend_from_slice(&self.encode_value(relation, field, value, &mode)?);
         }
-        Ok(EncodedTuple {
+        Ok(EncodedFact {
             relation: RelationId(relation_id),
             bytes,
         })
@@ -648,7 +655,7 @@ impl WriteTxn<'_> {
         &self,
         schema: &StorageSchema,
         relation: &RelationDescriptor,
-        row: &EncodedTuple,
+        row: &EncodedFact,
     ) -> Result<()> {
         for constraint in &relation.constraints {
             let ConstraintDescriptor::ForeignKey {
@@ -685,7 +692,7 @@ impl WriteTxn<'_> {
         &self,
         schema: &StorageSchema,
         relation: &RelationDescriptor,
-        row: &EncodedTuple,
+        row: &EncodedFact,
     ) -> Result<()> {
         for constraint in &relation.constraints {
             let ConstraintDescriptor::Unique { name, .. } = constraint else {
@@ -710,7 +717,7 @@ impl WriteTxn<'_> {
         &self,
         schema: &StorageSchema,
         relation: &RelationDescriptor,
-        row: &EncodedTuple,
+        row: &EncodedFact,
     ) -> Result<()> {
         for (source_relation_id, source_relation) in schema
             .descriptor
@@ -767,7 +774,7 @@ impl WriteTxn<'_> {
         schema: &StorageSchema,
         relation_id: u16,
         relation: &RelationDescriptor,
-        row: &EncodedTuple,
+        row: &EncodedFact,
     ) -> Result<()> {
         for layout in schema.layouts_for_relation(relation_id) {
             tracing::trace!(relation = %relation.name, index = %layout.index_name, "put current index entry");
@@ -784,7 +791,7 @@ impl WriteTxn<'_> {
         schema: &StorageSchema,
         relation_id: u16,
         relation: &RelationDescriptor,
-        row: &EncodedTuple,
+        row: &EncodedFact,
     ) -> Result<()> {
         for layout in schema.layouts_for_relation(relation_id) {
             tracing::trace!(relation = %relation.name, index = %layout.index_name, "delete current index entry");
@@ -799,8 +806,8 @@ impl WriteTxn<'_> {
         &mut self,
         op: u8,
         relation_id: u16,
-        old: Option<&EncodedTuple>,
-        new: Option<&EncodedTuple>,
+        old: Option<&EncodedFact>,
+        new: Option<&EncodedFact>,
     ) -> Result<()> {
         let tx_id = self.ensure_tx_id()?;
         let seq = self.history_seq;
@@ -816,8 +823,8 @@ impl WriteTxn<'_> {
         let mut value = Vec::new();
         value.push(op);
         push_u16(&mut value, relation_id);
-        push_optional_bytes(&mut value, old.map(EncodedTuple::bytes));
-        push_optional_bytes(&mut value, new.map(EncodedTuple::bytes));
+        push_optional_bytes(&mut value, old.map(EncodedFact::bytes));
+        push_optional_bytes(&mut value, new.map(EncodedFact::bytes));
 
         self.dbs
             .index
@@ -1061,6 +1068,22 @@ impl<'env> ReadTxn<'env> {
         .unwrap_or(0))
     }
 
+    /// Counts canonical fact entries for a relation by scanning the canonical namespace.
+    pub fn canonical_fact_count(
+        &self,
+        schema: &StorageSchema,
+        relation_name: &str,
+    ) -> Result<usize> {
+        let (relation_id, _) = schema.relation(relation_name)?;
+        let prefix = canonical_fact_prefix(relation_id);
+        let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
+        let mut count = 0usize;
+        while iter.next().transpose()?.is_some() {
+            count += 1;
+        }
+        Ok(count)
+    }
+
     /// Returns segment descriptors visible to this read snapshot.
     pub fn visible_segments(&self, schema: &StorageSchema) -> Result<Vec<SegmentDescriptor>> {
         let tx_id = self.last_committed_tx_id()?;
@@ -1228,9 +1251,12 @@ impl<'env> ReadTxn<'env> {
         Ok(self.dbs.index.get(&self.txn, key.as_slice())?.is_some())
     }
 
-    /// Checks whether the exact row exists in the covering access path.
+    /// Checks whether the exact row exists in the canonical fact set.
     pub fn exact_row_exists(&self, schema: &StorageSchema, row: &Row) -> Result<bool> {
-        self.current_index_entry_exists(schema, row, TUPLE_SET_ACCESS_NAME)
+        let (relation_id, relation) = schema.relation(&row.relation)?;
+        let encoded = self.encode_row_existing(relation_id, relation, row)?;
+        let key = canonical_fact_key(relation_id, &encoded);
+        Ok(self.dbs.index.get(&self.txn, key.as_slice())?.is_some())
     }
 
     /// Looks up an interned string ID.
@@ -1340,7 +1366,7 @@ impl<'env> ReadTxn<'env> {
         relation_id: u16,
         relation: &RelationDescriptor,
         row: &Row,
-    ) -> Result<EncodedTuple> {
+    ) -> Result<EncodedFact> {
         let mut bytes = Vec::with_capacity(tuple_width(relation));
         for field in &relation.fields {
             let value = row
@@ -1352,7 +1378,7 @@ impl<'env> ReadTxn<'env> {
                     .ok_or_else(|| Error::dictionary_value_not_found(dict_kind_name(kind)))
             })?);
         }
-        Ok(EncodedTuple {
+        Ok(EncodedFact {
             relation: RelationId(relation_id),
             bytes,
         })
@@ -1477,7 +1503,7 @@ fn decode_index_key(
     relation: &RelationDescriptor,
     layout: &CurrentIndexLayout,
     key: &[u8],
-) -> Result<(EncodedTuple, Vec<EncodedComponent>)> {
+) -> Result<(EncodedFact, Vec<EncodedComponent>)> {
     let prefix_len = current_index_prefix(layout.relation_id, layout.index_id).len();
     if key.len() != layout.encoded_len {
         return Err(Error::corrupt("index key width does not match layout"));
@@ -1520,7 +1546,7 @@ fn decode_index_key(
     }
 
     Ok((
-        EncodedTuple {
+        EncodedFact {
             relation: RelationId(layout.relation_id),
             bytes: tuple,
         },
@@ -1550,7 +1576,7 @@ fn decode_encoded_row(
     dict: crate::RawDatabase,
     txn: &heed::RoTxn,
     relation: &RelationDescriptor,
-    encoded: &EncodedTuple,
+    encoded: &EncodedFact,
 ) -> Result<Row> {
     let mut values = BTreeMap::new();
     for field in &relation.fields {
@@ -1710,7 +1736,7 @@ fn unique_constraint_layout<'a>(
 fn access_path_prefix_from_fields<'a>(
     layout: &CurrentIndexLayout,
     relation: &RelationDescriptor,
-    row: &EncodedTuple,
+    row: &EncodedFact,
     fields: impl IntoIterator<Item = &'a str>,
 ) -> Result<Vec<u8>> {
     let mut prefix = current_index_prefix(layout.relation_id, layout.index_id);
@@ -1721,16 +1747,28 @@ fn access_path_prefix_from_fields<'a>(
 }
 
 fn current_index_prefix(relation_id: u16, index_id: u16) -> Vec<u8> {
-    let mut key = vec![NS_CURRENT_TUPLE];
+    let mut key = vec![NS_ACCESS_ENTRY];
     push_u16(&mut key, relation_id);
     push_u16(&mut key, index_id);
+    key
+}
+
+fn canonical_fact_key(relation_id: u16, fact: &EncodedFact) -> Vec<u8> {
+    let mut key = canonical_fact_prefix(relation_id);
+    key.extend_from_slice(fact.bytes());
+    key
+}
+
+fn canonical_fact_prefix(relation_id: u16) -> Vec<u8> {
+    let mut key = vec![NS_CANONICAL_FACT];
+    push_u16(&mut key, relation_id);
     key
 }
 
 fn current_index_key(
     layout: &CurrentIndexLayout,
     relation: &RelationDescriptor,
-    row: &EncodedTuple,
+    row: &EncodedFact,
 ) -> Result<Vec<u8>> {
     if row.relation.0 != layout.relation_id {
         return Err(Error::corrupt(
@@ -2000,7 +2038,9 @@ mod tests {
             assert_eq!(txn.last_committed_tx_id()?, 1);
             assert_eq!(txn.history_entry_count()?, 2);
             assert_eq!(txn.relation_row_count(&schema, "Holder")?, 1);
+            assert_eq!(txn.canonical_fact_count(&schema, "Holder")?, 1);
             assert_eq!(txn.relation_row_count(&schema, "Account")?, 1);
+            assert_eq!(txn.canonical_fact_count(&schema, "Account")?, 1);
             assert_eq!(
                 txn.index_entry_count(&schema, "Holder", TUPLE_SET_ACCESS_NAME)?,
                 1
@@ -2031,6 +2071,7 @@ mod tests {
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 1);
             assert_eq!(txn.relation_row_count(&schema, "Holder")?, 1);
+            assert_eq!(txn.canonical_fact_count(&schema, "Holder")?, 1);
             assert!(txn.exact_row_exists(&schema, &holder_row(1, "Alice"))?);
             assert!(txn.dictionary_string_id("Alice")?.is_some());
             Ok::<(), Error>(())

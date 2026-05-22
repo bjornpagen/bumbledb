@@ -67,7 +67,7 @@ pub use storage_schema::{
 };
 
 /// Current on-disk storage format version.
-pub const STORAGE_FORMAT_VERSION: u32 = 2;
+pub const STORAGE_FORMAT_VERSION: u32 = 3;
 
 const DEFAULT_MAP_SIZE: usize = 64 * 1024 * 1024 * 1024;
 const DEFAULT_MAX_READERS: u32 = 1024;
@@ -542,6 +542,21 @@ mod tests {
 
         let env = Environment::open(dir.path())?;
         assert_eq!(env.storage_format_version()?, STORAGE_FORMAT_VERSION);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_v2_storage_format_after_set_native_break() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        env.write(|txn| txn.put_meta_bytes(STORAGE_FORMAT_VERSION_KEY, &2u32.to_be_bytes()))?;
+        drop(env);
+
+        assert!(matches!(
+            Environment::open(dir.path()),
+            Err(Error::Open(OpenError::StorageFormatMismatch { expected, found }))
+                if expected == STORAGE_FORMAT_VERSION && found == 2
+        ));
         Ok(())
     }
 
