@@ -11207,15 +11207,11 @@ impl AggregateState {
     }
 
     fn apply_count(&mut self) -> Result<()> {
-        self.apply_count_by(1)
-    }
-
-    fn apply_count_by(&mut self, value: u64) -> Result<()> {
         let AggregateState::Count(count) = self else {
             return Err(Error::internal("count aggregate state mismatch"));
         };
         *count = count
-            .checked_add(value)
+            .checked_add(1)
             .ok_or_else(|| Error::integer_overflow("count"))?;
         Ok(())
     }

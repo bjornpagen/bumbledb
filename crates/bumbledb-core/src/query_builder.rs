@@ -65,6 +65,10 @@ pub enum QueryBuildError {
     /// Aggregate domain is empty.
     #[error("aggregate domain must contain at least one variable")]
     EmptyAggregateDomain,
+
+    /// Aggregate measure is not functionally determined by the declared domain.
+    #[error("aggregate variable {variable} is not determined by aggregate domain")]
+    AmbiguousAggregateDomain { variable: String },
 }
 
 /// Direct schema-aware builder for typed query IR.
@@ -313,6 +317,15 @@ impl<'schema> QueryBuilder<'schema> {
                 value_type: type_name(&value_type),
             });
         }
+        if matches!(
+            function,
+            AggregateFunction::Sum | AggregateFunction::Min | AggregateFunction::Max
+        ) && !self.aggregate_measure_has_domain_atom(variable, &domain)
+        {
+            return Err(QueryBuildError::AmbiguousAggregateDomain {
+                variable: self.variables[variable].name.clone(),
+            });
+        }
         self.find.push(TypedFindTerm::Aggregate {
             function,
             variable,
@@ -320,6 +333,23 @@ impl<'schema> QueryBuilder<'schema> {
             value_type,
         });
         Ok(self)
+    }
+
+    fn aggregate_measure_has_domain_atom(&self, variable: usize, domain: &[usize]) -> bool {
+        self.clauses.iter().any(|clause| {
+            let TypedClause::Relation(atom) = clause else {
+                return false;
+            };
+            let vars = atom
+                .fields
+                .iter()
+                .filter_map(|field| match field.term {
+                    TypedTerm::Variable(variable) => Some(variable),
+                    TypedTerm::Input(_) | TypedTerm::Literal(_) | TypedTerm::Wildcard => None,
+                })
+                .collect::<std::collections::BTreeSet<_>>();
+            vars.contains(&variable) && domain.iter().all(|variable| vars.contains(variable))
+        })
     }
 
     fn bind_input(&mut self, name: &str, incoming: ValueType) -> QueryBuildResult<usize> {
@@ -816,6 +846,24 @@ mod tests {
         assert!(matches!(
             error,
             QueryBuildError::InvalidAggregateType { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_ambiguous_aggregate_domain() {
+        let schema = schema();
+        let mut builder = QueryBuilder::new(&schema);
+        let result = builder
+            .rel("Posting")
+            .and_then(|atom| atom.var("amount", "amount"))
+            .map(RelationAtomBuilder::done)
+            .and_then(|builder| builder.rel("Account"))
+            .and_then(|atom| atom.var("currency", "currency"))
+            .map(RelationAtomBuilder::done)
+            .and_then(|builder| builder.find_sum_over("amount", ["currency"]));
+        assert!(matches!(
+            result,
+            Err(QueryBuildError::AmbiguousAggregateDomain { .. })
         ));
     }
 
