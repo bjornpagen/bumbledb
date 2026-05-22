@@ -16,6 +16,10 @@ pub enum Failpoint {
     AfterDictionaryPut,
     /// After writing a current index entry.
     AfterCurrentIndexPut,
+    /// After writing a canonical fact entry.
+    AfterCanonicalFactPut,
+    /// Before updating stats metadata.
+    BeforeStatsUpdate,
     /// After updating stats metadata.
     AfterStatsUpdate,
     /// Immediately before LMDB commit.
@@ -30,6 +34,8 @@ impl Failpoint {
             Failpoint::BeforeDictionaryPut => "before_dictionary_put",
             Failpoint::AfterDictionaryPut => "after_dictionary_put",
             Failpoint::AfterCurrentIndexPut => "after_current_index_put",
+            Failpoint::AfterCanonicalFactPut => "after_canonical_fact_put",
+            Failpoint::BeforeStatsUpdate => "before_stats_update",
             Failpoint::AfterStatsUpdate => "after_stats_update",
             Failpoint::BeforeCommit => "before_commit",
         }

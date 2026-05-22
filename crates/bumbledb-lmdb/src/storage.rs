@@ -397,6 +397,7 @@ impl WriteTxn<'_> {
     fn insert_canonical_fact(&mut self, relation_id: u16, fact: &EncodedFact) -> Result<()> {
         let key = canonical_fact_key(relation_id, fact);
         self.dbs.index.put(&mut self.txn, key.as_slice(), &[])?;
+        crate::failpoints::check(crate::failpoints::Failpoint::AfterCanonicalFactPut)?;
         Ok(())
     }
 
@@ -1416,6 +1417,7 @@ fn adjust_index_entry_count(
 }
 
 fn adjust_u64_meta(txn: &mut WriteTxn<'_>, key: &[u8], delta: i64) -> Result<()> {
+    crate::failpoints::check(crate::failpoints::Failpoint::BeforeStatsUpdate)?;
     let current = read_u64_meta(txn, key)?.unwrap_or(0);
     let next = if delta >= 0 {
         current

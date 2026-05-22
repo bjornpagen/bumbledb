@@ -17,6 +17,8 @@ fn failpoints_abort_insert_delete_and_bulk_load() -> Result<(), Box<dyn std::err
         Failpoint::BeforeDictionaryPut,
         Failpoint::AfterDictionaryPut,
         Failpoint::AfterCurrentIndexPut,
+        Failpoint::AfterCanonicalFactPut,
+        Failpoint::BeforeStatsUpdate,
         Failpoint::AfterStatsUpdate,
         Failpoint::BeforeCommit,
     ] {

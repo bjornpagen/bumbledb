@@ -51,6 +51,12 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
                 "row count drift for {}",
                 relation.name
             );
+            assert_eq!(
+                txn.canonical_fact_count(schema, &relation.name)?,
+                primary_rows.len(),
+                "canonical fact count drift for {}",
+                relation.name
+            );
 
             for path in schema.access_paths(&relation.name)? {
                 let rows = txn
