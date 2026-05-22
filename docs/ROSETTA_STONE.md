@@ -33,14 +33,14 @@ Storage format mismatch on open is a hard failure. Schema mismatch on open is a 
 
 ## Relation Semantics
 
-- Every relation is a set of full tuples.
+- Every relation is a set of full facts.
 - Exact duplicate insert is an idempotent no-op.
-- Delete is exact tuple deletion.
-- Delete of an absent tuple is an idempotent no-op.
+- Delete is exact fact deletion.
+- Delete of an absent fact is an idempotent no-op.
 - There is no update operation.
 - There is no DB-side generated ID allocator.
 - Projection output has set semantics.
-- SQL-style bag semantics are rejected.
+- SQL-style multiset behavior is out of scope.
 - There is no `SELECT DISTINCT` concept because distinctness is the default.
 
 ## Schema Model
@@ -60,7 +60,7 @@ pub struct RelationDescriptor {
 
 There is no primary-key descriptor, no generated-ID descriptor, and no relation-kind enum.
 
-Canonical tuple membership is implicit for every relation. It is not modeled as a primary key or as a required covering unique constraint.
+Canonical fact membership is implicit for every relation. It is not modeled as a primary key or as a required covering unique constraint.
 
 Unique constraints are named logical constraints:
 
@@ -109,7 +109,7 @@ Supported persistent types:
 - `Bytes`
 - `Serial { type_name, owning_relation }`
 
-Open numeric domains use `U64`. Closed domains use one-byte `Enum` values. String and bytes values are interned. There are no nulls; optional facts are represented by absent tuples in separate relations.
+Open numeric domains use `U64`. Closed domains use one-byte `Enum` values. String and bytes values are interned. There are no nulls; optional facts are represented by absent facts in separate relations.
 
 ## Storage Model
 
@@ -118,21 +118,21 @@ LMDB is the only storage backend.
 Current storage has a canonical fact namespace plus access namespaces:
 
 ```text
-canonical fact = T | relation_id | tuple_bytes -> empty
+canonical fact = T | relation_id | fact_bytes -> empty
 access entry = A | relation_id | access_id | access_key_bytes -> empty
 ```
 
-The canonical fact namespace owns exact tuple membership. Access entries support scans, constraints, and query-image construction. Access layouts are generated from tuple-set access, named unique constraints, foreign keys, range annotations, and explicit physical indexes.
+The canonical fact namespace owns exact fact membership. Access entries support scans, constraints, and query-image construction. Access layouts are generated from fact-set access, named unique constraints, foreign keys, range annotations, and explicit physical indexes.
 
 Query images are built from current access state under an LMDB read snapshot. Durable full-relation segment publication and history/audit records are not part of the v4 write path.
 
 ## Write Semantics
 
-`insert` returns whether the tuple was inserted or already present.
+`insert` returns whether the fact was inserted or already present.
 
-`delete` returns whether the tuple was deleted or absent.
+`delete` returns whether the fact was deleted or absent.
 
-Bulk load is an ETL convenience that applies insert semantics in one write transaction and counts only newly inserted tuples.
+Bulk load is an ETL convenience that applies insert semantics in one write transaction and counts only newly inserted facts.
 
 Successful logical writes advance the Bumbledb storage transaction ID. Duplicate inserts and absent deletes do not change logical storage state.
 
@@ -142,7 +142,7 @@ Failed writes leave no partial canonical fact, access entry, constraint, diction
 
 Queries are built as typed IR with schema-aware validation.
 
-The logical solution of a query is a set of variable bindings. Projection returns the set of projected tuples. Existential variables do not multiply projected output.
+The logical solution of a query is a set of variable bindings. Projection returns the set of projected facts. Existential variables do not multiply projected output.
 
 Aggregates are explicit set-domain operations:
 
@@ -154,15 +154,15 @@ min(t).over([posting])
 max(t).over([posting])
 ```
 
-`count_domain(domain_vars)` counts distinct domain tuples per group. `count_distinct(var)` counts distinct variable values per group. `sum(value).over(domain_vars)` sums one value per distinct domain tuple per group; the builder rejects aggregate measures not determined by the declared domain. `min` and `max` use the values induced by the declared domain.
+`count_domain(domain_vars)` counts distinct domain facts per group. `count_distinct(var)` counts distinct variable values per group. `sum(value).over(domain_vars)` sums one value per distinct domain fact per group; the builder rejects aggregate measures not determined by the declared domain. `min` and `max` use the values induced by the declared domain.
 
-Global domain count over an empty input returns one row containing `0`. Grouped aggregates over empty input return zero rows.
+Global domain count over an empty input returns one fact containing `0`. Grouped aggregates over empty input return zero facts.
 
 ## Query Execution
 
 The retained execution backbone is Free Join/LFTJ plus narrow direct projection/storage paths. Legacy product-of-fanout count kernels and scalar prepared count caches were deleted because they encoded bag-style witness multiplicity.
 
-Projection materialization uses a result-set sink. Duplicate projected tuples are rejected before final output decoding.
+Projection materialization uses a result-set sink. Duplicate projected facts are rejected before final output decoding.
 
 Query image access APIs expose relation cardinality, access-prefix existence, and access-prefix cardinality directly over current set/access state.
 
@@ -173,7 +173,7 @@ Query execution returns `QueryOutput` containing a `QueryResultSet`:
 ```rust
 pub struct QueryResultSet {
     pub columns: Vec<ResultColumn>,
-    pub tuples: Vec<ResultTuple>,
+    pub facts: Vec<ResultFact>,
 }
 ```
 
@@ -183,7 +183,7 @@ pub struct QueryResultSet {
 
 Benchmarks must validate exact Bumbledb result values against SQLite before timing numbers matter.
 
-SQLite projection references use `SELECT DISTINCT`. SQLite count references use domain-correct `COUNT(DISTINCT ...)` or equivalent subqueries. Aggregate values are compared directly, not by counting returned SQLite rows.
+SQLite projection references use `SELECT DISTINCT`. SQLite count references use domain-correct `COUNT(DISTINCT ...)` or equivalent subqueries. Aggregate values are compared directly, not by counting returned SQLite facts.
 
 Prepared-result cache behavior must be explicitly reported; it must never be hidden as normal execution.
 

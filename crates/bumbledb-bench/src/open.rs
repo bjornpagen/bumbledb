@@ -8,7 +8,7 @@ use bumbledb_core::schema::{
     ConstraintDescriptor, FieldDescriptor, IndexDescriptor, RelationDescriptor, SchemaDescriptor,
     ValueType,
 };
-use bumbledb_lmdb::{Row, Value};
+use bumbledb_lmdb::{Fact, Value};
 use csv::{ReaderBuilder, StringRecord};
 use rusqlite::Connection;
 
@@ -18,28 +18,28 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub(crate) enum RowSource {
+pub(crate) enum FactSource {
     Job { dir: PathBuf, limit: Option<usize> },
 }
 
 pub(crate) fn stream_rows(
-    source: &RowSource,
-    emit: impl FnMut(Row) -> Result<(), Box<dyn std::error::Error>>,
+    source: &FactSource,
+    emit: impl FnMut(Fact) -> Result<(), Box<dyn std::error::Error>>,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     match source {
-        RowSource::Job { dir, limit } => stream_job_rows(dir, *limit, emit),
+        FactSource::Job { dir, limit } => stream_job_rows(dir, *limit, emit),
     }
 }
 
 pub(crate) fn insert_sqlite_streaming(
-    source: &RowSource,
+    source: &FactSource,
     conn: &mut Connection,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     match source {
-        RowSource::Job { dir, limit } => {
+        FactSource::Job { dir, limit } => {
             let tx = conn.unchecked_transaction()?;
-            let inserted = stream_job_rows(dir, *limit, |row| {
-                insert_job_sqlite_row(&tx, &row)?;
+            let inserted = stream_job_rows(dir, *limit, |fact| {
+                insert_job_sqlite_row(&tx, &fact)?;
                 Ok(())
             })?;
             tx.commit()?;
@@ -72,8 +72,8 @@ fn job_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std:
     Ok(Dataset {
         name: "job",
         schema: job_schema(),
-        rows: Vec::new(),
-        row_source: Some(RowSource::Job {
+        facts: Vec::new(),
+        fact_source: Some(FactSource::Job {
             dir: dir.to_path_buf(),
             limit,
         }),
@@ -86,7 +86,7 @@ fn job_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std:
 fn stream_job_rows(
     dir: &Path,
     limit: Option<usize>,
-    mut emit: impl FnMut(Row) -> Result<(), Box<dyn std::error::Error>>,
+    mut emit: impl FnMut(Fact) -> Result<(), Box<dyn std::error::Error>>,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let dimension_limit = scaled_limit(limit, 20);
     let name_limit = scaled_limit(limit, 10);
@@ -105,8 +105,8 @@ fn stream_job_rows(
     let mut names = BTreeSet::new();
     let mut titles = BTreeSet::new();
     macro_rules! emit_row {
-        ($row:expr) => {{
-            emit($row)?;
+        ($fact:expr) => {{
+            emit($fact)?;
             emitted += 1;
         }};
     }
@@ -117,7 +117,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         comp_cast_types.insert(id);
-        emit(Row::new(
+        emit(Fact::new(
             "CompCastType",
             [
                 ("id", Value::Serial(id)),
@@ -133,7 +133,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         company_types.insert(id);
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "CompanyType",
             [
                 ("id", Value::Serial(id)),
@@ -148,7 +148,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         info_types.insert(id);
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "InfoType",
             [
                 ("id", Value::Serial(id)),
@@ -163,7 +163,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         kind_types.insert(id);
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "KindType",
             [
                 ("id", Value::Serial(id)),
@@ -178,7 +178,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         link_types.insert(id);
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "LinkType",
             [
                 ("id", Value::Serial(id)),
@@ -193,7 +193,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         role_types.insert(id);
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "RoleType",
             [
                 ("id", Value::Serial(id)),
@@ -208,7 +208,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         keywords.insert(id);
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "Keyword",
             [
                 ("id", Value::Serial(id)),
@@ -224,7 +224,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         companies.insert(id);
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "CompanyName",
             [
                 ("id", Value::Serial(id)),
@@ -243,7 +243,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         characters.insert(id);
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "CharName",
             [
                 ("id", Value::Serial(id)),
@@ -262,7 +262,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         names.insert(id);
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "Name",
             [
                 ("id", Value::Serial(id)),
@@ -284,7 +284,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         titles.insert(id);
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "Title",
             [
                 ("id", Value::Serial(id)),
@@ -318,7 +318,7 @@ fn stream_job_rows(
         if id == 0 || !names.contains(&person) {
             return Ok(false);
         }
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "AkaName",
             [
                 ("id", Value::Serial(id)),
@@ -339,7 +339,7 @@ fn stream_job_rows(
         if id == 0 || !(titles.contains(&movie) && kind_types.contains(&kind)) {
             return Ok(false);
         }
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "AkaTitle",
             [
                 ("id", Value::Serial(id)),
@@ -380,7 +380,7 @@ fn stream_job_rows(
         {
             return Ok(false);
         }
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "CastInfo",
             [
                 ("id", Value::Serial(id)),
@@ -406,7 +406,7 @@ fn stream_job_rows(
         {
             return Ok(false);
         }
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "CompleteCast",
             [
                 ("id", Value::Serial(id)),
@@ -429,7 +429,7 @@ fn stream_job_rows(
         {
             return Ok(false);
         }
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "MovieCompanies",
             [
                 ("id", Value::Serial(id)),
@@ -448,7 +448,7 @@ fn stream_job_rows(
         if id == 0 || !(titles.contains(&movie) && info_types.contains(&info_type)) {
             return Ok(false);
         }
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "MovieInfo",
             [
                 ("id", Value::Serial(id)),
@@ -467,7 +467,7 @@ fn stream_job_rows(
         if id == 0 || !(titles.contains(&movie) && info_types.contains(&info_type)) {
             return Ok(false);
         }
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "MovieInfoIdx",
             [
                 ("id", Value::Serial(id)),
@@ -486,7 +486,7 @@ fn stream_job_rows(
         if id == 0 || !(titles.contains(&movie) && keywords.contains(&keyword)) {
             return Ok(false);
         }
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "MovieKeyword",
             [
                 ("id", Value::Serial(id)),
@@ -508,7 +508,7 @@ fn stream_job_rows(
         {
             return Ok(false);
         }
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "MovieLink",
             [
                 ("id", Value::Serial(id)),
@@ -526,7 +526,7 @@ fn stream_job_rows(
         if id == 0 || !(names.contains(&person) && info_types.contains(&info_type)) {
             return Ok(false);
         }
-        emit_row!(Row::new(
+        emit_row!(Fact::new(
             "PersonInfo",
             [
                 ("id", Value::Serial(id)),
@@ -929,7 +929,7 @@ fn job_relation_order(name: &str) -> usize {
 
 fn job_queries() -> Vec<BenchQuery> {
     // Bumbledb follows set/Codd aggregate semantics: global count over an empty
-    // input returns a single row containing 0. Keep equivalent SQLite COUNT(*)
+    // input returns a single fact containing 0. Keep equivalent SQLite COUNT(*)
     // queries free of HAVING COUNT(*) > 0, or empty JOB slices will mismatch.
     vec![
         BenchQuery {
@@ -1546,7 +1546,7 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
     let mut title_ids = BTreeMap::new();
     let mut name_ids = BTreeMap::new();
     let mut symbols = Symbols::default();
-    let mut rows = Vec::new();
+    let mut facts = Vec::new();
 
     let title_path = require_file(dir, "title.basics.tsv")?;
     let mut title_reader = tsv_reader(&title_path)?;
@@ -1558,7 +1558,7 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         let tconst = get(&record, 0);
         let id = (title_ids.len() + 1) as u64;
         title_ids.insert(tconst.to_owned(), id);
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Title",
             [
                 ("id", Value::Serial(id)),
@@ -1582,7 +1582,7 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         let nconst = get(&record, 0);
         let id = (name_ids.len() + 1) as u64;
         name_ids.insert(nconst.to_owned(), id);
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Name",
             [
                 ("id", Value::Serial(id)),
@@ -1602,7 +1602,7 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         let Some(title) = title_ids.get(get(&record, 0)).copied() else {
             continue;
         };
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "TitleRating",
             [
                 ("title", Value::Serial(title)),
@@ -1627,7 +1627,7 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         let category = symbols.id(get(&record, 3));
         sample_name = name;
         sample_category = category;
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Principal",
             [
                 ("title", Value::Serial(title)),
@@ -1641,8 +1641,8 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
     Ok(Dataset {
         name: "imdb",
         schema: imdb_schema(),
-        rows,
-        row_source: None,
+        facts,
+        fact_source: None,
         sqlite_schema: r#"
             CREATE TABLE title (id INTEGER PRIMARY KEY, title_type INTEGER NOT NULL, primary_title TEXT NOT NULL, start_year INTEGER NOT NULL);
             CREATE TABLE name (id INTEGER PRIMARY KEY, name TEXT NOT NULL, birth_year INTEGER NOT NULL);
@@ -1810,7 +1810,7 @@ fn tpch_open_dataset(
     dir: &Path,
     limit: Option<usize>,
 ) -> Result<Dataset, Box<dyn std::error::Error>> {
-    let mut rows = Vec::new();
+    let mut facts = Vec::new();
     let mut customers = BTreeSet::new();
     let mut suppliers = BTreeSet::new();
     let mut parts = BTreeSet::new();
@@ -1818,7 +1818,7 @@ fn tpch_open_dataset(
     read_pipe(dir, "customer.tbl", limit, |record| {
         let id = parse_u64(get(&record, 0));
         customers.insert(id);
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Customer",
             [
                 ("id", Value::Serial(id)),
@@ -1830,7 +1830,7 @@ fn tpch_open_dataset(
     read_pipe(dir, "supplier.tbl", limit, |record| {
         let id = parse_u64(get(&record, 0));
         suppliers.insert(id);
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Supplier",
             [
                 ("id", Value::Serial(id)),
@@ -1842,7 +1842,7 @@ fn tpch_open_dataset(
     read_pipe(dir, "part.tbl", limit, |record| {
         let id = parse_u64(get(&record, 0));
         parts.insert(id);
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Part",
             [
                 ("id", Value::Serial(id)),
@@ -1858,7 +1858,7 @@ fn tpch_open_dataset(
             return Ok(());
         }
         orders.insert(id);
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Orders",
             [
                 ("id", Value::Serial(id)),
@@ -1878,10 +1878,10 @@ fn tpch_open_dataset(
         if !(orders.contains(&order) && parts.contains(&part) && suppliers.contains(&supplier)) {
             return Ok(());
         }
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "LineItem",
             [
-                ("id", Value::Serial(rows.len() as u64 + 1)),
+                ("id", Value::Serial(facts.len() as u64 + 1)),
                 ("order", Value::Serial(order)),
                 ("part", Value::Serial(part)),
                 ("supplier", Value::Serial(supplier)),
@@ -1901,21 +1901,21 @@ fn tpch_open_dataset(
 
     let mut dataset = super_tpch_dataset();
     dataset.name = "tpch-open";
-    dataset.rows = rows;
-    dataset.row_source = None;
+    dataset.facts = facts;
+    dataset.fact_source = None;
     Ok(dataset)
 }
 
 fn lahman_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std::error::Error>> {
     let mut player_ids = BTreeMap::new();
     let mut team_ids = BTreeMap::new();
-    let mut rows = Vec::new();
+    let mut facts = Vec::new();
 
     read_csv(dir, "People.csv", limit, |headers, record| {
         let player_id = col(headers, record, &["playerID"]);
         let id = (player_ids.len() + 1) as u64;
         player_ids.insert(player_id.to_owned(), id);
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Player",
             [
                 ("id", Value::Serial(id)),
@@ -1944,7 +1944,7 @@ fn lahman_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn s
             );
             let id = (team_ids.len() + 1) as u64;
             team_ids.insert(key, id);
-            rows.push(Row::new(
+            facts.push(Fact::new(
                 "Team",
                 [
                     ("id", Value::Serial(id)),
@@ -1983,7 +1983,7 @@ fn lahman_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn s
             ) else {
                 return Ok(());
             };
-            rows.push(Row::new(
+            facts.push(Fact::new(
                 "Batting",
                 [
                     ("player", Value::Serial(player)),
@@ -2023,7 +2023,7 @@ fn lahman_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn s
             ) else {
                 return Ok(());
             };
-            rows.push(Row::new(
+            facts.push(Fact::new(
                 "Salary",
                 [
                     ("player", Value::Serial(player)),
@@ -2042,7 +2042,7 @@ fn lahman_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn s
         },
     )?;
 
-    Ok(lahman_from_rows(rows))
+    Ok(lahman_from_rows(facts))
 }
 
 fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std::error::Error>> {
@@ -2050,14 +2050,14 @@ fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
     let post_file = find_prefixed(dir, "post")?;
     let knows_file = find_prefixed(dir, "person_knows_person")?;
     let likes_file = find_prefixed(dir, "person_likes_post")?;
-    let mut rows = Vec::new();
+    let mut facts = Vec::new();
     let mut people = BTreeSet::new();
     let mut posts = BTreeSet::new();
 
     read_pipe_path(&person_file, limit, |headers, record| {
         let id = parse_u64(col(headers, record, &["id", "Person.id"]));
         people.insert(id);
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Person",
             [
                 ("id", Value::Serial(id)),
@@ -2088,7 +2088,7 @@ fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
             return Ok(());
         }
         posts.insert(id);
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Post",
             [
                 ("id", Value::Serial(id)),
@@ -2116,7 +2116,7 @@ fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         if !(people.contains(&p1) && people.contains(&p2)) {
             return Ok(());
         }
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Knows",
             [
                 ("person1", Value::Serial(p1)),
@@ -2139,7 +2139,7 @@ fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         if !(people.contains(&person) && posts.contains(&post)) {
             return Ok(());
         }
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Likes",
             [
                 ("person", Value::Serial(person)),
@@ -2156,10 +2156,10 @@ fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         ));
         Ok(())
     })?;
-    Ok(ldbc_from_rows(rows))
+    Ok(ldbc_from_rows(facts))
 }
 
-fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
+fn lahman_from_rows(facts: Vec<Fact>) -> Dataset {
     Dataset {
         name: "lahman",
         schema: SchemaDescriptor::new(
@@ -2239,8 +2239,8 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                 )),
             ],
         ),
-        rows,
-        row_source: None,
+        facts,
+        fact_source: None,
         sqlite_schema: r#"
             CREATE TABLE player (id INTEGER PRIMARY KEY, first TEXT NOT NULL, last TEXT NOT NULL);
             CREATE TABLE team (id INTEGER PRIMARY KEY, year INTEGER NOT NULL, league TEXT NOT NULL, name TEXT NOT NULL);
@@ -2281,7 +2281,7 @@ fn build_lahman_salary_hits_by_year(schema: &SchemaDescriptor) -> QueryBuildResu
         .finish()
 }
 
-fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
+fn ldbc_from_rows(facts: Vec<Fact>) -> Dataset {
     Dataset {
         name: "ldbc",
         schema: SchemaDescriptor::new(
@@ -2363,8 +2363,8 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                 )),
             ],
         ),
-        rows,
-        row_source: None,
+        facts,
+        fact_source: None,
         sqlite_schema: r#"
             CREATE TABLE person (id INTEGER PRIMARY KEY, first TEXT NOT NULL, created INTEGER NOT NULL);
             CREATE TABLE post (id INTEGER PRIMARY KEY, creator INTEGER NOT NULL, created INTEGER NOT NULL);
@@ -2676,10 +2676,10 @@ impl Symbols {
     }
 }
 
-fn insert_job_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std::error::Error>> {
+fn insert_job_sqlite(conn: &Connection, facts: &[Fact]) -> Result<(), Box<dyn std::error::Error>> {
     let tx = conn.unchecked_transaction()?;
-    for row in rows {
-        insert_job_sqlite_row(&tx, row)?;
+    for fact in facts {
+        insert_job_sqlite_row(&tx, fact)?;
     }
     tx.commit()?;
     Ok(())
@@ -2687,126 +2687,134 @@ fn insert_job_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std:
 
 fn insert_job_sqlite_row(
     tx: &rusqlite::Transaction<'_>,
-    row: &Row,
+    fact: &Fact,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    match row.relation() {
+    match fact.relation() {
         "AkaName" => {
-            tx.execute("INSERT INTO aka_name (id, person_id, name, imdb_index, name_pcode_cf, name_pcode_nf, surname_pcode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", rusqlite::params![id(row, "id")?, rf(row, "person")?, text(row, "name")?, text(row, "imdb_index")?, text(row, "name_pcode_cf")?, text(row, "name_pcode_nf")?, text(row, "surname_pcode")?])?;
+            tx.execute("INSERT INTO aka_name (id, person_id, name, imdb_index, name_pcode_cf, name_pcode_nf, surname_pcode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", rusqlite::params![id(fact, "id")?, rf(fact, "person")?, text(fact, "name")?, text(fact, "imdb_index")?, text(fact, "name_pcode_cf")?, text(fact, "name_pcode_nf")?, text(fact, "surname_pcode")?])?;
         }
         "AkaTitle" => {
-            tx.execute("INSERT INTO aka_title (id, movie_id, title, imdb_index, kind_id, production_year, phonetic_code, episode_of_id, season_nr, episode_nr, note) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, text(row, "title")?, text(row, "imdb_index")?, rf(row, "kind")?, i64v(row, "production_year")?, text(row, "phonetic_code")?, u64v(row, "episode_of")?, i64v(row, "season_nr")?, i64v(row, "episode_nr")?, text(row, "note")?])?;
+            tx.execute("INSERT INTO aka_title (id, movie_id, title, imdb_index, kind_id, production_year, phonetic_code, episode_of_id, season_nr, episode_nr, note) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", rusqlite::params![id(fact, "id")?, rf(fact, "movie")?, text(fact, "title")?, text(fact, "imdb_index")?, rf(fact, "kind")?, i64v(fact, "production_year")?, text(fact, "phonetic_code")?, u64v(fact, "episode_of")?, i64v(fact, "season_nr")?, i64v(fact, "episode_nr")?, text(fact, "note")?])?;
         }
         "CastInfo" => {
-            tx.execute("INSERT INTO cast_info (id, person_id, movie_id, person_role_id, note, nr_order, role_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", rusqlite::params![id(row, "id")?, rf(row, "person")?, rf(row, "movie")?, rf(row, "person_role")?, text(row, "note")?, i64v(row, "nr_order")?, rf(row, "role")?])?;
+            tx.execute("INSERT INTO cast_info (id, person_id, movie_id, person_role_id, note, nr_order, role_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", rusqlite::params![id(fact, "id")?, rf(fact, "person")?, rf(fact, "movie")?, rf(fact, "person_role")?, text(fact, "note")?, i64v(fact, "nr_order")?, rf(fact, "role")?])?;
         }
         "CharName" => {
-            tx.execute("INSERT INTO char_name (id, name, imdb_index, imdb_id, name_pcode_nf, surname_pcode) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![id(row, "id")?, text(row, "name")?, text(row, "imdb_index")?, i64v(row, "imdb_id")?, text(row, "name_pcode_nf")?, text(row, "surname_pcode")?])?;
+            tx.execute("INSERT INTO char_name (id, name, imdb_index, imdb_id, name_pcode_nf, surname_pcode) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![id(fact, "id")?, text(fact, "name")?, text(fact, "imdb_index")?, i64v(fact, "imdb_id")?, text(fact, "name_pcode_nf")?, text(fact, "surname_pcode")?])?;
         }
         "CompCastType" => {
             tx.execute(
                 "INSERT INTO comp_cast_type (id, kind) VALUES (?1, ?2)",
-                rusqlite::params![id(row, "id")?, text(row, "kind")?],
+                rusqlite::params![id(fact, "id")?, text(fact, "kind")?],
             )?;
         }
         "CompanyName" => {
-            tx.execute("INSERT INTO company_name (id, name, country_code, imdb_id, name_pcode_nf, name_pcode_sf) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![id(row, "id")?, text(row, "name")?, text(row, "country_code")?, i64v(row, "imdb_id")?, text(row, "name_pcode_nf")?, text(row, "name_pcode_sf")?])?;
+            tx.execute("INSERT INTO company_name (id, name, country_code, imdb_id, name_pcode_nf, name_pcode_sf) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![id(fact, "id")?, text(fact, "name")?, text(fact, "country_code")?, i64v(fact, "imdb_id")?, text(fact, "name_pcode_nf")?, text(fact, "name_pcode_sf")?])?;
         }
         "CompanyType" => {
             tx.execute(
                 "INSERT INTO company_type (id, kind) VALUES (?1, ?2)",
-                rusqlite::params![id(row, "id")?, text(row, "kind")?],
+                rusqlite::params![id(fact, "id")?, text(fact, "kind")?],
             )?;
         }
         "CompleteCast" => {
-            tx.execute("INSERT INTO complete_cast (id, movie_id, subject_id, status_id) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "subject")?, rf(row, "status")?])?;
+            tx.execute("INSERT INTO complete_cast (id, movie_id, subject_id, status_id) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![id(fact, "id")?, rf(fact, "movie")?, rf(fact, "subject")?, rf(fact, "status")?])?;
         }
         "InfoType" => {
             tx.execute(
                 "INSERT INTO info_type (id, info) VALUES (?1, ?2)",
-                rusqlite::params![id(row, "id")?, text(row, "info")?],
+                rusqlite::params![id(fact, "id")?, text(fact, "info")?],
             )?;
         }
         "Keyword" => {
             tx.execute(
                 "INSERT INTO keyword (id, keyword, phonetic_code) VALUES (?1, ?2, ?3)",
                 rusqlite::params![
-                    id(row, "id")?,
-                    text(row, "keyword")?,
-                    text(row, "phonetic_code")?
+                    id(fact, "id")?,
+                    text(fact, "keyword")?,
+                    text(fact, "phonetic_code")?
                 ],
             )?;
         }
         "KindType" => {
             tx.execute(
                 "INSERT INTO kind_type (id, kind) VALUES (?1, ?2)",
-                rusqlite::params![id(row, "id")?, text(row, "kind")?],
+                rusqlite::params![id(fact, "id")?, text(fact, "kind")?],
             )?;
         }
         "LinkType" => {
             tx.execute(
                 "INSERT INTO link_type (id, link) VALUES (?1, ?2)",
-                rusqlite::params![id(row, "id")?, text(row, "link")?],
+                rusqlite::params![id(fact, "id")?, text(fact, "link")?],
             )?;
         }
         "MovieCompanies" => {
-            tx.execute("INSERT INTO movie_companies (id, movie_id, company_id, company_type_id, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "company")?, rf(row, "company_type")?, text(row, "note")?])?;
+            tx.execute("INSERT INTO movie_companies (id, movie_id, company_id, company_type_id, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(fact, "id")?, rf(fact, "movie")?, rf(fact, "company")?, rf(fact, "company_type")?, text(fact, "note")?])?;
         }
         "MovieInfo" => {
-            tx.execute("INSERT INTO movie_info (id, movie_id, info_type_id, info, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "info_type")?, text(row, "info")?, text(row, "note")?])?;
+            tx.execute("INSERT INTO movie_info (id, movie_id, info_type_id, info, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(fact, "id")?, rf(fact, "movie")?, rf(fact, "info_type")?, text(fact, "info")?, text(fact, "note")?])?;
         }
         "MovieInfoIdx" => {
-            tx.execute("INSERT INTO movie_info_idx (id, movie_id, info_type_id, info, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "info_type")?, text(row, "info")?, text(row, "note")?])?;
+            tx.execute("INSERT INTO movie_info_idx (id, movie_id, info_type_id, info, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(fact, "id")?, rf(fact, "movie")?, rf(fact, "info_type")?, text(fact, "info")?, text(fact, "note")?])?;
         }
         "MovieKeyword" => {
             tx.execute(
                 "INSERT INTO movie_keyword (id, movie_id, keyword_id) VALUES (?1, ?2, ?3)",
-                rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "keyword")?],
+                rusqlite::params![id(fact, "id")?, rf(fact, "movie")?, rf(fact, "keyword")?],
             )?;
         }
         "MovieLink" => {
-            tx.execute("INSERT INTO movie_link (id, movie_id, linked_movie_id, link_type_id) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![id(row, "id")?, rf(row, "movie")?, rf(row, "linked_movie")?, rf(row, "link_type")?])?;
+            tx.execute("INSERT INTO movie_link (id, movie_id, linked_movie_id, link_type_id) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![id(fact, "id")?, rf(fact, "movie")?, rf(fact, "linked_movie")?, rf(fact, "link_type")?])?;
         }
         "Name" => {
-            tx.execute("INSERT INTO name (id, name, imdb_index, imdb_id, gender, name_pcode_cf, name_pcode_nf, surname_pcode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", rusqlite::params![id(row, "id")?, text(row, "name")?, text(row, "imdb_index")?, i64v(row, "imdb_id")?, text(row, "gender")?, text(row, "name_pcode_cf")?, text(row, "name_pcode_nf")?, text(row, "surname_pcode")?])?;
+            tx.execute("INSERT INTO name (id, name, imdb_index, imdb_id, gender, name_pcode_cf, name_pcode_nf, surname_pcode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", rusqlite::params![id(fact, "id")?, text(fact, "name")?, text(fact, "imdb_index")?, i64v(fact, "imdb_id")?, text(fact, "gender")?, text(fact, "name_pcode_cf")?, text(fact, "name_pcode_nf")?, text(fact, "surname_pcode")?])?;
         }
         "PersonInfo" => {
-            tx.execute("INSERT INTO person_info (id, person_id, info_type_id, info, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(row, "id")?, rf(row, "person")?, rf(row, "info_type")?, text(row, "info")?, text(row, "note")?])?;
+            tx.execute("INSERT INTO person_info (id, person_id, info_type_id, info, note) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![id(fact, "id")?, rf(fact, "person")?, rf(fact, "info_type")?, text(fact, "info")?, text(fact, "note")?])?;
         }
         "RoleType" => {
             tx.execute(
                 "INSERT INTO role_type (id, role) VALUES (?1, ?2)",
-                rusqlite::params![id(row, "id")?, text(row, "role")?],
+                rusqlite::params![id(fact, "id")?, text(fact, "role")?],
             )?;
         }
         "Title" => {
-            tx.execute("INSERT INTO title (id, title, imdb_index, kind_id, production_year, imdb_id, phonetic_code, episode_of_id, season_nr, episode_nr, series_years) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", rusqlite::params![id(row, "id")?, text(row, "title")?, text(row, "imdb_index")?, rf(row, "kind")?, i64v(row, "production_year")?, i64v(row, "imdb_id")?, text(row, "phonetic_code")?, u64v(row, "episode_of")?, i64v(row, "season_nr")?, i64v(row, "episode_nr")?, text(row, "series_years")?])?;
+            tx.execute("INSERT INTO title (id, title, imdb_index, kind_id, production_year, imdb_id, phonetic_code, episode_of_id, season_nr, episode_nr, series_years) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)", rusqlite::params![id(fact, "id")?, text(fact, "title")?, text(fact, "imdb_index")?, rf(fact, "kind")?, i64v(fact, "production_year")?, i64v(fact, "imdb_id")?, text(fact, "phonetic_code")?, u64v(fact, "episode_of")?, i64v(fact, "season_nr")?, i64v(fact, "episode_nr")?, text(fact, "series_years")?])?;
         }
         _ => {}
     }
     Ok(())
 }
 
-fn insert_imdb_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std::error::Error>> {
+fn insert_imdb_sqlite(conn: &Connection, facts: &[Fact]) -> Result<(), Box<dyn std::error::Error>> {
     let tx = conn.unchecked_transaction()?;
-    for row in rows {
-        match row.relation() {
+    for fact in facts {
+        match fact.relation() {
             "Title" => {
-                tx.execute("INSERT INTO title (id, title_type, primary_title, start_year) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![id(row, "id")?, symbol(row, "title_type")?, text(row, "primary_title")?, i64v(row, "start_year")?])?;
+                tx.execute("INSERT INTO title (id, title_type, primary_title, start_year) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![id(fact, "id")?, symbol(fact, "title_type")?, text(fact, "primary_title")?, i64v(fact, "start_year")?])?;
             }
             "Name" => {
                 tx.execute(
                     "INSERT INTO name (id, name, birth_year) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id")?, text(row, "name")?, i64v(row, "birth_year")?],
+                    rusqlite::params![
+                        id(fact, "id")?,
+                        text(fact, "name")?,
+                        i64v(fact, "birth_year")?
+                    ],
                 )?;
             }
             "TitleRating" => {
                 tx.execute(
                     "INSERT INTO title_rating (title, rating, votes) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![rf(row, "title")?, i64v(row, "rating")?, i64v(row, "votes")?],
+                    rusqlite::params![
+                        rf(fact, "title")?,
+                        i64v(fact, "rating")?,
+                        i64v(fact, "votes")?
+                    ],
                 )?;
             }
             "Principal" => {
-                tx.execute("INSERT INTO principal (title, name, category, ordering) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![rf(row, "title")?, rf(row, "name")?, symbol(row, "category")?, u64v(row, "ordering")?])?;
+                tx.execute("INSERT INTO principal (title, name, category, ordering) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![rf(fact, "title")?, rf(fact, "name")?, symbol(fact, "category")?, u64v(fact, "ordering")?])?;
             }
             _ => {}
         }
@@ -2815,38 +2823,41 @@ fn insert_imdb_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std
     Ok(())
 }
 
-fn insert_lahman_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std::error::Error>> {
+fn insert_lahman_sqlite(
+    conn: &Connection,
+    facts: &[Fact],
+) -> Result<(), Box<dyn std::error::Error>> {
     let tx = conn.unchecked_transaction()?;
-    for row in rows {
-        match row.relation() {
+    for fact in facts {
+        match fact.relation() {
             "Player" => {
                 tx.execute(
                     "INSERT INTO player (id, first, last) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id")?, text(row, "first")?, text(row, "last")?],
+                    rusqlite::params![id(fact, "id")?, text(fact, "first")?, text(fact, "last")?],
                 )?;
             }
             "Team" => {
                 tx.execute(
                     "INSERT INTO team (id, year, league, name) VALUES (?1, ?2, ?3, ?4)",
                     rusqlite::params![
-                        id(row, "id")?,
-                        i64v(row, "year")?,
-                        text(row, "league")?,
-                        text(row, "name")?
+                        id(fact, "id")?,
+                        i64v(fact, "year")?,
+                        text(fact, "league")?,
+                        text(fact, "name")?
                     ],
                 )?;
             }
             "Batting" => {
-                tx.execute("INSERT INTO batting (player, team, year, games, hits) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![rf(row, "player")?, rf(row, "team")?, i64v(row, "year")?, i64v(row, "games")?, i64v(row, "hits")?])?;
+                tx.execute("INSERT INTO batting (player, team, year, games, hits) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![rf(fact, "player")?, rf(fact, "team")?, i64v(fact, "year")?, i64v(fact, "games")?, i64v(fact, "hits")?])?;
             }
             "Salary" => {
                 tx.execute(
                     "INSERT INTO salary (player, team, year, salary) VALUES (?1, ?2, ?3, ?4)",
                     rusqlite::params![
-                        rf(row, "player")?,
-                        rf(row, "team")?,
-                        i64v(row, "year")?,
-                        i64v(row, "salary")?
+                        rf(fact, "player")?,
+                        rf(fact, "team")?,
+                        i64v(fact, "year")?,
+                        i64v(fact, "salary")?
                     ],
                 )?;
             }
@@ -2857,36 +2868,36 @@ fn insert_lahman_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn s
     Ok(())
 }
 
-fn insert_ldbc_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std::error::Error>> {
+fn insert_ldbc_sqlite(conn: &Connection, facts: &[Fact]) -> Result<(), Box<dyn std::error::Error>> {
     let tx = conn.unchecked_transaction()?;
-    for row in rows {
-        match row.relation() {
+    for fact in facts {
+        match fact.relation() {
             "Person" => {
                 tx.execute(
                     "INSERT INTO person (id, first, created) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id")?, text(row, "first")?, ts(row, "created")?],
+                    rusqlite::params![id(fact, "id")?, text(fact, "first")?, ts(fact, "created")?],
                 )?;
             }
             "Post" => {
                 tx.execute(
                     "INSERT INTO post (id, creator, created) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id")?, rf(row, "creator")?, ts(row, "created")?],
+                    rusqlite::params![id(fact, "id")?, rf(fact, "creator")?, ts(fact, "created")?],
                 )?;
             }
             "Knows" => {
                 tx.execute(
                     "INSERT OR IGNORE INTO knows (person1, person2, created) VALUES (?1, ?2, ?3)",
                     rusqlite::params![
-                        rf(row, "person1")?,
-                        rf(row, "person2")?,
-                        ts(row, "created")?
+                        rf(fact, "person1")?,
+                        rf(fact, "person2")?,
+                        ts(fact, "created")?
                     ],
                 )?;
             }
             "Likes" => {
                 tx.execute(
                     "INSERT OR IGNORE INTO likes (person, post, created) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![rf(row, "person")?, rf(row, "post")?, ts(row, "created")?],
+                    rusqlite::params![rf(fact, "person")?, rf(fact, "post")?, ts(fact, "created")?],
                 )?;
             }
             _ => {}
@@ -2951,10 +2962,10 @@ mod tests {
         let dataset = job_dataset(dir.path(), None)?;
         assert_eq!(dataset.name, "job");
         assert_eq!(dataset.queries.len(), 8);
-        let Some(limited_source) = limited.row_source.as_ref() else {
+        let Some(limited_source) = limited.fact_source.as_ref() else {
             return Err("limited JOB dataset should be streaming".into());
         };
-        let Some(full_source) = dataset.row_source.as_ref() else {
+        let Some(full_source) = dataset.fact_source.as_ref() else {
             return Err("full JOB dataset should be streaming".into());
         };
         let limited_rows = stream_rows(limited_source, |_| Ok(()))?;
@@ -2984,7 +2995,7 @@ mod tests {
         };
         let results = crate::run_dataset(dataset, &config)?;
         assert_eq!(results.len(), 8);
-        assert!(results.iter().all(|result| result.rows == 1));
+        assert!(results.iter().all(|result| result.facts == 1));
         Ok(())
     }
 }

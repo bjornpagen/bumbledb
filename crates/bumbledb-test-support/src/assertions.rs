@@ -2,26 +2,28 @@
 
 use std::collections::BTreeSet;
 
-use bumbledb_lmdb::{Environment, InputBindings, InternalError, Result, Row, StorageSchema, Value};
+use bumbledb_lmdb::{
+    Environment, Fact, InputBindings, InternalError, Result, StorageSchema, Value,
+};
 
-/// Sorts query result rows deterministically.
-pub fn sorted_rows(mut rows: Vec<Vec<Value>>) -> Vec<Vec<Value>> {
-    rows.sort();
-    rows
+/// Sorts query result facts deterministically.
+pub fn sorted_facts(mut facts: Vec<Vec<Value>>) -> Vec<Vec<Value>> {
+    facts.sort();
+    facts
 }
 
 /// Asserts two query outputs are equal under set semantics.
-pub fn assert_same_rows(actual: Vec<Vec<Value>>, expected: Vec<Vec<Value>>) {
+pub fn assert_same_facts(actual: Vec<Vec<Value>>, expected: Vec<Vec<Value>>) {
     assert_eq!(row_set("actual", actual), row_set("expected", expected));
 }
 
-fn row_set(label: &str, rows: Vec<Vec<Value>>) -> BTreeSet<Vec<Value>> {
-    let row_count = rows.len();
-    let set = rows.into_iter().collect::<BTreeSet<_>>();
+fn row_set(label: &str, facts: Vec<Vec<Value>>) -> BTreeSet<Vec<Value>> {
+    let fact_count = facts.len();
+    let set = facts.into_iter().collect::<BTreeSet<_>>();
     assert_eq!(
         set.len(),
-        row_count,
-        "{label} contains duplicate rows under set semantics"
+        fact_count,
+        "{label} contains duplicate facts under set semantics"
     );
     set
 }
@@ -33,9 +35,9 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
         for relation in &schema.descriptor().relations {
             let primary_rows = txn
                 .scan_relation(schema, &relation.name)?
-                .map(|item| item.map(|item| item.row))
+                .map(|item| item.map(|item| item.fact))
                 .collect::<Result<Vec<_>>>()?;
-            let primary_set = primary_rows.iter().cloned().collect::<BTreeSet<Row>>();
+            let primary_set = primary_rows.iter().cloned().collect::<BTreeSet<Fact>>();
             let relation_diag = diagnostics
                 .relations
                 .iter()
@@ -46,9 +48,9 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
                     })
                 })?;
             assert_eq!(
-                relation_diag.row_count as usize,
+                relation_diag.fact_count as usize,
                 primary_rows.len(),
-                "row count drift for {}",
+                "fact count drift for {}",
                 relation.name
             );
             assert_eq!(
@@ -59,7 +61,7 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
             );
 
             for path in schema.access_paths(&relation.name)? {
-                let rows = txn
+                let facts = txn
                     .scan_prefix(
                         schema,
                         &relation.name,
@@ -69,12 +71,12 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
                             std::iter::empty::<(&str, Value)>(),
                         ),
                     )?
-                    .map(|item| item.map(|item| item.row))
+                    .map(|item| item.map(|item| item.fact))
                     .collect::<Result<Vec<_>>>()?;
-                let row_set = rows.iter().cloned().collect::<BTreeSet<Row>>();
+                let row_set = facts.iter().cloned().collect::<BTreeSet<Fact>>();
                 assert_eq!(
                     primary_set, row_set,
-                    "index {}.{} does not decode to primary rows",
+                    "index {}.{} does not decode to primary facts",
                     relation.name, path.index_name
                 );
                 let index_diag = relation_diag
@@ -91,7 +93,7 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
                     })?;
                 assert_eq!(
                     index_diag.entry_count as usize,
-                    rows.len(),
+                    facts.len(),
                     "index stat drift for {}.{}",
                     relation.name,
                     path.index_name
@@ -102,17 +104,17 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
     })
 }
 
-/// Executes query against LMDB and returns sorted rows.
-pub fn execute_sorted(
+/// Executes query against LMDB and returns sorted facts.
+pub fn execute_sorted_facts(
     env: &Environment,
     schema: &StorageSchema,
     query: &bumbledb_core::query_ir::TypedQuery,
     inputs: &InputBindings,
 ) -> Result<Vec<Vec<Value>>> {
-    Ok(sorted_rows(
+    Ok(sorted_facts(
         env.read(|txn| txn.execute_query(schema, query, inputs))?
             .result
-            .tuples,
+            .facts,
     ))
 }
 
@@ -121,17 +123,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn assert_same_rows_ignores_order() {
-        assert_same_rows(
+    fn assert_same_facts_ignores_order() {
+        assert_same_facts(
             vec![vec![Value::U64(2)], vec![Value::U64(1)]],
             vec![vec![Value::U64(1)], vec![Value::U64(2)]],
         );
     }
 
     #[test]
-    #[should_panic(expected = "actual contains duplicate rows under set semantics")]
-    fn assert_same_rows_rejects_duplicate_actual_rows() {
-        assert_same_rows(
+    #[should_panic(expected = "actual contains duplicate facts under set semantics")]
+    fn assert_same_facts_rejects_duplicate_actual_rows() {
+        assert_same_facts(
             vec![vec![Value::U64(1)], vec![Value::U64(1)]],
             vec![vec![Value::U64(1)]],
         );

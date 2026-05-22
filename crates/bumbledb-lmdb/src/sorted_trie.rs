@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use smallvec::SmallVec;
 
-use crate::query_image::{RowId, RowRange};
+use crate::query_image::{FactId, FactRange};
 use crate::{EncodedRef, FieldId, RelationId, RelationImage, Result};
 
 /// Owned fixed-width encoded value used in trie levels.
@@ -73,8 +73,8 @@ pub struct SortedTrieIndex {
     pub name: String,
     /// Field order for trie levels.
     pub fields: Vec<FieldId>,
-    /// Row IDs sorted by this index's field order.
-    pub order: Vec<RowId>,
+    /// Fact IDs sorted by this index's field order.
+    pub order: Vec<FactId>,
     /// Distinct-value levels.
     pub levels: Vec<TrieLevel>,
     /// Build and shape statistics.
@@ -87,13 +87,13 @@ impl SortedTrieIndex {
         let _span = tracing::debug_span!(
             "bumbledb.sorted_trie.build",
             relation = relation.id.0,
-            rows = relation.row_count,
+            facts = relation.fact_count,
             fields = spec.fields.len()
         )
         .entered();
         let start = Instant::now();
-        let mut order = (0..relation.row_count)
-            .map(|row| RowId(row as u32))
+        let mut order = (0..relation.fact_count)
+            .map(|fact| FactId(fact as u32))
             .collect::<Vec<_>>();
 
         order.sort_by(|left, right| {
@@ -136,7 +136,7 @@ impl SortedTrieIndex {
     }
 }
 
-/// One trie level of distinct encoded keys and child row ranges.
+/// One trie level of distinct encoded keys and child fact ranges.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrieLevel {
     /// Field represented by this level.
@@ -144,7 +144,7 @@ pub struct TrieLevel {
     /// Distinct encoded keys at this level.
     pub keys: Vec<EncodedOwned>,
     /// Half-open ranges into `SortedTrieIndex::order`.
-    pub ranges: Vec<RowRange>,
+    pub ranges: Vec<FactRange>,
     /// Parent entry index in previous level, or `u32::MAX` for root level.
     pub parent: Vec<u32>,
 }
@@ -152,8 +152,8 @@ pub struct TrieLevel {
 /// Sorted trie shape and build statistics.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TrieStats {
-    /// Number of rows in the indexed relation.
-    pub row_count: usize,
+    /// Number of facts in the indexed relation.
+    pub fact_count: usize,
     /// Distinct key count by depth.
     pub distinct_by_depth: Vec<usize>,
     /// Average fanout by depth.
@@ -165,7 +165,7 @@ pub struct TrieStats {
 }
 
 impl TrieStats {
-    fn from_levels(row_count: usize, levels: &[TrieLevel], build_micros: u128) -> Self {
+    fn from_levels(fact_count: usize, levels: &[TrieLevel], build_micros: u128) -> Self {
         let distinct_by_depth = levels
             .iter()
             .map(|level| level.keys.len())
@@ -200,7 +200,7 @@ impl TrieStats {
             max_fanout_by_depth.push(max);
         }
         Self {
-            row_count,
+            fact_count,
             distinct_by_depth,
             avg_fanout_by_depth,
             max_fanout_by_depth,
@@ -229,9 +229,9 @@ pub trait TrieIter: LinearIter {
     fn up(&mut self);
     /// Current trie depth.
     fn depth(&self) -> usize;
-    /// Current row range into sorted row order.
-    fn current_range(&self) -> RowRange;
-    /// Number of rows under the current key/range.
+    /// Current fact range into sorted fact order.
+    fn current_range(&self) -> FactRange;
+    /// Number of facts under the current key/range.
     fn count(&self) -> usize;
 }
 
@@ -255,8 +255,8 @@ pub struct TrieFrame {
 }
 
 impl<'a> SortedTrieIter<'a> {
-    /// Returns row IDs under the current key.
-    pub fn current_rows(&self) -> &'a [RowId] {
+    /// Returns fact IDs under the current key.
+    pub fn current_rows(&self) -> &'a [FactId] {
         let range = self.current_range();
         &self.index.order[range.start.0 as usize..range.end.0 as usize]
     }
@@ -357,17 +357,17 @@ impl TrieIter for SortedTrieIter<'_> {
         self.current_frame().map_or(0, |frame| frame.depth)
     }
 
-    fn current_range(&self) -> RowRange {
+    fn current_range(&self) -> FactRange {
         let Some(frame) = self.current_frame() else {
-            return RowRange {
-                start: RowId(0),
-                end: RowId(0),
+            return FactRange {
+                start: FactId(0),
+                end: FactId(0),
             };
         };
         if frame.pos >= frame.end {
-            return RowRange {
-                start: RowId(0),
-                end: RowId(0),
+            return FactRange {
+                start: FactId(0),
+                end: FactId(0),
             };
         }
         self.index.levels[frame.depth].ranges[frame.pos]
@@ -381,7 +381,7 @@ impl TrieIter for SortedTrieIter<'_> {
 
 fn build_levels(
     relation: &RelationImage,
-    order: &[RowId],
+    order: &[FactId],
     fields: &[FieldId],
 ) -> Result<Vec<TrieLevel>> {
     let mut levels = Vec::new();
@@ -414,9 +414,9 @@ fn build_levels(
                 }
                 let entry_index = level.keys.len() as u32;
                 level.keys.push(key);
-                level.ranges.push(RowRange {
-                    start: RowId(start as u32),
-                    end: RowId(end as u32),
+                level.ranges.push(FactRange {
+                    start: FactId(start as u32),
+                    end: FactId(end as u32),
                 });
                 level.parent.push(parent_index);
                 next_parents.push((start, end, entry_index));
@@ -434,7 +434,7 @@ mod tests {
     use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
 
     use super::*;
-    use crate::{Environment, Row, StorageSchema, Value};
+    use crate::{Environment, Fact, StorageSchema, Value};
 
     #[test]
     fn builds_one_level_trie_and_collapses_duplicate_keys() -> Result<()> {
@@ -444,8 +444,8 @@ mod tests {
             .ok_or_else(|| crate::Error::internal("missing Account relation"))?;
         let index = SortedTrieIndex::build(account, IndexSpec::new("by_currency", [FieldId(1)]))?;
 
-        assert_eq!(index.order, vec![RowId(0), RowId(2), RowId(1)]);
-        assert_eq!(index.stats.row_count, 3);
+        assert_eq!(index.order, vec![FactId(0), FactId(2), FactId(1)]);
+        assert_eq!(index.stats.fact_count, 3);
         assert_eq!(index.stats.distinct_by_depth, vec![2]);
         assert_eq!(index.stats.max_fanout_by_depth, vec![2]);
 
@@ -453,11 +453,11 @@ mod tests {
         iter.open();
         assert_eq!(key_bytes(&iter)?, &[1]);
         assert_eq!(iter.count(), 2);
-        assert_eq!(iter.current_rows(), &[RowId(0), RowId(2)]);
+        assert_eq!(iter.current_rows(), &[FactId(0), FactId(2)]);
         iter.next();
         assert_eq!(key_bytes(&iter)?, &[2]);
         assert_eq!(iter.count(), 1);
-        assert_eq!(iter.current_rows(), &[RowId(1)]);
+        assert_eq!(iter.current_rows(), &[FactId(1)]);
         iter.next();
         assert!(iter.at_end());
         Ok(())
@@ -533,21 +533,21 @@ mod tests {
         iter.open();
         assert_eq!(
             iter.current_range(),
-            RowRange {
-                start: RowId(0),
-                end: RowId(1)
+            FactRange {
+                start: FactId(0),
+                end: FactId(1)
             }
         );
-        assert_eq!(iter.current_rows(), &[RowId(0)]);
+        assert_eq!(iter.current_rows(), &[FactId(0)]);
         iter.next();
         assert_eq!(
             iter.current_range(),
-            RowRange {
-                start: RowId(1),
-                end: RowId(2)
+            FactRange {
+                start: FactId(1),
+                end: FactId(2)
             }
         );
-        assert_eq!(iter.current_rows(), &[RowId(2)]);
+        assert_eq!(iter.current_rows(), &[FactId(2)]);
         Ok(())
     }
 
@@ -563,8 +563,8 @@ mod tests {
         let env = Environment::open(path)?;
         let schema = StorageSchema::new(account_schema(), env.max_key_size())?;
         env.write(|txn| {
-            for row in account_rows() {
-                txn.insert(&schema, row)?;
+            for fact in account_rows() {
+                txn.insert(&schema, fact)?;
             }
             Ok::<_, crate::Error>(())
         })?;
@@ -603,9 +603,9 @@ mod tests {
         ))
     }
 
-    fn account_rows() -> Vec<Row> {
+    fn account_rows() -> Vec<Fact> {
         vec![
-            Row::new(
+            Fact::new(
                 "Account",
                 [
                     ("id", Value::Serial(1)),
@@ -613,7 +613,7 @@ mod tests {
                     ("active", Value::Bool(true)),
                 ],
             ),
-            Row::new(
+            Fact::new(
                 "Account",
                 [
                     ("id", Value::Serial(2)),
@@ -621,7 +621,7 @@ mod tests {
                     ("active", Value::Bool(false)),
                 ],
             ),
-            Row::new(
+            Fact::new(
                 "Account",
                 [
                     ("id", Value::Serial(3)),

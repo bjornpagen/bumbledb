@@ -8,7 +8,7 @@ use bumbledb_core::schema::{
     ValueType,
 };
 
-use crate::{Row, Value};
+use crate::{Fact, Value};
 
 /// Builds a typed benchmark query for a schema descriptor.
 pub type BenchmarkQueryBuilder = fn(&SchemaDescriptor) -> QueryBuildResult<TypedQuery>;
@@ -29,9 +29,9 @@ pub struct BenchmarkQuery {
 pub struct BenchmarkComparison {
     /// Query name.
     pub query: String,
-    /// Number of Bumbledb output rows.
+    /// Number of Bumbledb output facts.
     pub bumbledb_rows: usize,
-    /// Number of SQLite output rows.
+    /// Number of SQLite output facts.
     pub sqlite_rows: usize,
     /// Bumbledb explain plan text.
     pub explain: String,
@@ -235,20 +235,20 @@ pub fn benchmark_schema() -> SchemaDescriptor {
     ))
 }
 
-/// Generates deterministic benchmark rows.
-pub fn benchmark_rows(scale: u64) -> Vec<Row> {
-    let mut rows = Vec::new();
+/// Generates deterministic benchmark facts.
+pub fn benchmark_rows(scale: u64) -> Vec<Fact> {
+    let mut facts = Vec::new();
     let scale = scale.max(1);
 
     for id in 1..=scale {
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Holder",
             [
                 ("id", Value::Serial(id)),
                 ("name", Value::String(format!("holder-{id}"))),
             ],
         ));
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Org",
             [
                 ("id", Value::Serial(id)),
@@ -257,7 +257,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
         ));
     }
     for id in 1..=3 {
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Instrument",
             [
                 ("id", Value::Serial(id)),
@@ -266,7 +266,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
         ));
     }
     for id in 1..=scale {
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "SourceDocument",
             [
                 ("id", Value::Serial(id)),
@@ -275,7 +275,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
         ));
     }
     for id in 1..=scale {
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Account",
             [
                 ("id", Value::Serial(id)),
@@ -285,7 +285,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
         ));
     }
     for id in 1..=scale {
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "JournalEntry",
             [
                 ("id", Value::Serial(id)),
@@ -300,7 +300,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
     let mut posting_id = 1;
     for account in 1..=scale {
         for offset in 0..3 {
-            rows.push(Row::new(
+            facts.push(Fact::new(
                 "Posting",
                 [
                     ("id", Value::Serial(posting_id)),
@@ -317,7 +317,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
                     ),
                 ],
             ));
-            rows.push(Row::new(
+            facts.push(Fact::new(
                 "PostingTag",
                 [
                     ("posting", Value::Serial(posting_id)),
@@ -328,11 +328,11 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
         }
     }
     for id in 2..=scale {
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "OrgParent",
             [("child", Value::Serial(id)), ("parent", Value::Serial(1))],
         ));
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "AuthorizationEdge",
             [
                 ("subject", Value::Serial(id)),
@@ -342,7 +342,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
         ));
     }
     for id in 1..=3 {
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "ExchangeRate",
             [
                 ("id", Value::Serial(id)),
@@ -354,7 +354,7 @@ pub fn benchmark_rows(scale: u64) -> Vec<Row> {
         ));
     }
 
-    rows
+    facts
 }
 
 /// Returns the benchmark query set.
@@ -437,11 +437,11 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let env = Environment::open(dir.path())?;
         let schema = StorageSchema::new(benchmark_schema(), env.max_key_size())?;
-        let rows = benchmark_rows(4);
+        let facts = benchmark_rows(4);
 
         env.write(|txn| {
-            for row in &rows {
-                txn.insert(&schema, row.clone())?;
+            for fact in &facts {
+                txn.insert(&schema, fact.clone())?;
             }
             Ok::<(), crate::Error>(())
         })?;
@@ -461,23 +461,23 @@ mod tests {
             )
         })?;
 
-        let sqlite_rows = run_sqlite_query(&rows, query.sqlite, 1, 0, 1000)?;
+        let sqlite_rows = run_sqlite_query(&facts, query.sqlite, 1, 0, 1000)?;
         let comparison = BenchmarkComparison {
             query: query.name.to_owned(),
-            bumbledb_rows: bumbledb.result.tuples.len(),
+            bumbledb_rows: bumbledb.result.facts.len(),
             sqlite_rows,
             explain: bumbledb.explain(),
         };
 
         assert_eq!(comparison.bumbledb_rows, comparison.sqlite_rows);
         assert!(comparison.bumbledb_rows > 0);
-        assert!(comparison.explain.contains("rows_scanned"));
+        assert!(comparison.explain.contains("facts_scanned"));
         assert!(comparison.explain.contains("candidate_plan"));
         Ok(())
     }
 
     fn run_sqlite_query(
-        rows: &[Row],
+        facts: &[Fact],
         sql: &str,
         holder: i64,
         start: i64,
@@ -495,19 +495,23 @@ mod tests {
         )
         .map_err(sqlite_error)?;
 
-        for row in rows {
-            match row.relation() {
+        for fact in facts {
+            match fact.relation() {
                 "Account" => {
                     conn.execute(
                         "INSERT INTO account (id, holder, currency) VALUES (?1, ?2, ?3)",
-                        params![id(row, "id")?, rf(row, "holder")?, symbol(row, "currency")?],
+                        params![
+                            id(fact, "id")?,
+                            rf(fact, "holder")?,
+                            symbol(fact, "currency")?
+                        ],
                     )
                     .map_err(sqlite_error)?;
                 }
                 "Posting" => {
                     conn.execute(
                         "INSERT INTO posting (id, entry, account, instrument, amount, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                        params![id(row, "id")?, rf(row, "entry")?, rf(row, "account")?, rf(row, "instrument")?, decimal(row, "amount")?, ts(row, "at")?],
+                        params![id(fact, "id")?, rf(fact, "entry")?, rf(fact, "account")?, rf(fact, "instrument")?, decimal(fact, "amount")?, ts(fact, "at")?],
                     )
                     .map_err(sqlite_error)?;
                 }
@@ -527,44 +531,44 @@ mod tests {
         crate::Error::internal(format!("sqlite benchmark error: {error}"))
     }
 
-    fn id(row: &Row, field: &str) -> Result<i64> {
-        match required_value(row, field)? {
+    fn id(fact: &Fact, field: &str) -> Result<i64> {
+        match required_value(fact, field)? {
             Value::Serial(value) => Ok(*value as i64),
             other => Err(unexpected_value("id", other)),
         }
     }
 
-    fn rf(row: &Row, field: &str) -> Result<i64> {
-        match required_value(row, field)? {
+    fn rf(fact: &Fact, field: &str) -> Result<i64> {
+        match required_value(fact, field)? {
             Value::Serial(value) => Ok(*value as i64),
             other => Err(unexpected_value("ref", other)),
         }
     }
 
-    fn symbol(row: &Row, field: &str) -> Result<i64> {
-        match required_value(row, field)? {
+    fn symbol(fact: &Fact, field: &str) -> Result<i64> {
+        match required_value(fact, field)? {
             Value::Enum(value) => Ok(i64::from(*value)),
             Value::U64(value) => Ok(*value as i64),
             other => Err(unexpected_value("symbol", other)),
         }
     }
 
-    fn decimal(row: &Row, field: &str) -> Result<i64> {
-        match required_value(row, field)? {
+    fn decimal(fact: &Fact, field: &str) -> Result<i64> {
+        match required_value(fact, field)? {
             Value::Decimal(DecimalRaw(value)) => Ok(*value as i64),
             other => Err(unexpected_value("decimal", other)),
         }
     }
 
-    fn ts(row: &Row, field: &str) -> Result<i64> {
-        match required_value(row, field)? {
+    fn ts(fact: &Fact, field: &str) -> Result<i64> {
+        match required_value(fact, field)? {
             Value::Timestamp(TimestampMicros(value)) => Ok(*value),
             other => Err(unexpected_value("timestamp", other)),
         }
     }
 
-    fn required_value<'a>(row: &'a Row, field: &str) -> Result<&'a Value> {
-        row.value(field)
+    fn required_value<'a>(fact: &'a Fact, field: &str) -> Result<&'a Value> {
+        fact.value(field)
             .ok_or_else(|| crate::Error::internal(format!("missing field {field}")))
     }
 

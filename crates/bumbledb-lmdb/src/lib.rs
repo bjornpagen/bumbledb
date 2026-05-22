@@ -44,7 +44,7 @@ pub use query::{
     NormTerm, NormVar, NormalizedQuery, OptimizerTrace, PlanCandidate, PlanCounters, PlanFamily,
     PredicateId, PreparedQuery, QueryAllocationStats, QueryExecutionOptions, QueryNodeTiming,
     QueryOutput, QueryPlan, QueryResultCardinality, QueryResultSet, QueryRuntimeKind, QueryTimings,
-    ResultColumn, ResultTuple, VariableEstimate,
+    ResultColumn, ResultFact, VariableEstimate,
 };
 pub use query_image::{
     ColumnImage, EncodedRef, FieldId, FieldImage, FixedColumn, PreparedPlanCacheDiagnostics,
@@ -56,7 +56,8 @@ pub use sorted_trie::{
     TrieLevel, TrieStats,
 };
 pub use storage::{
-    DeleteOutcome, EncodedComponent, FieldValues, IndexScan, InsertOutcome, Row, ScanItem, Value,
+    DeleteOutcome, EncodedComponent, Fact, FactScan, FactScanEntry, FieldValues, InsertOutcome,
+    Value,
 };
 pub use storage_schema::{AccessPathDescriptor, BulkLoadReport, StorageSchema};
 
@@ -118,8 +119,8 @@ pub struct StorageDiagnostics {
 pub struct RelationDiagnostics {
     /// Relation name.
     pub relation: String,
-    /// Current row count.
-    pub row_count: u64,
+    /// Current fact count.
+    pub fact_count: u64,
     /// Index diagnostics for this relation.
     pub indexes: Vec<IndexDiagnostics>,
 }
@@ -175,7 +176,7 @@ impl Environment {
         Ok(env)
     }
 
-    /// Creates a new database and bulk-loads rows as the ETL migration path.
+    /// Creates a new database and bulk-loads facts as the ETL migration path.
     ///
     /// This refuses to target a path that already contains `data.mdb`; migrations
     /// are explicit ETL into a new database, never in-place upgrades.
@@ -183,7 +184,7 @@ impl Environment {
     pub fn bulk_load_new(
         path: impl AsRef<Path>,
         schema: &StorageSchema,
-        rows: impl IntoIterator<Item = Row>,
+        facts: impl IntoIterator<Item = Fact>,
     ) -> Result<(Self, BulkLoadReport)> {
         let path = path.as_ref();
         let data_path = path.join(DATA_FILE);
@@ -192,7 +193,7 @@ impl Environment {
         }
 
         let env = Self::open_with_schema(path, schema)?;
-        let report = env.bulk_load(schema, rows)?;
+        let report = env.bulk_load(schema, facts)?;
         Ok((env, report))
     }
 
@@ -238,22 +239,22 @@ impl Environment {
         )
     }
 
-    /// Bulk-loads rows in one write transaction and returns ETL diagnostics.
+    /// Bulk-loads facts in one write transaction and returns ETL diagnostics.
     #[tracing::instrument(name = "bumbledb.bulk_load", skip_all, fields(schema = %schema.descriptor().fingerprint()))]
     pub fn bulk_load(
         &self,
         schema: &StorageSchema,
-        rows: impl IntoIterator<Item = Row>,
+        facts: impl IntoIterator<Item = Fact>,
     ) -> Result<BulkLoadReport> {
-        let rows_inserted = self.write(|txn| txn.bulk_load(schema, rows))?;
+        let facts_inserted = self.write(|txn| txn.bulk_load(schema, facts))?;
         self.read(|txn| {
             let report = BulkLoadReport {
-                rows_inserted,
+                facts_inserted,
                 storage_tx_id: txn.last_committed_tx_id()?,
                 dictionary_entries: txn.dictionary_entry_count()?,
             };
             tracing::info!(
-                rows_inserted = report.rows_inserted,
+                facts_inserted = report.facts_inserted,
                 storage_tx_id = report.storage_tx_id,
                 dictionary_entries = report.dictionary_entries,
                 "bulk load committed"
@@ -295,7 +296,7 @@ impl Environment {
                     })
                     .collect::<Result<Vec<_>>>()?;
                 relations.push(RelationDiagnostics {
-                    row_count: txn.relation_row_count(schema, &relation.name)?,
+                    fact_count: txn.relation_fact_count(schema, &relation.name)?,
                     relation: relation.name.clone(),
                     indexes,
                 });
@@ -585,21 +586,21 @@ mod tests {
 
     #[test]
     fn bulk_load_new_matches_row_by_row_results() -> TestResult {
-        let rows = benchmark_rows(5);
+        let facts = benchmark_rows(5);
         let schema = StorageSchema::new(benchmark_schema(), 511)?;
 
         let row_dir = tempfile::tempdir()?;
         let row_env = Environment::open_with_schema(row_dir.path(), &schema)?;
         row_env.write(|txn| {
-            for row in &rows {
-                txn.insert(&schema, row.clone())?;
+            for fact in &facts {
+                txn.insert(&schema, fact.clone())?;
             }
             Ok::<(), Error>(())
         })?;
 
         let bulk_dir = tempfile::tempdir()?;
-        let (bulk_env, report) = Environment::bulk_load_new(bulk_dir.path(), &schema, rows)?;
-        assert_eq!(report.rows_inserted, benchmark_rows(5).len());
+        let (bulk_env, report) = Environment::bulk_load_new(bulk_dir.path(), &schema, facts)?;
+        assert_eq!(report.facts_inserted, benchmark_rows(5).len());
         assert!(report.dictionary_entries > 0);
 
         let typed = (benchmark_queries()[0].build)(schema.descriptor())?;
@@ -618,12 +619,12 @@ mod tests {
         let row_result = row_env
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .result
-            .tuples;
+            .facts;
         let bulk_result = bulk_env
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .result
-            .tuples;
-        assert_eq!(sorted_rows(row_result), sorted_rows(bulk_result));
+            .facts;
+        assert_eq!(sorted_facts(row_result), sorted_facts(bulk_result));
         Ok(())
     }
 
@@ -632,12 +633,12 @@ mod tests {
         let schema = StorageSchema::new(benchmark_schema(), 511)?;
         let dir = tempfile::tempdir()?;
         let env = Environment::open_with_schema(dir.path(), &schema)?;
-        let mut rows = benchmark_rows(2);
-        let distinct = rows.len();
-        rows.push(rows[0].clone());
+        let mut facts = benchmark_rows(2);
+        let distinct = facts.len();
+        facts.push(facts[0].clone());
 
-        let report = env.bulk_load(&schema, rows)?;
-        assert_eq!(report.rows_inserted, distinct);
+        let report = env.bulk_load(&schema, facts)?;
+        assert_eq!(report.facts_inserted, distinct);
 
         let diagnostics = env.storage_diagnostics(&schema)?;
         assert_eq!(diagnostics.storage_tx_id, 1);
@@ -645,7 +646,7 @@ mod tests {
             diagnostics
                 .relations
                 .iter()
-                .map(|relation| relation.row_count)
+                .map(|relation| relation.fact_count)
                 .sum::<u64>(),
             distinct as u64
         );
@@ -672,7 +673,7 @@ mod tests {
             diagnostics
                 .relations
                 .iter()
-                .any(|relation| relation.relation == "Posting" && relation.row_count > 0)
+                .any(|relation| relation.relation == "Posting" && relation.fact_count > 0)
         );
         Ok(())
     }
@@ -685,7 +686,7 @@ mod tests {
         env.bulk_load(&schema, benchmark_rows(4))?;
 
         let duplicate_report = env.bulk_load(&schema, vec![benchmark_rows(1)[0].clone()])?;
-        assert_eq!(duplicate_report.rows_inserted, 0);
+        assert_eq!(duplicate_report.facts_inserted, 0);
 
         let backup_dir = tempfile::tempdir()?;
         env.backup_to_path(backup_dir.path())?;
@@ -712,18 +713,18 @@ mod tests {
         let original = env
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .result
-            .tuples;
+            .facts;
         let backup_rows = backup
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .result
-            .tuples;
+            .facts;
         let compact_rows = compact
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .result
-            .tuples;
+            .facts;
 
-        assert_eq!(sorted_rows(original.clone()), sorted_rows(backup_rows));
-        assert_eq!(sorted_rows(original), sorted_rows(compact_rows));
+        assert_eq!(sorted_facts(original.clone()), sorted_facts(backup_rows));
+        assert_eq!(sorted_facts(original), sorted_facts(compact_rows));
         Ok(())
     }
 
@@ -732,7 +733,7 @@ mod tests {
         let schema = StorageSchema::new(benchmark_schema(), 511)?;
         let dir = tempfile::tempdir()?;
         let (env, report) = Environment::bulk_load_new(dir.path(), &schema, benchmark_rows(12))?;
-        assert!(report.rows_inserted > 50);
+        assert!(report.facts_inserted > 50);
         assert!(report.dictionary_entries >= 12);
         drop(env);
 
@@ -748,9 +749,9 @@ mod tests {
         Ok(())
     }
 
-    fn sorted_rows(mut rows: Vec<Vec<Value>>) -> Vec<Vec<Value>> {
-        rows.sort();
-        rows
+    fn sorted_facts(mut facts: Vec<Vec<Value>>) -> Vec<Vec<Value>> {
+        facts.sort();
+        facts
     }
 
     fn changed_schema() -> bumbledb_core::schema::SchemaDescriptor {

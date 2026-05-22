@@ -3,10 +3,10 @@
 #![allow(clippy::result_large_err)]
 
 pub mod assertions;
+pub mod facts;
 pub mod golden;
 pub mod operations;
 pub mod reference;
-pub mod rows;
 pub mod schemas;
 pub mod sqlite;
 pub mod workloads;

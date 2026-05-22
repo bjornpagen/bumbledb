@@ -24,10 +24,10 @@ cargo check --manifest-path fuzz/Cargo.toml
 ## Cutover Summary
 
 - Storage format is bumped and old v2 format is rejected.
-- Query output is `QueryResultSet`, not a row-bag carrier.
+- Query output is `QueryResultSet`, not a fact-bag carrier.
 - Query cardinality uses `QueryResultCardinality` and is not an aggregate count value.
 - Covering unique constraints are no longer the physical schema contract.
-- Canonical tuple membership is stored separately from access entries.
+- Canonical fact membership is stored separately from access entries.
 - Write paths are exact insert/delete set deltas.
 - Segment publishing and history records are removed from the current write/query path.
 - Factorized/product-of-fanout count kernels and scalar prepared count caches are deleted.

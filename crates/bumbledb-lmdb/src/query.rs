@@ -13,13 +13,13 @@ use bumbledb_core::query_ir::{
 use bumbledb_core::schema::{IndexKind, SchemaFingerprint, ValueType};
 
 use crate::hash_trie::PrefixRows;
-use crate::query_image::{RowId, RowRange};
+use crate::query_image::{FactId, FactRange};
 use crate::{
-    AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FieldValues,
-    FreeJoinPlan, HashTrieIndex, IndexSpec, LeafMode, LinearIter, NodeId, NodeImpl, OutputPlan,
-    PayloadDemand, PlanEstimates, PlanNode, PrefixProbe, ProjectPlan, ReadTxn, RelationImage,
-    RelationIndexImage, RelationStats, Result, Row, SortedTrieIndex, StorageSchema, SubAtom,
-    TrieIter, Value, VarId,
+    AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, Fact, FieldId,
+    FieldValues, FreeJoinPlan, HashTrieIndex, IndexSpec, LeafMode, LinearIter, NodeId, NodeImpl,
+    OutputPlan, PayloadDemand, PlanEstimates, PlanNode, PrefixProbe, ProjectPlan, ReadTxn,
+    RelationImage, RelationIndexImage, RelationStats, Result, SortedTrieIndex, StorageSchema,
+    SubAtom, TrieIter, Value, VarId,
 };
 
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
@@ -216,29 +216,29 @@ impl EncodedInputs {
     }
 }
 
-/// One tuple in a query result set.
-pub type ResultTuple = Vec<Value>;
+/// One fact in a query result set.
+pub type ResultFact = Vec<Value>;
 
-/// Duplicate-free query result set in canonical tuple order.
+/// Duplicate-free query result set in canonical fact order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryResultSet {
     /// Result columns in projection order.
     pub columns: Vec<ResultColumn>,
-    /// Result tuples in canonical order.
-    pub tuples: Vec<ResultTuple>,
+    /// Result facts in canonical order.
+    pub facts: Vec<ResultFact>,
 }
 
 impl QueryResultSet {
-    /// Builds a canonical result set from possibly unordered tuples.
-    pub fn new(columns: Vec<ResultColumn>, mut tuples: Vec<ResultTuple>) -> Self {
-        tuples.sort();
-        tuples.dedup();
-        Self { columns, tuples }
+    /// Builds a canonical result set from possibly unordered facts.
+    pub fn new(columns: Vec<ResultColumn>, mut facts: Vec<ResultFact>) -> Self {
+        facts.sort();
+        facts.dedup();
+        Self { columns, facts }
     }
 
-    /// Number of tuples in the set.
+    /// Number of facts in the set.
     pub fn cardinality(&self) -> usize {
-        self.tuples.len()
+        self.facts.len()
     }
 }
 
@@ -283,7 +283,7 @@ impl Default for QueryExecutionOptions {
 /// Result-set cardinality output.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryResultCardinality {
-    /// Number of logical output tuples.
+    /// Number of logical output facts.
     pub cardinality: usize,
     /// Physical plan and counters.
     pub plan: QueryPlan,
@@ -385,8 +385,8 @@ pub struct QueryPlan {
     pub planner_stats: PlannerStatsCacheDiagnostics,
     /// Prepared physical plan cache diagnostics after planning.
     pub prepared_plan_cache: PreparedPlanCacheDiagnostics,
-    /// Node-level estimated and observed row/candidate counts.
-    pub node_rows: Vec<NodeRowEstimate>,
+    /// Node-level estimated and observed fact/candidate counts.
+    pub node_facts: Vec<NodeRowEstimate>,
     /// Node-level execution summaries.
     pub node_timings: Vec<QueryNodeTiming>,
     /// Free Join physical plan IR.
@@ -545,13 +545,13 @@ impl QueryPlan {
             ));
         }
         out.push_str(&format!(
-            "free_join_estimates: output_rows={} iterator_ops={} hash_build_rows={} materialized_values={} memory_bytes={} actual_output_rows={}\n",
-            self.free_join.estimates.output_rows,
+            "free_join_estimates: output_facts={} iterator_ops={} hash_build_rows={} materialized_values={} memory_bytes={} actual_output_facts={}\n",
+            self.free_join.estimates.output_facts,
             self.free_join.estimates.iterator_ops,
             self.free_join.estimates.hash_build_rows,
             self.free_join.estimates.materialized_values,
             self.free_join.estimates.memory_bytes,
-            self.counters.output_rows
+            self.counters.output_facts
         ));
         if let Some(direct) = &self.direct_kernel {
             out.push_str(&format!(
@@ -561,11 +561,11 @@ impl QueryPlan {
         }
         if self.runtime_kind == QueryRuntimeKind::StaticEmpty {
             out.push_str(&format!(
-                "static_empty cache_hits={} cache_misses={} atoms_checked={} rows_scanned={} semijoin_prefixes_probed={} semijoin_candidate_values={} semijoin_rounds={}\n",
+                "static_empty cache_hits={} cache_misses={} atoms_checked={} facts_scanned={} semijoin_prefixes_probed={} semijoin_candidate_values={} semijoin_rounds={}\n",
                 self.counters.static_empty_cache_hits,
                 self.counters.static_empty_cache_misses,
                 self.counters.static_empty_atoms_checked,
-                self.counters.static_empty_rows_scanned,
+                self.counters.static_empty_facts_scanned,
                 self.counters.static_semijoin_prefixes_probed,
                 self.counters.static_semijoin_candidate_values,
                 self.counters.static_semijoin_rounds,
@@ -580,10 +580,10 @@ impl QueryPlan {
                 node.bind_vars.iter().map(|var| var.0).collect::<Vec<_>>(),
                 node.subatoms.len()
             ));
-            if let Some(rows) = self.node_rows.get(node.id.0 as usize) {
+            if let Some(facts) = self.node_facts.get(node.id.0 as usize) {
                 out.push_str(&format!(
-                    "    node_rows variable={} estimated_rows={} actual_rows={}\n",
-                    rows.variable, rows.estimated_rows, rows.actual_rows
+                    "    node_facts variable={} estimated_rows={} actual_rows={}\n",
+                    facts.variable, facts.estimated_rows, facts.actual_rows
                 ));
             }
             if let Some(timing) = self.node_timings.get(node.id.0 as usize) {
@@ -613,8 +613,14 @@ impl QueryPlan {
         }
         out.push_str("counters:\n");
         out.push_str(&format!("  cursor_seeks: {}\n", self.counters.cursor_seeks));
-        out.push_str(&format!("  rows_scanned: {}\n", self.counters.rows_scanned));
-        out.push_str(&format!("  rows_matched: {}\n", self.counters.rows_matched));
+        out.push_str(&format!(
+            "  facts_scanned: {}\n",
+            self.counters.facts_scanned
+        ));
+        out.push_str(&format!(
+            "  facts_matched: {}\n",
+            self.counters.facts_matched
+        ));
         out.push_str(&format!(
             "  bindings_yielded: {}\n",
             self.counters.bindings_yielded
@@ -696,12 +702,12 @@ impl QueryPlan {
             self.counters.atom_temp_relation_rows
         ));
         out.push_str(&format!(
-            "  lftj_atom_source_rows_scanned: {}\n",
-            self.counters.lftj_atom_source_rows_scanned
+            "  lftj_atom_source_facts_scanned: {}\n",
+            self.counters.lftj_atom_source_facts_scanned
         ));
         out.push_str(&format!(
-            "  lftj_atom_rows_retained: {}\n",
-            self.counters.lftj_atom_rows_retained
+            "  lftj_atom_facts_retained: {}\n",
+            self.counters.lftj_atom_facts_retained
         ));
         out.push_str(&format!(
             "  lftj_atom_bytes_copied: {}\n",
@@ -724,12 +730,12 @@ impl QueryPlan {
             self.counters.hash_index_builds
         ));
         out.push_str(&format!(
-            "  hash_index_build_rows: {}\n",
-            self.counters.hash_index_build_rows
+            "  hash_index_build_facts: {}\n",
+            self.counters.hash_index_build_facts
         ));
         out.push_str(&format!(
-            "  hash_rows_returned: {}\n",
-            self.counters.hash_rows_returned
+            "  hash_facts_returned: {}\n",
+            self.counters.hash_facts_returned
         ));
         out.push_str(&format!(
             "  hash_distinct_emits: {}\n",
@@ -740,8 +746,8 @@ impl QueryPlan {
             self.counters.direct_kernel_probes
         ));
         out.push_str(&format!(
-            "  direct_kernel_rows: {}\n",
-            self.counters.direct_kernel_rows
+            "  direct_kernel_facts: {}\n",
+            self.counters.direct_kernel_facts
         ));
         out.push_str(&format!(
             "  direct_kernel_predicates: {}\n",
@@ -752,8 +758,8 @@ impl QueryPlan {
             self.counters.static_empty_atoms_checked
         ));
         out.push_str(&format!(
-            "  static_empty_rows_scanned: {}\n",
-            self.counters.static_empty_rows_scanned
+            "  static_empty_facts_scanned: {}\n",
+            self.counters.static_empty_facts_scanned
         ));
         out.push_str(&format!(
             "  static_empty_cache_hits: {}\n",
@@ -783,14 +789,14 @@ impl QueryPlan {
             "  static_semijoin_skipped_reason: {}\n",
             self.counters.static_semijoin_skipped_reason.as_str()
         ));
-        out.push_str(&format!("  output_rows: {}\n", self.counters.output_rows));
+        out.push_str(&format!("  output_facts: {}\n", self.counters.output_facts));
         out
     }
 
     fn refresh_node_timings(&mut self) {
         for timing in &mut self.node_timings {
-            if let Some(rows) = self.node_rows.get(timing.node.0 as usize) {
-                timing.actual_rows = rows.actual_rows;
+            if let Some(facts) = self.node_facts.get(timing.node.0 as usize) {
+                timing.actual_rows = facts.actual_rows;
             }
         }
     }
@@ -1037,7 +1043,7 @@ pub struct QueryNodeTiming {
     pub implementation: NodeImpl,
     /// Variables bound by this node.
     pub bind_vars: Vec<VarId>,
-    /// Estimated rows/candidates for this node.
+    /// Estimated facts/candidates for this node.
     pub estimated_rows: u64,
     /// Observed accepted candidates for this node.
     pub actual_rows: u64,
@@ -1142,14 +1148,14 @@ pub struct CostKey {
     pub implementation_mask: u64,
 }
 
-/// Estimated and observed rows/candidates for one Free Join node.
+/// Estimated and observed facts/candidates for one Free Join node.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NodeRowEstimate {
     /// Dense node ID.
     pub node: NodeId,
     /// Variable bound by this node.
     pub variable: String,
-    /// Estimated rows/candidates for this node.
+    /// Estimated facts/candidates for this node.
     pub estimated_rows: u64,
     /// Observed accepted candidates for this node.
     pub actual_rows: u64,
@@ -1192,9 +1198,9 @@ pub struct PlanCounters {
     /// Number of encoded index scan openings.
     pub cursor_seeks: u64,
     /// Number of encoded index entries inspected.
-    pub rows_scanned: u64,
+    pub facts_scanned: u64,
     /// Number of encoded index entries accepted by currently bound constraints.
-    pub rows_matched: u64,
+    pub facts_matched: u64,
     /// Number of complete encoded bindings yielded before projection/aggregation.
     pub bindings_yielded: u64,
     /// Number of comparison predicates evaluated.
@@ -1203,8 +1209,8 @@ pub struct PlanCounters {
     pub comparisons_failed: u64,
     /// Number of aggregate groups produced.
     pub aggregate_groups: u64,
-    /// Number of final output rows.
-    pub output_rows: u64,
+    /// Number of final output facts.
+    pub output_facts: u64,
     /// Number of complete bindings that reached an output boundary.
     pub bindings_completed: u64,
     /// Number of sink emit calls.
@@ -1265,14 +1271,14 @@ pub struct PlanCounters {
     pub sorted_trie_build_micros: u64,
     /// Number of temporary atom relation images built on cache misses.
     pub atom_temp_relation_builds: u64,
-    /// Number of source rows inspected while building temporary atom relations.
+    /// Number of source facts inspected while building temporary atom relations.
     pub atom_temp_relation_source_rows: u64,
-    /// Number of rows retained in temporary atom relations.
+    /// Number of facts retained in temporary atom relations.
     pub atom_temp_relation_rows: u64,
-    /// Number of source rows inspected by LFTJ atom build subphase tracing.
-    pub lftj_atom_source_rows_scanned: u64,
-    /// Number of rows retained by LFTJ atom build subphase tracing.
-    pub lftj_atom_rows_retained: u64,
+    /// Number of source facts inspected by LFTJ atom build subphase tracing.
+    pub lftj_atom_source_facts_scanned: u64,
+    /// Number of facts retained by LFTJ atom build subphase tracing.
+    pub lftj_atom_facts_retained: u64,
     /// Number of encoded bytes copied by LFTJ atom build subphase tracing.
     pub lftj_atom_bytes_copied: u64,
     /// LFTJ atom scan/filter/copy microseconds.
@@ -1283,16 +1289,16 @@ pub struct PlanCounters {
     pub lftj_atom_sort_micros: u64,
     /// Number of hash trie indexes built for direct execution.
     pub hash_index_builds: u64,
-    /// Number of source rows used to build hash indexes.
-    pub hash_index_build_rows: u64,
-    /// Number of row IDs returned from hash prefix probes.
-    pub hash_rows_returned: u64,
+    /// Number of source facts used to build hash indexes.
+    pub hash_index_build_facts: u64,
+    /// Number of fact IDs returned from hash prefix probes.
+    pub hash_facts_returned: u64,
     /// Number of bindings emitted from hash-backed direct nodes.
     pub hash_distinct_emits: u64,
     /// Number of direct kernel prefix/point probes.
     pub direct_kernel_probes: u64,
-    /// Number of relation rows visited by direct kernels.
-    pub direct_kernel_rows: u64,
+    /// Number of relation facts visited by direct kernels.
+    pub direct_kernel_facts: u64,
     /// Number of predicates evaluated by direct kernels.
     pub direct_kernel_predicates: u64,
     /// Number of direct variable bind attempts.
@@ -1301,36 +1307,36 @@ pub struct PlanCounters {
     pub direct_bind_successes: u64,
     /// Number of direct chain steps entered.
     pub direct_chain_steps: u64,
-    /// Number of direct chain step rows observed.
-    pub direct_chain_step_rows: u64,
-    /// Number of direct chain output rows emitted.
-    pub direct_chain_output_rows: u64,
+    /// Number of direct chain step facts observed.
+    pub direct_chain_step_facts: u64,
+    /// Number of direct chain output facts emitted.
+    pub direct_chain_output_facts: u64,
     /// Number of direct chain output values emitted.
     pub direct_chain_output_values: u64,
-    /// Number of direct storage output rows emitted.
-    pub direct_storage_output_rows: u64,
-    /// Number of direct rows appended through the direct batch projection path.
-    pub direct_batch_rows: u64,
+    /// Number of direct storage output facts emitted.
+    pub direct_storage_output_facts: u64,
+    /// Number of direct facts appended through the direct batch projection path.
+    pub direct_batch_facts: u64,
     /// Number of encoded bytes appended through the direct batch projection path.
-    pub direct_batch_row_bytes: u64,
-    /// Number of direct rows that fell back to generic sink emission.
-    pub direct_batch_fallback_rows: u64,
+    pub direct_batch_fact_bytes: u64,
+    /// Number of direct facts that fell back to generic sink emission.
+    pub direct_batch_fallback_facts: u64,
     /// Number of times direct materialization reused an existing encoded binding.
     pub direct_binding_reuses: u64,
-    /// Number of encoded projection rows observed before dedup.
-    pub encoded_project_rows_seen: u64,
-    /// Number of encoded projection rows inserted after dedup.
-    pub encoded_project_rows_inserted: u64,
-    /// Number of duplicate encoded projection rows observed.
-    pub encoded_project_duplicate_rows: u64,
-    /// Number of encoded row bytes observed by projection sink.
-    pub encoded_project_row_bytes: u64,
+    /// Number of encoded projection facts observed before dedup.
+    pub encoded_project_facts_seen: u64,
+    /// Number of encoded projection facts inserted after dedup.
+    pub encoded_project_facts_inserted: u64,
+    /// Number of duplicate encoded projection facts observed.
+    pub encoded_project_duplicate_facts: u64,
+    /// Number of encoded fact bytes observed by projection sink.
+    pub encoded_project_fact_bytes: u64,
     /// Number of projection values decoded at output boundary.
     pub project_decode_values: u64,
     /// Number of static-empty proof atoms checked.
     pub static_empty_atoms_checked: u64,
-    /// Number of relation/index rows inspected by static-empty proof.
-    pub static_empty_rows_scanned: u64,
+    /// Number of relation/index facts inspected by static-empty proof.
+    pub static_empty_facts_scanned: u64,
     /// Number of static-empty proof cache hits.
     pub static_empty_cache_hits: u64,
     /// Number of static-empty proof cache misses.
@@ -1404,11 +1410,11 @@ impl ExecutionPlan {
         plan.summary.timings = QueryTimings::default();
         plan.summary.allocations = QueryAllocationStats::default();
         plan.summary.counters = PlanCounters::default();
-        for rows in &mut plan.summary.node_rows {
-            rows.actual_rows = 0;
+        for facts in &mut plan.summary.node_facts {
+            facts.actual_rows = 0;
         }
         plan.summary.node_timings =
-            query_node_timings(&plan.summary.free_join, &plan.summary.node_rows);
+            query_node_timings(&plan.summary.free_join, &plan.summary.node_facts);
         plan
     }
 }
@@ -1443,7 +1449,7 @@ impl PlannerStats {
     fn relation_rows(&self, relation: &str) -> u64 {
         self.relations
             .get(relation)
-            .map(|stats| stats.rows as u64)
+            .map(|stats| stats.facts as u64)
             .unwrap_or(1)
             .max(1)
     }
@@ -1509,7 +1515,7 @@ impl AccessEstimate {
 struct LftjAtomPlan {
     variables: Vec<usize>,
     source: LftjAtomSource,
-    row_count: usize,
+    fact_count: usize,
 }
 
 enum LftjAtomSource {
@@ -1573,7 +1579,7 @@ impl TrieIter for LftjTrieIter<'_> {
         }
     }
 
-    fn current_range(&self) -> RowRange {
+    fn current_range(&self) -> FactRange {
         match self {
             LftjTrieIter::Sorted(iter) => iter.current_range(),
         }
@@ -1823,7 +1829,7 @@ impl<'env> ReadTxn<'env> {
             return Ok(QueryOutput {
                 result: QueryResultSet::new(
                     result_columns(&normalized),
-                    empty_output_rows(&normalized.output),
+                    empty_output_facts(&normalized.output),
                 ),
                 plan,
             });
@@ -1861,7 +1867,7 @@ impl<'env> ReadTxn<'env> {
             return Ok(QueryOutput {
                 result: QueryResultSet::new(
                     result_columns(&normalized),
-                    empty_output_rows(&normalized.output),
+                    empty_output_facts(&normalized.output),
                 ),
                 plan,
             });
@@ -1916,15 +1922,15 @@ impl<'env> ReadTxn<'env> {
         let columns = result_columns(&normalized);
         let sink_finish_start = Instant::now();
         let sink_finish_alloc_start = allocation::snapshot();
-        let rows = {
+        let facts = {
             let _span = tracing::debug_span!("bumbledb.query.sink.finish").entered();
             sink.finish(self, &normalized, &mut plan.summary.counters)?
         };
         plan.summary.timings.sink_finish_micros = elapsed_micros(sink_finish_start);
         plan.summary.allocations.sink_finish = allocation_delta_since(sink_finish_alloc_start);
-        plan.summary.counters.output_rows = rows.len() as u64;
+        plan.summary.counters.output_facts = facts.len() as u64;
         if has_aggregate(&normalized) {
-            plan.summary.counters.aggregate_groups = rows.len() as u64;
+            plan.summary.counters.aggregate_groups = facts.len() as u64;
         }
         if let Some(proof) = &static_empty_proof {
             record_static_proof_counters(&mut plan.summary.counters, proof);
@@ -1935,7 +1941,7 @@ impl<'env> ReadTxn<'env> {
         plan.summary.refresh_node_timings();
         tracing::debug!(?plan.summary.counters, "free join query executed");
         Ok(QueryOutput {
-            result: QueryResultSet::new(columns, rows),
+            result: QueryResultSet::new(columns, facts),
             plan: plan.summary,
         })
     }
@@ -2104,7 +2110,7 @@ impl<'env> ReadTxn<'env> {
             return Ok(QueryOutput {
                 result: QueryResultSet::new(
                     result_columns(normalized),
-                    empty_output_rows(&normalized.output),
+                    empty_output_facts(&normalized.output),
                 ),
                 plan,
             });
@@ -2142,7 +2148,7 @@ impl<'env> ReadTxn<'env> {
             return Ok(QueryOutput {
                 result: QueryResultSet::new(
                     result_columns(normalized),
-                    empty_output_rows(&normalized.output),
+                    empty_output_facts(&normalized.output),
                 ),
                 plan,
             });
@@ -2198,15 +2204,15 @@ impl<'env> ReadTxn<'env> {
         let columns = result_columns(normalized);
         let sink_finish_start = Instant::now();
         let sink_finish_alloc_start = allocation::snapshot();
-        let rows = {
+        let facts = {
             let _span = tracing::debug_span!("bumbledb.query.sink.finish").entered();
             sink.finish(self, normalized, &mut plan.summary.counters)?
         };
         plan.summary.timings.sink_finish_micros = elapsed_micros(sink_finish_start);
         plan.summary.allocations.sink_finish = allocation_delta_since(sink_finish_alloc_start);
-        plan.summary.counters.output_rows = rows.len() as u64;
+        plan.summary.counters.output_facts = facts.len() as u64;
         if has_aggregate(normalized) {
-            plan.summary.counters.aggregate_groups = rows.len() as u64;
+            plan.summary.counters.aggregate_groups = facts.len() as u64;
         }
         if let Some(proof) = &static_empty_proof {
             record_static_proof_counters(&mut plan.summary.counters, proof);
@@ -2217,12 +2223,12 @@ impl<'env> ReadTxn<'env> {
         plan.summary.refresh_node_timings();
         tracing::debug!(?plan.summary.counters, "free join query executed");
         Ok(QueryOutput {
-            result: QueryResultSet::new(columns, rows),
+            result: QueryResultSet::new(columns, facts),
             plan: plan.summary,
         })
     }
 
-    /// Executes a prepared typed query and returns only the output row count.
+    /// Executes a prepared typed query and returns only the output fact count.
     #[tracing::instrument(name = "bumbledb.query.execute_prepared_cardinality", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
     pub fn execute_prepared_query_cardinality(
         &self,
@@ -2250,7 +2256,7 @@ impl<'env> ReadTxn<'env> {
         self.execute_result_cardinality_with_options(schema, query.query(), inputs, options)
     }
 
-    /// Executes a typed query and returns only the output row count.
+    /// Executes a typed query and returns only the output fact count.
     #[tracing::instrument(name = "bumbledb.query.execute_count", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
     pub fn execute_result_cardinality(
         &self,
@@ -2448,10 +2454,10 @@ impl<'env> ReadTxn<'env> {
         plan.summary.timings.execute_micros = elapsed_micros(execute_start);
         plan.summary.allocations.execute = allocation_delta_since(execute_alloc_start);
 
-        let rows = sink.finish_count()?;
-        plan.summary.counters.output_rows = rows as u64;
+        let facts = sink.finish_count()?;
+        plan.summary.counters.output_facts = facts as u64;
         if has_aggregate(&normalized) {
-            plan.summary.counters.aggregate_groups = rows as u64;
+            plan.summary.counters.aggregate_groups = facts as u64;
         }
         if let Some(proof) = &static_empty_proof {
             record_static_proof_counters(&mut plan.summary.counters, proof);
@@ -2463,7 +2469,7 @@ impl<'env> ReadTxn<'env> {
             .with_total(allocation_delta_since(total_alloc_start));
         plan.summary.refresh_node_timings();
         Ok(QueryResultCardinality {
-            cardinality: rows,
+            cardinality: facts,
             plan: plan.summary,
         })
     }
@@ -2485,7 +2491,7 @@ fn finish_timings(timings: &mut QueryTimings, total_start: Instant) {
 fn record_static_proof_counters(counters: &mut PlanCounters, proof: &StaticEmptyProof) {
     counters.static_empty_cache_misses = 1;
     counters.static_empty_atoms_checked = proof.atoms_checked;
-    counters.static_empty_rows_scanned = proof.rows_scanned;
+    counters.static_empty_facts_scanned = proof.facts_scanned;
     counters.static_semijoin_prefixes_probed = proof.prefixes_probed;
     counters.static_semijoin_candidate_values = proof.candidate_values;
     counters.static_semijoin_rounds = proof.rounds;
@@ -2891,7 +2897,7 @@ fn hash_output_plan(hasher: &mut blake3::Hasher, output: &OutputPlan) {
 struct StaticEmptyProof {
     empty: bool,
     atoms_checked: u64,
-    rows_scanned: u64,
+    facts_scanned: u64,
     prefixes_probed: u64,
     candidate_values: u64,
     rounds: u64,
@@ -2934,7 +2940,7 @@ struct StaticRangeConstraint {
 
 type StaticSemijoinProbes<'a> = (&'a RelationIndexImage, Vec<StaticSemijoinProbe>);
 
-// Static proof owns emptiness detection only. It must not count rows or select plans.
+// Static proof owns emptiness detection only. It must not count facts or select plans.
 fn static_query_proves_empty_timed(
     image: &crate::QueryImage,
     query: &NormalizedQuery,
@@ -3024,7 +3030,7 @@ fn static_query_proves_empty_timed(
         .static_semijoin_proof_micros
         .saturating_add(elapsed_recorded_micros(semijoin_start));
     proof.atoms_checked = proof.atoms_checked.saturating_add(semijoin.atoms_checked);
-    proof.rows_scanned = proof.rows_scanned.saturating_add(semijoin.rows_scanned);
+    proof.facts_scanned = proof.facts_scanned.saturating_add(semijoin.facts_scanned);
     proof.prefixes_probed = semijoin.prefixes_probed;
     proof.candidate_values = semijoin.candidate_values;
     proof.rounds = semijoin.rounds;
@@ -3121,9 +3127,9 @@ fn static_literal_atoms_prove_empty(
             .relation_by_id(atom.relation)
             .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
         let mut matched = false;
-        for row in 0..relation.row_count {
-            proof.rows_scanned += 1;
-            if static_atom_row_matches(relation, atom, RowId(row as u32), inputs)? {
+        for fact in 0..relation.fact_count {
+            proof.facts_scanned += 1;
+            if static_atom_row_matches(relation, atom, FactId(fact as u32), inputs)? {
                 matched = true;
                 break;
             }
@@ -3310,19 +3316,19 @@ fn enumerate_static_atom_candidates(
         return Ok(Some(out));
     }
 
-    if relation.row_count > STATIC_SEMIJOIN_SCAN_THRESHOLD {
+    if relation.fact_count > STATIC_SEMIJOIN_SCAN_THRESHOLD {
         return Ok(None);
     }
     let mut out = empty_atom_candidate_map(atom);
-    for row in 0..relation.row_count {
-        if proof.rows_scanned >= STATIC_SEMIJOIN_MAX_SCANNED_ROWS {
+    for fact in 0..relation.fact_count {
+        if proof.facts_scanned >= STATIC_SEMIJOIN_MAX_SCANNED_ROWS {
             return Ok(None);
         }
-        proof.rows_scanned += 1;
-        let row = RowId(row as u32);
-        if static_atom_row_matches_with_candidates(relation, query, atom, row, inputs, candidates)?
+        proof.facts_scanned += 1;
+        let fact = FactId(fact as u32);
+        if static_atom_row_matches_with_candidates(relation, query, atom, fact, inputs, candidates)?
         {
-            collect_atom_row_candidates(relation, atom, row, &mut out)?;
+            collect_atom_row_candidates(relation, atom, fact, &mut out)?;
             if total_raw_candidate_values(&out) > max_candidates {
                 return Ok(None);
             }
@@ -3607,20 +3613,20 @@ fn static_atom_row_matches_with_candidates(
     relation: &RelationImage,
     query: &NormalizedQuery,
     atom: &NormAtom,
-    row: RowId,
+    fact: FactId,
     inputs: &EncodedInputs,
     candidates: &BTreeMap<VarId, CandidateSet>,
 ) -> Result<bool> {
     for field in &atom.fields {
         let bytes = relation
-            .encoded_bytes(row, field.field)
+            .encoded_bytes(fact, field.field)
             .ok_or_else(|| Error::internal("missing static semijoin atom field"))?;
         if !static_atom_field_bytes_match(field, bytes, inputs, candidates) {
             return Ok(false);
         }
     }
     static_atom_predicates_match(query, atom, inputs, |field| {
-        relation.encoded_bytes(row, field.field)
+        relation.encoded_bytes(fact, field.field)
     })
 }
 
@@ -3705,14 +3711,14 @@ fn collect_atom_entry_candidates(
 fn collect_atom_row_candidates(
     relation: &RelationImage,
     atom: &NormAtom,
-    row: RowId,
+    fact: FactId,
     out: &mut BTreeMap<VarId, BTreeSet<EncodedOwned>>,
 ) -> Result<()> {
     for field in &atom.fields {
         if let NormTerm::Var(variable) = field.term {
             let bytes = relation
-                .encoded_bytes(row, field.field)
-                .ok_or_else(|| Error::internal("missing static semijoin row field"))?;
+                .encoded_bytes(fact, field.field)
+                .ok_or_else(|| Error::internal("missing static semijoin fact field"))?;
             out.entry(variable)
                 .or_default()
                 .insert(encoded_owned_for_width(
@@ -3766,7 +3772,7 @@ fn total_raw_candidate_values(candidates: &BTreeMap<VarId, BTreeSet<EncodedOwned
 fn static_atom_row_matches(
     relation: &RelationImage,
     atom: &NormAtom,
-    row: RowId,
+    fact: FactId,
     inputs: &EncodedInputs,
 ) -> Result<bool> {
     for field in &atom.fields {
@@ -3779,7 +3785,7 @@ fn static_atom_row_matches(
             continue;
         };
         let bytes = relation
-            .encoded_bytes(row, field.field)
+            .encoded_bytes(fact, field.field)
             .ok_or_else(|| Error::internal("missing static atom field"))?;
         if expected.as_bytes() != bytes {
             return Ok(false);
@@ -3806,7 +3812,7 @@ fn static_empty_plan(
         query_image_cache,
         planner_stats,
         prepared_plan_cache,
-        node_rows: Vec::new(),
+        node_facts: Vec::new(),
         node_timings: Vec::new(),
         free_join: FreeJoinPlan {
             nodes: Vec::new(),
@@ -3833,7 +3839,7 @@ fn static_empty_output_from_typed(
     QueryOutput {
         result: QueryResultSet::new(
             result_columns_from_typed(query),
-            empty_output_rows(&output_plan_from_typed_find(query)),
+            empty_output_facts(&output_plan_from_typed_find(query)),
         ),
         plan: static_empty_plan_from_typed(
             query,
@@ -3846,7 +3852,7 @@ fn static_empty_output_from_typed(
     }
 }
 
-fn empty_output_rows(output: &OutputPlan) -> Vec<Vec<Value>> {
+fn empty_output_facts(output: &OutputPlan) -> Vec<Vec<Value>> {
     match output {
         OutputPlan::Aggregate(plan) if is_global_count_plan(plan) => vec![vec![Value::U64(0)]],
         OutputPlan::Project(_) | OutputPlan::Aggregate(_) => Vec::new(),
@@ -3880,7 +3886,7 @@ fn static_empty_plan_from_typed(
         query_image_cache,
         planner_stats: PlannerStatsCacheDiagnostics::default(),
         prepared_plan_cache: PreparedPlanCacheDiagnostics::default(),
-        node_rows: Vec::new(),
+        node_facts: Vec::new(),
         node_timings: Vec::new(),
         free_join: FreeJoinPlan {
             nodes: Vec::new(),
@@ -4028,7 +4034,7 @@ fn try_execute_direct_materialized_kernel(
             query_image_cache,
             planner_stats,
             prepared_plan_cache,
-            node_rows: Vec::new(),
+            node_facts: Vec::new(),
             node_timings: Vec::new(),
             free_join: FreeJoinPlan {
                 nodes: Vec::new(),
@@ -4061,19 +4067,19 @@ fn try_execute_direct_materialized_kernel(
     let columns = result_columns(query);
     let sink_finish_start = Instant::now();
     let sink_finish_alloc_start = allocation::snapshot();
-    let rows = sink.finish(txn, query, &mut plan.summary.counters)?;
+    let facts = sink.finish(txn, query, &mut plan.summary.counters)?;
     timings.sink_finish_micros = elapsed_micros(sink_finish_start);
     allocations.sink_finish = allocation_delta_since(sink_finish_alloc_start);
     plan.summary.timings = timings;
     plan.summary.allocations = allocations;
-    plan.summary.counters.output_rows = rows.len() as u64;
+    plan.summary.counters.output_facts = facts.len() as u64;
     finish_timings(&mut plan.summary.timings, total_start);
     plan.summary.allocations = plan
         .summary
         .allocations
         .with_total(allocation_delta_since(total_alloc_start));
     Ok(Some(QueryOutput {
-        result: QueryResultSet::new(columns, rows),
+        result: QueryResultSet::new(columns, facts),
         plan: plan.summary,
     }))
 }
@@ -4123,10 +4129,10 @@ fn try_execute_direct_storage_project(
     };
     for item in scan {
         let item = item?;
-        counters.direct_kernel_rows += 1;
+        counters.direct_kernel_facts += 1;
         let mut binding = EncodedBinding::new(query.vars.len());
         counters.direct_bind_attempts += 1;
-        if !bind_direct_storage_row(txn, query, encoded_inputs, atom, &item.row, &mut binding)? {
+        if !bind_direct_storage_row(txn, query, encoded_inputs, atom, &item.fact, &mut binding)? {
             continue;
         }
         counters.direct_bind_successes += 1;
@@ -4149,7 +4155,7 @@ fn try_execute_direct_storage_project(
             .saturating_add(counters.comparisons_evaluated.saturating_sub(before));
         counters.bindings_yielded += 1;
         counters.bindings_completed += 1;
-        counters.direct_storage_output_rows += 1;
+        counters.direct_storage_output_facts += 1;
         if !sink.emit_direct_project(query, &binding, &mut counters)? {
             sink.emit(txn, query, &binding, &mut counters)?;
         }
@@ -4160,15 +4166,15 @@ fn try_execute_direct_storage_project(
 
     let finish_start = Instant::now();
     let finish_alloc_start = allocation::snapshot();
-    let rows = sink.finish(txn, query, &mut counters)?;
+    let facts = sink.finish(txn, query, &mut counters)?;
     timings.sink_finish_micros = elapsed_micros(finish_start);
     allocations.sink_finish = allocation_delta_since(finish_alloc_start);
-    counters.output_rows = rows.len() as u64;
+    counters.output_facts = facts.len() as u64;
     finish_timings(&mut timings, total_start);
     allocations = allocations.with_total(allocation_delta_since(total_alloc_start));
 
     Ok(Some(QueryOutput {
-        result: QueryResultSet::new(result_columns(query), rows),
+        result: QueryResultSet::new(result_columns(query), facts),
         plan: QueryPlan {
             variable_order: query.vars.iter().map(|var| var.name.clone()).collect(),
             variable_estimates: Vec::new(),
@@ -4180,7 +4186,7 @@ fn try_execute_direct_storage_project(
                     family: PlanFamily::Direct,
                     implementations: Vec::new(),
                     cost: CostKey {
-                        estimated_micros: counters.direct_kernel_rows.max(1),
+                        estimated_micros: counters.direct_kernel_facts.max(1),
                         setup_micros: 0,
                         memory_bytes: 0,
                         materialization_penalty: counters.materialized_output_values,
@@ -4195,7 +4201,7 @@ fn try_execute_direct_storage_project(
             query_image_cache: txn.query_images.diagnostics(),
             planner_stats: PlannerStatsCacheDiagnostics::default(),
             prepared_plan_cache: PreparedPlanCacheDiagnostics::default(),
-            node_rows: Vec::new(),
+            node_facts: Vec::new(),
             node_timings: Vec::new(),
             free_join: FreeJoinPlan {
                 nodes: Vec::new(),
@@ -4357,11 +4363,11 @@ fn bind_direct_storage_row(
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
     atom: &NormAtom,
-    row: &crate::Row,
+    fact: &crate::Fact,
     binding: &mut EncodedBinding,
 ) -> Result<bool> {
     for field in &atom.fields {
-        let Some(value) = row.value(&field.field_name) else {
+        let Some(value) = fact.value(&field.field_name) else {
             return Ok(false);
         };
         match &field.term {
@@ -4397,7 +4403,7 @@ fn bind_direct_storage_row(
     Ok(true)
 }
 
-fn execute_free_join<'txn, 'query, S: TupleSink>(
+fn execute_free_join<'txn, 'query, S: FactSink>(
     image: &crate::QueryImage,
     txn: &ReadTxn<'txn>,
     schema: &StorageSchema,
@@ -4586,7 +4592,7 @@ fn direct_index_name(relation: &str, kind: &str) -> String {
     format!("{relation}_direct_{kind}")
 }
 
-fn execute_direct_kernel<'txn, 'query, S: TupleSink>(
+fn execute_direct_kernel<'txn, 'query, S: FactSink>(
     image: &crate::QueryImage,
     txn: &ReadTxn<'txn>,
     schema: &StorageSchema,
@@ -4621,7 +4627,7 @@ fn execute_direct_kernel<'txn, 'query, S: TupleSink>(
     }
 }
 
-fn execute_direct_prefix_range<'txn, 'query, S: TupleSink>(
+fn execute_direct_prefix_range<'txn, 'query, S: FactSink>(
     image: &crate::QueryImage,
     txn: &ReadTxn<'txn>,
     query: &'query NormalizedQuery,
@@ -4645,17 +4651,17 @@ fn execute_direct_prefix_range<'txn, 'query, S: TupleSink>(
         &EncodedBinding::new(query.vars.len()),
     )?;
     let refs = encoded_refs(&prefix);
-    let row_count = AccessSource::HashTrie(index.as_ref()).count(&refs)?;
+    let fact_count = AccessSource::HashTrie(index.as_ref()).count(&refs)?;
     plan.summary.counters.direct_kernel_probes += 1;
-    if row_count == 0 {
+    if fact_count == 0 {
         return Ok(());
     }
     let relation = direct_relation(image, kernel.relation)?;
     let mut binding = EncodedBinding::new(query.vars.len());
-    for row in index.rows_for_prefix(&refs) {
-        plan.summary.counters.direct_kernel_rows += 1;
-        let bound = bind_atom_variables(relation, atom, row, &mut binding)?;
-        if !direct_row_satisfies_atom(relation, atom, row, inputs, &binding)? {
+    for fact in index.rows_for_prefix(&refs) {
+        plan.summary.counters.direct_kernel_facts += 1;
+        let bound = bind_atom_variables(relation, atom, fact, &mut binding)?;
+        if !direct_row_satisfies_atom(relation, atom, fact, inputs, &binding)? {
             unbind_variables(&mut binding, &bound);
             continue;
         }
@@ -4688,7 +4694,7 @@ fn execute_direct_prefix_range<'txn, 'query, S: TupleSink>(
     Ok(())
 }
 
-struct DirectChainExecutor<'txn, 'input, 'query, 'plan, S: TupleSink> {
+struct DirectChainExecutor<'txn, 'input, 'query, 'plan, S: FactSink> {
     image: &'input crate::QueryImage,
     txn: &'input ReadTxn<'txn>,
     schema: &'input StorageSchema,
@@ -4700,36 +4706,39 @@ struct DirectChainExecutor<'txn, 'input, 'query, 'plan, S: TupleSink> {
     binding: EncodedBinding,
 }
 
-impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
+impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
     fn execute(&mut self) -> Result<()> {
         for check in &self.kernel.existence_checks {
-            if let Some(rows) =
+            if let Some(facts) =
                 self.image_rows_for_terms(check.atom_id, &check.fields, &check.terms)?
             {
-                if !rows.iter().try_fold(false, |found, row| {
+                if !facts.iter().try_fold(false, |found, fact| {
                     if found {
                         Ok(true)
                     } else {
-                        self.image_row_satisfies_atom(&self.plan.relation_atoms[check.atom_id], row)
+                        self.image_row_satisfies_atom(
+                            &self.plan.relation_atoms[check.atom_id],
+                            fact,
+                        )
                     }
                 })? {
                     return Ok(());
                 }
                 continue;
             }
-            if let Some(rows) = self.storage_rows_for_terms(
+            if let Some(facts) = self.storage_rows_for_terms(
                 check.relation,
                 check.atom_id,
                 &check.fields,
                 &check.terms,
             )? {
-                if !rows.iter().try_fold(false, |found, row| {
+                if !facts.iter().try_fold(false, |found, fact| {
                     if found {
                         Ok(true)
                     } else {
                         self.storage_row_satisfies_atom(
                             &self.plan.relation_atoms[check.atom_id],
-                            row,
+                            fact,
                         )
                     }
                 })? {
@@ -4753,11 +4762,11 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             }
             let relation = direct_relation(self.image, check.relation)?;
             let mut found = false;
-            for row in index.rows_for_prefix(&refs) {
+            for fact in index.rows_for_prefix(&refs) {
                 if direct_row_satisfies_atom(
                     relation,
                     &self.plan.relation_atoms[check.atom_id],
-                    row,
+                    fact,
                     self.inputs,
                     &self.binding,
                 )? {
@@ -4798,7 +4807,7 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             if keep {
                 self.plan.summary.counters.bindings_yielded += 1;
                 self.plan.summary.counters.bindings_completed += 1;
-                self.plan.summary.counters.direct_chain_output_rows += 1;
+                self.plan.summary.counters.direct_chain_output_facts += 1;
                 self.plan.summary.counters.direct_chain_output_values = self
                     .plan
                     .summary
@@ -4824,16 +4833,16 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
         }
         let step = &self.kernel.steps[depth];
         self.plan.summary.counters.direct_chain_steps += 1;
-        if let Some(rows) =
+        if let Some(facts) =
             self.image_rows_for_terms(step.atom_id, &step.prefix_fields, &step.prefix_terms)?
         {
-            for row in rows {
-                self.plan.summary.counters.direct_chain_step_rows += 1;
+            for fact in facts {
+                self.plan.summary.counters.direct_chain_step_facts += 1;
                 let atom = &self.plan.relation_atoms[step.atom_id];
-                if !self.image_row_satisfies_atom(atom, &row)? {
+                if !self.image_row_satisfies_atom(atom, &fact)? {
                     continue;
                 }
-                let Some(value) = row.get(step.bind_field) else {
+                let Some(value) = fact.get(step.bind_field) else {
                     return Err(Error::internal("missing direct chain image bind field"));
                 };
                 let encoded = encoded_owned_for_width(
@@ -4845,24 +4854,24 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                     continue;
                 }
                 self.plan.summary.counters.direct_bind_successes += 1;
-                if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
-                    rows.actual_rows = rows.actual_rows.saturating_add(1);
+                if let Some(facts) = self.plan.summary.node_facts.get_mut(depth) {
+                    facts.actual_rows = facts.actual_rows.saturating_add(1);
                 }
                 self.execute_step(depth + 1)?;
                 self.binding.unbind(step.bind_var);
             }
             return Ok(());
         }
-        if let Some(rows) = self.storage_rows_for_terms(
+        if let Some(facts) = self.storage_rows_for_terms(
             step.relation,
             step.atom_id,
             &step.prefix_fields,
             &step.prefix_terms,
         )? {
-            for row in rows {
-                self.plan.summary.counters.direct_chain_step_rows += 1;
+            for fact in facts {
+                self.plan.summary.counters.direct_chain_step_facts += 1;
                 let atom = &self.plan.relation_atoms[step.atom_id];
-                if !self.storage_row_satisfies_atom(atom, &row)? {
+                if !self.storage_row_satisfies_atom(atom, &fact)? {
                     continue;
                 }
                 let Some(field_name) = atom
@@ -4873,9 +4882,9 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 else {
                     return Err(Error::internal("missing direct chain storage bind field"));
                 };
-                let value = row
+                let value = fact
                     .value(field_name)
-                    .ok_or_else(|| Error::internal("missing direct chain storage row value"))?;
+                    .ok_or_else(|| Error::internal("missing direct chain storage fact value"))?;
                 let encoded = self
                     .txn
                     .encode_query_value(&self.query.vars[step.bind_var].value_type, value)?;
@@ -4888,8 +4897,8 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                     continue;
                 }
                 self.plan.summary.counters.direct_bind_successes += 1;
-                if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
-                    rows.actual_rows = rows.actual_rows.saturating_add(1);
+                if let Some(facts) = self.plan.summary.node_facts.get_mut(depth) {
+                    facts.actual_rows = facts.actual_rows.saturating_add(1);
                 }
                 self.execute_step(depth + 1)?;
                 self.binding.unbind(step.bind_var);
@@ -4906,26 +4915,26 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
         )?;
         let prefix = direct_prefix(&step.prefix_terms, self.inputs, &self.binding)?;
         let refs = encoded_refs(&prefix);
-        let row_count = index.count(&refs);
+        let fact_count = index.count(&refs);
         self.plan.summary.counters.direct_kernel_probes += 1;
-        if row_count == 0 {
+        if fact_count == 0 {
             return Ok(());
         }
         let relation = direct_relation(self.image, step.relation)?;
-        for row in index.rows_for_prefix(&refs) {
-            self.plan.summary.counters.direct_kernel_rows += 1;
-            self.plan.summary.counters.direct_chain_step_rows += 1;
+        for fact in index.rows_for_prefix(&refs) {
+            self.plan.summary.counters.direct_kernel_facts += 1;
+            self.plan.summary.counters.direct_chain_step_facts += 1;
             if !direct_row_satisfies_atom(
                 relation,
                 &self.plan.relation_atoms[step.atom_id],
-                row,
+                fact,
                 self.inputs,
                 &self.binding,
             )? {
                 continue;
             }
             let bytes = relation
-                .encoded_bytes(row, step.bind_field)
+                .encoded_bytes(fact, step.bind_field)
                 .ok_or_else(|| Error::internal("missing direct chain bind field"))?;
             let value = encoded_owned_for_width(
                 self.query.vars[step.bind_var].value_type.encoded_width(),
@@ -4936,8 +4945,8 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 continue;
             }
             self.plan.summary.counters.direct_bind_successes += 1;
-            if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
-                rows.actual_rows = rows.actual_rows.saturating_add(1);
+            if let Some(facts) = self.plan.summary.node_facts.get_mut(depth) {
+                facts.actual_rows = facts.actual_rows.saturating_add(1);
             }
             self.execute_step(depth + 1)?;
             self.binding.unbind(step.bind_var);
@@ -4951,7 +4960,7 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
         atom_id: usize,
         fields: &[FieldId],
         terms: &[NormTerm],
-    ) -> Result<Option<Vec<Row>>> {
+    ) -> Result<Option<Vec<Fact>>> {
         let atom = &self.plan.relation_atoms[atom_id];
         let Some(index_name) = direct_storage_index_for_fields(self.schema, atom, fields)? else {
             return Ok(None);
@@ -4970,18 +4979,18 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             &index_name,
             &FieldValues::new(&atom.relation_name, values),
         )?;
-        let rows = scan
-            .map(|item| item.map(|item| item.row))
+        let facts = scan
+            .map(|item| item.map(|item| item.fact))
             .collect::<Result<Vec<_>>>()?;
         self.plan.summary.counters.direct_kernel_probes += 1;
-        self.plan.summary.counters.direct_kernel_rows = self
+        self.plan.summary.counters.direct_kernel_facts = self
             .plan
             .summary
             .counters
-            .direct_kernel_rows
-            .saturating_add(rows.len() as u64);
+            .direct_kernel_facts
+            .saturating_add(facts.len() as u64);
         let _ = relation_id;
-        Ok(Some(rows))
+        Ok(Some(facts))
     }
 
     fn image_rows_for_terms(
@@ -5000,35 +5009,35 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             .iter()
             .flat_map(|value| value.as_bytes().iter().copied())
             .collect::<Vec<_>>();
-        let mut rows = Vec::new();
+        let mut facts = Vec::new();
         for entry in index.entries_with_prefix(&prefix) {
-            let mut row = DirectImageRow {
+            let mut fact = DirectImageRow {
                 fields: SmallVec::new(),
             };
             for field in &atom.fields {
                 let Some(bytes) = index.component_bytes(entry, field.field) else {
                     return Ok(None);
                 };
-                row.fields.push((
+                fact.fields.push((
                     field.field,
                     encoded_owned_from_slice(&field.value_type, bytes)?,
                 ));
             }
-            rows.push(row);
+            facts.push(fact);
         }
         self.plan.summary.counters.direct_kernel_probes += 1;
-        self.plan.summary.counters.direct_kernel_rows = self
+        self.plan.summary.counters.direct_kernel_facts = self
             .plan
             .summary
             .counters
-            .direct_kernel_rows
-            .saturating_add(rows.len() as u64);
-        Ok(Some(rows))
+            .direct_kernel_facts
+            .saturating_add(facts.len() as u64);
+        Ok(Some(facts))
     }
 
-    fn image_row_satisfies_atom(&self, atom: &NormAtom, row: &DirectImageRow) -> Result<bool> {
+    fn image_row_satisfies_atom(&self, atom: &NormAtom, fact: &DirectImageRow) -> Result<bool> {
         for field in &atom.fields {
-            let Some(value) = row.get(field.field) else {
+            let Some(value) = fact.get(field.field) else {
                 return Ok(false);
             };
             let bytes = value.as_bytes();
@@ -5082,9 +5091,9 @@ impl<S: TupleSink> DirectChainExecutor<'_, '_, '_, '_, S> {
         }
     }
 
-    fn storage_row_satisfies_atom(&self, atom: &NormAtom, row: &Row) -> Result<bool> {
+    fn storage_row_satisfies_atom(&self, atom: &NormAtom, fact: &Fact) -> Result<bool> {
         for field in &atom.fields {
-            let Some(value) = row.value(&field.field_name) else {
+            let Some(value) = fact.value(&field.field_name) else {
                 return Ok(false);
             };
             let encoded = self.txn.encode_query_value(&field.value_type, value)?;
@@ -5173,7 +5182,7 @@ fn direct_hash_index(
     counters: &mut PlanCounters,
 ) -> Result<Arc<HashTrieIndex>> {
     let relation = direct_relation(image, relation_id)?;
-    let key = HashTrieKey::new(&image.key(), relation_id, access, fields, LeafMode::Rows);
+    let key = HashTrieKey::new(&image.key(), relation_id, access, fields, LeafMode::Facts);
     let cached = image.cached_hash_trie(key, || {
         crate::query_image::build_hash_trie_index(
             relation,
@@ -5182,9 +5191,9 @@ fn direct_hash_index(
     })?;
     if !cached.hit {
         counters.hash_index_builds += 1;
-        counters.hash_index_build_rows = counters
-            .hash_index_build_rows
-            .saturating_add(relation.row_count as u64);
+        counters.hash_index_build_facts = counters
+            .hash_index_build_facts
+            .saturating_add(relation.fact_count as u64);
     }
     Ok(cached.index)
 }
@@ -5230,7 +5239,7 @@ fn direct_relation(
 fn bind_atom_variables(
     relation: &RelationImage,
     atom: &NormAtom,
-    row: RowId,
+    fact: FactId,
     binding: &mut EncodedBinding,
 ) -> Result<SmallParticipants> {
     let mut bound = SmallParticipants::new();
@@ -5240,7 +5249,7 @@ fn bind_atom_variables(
         };
         let variable = variable.0 as usize;
         let bytes = relation
-            .encoded_bytes(row, field.field)
+            .encoded_bytes(fact, field.field)
             .ok_or_else(|| Error::internal("missing direct variable field"))?;
         let value = encoded_owned_for_width(field.value_type.encoded_width(), bytes)?;
         if !binding.bind(variable, value) {
@@ -5262,13 +5271,13 @@ fn unbind_variables(binding: &mut EncodedBinding, variables: &[usize]) {
 fn direct_row_satisfies_atom(
     relation: &RelationImage,
     atom: &NormAtom,
-    row: RowId,
+    fact: FactId,
     inputs: &EncodedInputs,
     binding: &EncodedBinding,
 ) -> Result<bool> {
     for field in &atom.fields {
         let bytes = relation
-            .encoded_bytes(row, field.field)
+            .encoded_bytes(fact, field.field)
             .ok_or_else(|| Error::internal("missing direct atom field"))?;
         match &field.term {
             NormTerm::Var(variable) => {
@@ -5320,7 +5329,7 @@ fn encoded_owned_for_width(width: usize, bytes: &[u8]) -> Result<EncodedOwned> {
     }
 }
 
-fn execute_lftj<'txn, 'query, S: TupleSink>(
+fn execute_lftj<'txn, 'query, S: FactSink>(
     image: &crate::QueryImage,
     txn: &ReadTxn<'txn>,
     query: &'query NormalizedQuery,
@@ -5378,7 +5387,7 @@ fn execute_lftj<'txn, 'query, S: TupleSink>(
     let Some(atom_plans) = atom_plans else {
         return Ok(());
     };
-    if atom_plans.iter().any(|atom| atom.row_count == 0) {
+    if atom_plans.iter().any(|atom| atom.fact_count == 0) {
         return Ok(());
     }
     let runtime = LftjRuntime {
@@ -5477,7 +5486,7 @@ fn lftj_prefix_proves_empty(
             variable_order_ids,
             counters,
         )?;
-        if atom_plans.iter().any(|atom| atom.row_count == 0) {
+        if atom_plans.iter().any(|atom| atom.fact_count == 0) {
             return Ok(true);
         }
         if !lftj_prefix_has_binding(txn, query, inputs, variable_order_ids, &atom_plans, depth)? {
@@ -5572,7 +5581,7 @@ impl LftjPrefixProbe<'_, '_, '_, '_> {
     }
 }
 
-struct LftjExecutor<'txn, 'input, 'query, 'plan, 'image, S: TupleSink> {
+struct LftjExecutor<'txn, 'input, 'query, 'plan, 'image, S: FactSink> {
     txn: &'input ReadTxn<'txn>,
     query: &'query NormalizedQuery,
     inputs: &'input EncodedInputs,
@@ -5582,7 +5591,7 @@ struct LftjExecutor<'txn, 'input, 'query, 'plan, 'image, S: TupleSink> {
     sink: &'plan mut S,
 }
 
-impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
+impl<S: FactSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
     fn execute(&mut self, depth: usize) -> Result<()> {
         if depth == self.plan.variable_order_ids.len() {
             if comparisons_ready_pass(
@@ -5645,8 +5654,8 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
                     &mut self.plan.summary.counters,
                 )?;
                 if keep {
-                    if let Some(rows) = self.plan.summary.node_rows.get_mut(depth) {
-                        rows.actual_rows = rows.actual_rows.saturating_add(1);
+                    if let Some(facts) = self.plan.summary.node_facts.get_mut(depth) {
+                        facts.actual_rows = facts.actual_rows.saturating_add(1);
                     }
                     self.execute(depth + 1)?;
                 }
@@ -5905,16 +5914,16 @@ fn build_lftj_atom_plan(
         counters.atom_temp_relation_builds += 1;
         counters.atom_temp_relation_source_rows = counters
             .atom_temp_relation_source_rows
-            .saturating_add(cached.source_rows_scanned);
+            .saturating_add(cached.source_facts_scanned);
         counters.atom_temp_relation_rows = counters
             .atom_temp_relation_rows
-            .saturating_add(cached.index.stats.row_count as u64);
-        counters.lftj_atom_source_rows_scanned = counters
-            .lftj_atom_source_rows_scanned
-            .saturating_add(cached.source_rows_scanned);
-        counters.lftj_atom_rows_retained = counters
-            .lftj_atom_rows_retained
-            .saturating_add(cached.rows_retained);
+            .saturating_add(cached.index.stats.fact_count as u64);
+        counters.lftj_atom_source_facts_scanned = counters
+            .lftj_atom_source_facts_scanned
+            .saturating_add(cached.source_facts_scanned);
+        counters.lftj_atom_facts_retained = counters
+            .lftj_atom_facts_retained
+            .saturating_add(cached.facts_retained);
         counters.lftj_atom_bytes_copied = counters
             .lftj_atom_bytes_copied
             .saturating_add(cached.bytes_copied);
@@ -5930,7 +5939,7 @@ fn build_lftj_atom_plan(
     }
     Ok(LftjAtomPlan {
         variables,
-        row_count: cached.index.stats.row_count,
+        fact_count: cached.index.stats.fact_count,
         source: LftjAtomSource::SortedTrie(cached.index.clone()),
     })
 }
@@ -6028,11 +6037,11 @@ fn build_sorted_trie_from_relation_index(
 ) -> Result<SortedTrieBuild> {
     let start = Instant::now();
     let range = index.prefix_range(prefix);
-    let row_count = range.end.saturating_sub(range.start);
-    let order = (0..row_count)
-        .map(|row| RowId(row as u32))
+    let fact_count = range.end.saturating_sub(range.start);
+    let order = (0..fact_count)
+        .map(|fact| FactId(fact as u32))
         .collect::<Vec<_>>();
-    let levels = durable_sorted_trie_levels(index, range.start, row_count, fields)?;
+    let levels = durable_sorted_trie_levels(index, range.start, fact_count, fields)?;
     let distinct_by_depth = levels
         .iter()
         .map(|level| level.keys.len())
@@ -6060,7 +6069,7 @@ fn build_sorted_trie_from_relation_index(
         order,
         levels,
         stats: crate::TrieStats {
-            row_count,
+            fact_count,
             distinct_by_depth,
             avg_fanout_by_depth,
             max_fanout_by_depth,
@@ -6069,8 +6078,8 @@ fn build_sorted_trie_from_relation_index(
     };
     Ok(SortedTrieBuild {
         index: trie,
-        source_rows_scanned: row_count as u64,
-        rows_retained: row_count as u64,
+        source_facts_scanned: fact_count as u64,
+        facts_retained: fact_count as u64,
         bytes_copied: 0,
         scan_micros: 0,
         column_micros: 0,
@@ -6081,11 +6090,11 @@ fn build_sorted_trie_from_relation_index(
 fn durable_sorted_trie_levels(
     index: &crate::query_image::RelationIndexImage,
     base: usize,
-    row_count: usize,
+    fact_count: usize,
     fields: &[FieldId],
 ) -> Result<Vec<crate::TrieLevel>> {
     let mut levels = Vec::new();
-    let mut parents = vec![(0usize, row_count, u32::MAX)];
+    let mut parents = vec![(0usize, fact_count, u32::MAX)];
     for field in fields {
         let mut level = crate::TrieLevel {
             field: *field,
@@ -6108,9 +6117,9 @@ fn durable_sorted_trie_levels(
                 }
                 let entry_index = level.keys.len() as u32;
                 level.keys.push(key);
-                level.ranges.push(RowRange {
-                    start: RowId(start as u32),
-                    end: RowId(end as u32),
+                level.ranges.push(FactRange {
+                    start: FactId(start as u32),
+                    end: FactId(end as u32),
                 });
                 level.parent.push(parent_index);
                 next_parents.push((start, end, entry_index));
@@ -6156,7 +6165,7 @@ fn build_lftj_sorted_trie(
         .collect::<Vec<_>>();
     let mut builders = encoded_column_builders(&fields, 0)?;
     let mut included_rows = 0usize;
-    let source_rows_scanned;
+    let source_facts_scanned;
 
     let mut bytes_copied = 0u64;
     let scan_start = Instant::now();
@@ -6165,15 +6174,15 @@ fn build_lftj_sorted_trie(
         if let Some(indexed) =
             append_indexed_lftj_atom_values(&mut builders, source, query, inputs, atom, variables)?
         {
-            source_rows_scanned = indexed.source_rows_scanned;
-            included_rows = indexed.rows_retained as usize;
+            source_facts_scanned = indexed.source_facts_scanned;
+            included_rows = indexed.facts_retained as usize;
             bytes_copied = bytes_copied.saturating_add(indexed.bytes_appended);
         } else {
-            source_rows_scanned = source.row_count as u64;
-            for row in 0..source.row_count {
-                let row = RowId(row as u32);
+            source_facts_scanned = source.fact_count as u64;
+            for fact in 0..source.fact_count {
+                let fact = FactId(fact as u32);
                 let Some(slots) =
-                    atom_row_value_slots(source, inputs, atom, row, query.vars.len())?
+                    atom_row_value_slots(source, inputs, atom, fact, query.vars.len())?
                 else {
                     continue;
                 };
@@ -6191,7 +6200,7 @@ fn build_lftj_sorted_trie(
     }
     let scan_micros = elapsed_micros(scan_start).min(u128::from(u64::MAX)) as u64;
 
-    let row_count = if variables.is_empty() {
+    let fact_count = if variables.is_empty() {
         included_rows
     } else {
         builders[0].len()
@@ -6209,14 +6218,14 @@ fn build_lftj_sorted_trie(
     let relation = RelationImage {
         id: source.id,
         name: atom.relation_name.clone(),
-        row_count,
+        fact_count,
         fields,
         columns,
         indexes: Vec::new(),
         sorted_index_count: 0,
         hash_index_count: 0,
         stats: RelationStats {
-            row_count,
+            fact_count,
             field_count: variables.len(),
             encoded_column_bytes,
         },
@@ -6235,8 +6244,8 @@ fn build_lftj_sorted_trie(
     let sort_micros = elapsed_micros(sort_start).min(u128::from(u64::MAX)) as u64;
     Ok(SortedTrieBuild {
         index: trie,
-        source_rows_scanned,
-        rows_retained: row_count as u64,
+        source_facts_scanned,
+        facts_retained: fact_count as u64,
         bytes_copied,
         scan_micros,
         column_micros,
@@ -6245,8 +6254,8 @@ fn build_lftj_sorted_trie(
 }
 
 struct IndexedPrefixAppendStats {
-    source_rows_scanned: u64,
-    rows_retained: u64,
+    source_facts_scanned: u64,
+    facts_retained: u64,
     bytes_appended: u64,
 }
 
@@ -6308,8 +6317,8 @@ fn append_indexed_lftj_atom_values(
         .iter()
         .find(|index| index.access.0 as usize == access)
         .ok_or_else(|| Error::internal("missing selected LFTJ atom index"))?;
-    let mut source_rows_scanned = 0u64;
-    let mut rows_retained = 0u64;
+    let mut source_facts_scanned = 0u64;
+    let mut facts_retained = 0u64;
     let mut bytes_appended = 0u64;
     let _span = tracing::trace_span!(
         "bumbledb.query.lftj_atom.indexed_prefix",
@@ -6318,19 +6327,19 @@ fn append_indexed_lftj_atom_values(
     )
     .entered();
     for entry in index.entries_with_prefix(&prefix) {
-        source_rows_scanned += 1;
+        source_facts_scanned += 1;
         if let Some(slots) =
             atom_index_entry_value_slots(index, inputs, atom, entry, query.vars.len())?
             && atom_local_comparisons_pass_slots(query, inputs, &slots)?
         {
-            rows_retained += 1;
+            facts_retained += 1;
             bytes_appended =
                 bytes_appended.saturating_add(append_atom_slots(builders, &slots, variables)?);
         }
     }
     Ok(Some(IndexedPrefixAppendStats {
-        source_rows_scanned,
-        rows_retained,
+        source_facts_scanned,
+        facts_retained,
         bytes_appended,
     }))
 }
@@ -6523,13 +6532,13 @@ fn atom_row_value_slots(
     relation: &RelationImage,
     inputs: &EncodedInputs,
     atom: &NormAtom,
-    row: RowId,
+    fact: FactId,
     variable_count: usize,
 ) -> Result<Option<AtomValueSlots>> {
     let mut slots = empty_atom_slots(variable_count);
     for field in &atom.fields {
         let bytes = relation
-            .encoded_bytes(row, field.field)
+            .encoded_bytes(fact, field.field)
             .ok_or_else(|| Error::internal("missing atom field in relation image"))?;
         match &field.term {
             NormTerm::Var(variable) => {
@@ -6602,7 +6611,7 @@ fn plan_query(
             reason: cost.reason.clone(),
         })
         .collect::<Vec<_>>();
-    let node_rows = variable_order_ids
+    let node_facts = variable_order_ids
         .iter()
         .enumerate()
         .map(|(node_id, variable)| NodeRowEstimate {
@@ -6632,7 +6641,7 @@ fn plan_query(
         )?
     };
     free_join.validate()?;
-    let node_timings = query_node_timings(&free_join, &node_rows);
+    let node_timings = query_node_timings(&free_join, &node_facts);
     let planner_stats = image.planner_stats_diagnostics();
 
     let uses_indexed_multiway_join = relation_atoms.len() > 1;
@@ -6650,7 +6659,7 @@ fn plan_query(
             query_image_cache,
             planner_stats,
             prepared_plan_cache,
-            node_rows,
+            node_facts,
             node_timings,
             free_join,
             direct_kernel: None,
@@ -6677,19 +6686,19 @@ fn plan_query(
 
 fn query_node_timings(
     free_join: &FreeJoinPlan,
-    node_rows: &[NodeRowEstimate],
+    node_facts: &[NodeRowEstimate],
 ) -> Vec<QueryNodeTiming> {
     free_join
         .nodes
         .iter()
         .map(|node| {
-            let rows = node_rows.get(node.id.0 as usize);
+            let facts = node_facts.get(node.id.0 as usize);
             QueryNodeTiming {
                 node: node.id,
                 implementation: node.implementation,
                 bind_vars: node.bind_vars.clone(),
-                estimated_rows: rows.map_or(0, |rows| rows.estimated_rows),
-                actual_rows: rows.map_or(0, |rows| rows.actual_rows),
+                estimated_rows: facts.map_or(0, |facts| facts.estimated_rows),
+                actual_rows: facts.map_or(0, |facts| facts.actual_rows),
                 execute_micros: 0,
             }
         })
@@ -6923,7 +6932,7 @@ fn estimate_atom_variable_access(
                         .distinct_by_depth
                         .first()
                         .copied()
-                        .unwrap_or(index_stats.rows)
+                        .unwrap_or(index_stats.facts)
                         .max(1) as u64
                 }
             } else {
@@ -6932,7 +6941,7 @@ fn estimate_atom_variable_access(
         } else {
             index_stats.estimated_rows_for_prefix(prefix_len)
         };
-        if matches!(path.kind, IndexKind::TupleSet | IndexKind::Unique)
+        if matches!(path.kind, IndexKind::FactSet | IndexKind::Unique)
             && current_is_next
             && prefix_len + 1 == path.leading_fields.len()
         {
@@ -7317,7 +7326,7 @@ fn implementation_mask(implementations: &[NodeImpl]) -> u64 {
 }
 
 fn estimated_setup_micros(name: &str, estimates: &PlanEstimates) -> u64 {
-    let query_image_cost = estimates.output_rows.clamp(1, 1_000);
+    let query_image_cost = estimates.output_facts.clamp(1, 1_000);
     let hash_cost = estimates.hash_build_rows / HASH_BUILD_ROWS_PER_MICRO;
     let sorted_cost = if name == "pure_lftj" || name == "aggregate_pushdown" {
         estimates.iterator_ops / 10
@@ -7419,14 +7428,14 @@ fn estimate_free_join_plan(
         iterator_ops = iterator_ops.saturating_mul(8);
     }
 
-    let output_rows = estimate_output_rows(query, variable_costs);
-    let materialized_values = estimate_materialized_values(query, output_rows);
+    let output_facts = estimate_output_facts(query, variable_costs);
+    let materialized_values = estimate_materialized_values(query, output_facts);
     let memory_bytes = (hash_build_rows as usize)
         .saturating_mul(32)
         .saturating_add(materialized_values as usize * 16);
 
     PlanEstimates {
-        output_rows,
+        output_facts,
         iterator_ops,
         hash_build_rows,
         materialized_values,
@@ -7434,7 +7443,7 @@ fn estimate_free_join_plan(
     }
 }
 
-fn estimate_output_rows(query: &NormalizedQuery, variable_costs: &[VariableCost]) -> u64 {
+fn estimate_output_facts(query: &NormalizedQuery, variable_costs: &[VariableCost]) -> u64 {
     let has_aggregate = has_aggregate(query);
     let group_vars = query
         .find
@@ -7452,9 +7461,9 @@ fn estimate_output_rows(query: &NormalizedQuery, variable_costs: &[VariableCost]
         .max(1)
 }
 
-fn estimate_materialized_values(query: &NormalizedQuery, output_rows: u64) -> u64 {
+fn estimate_materialized_values(query: &NormalizedQuery, output_facts: u64) -> u64 {
     let projected_values = query.find.len() as u64;
-    output_rows
+    output_facts
         .saturating_mul(projected_values)
         .max(projected_values)
 }
@@ -8036,7 +8045,7 @@ fn result_columns(query: &NormalizedQuery) -> Vec<ResultColumn> {
         .collect()
 }
 
-trait TupleSink {
+trait FactSink {
     fn emit(
         &mut self,
         txn: &ReadTxn<'_>,
@@ -8051,7 +8060,7 @@ trait TupleSink {
         _binding: &EncodedBinding,
         counters: &mut PlanCounters,
     ) -> Result<bool> {
-        counters.direct_batch_fallback_rows += 1;
+        counters.direct_batch_fallback_facts += 1;
         Ok(false)
     }
 
@@ -8110,7 +8119,7 @@ impl OutputSink {
     fn finish_count(self) -> Result<usize> {
         let OutputSink::Cardinality(sink) = self else {
             return Err(Error::internal(
-                "count rows requested from materializing sink",
+                "count facts requested from materializing sink",
             ));
         };
         Ok(sink.finish_count())
@@ -8123,17 +8132,18 @@ impl OutputSink {
         counters: &mut PlanCounters,
     ) -> Result<bool> {
         let OutputSink::Project(sink) = self else {
-            counters.direct_batch_fallback_rows += 1;
+            counters.direct_batch_fallback_facts += 1;
             return Ok(false);
         };
         let row_width = sink.push_binding(query, binding, counters)?;
-        counters.direct_batch_rows += 1;
-        counters.direct_batch_row_bytes = counters.direct_batch_row_bytes.saturating_add(row_width);
+        counters.direct_batch_facts += 1;
+        counters.direct_batch_fact_bytes =
+            counters.direct_batch_fact_bytes.saturating_add(row_width);
         Ok(true)
     }
 }
 
-impl TupleSink for OutputSink {
+impl FactSink for OutputSink {
     fn emit(
         &mut self,
         txn: &ReadTxn<'_>,
@@ -8169,12 +8179,13 @@ impl TupleSink for OutputSink {
         counters: &mut PlanCounters,
     ) -> Result<bool> {
         let OutputSink::Project(sink) = self else {
-            counters.direct_batch_fallback_rows += 1;
+            counters.direct_batch_fallback_facts += 1;
             return Ok(false);
         };
         let row_width = sink.push_binding(query, binding, counters)?;
-        counters.direct_batch_rows += 1;
-        counters.direct_batch_row_bytes = counters.direct_batch_row_bytes.saturating_add(row_width);
+        counters.direct_batch_facts += 1;
+        counters.direct_batch_fact_bytes =
+            counters.direct_batch_fact_bytes.saturating_add(row_width);
         Ok(true)
     }
 
@@ -8204,14 +8215,14 @@ fn is_global_count_plan(plan: &AggregatePlan) -> bool {
 #[derive(Clone, Debug)]
 struct EncodedProjectSink {
     vars: Vec<VarId>,
-    rows: BTreeSet<SmallEncodedRow>,
+    facts: BTreeSet<SmallEncodedRow>,
 }
 
 impl EncodedProjectSink {
     fn new(plan: &ProjectPlan) -> Self {
         Self {
             vars: plan.vars.clone(),
-            rows: BTreeSet::new(),
+            facts: BTreeSet::new(),
         }
     }
 
@@ -8221,26 +8232,27 @@ impl EncodedProjectSink {
         binding: &EncodedBinding,
         counters: &mut PlanCounters,
     ) -> Result<u64> {
-        let mut row = SmallEncodedRow::new();
+        let mut fact = SmallEncodedRow::new();
         let mut row_width = 0u64;
         for variable in &self.vars {
             let value = bound_encoded_variable(binding, variable.0 as usize)?;
             row_width = row_width.saturating_add(value.as_bytes().len() as u64);
-            row.push(value.clone());
+            fact.push(value.clone());
         }
-        counters.encoded_project_rows_seen += 1;
-        if self.rows.insert(row) {
-            counters.encoded_project_rows_inserted =
-                counters.encoded_project_rows_inserted.saturating_add(1);
-            counters.encoded_project_row_bytes =
-                counters.encoded_project_row_bytes.saturating_add(row_width);
+        counters.encoded_project_facts_seen += 1;
+        if self.facts.insert(fact) {
+            counters.encoded_project_facts_inserted =
+                counters.encoded_project_facts_inserted.saturating_add(1);
+            counters.encoded_project_fact_bytes = counters
+                .encoded_project_fact_bytes
+                .saturating_add(row_width);
             return Ok(row_width);
         }
         Ok(0)
     }
 }
 
-impl TupleSink for EncodedProjectSink {
+impl FactSink for EncodedProjectSink {
     fn emit(
         &mut self,
         _txn: &ReadTxn<'_>,
@@ -8257,15 +8269,16 @@ impl TupleSink for EncodedProjectSink {
         query: &NormalizedQuery,
         counters: &mut PlanCounters,
     ) -> Result<Vec<Vec<Value>>> {
-        let EncodedProjectSink { vars, rows } = self;
-        let _span = tracing::debug_span!("bumbledb.query.project", rows = rows.len(),).entered();
-        if rows.is_empty() {
+        let EncodedProjectSink { vars, facts } = self;
+        let _span = tracing::debug_span!("bumbledb.query.project", facts = facts.len(),).entered();
+        if facts.is_empty() {
             return Ok(Vec::new());
         }
-        rows.into_iter()
-            .map(|row| {
+        facts
+            .into_iter()
+            .map(|fact| {
                 vars.iter()
-                    .zip(row)
+                    .zip(fact)
                     .map(|(variable, value)| {
                         counters.project_decode_values += 1;
                         decode_output_value(
@@ -8308,7 +8321,7 @@ impl CardinalitySink {
     }
 }
 
-impl TupleSink for CardinalitySink {
+impl FactSink for CardinalitySink {
     fn emit(
         &mut self,
         _txn: &ReadTxn<'_>,
@@ -8318,12 +8331,12 @@ impl TupleSink for CardinalitySink {
     ) -> Result<()> {
         match &self.output {
             OutputPlan::Project(plan) => {
-                let row = plan
+                let fact = plan
                     .vars
                     .iter()
                     .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
                     .collect::<Result<SmallEncodedRow>>()?;
-                self.project_rows.insert(row);
+                self.project_rows.insert(fact);
             }
             OutputPlan::Aggregate(plan) => {
                 if is_global_count_plan(plan) {
@@ -8384,7 +8397,7 @@ impl AggregateSink {
     }
 }
 
-impl TupleSink for AggregateSink {
+impl FactSink for AggregateSink {
     fn emit(
         &mut self,
         txn: &ReadTxn<'_>,
@@ -8414,7 +8427,7 @@ impl TupleSink for AggregateSink {
     ) -> Result<Vec<Vec<Value>>> {
         let _span =
             tracing::debug_span!("bumbledb.query.aggregate", groups = self.groups.len()).entered();
-        let mut rows = Vec::new();
+        let mut facts = Vec::new();
         let mut groups = self.groups;
         if groups.is_empty()
             && self.group_vars.is_empty()
@@ -8430,7 +8443,7 @@ impl TupleSink for AggregateSink {
             );
         }
         for (key, states) in groups {
-            let mut row = Vec::new();
+            let mut fact = Vec::new();
             let mut key_iter = key.into_iter();
             let mut state_iter = states.into_iter();
             for term in &query.find {
@@ -8439,7 +8452,7 @@ impl TupleSink for AggregateSink {
                         let value = key_iter
                             .next()
                             .ok_or_else(|| Error::internal("aggregate group key is missing"))?;
-                        row.push(decode_output_value(
+                        fact.push(decode_output_value(
                             txn,
                             &query.vars[variable.0 as usize].value_type,
                             value,
@@ -8451,14 +8464,14 @@ impl TupleSink for AggregateSink {
                         let state = state_iter
                             .next()
                             .ok_or_else(|| Error::internal("aggregate state is missing"))?;
-                        row.push(state.finish_encoded(txn, value_type, counters)?);
+                        fact.push(state.finish_encoded(txn, value_type, counters)?);
                     }
                 }
             }
-            rows.push(row);
+            facts.push(fact);
         }
-        rows.sort();
-        Ok(rows)
+        facts.sort();
+        Ok(facts)
     }
 }
 

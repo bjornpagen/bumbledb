@@ -367,11 +367,11 @@ pub enum ConstraintError {
         constraint: String,
     },
 
-    /// Missing row field.
+    /// Missing fact field.
     #[error("missing field {relation}.{field}")]
     MissingField { relation: String, field: String },
 
-    /// Unknown row field.
+    /// Unknown fact field.
     #[error("unknown field {relation}.{field}")]
     UnknownField { relation: String, field: String },
 

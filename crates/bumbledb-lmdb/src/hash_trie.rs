@@ -3,7 +3,7 @@ use std::ops::Range;
 
 use smallvec::SmallVec;
 
-use crate::query_image::{RowId, RowRange, RowSetRef};
+use crate::query_image::{FactId, FactRange, FactSetRef};
 use crate::{EncodedOwned, EncodedRef, FieldId, IndexSpec, RelationId, RelationImage, Result};
 
 type NodeStack<'a> = SmallVec<[&'a HashNode; 8]>;
@@ -25,9 +25,9 @@ pub struct HashTrieIndex {
 }
 
 impl HashTrieIndex {
-    /// Builds a hash trie retaining row IDs in leaves.
+    /// Builds a hash trie retaining fact IDs in leaves.
     pub fn build(relation: &RelationImage, spec: IndexSpec) -> Result<Self> {
-        Self::build_with_mode(relation, spec, LeafMode::Rows)
+        Self::build_with_mode(relation, spec, LeafMode::Facts)
     }
 
     /// Builds a hash trie with a specified leaf mode.
@@ -39,24 +39,24 @@ impl HashTrieIndex {
         let _span = tracing::debug_span!(
             "bumbledb.hash_trie.build",
             relation = relation.id.0,
-            rows = relation.row_count,
+            facts = relation.fact_count,
             fields = spec.fields.len()
         )
         .entered();
         let mut root = HashNode::Inner(HashMap::new());
-        for row in 0..relation.row_count {
-            let row = RowId(row as u32);
+        for fact in 0..relation.fact_count {
+            let fact = FactId(fact as u32);
             let keys = spec
                 .fields
                 .iter()
                 .map(|field| {
                     relation
-                        .encoded(row, *field)
+                        .encoded(fact, *field)
                         .map(EncodedOwned::from_ref)
                         .ok_or_else(|| crate::Error::internal("missing hash trie field value"))
                 })
                 .collect::<Result<KeyStack>>()?;
-            insert_row(&mut root, &keys, row, leaf_mode);
+            insert_row(&mut root, &keys, fact, leaf_mode);
         }
         let stats = HashTrieStats::from_root(&root, spec.fields.len());
         Ok(Self {
@@ -72,9 +72,9 @@ impl HashTrieIndex {
 /// Leaf storage mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LeafMode {
-    /// Store matching row IDs.
-    Rows,
-    /// Store only matching row counts.
+    /// Store matching fact IDs.
+    Facts,
+    /// Store only matching fact counts.
     CardinalityOnly,
 }
 
@@ -83,68 +83,68 @@ pub enum LeafMode {
 pub enum HashNode {
     /// Internal hash map from encoded key to next node.
     Inner(HashMap<EncodedOwned, HashNode>),
-    /// Row set leaf.
-    Leaf(RowSet),
+    /// Fact set leaf.
+    Leaf(FactSet),
     /// Count-only leaf for existence-only relations.
     CardinalityOnly(u32),
 }
 
-/// Owned row-id set used by hash trie leaves.
+/// Owned fact-id set used by hash trie leaves.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RowSet {
-    /// No rows.
+pub enum FactSet {
+    /// No facts.
     Empty,
-    /// One row.
-    One(RowId),
-    /// Small row set.
-    Small(Vec<RowId>),
-    /// Larger row set.
-    Many(Vec<RowId>),
-    /// Contiguous row range.
-    Range(RowRange),
+    /// One fact.
+    One(FactId),
+    /// Small fact set.
+    Small(Vec<FactId>),
+    /// Larger fact set.
+    Many(Vec<FactId>),
+    /// Contiguous fact range.
+    Range(FactRange),
 }
 
-impl RowSet {
-    fn push(&mut self, row: RowId) {
+impl FactSet {
+    fn push(&mut self, fact: FactId) {
         match self {
-            RowSet::Empty => *self = RowSet::One(row),
-            RowSet::One(existing) => *self = RowSet::Small(vec![*existing, row]),
-            RowSet::Small(rows) if rows.len() < 4 => rows.push(row),
-            RowSet::Small(rows) => {
-                let mut many = std::mem::take(rows);
-                many.push(row);
-                *self = RowSet::Many(many);
+            FactSet::Empty => *self = FactSet::One(fact),
+            FactSet::One(existing) => *self = FactSet::Small(vec![*existing, fact]),
+            FactSet::Small(facts) if facts.len() < 4 => facts.push(fact),
+            FactSet::Small(facts) => {
+                let mut many = std::mem::take(facts);
+                many.push(fact);
+                *self = FactSet::Many(many);
             }
-            RowSet::Many(rows) => rows.push(row),
-            RowSet::Range(range) => {
-                let mut rows = (range.start.0..range.end.0).map(RowId).collect::<Vec<_>>();
-                rows.push(row);
-                *self = RowSet::Many(rows);
+            FactSet::Many(facts) => facts.push(fact),
+            FactSet::Range(range) => {
+                let mut facts = (range.start.0..range.end.0).map(FactId).collect::<Vec<_>>();
+                facts.push(fact);
+                *self = FactSet::Many(facts);
             }
         }
     }
 
-    /// Number of rows represented by this row set.
+    /// Number of facts represented by this fact set.
     pub fn len(&self) -> usize {
         match self {
-            RowSet::Empty => 0,
-            RowSet::One(_) => 1,
-            RowSet::Small(rows) | RowSet::Many(rows) => rows.len(),
-            RowSet::Range(range) => range.end.0.saturating_sub(range.start.0) as usize,
+            FactSet::Empty => 0,
+            FactSet::One(_) => 1,
+            FactSet::Small(facts) | FactSet::Many(facts) => facts.len(),
+            FactSet::Range(range) => range.end.0.saturating_sub(range.start.0) as usize,
         }
     }
 
-    /// True when this set has no rows.
+    /// True when this set has no facts.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    fn as_ref(&self) -> RowSetRef<'_> {
+    fn as_ref(&self) -> FactSetRef<'_> {
         match self {
-            RowSet::Empty => RowSetRef::Empty,
-            RowSet::One(row) => RowSetRef::One(*row),
-            RowSet::Small(rows) | RowSet::Many(rows) => RowSetRef::Slice(rows),
-            RowSet::Range(range) => RowSetRef::Range(*range),
+            FactSet::Empty => FactSetRef::Empty,
+            FactSet::One(fact) => FactSetRef::One(*fact),
+            FactSet::Small(facts) | FactSet::Many(facts) => FactSetRef::Slice(facts),
+            FactSet::Range(range) => FactSetRef::Range(*range),
         }
     }
 }
@@ -154,8 +154,8 @@ impl RowSet {
 pub struct HashTrieStats {
     /// Number of trie levels.
     pub depth: usize,
-    /// Number of stored rows or cardinality-only entries.
-    pub rows: usize,
+    /// Number of stored facts or cardinality-only entries.
+    pub facts: usize,
     /// Number of internal hash nodes.
     pub inner_nodes: usize,
     /// Number of leaves.
@@ -177,26 +177,26 @@ impl HashTrieStats {
 pub trait PrefixProbe {
     /// True when the prefix exists.
     fn exists(&self, prefix: &[EncodedRef<'_>]) -> bool;
-    /// Number of rows under the prefix.
+    /// Number of facts under the prefix.
     fn count(&self, prefix: &[EncodedRef<'_>]) -> usize;
-    /// Row IDs under the prefix if this trie stores row IDs.
-    fn rows<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> RowSetRef<'a>;
+    /// Fact IDs under the prefix if this trie stores fact IDs.
+    fn facts<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> FactSetRef<'a>;
 }
 
-/// Streaming row iterator interface over hash trie prefixes.
+/// Streaming fact iterator interface over hash trie prefixes.
 pub trait PrefixRows {
-    /// Borrowed row iterator type tied to the borrowed index.
-    type Rows<'a>: Iterator<Item = RowId> + 'a
+    /// Borrowed fact iterator type tied to the borrowed index.
+    type Facts<'a>: Iterator<Item = FactId> + 'a
     where
         Self: 'a;
 
-    /// Returns row IDs under a prefix without materializing a row vector.
-    fn rows_for_prefix<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> Self::Rows<'a>;
+    /// Returns fact IDs under a prefix without materializing a fact vector.
+    fn rows_for_prefix<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> Self::Facts<'a>;
 }
 
 impl HashTrieIndex {
-    /// Visits row IDs under any prefix depth for row-retaining tries.
-    pub fn for_each_row(&self, prefix: &[EncodedRef<'_>], mut visit: impl FnMut(RowId) -> bool) {
+    /// Visits fact IDs under any prefix depth for fact-retaining tries.
+    pub fn for_each_row(&self, prefix: &[EncodedRef<'_>], mut visit: impl FnMut(FactId) -> bool) {
         let Some(node) = find_node(&self.root, prefix) else {
             return;
         };
@@ -208,7 +208,7 @@ impl PrefixProbe for HashTrieIndex {
     fn exists(&self, prefix: &[EncodedRef<'_>]) -> bool {
         find_node(&self.root, prefix).is_some_and(|node| match node {
             HashNode::Inner(map) => !map.is_empty(),
-            HashNode::Leaf(rows) => !rows.is_empty(),
+            HashNode::Leaf(facts) => !facts.is_empty(),
             HashNode::CardinalityOnly(count) => *count > 0,
         })
     }
@@ -217,26 +217,26 @@ impl PrefixProbe for HashTrieIndex {
         find_node(&self.root, prefix).map_or(0, count_node)
     }
 
-    fn rows<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> RowSetRef<'a> {
+    fn facts<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> FactSetRef<'a> {
         match find_node(&self.root, prefix) {
-            Some(HashNode::Leaf(rows)) => rows.as_ref(),
-            _ => RowSetRef::Empty,
+            Some(HashNode::Leaf(facts)) => facts.as_ref(),
+            _ => FactSetRef::Empty,
         }
     }
 }
 
 impl PrefixRows for HashTrieIndex {
-    type Rows<'a> = PrefixRowIter<'a>;
+    type Facts<'a> = PrefixRowIter<'a>;
 
-    fn rows_for_prefix<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> Self::Rows<'a> {
+    fn rows_for_prefix<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> Self::Facts<'a> {
         PrefixRowIter::new(find_node(&self.root, prefix))
     }
 }
 
-/// Concrete streaming row iterator for hash prefix traversal.
+/// Concrete streaming fact iterator for hash prefix traversal.
 pub struct PrefixRowIter<'a> {
     stack: NodeStack<'a>,
-    current: RowSetIter<'a>,
+    current: FactSetIter<'a>,
 }
 
 impl<'a> PrefixRowIter<'a> {
@@ -247,66 +247,66 @@ impl<'a> PrefixRowIter<'a> {
         }
         Self {
             stack,
-            current: RowSetIter::Empty,
+            current: FactSetIter::Empty,
         }
     }
 }
 
 impl Iterator for PrefixRowIter<'_> {
-    type Item = RowId;
+    type Item = FactId;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(row) = self.current.next() {
-                return Some(row);
+            if let Some(fact) = self.current.next() {
+                return Some(fact);
             }
             let node = self.stack.pop()?;
             match node {
                 HashNode::Inner(map) => self.stack.extend(map.values()),
-                HashNode::Leaf(rows) => self.current = RowSetIter::from(rows),
+                HashNode::Leaf(facts) => self.current = FactSetIter::from(facts),
                 HashNode::CardinalityOnly(_) => {}
             }
         }
     }
 }
 
-enum RowSetIter<'a> {
+enum FactSetIter<'a> {
     Empty,
-    One(Option<RowId>),
-    Slice(std::slice::Iter<'a, RowId>),
+    One(Option<FactId>),
+    Slice(std::slice::Iter<'a, FactId>),
     Range(Range<u32>),
 }
 
-impl<'a> From<&'a RowSet> for RowSetIter<'a> {
-    fn from(rows: &'a RowSet) -> Self {
-        match rows {
-            RowSet::Empty => RowSetIter::Empty,
-            RowSet::One(row) => RowSetIter::One(Some(*row)),
-            RowSet::Small(rows) | RowSet::Many(rows) => RowSetIter::Slice(rows.iter()),
-            RowSet::Range(range) => RowSetIter::Range(range.start.0..range.end.0),
+impl<'a> From<&'a FactSet> for FactSetIter<'a> {
+    fn from(facts: &'a FactSet) -> Self {
+        match facts {
+            FactSet::Empty => FactSetIter::Empty,
+            FactSet::One(fact) => FactSetIter::One(Some(*fact)),
+            FactSet::Small(facts) | FactSet::Many(facts) => FactSetIter::Slice(facts.iter()),
+            FactSet::Range(range) => FactSetIter::Range(range.start.0..range.end.0),
         }
     }
 }
 
-impl Iterator for RowSetIter<'_> {
-    type Item = RowId;
+impl Iterator for FactSetIter<'_> {
+    type Item = FactId;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            RowSetIter::Empty => None,
-            RowSetIter::One(row) => row.take(),
-            RowSetIter::Slice(rows) => rows.next().copied(),
-            RowSetIter::Range(rows) => rows.next().map(RowId),
+            FactSetIter::Empty => None,
+            FactSetIter::One(fact) => fact.take(),
+            FactSetIter::Slice(facts) => facts.next().copied(),
+            FactSetIter::Range(facts) => facts.next().map(FactId),
         }
     }
 }
 
-fn insert_row(node: &mut HashNode, keys: &[EncodedOwned], row: RowId, leaf_mode: LeafMode) {
+fn insert_row(node: &mut HashNode, keys: &[EncodedOwned], fact: FactId, leaf_mode: LeafMode) {
     if keys.is_empty() {
         match leaf_mode {
-            LeafMode::Rows => match node {
-                HashNode::Leaf(rows) => rows.push(row),
-                _ => *node = HashNode::Leaf(RowSet::One(row)),
+            LeafMode::Facts => match node {
+                HashNode::Leaf(facts) => facts.push(fact),
+                _ => *node = HashNode::Leaf(FactSet::One(fact)),
             },
             LeafMode::CardinalityOnly => match node {
                 HashNode::CardinalityOnly(count) => *count += 1,
@@ -320,11 +320,11 @@ fn insert_row(node: &mut HashNode, keys: &[EncodedOwned], row: RowId, leaf_mode:
             let child = map
                 .entry(keys[0].clone())
                 .or_insert_with(|| HashNode::Inner(HashMap::new()));
-            insert_row(child, &keys[1..], row, leaf_mode);
+            insert_row(child, &keys[1..], fact, leaf_mode);
         }
         HashNode::Leaf(_) | HashNode::CardinalityOnly(_) => {
             *node = HashNode::Inner(HashMap::new());
-            insert_row(node, keys, row, leaf_mode);
+            insert_row(node, keys, fact, leaf_mode);
         }
     }
 }
@@ -343,12 +343,12 @@ fn find_node<'a>(node: &'a HashNode, prefix: &[EncodedRef<'_>]) -> Option<&'a Ha
 fn count_node(node: &HashNode) -> usize {
     match node {
         HashNode::Inner(map) => map.values().map(count_node).sum(),
-        HashNode::Leaf(rows) => rows.len(),
+        HashNode::Leaf(facts) => facts.len(),
         HashNode::CardinalityOnly(count) => *count as usize,
     }
 }
 
-fn visit_rows(node: &HashNode, visit: &mut impl FnMut(RowId) -> bool) -> bool {
+fn visit_rows(node: &HashNode, visit: &mut impl FnMut(FactId) -> bool) -> bool {
     match node {
         HashNode::Inner(map) => {
             for child in map.values() {
@@ -358,20 +358,20 @@ fn visit_rows(node: &HashNode, visit: &mut impl FnMut(RowId) -> bool) -> bool {
             }
             true
         }
-        HashNode::Leaf(rows) => match rows {
-            RowSet::Empty => true,
-            RowSet::One(row) => visit(*row),
-            RowSet::Small(rows) | RowSet::Many(rows) => {
-                for row in rows {
-                    if !visit(*row) {
+        HashNode::Leaf(facts) => match facts {
+            FactSet::Empty => true,
+            FactSet::One(fact) => visit(*fact),
+            FactSet::Small(facts) | FactSet::Many(facts) => {
+                for fact in facts {
+                    if !visit(*fact) {
                         return false;
                     }
                 }
                 true
             }
-            RowSet::Range(range) => {
-                for row in (range.start.0..range.end.0).map(RowId) {
-                    if !visit(row) {
+            FactSet::Range(range) => {
+                for fact in (range.start.0..range.end.0).map(FactId) {
+                    if !visit(fact) {
                         return false;
                     }
                 }
@@ -390,13 +390,13 @@ fn accumulate_stats(node: &HashNode, stats: &mut HashTrieStats) {
                 accumulate_stats(child, stats);
             }
         }
-        HashNode::Leaf(rows) => {
+        HashNode::Leaf(facts) => {
             stats.leaves += 1;
-            stats.rows += rows.len();
+            stats.facts += facts.len();
         }
         HashNode::CardinalityOnly(count) => {
             stats.leaves += 1;
-            stats.rows += *count as usize;
+            stats.facts += *count as usize;
         }
     }
 }
@@ -406,7 +406,7 @@ mod tests {
     use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
 
     use super::*;
-    use crate::{Environment, Row, StorageSchema, Value};
+    use crate::{Environment, Fact, StorageSchema, Value};
 
     #[test]
     fn builds_hash_trie_over_primary_key() -> Result<()> {
@@ -417,7 +417,7 @@ mod tests {
 
         assert!(index.exists(&[key.as_ref()]));
         assert_eq!(index.count(&[key.as_ref()]), 1);
-        assert_eq!(index.rows(&[key.as_ref()]), RowSetRef::One(RowId(1)));
+        assert_eq!(index.facts(&[key.as_ref()]), FactSetRef::One(FactId(1)));
         Ok(())
     }
 
@@ -431,8 +431,8 @@ mod tests {
         assert!(index.exists(&[key.as_ref()]));
         assert_eq!(index.count(&[key.as_ref()]), 2);
         assert_eq!(
-            index.rows(&[key.as_ref()]),
-            RowSetRef::Slice(&[RowId(0), RowId(2)])
+            index.facts(&[key.as_ref()]),
+            FactSetRef::Slice(&[FactId(0), FactId(2)])
         );
         Ok(())
     }
@@ -450,7 +450,7 @@ mod tests {
 
         assert!(index.exists(&[key.as_ref()]));
         assert_eq!(index.count(&[key.as_ref()]), 2);
-        assert_eq!(index.rows(&[key.as_ref()]), RowSetRef::Empty);
+        assert_eq!(index.facts(&[key.as_ref()]), FactSetRef::Empty);
         Ok(())
     }
 
@@ -468,8 +468,8 @@ mod tests {
         assert_eq!(index.count(&[currency.as_ref()]), 2);
         assert_eq!(index.count(&[currency.as_ref(), active.as_ref()]), 2);
         assert_eq!(
-            index.rows(&[currency.as_ref(), active.as_ref()]),
-            RowSetRef::Slice(&[RowId(0), RowId(2)])
+            index.facts(&[currency.as_ref(), active.as_ref()]),
+            FactSetRef::Slice(&[FactId(0), FactId(2)])
         );
         Ok(())
     }
@@ -492,7 +492,7 @@ mod tests {
             covering
                 .rows_for_prefix(&[one.as_ref()])
                 .collect::<Vec<_>>(),
-            [RowId(1)]
+            [FactId(1)]
         );
 
         let by_currency =
@@ -502,7 +502,7 @@ mod tests {
             by_currency
                 .rows_for_prefix(&[currency.as_ref()])
                 .collect::<Vec<_>>(),
-            [RowId(0), RowId(2)]
+            [FactId(0), FactId(2)]
         );
 
         let nested = HashTrieIndex::build(
@@ -514,13 +514,13 @@ mod tests {
             nested
                 .rows_for_prefix(&[currency.as_ref()])
                 .collect::<Vec<_>>(),
-            [RowId(0), RowId(2)]
+            [FactId(0), FactId(2)]
         );
         assert_eq!(
             nested
                 .rows_for_prefix(&[currency.as_ref(), active.as_ref()])
                 .collect::<Vec<_>>(),
-            [RowId(0), RowId(2)]
+            [FactId(0), FactId(2)]
         );
         Ok(())
     }
@@ -537,8 +537,8 @@ mod tests {
         let env = Environment::open(path)?;
         let schema = StorageSchema::new(account_schema(), env.max_key_size())?;
         env.write(|txn| {
-            for row in account_rows() {
-                txn.insert(&schema, row)?;
+            for fact in account_rows() {
+                txn.insert(&schema, fact)?;
             }
             Ok::<_, crate::Error>(())
         })?;
@@ -577,9 +577,9 @@ mod tests {
         ))
     }
 
-    fn account_rows() -> Vec<Row> {
+    fn account_rows() -> Vec<Fact> {
         vec![
-            Row::new(
+            Fact::new(
                 "Account",
                 [
                     ("id", Value::Serial(1)),
@@ -587,7 +587,7 @@ mod tests {
                     ("active", Value::Bool(true)),
                 ],
             ),
-            Row::new(
+            Fact::new(
                 "Account",
                 [
                     ("id", Value::Serial(2)),
@@ -595,7 +595,7 @@ mod tests {
                     ("active", Value::Bool(false)),
                 ],
             ),
-            Row::new(
+            Fact::new(
                 "Account",
                 [
                     ("id", Value::Serial(3)),

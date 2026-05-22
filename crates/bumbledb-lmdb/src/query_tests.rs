@@ -1,6 +1,6 @@
 use super::*;
 use crate::query_image::{QueryImageBuilder, QueryImageScope};
-use crate::{AggregateError, Environment, ExecuteError, QueryError, Row};
+use crate::{AggregateError, Environment, ExecuteError, Fact, QueryError};
 use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
 use bumbledb_core::schema::{
     ConstraintDescriptor, FieldDescriptor, IndexDescriptor, RelationDescriptor,
@@ -32,9 +32,9 @@ fn query_observability_defaults_are_zero() {
 
     let counters = PlanCounters::default();
     assert_eq!(counters.sink_emit_calls, 0);
-    assert_eq!(counters.encoded_project_rows_seen, 0);
+    assert_eq!(counters.encoded_project_facts_seen, 0);
     assert_eq!(counters.lftj_next_calls, 0);
-    assert_eq!(counters.direct_chain_step_rows, 0);
+    assert_eq!(counters.direct_chain_step_facts, 0);
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn query_timing_unaccounted_saturates_to_zero() {
 }
 
 #[test]
-fn query_result_set_sorts_and_deduplicates_tuples() {
+fn query_result_set_sorts_and_deduplicates_facts() {
     let set = QueryResultSet::new(
         vec![ResultColumn::Variable("id".to_owned())],
         vec![
@@ -63,7 +63,7 @@ fn query_result_set_sorts_and_deduplicates_tuples() {
     );
 
     assert_eq!(set.cardinality(), 2);
-    assert_eq!(set.tuples, vec![vec![Value::U64(1)], vec![Value::U64(2)]]);
+    assert_eq!(set.facts, vec![vec![Value::U64(1)], vec![Value::U64(2)]]);
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn executes_single_relation_query() -> TestResult {
     })?;
 
     assert_eq!(
-        output.result.tuples,
+        output.result.facts,
         vec![vec![Value::Serial(1)], vec![Value::Serial(2)]]
     );
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
@@ -141,8 +141,8 @@ fn planner_recommends_missing_static_predicate_index() -> TestResult {
         )
     })?;
 
-    assert_same_rows(
-        &output.result.tuples,
+    assert_same_facts(
+        &output.result.facts,
         &[vec![Value::Serial(1)], vec![Value::Serial(3)]],
     );
     let expected_fields = vec!["currency".to_owned(), "id".to_owned()];
@@ -187,9 +187,9 @@ fn optimizer_selects_direct_storage_for_static_lookup() -> TestResult {
     assert_eq!(output.plan.plan_family, PlanFamily::Direct);
     assert_eq!(output.plan.optimizer.chosen, "direct_storage");
     assert_eq!(output.plan.query_image_cache.builds, 0);
-    assert_eq!(output.plan.counters.direct_kernel_rows, 2);
-    assert_same_rows(
-        &output.result.tuples,
+    assert_eq!(output.plan.counters.direct_kernel_facts, 2);
+    assert_same_facts(
+        &output.result.facts,
         &[vec![Value::Serial(1)], vec![Value::Serial(2)]],
     );
     Ok(())
@@ -224,7 +224,7 @@ fn static_empty_checks_static_existence_atoms() -> TestResult {
         )
     })?;
 
-    assert!(output.result.tuples.is_empty());
+    assert!(output.result.facts.is_empty());
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert_eq!(output.plan.counters.trie_open, 0);
     assert!(output.plan.counters.static_empty_atoms_checked > 0);
@@ -269,8 +269,8 @@ fn partial_probe_shape_falls_back_to_lftj() -> TestResult {
             .any(|node| node.implementation == NodeImpl::SortedLeapfrog)
     );
     assert!(output.plan.counters.trie_next > 0);
-    assert_same_rows(
-        &output.result.tuples,
+    assert_same_facts(
+        &output.result.facts,
         &[vec![Value::U64(20)], vec![Value::U64(21)]],
     );
     Ok(())
@@ -326,19 +326,19 @@ fn direct_prefix_range_kernel_selects_and_filters_rows() -> TestResult {
         output.plan.direct_kernel.as_ref().map(|direct| direct.kind),
         Some(DirectKernelKind::PrefixRange)
     ));
-    assert_same_rows(
-        &output.result.tuples,
+    assert_same_facts(
+        &output.result.facts,
         &[vec![Value::U64(10), Value::Timestamp(TimestampMicros(5))]],
     );
     assert!(output.plan.counters.direct_kernel_probes > 0);
-    assert_eq!(output.plan.counters.direct_kernel_rows, 2);
+    assert_eq!(output.plan.counters.direct_kernel_facts, 2);
     assert_eq!(output.plan.counters.direct_kernel_predicates, 4);
-    assert_eq!(output.plan.counters.direct_storage_output_rows, 1);
+    assert_eq!(output.plan.counters.direct_storage_output_facts, 1);
     assert_eq!(output.plan.counters.direct_bind_attempts, 2);
     assert_eq!(output.plan.counters.direct_bind_successes, 2);
     assert_eq!(output.plan.counters.sink_emit_calls, 0);
-    assert_eq!(output.plan.counters.direct_batch_rows, 1);
-    assert_eq!(output.plan.counters.direct_batch_fallback_rows, 0);
+    assert_eq!(output.plan.counters.direct_batch_facts, 1);
+    assert_eq!(output.plan.counters.direct_batch_fallback_facts, 0);
     assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
     assert_eq!(output.plan.query_image_cache.builds, 0);
     assert_eq!(output.plan.counters.hash_index_builds, 0);
@@ -395,8 +395,8 @@ fn direct_storage_no_prefix_range_scan_selects_rows() -> TestResult {
     assert_eq!(output.plan.query_image_cache.builds, 0);
     assert_eq!(output.plan.counters.hash_index_builds, 0);
     assert_eq!(output.plan.counters.sorted_trie_builds, 0);
-    assert_same_rows(
-        &output.result.tuples,
+    assert_same_facts(
+        &output.result.facts,
         &[
             vec![Value::U64(1), Value::U64(11)],
             vec![Value::U64(2), Value::U64(12)],
@@ -448,7 +448,7 @@ fn direct_prefix_range_empty_prefix_returns_zero_rows() -> TestResult {
     })?;
 
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
-    assert!(output.result.tuples.is_empty());
+    assert!(output.result.facts.is_empty());
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
 }
@@ -488,19 +488,19 @@ fn direct_chain_kernel_selects_and_follows_acyclic_path() -> TestResult {
         output.plan.direct_kernel.as_ref().map(|direct| direct.kind),
         Some(DirectKernelKind::ChainProbe)
     ));
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(30)]]);
-    assert_eq!(output.plan.counters.direct_kernel_rows, 4);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(30)]]);
+    assert_eq!(output.plan.counters.direct_kernel_facts, 4);
     assert!(output.plan.counters.direct_chain_steps > 0);
-    assert_eq!(output.plan.counters.direct_chain_output_rows, 1);
+    assert_eq!(output.plan.counters.direct_chain_output_facts, 1);
     assert_eq!(output.plan.counters.direct_chain_output_values, 1);
     assert_eq!(output.plan.counters.sink_emit_calls, 0);
-    assert_eq!(output.plan.counters.direct_batch_rows, 1);
-    assert_eq!(output.plan.counters.direct_batch_fallback_rows, 0);
+    assert_eq!(output.plan.counters.direct_batch_facts, 1);
+    assert_eq!(output.plan.counters.direct_batch_fallback_facts, 0);
     assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
     assert_eq!(output.plan.counters.materialized_output_values, 1);
     assert_eq!(output.plan.counters.dictionary_reverse_lookups, 0);
     assert_eq!(output.plan.counters.hash_index_builds, 0);
-    assert_eq!(output.plan.counters.hash_index_build_rows, 0);
+    assert_eq!(output.plan.counters.hash_index_build_facts, 0);
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
 }
@@ -543,8 +543,8 @@ fn direct_chain_tag_lookup_like_projection_runs_before_static_semijoin() -> Test
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::IndexNestedLoop);
     assert_eq!(output.plan.plan_family, PlanFamily::IndexNestedLoop);
     assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
-    assert_same_rows(
-        &output.result.tuples,
+    assert_same_facts(
+        &output.result.facts,
         &[vec![Value::U64(10), Value::U64(20)]],
     );
     Ok(())
@@ -556,7 +556,7 @@ fn cardinality_matches_materialized_projection_without_decoding_output() -> Test
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
+        txn.insert(&schema, Fact::new("A", [("id", Value::U64(1))]))?;
         txn.insert(&schema, chain_b_row(10, 1))?;
         txn.insert(&schema, chain_c_row(20, 10))?;
         txn.insert(&schema, chain_d_row(30, 20))?;
@@ -575,7 +575,7 @@ fn cardinality_matches_materialized_projection_without_decoding_output() -> Test
     let materialized = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
     let cardinality = env.read(|txn| txn.execute_result_cardinality(&schema, &query, &inputs))?;
 
-    assert_eq!(cardinality.cardinality, materialized.result.tuples.len());
+    assert_eq!(cardinality.cardinality, materialized.result.facts.len());
     assert_eq!(
         cardinality.plan.runtime_kind,
         materialized.plan.runtime_kind
@@ -613,7 +613,7 @@ fn direct_chain_broken_path_returns_zero_rows() -> TestResult {
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::IndexNestedLoop);
     assert_eq!(output.plan.plan_family, PlanFamily::IndexNestedLoop);
     assert_eq!(output.plan.timings.static_semijoin_proof_micros, 0);
-    assert!(output.result.tuples.is_empty());
+    assert!(output.result.facts.is_empty());
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
 }
@@ -642,7 +642,7 @@ fn optimizer_keeps_cyclic_triangle_on_lftj() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(output.plan.direct_kernel.is_none());
     assert!(
@@ -670,8 +670,8 @@ fn lftj_atom_cache_reuses_equivalent_relation_aliases() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
-        txn.insert(&schema, Row::new("A", [("id", Value::U64(2))]))?;
+        txn.insert(&schema, Fact::new("A", [("id", Value::U64(1))]))?;
+        txn.insert(&schema, Fact::new("A", [("id", Value::U64(2))]))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -685,7 +685,7 @@ fn lftj_atom_cache_reuses_equivalent_relation_aliases() -> TestResult {
 
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(output.plan.counters.sorted_trie_builds <= 1);
-    assert_eq!(output.result.tuples.len(), 4);
+    assert_eq!(output.result.facts.len(), 4);
     Ok(())
 }
 
@@ -695,7 +695,7 @@ fn lftj_empty_variable_atom_short_circuits_execution() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
+        txn.insert(&schema, Fact::new("A", [("id", Value::U64(1))]))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -707,7 +707,7 @@ fn lftj_empty_variable_atom_short_circuits_execution() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert!(output.result.tuples.is_empty());
+    assert!(output.result.facts.is_empty());
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert_eq!(output.plan.optimizer.chosen, "static_empty");
     assert_eq!(output.plan.counters.trie_open, 0);
@@ -721,7 +721,7 @@ fn static_empty_no_input_query_hits_fast_cache_before_normalize() -> TestResult 
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
+        txn.insert(&schema, Fact::new("A", [("id", Value::U64(1))]))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -734,8 +734,8 @@ fn static_empty_no_input_query_hits_fast_cache_before_normalize() -> TestResult 
     let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert!(first.result.tuples.is_empty());
-    assert!(second.result.tuples.is_empty());
+    assert!(first.result.facts.is_empty());
+    assert!(second.result.facts.is_empty());
     assert_eq!(first.plan.counters.static_empty_cache_misses, 1);
     assert_eq!(second.plan.counters.static_empty_cache_hits, 1);
     assert!(second.plan.free_join.nodes.is_empty());
@@ -757,11 +757,11 @@ fn domain_count_falls_back_to_lftj_until_fast_paths_are_rebuilt() -> TestResult 
         txn.insert(&schema, edge_ab_row(1, 11))?;
         txn.insert(
             &schema,
-            Row::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(20))]),
+            Fact::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(20))]),
         )?;
         txn.insert(
             &schema,
-            Row::new("EdgeAC", [("a", Value::U64(2)), ("c", Value::U64(30))]),
+            Fact::new("EdgeAC", [("a", Value::U64(2)), ("c", Value::U64(30))]),
         )?;
         Ok::<_, Error>(())
     })?;
@@ -776,7 +776,7 @@ fn domain_count_falls_back_to_lftj_until_fast_paths_are_rebuilt() -> TestResult 
     let output =
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
     assert!(output.plan.direct_kernel.is_none());
@@ -814,7 +814,7 @@ fn domain_count_serial_literal_filter_uses_lftj() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(2)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(2)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
@@ -850,7 +850,7 @@ fn domain_count_enum_literal_filter_uses_lftj() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(2)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(2)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
@@ -864,44 +864,44 @@ fn domain_count_range_filter_uses_lftj() -> TestResult {
     env.write(|txn| {
         txn.insert(
             &schema,
-            Row::new("Title", [("id", Value::U64(1)), ("year", Value::I64(2004))]),
+            Fact::new("Title", [("id", Value::U64(1)), ("year", Value::I64(2004))]),
         )?;
         txn.insert(
             &schema,
-            Row::new("Title", [("id", Value::U64(2)), ("year", Value::I64(2005))]),
+            Fact::new("Title", [("id", Value::U64(2)), ("year", Value::I64(2005))]),
         )?;
         txn.insert(
             &schema,
-            Row::new("Title", [("id", Value::U64(3)), ("year", Value::I64(2015))]),
+            Fact::new("Title", [("id", Value::U64(3)), ("year", Value::I64(2015))]),
         )?;
         txn.insert(
             &schema,
-            Row::new("Title", [("id", Value::U64(4)), ("year", Value::I64(2016))]),
+            Fact::new("Title", [("id", Value::U64(4)), ("year", Value::I64(2016))]),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "WorkCompany",
                 [("work", Value::U64(1)), ("company", Value::U64(10))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "WorkCompany",
                 [("work", Value::U64(2)), ("company", Value::U64(20))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "WorkCompany",
                 [("work", Value::U64(3)), ("company", Value::U64(30))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "WorkCompany",
                 [("work", Value::U64(4)), ("company", Value::U64(40))],
             ),
@@ -935,7 +935,7 @@ fn domain_count_range_filter_uses_lftj() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(2)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(2)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
@@ -949,7 +949,7 @@ fn domain_count_literal_and_range_filters_use_lftj() -> TestResult {
     env.write(|txn| {
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Company",
                 [
                     ("id", Value::U64(1)),
@@ -959,7 +959,7 @@ fn domain_count_literal_and_range_filters_use_lftj() -> TestResult {
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Company",
                 [
                     ("id", Value::U64(2)),
@@ -969,42 +969,42 @@ fn domain_count_literal_and_range_filters_use_lftj() -> TestResult {
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Title",
                 [("id", Value::U64(10)), ("year", Value::I64(2010))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Title",
                 [("id", Value::U64(20)), ("year", Value::I64(2010))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Title",
                 [("id", Value::U64(30)), ("year", Value::I64(2020))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "WorkCompany",
                 [("work", Value::U64(10)), ("company", Value::U64(1))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "WorkCompany",
                 [("work", Value::U64(20)), ("company", Value::U64(2))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "WorkCompany",
                 [("work", Value::U64(30)), ("company", Value::U64(1))],
             ),
@@ -1043,7 +1043,7 @@ fn domain_count_literal_and_range_filters_use_lftj() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
@@ -1058,11 +1058,11 @@ fn domain_count_unsafe_cycle_uses_generic_lftj() -> TestResult {
         txn.insert(&schema, edge_ab_row(1, 10))?;
         txn.insert(
             &schema,
-            Row::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(20))]),
+            Fact::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(20))]),
         )?;
         txn.insert(
             &schema,
-            Row::new("EdgeBC", [("b", Value::U64(10)), ("c", Value::U64(20))]),
+            Fact::new("EdgeBC", [("b", Value::U64(10)), ("c", Value::U64(20))]),
         )?;
         Ok::<_, Error>(())
     })?;
@@ -1076,7 +1076,7 @@ fn domain_count_unsafe_cycle_uses_generic_lftj() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
     assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
 }
@@ -1133,7 +1133,7 @@ fn prepared_plan_cache_reuses_parameterized_shape() -> TestResult {
     let first = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
     let second = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
 
-    assert_eq!(first.result.tuples, second.result.tuples);
+    assert_eq!(first.result.facts, second.result.facts);
     assert_eq!(first.plan.prepared_plan_cache.misses, 1);
     assert_eq!(first.plan.prepared_plan_cache.builds, 1);
     assert_eq!(second.plan.prepared_plan_cache.hits, 1);
@@ -1157,7 +1157,7 @@ fn prepared_plan_cache_reuses_no_input_physical_plan() -> TestResult {
     let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(first.result.tuples, second.result.tuples);
+    assert_eq!(first.result.facts, second.result.facts);
     assert_eq!(first.plan.prepared_plan_cache.cached_plans, 1);
     assert_eq!(first.plan.prepared_plan_cache.misses, 1);
     assert_eq!(first.plan.prepared_plan_cache.builds, 1);
@@ -1198,7 +1198,7 @@ fn prepared_plan_cache_is_snapshot_scoped() -> TestResult {
     assert_eq!(after.plan.prepared_plan_cache.misses, 1);
     assert_eq!(after.plan.prepared_plan_cache.builds, 1);
     assert_eq!(after.plan.prepared_plan_cache.hits, 0);
-    assert_eq!(after.result.tuples.len(), before.result.tuples.len() + 1);
+    assert_eq!(after.result.facts.len(), before.result.facts.len() + 1);
     Ok(())
 }
 
@@ -1219,7 +1219,7 @@ fn planner_stats_are_cached_per_query_image() -> TestResult {
     let first = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
     let second = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
 
-    assert_eq!(first.result.tuples, second.result.tuples);
+    assert_eq!(first.result.facts, second.result.facts);
     assert_eq!(first.plan.planner_stats.builds, 1);
     assert_eq!(first.plan.planner_stats.misses, 1);
     assert_eq!(second.plan.planner_stats.builds, 1);
@@ -1254,8 +1254,8 @@ fn execute_query_uses_warmed_query_image_cache() -> TestResult {
     assert_eq!(after.builds, 1);
     assert_eq!(output.plan.query_image_cache.builds, 1);
     assert!(output.plan.query_image_cache.hits > before.hits);
-    assert_eq!(warm.result.tuples.len(), 3);
-    assert_eq!(output.result.tuples.len(), 3);
+    assert_eq!(warm.result.facts.len(), 3);
+    assert_eq!(output.result.facts.len(), 3);
     Ok(())
 }
 
@@ -1281,7 +1281,7 @@ fn execute_query_cache_misses_after_write_commit() -> TestResult {
 
     assert_eq!(before.plan.query_image_cache.builds, 1);
     assert_eq!(after.plan.query_image_cache.builds, 2);
-    assert_eq!(after.result.tuples.len(), before.result.tuples.len() + 1);
+    assert_eq!(after.result.facts.len(), before.result.facts.len() + 1);
     Ok(())
 }
 
@@ -1355,7 +1355,7 @@ fn planner_stats_reuse_shared_relations_across_queries() -> TestResult {
 
     assert_eq!(first.plan.planner_stats.builds, 2);
     assert_eq!(second.plan.planner_stats.builds, 1);
-    assert_eq!(second.result.tuples.len(), 3);
+    assert_eq!(second.result.facts.len(), 3);
     Ok(())
 }
 
@@ -1381,7 +1381,7 @@ fn planner_stats_cache_is_snapshot_scoped() -> TestResult {
 
     assert_eq!(before.plan.planner_stats.builds, 1);
     assert_eq!(after.plan.planner_stats.builds, 1);
-    assert_eq!(after.result.tuples.len(), before.result.tuples.len() + 1);
+    assert_eq!(after.result.facts.len(), before.result.facts.len() + 1);
     Ok(())
 }
 
@@ -1511,7 +1511,7 @@ fn prepared_query_reuses_normalized_snapshot_shape() -> TestResult {
     let first = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &inputs))?;
     let second = env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &inputs))?;
 
-    assert_eq!(first.result.tuples, second.result.tuples);
+    assert_eq!(first.result.facts, second.result.facts);
     assert!(first.plan.timings.normalize_micros > 0);
     assert_eq!(second.plan.timings.normalize_micros, 0);
     Ok(())
@@ -1527,7 +1527,7 @@ fn cache_options_do_not_cache_aggregate_results() -> TestResult {
         txn.insert(&schema, edge_ab_row(1, 11))?;
         txn.insert(
             &schema,
-            Row::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(20))]),
+            Fact::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(20))]),
         )?;
         Ok::<_, Error>(())
     })?;
@@ -1552,20 +1552,20 @@ fn cache_options_do_not_cache_aggregate_results() -> TestResult {
         )
     })?;
 
-    assert_eq!(first.result.tuples, vec![vec![Value::U64(1)]]);
-    assert_eq!(cached.result.tuples, first.result.tuples);
-    assert_eq!(disabled.result.tuples, first.result.tuples);
+    assert_eq!(first.result.facts, vec![vec![Value::U64(1)]]);
+    assert_eq!(cached.result.facts, first.result.facts);
+    assert_eq!(disabled.result.facts, first.result.facts);
 
     env.write(|txn| {
         txn.insert(
             &schema,
-            Row::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(21))]),
+            Fact::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(21))]),
         )?;
         Ok::<_, Error>(())
     })?;
     let after_write =
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
-    assert_eq!(after_write.result.tuples, vec![vec![Value::U64(1)]]);
+    assert_eq!(after_write.result.facts, vec![vec![Value::U64(1)]]);
     Ok(())
 }
 
@@ -1589,8 +1589,8 @@ fn aggregate_domain_results_differ_for_different_inputs() -> TestResult {
     let different_input =
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &holder_two))?;
 
-    assert_eq!(first.result.tuples, vec![vec![Value::U64(2)]]);
-    assert_eq!(different_input.result.tuples, vec![vec![Value::U64(1)]]);
+    assert_eq!(first.result.facts, vec![vec![Value::U64(2)]]);
+    assert_eq!(different_input.result.facts, vec![vec![Value::U64(1)]]);
     Ok(())
 }
 
@@ -1651,7 +1651,7 @@ fn repeated_variable_atom_matches_equal_encoded_fields() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
     Ok(())
 }
 
@@ -1727,11 +1727,11 @@ fn executes_two_relation_join() -> TestResult {
     assert!(output.plan.counters.lftj_completed_bindings > 0);
     assert_eq!(output.plan.counters.sink_emit_calls, 0);
     assert_eq!(
-        output.plan.counters.encoded_project_rows_seen,
+        output.plan.counters.encoded_project_facts_seen,
         output.plan.counters.bindings_yielded
     );
-    assert_same_rows(
-        &output.result.tuples,
+    assert_same_facts(
+        &output.result.facts,
         &[
             vec![Value::Serial(1), Value::String("Alice".to_owned())],
             vec![Value::Serial(2), Value::String("Alice".to_owned())],
@@ -1797,8 +1797,8 @@ fn executes_many_relation_join_and_range_filter() -> TestResult {
             .iter()
             .any(|estimate| estimate.access == "Posting.by_at")
     );
-    assert_same_rows(
-        &output.result.tuples,
+    assert_same_facts(
+        &output.result.facts,
         &[
             vec![
                 Value::Serial(2),
@@ -1830,14 +1830,14 @@ fn projection_deduplicates_results() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     assert_eq!(
-        output.result.tuples,
+        output.result.facts,
         vec![vec![Value::Serial(1)], vec![Value::Serial(2)]]
     );
     assert_eq!(output.plan.counters.bindings_yielded, 3);
     assert_eq!(output.plan.counters.materialized_output_values, 2);
-    assert_eq!(output.plan.counters.encoded_project_rows_seen, 3);
-    assert_eq!(output.plan.counters.encoded_project_rows_inserted, 2);
-    assert_eq!(output.plan.counters.encoded_project_duplicate_rows, 0);
+    assert_eq!(output.plan.counters.encoded_project_facts_seen, 3);
+    assert_eq!(output.plan.counters.encoded_project_facts_inserted, 2);
+    assert_eq!(output.plan.counters.encoded_project_duplicate_facts, 0);
     assert_eq!(output.plan.counters.project_decode_values, 2);
     Ok(())
 }
@@ -1873,12 +1873,12 @@ fn materialized_projection_is_recomputed_without_result_cache() -> TestResult {
     let second =
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
 
-    assert_same_rows(
-        &first.result.tuples,
+    assert_same_facts(
+        &first.result.facts,
         &[vec![Value::U64(20)], vec![Value::U64(21)]],
     );
-    assert_eq!(second.result.tuples, first.result.tuples);
-    assert!(second.plan.counters.materialized_output_values <= second.result.tuples.len() as u64);
+    assert_eq!(second.result.facts, first.result.facts);
+    assert!(second.plan.counters.materialized_output_values <= second.result.facts.len() as u64);
     Ok(())
 }
 
@@ -1893,13 +1893,13 @@ fn count_sink_avoids_decoding_counted_variable() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(3)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(3)]]);
     assert_eq!(output.plan.counters.bindings_yielded, 3);
     assert_eq!(output.plan.counters.aggregate_groups, 1);
     assert_eq!(output.plan.counters.decoded_values, 0);
     assert_eq!(output.plan.counters.materialized_output_values, 1);
-    assert_eq!(output.plan.counters.encoded_project_rows_seen, 0);
-    assert_eq!(output.plan.counters.encoded_project_rows_inserted, 0);
+    assert_eq!(output.plan.counters.encoded_project_facts_seen, 0);
+    assert_eq!(output.plan.counters.encoded_project_facts_inserted, 0);
     assert!(
         output.plan.counters.materialized_output_values < output.plan.counters.bindings_yielded
     );
@@ -1922,8 +1922,8 @@ fn global_count_over_empty_input_returns_zero_row() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(0)]]);
-    assert_eq!(output.plan.counters.output_rows, 1);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
+    assert_eq!(output.plan.counters.output_facts, 1);
     Ok(())
 }
 
@@ -1940,7 +1940,7 @@ fn grouped_count_over_empty_input_returns_no_rows() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert!(output.result.tuples.is_empty());
+    assert!(output.result.facts.is_empty());
     Ok(())
 }
 
@@ -1964,12 +1964,12 @@ fn count_distinct_ignores_duplicate_existential_witnesses() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
     Ok(())
 }
 
 #[test]
-fn sum_over_domain_counts_distinct_domain_tuples_with_same_value() -> TestResult {
+fn sum_over_domain_counts_distinct_domain_facts_with_same_value() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(overflow_schema(), env.max_key_size())?;
@@ -1986,7 +1986,7 @@ fn sum_over_domain_counts_distinct_domain_tuples_with_same_value() -> TestResult
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::I64(10)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::I64(10)]]);
     Ok(())
 }
 
@@ -1996,7 +1996,7 @@ fn static_empty_global_count_returns_zero_row() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
     env.write(|txn| {
-        let _ = txn.insert(&schema, Row::new("A", [("id", Value::U64(1))]))?;
+        let _ = txn.insert(&schema, Fact::new("A", [("id", Value::U64(1))]))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -2014,7 +2014,7 @@ fn static_empty_global_count_returns_zero_row() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(0)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     Ok(())
 }
@@ -2046,7 +2046,7 @@ fn static_semijoin_dimension_row_exists_but_fact_is_empty() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(0)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(output.plan.counters.static_semijoin_rounds > 0);
     assert!(output.plan.timings.static_semijoin_proof_micros > 0);
@@ -2092,7 +2092,7 @@ fn static_semijoin_disjoint_central_candidates_prove_empty() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(0)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(output.plan.counters.static_semijoin_candidate_values > 0);
     Ok(())
@@ -2195,7 +2195,7 @@ fn static_semijoin_compound_relation_proves_empty() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(0)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     Ok(())
 }
@@ -2209,10 +2209,10 @@ fn static_semijoin_budget_exhaustion_falls_back_safely() -> TestResult {
         for id in 1..=1_001 {
             txn.insert(
                 &schema,
-                Row::new("Big", [("pad", Value::U64(0)), ("id", Value::U64(id))]),
+                Fact::new("Big", [("pad", Value::U64(0)), ("id", Value::U64(id))]),
             )?;
         }
-        txn.insert(&schema, Row::new("Link", [("id", Value::U64(999_999))]))?;
+        txn.insert(&schema, Fact::new("Link", [("id", Value::U64(999_999))]))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -2270,7 +2270,7 @@ fn static_semijoin_non_empty_query_is_not_proven_empty() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
     assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     Ok(())
 }
@@ -2303,10 +2303,10 @@ fn static_semijoin_negative_cache_skips_second_failed_proof() -> TestResult {
     let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(first.result.tuples, vec![vec![Value::U64(1)]]);
+    assert_eq!(first.result.facts, vec![vec![Value::U64(1)]]);
     assert!(first.plan.counters.static_semijoin_rounds > 0);
     assert_eq!(first.plan.counters.static_semijoin_skipped, 0);
-    assert_eq!(second.result.tuples, vec![vec![Value::U64(1)]]);
+    assert_eq!(second.result.facts, vec![vec![Value::U64(1)]]);
     assert_eq!(second.plan.counters.static_semijoin_rounds, 0);
     assert_eq!(second.plan.counters.static_semijoin_skipped, 1);
     assert_eq!(
@@ -2351,7 +2351,7 @@ fn static_semijoin_negative_cache_is_tx_id_scoped() -> TestResult {
 
     assert!(first.plan.counters.static_semijoin_rounds > 0);
     assert_eq!(cached.plan.counters.static_semijoin_skipped, 1);
-    assert_eq!(after_write.result.tuples, vec![vec![Value::U64(2)]]);
+    assert_eq!(after_write.result.facts, vec![vec![Value::U64(2)]]);
     assert!(after_write.plan.counters.static_semijoin_rounds > 0);
     assert_eq!(after_write.plan.counters.static_semijoin_skipped, 0);
     Ok(())
@@ -2389,12 +2389,12 @@ fn static_semijoin_cache_is_input_scoped_and_reuses_proven_empty() -> TestResult
     let empty_first = env.read(|txn| txn.execute_query(&schema, &query, &kind_two))?;
     let empty_cached = env.read(|txn| txn.execute_query(&schema, &query, &kind_two))?;
 
-    assert_eq!(non_empty.result.tuples, vec![vec![Value::U64(1)]]);
+    assert_eq!(non_empty.result.facts, vec![vec![Value::U64(1)]]);
     assert_ne!(non_empty.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-    assert_eq!(empty_first.result.tuples, vec![vec![Value::U64(0)]]);
+    assert_eq!(empty_first.result.facts, vec![vec![Value::U64(0)]]);
     assert_eq!(empty_first.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(empty_first.plan.counters.static_semijoin_rounds > 0);
-    assert_eq!(empty_cached.result.tuples, vec![vec![Value::U64(0)]]);
+    assert_eq!(empty_cached.result.facts, vec![vec![Value::U64(0)]]);
     assert_eq!(
         empty_cached.plan.runtime_kind,
         QueryRuntimeKind::StaticEmpty
@@ -2435,10 +2435,7 @@ fn static_semijoin_red_boat_like_wide_projection_skips_and_preserves_rows() -> T
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_same_rows(
-        &output.result.tuples,
-        &[vec![Value::U64(1), Value::U64(10)]],
-    );
+    assert_same_facts(&output.result.facts, &[vec![Value::U64(1), Value::U64(10)]]);
     assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert_eq!(output.plan.counters.static_semijoin_skipped, 1);
     assert_eq!(
@@ -2480,8 +2477,8 @@ fn static_semijoin_tag_lookup_like_direct_chain_projection_skips() -> TestResult
         )
     })?;
 
-    assert_same_rows(
-        &output.result.tuples,
+    assert_same_facts(
+        &output.result.facts,
         &[
             vec![Value::Serial(1), Value::Serial(1)],
             vec![Value::Serial(2), Value::Serial(1)],
@@ -2533,8 +2530,8 @@ fn static_semijoin_tpch_like_non_empty_materialized_projection_skips() -> TestRe
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_same_rows(
-        &output.result.tuples,
+    assert_same_facts(
+        &output.result.facts,
         &[vec![Value::U64(10), Value::Enum(2)]],
     );
     assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
@@ -2552,11 +2549,11 @@ fn static_semijoin_q24_like_empty_shape_proves_empty() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, Row::new("Alias", [("person", Value::U64(1))]))?;
-        txn.insert(&schema, Row::new("Character", [("id", Value::U64(1))]))?;
+        txn.insert(&schema, Fact::new("Alias", [("person", Value::U64(1))]))?;
+        txn.insert(&schema, Fact::new("Character", [("id", Value::U64(1))]))?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Appearance",
                 [
                     ("person", Value::U64(1)),
@@ -2568,7 +2565,7 @@ fn static_semijoin_q24_like_empty_shape_proves_empty() -> TestResult {
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Company",
                 [
                     ("id", Value::U64(1)),
@@ -2578,7 +2575,7 @@ fn static_semijoin_q24_like_empty_shape_proves_empty() -> TestResult {
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Keyword",
                 [
                     ("id", Value::U64(1)),
@@ -2588,7 +2585,7 @@ fn static_semijoin_q24_like_empty_shape_proves_empty() -> TestResult {
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Person",
                 [
                     ("id", Value::U64(1)),
@@ -2598,7 +2595,7 @@ fn static_semijoin_q24_like_empty_shape_proves_empty() -> TestResult {
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Role",
                 [
                     ("id", Value::U64(1)),
@@ -2608,28 +2605,28 @@ fn static_semijoin_q24_like_empty_shape_proves_empty() -> TestResult {
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Title",
                 [("id", Value::U64(100)), ("year", Value::I64(2012))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Title",
                 [("id", Value::U64(200)), ("year", Value::I64(2012))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "WorkCompany",
                 [("work", Value::U64(100)), ("company", Value::U64(1))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "WorkKeyword",
                 [("work", Value::U64(200)), ("keyword", Value::U64(1))],
             ),
@@ -2692,7 +2689,7 @@ fn static_semijoin_q24_like_empty_shape_proves_empty() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert!(output.result.tuples.is_empty());
+    assert!(output.result.facts.is_empty());
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(output.plan.counters.static_semijoin_candidate_values > 0);
     assert_eq!(output.plan.counters.static_semijoin_skipped, 0);
@@ -2705,18 +2702,18 @@ fn static_semijoin_range_index_q16_like_count_proves_empty() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(q16_like_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, Row::new("Alias", [("person", Value::U64(1))]))?;
-        txn.insert(&schema, Row::new("Person", [("id", Value::U64(1))]))?;
+        txn.insert(&schema, Fact::new("Alias", [("person", Value::U64(1))]))?;
+        txn.insert(&schema, Fact::new("Person", [("id", Value::U64(1))]))?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Cast",
                 [("person", Value::U64(1)), ("work", Value::U64(200))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Company",
                 [
                     ("id", Value::U64(1)),
@@ -2726,7 +2723,7 @@ fn static_semijoin_range_index_q16_like_count_proves_empty() -> TestResult {
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Keyword",
                 [
                     ("id", Value::U64(1)),
@@ -2736,35 +2733,35 @@ fn static_semijoin_range_index_q16_like_count_proves_empty() -> TestResult {
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "WorkCompany",
                 [("work", Value::U64(100)), ("company", Value::U64(1))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "WorkCompany",
                 [("work", Value::U64(200)), ("company", Value::U64(1))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "WorkKeyword",
                 [("work", Value::U64(200)), ("keyword", Value::U64(1))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Title",
                 [("id", Value::U64(100)), ("episode", Value::I64(60))],
             ),
         )?;
         txn.insert(
             &schema,
-            Row::new(
+            Fact::new(
                 "Title",
                 [("id", Value::U64(200)), ("episode", Value::I64(10))],
             ),
@@ -2772,7 +2769,7 @@ fn static_semijoin_range_index_q16_like_count_proves_empty() -> TestResult {
         for id in 1_000..2_500 {
             txn.insert(
                 &schema,
-                Row::new(
+                Fact::new(
                     "Title",
                     [("id", Value::U64(id)), ("episode", Value::I64(10))],
                 ),
@@ -2829,7 +2826,7 @@ fn static_semijoin_range_index_q16_like_count_proves_empty() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.result.tuples, vec![vec![Value::U64(0)]]);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(output.plan.counters.static_semijoin_prefixes_probed > 0);
     assert!(output.plan.counters.static_semijoin_candidate_values > 0);
@@ -2855,7 +2852,7 @@ fn sum_sink_decodes_only_aggregate_operand_values() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(
-        output.result.tuples,
+        output.result.facts,
         vec![vec![Value::Decimal(DecimalRaw(600)), Value::U64(3)]]
     );
     assert_eq!(output.plan.counters.bindings_yielded, 3);
@@ -2886,8 +2883,8 @@ fn grouped_count_decodes_dictionary_keys_only_at_final_output() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_same_rows(
-        &output.result.tuples,
+    assert_same_facts(
+        &output.result.facts,
         &[
             vec![Value::String("Alice".to_owned()), Value::U64(2)],
             vec![Value::String("Bob".to_owned()), Value::U64(1)],
@@ -2922,8 +2919,8 @@ fn aggregation_groups_and_sums_decimal_values() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_same_rows(
-        &output.result.tuples,
+    assert_same_facts(
+        &output.result.facts,
         &[
             vec![
                 Value::Serial(1),
@@ -3030,7 +3027,7 @@ fn serial_input_accepts_serial_value() -> TestResult {
         )
     })?;
 
-    assert!(!output.result.tuples.is_empty());
+    assert!(!output.result.facts.is_empty());
     Ok(())
 }
 
@@ -3145,19 +3142,19 @@ fn explain_and_storage_diagnostics_are_available() -> TestResult {
     assert!(explain.contains("free_join_node"));
     assert!(explain.contains("candidate_plan"));
     assert!(explain.contains("free_join_estimates"));
-    assert!(explain.contains("node_rows"));
+    assert!(explain.contains("node_facts"));
     assert!(explain.contains("free_join_subatom"));
     assert!(!explain.contains("atoms:\n"));
     assert!(!explain.contains("index="));
     assert!(explain.contains("cursor_seeks"));
-    assert!(explain.contains("rows_scanned"));
+    assert!(explain.contains("facts_scanned"));
     assert!(explain.contains("bindings_yielded"));
     assert!(explain.contains("decoded_values"));
     assert!(explain.contains("encoded_comparisons_evaluated"));
     assert!(explain.contains("materialized_output_values"));
     assert!(explain.contains("trie_open"));
     assert!(explain.contains("trie_seek"));
-    assert!(explain.contains("output_rows"));
+    assert!(explain.contains("output_facts"));
 
     let diagnostics = env.storage_diagnostics(&schema)?;
     assert_eq!(diagnostics.storage_tx_id, 1);
@@ -3167,7 +3164,7 @@ fn explain_and_storage_diagnostics_are_available() -> TestResult {
         diagnostics
             .relations
             .iter()
-            .any(|relation| relation.relation == "Account" && relation.row_count == 3)
+            .any(|relation| relation.relation == "Account" && relation.fact_count == 3)
     );
     assert_eq!(
         diagnostics.schema_fingerprint,
@@ -3246,9 +3243,9 @@ fn differential_reference_evaluator_matches_lmdb() -> TestResult {
         let lmdb_rows = env
             .read(|txn| txn.execute_query(&schema, &query, &inputs))?
             .result
-            .tuples;
+            .facts;
         let reference_rows = reference.execute(&query, &inputs)?;
-        assert_same_rows(&lmdb_rows, &reference_rows);
+        assert_same_facts(&lmdb_rows, &reference_rows);
     }
     Ok(())
 }
@@ -3258,10 +3255,10 @@ fn seeded_db() -> Result<(Environment, StorageSchema)> {
     let path = dir.keep();
     let env = Environment::open(&path)?;
     let schema = StorageSchema::new(ledger_schema(), env.max_key_size())?;
-    let rows = seeded_rows();
+    let facts = seeded_rows();
     env.write(|txn| {
-        for row in &rows {
-            txn.insert(&schema, row.clone())?;
+        for fact in &facts {
+            txn.insert(&schema, fact.clone())?;
         }
         Ok::<(), Error>(())
     })?;
@@ -3545,26 +3542,26 @@ fn q16_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
     )
 }
 
-fn dim_row(id: u64, kind: u8) -> Row {
-    Row::new("Dim", [("id", Value::U64(id)), ("kind", Value::Enum(kind))])
+fn dim_row(id: u64, kind: u8) -> Fact {
+    Fact::new("Dim", [("id", Value::U64(id)), ("kind", Value::Enum(kind))])
 }
 
-fn other_dim_row(id: u64, kind: u8) -> Row {
-    Row::new(
+fn other_dim_row(id: u64, kind: u8) -> Fact {
+    Fact::new(
         "OtherDim",
         [("id", Value::U64(id)), ("kind", Value::Enum(kind))],
     )
 }
 
-fn fact_row(dim: u64, item: u64) -> Row {
-    Row::new(
+fn fact_row(dim: u64, item: u64) -> Fact {
+    Fact::new(
         "Fact",
         [("dim", Value::U64(dim)), ("item", Value::U64(item))],
     )
 }
 
-fn owner_group_row(owner: u64, group: u64) -> Row {
-    Row::new(
+fn owner_group_row(owner: u64, group: u64) -> Fact {
+    Fact::new(
         "OwnerGroup",
         [
             ("owner", Value::Serial(owner)),
@@ -3573,8 +3570,8 @@ fn owner_group_row(owner: u64, group: u64) -> Row {
     )
 }
 
-fn owned_fact_row(owner: u64, group: u64, item: u64) -> Row {
-    Row::new(
+fn owned_fact_row(owner: u64, group: u64, item: u64) -> Fact {
+    Fact::new(
         "OwnedFact",
         [
             ("owner", Value::Serial(owner)),
@@ -3584,14 +3581,14 @@ fn owned_fact_row(owner: u64, group: u64, item: u64) -> Row {
     )
 }
 
-fn pair_row(left: u64, right: u64) -> Row {
-    Row::new(
+fn pair_row(left: u64, right: u64) -> Fact {
+    Fact::new(
         "Pair",
         [("left", Value::U64(left)), ("right", Value::U64(right))],
     )
 }
 
-fn seeded_rows() -> Vec<Row> {
+fn seeded_rows() -> Vec<Fact> {
     vec![
         holder_row(1, "Alice"),
         holder_row(2, "Bob"),
@@ -3847,8 +3844,8 @@ fn direct_chain4_schema() -> bumbledb_core::schema::SchemaDescriptor {
     )
 }
 
-fn holder_row(id: u64, name: &str) -> Row {
-    Row::new(
+fn holder_row(id: u64, name: &str) -> Fact {
+    Fact::new(
         "Holder",
         [
             ("id", Value::Serial(id)),
@@ -3857,8 +3854,8 @@ fn holder_row(id: u64, name: &str) -> Row {
     )
 }
 
-fn account_row(id: u64, holder: u64, currency: u8) -> Row {
-    Row::new(
+fn account_row(id: u64, holder: u64, currency: u8) -> Fact {
+    Fact::new(
         "Account",
         [
             ("id", Value::Serial(id)),
@@ -3868,8 +3865,8 @@ fn account_row(id: u64, holder: u64, currency: u8) -> Row {
     )
 }
 
-fn posting_row(id: u64, account: u64, amount: i128, at: i64) -> Row {
-    Row::new(
+fn posting_row(id: u64, account: u64, amount: i128, at: i64) -> Fact {
+    Fact::new(
         "Posting",
         [
             ("id", Value::Serial(id)),
@@ -3880,8 +3877,8 @@ fn posting_row(id: u64, account: u64, amount: i128, at: i64) -> Row {
     )
 }
 
-fn number_row(id: u64, n: i64, d: i128) -> Row {
-    Row::new(
+fn number_row(id: u64, n: i64, d: i128) -> Fact {
+    Fact::new(
         "Number",
         [
             ("id", Value::Serial(id)),
@@ -3891,31 +3888,31 @@ fn number_row(id: u64, n: i64, d: i128) -> Row {
     )
 }
 
-fn item_row(id: u64, kind: u8) -> Row {
-    Row::new(
+fn item_row(id: u64, kind: u8) -> Fact {
+    Fact::new(
         "Item",
         [("id", Value::Serial(id)), ("kind", Value::Enum(kind))],
     )
 }
 
-fn edge_ab_row(a: u64, b: u64) -> Row {
-    Row::new("EdgeAB", [("a", Value::U64(a)), ("b", Value::U64(b))])
+fn edge_ab_row(a: u64, b: u64) -> Fact {
+    Fact::new("EdgeAB", [("a", Value::U64(a)), ("b", Value::U64(b))])
 }
 
-fn edge_ac_row(a: u64, c: u64) -> Row {
-    Row::new("EdgeAC", [("a", Value::U64(a)), ("c", Value::U64(c))])
+fn edge_ac_row(a: u64, c: u64) -> Fact {
+    Fact::new("EdgeAC", [("a", Value::U64(a)), ("c", Value::U64(c))])
 }
 
-fn edge_bc_row(b: u64, c: u64) -> Row {
-    Row::new("EdgeBC", [("b", Value::U64(b)), ("c", Value::U64(c))])
+fn edge_bc_row(b: u64, c: u64) -> Fact {
+    Fact::new("EdgeBC", [("b", Value::U64(b)), ("c", Value::U64(c))])
 }
 
-fn b_row(id: u64, a: u64) -> Row {
-    Row::new("B", [("id", Value::U64(id)), ("a", Value::U64(a))])
+fn b_row(id: u64, a: u64) -> Fact {
+    Fact::new("B", [("id", Value::U64(id)), ("a", Value::U64(a))])
 }
 
-fn reserve_row(sailor: u64, boat: u64, day: i64) -> Row {
-    Row::new(
+fn reserve_row(sailor: u64, boat: u64, day: i64) -> Fact {
+    Fact::new(
         "Reserve",
         [
             ("sailor", Value::U64(sailor)),
@@ -3925,23 +3922,23 @@ fn reserve_row(sailor: u64, boat: u64, day: i64) -> Row {
     )
 }
 
-fn chain_a_row(id: u64) -> Row {
-    Row::new("A", [("id", Value::U64(id))])
+fn chain_a_row(id: u64) -> Fact {
+    Fact::new("A", [("id", Value::U64(id))])
 }
 
-fn chain_b_row(id: u64, a: u64) -> Row {
-    Row::new("B", [("id", Value::U64(id)), ("a", Value::U64(a))])
+fn chain_b_row(id: u64, a: u64) -> Fact {
+    Fact::new("B", [("id", Value::U64(id)), ("a", Value::U64(a))])
 }
 
-fn chain_c_row(id: u64, b: u64) -> Row {
-    Row::new("C", [("id", Value::U64(id)), ("b", Value::U64(b))])
+fn chain_c_row(id: u64, b: u64) -> Fact {
+    Fact::new("C", [("id", Value::U64(id)), ("b", Value::U64(b))])
 }
 
-fn chain_d_row(id: u64, c: u64) -> Row {
-    Row::new("D", [("id", Value::U64(id)), ("c", Value::U64(c))])
+fn chain_d_row(id: u64, c: u64) -> Fact {
+    Fact::new("D", [("id", Value::U64(id)), ("c", Value::U64(c))])
 }
 
-fn assert_same_rows(actual: &[Vec<Value>], expected: &[Vec<Value>]) {
+fn assert_same_facts(actual: &[Vec<Value>], expected: &[Vec<Value>]) {
     let mut actual = actual.to_vec();
     let mut expected = expected.to_vec();
     actual.sort();
@@ -3950,7 +3947,7 @@ fn assert_same_rows(actual: &[Vec<Value>], expected: &[Vec<Value>]) {
 }
 
 struct ReferenceDb {
-    rows: BTreeMap<String, Vec<Row>>,
+    facts: BTreeMap<String, Vec<Fact>>,
 }
 
 #[derive(Clone, Debug)]
@@ -3981,15 +3978,15 @@ impl ReferenceBinding {
 }
 
 impl ReferenceDb {
-    fn from_rows(rows: Vec<Row>) -> Self {
-        let mut by_relation: BTreeMap<String, Vec<Row>> = BTreeMap::new();
-        for row in rows {
+    fn from_rows(facts: Vec<Fact>) -> Self {
+        let mut by_relation: BTreeMap<String, Vec<Fact>> = BTreeMap::new();
+        for fact in facts {
             by_relation
-                .entry(row.relation().to_owned())
+                .entry(fact.relation().to_owned())
                 .or_default()
-                .push(row);
+                .push(fact);
         }
-        Self { rows: by_relation }
+        Self { facts: by_relation }
     }
 
     fn execute(&self, query: &TypedQuery, inputs: &InputBindings) -> Result<Vec<Vec<Value>>> {
@@ -4047,8 +4044,8 @@ impl ReferenceDb {
         }
 
         let atom = atoms[depth];
-        for row in self.rows.get(&atom.relation).into_iter().flatten() {
-            let Some(next) = reference_match_atom(atom, query, inputs, &binding, row)? else {
+        for fact in self.facts.get(&atom.relation).into_iter().flatten() {
+            let Some(next) = reference_match_atom(atom, query, inputs, &binding, fact)? else {
                 continue;
             };
             if reference_comparisons_pass(comparisons, query, inputs, &next, counters)? {
@@ -4073,11 +4070,11 @@ fn reference_match_atom(
     query: &TypedQuery,
     inputs: &InputBindings,
     binding: &ReferenceBinding,
-    row: &Row,
+    fact: &Fact,
 ) -> Result<Option<ReferenceBinding>> {
     let mut next = binding.clone();
     for field in &atom.fields {
-        let Some(row_value) = row.value(&field.field) else {
+        let Some(row_value) = fact.value(&field.field) else {
             return Ok(None);
         };
         match &field.term {
@@ -4175,14 +4172,14 @@ fn reference_project_results(
     } else {
         let mut set = BTreeSet::new();
         for binding in bindings {
-            let mut row = Vec::new();
+            let mut fact = Vec::new();
             for term in &query.find {
                 let TypedFindTerm::Variable { variable } = term else {
                     continue;
                 };
-                row.push(reference_bound_variable(binding, *variable)?.clone());
+                fact.push(reference_bound_variable(binding, *variable)?.clone());
             }
-            set.insert(row);
+            set.insert(fact);
         }
         Ok(set.into_iter().collect())
     }
@@ -4243,14 +4240,14 @@ fn reference_project_aggregates(
         }
     }
 
-    let mut rows = Vec::new();
+    let mut facts = Vec::new();
     for (key, states) in groups {
-        let mut row = Vec::new();
+        let mut fact = Vec::new();
         let mut key_iter = key.into_iter();
         let mut state_iter = states.into_iter();
         for term in &query.find {
             match term {
-                TypedFindTerm::Variable { .. } => row.push(
+                TypedFindTerm::Variable { .. } => fact.push(
                     key_iter
                         .next()
                         .ok_or_else(|| Error::internal("missing reference aggregate group key"))?,
@@ -4259,14 +4256,14 @@ fn reference_project_aggregates(
                     let state = state_iter
                         .next()
                         .ok_or_else(|| Error::internal("missing reference aggregate state"))?;
-                    row.push(state.finish()?)
+                    fact.push(state.finish()?)
                 }
             }
         }
-        rows.push(row);
+        facts.push(fact);
     }
-    rows.sort();
-    Ok(rows)
+    facts.sort();
+    Ok(facts)
 }
 
 fn reference_bound_variable(binding: &ReferenceBinding, variable: usize) -> Result<&Value> {

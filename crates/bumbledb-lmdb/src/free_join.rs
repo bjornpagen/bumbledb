@@ -94,7 +94,7 @@ pub struct PayloadDemand {
     pub aggregate_vars: Vec<VarId>,
     /// Relations used only for existence checks.
     pub existence_only_relations: Vec<RelationId>,
-    /// Relations whose row IDs are needed by later nodes/output.
+    /// Relations whose fact IDs are needed by later nodes/output.
     pub row_id_demands: Vec<RelationId>,
 }
 
@@ -146,11 +146,11 @@ pub struct AggregateTerm {
 /// Planner estimates for one Free Join plan.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlanEstimates {
-    /// Estimated output rows.
-    pub output_rows: u64,
+    /// Estimated output facts.
+    pub output_facts: u64,
     /// Estimated iterator operations.
     pub iterator_ops: u64,
-    /// Estimated hash build rows.
+    /// Estimated hash build facts.
     pub hash_build_rows: u64,
     /// Estimated materialized logical values.
     pub materialized_values: u64,

@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-use crate::query_image::RowId;
+use crate::query_image::FactId;
 use crate::{
     AccessId, EncodedOwned, Error, FieldId, RelationId, RelationImage, Result, StorageSchema,
 };
@@ -134,8 +134,8 @@ pub struct PlannerStatsCacheDiagnostics {
 /// Optimizer relation statistics derived from one relation image.
 #[derive(Clone, Debug)]
 pub(crate) struct OptimizerRelationStats {
-    /// Relation row count.
-    pub rows: usize,
+    /// Relation fact count.
+    pub facts: usize,
     /// Field stats keyed by field name.
     pub fields: BTreeMap<String, OptimizerFieldStats>,
     /// Index stats keyed by index/access-path name.
@@ -161,7 +161,7 @@ impl OptimizerRelationStats {
                 path.index_name,
                 OptimizerIndexStats::cheap(
                     AccessId(layout.index_id),
-                    relation.row_count,
+                    relation.fact_count,
                     &path.leading_fields,
                     &fields,
                 ),
@@ -169,7 +169,7 @@ impl OptimizerRelationStats {
         }
 
         Ok(Self {
-            rows: relation.row_count,
+            facts: relation.fact_count,
             fields,
             indexes,
         })
@@ -191,23 +191,24 @@ pub(crate) struct OptimizerFieldStats {
 
 impl OptimizerFieldStats {
     fn sample(relation: &RelationImage, field: FieldId) -> Result<Self> {
-        let sample_rows = relation.row_count.min(FIELD_STATS_SAMPLE_ROWS);
+        let sample_rows = relation.fact_count.min(FIELD_STATS_SAMPLE_ROWS);
         let mut frequencies = BTreeMap::<EncodedOwned, usize>::new();
-        for row in 0..sample_rows {
+        for fact in 0..sample_rows {
             let value = relation
-                .encoded(RowId(row as u32), field)
+                .encoded(FactId(fact as u32), field)
                 .map(EncodedOwned::from_ref)
                 .ok_or_else(|| Error::internal("missing optimizer sample field value"))?;
             *frequencies.entry(value).or_insert(0) += 1;
         }
         let sample_distinct = frequencies.len().max(1);
-        let distinct = if sample_rows == relation.row_count || sample_distinct <= sample_rows / 16 {
+        let distinct = if sample_rows == relation.fact_count || sample_distinct <= sample_rows / 16
+        {
             sample_distinct
         } else {
             sample_distinct
-                .saturating_mul(relation.row_count.max(1))
+                .saturating_mul(relation.fact_count.max(1))
                 .div_ceil(sample_rows.max(1))
-                .min(relation.row_count.max(1))
+                .min(relation.fact_count.max(1))
         };
         let min = frequencies.keys().next().cloned();
         let max = frequencies.keys().next_back().cloned();
@@ -237,8 +238,8 @@ impl OptimizerFieldStats {
 pub(crate) struct OptimizerIndexStats {
     /// Dense storage access ID.
     pub index: AccessId,
-    /// Indexed row count.
-    pub rows: usize,
+    /// Indexed fact count.
+    pub facts: usize,
     /// Distinct count by trie depth.
     pub distinct_by_depth: Vec<usize>,
     /// Average fanout by trie depth.
@@ -250,11 +251,11 @@ pub(crate) struct OptimizerIndexStats {
 impl OptimizerIndexStats {
     fn cheap(
         index: AccessId,
-        rows: usize,
+        facts: usize,
         leading_fields: &[String],
         fields: &BTreeMap<String, OptimizerFieldStats>,
     ) -> Self {
-        let rows = rows.max(1);
+        let facts = facts.max(1);
         let depth = leading_fields.len().max(1);
         let mut distinct_by_depth = Vec::with_capacity(depth);
         let mut avg_fanout_by_depth = Vec::with_capacity(depth);
@@ -263,10 +264,10 @@ impl OptimizerIndexStats {
             let distinct = leading_fields
                 .get(level)
                 .and_then(|field| fields.get(field))
-                .map_or(rows, |stats| stats.distinct)
+                .map_or(facts, |stats| stats.distinct)
                 .max(1)
-                .min(rows);
-            let depth_distinct = if level + 1 == depth { rows } else { distinct };
+                .min(facts);
+            let depth_distinct = if level + 1 == depth { facts } else { distinct };
             distinct_by_depth.push(depth_distinct);
             let parent_distinct = if level == 0 {
                 1
@@ -279,7 +280,7 @@ impl OptimizerIndexStats {
         }
         Self {
             index,
-            rows,
+            facts,
             distinct_by_depth,
             avg_fanout_by_depth,
             max_fanout_by_depth,
@@ -288,7 +289,7 @@ impl OptimizerIndexStats {
 
     pub(crate) fn estimated_rows_for_prefix(&self, prefix_len: usize) -> u64 {
         if prefix_len == 0 {
-            return self.rows.max(1) as u64;
+            return self.facts.max(1) as u64;
         }
         let distinct = self
             .distinct_by_depth
@@ -296,7 +297,7 @@ impl OptimizerIndexStats {
             .copied()
             .unwrap_or(1)
             .max(1);
-        divide_ceil(self.rows.max(1) as u64, distinct as u64).max(1)
+        divide_ceil(self.facts.max(1) as u64, distinct as u64).max(1)
     }
 
     pub(crate) fn fanout_after_prefix(&self, prefix_len: usize) -> u64 {

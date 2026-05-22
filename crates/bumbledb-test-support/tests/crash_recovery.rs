@@ -4,7 +4,7 @@ use std::process::Command;
 
 use bumbledb_lmdb::{Environment, StorageSchema};
 use bumbledb_test_support::assertions::assert_invariants;
-use bumbledb_test_support::rows::holder;
+use bumbledb_test_support::facts::holder;
 use bumbledb_test_support::schemas::ledger_schema;
 
 #[test]
@@ -49,14 +49,14 @@ fn crash_parent(test_name: &str, mode: &str) -> Result<(), Box<dyn std::error::E
             diagnostics
                 .relations
                 .iter()
-                .all(|relation| relation.row_count == 0)
+                .all(|relation| relation.fact_count == 0)
         );
     } else {
         assert!(
             diagnostics
                 .relations
                 .iter()
-                .any(|relation| relation.relation == "Holder" && relation.row_count == 1)
+                .any(|relation| relation.relation == "Holder" && relation.fact_count == 1)
         );
     }
     Ok(())

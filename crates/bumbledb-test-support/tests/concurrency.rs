@@ -6,7 +6,7 @@ use std::thread;
 use bumbledb_core::query_builder::QueryBuilder;
 use bumbledb_lmdb::{Environment, InputBindings, StorageSchema};
 use bumbledb_test_support::assertions::assert_invariants;
-use bumbledb_test_support::rows::{account, holder, seeded_ledger_rows};
+use bumbledb_test_support::facts::{account, holder, seeded_ledger_rows};
 use bumbledb_test_support::schemas::ledger_schema;
 
 #[test]
@@ -34,14 +34,14 @@ fn readers_see_stable_snapshots_while_writer_commits() -> Result<(), Box<dyn std
             let before = txn
                 .execute_query(&reader_schema, &reader_query, &InputBindings::new())?
                 .result
-                .tuples
+                .facts
                 .len();
             reader_barrier.wait();
             reader_barrier.wait();
             let after = txn
                 .execute_query(&reader_schema, &reader_query, &InputBindings::new())?
                 .result
-                .tuples
+                .facts
                 .len();
             assert_eq!(before, after);
             Ok::<(), bumbledb_lmdb::Error>(())
@@ -60,7 +60,7 @@ fn readers_see_stable_snapshots_while_writer_commits() -> Result<(), Box<dyn std
         .map_err(|_| std::io::Error::other("reader thread panicked"))??;
 
     let latest = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-    assert_eq!(latest.result.tuples.len(), 4);
+    assert_eq!(latest.result.facts.len(), 4);
     assert_invariants(&env, &schema)?;
     Ok(())
 }

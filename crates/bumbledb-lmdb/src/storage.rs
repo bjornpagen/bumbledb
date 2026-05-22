@@ -10,7 +10,7 @@ use bumbledb_core::schema::{
     SchemaDescriptor, ValueType,
 };
 
-use crate::storage_schema::TUPLE_SET_ACCESS_NAME;
+use crate::storage_schema::FACT_SET_ACCESS_NAME;
 use crate::{Error, ReadTxn, RelationId, Result, StorageSchema, WriteTxn};
 
 const NS_CANONICAL_FACT: u8 = 0x10;
@@ -22,15 +22,15 @@ const DICT_BYTES: u8 = 0x02;
 
 const NEXT_TX_ID_KEY: &[u8] = b"next_tx_id";
 
-/// A logical row for the generic storage layer.
+/// A logical fact for the generic storage layer.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Row {
+pub struct Fact {
     relation: String,
     values: BTreeMap<String, Value>,
 }
 
-impl Row {
-    /// Creates a row for `relation`.
+impl Fact {
+    /// Creates a fact for `relation`.
     pub fn new(
         relation: impl Into<String>,
         values: impl IntoIterator<Item = (impl Into<String>, Value)>,
@@ -44,7 +44,7 @@ impl Row {
         }
     }
 
-    /// Returns this row's relation name.
+    /// Returns this fact's relation name.
     pub fn relation(&self) -> &str {
         &self.relation
     }
@@ -54,7 +54,7 @@ impl Row {
         self.values.get(field)
     }
 
-    /// Returns all row values keyed by field name.
+    /// Returns all fact values keyed by field name.
     pub fn values(&self) -> &BTreeMap<String, Value> {
         &self.values
     }
@@ -131,34 +131,34 @@ pub struct EncodedComponent {
     pub bytes: Vec<u8>,
 }
 
-/// A row yielded from an index scan.
+/// A fact yielded from an index scan.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ScanItem {
-    /// Decoded logical row.
-    pub row: Row,
+pub struct FactScanEntry {
+    /// Decoded logical fact.
+    pub fact: Fact,
     /// Encoded components in index-key order.
     pub encoded_components: Vec<EncodedComponent>,
 }
 
-/// Result of inserting a row into a relation-as-set.
+/// Result of inserting a fact into a relation-as-set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InsertOutcome {
-    /// The row was newly inserted.
+    /// The fact was newly inserted.
     Inserted,
-    /// The exact row was already present and no storage state changed.
+    /// The exact fact was already present and no storage state changed.
     AlreadyPresent,
 }
 
-/// Result of deleting an exact row from a relation-as-set.
+/// Result of deleting an exact fact from a relation-as-set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeleteOutcome {
-    /// The row was present and deleted.
+    /// The fact was present and deleted.
     Deleted,
-    /// The exact row was absent and no storage state changed.
+    /// The exact fact was absent and no storage state changed.
     Absent,
 }
 
-impl ScanItem {
+impl FactScanEntry {
     /// Returns an encoded component by field name.
     pub fn encoded_component(&self, field: &str) -> Option<&[u8]> {
         self.encoded_components
@@ -168,14 +168,14 @@ impl ScanItem {
     }
 }
 
-/// Encoded row component view yielded from an access scan.
+/// Encoded fact component view yielded from an access scan.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct EncodedIndexItem {
+pub(crate) struct EncodedAccessItem {
     key: Vec<u8>,
     prefix_len: usize,
 }
 
-impl EncodedIndexItem {
+impl EncodedAccessItem {
     /// Returns the encoded index key bytes.
     pub fn key(&self) -> &[u8] {
         &self.key
@@ -193,7 +193,7 @@ impl EncodedIndexItem {
 }
 
 /// Transaction-scoped scan over one current access path.
-pub struct IndexScan<'borrow, 'env, 'schema> {
+pub struct FactScan<'borrow, 'env, 'schema> {
     iter: heed::RoPrefix<'borrow, heed::types::Bytes, heed::types::Bytes>,
     txn: &'borrow heed::RoTxn<'env, heed::WithoutTls>,
     index_db: crate::RawDatabase,
@@ -204,7 +204,7 @@ pub struct IndexScan<'borrow, 'env, 'schema> {
 }
 
 /// Transaction-scoped encoded scan over one current access path.
-pub(crate) struct EncodedIndexScan<'borrow, 'env, 'schema> {
+pub(crate) struct EncodedFactScan<'borrow, 'env, 'schema> {
     iter: heed::RoPrefix<'borrow, heed::types::Bytes, heed::types::Bytes>,
     layout: &'schema CurrentIndexLayout,
     index_prefix: Vec<u8>,
@@ -219,8 +219,8 @@ struct EncodedRange {
     end: Option<Vec<u8>>,
 }
 
-impl Iterator for IndexScan<'_, '_, '_> {
-    type Item = Result<ScanItem>;
+impl Iterator for FactScan<'_, '_, '_> {
+    type Item = Result<FactScanEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -245,8 +245,8 @@ impl Iterator for IndexScan<'_, '_, '_> {
     }
 }
 
-impl Iterator for EncodedIndexScan<'_, '_, '_> {
-    type Item = Result<EncodedIndexItem>;
+impl Iterator for EncodedFactScan<'_, '_, '_> {
+    type Item = Result<EncodedAccessItem>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let (key, _) = match self.iter.next()? {
@@ -257,7 +257,7 @@ impl Iterator for EncodedIndexScan<'_, '_, '_> {
     }
 }
 
-impl IndexScan<'_, '_, '_> {
+impl FactScan<'_, '_, '_> {
     fn range_matches(&self, key: &[u8]) -> bool {
         let Some(range) = &self.range else {
             return true;
@@ -290,7 +290,7 @@ impl EncodedFact {
         let (offset, width) = field_layout(relation, name)?;
         self.bytes
             .get(offset..offset + width)
-            .ok_or_else(|| Error::corrupt("encoded tuple width does not match schema"))
+            .ok_or_else(|| Error::corrupt("encoded fact width does not match schema"))
     }
 
     fn bytes(&self) -> &[u8] {
@@ -304,24 +304,27 @@ enum InternMode {
 }
 
 impl WriteTxn<'_> {
-    /// Bulk-loads rows in deterministic schema relation order.
+    /// Bulk-loads facts in deterministic schema relation order.
     ///
     /// This is one write transaction: any constraint failure aborts all current
-    /// rows, indexes, stats, counters, and dictionary inserts made by
+    /// facts, indexes, stats, counters, and dictionary inserts made by
     /// the attempted load.
     pub fn bulk_load(
         &mut self,
         schema: &StorageSchema,
-        rows: impl IntoIterator<Item = Row>,
+        facts: impl IntoIterator<Item = Fact>,
     ) -> Result<usize> {
         let _span = tracing::debug_span!("bumbledb.storage.bulk_load").entered();
-        let mut rows = rows.into_iter().collect::<Vec<_>>();
-        tracing::debug!(rows = rows.len(), "bulk load rows sorted by relation order");
-        rows.sort_by_key(|row| relation_sort_key(schema, row.relation()));
+        let mut facts = facts.into_iter().collect::<Vec<_>>();
+        tracing::debug!(
+            facts = facts.len(),
+            "bulk load facts sorted by relation order"
+        );
+        facts.sort_by_key(|fact| relation_sort_key(schema, fact.relation()));
 
         let mut inserted = 0;
-        for row in rows {
-            if self.insert(schema, row)? == InsertOutcome::Inserted {
+        for fact in facts {
+            if self.insert(schema, fact)? == InsertOutcome::Inserted {
                 inserted += 1;
             }
         }
@@ -344,14 +347,14 @@ impl WriteTxn<'_> {
         }
     }
 
-    /// Inserts a relation row using set semantics.
-    #[tracing::instrument(name = "bumbledb.insert", skip_all, fields(relation = row.relation()))]
-    pub fn insert(&mut self, schema: &StorageSchema, row: Row) -> Result<InsertOutcome> {
-        let (relation_id, relation) = schema.relation(&row.relation)?;
-        validate_row_values(schema.descriptor(), relation, &row)?;
-        let encoded = self.encode_row(relation_id, relation, &row, InternMode::Create)?;
+    /// Inserts a relation fact using set semantics.
+    #[tracing::instrument(name = "bumbledb.insert", skip_all, fields(relation = fact.relation()))]
+    pub fn insert(&mut self, schema: &StorageSchema, fact: Fact) -> Result<InsertOutcome> {
+        let (relation_id, relation) = schema.relation(&fact.relation)?;
+        validate_row_values(schema.descriptor(), relation, &fact)?;
+        let encoded = self.encode_row(relation_id, relation, &fact, InternMode::Create)?;
 
-        if self.exact_current_tuple_exists(relation_id, &encoded)? {
+        if self.exact_current_fact_exists(relation_id, &encoded)? {
             return Ok(InsertOutcome::AlreadyPresent);
         }
 
@@ -360,36 +363,37 @@ impl WriteTxn<'_> {
 
         self.insert_current_indexes(schema, relation_id, relation, &encoded)?;
         self.insert_canonical_fact(relation_id, &encoded)?;
-        adjust_relation_row_count(self, relation_id, 1)?;
+        adjust_relation_fact_count(self, relation_id, 1)?;
         self.ensure_tx_id()?;
         Ok(InsertOutcome::Inserted)
     }
 
-    /// Deletes an exact relation row using set semantics.
+    /// Deletes an exact relation fact using set semantics.
     #[tracing::instrument(name = "bumbledb.delete", skip_all)]
-    pub fn delete(&mut self, schema: &StorageSchema, row: Row) -> Result<DeleteOutcome> {
-        let (relation_id, relation) = schema.relation(&row.relation)?;
-        validate_row_values(schema.descriptor(), relation, &row)?;
-        let old_encoded = match self.encode_row(relation_id, relation, &row, InternMode::Existing) {
+    pub fn delete(&mut self, schema: &StorageSchema, fact: Fact) -> Result<DeleteOutcome> {
+        let (relation_id, relation) = schema.relation(&fact.relation)?;
+        validate_row_values(schema.descriptor(), relation, &fact)?;
+        let old_encoded = match self.encode_row(relation_id, relation, &fact, InternMode::Existing)
+        {
             Ok(encoded) => encoded,
             Err(Error::Storage(crate::StorageError::DictionaryValueNotFound { .. })) => {
                 return Ok(DeleteOutcome::Absent);
             }
             Err(error) => return Err(error),
         };
-        if !self.exact_current_tuple_exists(relation_id, &old_encoded)? {
+        if !self.exact_current_fact_exists(relation_id, &old_encoded)? {
             return Ok(DeleteOutcome::Absent);
         };
 
         self.check_delete_restrictions(schema, relation, &old_encoded)?;
         self.delete_current_indexes(schema, relation_id, relation, &old_encoded)?;
         self.delete_canonical_fact(relation_id, &old_encoded)?;
-        adjust_relation_row_count(self, relation_id, -1)?;
+        adjust_relation_fact_count(self, relation_id, -1)?;
         self.ensure_tx_id()?;
         Ok(DeleteOutcome::Deleted)
     }
 
-    fn exact_current_tuple_exists(&self, relation_id: u16, fact: &EncodedFact) -> Result<bool> {
+    fn exact_current_fact_exists(&self, relation_id: u16, fact: &EncodedFact) -> Result<bool> {
         let key = canonical_fact_key(relation_id, fact);
         Ok(self.dbs.index.get(&self.txn, key.as_slice())?.is_some())
     }
@@ -411,7 +415,7 @@ impl WriteTxn<'_> {
         &mut self,
         relation_id: u16,
         relation: &RelationDescriptor,
-        row: &Row,
+        fact: &Fact,
         mode: InternMode,
     ) -> Result<EncodedFact> {
         let known_fields = relation
@@ -419,15 +423,15 @@ impl WriteTxn<'_> {
             .iter()
             .map(|field| field.name.as_str())
             .collect::<BTreeSet<_>>();
-        for field in row.values.keys() {
+        for field in fact.values.keys() {
             if !known_fields.contains(field.as_str()) {
                 return Err(Error::unknown_field(&relation.name, field));
             }
         }
 
-        let mut bytes = Vec::with_capacity(tuple_width(relation));
+        let mut bytes = Vec::with_capacity(fact_width(relation));
         for field in &relation.fields {
-            let value = row
+            let value = fact
                 .values
                 .get(&field.name)
                 .ok_or_else(|| Error::missing_field(&relation.name, &field.name))?;
@@ -458,7 +462,7 @@ impl WriteTxn<'_> {
         &self,
         schema: &StorageSchema,
         relation: &RelationDescriptor,
-        row: &EncodedFact,
+        fact: &EncodedFact,
     ) -> Result<()> {
         for constraint in &relation.constraints {
             let ConstraintDescriptor::ForeignKey {
@@ -476,7 +480,7 @@ impl WriteTxn<'_> {
             let prefix = access_path_prefix_from_fields(
                 target_layout,
                 relation,
-                row,
+                fact,
                 fields.iter().map(String::as_str),
             )?;
             let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
@@ -495,7 +499,7 @@ impl WriteTxn<'_> {
         &self,
         schema: &StorageSchema,
         relation: &RelationDescriptor,
-        row: &EncodedFact,
+        fact: &EncodedFact,
     ) -> Result<()> {
         for constraint in &relation.constraints {
             let ConstraintDescriptor::Unique { name, .. } = constraint else {
@@ -505,7 +509,7 @@ impl WriteTxn<'_> {
             let prefix = access_path_prefix_from_fields(
                 layout,
                 relation,
-                row,
+                fact,
                 layout.leading_fields.iter().map(String::as_str),
             )?;
             let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
@@ -520,7 +524,7 @@ impl WriteTxn<'_> {
         &self,
         schema: &StorageSchema,
         relation: &RelationDescriptor,
-        row: &EncodedFact,
+        fact: &EncodedFact,
     ) -> Result<()> {
         for (source_relation_id, source_relation) in schema
             .descriptor
@@ -548,7 +552,7 @@ impl WriteTxn<'_> {
                 };
                 let target_primary = target_fields
                     .iter()
-                    .map(|field| row.field(relation, field))
+                    .map(|field| fact.field(relation, field))
                     .collect::<Result<Vec<_>>>()?
                     .concat();
 
@@ -577,11 +581,11 @@ impl WriteTxn<'_> {
         schema: &StorageSchema,
         relation_id: u16,
         relation: &RelationDescriptor,
-        row: &EncodedFact,
+        fact: &EncodedFact,
     ) -> Result<()> {
         for layout in schema.layouts_for_relation(relation_id) {
             tracing::trace!(relation = %relation.name, index = %layout.index_name, "put current index entry");
-            let key = current_index_key(layout, relation, row)?;
+            let key = current_index_key(layout, relation, fact)?;
             self.dbs.index.put(&mut self.txn, key.as_slice(), &[])?;
             crate::failpoints::check(crate::failpoints::Failpoint::AfterCurrentIndexPut)?;
             adjust_index_entry_count(self, relation_id, layout.index_id, 1)?;
@@ -594,11 +598,11 @@ impl WriteTxn<'_> {
         schema: &StorageSchema,
         relation_id: u16,
         relation: &RelationDescriptor,
-        row: &EncodedFact,
+        fact: &EncodedFact,
     ) -> Result<()> {
         for layout in schema.layouts_for_relation(relation_id) {
             tracing::trace!(relation = %relation.name, index = %layout.index_name, "delete current index entry");
-            let key = current_index_key(layout, relation, row)?;
+            let key = current_index_key(layout, relation, fact)?;
             self.dbs.index.delete(&mut self.txn, key.as_slice())?;
             adjust_index_entry_count(self, relation_id, layout.index_id, -1)?;
         }
@@ -664,15 +668,15 @@ fn relation_sort_key(schema: &StorageSchema, relation_name: &str) -> usize {
 }
 
 impl<'env> ReadTxn<'env> {
-    /// Scans a whole relation through the canonical tuple-set access path.
+    /// Scans a whole relation through the canonical fact-set access path.
     pub fn scan_relation<'borrow, 'schema>(
         &'borrow self,
         schema: &'schema StorageSchema,
         relation_name: &str,
-    ) -> Result<IndexScan<'borrow, 'env, 'schema>> {
+    ) -> Result<FactScan<'borrow, 'env, 'schema>> {
         let covering = schema
-            .tuple_set_index_name(relation_name)
-            .ok_or_else(|| Error::unknown_index(relation_name, TUPLE_SET_ACCESS_NAME))?;
+            .fact_set_index_name(relation_name)
+            .ok_or_else(|| Error::unknown_index(relation_name, FACT_SET_ACCESS_NAME))?;
         self.scan_index_with_prefix(schema, relation_name, covering, &[], None)
     }
 
@@ -683,7 +687,7 @@ impl<'env> ReadTxn<'env> {
         relation_name: &str,
         index_name: &str,
         prefix: &FieldValues,
-    ) -> Result<IndexScan<'borrow, 'env, 'schema>> {
+    ) -> Result<FactScan<'borrow, 'env, 'schema>> {
         if prefix.relation != relation_name {
             return Err(Error::internal(format!(
                 "prefix relation {} does not match scan relation {relation_name}",
@@ -707,7 +711,7 @@ impl<'env> ReadTxn<'env> {
         index_name: &str,
         start: Option<Value>,
         end: Option<Value>,
-    ) -> Result<IndexScan<'borrow, 'env, 'schema>> {
+    ) -> Result<FactScan<'borrow, 'env, 'schema>> {
         let (_, relation) = schema.relation(relation_name)?;
         let layout = schema
             .layout(relation_name, index_name)
@@ -739,14 +743,14 @@ impl<'env> ReadTxn<'env> {
         self.scan_index_with_prefix(schema, relation_name, index_name, &[], Some(range))
     }
 
-    /// Scans an access path by encoded key prefix without decoding logical rows.
+    /// Scans an access path by encoded key prefix without decoding logical facts.
     pub(crate) fn scan_encoded_index_prefix<'borrow, 'schema>(
         &'borrow self,
         schema: &'schema StorageSchema,
         relation_name: &str,
         index_name: &str,
         encoded_prefix: &[u8],
-    ) -> Result<EncodedIndexScan<'borrow, 'env, 'schema>> {
+    ) -> Result<EncodedFactScan<'borrow, 'env, 'schema>> {
         let (relation_id, _) = schema.relation(relation_name)?;
         let layout = schema
             .layout(relation_name, index_name)
@@ -758,7 +762,7 @@ impl<'env> ReadTxn<'env> {
             .dbs
             .index
             .prefix_iter(&self.txn, scan_prefix.as_slice())?;
-        Ok(EncodedIndexScan {
+        Ok(EncodedFactScan {
             iter,
             layout,
             index_prefix,
@@ -788,13 +792,13 @@ impl<'env> ReadTxn<'env> {
         Ok(read_u64(&self.dbs.meta, &self.txn, NEXT_TX_ID_KEY)?.unwrap_or(1) - 1)
     }
 
-    /// Returns the stored row count for a relation.
-    pub fn relation_row_count(&self, schema: &StorageSchema, relation_name: &str) -> Result<u64> {
+    /// Returns the stored fact count for a relation.
+    pub fn relation_fact_count(&self, schema: &StorageSchema, relation_name: &str) -> Result<u64> {
         let (relation_id, _) = schema.relation(relation_name)?;
         Ok(read_u64(
             &self.dbs.meta,
             &self.txn,
-            &relation_row_count_key(relation_id),
+            &relation_fact_count_key(relation_id),
         )?
         .unwrap_or(0))
     }
@@ -833,26 +837,26 @@ impl<'env> ReadTxn<'env> {
         Ok(count)
     }
 
-    /// Checks whether a current access entry exists for a full row.
+    /// Checks whether a current access entry exists for a full fact.
     pub fn current_index_entry_exists(
         &self,
         schema: &StorageSchema,
-        row: &Row,
+        fact: &Fact,
         index_name: &str,
     ) -> Result<bool> {
-        let (relation_id, relation) = schema.relation(&row.relation)?;
-        let layout = schema.layout(&row.relation, index_name).ok_or_else(|| {
-            Error::internal(format!("missing index {}.{index_name}", row.relation))
+        let (relation_id, relation) = schema.relation(&fact.relation)?;
+        let layout = schema.layout(&fact.relation, index_name).ok_or_else(|| {
+            Error::internal(format!("missing index {}.{index_name}", fact.relation))
         })?;
-        let encoded = self.encode_row_existing(relation_id, relation, row)?;
+        let encoded = self.encode_row_existing(relation_id, relation, fact)?;
         let key = current_index_key(layout, relation, &encoded)?;
         Ok(self.dbs.index.get(&self.txn, key.as_slice())?.is_some())
     }
 
-    /// Checks whether the exact row exists in the canonical fact set.
-    pub fn exact_row_exists(&self, schema: &StorageSchema, row: &Row) -> Result<bool> {
-        let (relation_id, relation) = schema.relation(&row.relation)?;
-        let encoded = self.encode_row_existing(relation_id, relation, row)?;
+    /// Checks whether the exact fact exists in the canonical fact set.
+    pub fn exact_row_exists(&self, schema: &StorageSchema, fact: &Fact) -> Result<bool> {
+        let (relation_id, relation) = schema.relation(&fact.relation)?;
+        let encoded = self.encode_row_existing(relation_id, relation, fact)?;
         let key = canonical_fact_key(relation_id, &encoded);
         Ok(self.dbs.index.get(&self.txn, key.as_slice())?.is_some())
     }
@@ -880,7 +884,7 @@ impl<'env> ReadTxn<'env> {
         index_name: &str,
         encoded_prefix: &[u8],
         range: Option<EncodedRange>,
-    ) -> Result<IndexScan<'borrow, 'env, 'schema>> {
+    ) -> Result<FactScan<'borrow, 'env, 'schema>> {
         let _span = tracing::trace_span!(
             "bumbledb.query.scan",
             relation = relation_name,
@@ -896,7 +900,7 @@ impl<'env> ReadTxn<'env> {
         let mut prefix = current_index_prefix(relation_id, layout.index_id);
         prefix.extend_from_slice(encoded_prefix);
         let iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
-        Ok(IndexScan {
+        Ok(FactScan {
             iter,
             txn: &self.txn,
             index_db: self.dbs.index,
@@ -963,11 +967,11 @@ impl<'env> ReadTxn<'env> {
         &self,
         relation_id: u16,
         relation: &RelationDescriptor,
-        row: &Row,
+        fact: &Fact,
     ) -> Result<EncodedFact> {
-        let mut bytes = Vec::with_capacity(tuple_width(relation));
+        let mut bytes = Vec::with_capacity(fact_width(relation));
         for field in &relation.fields {
-            let value = row
+            let value = fact
                 .values
                 .get(&field.name)
                 .ok_or_else(|| Error::missing_field(&relation.name, &field.name))?;
@@ -1034,9 +1038,9 @@ fn encode_value_for_type(
 fn validate_row_values(
     schema: &SchemaDescriptor,
     relation: &RelationDescriptor,
-    row: &Row,
+    fact: &Fact,
 ) -> Result<()> {
-    for (field_name, value) in row.values() {
+    for (field_name, value) in fact.values() {
         let Some(field) = relation.field(field_name) else {
             continue;
         };
@@ -1088,11 +1092,11 @@ fn decode_index_scan_item(
     relation: &RelationDescriptor,
     layout: &CurrentIndexLayout,
     key: &[u8],
-) -> Result<ScanItem> {
+) -> Result<FactScanEntry> {
     let (encoded, encoded_components) = decode_index_key(relation, layout, key)?;
-    let row = decode_encoded_row(dict, txn, relation, &encoded)?;
-    Ok(ScanItem {
-        row,
+    let fact = decode_encoded_row(dict, txn, relation, &encoded)?;
+    Ok(FactScanEntry {
+        fact,
         encoded_components,
     })
 }
@@ -1112,7 +1116,7 @@ fn decode_index_key(
         return Err(Error::corrupt("index key prefix does not match layout"));
     }
 
-    let mut tuple = vec![0; tuple_width(relation)];
+    let mut fact = vec![0; fact_width(relation)];
     let mut seen = vec![false; relation.fields.len()];
     let mut components = Vec::with_capacity(layout.components.len());
     let mut offset = prefix_len;
@@ -1130,7 +1134,7 @@ fn decode_index_key(
                 "index key component width does not match field",
             ));
         }
-        tuple[field_offset..field_offset + width].copy_from_slice(&bytes);
+        fact[field_offset..field_offset + width].copy_from_slice(&bytes);
         seen[field_id] = true;
         components.push(EncodedComponent {
             field_name: component.field_name.clone(),
@@ -1140,13 +1144,13 @@ fn decode_index_key(
     }
 
     if seen.iter().any(|seen| !seen) {
-        return Err(Error::corrupt("index key does not cover full tuple"));
+        return Err(Error::corrupt("index key does not cover full fact"));
     }
 
     Ok((
         EncodedFact {
             relation: RelationId(layout.relation_id),
-            bytes: tuple,
+            bytes: fact,
         },
         components,
     ))
@@ -1156,7 +1160,7 @@ fn encoded_index_item(
     layout: &CurrentIndexLayout,
     index_prefix: &[u8],
     key: &[u8],
-) -> Result<EncodedIndexItem> {
+) -> Result<EncodedAccessItem> {
     let prefix_len = index_prefix.len();
     if key.len() != layout.encoded_len {
         return Err(Error::corrupt("index key width does not match layout"));
@@ -1164,7 +1168,7 @@ fn encoded_index_item(
     if key.get(0..prefix_len) != Some(index_prefix) {
         return Err(Error::corrupt("index key prefix does not match layout"));
     }
-    Ok(EncodedIndexItem {
+    Ok(EncodedAccessItem {
         key: key.to_vec(),
         prefix_len,
     })
@@ -1175,7 +1179,7 @@ fn decode_encoded_row(
     txn: &heed::RoTxn,
     relation: &RelationDescriptor,
     encoded: &EncodedFact,
-) -> Result<Row> {
+) -> Result<Fact> {
     let mut values = BTreeMap::new();
     for field in &relation.fields {
         let bytes = encoded.field(relation, &field.name)?;
@@ -1184,7 +1188,7 @@ fn decode_encoded_row(
             decode_value(dict, txn, &field.value_type, bytes)?,
         );
     }
-    Ok(Row {
+    Ok(Fact {
         relation: relation.name.clone(),
         values,
     })
@@ -1252,7 +1256,7 @@ fn value_type_name(value_type: &ValueType) -> String {
     }
 }
 
-fn tuple_width(relation: &RelationDescriptor) -> usize {
+fn fact_width(relation: &RelationDescriptor) -> usize {
     relation
         .fields
         .iter()
@@ -1334,12 +1338,12 @@ fn unique_constraint_layout<'a>(
 fn access_path_prefix_from_fields<'a>(
     layout: &CurrentIndexLayout,
     relation: &RelationDescriptor,
-    row: &EncodedFact,
+    fact: &EncodedFact,
     fields: impl IntoIterator<Item = &'a str>,
 ) -> Result<Vec<u8>> {
     let mut prefix = current_index_prefix(layout.relation_id, layout.index_id);
     for field in fields {
-        prefix.extend_from_slice(row.field(relation, field)?);
+        prefix.extend_from_slice(fact.field(relation, field)?);
     }
     Ok(prefix)
 }
@@ -1366,16 +1370,16 @@ fn canonical_fact_prefix(relation_id: u16) -> Vec<u8> {
 fn current_index_key(
     layout: &CurrentIndexLayout,
     relation: &RelationDescriptor,
-    row: &EncodedFact,
+    fact: &EncodedFact,
 ) -> Result<Vec<u8>> {
-    if row.relation.0 != layout.relation_id {
+    if fact.relation.0 != layout.relation_id {
         return Err(Error::corrupt(
-            "encoded tuple relation does not match index layout",
+            "encoded fact relation does not match index layout",
         ));
     }
     let mut key = current_index_prefix(layout.relation_id, layout.index_id);
     for component in &layout.components {
-        key.extend_from_slice(row.field(relation, &component.field_name)?);
+        key.extend_from_slice(fact.field(relation, &component.field_name)?);
     }
     Ok(key)
 }
@@ -1403,8 +1407,8 @@ fn write_u64(db: &crate::RawDatabase, txn: &mut heed::RwTxn, key: &[u8], value: 
     Ok(db.put(txn, key, &bytes[..])?)
 }
 
-fn adjust_relation_row_count(txn: &mut WriteTxn<'_>, relation_id: u16, delta: i64) -> Result<()> {
-    adjust_u64_meta(txn, &relation_row_count_key(relation_id), delta)
+fn adjust_relation_fact_count(txn: &mut WriteTxn<'_>, relation_id: u16, delta: i64) -> Result<()> {
+    adjust_u64_meta(txn, &relation_fact_count_key(relation_id), delta)
 }
 
 fn adjust_index_entry_count(
@@ -1433,8 +1437,8 @@ fn adjust_u64_meta(txn: &mut WriteTxn<'_>, key: &[u8], delta: i64) -> Result<()>
     Ok(())
 }
 
-fn relation_row_count_key(relation_id: u16) -> Vec<u8> {
-    let mut key = b"stats:rows:".to_vec();
+fn relation_fact_count_key(relation_id: u16) -> Vec<u8> {
+    let mut key = b"stats:facts:".to_vec();
     push_u16(&mut key, relation_id);
     key
 }
@@ -1536,17 +1540,17 @@ mod tests {
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 1);
-            assert_eq!(txn.relation_row_count(&schema, "Holder")?, 1);
+            assert_eq!(txn.relation_fact_count(&schema, "Holder")?, 1);
             assert_eq!(txn.canonical_fact_count(&schema, "Holder")?, 1);
-            assert_eq!(txn.relation_row_count(&schema, "Account")?, 1);
+            assert_eq!(txn.relation_fact_count(&schema, "Account")?, 1);
             assert_eq!(txn.canonical_fact_count(&schema, "Account")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "Holder", TUPLE_SET_ACCESS_NAME)?,
+                txn.index_entry_count(&schema, "Holder", FACT_SET_ACCESS_NAME)?,
                 1
             );
             assert_eq!(txn.index_entry_count(&schema, "Holder", "unique_name")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "Account", TUPLE_SET_ACCESS_NAME)?,
+                txn.index_entry_count(&schema, "Account", FACT_SET_ACCESS_NAME)?,
                 1
             );
             assert_eq!(txn.index_entry_count(&schema, "Account", "by_holder")?, 1);
@@ -1557,7 +1561,7 @@ mod tests {
             assert!(txn.current_index_entry_exists(
                 &schema,
                 &holder_row(1, "Alice"),
-                TUPLE_SET_ACCESS_NAME
+                FACT_SET_ACCESS_NAME
             )?);
             assert!(txn.current_index_entry_exists(&schema, &account_row(1, 1, 1), "by_holder")?);
             assert!(txn.dictionary_string_id("Alice")?.is_some());
@@ -1569,7 +1573,7 @@ mod tests {
         let schema = storage_schema(&env)?;
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 1);
-            assert_eq!(txn.relation_row_count(&schema, "Holder")?, 1);
+            assert_eq!(txn.relation_fact_count(&schema, "Holder")?, 1);
             assert_eq!(txn.canonical_fact_count(&schema, "Holder")?, 1);
             assert!(txn.exact_row_exists(&schema, &holder_row(1, "Alice"))?);
             assert!(txn.dictionary_string_id("Alice")?.is_some());
@@ -1595,9 +1599,9 @@ mod tests {
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 1);
-            assert_eq!(txn.relation_row_count(&schema, "Holder")?, 1);
+            assert_eq!(txn.relation_fact_count(&schema, "Holder")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "Holder", TUPLE_SET_ACCESS_NAME)?,
+                txn.index_entry_count(&schema, "Holder", FACT_SET_ACCESS_NAME)?,
                 1
             );
             Ok::<(), Error>(())
@@ -1625,8 +1629,8 @@ mod tests {
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 1);
-            assert_eq!(txn.relation_row_count(&schema, "Holder")?, 1);
-            assert_eq!(txn.relation_row_count(&schema, "Account")?, 0);
+            assert_eq!(txn.relation_fact_count(&schema, "Holder")?, 1);
+            assert_eq!(txn.relation_fact_count(&schema, "Account")?, 0);
             assert_eq!(txn.dictionary_string_id("Bob")?, None);
             Ok::<(), Error>(())
         })?;
@@ -1651,7 +1655,7 @@ mod tests {
         ));
 
         env.read(|txn| {
-            assert_eq!(txn.relation_row_count(&schema, "Account")?, 0);
+            assert_eq!(txn.relation_fact_count(&schema, "Account")?, 0);
             Ok::<(), Error>(())
         })?;
         Ok(())
@@ -1666,7 +1670,7 @@ mod tests {
         let missing_parent = env.write(|txn| {
             txn.insert(
                 &schema,
-                Row::new(
+                Fact::new(
                     "Child",
                     [
                         ("id", Value::U64(1)),
@@ -1686,11 +1690,11 @@ mod tests {
         env.write(|txn| {
             txn.insert(
                 &schema,
-                Row::new("Parent", [("a", Value::U64(10)), ("b", Value::U64(20))]),
+                Fact::new("Parent", [("a", Value::U64(10)), ("b", Value::U64(20))]),
             )?;
             txn.insert(
                 &schema,
-                Row::new(
+                Fact::new(
                     "Child",
                     [
                         ("id", Value::U64(1)),
@@ -1705,7 +1709,7 @@ mod tests {
         let restricted = env.write(|txn| {
             txn.delete(
                 &schema,
-                Row::new("Parent", [("a", Value::U64(10)), ("b", Value::U64(20))]),
+                Fact::new("Parent", [("a", Value::U64(10)), ("b", Value::U64(20))]),
             )
         });
         assert!(matches!(
@@ -1716,7 +1720,7 @@ mod tests {
         env.write(|txn| {
             txn.delete(
                 &schema,
-                Row::new(
+                Fact::new(
                     "Child",
                     [
                         ("id", Value::U64(1)),
@@ -1727,14 +1731,14 @@ mod tests {
             )?;
             txn.delete(
                 &schema,
-                Row::new("Parent", [("a", Value::U64(10)), ("b", Value::U64(20))]),
+                Fact::new("Parent", [("a", Value::U64(10)), ("b", Value::U64(20))]),
             )?;
             Ok::<(), Error>(())
         })?;
 
         env.read(|txn| {
-            assert_eq!(txn.relation_row_count(&schema, "Parent")?, 0);
-            assert_eq!(txn.relation_row_count(&schema, "Child")?, 0);
+            assert_eq!(txn.relation_fact_count(&schema, "Parent")?, 0);
+            assert_eq!(txn.relation_fact_count(&schema, "Child")?, 0);
             assert!(
                 schema
                     .access_paths("Child")?
@@ -1755,7 +1759,7 @@ mod tests {
         let missing_currency = env.write(|txn| {
             txn.insert(
                 &schema,
-                Row::new(
+                Fact::new(
                     "Account",
                     [("id", Value::U64(1)), ("currency", Value::Enum(1))],
                 ),
@@ -1769,10 +1773,10 @@ mod tests {
         ));
 
         env.write(|txn| {
-            txn.insert(&schema, Row::new("Currency", [("code", Value::Enum(1))]))?;
+            txn.insert(&schema, Fact::new("Currency", [("code", Value::Enum(1))]))?;
             txn.insert(
                 &schema,
-                Row::new(
+                Fact::new(
                     "Account",
                     [("id", Value::U64(1)), ("currency", Value::Enum(1))],
                 ),
@@ -1781,7 +1785,7 @@ mod tests {
         })?;
 
         let restricted =
-            env.write(|txn| txn.delete(&schema, Row::new("Currency", [("code", Value::Enum(1))])));
+            env.write(|txn| txn.delete(&schema, Fact::new("Currency", [("code", Value::Enum(1))])));
         assert!(matches!(
             restricted,
             Err(Error::Constraint(ConstraintError::RestrictViolation { .. }))
@@ -1791,7 +1795,7 @@ mod tests {
             let account = collect_rows(txn.scan_relation(&schema, "Account")?)?;
             assert_eq!(
                 account,
-                [Row::new(
+                [Fact::new(
                     "Account",
                     [("id", Value::U64(1)), ("currency", Value::Enum(1))]
                 )]
@@ -1810,7 +1814,7 @@ mod tests {
         let missing_policy = env.write(|txn| {
             txn.insert(
                 &schema,
-                Row::new(
+                Fact::new(
                     "Account",
                     [
                         ("id", Value::U64(1)),
@@ -1830,14 +1834,14 @@ mod tests {
         env.write(|txn| {
             txn.insert(
                 &schema,
-                Row::new(
+                Fact::new(
                     "Policy",
                     [("country", Value::Enum(1)), ("currency", Value::Enum(2))],
                 ),
             )?;
             txn.insert(
                 &schema,
-                Row::new(
+                Fact::new(
                     "Account",
                     [
                         ("id", Value::U64(1)),
@@ -1852,7 +1856,7 @@ mod tests {
         let restricted = env.write(|txn| {
             txn.delete(
                 &schema,
-                Row::new(
+                Fact::new(
                     "Policy",
                     [("country", Value::Enum(1)), ("currency", Value::Enum(2))],
                 ),
@@ -1864,8 +1868,8 @@ mod tests {
         ));
 
         env.read(|txn| {
-            assert_eq!(txn.relation_row_count(&schema, "Policy")?, 1);
-            assert_eq!(txn.relation_row_count(&schema, "Account")?, 1);
+            assert_eq!(txn.relation_fact_count(&schema, "Policy")?, 1);
+            assert_eq!(txn.relation_fact_count(&schema, "Account")?, 1);
             Ok::<(), Error>(())
         })?;
         Ok(())
@@ -1880,7 +1884,7 @@ mod tests {
         let missing_account = env.write(|txn| {
             txn.insert(
                 &schema,
-                Row::new(
+                Fact::new(
                     "Posting",
                     [
                         ("id", Value::U64(1)),
@@ -1900,14 +1904,14 @@ mod tests {
         env.write(|txn| {
             txn.insert(
                 &schema,
-                Row::new(
+                Fact::new(
                     "AccountCurrency",
                     [("account", Value::Serial(7)), ("currency", Value::Enum(1))],
                 ),
             )?;
             txn.insert(
                 &schema,
-                Row::new(
+                Fact::new(
                     "Posting",
                     [
                         ("id", Value::U64(1)),
@@ -1923,7 +1927,7 @@ mod tests {
             let missing_component = env.write(|txn| {
                 txn.insert(
                     &schema,
-                    Row::new(
+                    Fact::new(
                         "Posting",
                         [
                             ("id", Value::U64(id)),
@@ -1944,7 +1948,7 @@ mod tests {
         let restricted = env.write(|txn| {
             txn.delete(
                 &schema,
-                Row::new(
+                Fact::new(
                     "AccountCurrency",
                     [("account", Value::Serial(7)), ("currency", Value::Enum(1))],
                 ),
@@ -1959,7 +1963,7 @@ mod tests {
             assert_eq!(
                 txn.delete(
                     &schema,
-                    Row::new(
+                    Fact::new(
                         "Posting",
                         [
                             ("id", Value::U64(1)),
@@ -1973,7 +1977,7 @@ mod tests {
             assert_eq!(
                 txn.delete(
                     &schema,
-                    Row::new(
+                    Fact::new(
                         "AccountCurrency",
                         [("account", Value::Serial(7)), ("currency", Value::Enum(1))],
                     ),
@@ -2011,20 +2015,20 @@ mod tests {
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 2);
-            assert_eq!(txn.relation_row_count(&schema, "Account")?, 1);
+            assert_eq!(txn.relation_fact_count(&schema, "Account")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "Account", TUPLE_SET_ACCESS_NAME)?,
+                txn.index_entry_count(&schema, "Account", FACT_SET_ACCESS_NAME)?,
                 1
             );
             assert!(!txn.current_index_entry_exists(
                 &schema,
                 &account_row(1, 1, 1),
-                TUPLE_SET_ACCESS_NAME
+                FACT_SET_ACCESS_NAME
             )?);
             assert!(txn.current_index_entry_exists(
                 &schema,
                 &account_row(1, 1, 2),
-                TUPLE_SET_ACCESS_NAME
+                FACT_SET_ACCESS_NAME
             )?);
             Ok::<(), Error>(())
         })?;
@@ -2062,8 +2066,8 @@ mod tests {
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 2);
-            assert_eq!(txn.relation_row_count(&schema, "Holder")?, 0);
-            assert_eq!(txn.relation_row_count(&schema, "Account")?, 0);
+            assert_eq!(txn.relation_fact_count(&schema, "Holder")?, 0);
+            assert_eq!(txn.relation_fact_count(&schema, "Account")?, 0);
             assert!(!txn.exact_row_exists(&schema, &holder_row(1, "Alice"))?);
             assert_eq!(txn.index_entry_count(&schema, "Account", "by_holder")?, 0);
             Ok::<(), Error>(())
@@ -2072,7 +2076,7 @@ mod tests {
     }
 
     #[test]
-    fn composite_tuples_insert_duplicate_and_delete() -> TestResult {
+    fn composite_facts_insert_duplicate_and_delete() -> TestResult {
         let dir = tempfile::tempdir()?;
         let env = Environment::open(dir.path())?;
         let schema = storage_schema(&env)?;
@@ -2088,9 +2092,9 @@ mod tests {
         assert_eq!(duplicate?, InsertOutcome::AlreadyPresent);
 
         env.read(|txn| {
-            assert_eq!(txn.relation_row_count(&schema, "AccountTag")?, 1);
+            assert_eq!(txn.relation_fact_count(&schema, "AccountTag")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "AccountTag", TUPLE_SET_ACCESS_NAME)?,
+                txn.index_entry_count(&schema, "AccountTag", FACT_SET_ACCESS_NAME)?,
                 1
             );
             assert_eq!(
@@ -2107,9 +2111,9 @@ mod tests {
         })?;
 
         env.read(|txn| {
-            assert_eq!(txn.relation_row_count(&schema, "AccountTag")?, 0);
+            assert_eq!(txn.relation_fact_count(&schema, "AccountTag")?, 0);
             assert_eq!(
-                txn.index_entry_count(&schema, "AccountTag", TUPLE_SET_ACCESS_NAME)?,
+                txn.index_entry_count(&schema, "AccountTag", FACT_SET_ACCESS_NAME)?,
                 0
             );
             assert_eq!(
@@ -2143,7 +2147,7 @@ mod tests {
             assert!(
                 access_paths
                     .iter()
-                    .any(|path| path.index_name == TUPLE_SET_ACCESS_NAME)
+                    .any(|path| path.index_name == FACT_SET_ACCESS_NAME)
             );
             assert!(
                 access_paths
@@ -2162,7 +2166,7 @@ mod tests {
             );
 
             let full = collect_rows(txn.scan_relation(&schema, "Account")?)?;
-            assert_same_rows(&full, &[account_row(1, 1, 1), account_row(2, 1, 2)])?;
+            assert_same_facts(&full, &[account_row(1, 1, 1), account_row(2, 1, 2)])?;
 
             let by_holder_items = collect_items(txn.scan_prefix(
                 &schema,
@@ -2170,10 +2174,10 @@ mod tests {
                 "by_holder",
                 &FieldValues::new("Account", [("holder", Value::Serial(1))]),
             )?)?;
-            assert_same_rows(
+            assert_same_facts(
                 &by_holder_items
                     .iter()
-                    .map(|item| item.row.clone())
+                    .map(|item| item.fact.clone())
                     .collect::<Vec<_>>(),
                 &[account_row(1, 1, 1), account_row(2, 1, 2)],
             )?;
@@ -2198,16 +2202,16 @@ mod tests {
                 Some(Value::Timestamp(TimestampMicros(15))),
                 Some(Value::Timestamp(TimestampMicros(31))),
             )?)?;
-            assert_same_rows(&ranged, &[account_row(2, 1, 2)])?;
+            assert_same_facts(&ranged, &[account_row(2, 1, 2)])?;
 
             for path in access_paths {
-                let rows = collect_rows(txn.scan_prefix(
+                let facts = collect_rows(txn.scan_prefix(
                     &schema,
                     "Account",
                     &path.index_name,
                     &FieldValues::new("Account", std::iter::empty::<(&str, Value)>()),
                 )?)?;
-                assert_same_rows(&rows, &[account_row(1, 1, 1), account_row(2, 1, 2)])?;
+                assert_same_facts(&facts, &[account_row(1, 1, 1), account_row(2, 1, 2)])?;
             }
 
             env.write(|write| {
@@ -2216,13 +2220,13 @@ mod tests {
             })?;
 
             let still_two = collect_rows(txn.scan_relation(&schema, "Account")?)?;
-            assert_same_rows(&still_two, &[account_row(1, 1, 1), account_row(2, 1, 2)])?;
+            assert_same_facts(&still_two, &[account_row(1, 1, 1), account_row(2, 1, 2)])?;
             Ok::<(), Error>(())
         })?;
 
         env.read(|txn| {
             let now_three = collect_rows(txn.scan_relation(&schema, "Account")?)?;
-            assert_same_rows(
+            assert_same_facts(
                 &now_three,
                 &[
                     account_row(1, 1, 1),
@@ -2534,8 +2538,8 @@ mod tests {
         ))
     }
 
-    fn holder_row(id: u64, name: &str) -> Row {
-        Row::new(
+    fn holder_row(id: u64, name: &str) -> Fact {
+        Fact::new(
             "Holder",
             [
                 ("id", Value::Serial(id)),
@@ -2544,8 +2548,8 @@ mod tests {
         )
     }
 
-    fn account_row(id: u64, holder: u64, currency: u8) -> Row {
-        Row::new(
+    fn account_row(id: u64, holder: u64, currency: u8) -> Fact {
+        Fact::new(
             "Account",
             [
                 ("id", Value::Serial(id)),
@@ -2559,8 +2563,8 @@ mod tests {
         )
     }
 
-    fn tag_row(account: u64, tag: u8) -> Row {
-        Row::new(
+    fn tag_row(account: u64, tag: u8) -> Fact {
+        Fact::new(
             "AccountTag",
             [
                 ("account", Value::Serial(account)),
@@ -2569,15 +2573,15 @@ mod tests {
         )
     }
 
-    fn collect_items(scan: IndexScan<'_, '_, '_>) -> Result<Vec<ScanItem>> {
+    fn collect_items(scan: FactScan<'_, '_, '_>) -> Result<Vec<FactScanEntry>> {
         scan.collect()
     }
 
-    fn collect_rows(scan: IndexScan<'_, '_, '_>) -> Result<Vec<Row>> {
-        scan.map(|item| item.map(|item| item.row)).collect()
+    fn collect_rows(scan: FactScan<'_, '_, '_>) -> Result<Vec<Fact>> {
+        scan.map(|item| item.map(|item| item.fact)).collect()
     }
 
-    fn assert_same_rows(actual: &[Row], expected: &[Row]) -> Result<()> {
+    fn assert_same_facts(actual: &[Fact], expected: &[Fact]) -> Result<()> {
         let mut actual = row_keys(actual)?;
         let mut expected = row_keys(expected)?;
         actual.sort();
@@ -2586,16 +2590,17 @@ mod tests {
         Ok(())
     }
 
-    fn row_keys(rows: &[Row]) -> Result<Vec<(u64, u64, u8, i64)>> {
-        rows.iter()
-            .map(|row| {
-                let id = match required_value(row, "id")? {
+    fn row_keys(facts: &[Fact]) -> Result<Vec<(u64, u64, u8, i64)>> {
+        facts
+            .iter()
+            .map(|fact| {
+                let id = match required_value(fact, "id")? {
                     Value::Serial(value) => *value,
                     other => {
                         return Err(Error::internal(format!("unexpected id value: {other:?}")));
                     }
                 };
-                let holder = match required_value(row, "holder")? {
+                let holder = match required_value(fact, "holder")? {
                     Value::Serial(value) => *value,
                     other => {
                         return Err(Error::internal(format!(
@@ -2603,7 +2608,7 @@ mod tests {
                         )));
                     }
                 };
-                let currency = match required_value(row, "currency")? {
+                let currency = match required_value(fact, "currency")? {
                     Value::Enum(value) => *value,
                     other => {
                         return Err(Error::internal(format!(
@@ -2611,7 +2616,7 @@ mod tests {
                         )));
                     }
                 };
-                let opened = match required_value(row, "opened")? {
+                let opened = match required_value(fact, "opened")? {
                     Value::Timestamp(value) => value.0,
                     other => {
                         return Err(Error::internal(format!(
@@ -2624,8 +2629,8 @@ mod tests {
             .collect()
     }
 
-    fn required_value<'a>(row: &'a Row, field: &str) -> Result<&'a Value> {
-        row.value(field)
+    fn required_value<'a>(fact: &'a Fact, field: &str) -> Result<&'a Value> {
+        fact.value(field)
             .ok_or_else(|| Error::internal(format!("missing field {field}")))
     }
 }

@@ -9,30 +9,30 @@ use bumbledb_core::query_ir::{
 };
 use bumbledb_core::schema::ValueType;
 use bumbledb_lmdb::{
-    AggregateError, Error, ExecuteError, InputBindings, InternalError, QueryError, Result, Row,
+    AggregateError, Error, ExecuteError, Fact, InputBindings, InternalError, QueryError, Result,
     Value,
 };
 
 /// In-memory reference database.
 #[derive(Clone, Debug, Default)]
 pub struct ReferenceDb {
-    rows: BTreeMap<String, Vec<Row>>,
+    facts: BTreeMap<String, Vec<Fact>>,
 }
 
 impl ReferenceDb {
-    /// Builds a reference DB from logical rows.
-    pub fn from_rows(rows: impl IntoIterator<Item = Row>) -> Self {
-        let mut by_relation: BTreeMap<String, BTreeSet<Row>> = BTreeMap::new();
-        for row in rows {
+    /// Builds a reference DB from logical facts.
+    pub fn from_rows(facts: impl IntoIterator<Item = Fact>) -> Self {
+        let mut by_relation: BTreeMap<String, BTreeSet<Fact>> = BTreeMap::new();
+        for fact in facts {
             by_relation
-                .entry(row.relation().to_owned())
+                .entry(fact.relation().to_owned())
                 .or_default()
-                .insert(row);
+                .insert(fact);
         }
         Self {
-            rows: by_relation
+            facts: by_relation
                 .into_iter()
-                .map(|(relation, rows)| (relation, rows.into_iter().collect()))
+                .map(|(relation, facts)| (relation, facts.into_iter().collect()))
                 .collect(),
         }
     }
@@ -92,8 +92,8 @@ impl ReferenceDb {
         }
 
         let atom = atoms[depth];
-        for row in self.rows.get(&atom.relation).into_iter().flatten() {
-            let Some(next) = match_atom(atom, query, inputs, &binding, row)? else {
+        for fact in self.facts.get(&atom.relation).into_iter().flatten() {
+            let Some(next) = match_atom(atom, query, inputs, &binding, fact)? else {
                 continue;
             };
             if comparisons_pass(comparisons, query, inputs, &next)? {
@@ -136,11 +136,11 @@ fn match_atom(
     query: &TypedQuery,
     inputs: &InputBindings,
     binding: &Binding,
-    row: &Row,
+    fact: &Fact,
 ) -> Result<Option<Binding>> {
     let mut next = binding.clone();
     for field in &atom.fields {
-        let Some(row_value) = row.value(&field.field) else {
+        let Some(row_value) = fact.value(&field.field) else {
             return Ok(None);
         };
         match &field.term {
@@ -239,14 +239,14 @@ fn project_results(query: &TypedQuery, bindings: &[Binding]) -> Result<Vec<Vec<V
     } else {
         let mut set = BTreeSet::new();
         for binding in bindings {
-            let mut row = Vec::new();
+            let mut fact = Vec::new();
             for term in &query.find {
                 let TypedFindTerm::Variable { variable } = term else {
                     continue;
                 };
-                row.push(bound_variable(binding, *variable)?.clone());
+                fact.push(bound_variable(binding, *variable)?.clone());
             }
-            set.insert(row);
+            set.insert(fact);
         }
         Ok(set.into_iter().collect())
     }
@@ -319,14 +319,14 @@ fn project_aggregates(query: &TypedQuery, bindings: &[Binding]) -> Result<Vec<Ve
                 .collect(),
         );
     }
-    let mut rows = Vec::new();
+    let mut facts = Vec::new();
     for (key, states) in groups {
         let mut key_iter = key.into_iter();
         let mut state_iter = states.into_iter();
-        let mut row = Vec::new();
+        let mut fact = Vec::new();
         for term in &query.find {
             match term {
-                TypedFindTerm::Variable { .. } => row.push(key_iter.next().ok_or_else(|| {
+                TypedFindTerm::Variable { .. } => fact.push(key_iter.next().ok_or_else(|| {
                     Error::Internal(InternalError::Invariant {
                         message: "missing aggregate group key".to_owned(),
                     })
@@ -337,14 +337,14 @@ fn project_aggregates(query: &TypedQuery, bindings: &[Binding]) -> Result<Vec<Ve
                             message: "missing aggregate state".to_owned(),
                         })
                     })?;
-                    row.push(state.finish()?);
+                    fact.push(state.finish()?);
                 }
             }
         }
-        rows.push(row);
+        facts.push(fact);
     }
-    rows.sort();
-    Ok(rows)
+    facts.sort();
+    Ok(facts)
 }
 
 fn bound_variable(binding: &Binding, variable: usize) -> Result<&Value> {
@@ -541,8 +541,8 @@ mod tests {
     #[test]
     fn from_rows_deduplicates_projection_input_rows() -> TestResult {
         let db = ReferenceDb::from_rows([
-            Row::new("Item", [("id", Value::U64(1))]),
-            Row::new("Item", [("id", Value::U64(1))]),
+            Fact::new("Item", [("id", Value::U64(1))]),
+            Fact::new("Item", [("id", Value::U64(1))]),
         ]);
         let query = item_query(|query| {
             query.rel("Item")?.var("id", "id")?.done();
@@ -560,8 +560,8 @@ mod tests {
     #[test]
     fn from_rows_deduplicates_count_input_rows() -> TestResult {
         let db = ReferenceDb::from_rows([
-            Row::new("Item", [("id", Value::U64(1))]),
-            Row::new("Item", [("id", Value::U64(1))]),
+            Fact::new("Item", [("id", Value::U64(1))]),
+            Fact::new("Item", [("id", Value::U64(1))]),
         ]);
         let query = item_query(|query| {
             query.rel("Item")?.var("id", "id")?.done();

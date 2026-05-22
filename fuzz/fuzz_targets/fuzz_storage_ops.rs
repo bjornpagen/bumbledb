@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
-use bumbledb_lmdb::{Environment, Row, StorageSchema, Value};
+use bumbledb_lmdb::{Environment, Fact, StorageSchema, Value};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -26,18 +26,18 @@ fuzz_target!(|data: &[u8]| {
     let mut expected = BTreeSet::new();
     for byte in data.iter().copied().take(128) {
         let id = u64::from(byte & 0x0f);
-        let row = Row::new("Item", [("id", Value::U64(id))]);
+        let fact = Fact::new("Item", [("id", Value::U64(id))]);
         let result = if byte & 0x80 == 0 {
-            expected.insert(row.clone());
-            env.write(|txn| txn.insert(&schema, row).map(|_| ()))
+            expected.insert(fact.clone());
+            env.write(|txn| txn.insert(&schema, fact).map(|_| ()))
         } else {
-            expected.remove(&row);
-            env.write(|txn| txn.delete(&schema, row).map(|_| ()))
+            expected.remove(&fact);
+            env.write(|txn| txn.delete(&schema, fact).map(|_| ()))
         };
         if result.is_err() {
             return;
         }
-        let Ok(count) = env.read(|txn| txn.relation_row_count(&schema, "Item")) else {
+        let Ok(count) = env.read(|txn| txn.relation_fact_count(&schema, "Item")) else {
             return;
         };
         if count as usize != expected.len() {

@@ -4,7 +4,7 @@ error: lifetime may not live long enough
 9 |     let _scan = env.read(|txn| txn.scan_relation(&schema, "Holder"))?;
   |                           ---- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ returning this value requires that `'1` must outlive `'2`
   |                           |  |
-  |                           |  return type of closure is Result<IndexScan<'2, '_, '_>, bumbledb_lmdb::Error>
+  |                           |  return type of closure is Result<FactScan<'2, '_, '_>, bumbledb_lmdb::Error>
   |                           has type `&'1 ReadTxn<'_>`
 
 error: lifetime may not live long enough
@@ -13,5 +13,5 @@ error: lifetime may not live long enough
 9 |     let _scan = env.read(|txn| txn.scan_relation(&schema, "Holder"))?;
   |                           ---- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ returning this value requires that `'3` must outlive `'2`
   |                           |  |
-  |                           |  return type of closure is Result<IndexScan<'2, '_, '_>, bumbledb_lmdb::Error>
+  |                           |  return type of closure is Result<FactScan<'2, '_, '_>, bumbledb_lmdb::Error>
   |                           has type `&ReadTxn<'3>`

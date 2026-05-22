@@ -771,8 +771,8 @@ impl RelationDescriptor {
         let mut candidates = Vec::new();
 
         candidates.push(IndexCandidate {
-            name: "tuple_set".to_owned(),
-            kind: IndexKind::TupleSet,
+            name: "fact_set".to_owned(),
+            kind: IndexKind::FactSet,
             fields: self.fields.iter().map(|field| field.name.clone()).collect(),
         });
 
@@ -1157,8 +1157,8 @@ impl IndexDescriptor {
 /// Current index kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IndexKind {
-    /// Canonical tuple-set access path.
-    TupleSet,
+    /// Canonical fact-set access path.
+    FactSet,
     /// Unique leading index.
     Unique,
     /// Foreign-key leading index.
@@ -1176,7 +1176,7 @@ impl IndexKind {
         push_u8(
             out,
             match self {
-                IndexKind::TupleSet => 1,
+                IndexKind::FactSet => 1,
                 IndexKind::Unique => 2,
                 IndexKind::ForeignKey => 3,
                 IndexKind::Range => 4,
@@ -1257,7 +1257,7 @@ struct IndexCandidate {
 
 fn generated_index_names(relation: &RelationDescriptor) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
-    names.insert("tuple_set".to_owned());
+    names.insert("fact_set".to_owned());
     for field in &relation.fields {
         if field.indexing.range {
             names.insert(format!("by_{}", field.name));
@@ -1347,13 +1347,13 @@ mod tests {
     fn computes_current_index_layouts() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let layouts = ledger_schema().current_index_layouts(511)?;
 
-        let account_tuple_set = find_layout(&layouts, "Account", "tuple_set")?;
-        assert_eq!(account_tuple_set.kind, IndexKind::TupleSet);
+        let account_fact_set = find_layout(&layouts, "Account", "fact_set")?;
+        assert_eq!(account_fact_set.kind, IndexKind::FactSet);
         assert_eq!(
-            account_tuple_set.leading_fields,
+            account_fact_set.leading_fields,
             ["id", "holder", "currency"]
         );
-        assert_eq!(field_names(account_tuple_set), ["id", "holder", "currency"]);
+        assert_eq!(field_names(account_fact_set), ["id", "holder", "currency"]);
 
         let posting_at = find_layout(&layouts, "Posting", "by_at")?;
         assert_eq!(posting_at.kind, IndexKind::Range);
@@ -1400,7 +1400,7 @@ mod tests {
     }
 
     #[test]
-    fn tuple_set_layout_is_first_even_when_declared_later()
+    fn fact_set_layout_is_first_even_when_declared_later()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let schema = SchemaDescriptor::new(
             "Ordering",
@@ -1418,8 +1418,8 @@ mod tests {
         );
 
         let layouts = schema.current_index_layouts(511)?;
-        assert_eq!(layouts[0].index_name, "tuple_set");
-        assert_eq!(layouts[0].kind, IndexKind::TupleSet);
+        assert_eq!(layouts[0].index_name, "fact_set");
+        assert_eq!(layouts[0].kind, IndexKind::FactSet);
         assert_eq!(layouts[1].index_name, "unique_code");
         Ok(())
     }
@@ -1438,8 +1438,8 @@ mod tests {
         assert!(name.value_type.is_interned_placeholder());
         assert_eq!(name.encoded_width, 8);
 
-        let source_tuple_set = find_layout(&layouts, "SourceDocument", "tuple_set")?;
-        let payload = source_tuple_set
+        let source_fact_set = find_layout(&layouts, "SourceDocument", "fact_set")?;
+        let payload = source_fact_set
             .components
             .iter()
             .find(|component| component.field_name == "payload")
@@ -1447,8 +1447,8 @@ mod tests {
         assert!(payload.value_type.is_interned_placeholder());
         assert_eq!(payload.encoded_width, 8);
 
-        let account_tuple_set = find_layout(&layouts, "Account", "tuple_set")?;
-        let currency = account_tuple_set
+        let account_fact_set = find_layout(&layouts, "Account", "fact_set")?;
+        let currency = account_fact_set
             .components
             .iter()
             .find(|component| component.field_name == "currency")

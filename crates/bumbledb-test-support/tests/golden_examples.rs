@@ -9,8 +9,8 @@ use bumbledb_core::schema::{
     ConstraintDescriptor, EnumDescriptor, FieldDescriptor, RelationDescriptor, SchemaDescriptor,
     ValueType,
 };
-use bumbledb_lmdb::{DeleteOutcome, Environment, InputBindings, Row, StorageSchema, Value};
-use bumbledb_test_support::assertions::assert_same_rows;
+use bumbledb_lmdb::{DeleteOutcome, Environment, Fact, InputBindings, StorageSchema, Value};
+use bumbledb_test_support::assertions::assert_same_facts;
 use bumbledb_test_support::golden::{GOLDEN_FAMILIES, GoldenFamily};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -34,13 +34,13 @@ fn golden_manifest_lists_all_required_families() {
 #[test]
 fn ledger_golden_preserves_set_projection_aggregate_and_restrict() -> TestResult {
     let schema = bumbledb_lmdb::benchmark::benchmark_schema();
-    let rows = bumbledb_lmdb::benchmark::benchmark_rows(2);
-    let (env, storage) = load(schema, rows)?;
+    let facts = bumbledb_lmdb::benchmark::benchmark_rows(2);
+    let (env, storage) = load(schema, facts)?;
 
     let duplicate = env.write(|txn| {
         txn.insert(
             &storage,
-            Row::new(
+            Fact::new(
                 "Holder",
                 [
                     ("id", Value::Serial(1)),
@@ -54,7 +54,7 @@ fn ledger_golden_preserves_set_projection_aggregate_and_restrict() -> TestResult
     let absent = env.write(|txn| {
         txn.delete(
             &storage,
-            Row::new(
+            Fact::new(
                 "PostingTag",
                 [("posting", Value::Serial(99)), ("tag", Value::Enum(1))],
             ),
@@ -65,7 +65,7 @@ fn ledger_golden_preserves_set_projection_aggregate_and_restrict() -> TestResult
     let restricted = env.write(|txn| {
         txn.delete(
             &storage,
-            Row::new(
+            Fact::new(
                 "Holder",
                 [
                     ("id", Value::Serial(1)),
@@ -86,7 +86,7 @@ fn ledger_golden_preserves_set_projection_aggregate_and_restrict() -> TestResult
         .done()
         .find_var("account")?
         .finish()?;
-    assert_same_rows(
+    assert_same_facts(
         execute(
             &env,
             &storage,
@@ -110,7 +110,7 @@ fn ledger_golden_preserves_set_projection_aggregate_and_restrict() -> TestResult
         .find_var("instrument")?
         .find_sum_over("amount", ["posting"])?
         .finish()?;
-    assert_same_rows(
+    assert_same_facts(
         execute(
             &env,
             &storage,
@@ -151,7 +151,7 @@ fn sailors_golden_preserves_duplicate_witness_projection_and_deletes() -> TestRe
         .done()
         .find_var("sailor")?
         .finish()?;
-    assert_same_rows(
+    assert_same_facts(
         execute(&env, &schema, &query, inputs([("color", Value::Enum(1))]))?,
         vec![vec![Value::Serial(1)], vec![Value::Serial(2)]],
     );
@@ -194,7 +194,7 @@ fn joinstress_golden_preserves_triangle_domains() -> TestResult {
         .find_count_distinct("a")?
         .find_count_domain(["a", "b", "c"])?
         .finish()?;
-    assert_same_rows(
+    assert_same_facts(
         execute(&env, &schema, &query, InputBindings::new())?,
         vec![vec![Value::U64(1), Value::U64(2)]],
     );
@@ -231,7 +231,7 @@ fn tpch_golden_preserves_lineitem_revenue_domain() -> TestResult {
         .find_var("customer")?
         .find_sum_over("price", ["line"])?
         .finish()?;
-    assert_same_rows(
+    assert_same_facts(
         execute(&env, &schema, &query, inputs([("nation", Value::U64(1))]))?,
         vec![vec![Value::Serial(1), Value::Decimal(DecimalRaw(200))]],
     );
@@ -261,7 +261,7 @@ fn imdb_job_golden_preserves_title_count_and_static_empty() -> TestResult {
         .done()
         .find_count_domain(["title"])?
         .finish()?;
-    assert_same_rows(
+    assert_same_facts(
         execute(
             &env,
             &schema,
@@ -283,7 +283,7 @@ fn imdb_job_golden_preserves_title_count_and_static_empty() -> TestResult {
         )?
         .find_count_domain(["title"])?
         .finish()?;
-    assert_same_rows(
+    assert_same_facts(
         execute(&env, &schema, &empty, InputBindings::new())?,
         vec![vec![Value::U64(0)]],
     );
@@ -318,7 +318,7 @@ fn lahman_golden_preserves_compound_year_join() -> TestResult {
         .find_var("salary")?
         .find_var("hits")?
         .finish()?;
-    assert_same_rows(
+    assert_same_facts(
         execute(&env, &schema, &query, inputs([("year", Value::I64(2000))]))?,
         vec![vec![Value::Serial(1), Value::I64(50), Value::I64(7)]],
     );
@@ -351,7 +351,7 @@ fn ldbc_golden_preserves_two_hop_projection_set() -> TestResult {
         .done()
         .find_var("friend2")?
         .finish()?;
-    assert_same_rows(
+    assert_same_facts(
         execute(
             &env,
             &schema,
@@ -365,12 +365,12 @@ fn ldbc_golden_preserves_two_hop_projection_set() -> TestResult {
 
 fn load(
     schema: SchemaDescriptor,
-    rows: Vec<Row>,
+    facts: Vec<Fact>,
 ) -> Result<(Environment, StorageSchema), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let storage = StorageSchema::new(schema, env.max_key_size())?;
-    env.bulk_load(&storage, rows)?;
+    env.bulk_load(&storage, facts)?;
     Ok((env, storage))
 }
 
@@ -383,7 +383,7 @@ fn execute(
     Ok(env
         .read(|txn| txn.execute_query(schema, query, &inputs))?
         .result
-        .tuples)
+        .facts)
 }
 
 fn inputs(values: impl IntoIterator<Item = (&'static str, Value)>) -> InputBindings {
@@ -646,20 +646,20 @@ fn ldbc_schema() -> SchemaDescriptor {
     )
 }
 
-fn sailor(id: u64, rating: u64) -> Row {
-    Row::new(
+fn sailor(id: u64, rating: u64) -> Fact {
+    Fact::new(
         "Sailor",
         [("id", Value::Serial(id)), ("rating", Value::U64(rating))],
     )
 }
-fn boat(id: u64, color: u8) -> Row {
-    Row::new(
+fn boat(id: u64, color: u8) -> Fact {
+    Fact::new(
         "Boat",
         [("id", Value::Serial(id)), ("color", Value::Enum(color))],
     )
 }
-fn reserve(sailor: u64, boat: u64, day: i64) -> Row {
-    Row::new(
+fn reserve(sailor: u64, boat: u64, day: i64) -> Fact {
+    Fact::new(
         "Reserve",
         [
             ("sailor", Value::Serial(sailor)),
@@ -668,29 +668,29 @@ fn reserve(sailor: u64, boat: u64, day: i64) -> Row {
         ],
     )
 }
-fn edge_ab(a: u64, b: u64) -> Row {
-    Row::new("EdgeAB", [("a", Value::U64(a)), ("b", Value::U64(b))])
+fn edge_ab(a: u64, b: u64) -> Fact {
+    Fact::new("EdgeAB", [("a", Value::U64(a)), ("b", Value::U64(b))])
 }
-fn edge_ac(a: u64, c: u64) -> Row {
-    Row::new("EdgeAC", [("a", Value::U64(a)), ("c", Value::U64(c))])
+fn edge_ac(a: u64, c: u64) -> Fact {
+    Fact::new("EdgeAC", [("a", Value::U64(a)), ("c", Value::U64(c))])
 }
-fn edge_bc(b: u64, c: u64) -> Row {
-    Row::new("EdgeBC", [("b", Value::U64(b)), ("c", Value::U64(c))])
+fn edge_bc(b: u64, c: u64) -> Fact {
+    Fact::new("EdgeBC", [("b", Value::U64(b)), ("c", Value::U64(c))])
 }
-fn customer(id: u64, nation: u64) -> Row {
-    Row::new(
+fn customer(id: u64, nation: u64) -> Fact {
+    Fact::new(
         "Customer",
         [("id", Value::Serial(id)), ("nation", Value::U64(nation))],
     )
 }
-fn supplier(id: u64, nation: u64) -> Row {
-    Row::new(
+fn supplier(id: u64, nation: u64) -> Fact {
+    Fact::new(
         "Supplier",
         [("id", Value::Serial(id)), ("nation", Value::U64(nation))],
     )
 }
-fn orders(id: u64, customer: u64) -> Row {
-    Row::new(
+fn orders(id: u64, customer: u64) -> Fact {
+    Fact::new(
         "Orders",
         [
             ("id", Value::Serial(id)),
@@ -698,8 +698,8 @@ fn orders(id: u64, customer: u64) -> Row {
         ],
     )
 }
-fn lineitem(id: u64, order: u64, price: i128) -> Row {
-    Row::new(
+fn lineitem(id: u64, order: u64, price: i128) -> Fact {
+    Fact::new(
         "LineItem",
         [
             ("id", Value::Serial(id)),
@@ -708,17 +708,17 @@ fn lineitem(id: u64, order: u64, price: i128) -> Row {
         ],
     )
 }
-fn title(id: u64, year: i64) -> Row {
-    Row::new(
+fn title(id: u64, year: i64) -> Fact {
+    Fact::new(
         "Title",
         [("id", Value::Serial(id)), ("year", Value::I64(year))],
     )
 }
-fn name(id: u64) -> Row {
-    Row::new("Name", [("id", Value::Serial(id))])
+fn name(id: u64) -> Fact {
+    Fact::new("Name", [("id", Value::Serial(id))])
 }
-fn principal(title: u64, name: u64, category: u8, ordering: u64) -> Row {
-    Row::new(
+fn principal(title: u64, name: u64, category: u8, ordering: u64) -> Fact {
+    Fact::new(
         "Principal",
         [
             ("title", Value::Serial(title)),
@@ -728,17 +728,17 @@ fn principal(title: u64, name: u64, category: u8, ordering: u64) -> Row {
         ],
     )
 }
-fn player(id: u64) -> Row {
-    Row::new("Player", [("id", Value::Serial(id))])
+fn player(id: u64) -> Fact {
+    Fact::new("Player", [("id", Value::Serial(id))])
 }
-fn team(id: u64, year: i64) -> Row {
-    Row::new(
+fn team(id: u64, year: i64) -> Fact {
+    Fact::new(
         "Team",
         [("id", Value::Serial(id)), ("year", Value::I64(year))],
     )
 }
-fn batting(player: u64, team: u64, year: i64, hits: i64) -> Row {
-    Row::new(
+fn batting(player: u64, team: u64, year: i64, hits: i64) -> Fact {
+    Fact::new(
         "Batting",
         [
             ("player", Value::Serial(player)),
@@ -748,8 +748,8 @@ fn batting(player: u64, team: u64, year: i64, hits: i64) -> Row {
         ],
     )
 }
-fn salary(player: u64, team: u64, year: i64, salary: i64) -> Row {
-    Row::new(
+fn salary(player: u64, team: u64, year: i64, salary: i64) -> Fact {
+    Fact::new(
         "Salary",
         [
             ("player", Value::Serial(player)),
@@ -759,11 +759,11 @@ fn salary(player: u64, team: u64, year: i64, salary: i64) -> Row {
         ],
     )
 }
-fn person(id: u64) -> Row {
-    Row::new("Person", [("id", Value::Serial(id))])
+fn person(id: u64) -> Fact {
+    Fact::new("Person", [("id", Value::Serial(id))])
 }
-fn knows(left: u64, right: u64) -> Row {
-    Row::new(
+fn knows(left: u64, right: u64) -> Fact {
+    Fact::new(
         "Knows",
         [
             ("person1", Value::Serial(left)),

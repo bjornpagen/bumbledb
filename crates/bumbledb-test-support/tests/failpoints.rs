@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 use bumbledb_lmdb::failpoints::{self, Failpoint};
 use bumbledb_lmdb::{Environment, Error, StorageSchema, TestError};
 use bumbledb_test_support::assertions::assert_invariants;
-use bumbledb_test_support::rows::{account, holder, posting, seeded_ledger_rows};
+use bumbledb_test_support::facts::{account, holder, posting, seeded_ledger_rows};
 use bumbledb_test_support::schemas::ledger_schema;
 
 #[test]
@@ -44,7 +44,7 @@ fn failpoint_insert_is_atomic(failpoint: Failpoint) -> Result<(), Box<dyn std::e
         diagnostics
             .relations
             .iter()
-            .all(|relation| relation.row_count == 0)
+            .all(|relation| relation.fact_count == 0)
     );
     assert_eq!(diagnostics.dictionary_entries, 0);
     Ok(())
@@ -59,7 +59,7 @@ fn failpoint_delete_and_bulk_are_atomic() -> Result<(), Box<dyn std::error::Erro
 
     failpoints::set(Failpoint::BeforeCommit);
     assert!(matches!(
-        env.write(|txn| txn.delete(&schema, bumbledb_test_support::rows::account(3, 2, 1))),
+        env.write(|txn| txn.delete(&schema, bumbledb_test_support::facts::account(3, 2, 1))),
         Err(Error::Test(TestError::InjectedFailpoint { .. }))
     ));
     failpoints::clear();
@@ -82,7 +82,7 @@ fn failpoint_delete_and_bulk_are_atomic() -> Result<(), Box<dyn std::error::Erro
         diagnostics
             .relations
             .iter()
-            .all(|relation| relation.row_count == 0)
+            .all(|relation| relation.fact_count == 0)
     );
     Ok(())
 }

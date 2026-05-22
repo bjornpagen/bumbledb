@@ -1,11 +1,11 @@
-//! Deterministic row fixtures.
+//! Deterministic fact fixtures.
 
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
-use bumbledb_lmdb::{Row, Value};
+use bumbledb_lmdb::{Fact, Value};
 
-/// Holder row.
-pub fn holder(id: u64, name: impl Into<String>) -> Row {
-    Row::new(
+/// Holder fact.
+pub fn holder(id: u64, name: impl Into<String>) -> Fact {
+    Fact::new(
         "Holder",
         [
             ("id", Value::Serial(id)),
@@ -14,9 +14,9 @@ pub fn holder(id: u64, name: impl Into<String>) -> Row {
     )
 }
 
-/// Account row.
-pub fn account(id: u64, holder: u64, currency: u8) -> Row {
-    Row::new(
+/// Account fact.
+pub fn account(id: u64, holder: u64, currency: u8) -> Fact {
+    Fact::new(
         "Account",
         [
             ("id", Value::Serial(id)),
@@ -26,9 +26,9 @@ pub fn account(id: u64, holder: u64, currency: u8) -> Row {
     )
 }
 
-/// Posting row.
-pub fn posting(id: u64, account: u64, amount: i128, at: i64) -> Row {
-    Row::new(
+/// Posting fact.
+pub fn posting(id: u64, account: u64, amount: i128, at: i64) -> Fact {
+    Fact::new(
         "Posting",
         [
             ("id", Value::Serial(id)),
@@ -39,9 +39,9 @@ pub fn posting(id: u64, account: u64, amount: i128, at: i64) -> Row {
     )
 }
 
-/// Account tag row.
-pub fn account_tag(account: u64, tag: u8) -> Row {
-    Row::new(
+/// Account tag fact.
+pub fn account_tag(account: u64, tag: u8) -> Fact {
+    Fact::new(
         "AccountTag",
         [
             ("account", Value::Serial(account)),
@@ -50,9 +50,9 @@ pub fn account_tag(account: u64, tag: u8) -> Row {
     )
 }
 
-/// Number row for overflow tests.
-pub fn number(id: u64, n: i64, d: i128) -> Row {
-    Row::new(
+/// Number fact for overflow tests.
+pub fn number(id: u64, n: i64, d: i128) -> Fact {
+    Fact::new(
         "Number",
         [
             ("id", Value::Serial(id)),
@@ -62,8 +62,8 @@ pub fn number(id: u64, n: i64, d: i128) -> Row {
     )
 }
 
-/// Seeded valid ledger rows.
-pub fn seeded_ledger_rows() -> Vec<Row> {
+/// Seeded valid ledger facts.
+pub fn seeded_ledger_rows() -> Vec<Fact> {
     vec![
         holder(1, "Alice"),
         holder(2, "Bob"),
@@ -78,26 +78,26 @@ pub fn seeded_ledger_rows() -> Vec<Row> {
     ]
 }
 
-/// Larger deterministic ledger rows.
-pub fn generated_ledger_rows(scale: u64) -> Vec<Row> {
+/// Larger deterministic ledger facts.
+pub fn generated_ledger_rows(scale: u64) -> Vec<Fact> {
     let scale = scale.max(1);
-    let mut rows = Vec::new();
+    let mut facts = Vec::new();
     for id in 1..=scale {
-        rows.push(holder(id, format!("holder-{id}")));
-        rows.push(account(id, id, 1));
+        facts.push(holder(id, format!("holder-{id}")));
+        facts.push(account(id, id, 1));
     }
     let mut posting_id = 1;
     for account in 1..=scale {
         for offset in 0..3 {
-            rows.push(posting(
+            facts.push(posting(
                 posting_id,
                 account,
                 posting_id as i128 * 100,
                 posting_id as i64 * 10,
             ));
-            rows.push(account_tag(account, offset + 1));
+            facts.push(account_tag(account, offset + 1));
             posting_id += 1;
         }
     }
-    rows
+    facts
 }

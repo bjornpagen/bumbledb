@@ -17,13 +17,13 @@ pub struct StorageSchema {
     layout_by_relation_name: BTreeMap<(String, String), AccessId>,
 }
 
-pub(crate) const TUPLE_SET_ACCESS_NAME: &str = "tuple_set";
+pub(crate) const FACT_SET_ACCESS_NAME: &str = "fact_set";
 
 /// Bulk ETL load report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BulkLoadReport {
-    /// Number of rows newly inserted; exact duplicates are not counted.
-    pub rows_inserted: usize,
+    /// Number of facts newly inserted; exact duplicates are not counted.
+    pub facts_inserted: usize,
     /// Storage transaction ID after the bulk load committed.
     pub storage_tx_id: u64,
     /// Number of interned dictionary values after the load committed.
@@ -109,12 +109,12 @@ impl StorageSchema {
             })
     }
 
-    pub(crate) fn tuple_set_layout(&self, relation: &str) -> Option<&CurrentIndexLayout> {
-        self.layout(relation, TUPLE_SET_ACCESS_NAME)
+    pub(crate) fn fact_set_layout(&self, relation: &str) -> Option<&CurrentIndexLayout> {
+        self.layout(relation, FACT_SET_ACCESS_NAME)
     }
 
-    pub(crate) fn tuple_set_index_name(&self, relation: &str) -> Option<&str> {
-        self.tuple_set_layout(relation)
+    pub(crate) fn fact_set_index_name(&self, relation: &str) -> Option<&str> {
+        self.fact_set_layout(relation)
             .map(|layout| layout.index_name.as_str())
     }
 }

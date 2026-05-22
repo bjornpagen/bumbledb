@@ -35,7 +35,7 @@ pub enum ComparisonOperator {
 /// Aggregate function.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AggregateFunction {
-    /// Count distinct aggregate-domain tuples.
+    /// Count distinct aggregate-domain facts.
     CountDomain,
     /// Count distinct values of the measured variable.
     CountDistinct,

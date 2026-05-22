@@ -15,8 +15,8 @@ use bumbledb_core::schema::{
     SchemaDescriptor, ValueType,
 };
 use bumbledb_lmdb::{
-    AllocationPhaseStats, Environment, InputBindings, PlanCounters, QueryAllocationStats,
-    QueryExecutionOptions, QueryOutput, QueryPlan, QueryResultSet, QueryTimings, ResultColumn, Row,
+    AllocationPhaseStats, Environment, Fact, InputBindings, PlanCounters, QueryAllocationStats,
+    QueryExecutionOptions, QueryOutput, QueryPlan, QueryResultSet, QueryTimings, ResultColumn,
     StorageSchema, Value,
 };
 use rusqlite::{Connection, params_from_iter};
@@ -171,14 +171,14 @@ enum TraceFormat {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CompareMode {
     Materialized,
-    Rows,
+    Facts,
 }
 
 impl CompareMode {
     fn as_str(self) -> &'static str {
         match self {
             CompareMode::Materialized => "materialized",
-            CompareMode::Rows => "rows",
+            CompareMode::Facts => "facts",
         }
     }
 }
@@ -322,7 +322,7 @@ impl Config {
                 "--compare-mode" => {
                     compare_mode = match next_arg(&mut args, "--compare-mode")?.as_str() {
                         "materialized" => CompareMode::Materialized,
-                        "rows" => CompareMode::Rows,
+                        "facts" => CompareMode::Facts,
                         other => {
                             return Err(bench_error(format!("unknown --compare-mode {other}")));
                         }
@@ -346,7 +346,7 @@ impl Config {
                 "--fail-gates" => fail_gates = true,
                 "--help" | "-h" => {
                     println!(
-                        "usage: cargo run -p bumbledb-bench --release -- [--preset quick|nonjob|job|job-sample|job-full] [--scale N] [--open-limit N|--open-full] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--compare-mode materialized|rows] [--cache-mode recompute|prepared-plan] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
+                        "usage: cargo run -p bumbledb-bench --release -- [--preset quick|nonjob|job|job-sample|job-full] [--scale N] [--open-limit N|--open-full] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--compare-mode materialized|facts] [--cache-mode recompute|prepared-plan] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
                     );
                     return Ok(None);
                 }
@@ -579,14 +579,14 @@ pub(crate) fn bench_error(message: impl Into<String>) -> Box<dyn std::error::Err
 pub(crate) struct Dataset {
     name: &'static str,
     schema: SchemaDescriptor,
-    rows: Vec<Row>,
-    row_source: Option<open::RowSource>,
+    facts: Vec<Fact>,
+    fact_source: Option<open::FactSource>,
     sqlite_schema: &'static str,
     sqlite_insert: SqliteInsert,
     queries: Vec<BenchQuery>,
 }
 
-pub(crate) type SqliteInsert = fn(&Connection, &[Row]) -> Result<(), Box<dyn std::error::Error>>;
+pub(crate) type SqliteInsert = fn(&Connection, &[Fact]) -> Result<(), Box<dyn std::error::Error>>;
 
 pub(crate) struct BenchQuery {
     name: &'static str,
@@ -633,7 +633,7 @@ struct BenchmarkGate {
 struct BenchmarkRunResult {
     dataset: &'static str,
     query: &'static str,
-    rows: usize,
+    facts: usize,
     correctness_mode: String,
     bumbledb_correctness_execution: Duration,
     sqlite_correctness_execution: Duration,
@@ -686,13 +686,13 @@ struct BenchmarkRunResult {
     sorted_trie_cache_misses: u64,
     sorted_trie_builds: u64,
     atom_temp_relation_builds: u64,
-    hash_rows_returned: u64,
+    hash_facts_returned: u64,
     hash_distinct_emits: u64,
     direct_kernel_probes: u64,
-    direct_kernel_rows: u64,
+    direct_kernel_facts: u64,
     direct_kernel_predicates: u64,
     query_image_relation_count: usize,
-    query_image_row_count: usize,
+    query_image_fact_count: usize,
     query_image_encoded_column_bytes: usize,
     query_image_sorted_trie_bytes: usize,
     query_image_hash_trie_bytes: usize,
@@ -751,7 +751,7 @@ impl TimingStats {
 #[derive(Clone, Copy, Debug)]
 struct QueryImageBenchStats {
     relation_count: usize,
-    row_count: usize,
+    fact_count: usize,
     encoded_column_bytes: usize,
     sorted_trie_bytes: usize,
     hash_trie_bytes: usize,
@@ -762,7 +762,7 @@ impl QueryImageBenchStats {
     fn empty() -> Self {
         Self {
             relation_count: 0,
-            row_count: 0,
+            fact_count: 0,
             encoded_column_bytes: 0,
             sorted_trie_bytes: 0,
             hash_trie_bytes: 0,
@@ -808,9 +808,9 @@ fn run_dataset(
     let format = config.format;
     if format.includes_text() {
         println!("== {} ==", dataset.name);
-        match &dataset.row_source {
-            Some(_) => println!("rows=streaming"),
-            None => println!("rows={}", dataset.rows.len()),
+        match &dataset.fact_source {
+            Some(_) => println!("facts=streaming"),
+            None => println!("facts={}", dataset.facts.len()),
         }
         println!("queries={}", selected_queries.len());
     }
@@ -819,18 +819,18 @@ fn run_dataset(
     let bumble_env = Environment::open(bumble_dir.path())?;
     let bumble_schema = StorageSchema::new(dataset.schema.clone(), bumble_env.max_key_size())?;
 
-    if dataset.row_source.is_some() {
+    if dataset.fact_source.is_some() {
         eprintln!(
             "[bench:{}] loading bumbledb from streaming source",
             dataset.name
         );
     }
-    let bumble_load = timed(|| match &dataset.row_source {
+    let bumble_load = timed(|| match &dataset.fact_source {
         Some(source) => bumble_env.write(|txn| {
             txn.bulk_load_streaming(&bumble_schema, |txn| {
                 let mut inserted = 0;
-                open::stream_rows(source, |row| {
-                    if txn.insert(&bumble_schema, row)? == bumbledb_lmdb::InsertOutcome::Inserted {
+                open::stream_rows(source, |fact| {
+                    if txn.insert(&bumble_schema, fact)? == bumbledb_lmdb::InsertOutcome::Inserted {
                         inserted += 1;
                     }
                     Ok(())
@@ -839,26 +839,26 @@ fn run_dataset(
             })
         }),
         None => bumble_env
-            .bulk_load(&bumble_schema, dataset.rows.clone())
-            .map(|report| report.rows_inserted)
+            .bulk_load(&bumble_schema, dataset.facts.clone())
+            .map(|report| report.facts_inserted)
             .map_err(Into::into),
     })?;
     if format.includes_text() {
         println!("load.bumbledb={:?}", bumble_load.elapsed);
     }
-    if dataset.row_source.is_some() {
+    if dataset.fact_source.is_some() {
         eprintln!(
-            "[bench:{}] bumbledb load complete rows={} elapsed={:?}",
+            "[bench:{}] bumbledb load complete facts={} elapsed={:?}",
             dataset.name, bumble_load.value, bumble_load.elapsed
         );
     }
-    let query_image_stats = if dataset.row_source.is_some() {
+    let query_image_stats = if dataset.fact_source.is_some() {
         QueryImageBenchStats::empty()
     } else {
         let query_image = bumble_env.query_image(&bumble_schema)?;
         QueryImageBenchStats {
             relation_count: query_image.stats().relation_count,
-            row_count: query_image.stats().row_count,
+            fact_count: query_image.stats().fact_count,
             encoded_column_bytes: query_image.stats().encoded_column_bytes,
             sorted_trie_bytes: query_image.stats().sorted_trie_bytes,
             hash_trie_bytes: query_image.stats().hash_trie_bytes,
@@ -866,7 +866,7 @@ fn run_dataset(
         }
     };
     if format.includes_text() {
-        if dataset.row_source.is_some() {
+        if dataset.fact_source.is_some() {
             println!("query_image eager_build=skipped_for_streaming_dataset");
         } else {
             println!(
@@ -877,28 +877,28 @@ fn run_dataset(
     }
 
     let sqlite_dir = tempfile::tempdir()?;
-    let mut sqlite = if dataset.row_source.is_some() {
+    let mut sqlite = if dataset.fact_source.is_some() {
         Connection::open(sqlite_dir.path().join("sqlite-bench.db"))?
     } else {
         Connection::open_in_memory()?
     };
     sqlite.execute_batch(dataset.sqlite_schema)?;
-    if dataset.row_source.is_some() {
+    if dataset.fact_source.is_some() {
         eprintln!(
             "[bench:{}] loading sqlite from streaming source",
             dataset.name
         );
     }
-    let sqlite_load = timed(|| match &dataset.row_source {
+    let sqlite_load = timed(|| match &dataset.fact_source {
         Some(source) => open::insert_sqlite_streaming(source, &mut sqlite),
-        None => (dataset.sqlite_insert)(&sqlite, &dataset.rows).map(|()| dataset.rows.len()),
+        None => (dataset.sqlite_insert)(&sqlite, &dataset.facts).map(|()| dataset.facts.len()),
     })?;
     if format.includes_text() {
         println!("load.sqlite={:?}", sqlite_load.elapsed);
     }
-    if dataset.row_source.is_some() {
+    if dataset.fact_source.is_some() {
         eprintln!(
-            "[bench:{}] sqlite load complete rows={} elapsed={:?}",
+            "[bench:{}] sqlite load complete facts={} elapsed={:?}",
             dataset.name, sqlite_load.value, sqlite_load.elapsed
         );
     }
@@ -927,7 +927,7 @@ fn run_dataset(
         let materialized_output = materialized_once.value;
         let (bumble_cold_execution, bumble_output) = match config.compare_mode {
             CompareMode::Materialized => (materialized_once.elapsed, materialized_output.clone()),
-            CompareMode::Rows => {
+            CompareMode::Facts => {
                 let count_once = timed(|| match config.cache_mode {
                     CacheMode::Recompute => bumble_env.read(|txn| {
                         txn.execute_result_cardinality_with_options(
@@ -970,12 +970,12 @@ fn run_dataset(
         let sqlite_once = timed(|| sqlite_count(&mut sqlite, query.sqlite, &params))?;
         let sqlite_cold_execution = sqlite_once.elapsed;
         let sqlite_once = sqlite_once.value;
-        if materialized_output.result.tuples.len() != sqlite_once {
+        if materialized_output.result.facts.len() != sqlite_once {
             return Err(format!(
-                "{}:{} row-count mismatch after value match bumbledb={} sqlite={}",
+                "{}:{} fact-count mismatch after value match bumbledb={} sqlite={}",
                 dataset.name,
                 query.name,
-                materialized_output.result.tuples.len(),
+                materialized_output.result.facts.len(),
                 sqlite_once
             )
             .into());
@@ -1002,10 +1002,10 @@ fn run_dataset(
                             )
                         })?,
                     };
-                    black_box(output.result.tuples.len());
+                    black_box(output.result.facts.len());
                     Ok::<_, bumbledb_lmdb::Error>(output.plan)
                 }
-                CompareMode::Rows => {
+                CompareMode::Facts => {
                     let output = match config.cache_mode {
                         CacheMode::Recompute => bumble_env.read(|txn| {
                             txn.execute_result_cardinality_with_options(
@@ -1029,8 +1029,8 @@ fn run_dataset(
                 }
             })?;
         let sqlite_warmup = timed_samples(config.warmup, || {
-            let rows = sqlite_count(&mut sqlite, query.sqlite, &params)?;
-            black_box(rows);
+            let facts = sqlite_count(&mut sqlite, query.sqlite, &params)?;
+            black_box(facts);
             Ok::<_, Box<dyn std::error::Error>>(())
         })?;
 
@@ -1055,10 +1055,10 @@ fn run_dataset(
                             )
                         })?,
                     };
-                    black_box(output.result.tuples.len());
+                    black_box(output.result.facts.len());
                     Ok::<_, bumbledb_lmdb::Error>(output.plan)
                 }
-                CompareMode::Rows => {
+                CompareMode::Facts => {
                     let output = match config.cache_mode {
                         CacheMode::Recompute => bumble_env.read(|txn| {
                             txn.execute_result_cardinality_with_options(
@@ -1082,8 +1082,8 @@ fn run_dataset(
                 }
             })?;
         let sqlite_samples = timed_samples(config.repeats, || {
-            let rows = sqlite_count(&mut sqlite, query.sqlite, &params)?;
-            black_box(rows);
+            let facts = sqlite_count(&mut sqlite, query.sqlite, &params)?;
+            black_box(facts);
             Ok::<_, Box<dyn std::error::Error>>(())
         })?;
 
@@ -1111,14 +1111,14 @@ fn run_dataset(
         emit_profile_summary(dataset.name, query.name, &bumble_output);
         if format.includes_text() {
             println!(
-                "query={} rows={} cache_mode={} sink_emit_calls={} encoded_project_rows_seen={} lftj_next_calls={} direct_chain_step_rows={} static_empty_cache_hits={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
+                "query={} facts={} cache_mode={} sink_emit_calls={} encoded_project_facts_seen={} lftj_next_calls={} direct_chain_step_facts={} static_empty_cache_hits={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
                 query.name,
-                bumble_output.result.tuples.len(),
+                bumble_output.result.facts.len(),
                 result.cache_mode,
                 result.counters.sink_emit_calls,
-                result.counters.encoded_project_rows_seen,
+                result.counters.encoded_project_facts_seen,
                 result.counters.lftj_next_calls,
-                result.counters.direct_chain_step_rows,
+                result.counters.direct_chain_step_facts,
                 result.static_empty_cache_hits,
                 bumble_cold_execution,
                 result.bumbledb_samples.samples,
@@ -1202,10 +1202,10 @@ fn sqlite_count(
     params: &[SqlParam],
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt
+    let facts = stmt
         .query_map(params_from_iter(params.iter()), |_| Ok(()))?
         .count();
-    Ok(rows)
+    Ok(facts)
 }
 
 fn sqlite_result_rows(
@@ -1215,12 +1215,12 @@ fn sqlite_result_rows(
 ) -> Result<Vec<Vec<SqlValue>>, Box<dyn std::error::Error>> {
     let mut stmt = conn.prepare(sql)?;
     let column_count = stmt.column_count();
-    let mut rows = stmt.query(params_from_iter(params.iter()))?;
+    let mut facts = stmt.query(params_from_iter(params.iter()))?;
     let mut out = Vec::new();
-    while let Some(row) = rows.next()? {
+    while let Some(fact) = facts.next()? {
         let mut values = Vec::with_capacity(column_count);
         for index in 0..column_count {
-            values.push(match row.get_ref(index)? {
+            values.push(match fact.get_ref(index)? {
                 rusqlite::types::ValueRef::Null => {
                     return Err("SQLite NULL is not a valid Bumbledb benchmark value".into());
                 }
@@ -1244,9 +1244,9 @@ fn bumbledb_sql_rows(
 ) -> Result<Vec<Vec<SqlValue>>, Box<dyn std::error::Error>> {
     output
         .result
-        .tuples
+        .facts
         .iter()
-        .map(|row| row.iter().map(sql_value).collect())
+        .map(|fact| fact.iter().map(sql_value).collect())
         .collect()
 }
 
@@ -1263,9 +1263,9 @@ fn sql_value(value: &Value) -> Result<SqlValue, Box<dyn std::error::Error>> {
     })
 }
 
-fn sorted_sql_rows(mut rows: Vec<Vec<SqlValue>>) -> Vec<Vec<SqlValue>> {
-    rows.sort();
-    rows
+fn sorted_sql_rows(mut facts: Vec<Vec<SqlValue>>) -> Vec<Vec<SqlValue>> {
+    facts.sort();
+    facts
 }
 
 fn correctness_mode(query: &TypedQuery) -> CorrectnessMode {
@@ -1296,10 +1296,10 @@ fn benchmark_result(
     timing: QueryTimingSamples,
     query_image_stats: QueryImageBenchStats,
 ) -> BenchmarkRunResult {
-    let final_output_values = (output.result.tuples.len() * output.result.columns.len()) as u64;
+    let final_output_values = (output.result.facts.len() * output.result.columns.len()) as u64;
     let output_contains_dictionary_values = output
         .result
-        .tuples
+        .facts
         .iter()
         .flatten()
         .any(|value| matches!(value, Value::String(_) | Value::Bytes(_)));
@@ -1322,14 +1322,14 @@ fn benchmark_result(
     BenchmarkRunResult {
         dataset,
         query: query.name,
-        rows: output.result.tuples.len(),
+        facts: output.result.facts.len(),
         correctness_mode: correctness_mode.as_str().to_owned(),
         bumbledb_correctness_execution: timing.bumbledb_correctness_execution,
         sqlite_correctness_execution: timing.sqlite_correctness_execution,
         bumbledb_cold_execution: timing.bumbledb_cold_execution,
         sqlite_cold_execution: timing.sqlite_cold_execution,
         cold_execution_uses_correctness_output: compare_mode == CompareMode::Materialized,
-        count_cold_execution_warmed_by_correctness: compare_mode == CompareMode::Rows,
+        count_cold_execution_warmed_by_correctness: compare_mode == CompareMode::Facts,
         allocation_scope: allocation_scope(compare_mode).to_owned(),
         query_image_scope: query_image_scope(output).to_owned(),
         bumbledb_warmup: timing.bumbledb_warmup,
@@ -1348,7 +1348,7 @@ fn benchmark_result(
         query_image_sample_cache_hits: cache_hits.query_image_cache_hits,
         bumbledb_materialized_rows: compare_mode == CompareMode::Materialized,
         sqlite_materialized_rows: true,
-        cardinality_supported: compare_mode == CompareMode::Rows,
+        cardinality_supported: compare_mode == CompareMode::Facts,
         cardinality_fallback_reason: String::new(),
         timings: output.plan.timings,
         allocations: output.plan.allocations,
@@ -1375,13 +1375,13 @@ fn benchmark_result(
         sorted_trie_cache_misses: output.plan.counters.sorted_trie_cache_misses,
         sorted_trie_builds: output.plan.counters.sorted_trie_builds,
         atom_temp_relation_builds: output.plan.counters.atom_temp_relation_builds,
-        hash_rows_returned: output.plan.counters.hash_rows_returned,
+        hash_facts_returned: output.plan.counters.hash_facts_returned,
         hash_distinct_emits: output.plan.counters.hash_distinct_emits,
         direct_kernel_probes: output.plan.counters.direct_kernel_probes,
-        direct_kernel_rows: output.plan.counters.direct_kernel_rows,
+        direct_kernel_facts: output.plan.counters.direct_kernel_facts,
         direct_kernel_predicates: output.plan.counters.direct_kernel_predicates,
         query_image_relation_count: query_image_stats.relation_count,
-        query_image_row_count: query_image_stats.row_count,
+        query_image_fact_count: query_image_stats.fact_count,
         query_image_encoded_column_bytes: query_image_stats.encoded_column_bytes,
         query_image_sorted_trie_bytes: query_image_stats.sorted_trie_bytes,
         query_image_hash_trie_bytes: query_image_stats.hash_trie_bytes,
@@ -1396,7 +1396,7 @@ fn cardinality_plan_as_query_output(result: QueryResultSet, plan: QueryPlan) -> 
 fn allocation_scope(compare_mode: CompareMode) -> &'static str {
     match compare_mode {
         CompareMode::Materialized => "bumbledb.correctness_execution",
-        CompareMode::Rows => "bumbledb.count_cold_execution",
+        CompareMode::Facts => "bumbledb.count_cold_execution",
     }
 }
 
@@ -1417,7 +1417,7 @@ fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
     tracing::debug!(
         dataset,
         query,
-        rows = output.result.tuples.len(),
+        facts = output.result.facts.len(),
         runtime = ?plan.runtime_kind,
         total_micros = timings.total_micros,
         plan_micros = timings.plan_micros,
@@ -1543,11 +1543,11 @@ fn evaluate_gate(
                     output.plan.counters.hash_index_builds
                 ));
             }
-            if output.plan.counters.hash_index_build_rows != 0 {
+            if output.plan.counters.hash_index_build_facts != 0 {
                 passed = false;
                 notes.push(format!(
-                    "hash index build rows during direct chain query: {}",
-                    output.plan.counters.hash_index_build_rows
+                    "hash index build facts during direct chain query: {}",
+                    output.plan.counters.hash_index_build_facts
                 ));
             }
         }
@@ -1593,11 +1593,11 @@ fn evaluate_gate(
     }
 
     let counters = &output.plan.counters;
-    if counters.cursor_seeks != 0 || counters.rows_scanned != 0 {
+    if counters.cursor_seeks != 0 || counters.facts_scanned != 0 {
         passed = false;
         notes.push(format!(
-            "LMDB scan counters nonzero: cursor_seeks={} rows_scanned={}",
-            counters.cursor_seeks, counters.rows_scanned
+            "LMDB scan counters nonzero: cursor_seeks={} facts_scanned={}",
+            counters.cursor_seeks, counters.facts_scanned
         ));
     }
     if !output_contains_dictionary_values && counters.dictionary_reverse_lookups != 0 {
@@ -1761,7 +1761,7 @@ fn job_cache_mode_avg_limit(
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | rows | compare mode | bumbledb materialized | sqlite materialized | cardinality | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash rows | hash emits | direct probes | direct rows | direct predicates | iterator ops | hash build est | materialized | dict lookups | gate |\n");
+    out.push_str("| dataset | query | facts | compare mode | bumbledb materialized | sqlite materialized | cardinality | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash facts | hash emits | direct probes | direct facts | direct predicates | iterator ops | hash build est | materialized | dict lookups | gate |\n");
     out.push_str("|---|---|---:|---|---|---|---|---:|---:|---:|---|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
@@ -1769,7 +1769,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
-            result.rows,
+            result.facts,
             markdown_escape(&result.compare_mode),
             result.bumbledb_materialized_rows,
             result.sqlite_materialized_rows,
@@ -1796,10 +1796,10 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.sorted_trie_cache_misses,
             result.sorted_trie_builds,
             result.atom_temp_relation_builds,
-            result.hash_rows_returned,
+            result.hash_facts_returned,
             result.hash_distinct_emits,
             result.direct_kernel_probes,
-            result.direct_kernel_rows,
+            result.direct_kernel_facts,
             result.direct_kernel_predicates,
             result.iterator_ops,
             result.hash_build_rows,
@@ -1809,7 +1809,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Mechanics Counters\n\n");
-    out.push_str("| dataset | query | runtime | sink emits | project seen | project dupes | lftj next | lftj seek | lftj keys | direct chain step rows | direct chain output rows | direct storage output rows |\n");
+    out.push_str("| dataset | query | runtime | sink emits | project seen | project dupes | lftj next | lftj seek | lftj keys | direct chain step facts | direct chain output facts | direct storage output facts |\n");
     out.push_str("|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     for result in results {
         let counters = &result.counters;
@@ -1820,14 +1820,14 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             markdown_escape(result.query),
             markdown_escape(&result.runtime_kind),
             counters.sink_emit_calls,
-            counters.encoded_project_rows_seen,
-            counters.encoded_project_duplicate_rows,
+            counters.encoded_project_facts_seen,
+            counters.encoded_project_duplicate_facts,
             counters.lftj_next_calls,
             counters.lftj_seek_calls,
             counters.lftj_key_reads,
-            counters.direct_chain_step_rows,
-            counters.direct_chain_output_rows,
-            counters.direct_storage_output_rows,
+            counters.direct_chain_step_facts,
+            counters.direct_chain_output_facts,
+            counters.direct_storage_output_facts,
         );
     }
     out.push_str("\n## Cache Diagnostics\n\n");
@@ -2006,7 +2006,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         "| high allocation counts | rerun with alloc-profile and then use a deep heap profiler for callsites |\n",
     );
     out.push_str("\n## Counter Gates\n\n");
-    out.push_str("| dataset | query | cursor seeks | rows scanned | final values | materialized values | dictionary output | dictionary lookups | notes |\n");
+    out.push_str("| dataset | query | cursor seeks | facts scanned | final values | materialized values | dictionary output | dictionary lookups | notes |\n");
     out.push_str("|---|---|---:|---:|---:|---:|---|---:|---|\n");
     for result in results {
         let _ = writeln!(
@@ -2015,7 +2015,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.counters.cursor_seeks,
-            result.counters.rows_scanned,
+            result.counters.facts_scanned,
             result.final_output_values,
             result.materialized_values,
             result.output_contains_dictionary_values,
@@ -2056,14 +2056,14 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_rows\":{},\"materialized_rows\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"cache_mode\":\"{}\",\"static_empty_cache_hit\":{},\"static_empty_cache_hits\":{},\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"bumbledb_materialized_rows\":{},\"sqlite_materialized_rows\":{},\"cardinality_supported\":{},\"cardinality_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
+            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"facts\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_rows\":{},\"materialized_rows\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"cache_mode\":\"{}\",\"static_empty_cache_hit\":{},\"static_empty_cache_hits\":{},\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"bumbledb_materialized_rows\":{},\"sqlite_materialized_rows\":{},\"cardinality_supported\":{},\"cardinality_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
             json_escape(result.dataset),
             json_escape(result.query),
-            result.rows,
+            result.facts,
             json_escape(&result.correctness_mode),
-            result.rows,
+            result.facts,
             if result.bumbledb_materialized_rows {
-                result.rows
+                result.facts
             } else {
                 0
             },
@@ -2099,11 +2099,11 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.query_image_built_during_query,
             json_escape(&result.query_image_scope),
             if result.bumbledb_materialized_rows {
-                result.rows
+                result.facts
             } else {
                 0
             },
-            result.rows,
+            result.facts,
             result.final_output_values,
             result.bumbledb_warmup.samples,
             duration_micros(result.bumbledb_warmup.avg),
@@ -2112,7 +2112,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         out.push_str("},\"sqlite\":{");
         let _ = write!(
             out,
-            "\"correctness_execution\":{{\"elapsed_us\":{},\"output_mode\":\"rows\"}},\"cold_execution\":{{\"elapsed_us\":{}}},\"warmup\":{{\"samples\":{},\"avg_us\":{}}},\"samples\":",
+            "\"correctness_execution\":{{\"elapsed_us\":{},\"output_mode\":\"facts\"}},\"cold_execution\":{{\"elapsed_us\":{}}},\"warmup\":{{\"samples\":{},\"avg_us\":{}}},\"samples\":",
             duration_micros(result.sqlite_correctness_execution),
             duration_micros(result.sqlite_cold_execution),
             result.sqlite_warmup.samples,
@@ -2183,19 +2183,19 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_rows_seen\":{},\"encoded_project_rows_inserted\":{},\"encoded_project_duplicate_rows\":{},\"encoded_project_row_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"direct_kernel_probes\":{},\"direct_kernel_rows\":{},\"direct_kernel_predicates\":{},\"direct_bind_attempts\":{},\"direct_bind_successes\":{},\"direct_chain_steps\":{},\"direct_chain_step_rows\":{},\"direct_chain_output_rows\":{},\"direct_chain_output_values\":{},\"direct_storage_output_rows\":{},\"direct_batch_rows\":{},\"direct_batch_row_bytes\":{},\"direct_batch_fallback_rows\":{},\"direct_binding_reuses\":{},\"query_image_relations_loaded\":{},\"query_image_rows_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{},\"hash_trie_bytes\":{},\"static_empty_atoms_checked\":{},\"static_empty_rows_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            "]}},\"counters\":{{\"cursor_seeks\":{},\"facts_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_facts_seen\":{},\"encoded_project_facts_inserted\":{},\"encoded_project_duplicate_facts\":{},\"encoded_project_fact_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"direct_kernel_probes\":{},\"direct_kernel_facts\":{},\"direct_kernel_predicates\":{},\"direct_bind_attempts\":{},\"direct_bind_successes\":{},\"direct_chain_steps\":{},\"direct_chain_step_facts\":{},\"direct_chain_output_facts\":{},\"direct_chain_output_values\":{},\"direct_storage_output_facts\":{},\"direct_batch_facts\":{},\"direct_batch_fact_bytes\":{},\"direct_batch_fallback_facts\":{},\"direct_binding_reuses\":{},\"query_image_relations_loaded\":{},\"query_image_facts_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{},\"hash_trie_bytes\":{},\"static_empty_atoms_checked\":{},\"static_empty_facts_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.counters.cursor_seeks,
-            result.counters.rows_scanned,
+            result.counters.facts_scanned,
             result.dictionary_reverse_lookups,
             result.materialized_values,
             result.counters.bindings_completed,
             result.counters.sink_emit_calls,
             result.counters.aggregate_emit_calls,
             result.counters.aggregate_count_range_calls,
-            result.counters.encoded_project_rows_seen,
-            result.counters.encoded_project_rows_inserted,
-            result.counters.encoded_project_duplicate_rows,
-            result.counters.encoded_project_row_bytes,
+            result.counters.encoded_project_facts_seen,
+            result.counters.encoded_project_facts_inserted,
+            result.counters.encoded_project_duplicate_facts,
+            result.counters.encoded_project_fact_bytes,
             result.counters.project_decode_values,
             result.counters.lftj_open_calls,
             result.counters.lftj_up_calls,
@@ -2207,26 +2207,26 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.counters.lftj_bind_rejects,
             result.counters.lftj_completed_bindings,
             result.direct_kernel_probes,
-            result.direct_kernel_rows,
+            result.direct_kernel_facts,
             result.direct_kernel_predicates,
             result.counters.direct_bind_attempts,
             result.counters.direct_bind_successes,
             result.counters.direct_chain_steps,
-            result.counters.direct_chain_step_rows,
-            result.counters.direct_chain_output_rows,
+            result.counters.direct_chain_step_facts,
+            result.counters.direct_chain_output_facts,
             result.counters.direct_chain_output_values,
-            result.counters.direct_storage_output_rows,
-            result.counters.direct_batch_rows,
-            result.counters.direct_batch_row_bytes,
-            result.counters.direct_batch_fallback_rows,
+            result.counters.direct_storage_output_facts,
+            result.counters.direct_batch_facts,
+            result.counters.direct_batch_fact_bytes,
+            result.counters.direct_batch_fallback_facts,
             result.counters.direct_binding_reuses,
             result.query_image_relation_count,
-            result.query_image_row_count,
+            result.query_image_fact_count,
             result.query_image_encoded_column_bytes,
             result.query_image_sorted_trie_bytes,
             result.query_image_hash_trie_bytes,
             result.counters.static_empty_atoms_checked,
-            result.counters.static_empty_rows_scanned,
+            result.counters.static_empty_facts_scanned,
             result.counters.static_empty_cache_hits,
             result.counters.static_empty_cache_misses,
             result.gate.passed,
@@ -2330,10 +2330,10 @@ fn print_explain(explain: &str) {
             || line.contains("candidate_plan")
             || line.contains("free_join_estimates")
             || line.contains("free_join_node")
-            || line.contains("node_rows")
+            || line.contains("node_facts")
             || line.contains("node_timing")
             || line.contains("free_join_subatom")
-            || line.contains("rows_scanned")
+            || line.contains("facts_scanned")
             || line.contains("cursor_seeks")
             || line.contains("trie_intersections")
             || line.contains("variable_candidates")
@@ -2354,7 +2354,7 @@ fn print_explain(explain: &str) {
             || line.contains("hash_rows")
             || line.contains("hash_distinct")
             || line.contains("direct_kernel")
-            || line.contains("output_rows")
+            || line.contains("output_facts")
         {
             println!("  {line}");
         }
@@ -2374,8 +2374,8 @@ fn ledger_dataset(scale: u64) -> Dataset {
     Dataset {
         name: "ledger",
         schema: bumbledb_lmdb::benchmark::benchmark_schema(),
-        rows: bumbledb_lmdb::benchmark::benchmark_rows(scale),
-        row_source: None,
+        facts: bumbledb_lmdb::benchmark::benchmark_rows(scale),
+        fact_source: None,
         sqlite_schema: r#"
             CREATE TABLE holder (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
             CREATE TABLE account (id INTEGER PRIMARY KEY, holder INTEGER NOT NULL, currency INTEGER NOT NULL);
@@ -2496,8 +2496,8 @@ fn sailors_dataset(scale: u64) -> Dataset {
             ],
         )
         .with_enum(EnumDescriptor::codes("Color", [1, 2, 3])),
-        rows: sailors_rows(sailors),
-        row_source: None,
+        facts: sailors_rows(sailors),
+        fact_source: None,
         sqlite_schema: r#"
             CREATE TABLE sailor (id INTEGER PRIMARY KEY, name TEXT NOT NULL, rating INTEGER NOT NULL, age INTEGER NOT NULL);
             CREATE TABLE boat (id INTEGER PRIMARY KEY, name TEXT NOT NULL, color INTEGER NOT NULL);
@@ -2642,8 +2642,8 @@ fn join_stress_dataset(scale: u64) -> Dataset {
             ],
         )
         .with_enum(EnumDescriptor::codes("K", 0..10)),
-        rows: join_stress_rows(n),
-        row_source: None,
+        facts: join_stress_rows(n),
+        fact_source: None,
         sqlite_schema: r#"
             CREATE TABLE a (id INTEGER PRIMARY KEY, k INTEGER NOT NULL);
             CREATE TABLE b (id INTEGER PRIMARY KEY, a INTEGER NOT NULL, k INTEGER NOT NULL);
@@ -2762,8 +2762,8 @@ fn tpch_dataset(scale: u64) -> Dataset {
                 )),
             ],
         ),
-        rows: tpch_rows(n),
-        row_source: None,
+        facts: tpch_rows(n),
+        fact_source: None,
         sqlite_schema: r#"
             CREATE TABLE customer (id INTEGER PRIMARY KEY, nation INTEGER NOT NULL);
             CREATE TABLE supplier (id INTEGER PRIMARY KEY, nation INTEGER NOT NULL);
@@ -3042,10 +3042,10 @@ fn build_tpch_supplier_nation_orders(schema: &SchemaDescriptor) -> QueryBuildRes
         .finish()
 }
 
-fn sailors_rows(sailors: u64) -> Vec<Row> {
-    let mut rows = Vec::new();
+fn sailors_rows(sailors: u64) -> Vec<Fact> {
+    let mut facts = Vec::new();
     for sid in 1..=sailors {
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Sailor",
             [
                 ("id", Value::Serial(sid)),
@@ -3057,7 +3057,7 @@ fn sailors_rows(sailors: u64) -> Vec<Row> {
     }
     let boats = (sailors / 4).max(10);
     for bid in 1..=boats {
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Boat",
             [
                 ("id", Value::Serial(bid)),
@@ -3072,7 +3072,7 @@ fn sailors_rows(sailors: u64) -> Vec<Row> {
             let bid = ((sid + offset * 7) % boats) + 1;
             let day = ((sid * 10 + offset) as i64) * 86_400;
             if seen.insert((sid, bid, day)) {
-                rows.push(Row::new(
+                facts.push(Fact::new(
                     "Reserve",
                     [
                         ("sailor", Value::Serial(sid)),
@@ -3083,20 +3083,20 @@ fn sailors_rows(sailors: u64) -> Vec<Row> {
             }
         }
     }
-    rows
+    facts
 }
 
-fn join_stress_rows(n: u64) -> Vec<Row> {
-    let mut rows = Vec::new();
+fn join_stress_rows(n: u64) -> Vec<Fact> {
+    let mut facts = Vec::new();
     for id in 1..=n {
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "A",
             [
                 ("id", Value::Serial(id)),
                 ("k", Value::Enum((id % 10) as u8)),
             ],
         ));
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "B",
             [
                 ("id", Value::Serial(id)),
@@ -3104,7 +3104,7 @@ fn join_stress_rows(n: u64) -> Vec<Row> {
                 ("k", Value::Enum((id % 10) as u8)),
             ],
         ));
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "C",
             [
                 ("id", Value::Serial(id)),
@@ -3112,7 +3112,7 @@ fn join_stress_rows(n: u64) -> Vec<Row> {
                 ("k", Value::Enum((id % 10) as u8)),
             ],
         ));
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "D",
             [
                 ("id", Value::Serial(id)),
@@ -3129,53 +3129,53 @@ fn join_stress_rows(n: u64) -> Vec<Row> {
             let b = ((a + offset) % n) + 1;
             let c = ((a + offset * 2) % n) + 1;
             if ab.insert((a, b)) {
-                rows.push(Row::new(
+                facts.push(Fact::new(
                     "EdgeAB",
                     [("a", Value::Serial(a)), ("b", Value::Serial(b))],
                 ));
             }
             if ac.insert((a, c)) {
-                rows.push(Row::new(
+                facts.push(Fact::new(
                     "EdgeAC",
                     [("a", Value::Serial(a)), ("c", Value::Serial(c))],
                 ));
             }
             if bc.insert((b, c)) {
-                rows.push(Row::new(
+                facts.push(Fact::new(
                     "EdgeBC",
                     [("b", Value::Serial(b)), ("c", Value::Serial(c))],
                 ));
             }
         }
     }
-    rows
+    facts
 }
 
-fn tpch_rows(n: u64) -> Vec<Row> {
-    let mut rows = Vec::new();
+fn tpch_rows(n: u64) -> Vec<Fact> {
+    let mut facts = Vec::new();
     for id in 1..=n {
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Customer",
             [
                 ("id", Value::Serial(id)),
                 ("nation", Value::U64((id % 5) + 1)),
             ],
         ));
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Supplier",
             [
                 ("id", Value::Serial(id)),
                 ("nation", Value::U64((id % 7) + 1)),
             ],
         ));
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Part",
             [
                 ("id", Value::Serial(id)),
                 ("brand", Value::U64((id % 11) + 1)),
             ],
         ));
-        rows.push(Row::new(
+        facts.push(Fact::new(
             "Orders",
             [
                 ("id", Value::Serial(id)),
@@ -3190,7 +3190,7 @@ fn tpch_rows(n: u64) -> Vec<Row> {
     let mut line = 1;
     for order in 1..=n {
         for offset in 0..4 {
-            rows.push(Row::new(
+            facts.push(Fact::new(
                 "LineItem",
                 [
                     ("id", Value::Serial(line)),
@@ -3211,44 +3211,55 @@ fn tpch_rows(n: u64) -> Vec<Row> {
             line += 1;
         }
     }
-    rows
+    facts
 }
 
-fn insert_ledger_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std::error::Error>> {
+fn insert_ledger_sqlite(
+    conn: &Connection,
+    facts: &[Fact],
+) -> Result<(), Box<dyn std::error::Error>> {
     let tx = conn.unchecked_transaction()?;
-    for row in rows {
-        match row.relation() {
+    for fact in facts {
+        match fact.relation() {
             "Holder" => {
                 tx.execute(
                     "INSERT INTO holder (id, name) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id")?, text(row, "name")?],
+                    rusqlite::params![id(fact, "id")?, text(fact, "name")?],
                 )?;
             }
             "Account" => {
                 tx.execute(
                     "INSERT INTO account (id, holder, currency) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id")?, rf(row, "holder")?, symbol(row, "currency")?],
+                    rusqlite::params![
+                        id(fact, "id")?,
+                        rf(fact, "holder")?,
+                        symbol(fact, "currency")?
+                    ],
                 )?;
             }
             "Instrument" => {
                 tx.execute(
                     "INSERT INTO instrument (id, symbol) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id")?, text(row, "symbol")?],
+                    rusqlite::params![id(fact, "id")?, text(fact, "symbol")?],
                 )?;
             }
             "JournalEntry" => {
                 tx.execute(
                     "INSERT INTO journal_entry (id, source, created_at) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id")?, rf(row, "source")?, ts(row, "created_at")?],
+                    rusqlite::params![
+                        id(fact, "id")?,
+                        rf(fact, "source")?,
+                        ts(fact, "created_at")?
+                    ],
                 )?;
             }
             "Posting" => {
-                tx.execute("INSERT INTO posting (id, entry, account, instrument, amount, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![id(row, "id")?, rf(row, "entry")?, rf(row, "account")?, rf(row, "instrument")?, dec(row, "amount")?, ts(row, "at")?])?;
+                tx.execute("INSERT INTO posting (id, entry, account, instrument, amount, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![id(fact, "id")?, rf(fact, "entry")?, rf(fact, "account")?, rf(fact, "instrument")?, dec(fact, "amount")?, ts(fact, "at")?])?;
             }
             "PostingTag" => {
                 tx.execute(
                     "INSERT INTO posting_tag (posting, tag) VALUES (?1, ?2)",
-                    rusqlite::params![rf(row, "posting")?, symbol(row, "tag")?],
+                    rusqlite::params![rf(fact, "posting")?, symbol(fact, "tag")?],
                 )?;
             }
             _ => {}
@@ -3260,32 +3271,32 @@ fn insert_ledger_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn s
 
 fn insert_sailors_sqlite(
     conn: &Connection,
-    rows: &[Row],
+    facts: &[Fact],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tx = conn.unchecked_transaction()?;
-    for row in rows {
-        match row.relation() {
+    for fact in facts {
+        match fact.relation() {
             "Sailor" => {
                 tx.execute(
                     "INSERT INTO sailor (id, name, rating, age) VALUES (?1, ?2, ?3, ?4)",
                     rusqlite::params![
-                        id(row, "id")?,
-                        text(row, "name")?,
-                        u64v(row, "rating")?,
-                        i64v(row, "age")?
+                        id(fact, "id")?,
+                        text(fact, "name")?,
+                        u64v(fact, "rating")?,
+                        i64v(fact, "age")?
                     ],
                 )?;
             }
             "Boat" => {
                 tx.execute(
                     "INSERT INTO boat (id, name, color) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id")?, text(row, "name")?, symbol(row, "color")?],
+                    rusqlite::params![id(fact, "id")?, text(fact, "name")?, symbol(fact, "color")?],
                 )?;
             }
             "Reserve" => {
                 tx.execute(
                     "INSERT INTO reserve (sailor, boat, day) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![rf(row, "sailor")?, rf(row, "boat")?, ts(row, "day")?],
+                    rusqlite::params![rf(fact, "sailor")?, rf(fact, "boat")?, ts(fact, "day")?],
                 )?;
             }
             _ => {}
@@ -3297,51 +3308,51 @@ fn insert_sailors_sqlite(
 
 fn insert_join_stress_sqlite(
     conn: &Connection,
-    rows: &[Row],
+    facts: &[Fact],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tx = conn.unchecked_transaction()?;
-    for row in rows {
-        match row.relation() {
+    for fact in facts {
+        match fact.relation() {
             "A" => {
                 tx.execute(
                     "INSERT INTO a (id, k) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id")?, symbol(row, "k")?],
+                    rusqlite::params![id(fact, "id")?, symbol(fact, "k")?],
                 )?;
             }
             "B" => {
                 tx.execute(
                     "INSERT INTO b (id, a, k) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id")?, rf(row, "a")?, symbol(row, "k")?],
+                    rusqlite::params![id(fact, "id")?, rf(fact, "a")?, symbol(fact, "k")?],
                 )?;
             }
             "C" => {
                 tx.execute(
                     "INSERT INTO c (id, b, k) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id")?, rf(row, "b")?, symbol(row, "k")?],
+                    rusqlite::params![id(fact, "id")?, rf(fact, "b")?, symbol(fact, "k")?],
                 )?;
             }
             "D" => {
                 tx.execute(
                     "INSERT INTO d (id, c, k) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id")?, rf(row, "c")?, symbol(row, "k")?],
+                    rusqlite::params![id(fact, "id")?, rf(fact, "c")?, symbol(fact, "k")?],
                 )?;
             }
             "EdgeAB" => {
                 tx.execute(
                     "INSERT INTO edge_ab (a, b) VALUES (?1, ?2)",
-                    rusqlite::params![rf(row, "a")?, rf(row, "b")?],
+                    rusqlite::params![rf(fact, "a")?, rf(fact, "b")?],
                 )?;
             }
             "EdgeAC" => {
                 tx.execute(
                     "INSERT INTO edge_ac (a, c) VALUES (?1, ?2)",
-                    rusqlite::params![rf(row, "a")?, rf(row, "c")?],
+                    rusqlite::params![rf(fact, "a")?, rf(fact, "c")?],
                 )?;
             }
             "EdgeBC" => {
                 tx.execute(
                     "INSERT INTO edge_bc (b, c) VALUES (?1, ?2)",
-                    rusqlite::params![rf(row, "b")?, rf(row, "c")?],
+                    rusqlite::params![rf(fact, "b")?, rf(fact, "c")?],
                 )?;
             }
             _ => {}
@@ -3351,36 +3362,40 @@ fn insert_join_stress_sqlite(
     Ok(())
 }
 
-fn insert_tpch_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std::error::Error>> {
+fn insert_tpch_sqlite(conn: &Connection, facts: &[Fact]) -> Result<(), Box<dyn std::error::Error>> {
     let tx = conn.unchecked_transaction()?;
-    for row in rows {
-        match row.relation() {
+    for fact in facts {
+        match fact.relation() {
             "Customer" => {
                 tx.execute(
                     "INSERT INTO customer (id, nation) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id")?, symbol(row, "nation")?],
+                    rusqlite::params![id(fact, "id")?, symbol(fact, "nation")?],
                 )?;
             }
             "Supplier" => {
                 tx.execute(
                     "INSERT INTO supplier (id, nation) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id")?, symbol(row, "nation")?],
+                    rusqlite::params![id(fact, "id")?, symbol(fact, "nation")?],
                 )?;
             }
             "Part" => {
                 tx.execute(
                     "INSERT INTO part (id, brand) VALUES (?1, ?2)",
-                    rusqlite::params![id(row, "id")?, symbol(row, "brand")?],
+                    rusqlite::params![id(fact, "id")?, symbol(fact, "brand")?],
                 )?;
             }
             "Orders" => {
                 tx.execute(
                     "INSERT INTO orders (id, customer, order_date) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![id(row, "id")?, rf(row, "customer")?, ts(row, "order_date")?],
+                    rusqlite::params![
+                        id(fact, "id")?,
+                        rf(fact, "customer")?,
+                        ts(fact, "order_date")?
+                    ],
                 )?;
             }
             "LineItem" => {
-                tx.execute("INSERT INTO lineitem (id, ord, part, supplier, quantity, extended_price, ship_date) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", rusqlite::params![id(row, "id")?, rf(row, "order")?, rf(row, "part")?, rf(row, "supplier")?, i64v(row, "quantity")?, dec(row, "extended_price")?, ts(row, "ship_date")?])?;
+                tx.execute("INSERT INTO lineitem (id, ord, part, supplier, quantity, extended_price, ship_date) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", rusqlite::params![id(fact, "id")?, rf(fact, "order")?, rf(fact, "part")?, rf(fact, "supplier")?, i64v(fact, "quantity")?, dec(fact, "extended_price")?, ts(fact, "ship_date")?])?;
             }
             _ => {}
         }
@@ -3389,65 +3404,68 @@ fn insert_tpch_sqlite(conn: &Connection, rows: &[Row]) -> Result<(), Box<dyn std
     Ok(())
 }
 
-pub(crate) fn id(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
-    match required_value(row, field)? {
+pub(crate) fn id(fact: &Fact, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    match required_value(fact, field)? {
         Value::Serial(v) => Ok(*v as i64),
         other => Err(unexpected_value(field, "id", other)),
     }
 }
 
-pub(crate) fn rf(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
-    match required_value(row, field)? {
+pub(crate) fn rf(fact: &Fact, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    match required_value(fact, field)? {
         Value::Serial(v) => Ok(*v as i64),
         other => Err(unexpected_value(field, "ref", other)),
     }
 }
 
-pub(crate) fn symbol(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
-    match required_value(row, field)? {
+pub(crate) fn symbol(fact: &Fact, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    match required_value(fact, field)? {
         Value::Enum(v) => Ok(i64::from(*v)),
         Value::U64(v) => Ok(*v as i64),
         other => Err(unexpected_value(field, "symbol", other)),
     }
 }
 
-pub(crate) fn dec(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
-    match required_value(row, field)? {
+pub(crate) fn dec(fact: &Fact, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    match required_value(fact, field)? {
         Value::Decimal(DecimalRaw(v)) => Ok(*v as i64),
         other => Err(unexpected_value(field, "decimal", other)),
     }
 }
 
-pub(crate) fn ts(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
-    match required_value(row, field)? {
+pub(crate) fn ts(fact: &Fact, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    match required_value(fact, field)? {
         Value::Timestamp(TimestampMicros(v)) => Ok(*v),
         other => Err(unexpected_value(field, "timestamp", other)),
     }
 }
 
-pub(crate) fn u64v(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
-    match required_value(row, field)? {
+pub(crate) fn u64v(fact: &Fact, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    match required_value(fact, field)? {
         Value::U64(v) => Ok(*v as i64),
         other => Err(unexpected_value(field, "u64", other)),
     }
 }
 
-pub(crate) fn i64v(row: &Row, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
-    match required_value(row, field)? {
+pub(crate) fn i64v(fact: &Fact, field: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    match required_value(fact, field)? {
         Value::I64(v) => Ok(*v),
         other => Err(unexpected_value(field, "i64", other)),
     }
 }
 
-pub(crate) fn text(row: &Row, field: &str) -> Result<String, Box<dyn std::error::Error>> {
-    match required_value(row, field)? {
+pub(crate) fn text(fact: &Fact, field: &str) -> Result<String, Box<dyn std::error::Error>> {
+    match required_value(fact, field)? {
         Value::String(v) => Ok(v.clone()),
         other => Err(unexpected_value(field, "string", other)),
     }
 }
 
-fn required_value<'a>(row: &'a Row, field: &str) -> Result<&'a Value, Box<dyn std::error::Error>> {
-    row.value(field)
+fn required_value<'a>(
+    fact: &'a Fact,
+    field: &str,
+) -> Result<&'a Value, Box<dyn std::error::Error>> {
+    fact.value(field)
         .ok_or_else(|| bench_error(format!("missing field {field}")))
 }
 
@@ -3505,7 +3523,7 @@ mod tests {
         let result = BenchmarkRunResult {
             dataset: "joinstress",
             query: "triangle_count",
-            rows: 1,
+            facts: 1,
             correctness_mode: "aggregate-values".to_owned(),
             bumbledb_correctness_execution: Duration::from_micros(20),
             sqlite_correctness_execution: Duration::from_micros(12),
@@ -3546,7 +3564,7 @@ mod tests {
             materialized_values: 1,
             dictionary_reverse_lookups: 0,
             counters: PlanCounters {
-                output_rows: 1,
+                output_facts: 1,
                 materialized_output_values: 1,
                 ..PlanCounters::default()
             },
@@ -3568,13 +3586,13 @@ mod tests {
             sorted_trie_cache_misses: 1,
             sorted_trie_builds: 1,
             atom_temp_relation_builds: 1,
-            hash_rows_returned: 1,
+            hash_facts_returned: 1,
             hash_distinct_emits: 1,
             direct_kernel_probes: 0,
-            direct_kernel_rows: 0,
+            direct_kernel_facts: 0,
             direct_kernel_predicates: 0,
             query_image_relation_count: 1,
-            query_image_row_count: 3,
+            query_image_fact_count: 3,
             query_image_encoded_column_bytes: 128,
             query_image_sorted_trie_bytes: 0,
             query_image_hash_trie_bytes: 0,
@@ -3611,7 +3629,7 @@ mod tests {
         let result = BenchmarkRunResult {
             dataset: "ledger",
             query: "tag_lookup_join",
-            rows: 2,
+            facts: 2,
             correctness_mode: "result-set".to_owned(),
             bumbledb_correctness_execution: Duration::from_micros(21),
             sqlite_correctness_execution: Duration::from_micros(10),
@@ -3631,7 +3649,7 @@ mod tests {
             chosen_plan: "pure_lftj".to_owned(),
             runtime_kind: "Lftj".to_owned(),
             plan_family: "FreeJoinLftj".to_owned(),
-            compare_mode: "rows".to_owned(),
+            compare_mode: "facts".to_owned(),
             cache_mode: "prepared-plan".to_owned(),
             static_empty_cache_hits: 0,
             query_image_sample_cache_hits: 1,
@@ -3670,13 +3688,13 @@ mod tests {
             sorted_trie_cache_misses: 0,
             sorted_trie_builds: 0,
             atom_temp_relation_builds: 0,
-            hash_rows_returned: 2,
+            hash_facts_returned: 2,
             hash_distinct_emits: 2,
             direct_kernel_probes: 0,
-            direct_kernel_rows: 0,
+            direct_kernel_facts: 0,
             direct_kernel_predicates: 0,
             query_image_relation_count: 1,
-            query_image_row_count: 2,
+            query_image_fact_count: 2,
             query_image_encoded_column_bytes: 1,
             query_image_sorted_trie_bytes: 0,
             query_image_hash_trie_bytes: 0,
@@ -3690,7 +3708,7 @@ mod tests {
         assert!(json.contains("\"dataset\":\"ledger\""));
         assert!(json.contains("\"runtime\":\"Lftj\""));
         assert!(json.contains("\"plan_family\":\"FreeJoinLftj\""));
-        assert!(json.contains("\"compare_mode\":\"rows\""));
+        assert!(json.contains("\"compare_mode\":\"facts\""));
         assert!(json.contains("\"correctness_mode\":\"result-set\""));
         assert!(json.contains("\"cache_mode\":\"prepared-plan\""));
         assert!(json.contains("\"query_image_cache_hit\":true"));
@@ -3708,9 +3726,9 @@ mod tests {
         assert!(json.contains("\"hash_execute_us\":4"));
         assert!(json.contains("\"unaccounted_us\":7"));
         assert!(json.contains("\"sink_emit_calls\""));
-        assert!(json.contains("\"encoded_project_rows_seen\""));
+        assert!(json.contains("\"encoded_project_facts_seen\""));
         assert!(json.contains("\"lftj_next_calls\""));
-        assert!(json.contains("\"direct_chain_step_rows\""));
+        assert!(json.contains("\"direct_chain_step_facts\""));
         assert!(json.contains("\"allocations\""));
         assert!(json.contains("\"phases\""));
         assert!(json.contains("\"size_class_allocs\""));
