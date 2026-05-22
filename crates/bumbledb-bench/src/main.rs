@@ -1624,7 +1624,7 @@ fn typed_query_has_count_aggregate(query: &TypedQuery) -> bool {
         matches!(
             term,
             TypedFindTerm::Aggregate {
-                function: AggregateFunction::Count,
+                function: AggregateFunction::CountDomain | AggregateFunction::CountDistinct,
                 ..
             }
         )
@@ -2405,7 +2405,7 @@ fn ledger_dataset(scale: u64) -> Dataset {
                     ),
                 ],
                 sqlite: r#"
-                    SELECT p.id, p.amount FROM posting p
+                    SELECT DISTINCT p.id, p.amount FROM posting p
                     JOIN account a ON a.id = p.account
                     WHERE a.holder = ?1 AND p.at >= ?2 AND p.at < ?3
                 "#,
@@ -2432,7 +2432,7 @@ fn ledger_dataset(scale: u64) -> Dataset {
                 build: build_ledger_tag_lookup_join,
                 inputs: vec![("tag", Value::Enum(1))],
                 sqlite: r#"
-                    SELECT p.id, p.account FROM posting_tag t
+                    SELECT DISTINCT p.id, p.account FROM posting_tag t
                     JOIN posting p ON p.id = t.posting
                     WHERE t.tag = ?1
                 "#,
@@ -2532,7 +2532,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
                     ("start", Value::Timestamp(TimestampMicros(0))),
                     ("end", Value::Timestamp(TimestampMicros(10_000_000))),
                 ],
-                sqlite: "SELECT boat, day FROM reserve WHERE sailor = ?1 AND day >= ?2 AND day < ?3",
+                sqlite: "SELECT DISTINCT boat, day FROM reserve WHERE sailor = ?1 AND day >= ?2 AND day < ?3",
                 sqlite_params: vec![
                     SqlParam::I64(1),
                     SqlParam::I64(0),
@@ -2667,7 +2667,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                 name: "chain4_from_a",
                 build: build_joinstress_chain4_from_a,
                 inputs: vec![("a", Value::Serial(1))],
-                sqlite: "SELECT d.id FROM a JOIN b ON b.a = a.id JOIN c ON c.b = b.id JOIN d ON d.c = c.id WHERE a.id = ?1",
+                sqlite: "SELECT DISTINCT d.id FROM a JOIN b ON b.a = a.id JOIN c ON c.b = b.id JOIN d ON d.c = c.id WHERE a.id = ?1",
                 sqlite_params: vec![SqlParam::I64(1)],
             },
             BenchQuery {
@@ -2806,7 +2806,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                 build: build_tpch_supplier_nation_orders,
                 inputs: vec![("nation", Value::U64(2))],
                 sqlite: r#"
-                    SELECT l.id, o.id FROM supplier s
+                    SELECT DISTINCT l.id, o.id FROM supplier s
                     JOIN lineitem l ON l.supplier = s.id
                     JOIN orders o ON o.id = l.ord
                     WHERE s.nation = ?1
@@ -2862,7 +2862,7 @@ fn build_ledger_balances_by_instrument(schema: &SchemaDescriptor) -> QueryBuildR
         .input("holder", "holder")?
         .done()
         .find_var("instrument")?
-        .find_aggregate(AggregateFunction::Sum, "amount")?
+        .find_sum_over("amount", ["posting"])?
         .finish()
 }
 
@@ -2987,7 +2987,7 @@ fn build_joinstress_triangle_count(schema: &SchemaDescriptor) -> QueryBuildResul
         .var("b", "b")?
         .var("c", "c")?
         .done()
-        .find_aggregate(AggregateFunction::Count, "a")?
+        .find_count_domain(["a"])?
         .finish()
 }
 
@@ -3018,7 +3018,7 @@ fn build_tpch_revenue_by_customer_range(schema: &SchemaDescriptor) -> QueryBuild
             OperandRef::input("end"),
         )?
         .find_var("customer")?
-        .find_aggregate(AggregateFunction::Sum, "price")?
+        .find_sum_over("price", ["line"])?
         .finish()
 }
 

@@ -12,7 +12,18 @@ pub fn sorted_rows(mut rows: Vec<Vec<Value>>) -> Vec<Vec<Value>> {
 
 /// Asserts two query outputs are equal under set semantics.
 pub fn assert_same_rows(actual: Vec<Vec<Value>>, expected: Vec<Vec<Value>>) {
-    assert_eq!(sorted_rows(actual), sorted_rows(expected));
+    assert_eq!(row_set("actual", actual), row_set("expected", expected));
+}
+
+fn row_set(label: &str, rows: Vec<Vec<Value>>) -> BTreeSet<Vec<Value>> {
+    let row_count = rows.len();
+    let set = rows.into_iter().collect::<BTreeSet<_>>();
+    assert_eq!(
+        set.len(),
+        row_count,
+        "{label} contains duplicate rows under set semantics"
+    );
+    set
 }
 
 /// Scans public current access paths and verifies visible invariants.
@@ -96,4 +107,26 @@ pub fn execute_sorted(
         env.read(|txn| txn.execute_query(schema, query, inputs))?
             .rows,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assert_same_rows_ignores_order() {
+        assert_same_rows(
+            vec![vec![Value::U64(2)], vec![Value::U64(1)]],
+            vec![vec![Value::U64(1)], vec![Value::U64(2)]],
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "actual contains duplicate rows under set semantics")]
+    fn assert_same_rows_rejects_duplicate_actual_rows() {
+        assert_same_rows(
+            vec![vec![Value::U64(1)], vec![Value::U64(1)]],
+            vec![vec![Value::U64(1)]],
+        );
+    }
 }

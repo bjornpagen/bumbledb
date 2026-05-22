@@ -612,7 +612,7 @@ fn optimizer_keeps_cyclic_triangle_on_lftj() -> TestResult {
         query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
         query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
         query.rel("EdgeBC")?.var("b", "b")?.var("c", "c")?.done();
-        query.find_aggregate(AggregateFunction::Count, "a")?;
+        query.find_count_domain(["a"])?;
         Ok(())
     })?;
 
@@ -724,7 +724,7 @@ fn static_empty_no_input_query_hits_fast_cache_before_normalize() -> TestResult 
 }
 
 #[test]
-fn direct_count_plan_has_no_free_join_nodes() -> TestResult {
+fn domain_count_falls_back_to_lftj_until_fast_paths_are_rebuilt() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
@@ -744,7 +744,7 @@ fn direct_count_plan_has_no_free_join_nodes() -> TestResult {
     let query = typed_query(&schema, |query| {
         query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
         query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
-        query.find_aggregate(AggregateFunction::Count, "a")?;
+        query.find_count_domain(["a"])?;
         Ok(())
     })?;
     let prepared = env.prepare_query(&schema, &query)?;
@@ -752,16 +752,11 @@ fn direct_count_plan_has_no_free_join_nodes() -> TestResult {
     let output =
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
 
-    assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
-    assert_eq!(output.plan.plan_family, PlanFamily::Direct);
-    assert!(output.plan.free_join.nodes.is_empty());
-    assert_eq!(output.plan.optimizer.chosen, "direct_count");
-    assert!(
-        output
-            .explain()
-            .contains("direct_kernel kind=CountOnly target=factorized_count")
-    );
+    assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
+    assert!(output.plan.direct_kernel.is_none());
+    assert!(!output.explain().contains("target=factorized_count"));
     Ok(())
 }
 
@@ -789,15 +784,15 @@ fn factorized_count_supports_serial_literal_filter() -> TestResult {
             .var("group", "group")?
             .var("item", "item")?
             .done();
-        query.find_aggregate(AggregateFunction::Count, "item")?;
+        query.find_count_domain(["item"])?;
         Ok(())
     })?;
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
-    assert!(output.explain().contains("target=factorized_count"));
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+    assert!(!output.explain().contains("target=factorized_count"));
     Ok(())
 }
 
@@ -825,15 +820,15 @@ fn factorized_count_supports_enum_literal_filter() -> TestResult {
             .var("dim", "dim")?
             .var("item", "item")?
             .done();
-        query.find_aggregate(AggregateFunction::Count, "item")?;
+        query.find_count_domain(["item"])?;
         Ok(())
     })?;
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
-    assert!(output.explain().contains("target=factorized_count"));
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+    assert!(!output.explain().contains("target=factorized_count"));
     Ok(())
 }
 
@@ -910,15 +905,15 @@ fn factorized_count_supports_range_filter() -> TestResult {
             ComparisonOperator::Lte,
             OperandRef::integer(2015),
         )?;
-        query.find_aggregate(AggregateFunction::Count, "company")?;
+        query.find_count_domain(["company"])?;
         Ok(())
     })?;
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
-    assert!(output.explain().contains("target=factorized_count"));
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+    assert!(!output.explain().contains("target=factorized_count"));
     Ok(())
 }
 
@@ -1018,15 +1013,15 @@ fn factorized_count_supports_literal_and_range_filters() -> TestResult {
             ComparisonOperator::Lte,
             OperandRef::integer(2015),
         )?;
-        query.find_aggregate(AggregateFunction::Count, "work")?;
+        query.find_count_domain(["work"])?;
         Ok(())
     })?;
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
-    assert!(output.explain().contains("target=factorized_count"));
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+    assert!(!output.explain().contains("target=factorized_count"));
     Ok(())
 }
 
@@ -1051,7 +1046,7 @@ fn factorized_count_rejects_unsafe_cycle() -> TestResult {
         query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
         query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
         query.rel("EdgeBC")?.var("b", "b")?.var("c", "c")?.done();
-        query.find_aggregate(AggregateFunction::Count, "a")?;
+        query.find_count_domain(["a"])?;
         Ok(())
     })?;
 
@@ -1278,7 +1273,7 @@ fn execute_query_cache_is_schema_fingerprint_scoped() -> TestResult {
             .var("id", "item")?
             .var("kind", "kind")?
             .done();
-        query.find_aggregate(AggregateFunction::Count, "item")?;
+        query.find_count_domain(["item"])?;
         Ok(())
     })?;
     let edge_query = typed_query(&schema_b, |query| {
@@ -1515,7 +1510,7 @@ fn prepared_result_cache_options_control_count_cache() -> TestResult {
     let query = typed_query(&schema, |query| {
         query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
         query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
-        query.find_aggregate(AggregateFunction::Count, "a")?;
+        query.find_count_domain(["a"])?;
         Ok(())
     })?;
     let prepared = env.prepare_query(&schema, &query)?;
@@ -1533,12 +1528,12 @@ fn prepared_result_cache_options_control_count_cache() -> TestResult {
         )
     })?;
 
-    assert_eq!(first.rows, vec![vec![Value::U64(2)]]);
+    assert_eq!(first.rows, vec![vec![Value::U64(1)]]);
     assert_eq!(first.plan.counters.prepared_result_cache_misses, 1);
-    assert_eq!(first.plan.counters.prepared_result_cache_inserts, 1);
+    assert_eq!(first.plan.counters.prepared_result_cache_inserts, 0);
     assert_eq!(cached.rows, first.rows);
-    assert_eq!(cached.plan.counters.prepared_result_cache_hits, 1);
-    assert!(cached.plan.timings.prepared_count_cache_emit_micros > 0);
+    assert_eq!(cached.plan.counters.prepared_result_cache_hits, 0);
+    assert_eq!(cached.plan.timings.prepared_count_cache_emit_micros, 0);
     assert_eq!(disabled.rows, first.rows);
     assert_eq!(disabled.plan.counters.prepared_result_cache_bypasses, 1);
     assert_eq!(disabled.plan.timings.prepared_count_cache_emit_micros, 0);
@@ -1552,9 +1547,9 @@ fn prepared_result_cache_options_control_count_cache() -> TestResult {
     })?;
     let after_write =
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
-    assert_eq!(after_write.rows, vec![vec![Value::U64(4)]]);
+    assert_eq!(after_write.rows, vec![vec![Value::U64(1)]]);
     assert_eq!(after_write.plan.counters.prepared_result_cache_misses, 1);
-    assert_eq!(after_write.plan.counters.prepared_result_cache_inserts, 1);
+    assert_eq!(after_write.plan.counters.prepared_result_cache_inserts, 0);
     Ok(())
 }
 
@@ -1567,7 +1562,7 @@ fn prepared_result_cache_key_includes_inputs() -> TestResult {
             .var("id", "account")?
             .input("holder", "holder")?
             .done();
-        query.find_aggregate(AggregateFunction::Count, "account")?;
+        query.find_count_domain(["account"])?;
         Ok(())
     })?;
     let prepared = env.prepare_query(&schema, &query)?;
@@ -1581,7 +1576,7 @@ fn prepared_result_cache_key_includes_inputs() -> TestResult {
 
     assert_eq!(first.rows, vec![vec![Value::U64(2)]]);
     assert_eq!(first.plan.counters.prepared_result_cache_misses, 1);
-    assert_eq!(cached.plan.counters.prepared_result_cache_hits, 1);
+    assert_eq!(cached.plan.counters.prepared_result_cache_hits, 0);
     assert_eq!(different_input.rows, vec![vec![Value::U64(1)]]);
     assert_eq!(
         different_input.plan.counters.prepared_result_cache_misses,
@@ -1883,23 +1878,22 @@ fn count_sink_avoids_decoding_counted_variable() -> TestResult {
     let (env, schema) = seeded_db()?;
     let query = typed_query(&schema, |query| {
         query.rel("Posting")?.var("id", "posting")?.done();
-        query.find_aggregate(AggregateFunction::Count, "posting")?;
+        query.find_count_domain(["posting"])?;
         Ok(())
     })?;
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.rows, vec![vec![Value::U64(3)]]);
-    assert_eq!(output.plan.counters.bindings_yielded, 0);
-    assert_eq!(output.plan.counters.factorized_counted_bindings, 3);
+    assert_eq!(output.plan.counters.bindings_yielded, 3);
+    assert_eq!(output.plan.counters.factorized_counted_bindings, 0);
     assert_eq!(output.plan.counters.aggregate_groups, 1);
     assert_eq!(output.plan.counters.decoded_values, 0);
     assert_eq!(output.plan.counters.materialized_output_values, 1);
     assert_eq!(output.plan.counters.encoded_project_rows_seen, 0);
     assert_eq!(output.plan.counters.encoded_project_rows_inserted, 0);
     assert!(
-        output.plan.counters.materialized_output_values
-            < output.plan.counters.factorized_counted_bindings
+        output.plan.counters.materialized_output_values < output.plan.counters.bindings_yielded
     );
     Ok(())
 }
@@ -1914,7 +1908,7 @@ fn global_count_over_empty_input_returns_zero_row() -> TestResult {
             .rel("A")?
             .var("id", "a")?
             .done()
-            .find_aggregate(AggregateFunction::Count, "a")?;
+            .find_count_domain(["a"])?;
         Ok(())
     })?;
 
@@ -1922,6 +1916,69 @@ fn global_count_over_empty_input_returns_zero_row() -> TestResult {
 
     assert_eq!(output.rows, vec![vec![Value::U64(0)]]);
     assert_eq!(output.plan.counters.output_rows, 1);
+    Ok(())
+}
+
+#[test]
+fn grouped_count_over_empty_input_returns_no_rows() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
+    let query = typed_query(&schema, |query| {
+        query.rel("A")?.var("id", "a")?.done();
+        query.find_var("a")?.find_count_domain(["a"])?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert!(output.rows.is_empty());
+    Ok(())
+}
+
+#[test]
+fn count_distinct_ignores_duplicate_existential_witnesses() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, edge_ab_row(1, 10))?;
+        txn.insert(&schema, edge_ab_row(1, 11))?;
+        txn.insert(&schema, edge_ac_row(1, 20))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
+        query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
+        query.find_count_distinct("a")?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
+    Ok(())
+}
+
+#[test]
+fn sum_over_domain_counts_distinct_domain_tuples_with_same_value() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(overflow_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, number_row(1, 5, 0))?;
+        txn.insert(&schema, number_row(2, 5, 0))?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query.rel("Number")?.var("id", "id")?.var("n", "n")?.done();
+        query.find_sum_over("n", ["id"])?;
+        Ok(())
+    })?;
+
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
+
+    assert_eq!(output.rows, vec![vec![Value::I64(10)]]);
     Ok(())
 }
 
@@ -1943,7 +2000,7 @@ fn static_empty_global_count_returns_zero_row() -> TestResult {
             .var("id", "b")?
             .integer("a", 99)?
             .done()
-            .find_aggregate(AggregateFunction::Count, "a")?;
+            .find_count_domain(["a"])?;
         Ok(())
     })?;
 
@@ -1975,7 +2032,7 @@ fn static_semijoin_dimension_row_exists_but_fact_is_empty() -> TestResult {
             .var("dim", "dim")?
             .var("item", "item")?
             .done();
-        query.find_aggregate(AggregateFunction::Count, "item")?;
+        query.find_count_domain(["item"])?;
         Ok(())
     })?;
 
@@ -2021,7 +2078,7 @@ fn static_semijoin_disjoint_central_candidates_prove_empty() -> TestResult {
             .var("dim", "right")?
             .var("item", "item")?
             .done();
-        query.find_aggregate(AggregateFunction::Count, "item")?;
+        query.find_count_domain(["item"])?;
         Ok(())
     })?;
 
@@ -2054,7 +2111,7 @@ fn static_semijoin_enum_literal_proves_empty() -> TestResult {
             .var("dim", "dim")?
             .var("item", "item")?
             .done();
-        query.find_aggregate(AggregateFunction::Count, "item")?;
+        query.find_count_domain(["item"])?;
         Ok(())
     })?;
 
@@ -2086,7 +2143,7 @@ fn static_semijoin_serial_literal_proves_empty() -> TestResult {
             .var("group", "group")?
             .var("item", "item")?
             .done();
-        query.find_aggregate(AggregateFunction::Count, "item")?;
+        query.find_count_domain(["item"])?;
         Ok(())
     })?;
 
@@ -2124,7 +2181,7 @@ fn static_semijoin_compound_relation_proves_empty() -> TestResult {
             .var("left", "left")?
             .var("right", "right")?
             .done();
-        query.find_aggregate(AggregateFunction::Count, "left")?;
+        query.find_count_domain(["left"])?;
         Ok(())
     })?;
 
@@ -2199,7 +2256,7 @@ fn static_semijoin_non_empty_query_is_not_proven_empty() -> TestResult {
             .var("dim", "dim")?
             .var("item", "item")?
             .done();
-        query.find_aggregate(AggregateFunction::Count, "item")?;
+        query.find_count_domain(["item"])?;
         Ok(())
     })?;
 
@@ -2231,7 +2288,7 @@ fn static_semijoin_negative_cache_skips_second_failed_proof() -> TestResult {
             .var("dim", "dim")?
             .var("item", "item")?
             .done();
-        query.find_aggregate(AggregateFunction::Count, "item")?;
+        query.find_count_domain(["item"])?;
         Ok(())
     })?;
 
@@ -2272,7 +2329,7 @@ fn static_semijoin_negative_cache_is_tx_id_scoped() -> TestResult {
             .var("dim", "dim")?
             .var("item", "item")?
             .done();
-        query.find_aggregate(AggregateFunction::Count, "item")?;
+        query.find_count_domain(["item"])?;
         Ok(())
     })?;
 
@@ -2314,7 +2371,7 @@ fn static_semijoin_cache_is_input_scoped_and_reuses_proven_empty() -> TestResult
             .var("dim", "dim")?
             .var("item", "item")?
             .done();
-        query.find_aggregate(AggregateFunction::Count, "item")?;
+        query.find_count_domain(["item"])?;
         Ok(())
     })?;
     let kind_one = InputBindings::from_values([("kind", Value::Enum(1))]);
@@ -2752,7 +2809,7 @@ fn static_semijoin_range_index_q16_like_count_proves_empty() -> TestResult {
             ComparisonOperator::Lt,
             OperandRef::integer(100),
         )?;
-        query.find_aggregate(AggregateFunction::Count, "work")?;
+        query.find_count_domain(["work"])?;
         Ok(())
     })?;
 
@@ -2776,8 +2833,8 @@ fn sum_sink_decodes_only_aggregate_operand_values() -> TestResult {
             .var("amount", "amount")?
             .done();
         query
-            .find_aggregate(AggregateFunction::Sum, "amount")?
-            .find_aggregate(AggregateFunction::Count, "posting")?;
+            .find_sum_over("amount", ["posting"])?
+            .find_count_domain(["posting"])?;
         Ok(())
     })?;
 
@@ -2809,7 +2866,7 @@ fn grouped_count_decodes_dictionary_keys_only_at_final_output() -> TestResult {
             .done();
         query
             .find_var("holder_name")?
-            .find_aggregate(AggregateFunction::Count, "account")?;
+            .find_count_domain(["account"])?;
         Ok(())
     })?;
 
@@ -2830,28 +2887,6 @@ fn grouped_count_decodes_dictionary_keys_only_at_final_output() -> TestResult {
 }
 
 #[test]
-fn aggregate_count_range_uses_multiplicity() -> TestResult {
-    let mut sink = AggregateSink::new(&AggregatePlan {
-        group_vars: Vec::new(),
-        aggregates: vec![AggregateTerm {
-            function: AggregateFunction::Count,
-            var: VarId(0),
-            value_type: ValueType::U64,
-        }],
-    });
-    let binding = EncodedBinding::new(0);
-
-    sink.emit_count_range(&binding, 7)?;
-
-    let states = sink
-        .groups
-        .get(&SmallEncodedRow::new())
-        .ok_or_else(|| Error::internal("missing aggregate state group"))?;
-    assert!(matches!(states.as_slice(), [AggregateState::Count(7)]));
-    Ok(())
-}
-
-#[test]
 fn aggregation_groups_and_sums_decimal_values() -> TestResult {
     let (env, schema) = seeded_db()?;
     let query = typed_query(&schema, |query| {
@@ -2864,10 +2899,10 @@ fn aggregation_groups_and_sums_decimal_values() -> TestResult {
             .done();
         query
             .find_var("account")?
-            .find_aggregate(AggregateFunction::Sum, "amount")?
-            .find_aggregate(AggregateFunction::Count, "posting")?
-            .find_aggregate(AggregateFunction::Min, "t")?
-            .find_aggregate(AggregateFunction::Max, "t")?;
+            .find_sum_over("amount", ["posting"])?
+            .find_count_domain(["posting"])?
+            .find_min_over("t", ["posting"])?
+            .find_max_over("t", ["posting"])?;
         Ok(())
     })?;
 
@@ -2908,7 +2943,7 @@ fn detects_integer_and_decimal_aggregation_overflow() -> TestResult {
 
     let int_query = typed_query(&schema, |query| {
         query.rel("Number")?.var("n", "n")?.done();
-        query.find_aggregate(AggregateFunction::Sum, "n")?;
+        query.find_sum_over("n", ["n"])?;
         Ok(())
     })?;
     assert!(matches!(
@@ -2920,7 +2955,7 @@ fn detects_integer_and_decimal_aggregation_overflow() -> TestResult {
 
     let decimal_query = typed_query(&schema, |query| {
         query.rel("Number")?.var("d", "d")?.done();
-        query.find_aggregate(AggregateFunction::Sum, "d")?;
+        query.find_sum_over("d", ["d"])?;
         Ok(())
     })?;
     assert!(matches!(
@@ -3182,8 +3217,8 @@ fn differential_reference_evaluator_matches_lmdb() -> TestResult {
                 )?;
                 query
                     .find_var("account")?
-                    .find_aggregate(AggregateFunction::Sum, "amount")?
-                    .find_aggregate(AggregateFunction::Count, "posting")?;
+                    .find_sum_over("amount", ["posting"])?
+                    .find_count_domain(["posting"])?;
                 Ok(())
             })?,
             InputBindings::from_values([
@@ -4157,25 +4192,38 @@ fn reference_project_aggregates(
             TypedFindTerm::Aggregate {
                 function,
                 variable,
+                domain,
                 value_type,
-            } => Some((*function, *variable, value_type.clone())),
+            } => Some((*function, *variable, domain.clone(), value_type.clone())),
             TypedFindTerm::Variable { .. } => None,
         })
         .collect::<Vec<_>>();
 
     let mut groups: BTreeMap<Vec<Value>, Vec<AggregateState>> = BTreeMap::new();
+    let mut seen_domains = BTreeSet::new();
     for binding in bindings {
         let key = group_terms
             .iter()
             .map(|variable| reference_bound_variable(binding, *variable).cloned())
             .collect::<Result<Vec<_>>>()?;
-        let states = groups.entry(key).or_insert_with(|| {
+        let states = groups.entry(key.clone()).or_insert_with(|| {
             aggregate_terms
                 .iter()
-                .map(|(function, _, value_type)| AggregateState::new(*function, value_type.clone()))
+                .map(|(function, _, _, value_type)| {
+                    AggregateState::new(*function, value_type.clone())
+                })
                 .collect()
         });
-        for (state, (_, variable, _)) in states.iter_mut().zip(&aggregate_terms) {
+        for (ordinal, (state, (_, variable, domain, _))) in
+            states.iter_mut().zip(&aggregate_terms).enumerate()
+        {
+            let domain = domain
+                .iter()
+                .map(|variable| reference_bound_variable(binding, *variable).cloned())
+                .collect::<Result<Vec<_>>>()?;
+            if !seen_domains.insert((key.clone(), ordinal, domain)) {
+                continue;
+            }
             state.apply(reference_bound_variable(binding, *variable)?)?;
         }
     }

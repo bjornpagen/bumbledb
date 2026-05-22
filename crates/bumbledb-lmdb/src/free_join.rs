@@ -134,8 +134,11 @@ pub struct AggregatePlan {
 pub struct AggregateTerm {
     /// Aggregate function.
     pub function: AggregateFunction,
-    /// Variable being aggregated.
+    /// Measured variable. For domain count this is the first domain variable and
+    /// is retained only for diagnostics/result column labeling.
     pub var: VarId,
+    /// Distinct set domain for this aggregate.
+    pub domain_vars: Vec<VarId>,
     /// Logical aggregate operand type.
     pub value_type: ValueType,
 }

@@ -308,27 +308,6 @@ enum InternMode {
 }
 
 impl WriteTxn<'_> {
-    /// Allocates a generated ID for a relation and advances its persisted counter.
-    #[tracing::instrument(name = "bumbledb.alloc_id", skip_all, fields(relation = relation_name))]
-    pub fn alloc_id(&mut self, schema: &StorageSchema, relation_name: &str) -> Result<u64> {
-        let (relation_id, relation) = schema.relation(relation_name)?;
-        let _field = relation
-            .fields
-            .iter()
-            .find(|field| {
-                matches!(
-                    &field.value_type,
-                    ValueType::Serial { owning_relation, .. } if owning_relation == &relation.name
-                )
-            })
-            .ok_or_else(|| Error::internal(format!("relation {relation_name} has no serial ID")))?;
-
-        let key = next_id_key(relation_id);
-        let next = read_u64_meta(self, &key)?.unwrap_or(1);
-        write_u64_meta(self, &key, next + 1)?;
-        Ok(next)
-    }
-
     /// Bulk-loads rows in deterministic schema relation order.
     ///
     /// This is one write transaction: any constraint failure aborts all current
@@ -1902,12 +1881,6 @@ fn adjust_u64_meta(txn: &mut WriteTxn<'_>, key: &[u8], delta: i64) -> Result<()>
     Ok(())
 }
 
-fn next_id_key(relation_id: u16) -> Vec<u8> {
-    let mut key = b"next_id:".to_vec();
-    push_u16(&mut key, relation_id);
-    key
-}
-
 fn relation_row_count_key(relation_id: u16) -> Vec<u8> {
     let mut key = b"stats:rows:".to_vec();
     push_u16(&mut key, relation_id);
@@ -2023,13 +1996,8 @@ mod tests {
         let schema = storage_schema(&env)?;
 
         env.write(|txn| {
-            let holder = txn.alloc_id(&schema, "Holder")?;
-            let account = txn.alloc_id(&schema, "Account")?;
-            assert_eq!(holder, 1);
-            assert_eq!(account, 1);
-
-            txn.insert(&schema, holder_row(holder, "Alice"))?;
-            txn.insert(&schema, account_row(account, holder, 1))?;
+            txn.insert(&schema, holder_row(1, "Alice"))?;
+            txn.insert(&schema, account_row(1, 1, 1))?;
             Ok::<(), Error>(())
         })?;
 
@@ -2073,13 +2041,6 @@ mod tests {
             Ok::<(), Error>(())
         })?;
 
-        assert!(
-            env.write(|txn| {
-                assert_eq!(txn.alloc_id(&schema, "Holder")?, 2);
-                Err::<(), Error>(Error::internal("rollback counter check"))
-            })
-            .is_err()
-        );
         Ok(())
     }
 

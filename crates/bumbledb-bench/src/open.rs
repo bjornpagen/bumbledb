@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
-use bumbledb_core::query_ir::{AggregateFunction, ComparisonOperator, Literal, TypedQuery};
+use bumbledb_core::query_ir::{ComparisonOperator, Literal, TypedQuery};
 use bumbledb_core::schema::{
     ConstraintDescriptor, FieldDescriptor, IndexDescriptor, RelationDescriptor, SchemaDescriptor,
     ValueType,
@@ -1132,7 +1132,7 @@ fn build_job_broad_cast_keyword_company(schema: &SchemaDescriptor) -> QueryBuild
         .rel("CompanyType")?
         .var("id", "company_type")?
         .done()
-        .find_aggregate(AggregateFunction::Count, "movie")?
+        .find_count_domain(["movie"])?
         .finish()
 }
 
@@ -1177,7 +1177,7 @@ fn build_job_broad_movie_info_star(schema: &SchemaDescriptor) -> QueryBuildResul
         .rel("InfoType")?
         .var("id", "idx_info_type")?
         .done()
-        .find_aggregate(AggregateFunction::Count, "movie")?
+        .find_count_domain(["movie"])?
         .finish()
 }
 
@@ -1203,7 +1203,7 @@ fn build_job_q01_top_production(schema: &SchemaDescriptor) -> QueryBuildResult<T
         .rel("Title")?
         .var("id", "movie")?
         .done()
-        .find_aggregate(AggregateFunction::Count, "movie")?
+        .find_count_domain(["movie"])?
         .finish()
 }
 
@@ -1252,7 +1252,7 @@ fn build_job_q09_voice_us_actor(schema: &SchemaDescriptor) -> QueryBuildResult<T
             ComparisonOperator::Lte,
             OperandRef::literal(Literal::Integer(2015)),
         )?
-        .find_aggregate(AggregateFunction::Count, "movie")?
+        .find_count_domain(["movie"])?
         .finish()
 }
 
@@ -1299,7 +1299,7 @@ fn build_job_q16_character_title_us(schema: &SchemaDescriptor) -> QueryBuildResu
             ComparisonOperator::Lt,
             OperandRef::literal(Literal::Integer(100)),
         )?
-        .find_aggregate(AggregateFunction::Count, "movie")?
+        .find_count_domain(["movie"])?
         .finish()
 }
 
@@ -1400,7 +1400,7 @@ fn build_job_movie_link_bridge(schema: &SchemaDescriptor) -> QueryBuildResult<Ty
         .rel("InfoType")?
         .var("id", "info_type2")?
         .done()
-        .find_aggregate(AggregateFunction::Count, "movie1")?
+        .find_count_domain(["movie1"])?
         .finish()
 }
 
@@ -1460,7 +1460,7 @@ fn build_job_q33_linked_series_companies(
             ComparisonOperator::Lte,
             OperandRef::literal(Literal::Integer(2008)),
         )?
-        .find_aggregate(AggregateFunction::Count, "movie1")?
+        .find_count_domain(["movie1"])?
         .finish()
 }
 
@@ -1663,7 +1663,7 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
                     ("min_rating", Value::I64(70)),
                 ],
                 sqlite: r#"
-                    SELECT p.title, r.rating FROM principal p
+                    SELECT DISTINCT p.title, r.rating FROM principal p
                     JOIN title_rating r ON r.title = p.title
                     WHERE p.name = ?1 AND p.category = ?2 AND r.rating >= ?3
                 "#,
@@ -1681,7 +1681,7 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
                     ("min_rating", Value::I64(80)),
                 ],
                 sqlite: r#"
-                    SELECT p.title, p.name FROM principal p
+                    SELECT DISTINCT p.title, p.name FROM principal p
                     JOIN title_rating r ON r.title = p.title
                     WHERE p.category = ?1 AND r.rating >= ?2
                 "#,
@@ -2256,7 +2256,7 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
             name: "salary_hits_by_year",
             build: build_lahman_salary_hits_by_year,
             inputs: vec![("year", Value::I64(2000))],
-            sqlite: "SELECT s.player, s.salary, b.hits FROM salary s JOIN batting b ON b.player = s.player AND b.year = s.year WHERE s.year = ?1",
+            sqlite: "SELECT DISTINCT s.player, s.salary, b.hits FROM salary s JOIN batting b ON b.player = s.player AND b.year = s.year WHERE s.year = ?1",
             sqlite_params: vec![SqlParam::I64(2000)],
         }],
     }
@@ -2382,14 +2382,14 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                 name: "person_likes_posts",
                 build: build_ldbc_person_likes_posts,
                 inputs: vec![("person", Value::Serial(1))],
-                sqlite: "SELECT p.id FROM likes l JOIN post p ON p.id = l.post WHERE l.person = ?1",
+                sqlite: "SELECT DISTINCT p.id FROM likes l JOIN post p ON p.id = l.post WHERE l.person = ?1",
                 sqlite_params: vec![SqlParam::I64(1)],
             },
             BenchQuery {
                 name: "two_hop_knows",
                 build: build_ldbc_two_hop_knows,
                 inputs: vec![("person", Value::Serial(1))],
-                sqlite: "SELECT k2.person2 FROM knows k1 JOIN knows k2 ON k2.person1 = k1.person2 WHERE k1.person1 = ?1",
+                sqlite: "SELECT DISTINCT k2.person2 FROM knows k1 JOIN knows k2 ON k2.person1 = k1.person2 WHERE k1.person1 = ?1",
                 sqlite_params: vec![SqlParam::I64(1)],
             },
         ],

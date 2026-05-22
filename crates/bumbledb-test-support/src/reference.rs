@@ -22,14 +22,19 @@ pub struct ReferenceDb {
 impl ReferenceDb {
     /// Builds a reference DB from logical rows.
     pub fn from_rows(rows: impl IntoIterator<Item = Row>) -> Self {
-        let mut by_relation: BTreeMap<String, Vec<Row>> = BTreeMap::new();
+        let mut by_relation: BTreeMap<String, BTreeSet<Row>> = BTreeMap::new();
         for row in rows {
             by_relation
                 .entry(row.relation().to_owned())
                 .or_default()
-                .push(row);
+                .insert(row);
         }
-        Self { rows: by_relation }
+        Self {
+            rows: by_relation
+                .into_iter()
+                .map(|(relation, rows)| (relation, rows.into_iter().collect()))
+                .collect(),
+        }
     }
 
     /// Executes a typed positive query IR.
@@ -263,26 +268,56 @@ fn project_aggregates(query: &TypedQuery, bindings: &[Binding]) -> Result<Vec<Ve
             TypedFindTerm::Aggregate {
                 function,
                 variable,
+                domain,
                 value_type,
-            } => Some((*function, *variable, value_type.clone())),
+            } => Some((*function, *variable, domain.clone(), value_type.clone())),
             TypedFindTerm::Variable { .. } => None,
         })
         .collect::<Vec<_>>();
     let mut groups: BTreeMap<Vec<Value>, Vec<AggregateState>> = BTreeMap::new();
+    let global_count = group_terms.is_empty()
+        && aggregate_terms.len() == 1
+        && matches!(
+            aggregate_terms[0].0,
+            AggregateFunction::CountDomain | AggregateFunction::CountDistinct
+        );
+    let mut seen_domains = BTreeSet::new();
     for binding in bindings {
         let key = group_terms
             .iter()
             .map(|variable| bound_variable(binding, *variable).cloned())
             .collect::<Result<Vec<_>>>()?;
-        let states = groups.entry(key).or_insert_with(|| {
+        let states = groups.entry(key.clone()).or_insert_with(|| {
             aggregate_terms
                 .iter()
-                .map(|(function, _, value_type)| AggregateState::new(*function, value_type.clone()))
+                .map(|(function, _, _, value_type)| {
+                    AggregateState::new(*function, value_type.clone())
+                })
                 .collect()
         });
-        for (state, (_, variable, _)) in states.iter_mut().zip(&aggregate_terms) {
+        for (ordinal, (state, (_, variable, domain, _))) in
+            states.iter_mut().zip(&aggregate_terms).enumerate()
+        {
+            let domain = domain
+                .iter()
+                .map(|variable| bound_variable(binding, *variable).cloned())
+                .collect::<Result<Vec<_>>>()?;
+            if !seen_domains.insert((key.clone(), ordinal, domain)) {
+                continue;
+            }
             state.apply(bound_variable(binding, *variable)?)?;
         }
+    }
+    if bindings.is_empty() && global_count {
+        groups.insert(
+            Vec::new(),
+            aggregate_terms
+                .iter()
+                .map(|(function, _, _, value_type)| {
+                    AggregateState::new(*function, value_type.clone())
+                })
+                .collect(),
+        );
     }
     let mut rows = Vec::new();
     for (key, states) in groups {
@@ -332,7 +367,9 @@ enum AggregateState {
 impl AggregateState {
     fn new(function: AggregateFunction, value_type: ValueType) -> Self {
         match (function, value_type) {
-            (AggregateFunction::Count, _) => Self::Count(0),
+            (AggregateFunction::CountDomain | AggregateFunction::CountDistinct, _) => {
+                Self::Count(0)
+            }
             (AggregateFunction::Sum, ValueType::I64) => Self::SumI64(0),
             (AggregateFunction::Sum, ValueType::Decimal { .. }) => Self::SumDecimal(0),
             (AggregateFunction::Min, _) => Self::Min(None),
@@ -471,5 +508,87 @@ fn value_kind_name(value: &Value) -> &'static str {
         Value::Enum(_) => "enum",
         Value::String(_) => "string",
         Value::Bytes(_) => "bytes",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bumbledb_core::query_builder::{QueryBuildResult, QueryBuilder};
+    use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor};
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
+    fn item_schema() -> SchemaDescriptor {
+        SchemaDescriptor::new(
+            "ReferenceTestDb",
+            vec![RelationDescriptor::new(
+                "Item",
+                vec![FieldDescriptor::new("id", ValueType::U64)],
+            )],
+        )
+    }
+
+    fn item_query(
+        build: impl FnOnce(&mut QueryBuilder<'_>) -> QueryBuildResult<()>,
+    ) -> QueryBuildResult<TypedQuery> {
+        let schema = item_schema();
+        let mut query = QueryBuilder::new(&schema);
+        build(&mut query)?;
+        query.finish()
+    }
+
+    #[test]
+    fn from_rows_deduplicates_projection_input_rows() -> TestResult {
+        let db = ReferenceDb::from_rows([
+            Row::new("Item", [("id", Value::U64(1))]),
+            Row::new("Item", [("id", Value::U64(1))]),
+        ]);
+        let query = item_query(|query| {
+            query.rel("Item")?.var("id", "id")?.done();
+            query.find_var("id")?;
+            Ok(())
+        })?;
+
+        assert_eq!(
+            db.execute(&query, &InputBindings::new())?,
+            vec![vec![Value::U64(1)]]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn from_rows_deduplicates_count_input_rows() -> TestResult {
+        let db = ReferenceDb::from_rows([
+            Row::new("Item", [("id", Value::U64(1))]),
+            Row::new("Item", [("id", Value::U64(1))]),
+        ]);
+        let query = item_query(|query| {
+            query.rel("Item")?.var("id", "id")?.done();
+            query.find_count_domain(["id"])?;
+            Ok(())
+        })?;
+
+        assert_eq!(
+            db.execute(&query, &InputBindings::new())?,
+            vec![vec![Value::U64(1)]]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn global_count_over_empty_input_returns_zero_row() -> TestResult {
+        let db = ReferenceDb::from_rows([]);
+        let query = item_query(|query| {
+            query.rel("Item")?.var("id", "id")?.done();
+            query.find_count_domain(["id"])?;
+            Ok(())
+        })?;
+
+        assert_eq!(
+            db.execute(&query, &InputBindings::new())?,
+            vec![vec![Value::U64(0)]]
+        );
+        Ok(())
     }
 }

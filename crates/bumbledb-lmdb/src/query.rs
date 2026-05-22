@@ -191,12 +191,14 @@ pub enum NormOperand {
 pub enum NormFindTerm {
     /// Projected variable.
     Variable { variable: VarId },
-    /// Aggregate over a variable.
+    /// Aggregate over an explicit set domain.
     Aggregate {
         /// Aggregate function.
         function: AggregateFunction,
-        /// Aggregated variable.
+        /// Measured variable or first domain variable for domain count.
         variable: VarId,
+        /// Distinct set domain for this aggregate.
+        domain: Vec<VarId>,
         /// Aggregate operand type.
         value_type: ValueType,
     },
@@ -2808,11 +2810,16 @@ fn hash_typed_find_term(hasher: &mut blake3::Hasher, term: &TypedFindTerm) {
         TypedFindTerm::Aggregate {
             function,
             variable,
+            domain,
             value_type,
         } => {
             hash_u8(hasher, 2);
             hash_aggregate_function(hasher, *function);
             hash_u64(hasher, *variable as u64);
+            hash_u64(hasher, domain.len() as u64);
+            for variable in domain {
+                hash_u64(hasher, *variable as u64);
+            }
             hash_value_type(hasher, value_type);
         }
     }
@@ -2989,10 +2996,11 @@ fn hash_aggregate_function(hasher: &mut blake3::Hasher, function: AggregateFunct
     hash_u8(
         hasher,
         match function {
-            AggregateFunction::Count => 1,
-            AggregateFunction::Sum => 2,
-            AggregateFunction::Min => 3,
-            AggregateFunction::Max => 4,
+            AggregateFunction::CountDomain => 1,
+            AggregateFunction::CountDistinct => 2,
+            AggregateFunction::Sum => 3,
+            AggregateFunction::Min => 4,
+            AggregateFunction::Max => 5,
         },
     );
 }
@@ -3006,11 +3014,16 @@ fn hash_find_term(hasher: &mut blake3::Hasher, term: &NormFindTerm) {
         NormFindTerm::Aggregate {
             function,
             variable,
+            domain,
             value_type,
         } => {
             hash_u8(hasher, 2);
             hash_aggregate_function(hasher, *function);
             hash_u16(hasher, variable.0);
+            hash_u64(hasher, domain.len() as u64);
+            for variable in domain {
+                hash_u16(hasher, variable.0);
+            }
             hash_value_type(hasher, value_type);
         }
     }
@@ -3035,6 +3048,10 @@ fn hash_output_plan(hasher: &mut blake3::Hasher, output: &OutputPlan) {
             for term in &aggregate.aggregates {
                 hash_aggregate_function(hasher, term.function);
                 hash_u16(hasher, term.var.0);
+                hash_u64(hasher, term.domain_vars.len() as u64);
+                for variable in &term.domain_vars {
+                    hash_u16(hasher, variable.0);
+                }
                 hash_value_type(hasher, &term.value_type);
             }
         }
@@ -4143,10 +4160,15 @@ fn output_plan_from_typed_find(query: &TypedQuery) -> OutputPlan {
                 TypedFindTerm::Aggregate {
                     function,
                     variable,
+                    domain,
                     value_type,
                 } => aggregates.push(AggregateTerm {
                     function: *function,
                     var: VarId(*variable as u16),
+                    domain_vars: domain
+                        .iter()
+                        .map(|variable| VarId(*variable as u16))
+                        .collect(),
                     value_type: value_type.clone(),
                 }),
             }
@@ -4982,7 +5004,7 @@ fn precomputed_driver_count_plan<'a>(
     };
     if !output.group_vars.is_empty()
         || output.aggregates.len() != 1
-        || output.aggregates[0].function != AggregateFunction::Count
+        || output.aggregates[0].function != AggregateFunction::CountDomain
     {
         return Ok(None);
     }
@@ -5401,7 +5423,7 @@ fn compact_driver_factorized_count_plan<'a>(
     };
     if !output.group_vars.is_empty()
         || output.aggregates.len() != 1
-        || output.aggregates[0].function != AggregateFunction::Count
+        || output.aggregates[0].function != AggregateFunction::CountDomain
     {
         return Ok(None);
     }
@@ -5552,7 +5574,7 @@ fn candidate_driver_factorized_count_plan<'a>(
     };
     if !output.group_vars.is_empty()
         || output.aggregates.len() != 1
-        || output.aggregates[0].function != AggregateFunction::Count
+        || output.aggregates[0].function != AggregateFunction::CountDomain
     {
         return Ok(None);
     }
@@ -5702,7 +5724,7 @@ fn literal_range_factorized_count_plan<'a>(
     };
     if !output.group_vars.is_empty()
         || output.aggregates.len() != 1
-        || output.aggregates[0].function != AggregateFunction::Count
+        || output.aggregates[0].function != AggregateFunction::CountDomain
     {
         return Ok(None);
     }
@@ -6593,6 +6615,9 @@ fn try_execute_factorized_count<S: TupleSink>(
     plan: &mut ExecutionPlan,
     sink: &mut S,
 ) -> Result<bool> {
+    if !domain_count_fast_paths_enabled() {
+        return Ok(false);
+    }
     if try_execute_literal_range_factorized_count(image, txn, schema, query, inputs, plan, sink)? {
         return Ok(true);
     }
@@ -6614,7 +6639,7 @@ fn try_execute_factorized_count<S: TupleSink>(
     };
     if !output.group_vars.is_empty()
         || output.aggregates.len() != 1
-        || output.aggregates[0].function != AggregateFunction::Count
+        || output.aggregates[0].function != AggregateFunction::CountDomain
     {
         return Ok(false);
     }
@@ -6710,6 +6735,10 @@ fn try_execute_factorized_count<S: TupleSink>(
     Ok(true)
 }
 
+fn domain_count_fast_paths_enabled() -> bool {
+    false
+}
+
 fn try_execute_bridge_factorized_count<S: TupleSink>(
     image: &crate::QueryImage,
     txn: &ReadTxn<'_>,
@@ -6722,7 +6751,7 @@ fn try_execute_bridge_factorized_count<S: TupleSink>(
     };
     if !output.group_vars.is_empty()
         || output.aggregates.len() != 1
-        || output.aggregates[0].function != AggregateFunction::Count
+        || output.aggregates[0].function != AggregateFunction::CountDomain
     {
         return Ok(false);
     }
@@ -8178,17 +8207,21 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
     }
 
     fn can_count_current_suffix(&self, depth: usize) -> bool {
+        if !domain_count_suffix_fast_path_enabled() {
+            return false;
+        }
         if depth + 1 != self.plan.variable_order_ids.len() || !self.plan.comparisons.is_empty() {
             return false;
         }
         let OutputPlan::Aggregate(plan) = &self.plan.summary.free_join.output else {
             return false;
         };
-        if !plan
-            .aggregates
-            .iter()
-            .all(|term| term.function == AggregateFunction::Count)
-        {
+        if !plan.aggregates.iter().all(|term| {
+            matches!(
+                term.function,
+                AggregateFunction::CountDomain | AggregateFunction::CountDistinct
+            )
+        }) {
             return false;
         }
         let current = self.plan.variable_order_ids[depth];
@@ -8215,6 +8248,10 @@ impl<S: TupleSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
             .cloned()
             .unwrap_or_default()
     }
+}
+
+fn domain_count_suffix_fast_path_enabled() -> bool {
+    false
 }
 
 struct LeapfrogState {
@@ -10037,8 +10074,11 @@ fn payload_demand(query: &NormalizedQuery) -> PayloadDemand {
     for term in &query.find {
         match term {
             NormFindTerm::Variable { variable } => projected_vars.push(*variable),
-            NormFindTerm::Aggregate { variable, .. } => {
+            NormFindTerm::Aggregate {
+                variable, domain, ..
+            } => {
                 aggregate_vars.push(*variable);
+                aggregate_vars.extend(domain.iter().copied());
             }
         }
     }
@@ -10067,10 +10107,12 @@ fn output_plan_from_find(find: &[NormFindTerm]) -> OutputPlan {
                 NormFindTerm::Aggregate {
                     function,
                     variable,
+                    domain,
                     value_type,
                 } => aggregates.push(AggregateTerm {
                     function: *function,
                     var: *variable,
+                    domain_vars: domain.clone(),
                     value_type: value_type.clone(),
                 }),
             }
@@ -10367,10 +10409,15 @@ fn normalize_query(
             TypedFindTerm::Aggregate {
                 function,
                 variable,
+                domain,
                 value_type,
             } => NormFindTerm::Aggregate {
                 function: *function,
                 variable: VarId(*variable as u16),
+                domain: domain
+                    .iter()
+                    .map(|variable| VarId(*variable as u16))
+                    .collect(),
                 value_type: value_type.clone(),
             },
         })
@@ -10628,7 +10675,6 @@ trait TupleSink {
 #[derive(Clone, Debug)]
 enum OutputSink {
     CountRows(CountRowsSink),
-    GlobalCount(GlobalCountSink),
     Project(EncodedProjectSink),
     Aggregate(AggregateSink),
 }
@@ -10654,9 +10700,6 @@ impl OutputSink {
         }
         match output {
             OutputPlan::Project(plan) => OutputSink::Project(EncodedProjectSink::new(plan)),
-            OutputPlan::Aggregate(plan) if is_global_count_plan(plan) => {
-                OutputSink::GlobalCount(GlobalCountSink::default())
-            }
             OutputPlan::Aggregate(plan) => OutputSink::Aggregate(AggregateSink::new(plan)),
         }
     }
@@ -10698,7 +10741,6 @@ impl TupleSink for OutputSink {
         counters.sink_emit_calls += 1;
         match self {
             OutputSink::CountRows(sink) => sink.emit(txn, query, binding, counters),
-            OutputSink::GlobalCount(sink) => sink.emit(txn, query, binding, counters),
             OutputSink::Project(sink) => sink.emit(txn, query, binding, counters),
             OutputSink::Aggregate(sink) => sink.emit(txn, query, binding, counters),
         }
@@ -10712,7 +10754,6 @@ impl TupleSink for OutputSink {
     ) -> Result<Vec<Vec<Value>>> {
         match self {
             OutputSink::CountRows(sink) => sink.finish(txn, query, counters),
-            OutputSink::GlobalCount(sink) => sink.finish(txn, query, counters),
             OutputSink::Project(sink) => sink.finish(txn, query, counters),
             OutputSink::Aggregate(sink) => sink.finish(txn, query, counters),
         }
@@ -10729,9 +10770,6 @@ impl TupleSink for OutputSink {
         counters.sink_emit_count_range_calls += 1;
         match self {
             OutputSink::CountRows(sink) => {
-                sink.emit_count_range(txn, query, binding, count, counters)
-            }
-            OutputSink::GlobalCount(sink) => {
                 sink.emit_count_range(txn, query, binding, count, counters)
             }
             OutputSink::Project(sink) => {
@@ -10776,51 +10814,10 @@ impl TupleSink for OutputSink {
 fn is_global_count_plan(plan: &AggregatePlan) -> bool {
     plan.group_vars.is_empty()
         && plan.aggregates.len() == 1
-        && plan.aggregates[0].function == AggregateFunction::Count
-}
-
-#[derive(Clone, Debug, Default)]
-struct GlobalCountSink {
-    count: u64,
-}
-
-impl TupleSink for GlobalCountSink {
-    fn emit(
-        &mut self,
-        _txn: &ReadTxn<'_>,
-        _query: &NormalizedQuery,
-        _binding: &EncodedBinding,
-        _counters: &mut PlanCounters,
-    ) -> Result<()> {
-        _counters.aggregate_emit_calls += 1;
-        self.emit_count_range(_txn, _query, _binding, 1, _counters)
-    }
-
-    fn emit_count_range(
-        &mut self,
-        _txn: &ReadTxn<'_>,
-        _query: &NormalizedQuery,
-        _binding: &EncodedBinding,
-        count: u64,
-        _counters: &mut PlanCounters,
-    ) -> Result<()> {
-        _counters.aggregate_count_range_calls += 1;
-        self.count = self
-            .count
-            .checked_add(count)
-            .ok_or_else(|| Error::integer_overflow("count"))?;
-        Ok(())
-    }
-
-    fn finish(
-        self,
-        _txn: &ReadTxn<'_>,
-        _query: &NormalizedQuery,
-        counters: &mut PlanCounters,
-    ) -> Result<Vec<Vec<Value>>> {
-        counters.materialized_output_values += 1;
-        Ok(vec![vec![Value::U64(self.count)]])
-    }
+        && matches!(
+            plan.aggregates[0].function,
+            AggregateFunction::CountDomain | AggregateFunction::CountDistinct
+        )
 }
 
 #[derive(Clone, Debug)]
@@ -11094,6 +11091,7 @@ struct AggregateSink {
     group_vars: Vec<VarId>,
     terms: Vec<AggregateTerm>,
     groups: BTreeMap<SmallEncodedRow, Vec<AggregateState>>,
+    seen_domains: BTreeMap<(SmallEncodedRow, usize), BTreeSet<SmallEncodedRow>>,
 }
 
 impl AggregateSink {
@@ -11102,6 +11100,7 @@ impl AggregateSink {
             group_vars: plan.group_vars.clone(),
             terms: plan.aggregates.clone(),
             groups: BTreeMap::new(),
+            seen_domains: BTreeMap::new(),
         }
     }
 
@@ -11112,19 +11111,11 @@ impl AggregateSink {
             .collect()
     }
 
-    fn count_only(&self) -> bool {
-        self.terms
+    fn domain_key(term: &AggregateTerm, binding: &EncodedBinding) -> Result<SmallEncodedRow> {
+        term.domain_vars
             .iter()
-            .all(|term| term.function == AggregateFunction::Count)
-    }
-
-    fn emit_count_range(&mut self, binding: &EncodedBinding, count: u64) -> Result<()> {
-        let key = self.group_key(binding)?;
-        let states = ensure_aggregate_group(&mut self.groups, &self.terms, key);
-        for state in states {
-            state.apply_count_by(count)?;
-        }
-        Ok(())
+            .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
+            .collect()
     }
 }
 
@@ -11137,13 +11128,14 @@ impl TupleSink for AggregateSink {
         counters: &mut PlanCounters,
     ) -> Result<()> {
         counters.aggregate_emit_calls += 1;
-        if self.count_only() {
-            return self.emit_count_range(binding, 1);
-        }
-
         let key = self.group_key(binding)?;
-        let states = ensure_aggregate_group(&mut self.groups, &self.terms, key);
-        for (state, term) in states.iter_mut().zip(&self.terms) {
+        let states = ensure_aggregate_group(&mut self.groups, &self.terms, key.clone());
+        for (ordinal, (state, term)) in states.iter_mut().zip(&self.terms).enumerate() {
+            let domain_key = Self::domain_key(term, binding)?;
+            let seen = self.seen_domains.entry((key.clone(), ordinal)).or_default();
+            if !seen.insert(domain_key) {
+                continue;
+            }
             state.apply_encoded(txn, query, binding, term, counters)?;
         }
         Ok(())
@@ -11158,9 +11150,6 @@ impl TupleSink for AggregateSink {
         counters: &mut PlanCounters,
     ) -> Result<()> {
         counters.aggregate_count_range_calls += 1;
-        if self.count_only() {
-            return self.emit_count_range(binding, count);
-        }
         for _ in 0..count {
             self.emit(_txn, _query, binding, counters)?;
         }
@@ -11176,7 +11165,21 @@ impl TupleSink for AggregateSink {
         let _span =
             tracing::debug_span!("bumbledb.query.aggregate", groups = self.groups.len()).entered();
         let mut rows = Vec::new();
-        for (key, states) in self.groups {
+        let mut groups = self.groups;
+        if groups.is_empty()
+            && self.group_vars.is_empty()
+            && self.terms.len() == 1
+            && matches!(
+                self.terms[0].function,
+                AggregateFunction::CountDomain | AggregateFunction::CountDistinct
+            )
+        {
+            groups.insert(
+                SmallEncodedRow::new(),
+                initial_aggregate_states(&self.terms),
+            );
+        }
+        for (key, states) in groups {
             let mut row = Vec::new();
             let mut key_iter = key.into_iter();
             let mut state_iter = states.into_iter();
@@ -11273,7 +11276,9 @@ enum AggregateState {
 impl AggregateState {
     fn new(function: AggregateFunction, value_type: ValueType) -> Self {
         match (function, value_type) {
-            (AggregateFunction::Count, _) => AggregateState::Count(0),
+            (AggregateFunction::CountDomain | AggregateFunction::CountDistinct, _) => {
+                AggregateState::Count(0)
+            }
             (AggregateFunction::Sum, ValueType::U64) => AggregateState::SumU64(0),
             (AggregateFunction::Sum, ValueType::I64) => AggregateState::SumI64(0),
             (AggregateFunction::Sum, ValueType::Decimal { .. }) => AggregateState::SumDecimal(0),

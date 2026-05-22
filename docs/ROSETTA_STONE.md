@@ -101,7 +101,6 @@ ConstraintDescriptor::ForeignKey {
     target_relation,
     target_constraint,
     on_delete: ForeignKeyAction::Restrict,
-    on_update: ForeignKeyAction::Restrict,
 }
 ```
 
@@ -190,6 +189,8 @@ History records full old/new tuple bytes, not primary-key bytes.
 Queries are built as typed IR with schema-aware validation.
 
 The query runtime normalizes typed IR, plans access paths, executes direct/hash/LFTJ/factorized paths, and emits set-semantic results through encoded sinks.
+
+Aggregates are set-domain operations. Count semantics must be expressed as explicit domain counts or distinct-value counts; SQL-style hidden witness multiplicity is not part of the contract.
 
 Benchmark-shaped fast paths must be represented as structural plan candidates or executor nodes. Engine code must not depend on JOB-specific relation names.
 

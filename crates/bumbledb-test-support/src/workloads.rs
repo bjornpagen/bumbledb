@@ -1,7 +1,7 @@
 //! Reusable query workloads.
 
 use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
-use bumbledb_core::query_ir::{AggregateFunction, ComparisonOperator, TypedQuery};
+use bumbledb_core::query_ir::{ComparisonOperator, TypedQuery};
 use bumbledb_core::schema::SchemaDescriptor;
 
 /// Representative supported positive ledger queries.
@@ -63,8 +63,8 @@ pub fn ledger_queries(schema: &SchemaDescriptor) -> QueryBuildResult<Vec<TypedQu
             .var("at", "t")?
             .done()
             .find_var("account")?
-            .find_aggregate(AggregateFunction::Sum, "amount")?
-            .find_aggregate(AggregateFunction::Count, "posting")?
+            .find_sum_over("amount", ["posting"])?
+            .find_count_domain(["posting"])?
             .finish()?,
     ])
 }

@@ -430,11 +430,8 @@ impl SchemaDescriptor {
                     target_relation,
                     target_constraint,
                     on_delete,
-                    on_update,
                 } => {
-                    if *on_delete != ForeignKeyAction::Restrict
-                        || *on_update != ForeignKeyAction::Restrict
-                    {
+                    if *on_delete != ForeignKeyAction::Restrict {
                         return Err(SchemaError::InvalidConstraint {
                             relation: relation.name.clone(),
                             constraint: name.clone(),
@@ -1077,7 +1074,6 @@ pub enum ConstraintDescriptor {
         target_relation: String,
         target_constraint: String,
         on_delete: ForeignKeyAction,
-        on_update: ForeignKeyAction,
     },
 }
 
@@ -1126,7 +1122,6 @@ impl ConstraintDescriptor {
             target_relation: target_relation.into(),
             target_constraint: target_constraint.into(),
             on_delete: ForeignKeyAction::Restrict,
-            on_update: ForeignKeyAction::Restrict,
         }
     }
 
@@ -1155,7 +1150,6 @@ impl ConstraintDescriptor {
                 target_relation,
                 target_constraint,
                 on_delete,
-                on_update,
             } => {
                 push_u8(out, 2);
                 push_str(out, name);
@@ -1163,7 +1157,6 @@ impl ConstraintDescriptor {
                 push_str(out, target_relation);
                 push_str(out, target_constraint);
                 on_delete.push_canonical(out);
-                on_update.push_canonical(out);
             }
         }
     }

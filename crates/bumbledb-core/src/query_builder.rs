@@ -61,6 +61,10 @@ pub enum QueryBuildError {
     /// Aggregate references an unbound variable.
     #[error("aggregate variable {variable} is unbound")]
     UnboundAggregateVariable { variable: String },
+
+    /// Aggregate domain is empty.
+    #[error("aggregate domain must contain at least one variable")]
+    EmptyAggregateDomain,
 }
 
 /// Direct schema-aware builder for typed query IR.
@@ -164,30 +168,62 @@ impl<'schema> QueryBuilder<'schema> {
         Ok(self)
     }
 
-    /// Adds an aggregate projection term.
-    pub fn find_aggregate(
-        &mut self,
-        function: AggregateFunction,
-        variable: &str,
-    ) -> QueryBuildResult<&mut Self> {
-        let Some(id) = self.variable_ids.get(variable).copied() else {
-            return Err(QueryBuildError::UnboundAggregateVariable {
-                variable: variable.to_owned(),
-            });
-        };
-        let value_type = self.variables[id].value_type.clone();
-        if !aggregate_supports(function, &value_type) {
-            return Err(QueryBuildError::InvalidAggregateType {
-                function,
-                value_type: type_name(&value_type),
-            });
-        }
+    /// Adds a domain-count aggregate projection term.
+    pub fn find_count_domain<I, S>(&mut self, domain: I) -> QueryBuildResult<&mut Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let domain = self.domain_variables(domain)?;
+        let variable = *domain
+            .first()
+            .ok_or(QueryBuildError::EmptyAggregateDomain)?;
         self.find.push(TypedFindTerm::Aggregate {
-            function,
-            variable: id,
-            value_type,
+            function: AggregateFunction::CountDomain,
+            variable,
+            domain,
+            value_type: ValueType::U64,
         });
         Ok(self)
+    }
+
+    /// Adds a distinct-value count aggregate projection term.
+    pub fn find_count_distinct(&mut self, variable: &str) -> QueryBuildResult<&mut Self> {
+        let variable = self.aggregate_variable(variable)?;
+        self.find.push(TypedFindTerm::Aggregate {
+            function: AggregateFunction::CountDistinct,
+            variable,
+            domain: vec![variable],
+            value_type: ValueType::U64,
+        });
+        Ok(self)
+    }
+
+    /// Adds a sum aggregate over an explicit set domain.
+    pub fn find_sum_over<I, S>(&mut self, variable: &str, domain: I) -> QueryBuildResult<&mut Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.find_domain_aggregate(AggregateFunction::Sum, variable, domain)
+    }
+
+    /// Adds a minimum aggregate over an explicit set domain.
+    pub fn find_min_over<I, S>(&mut self, variable: &str, domain: I) -> QueryBuildResult<&mut Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.find_domain_aggregate(AggregateFunction::Min, variable, domain)
+    }
+
+    /// Adds a maximum aggregate over an explicit set domain.
+    pub fn find_max_over<I, S>(&mut self, variable: &str, domain: I) -> QueryBuildResult<&mut Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.find_domain_aggregate(AggregateFunction::Max, variable, domain)
     }
 
     /// Finishes construction and returns typed query IR.
@@ -233,6 +269,57 @@ impl<'schema> QueryBuilder<'schema> {
             });
             Ok(id)
         }
+    }
+
+    fn aggregate_variable(&self, variable: &str) -> QueryBuildResult<usize> {
+        self.variable_ids.get(variable).copied().ok_or_else(|| {
+            QueryBuildError::UnboundAggregateVariable {
+                variable: variable.to_owned(),
+            }
+        })
+    }
+
+    fn domain_variables<I, S>(&self, domain: I) -> QueryBuildResult<Vec<usize>>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut variables = Vec::new();
+        for variable in domain {
+            variables.push(self.aggregate_variable(variable.as_ref())?);
+        }
+        if variables.is_empty() {
+            return Err(QueryBuildError::EmptyAggregateDomain);
+        }
+        Ok(variables)
+    }
+
+    fn find_domain_aggregate<I, S>(
+        &mut self,
+        function: AggregateFunction,
+        variable: &str,
+        domain: I,
+    ) -> QueryBuildResult<&mut Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let variable = self.aggregate_variable(variable)?;
+        let domain = self.domain_variables(domain)?;
+        let value_type = self.variables[variable].value_type.clone();
+        if !aggregate_supports(function, &value_type) {
+            return Err(QueryBuildError::InvalidAggregateType {
+                function,
+                value_type: type_name(&value_type),
+            });
+        }
+        self.find.push(TypedFindTerm::Aggregate {
+            function,
+            variable,
+            domain,
+            value_type,
+        });
+        Ok(self)
     }
 
     fn bind_input(&mut self, name: &str, incoming: ValueType) -> QueryBuildResult<usize> {
@@ -485,7 +572,7 @@ fn literal_fits_type(schema: &SchemaDescriptor, literal: &Literal, expected: &Va
 
 fn aggregate_supports(function: AggregateFunction, value_type: &ValueType) -> bool {
     match function {
-        AggregateFunction::Count => true,
+        AggregateFunction::CountDomain | AggregateFunction::CountDistinct => true,
         AggregateFunction::Sum => matches!(
             value_type,
             ValueType::U64 | ValueType::I64 | ValueType::Decimal { .. }
@@ -603,8 +690,8 @@ mod tests {
             .var("id", "posting")?
             .var("amount", "amount")?
             .done()
-            .find_aggregate(AggregateFunction::Sum, "amount")?
-            .find_aggregate(AggregateFunction::Count, "posting")?
+            .find_sum_over("amount", ["posting"])?
+            .find_count_domain(["posting"])?
             .finish()?;
 
         assert_eq!(query.find.len(), 2);
@@ -723,7 +810,7 @@ mod tests {
             .rel("Holder")
             .and_then(|atom| atom.var("name", "name"))
             .map(RelationAtomBuilder::done)
-            .and_then(|builder| builder.find_aggregate(AggregateFunction::Sum, "name"));
+            .and_then(|builder| builder.find_sum_over("name", ["name"]));
         assert!(result.is_err(), "invalid aggregate type should fail");
         let Err(error) = result else { return };
         assert!(matches!(

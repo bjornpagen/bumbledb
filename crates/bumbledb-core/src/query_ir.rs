@@ -35,8 +35,10 @@ pub enum ComparisonOperator {
 /// Aggregate function.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AggregateFunction {
-    /// Count rows.
-    Count,
+    /// Count distinct aggregate-domain tuples.
+    CountDomain,
+    /// Count distinct values of the measured variable.
+    CountDistinct,
     /// Sum values.
     Sum,
     /// Minimum value.
@@ -48,7 +50,8 @@ pub enum AggregateFunction {
 impl fmt::Display for AggregateFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AggregateFunction::Count => f.write_str("count"),
+            AggregateFunction::CountDomain => f.write_str("count_domain"),
+            AggregateFunction::CountDistinct => f.write_str("count_distinct"),
             AggregateFunction::Sum => f.write_str("sum"),
             AggregateFunction::Min => f.write_str("min"),
             AggregateFunction::Max => f.write_str("max"),
@@ -100,8 +103,11 @@ pub enum TypedFindTerm {
     Aggregate {
         /// Aggregate function.
         function: AggregateFunction,
-        /// Aggregated variable.
+        /// Measured variable. For `CountDomain`, this is the first domain variable
+        /// and is retained only for diagnostics/result column labeling.
         variable: usize,
+        /// Distinct set domain for this aggregate.
+        domain: Vec<usize>,
         /// Aggregate operand type.
         value_type: ValueType,
     },
