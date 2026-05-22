@@ -937,7 +937,7 @@ fn job_queries() -> Vec<BenchQuery> {
             build: build_job_broad_cast_keyword_company,
             inputs: Vec::new(),
             sqlite: r#"
-                SELECT COUNT(*)
+                SELECT COUNT(DISTINCT t.id)
                 FROM title t
                 JOIN cast_info ci ON ci.movie_id = t.id
                 JOIN role_type rt ON rt.id = ci.role_id
@@ -954,7 +954,7 @@ fn job_queries() -> Vec<BenchQuery> {
             build: build_job_broad_movie_info_star,
             inputs: Vec::new(),
             sqlite: r#"
-                SELECT COUNT(*)
+                SELECT COUNT(DISTINCT t.id)
                 FROM title t
                 JOIN cast_info ci ON ci.movie_id = t.id
                 JOIN role_type rt ON rt.id = ci.role_id
@@ -974,7 +974,7 @@ fn job_queries() -> Vec<BenchQuery> {
             build: build_job_q01_top_production,
             inputs: Vec::new(),
             sqlite: r#"
-                SELECT COUNT(*)
+                SELECT COUNT(DISTINCT t.id)
                 FROM company_type ct
                 JOIN movie_companies mc ON mc.company_type_id = ct.id
                 JOIN movie_info_idx mi_idx ON mi_idx.movie_id = mc.movie_id
@@ -990,7 +990,7 @@ fn job_queries() -> Vec<BenchQuery> {
             build: build_job_q09_voice_us_actor,
             inputs: Vec::new(),
             sqlite: r#"
-                SELECT COUNT(*)
+                SELECT COUNT(DISTINCT t.id)
                 FROM aka_name an
                 JOIN name n ON n.id = an.person_id
                 JOIN cast_info ci ON ci.person_id = n.id
@@ -1011,7 +1011,7 @@ fn job_queries() -> Vec<BenchQuery> {
             build: build_job_q16_character_title_us,
             inputs: Vec::new(),
             sqlite: r#"
-                SELECT COUNT(*)
+                SELECT COUNT(DISTINCT t.id)
                 FROM aka_name an
                 JOIN name n ON n.id = an.person_id
                 JOIN cast_info ci ON ci.person_id = n.id
@@ -1056,7 +1056,7 @@ fn job_queries() -> Vec<BenchQuery> {
             build: build_job_movie_link_bridge,
             inputs: Vec::new(),
             sqlite: r#"
-                SELECT COUNT(*)
+                SELECT COUNT(DISTINCT t1.id)
                 FROM movie_link ml
                 JOIN link_type lt ON lt.id = ml.link_type_id
                 JOIN title t1 ON t1.id = ml.movie_id
@@ -1077,7 +1077,7 @@ fn job_queries() -> Vec<BenchQuery> {
             build: build_job_q33_linked_series_companies,
             inputs: Vec::new(),
             sqlite: r#"
-                SELECT COUNT(*)
+                SELECT COUNT(DISTINCT t1.id)
                 FROM company_name cn1
                 JOIN movie_companies mc1 ON mc1.company_id = cn1.id
                 JOIN title t1 ON t1.id = mc1.movie_id

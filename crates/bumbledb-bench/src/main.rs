@@ -605,6 +605,28 @@ pub(crate) struct BenchQuery {
     sqlite_params: Vec<SqlParam>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CorrectnessMode {
+    ResultSet,
+    AggregateValues,
+}
+
+impl CorrectnessMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ResultSet => "result-set",
+            Self::AggregateValues => "aggregate-values",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum SqlValue {
+    Integer(i64),
+    Text(String),
+    Blob(Vec<u8>),
+}
+
 #[derive(Clone, Debug)]
 struct BenchmarkGate {
     dataset: &'static str,
@@ -621,6 +643,7 @@ struct BenchmarkRunResult {
     dataset: &'static str,
     query: &'static str,
     rows: usize,
+    correctness_mode: String,
     bumbledb_correctness_execution: Duration,
     sqlite_correctness_execution: Duration,
     bumbledb_cold_execution: Duration,
@@ -959,12 +982,24 @@ fn run_dataset(
                 )
             }
         };
+        let correctness_mode = correctness_mode(&typed);
+        let sqlite_correctness = timed(|| sqlite_result_rows(&mut sqlite, query.sqlite, &params))?;
+        let sqlite_correctness_execution = sqlite_correctness.elapsed;
+        let sqlite_expected = sorted_sql_rows(sqlite_correctness.value);
+        let bumbledb_actual = sorted_sql_rows(bumbledb_sql_rows(&materialized_output)?);
+        if bumbledb_actual != sqlite_expected {
+            return Err(format!(
+                "{}:{} result mismatch bumbledb={:?} sqlite={:?}",
+                dataset.name, query.name, bumbledb_actual, sqlite_expected
+            )
+            .into());
+        }
         let sqlite_once = timed(|| sqlite_count(&mut sqlite, query.sqlite, &params))?;
         let sqlite_cold_execution = sqlite_once.elapsed;
         let sqlite_once = sqlite_once.value;
         if materialized_output.result.tuples.len() != sqlite_once {
             return Err(format!(
-                "{}:{} row mismatch bumbledb={} sqlite={}",
+                "{}:{} row-count mismatch after value match bumbledb={} sqlite={}",
                 dataset.name,
                 query.name,
                 materialized_output.result.tuples.len(),
@@ -1095,9 +1130,10 @@ fn run_dataset(
             config.compare_mode,
             config.cache_mode,
             bumble_sample_cache_hits,
+            correctness_mode,
             QueryTimingSamples {
                 bumbledb_correctness_execution: materialized_once.elapsed,
-                sqlite_correctness_execution: sqlite_cold_execution,
+                sqlite_correctness_execution,
                 bumbledb_cold_execution: bumble_cold_execution,
                 sqlite_cold_execution,
                 bumbledb_warmup: bumble_warmup,
@@ -1208,6 +1244,78 @@ fn sqlite_count(
     Ok(rows)
 }
 
+fn sqlite_result_rows(
+    conn: &mut Connection,
+    sql: &str,
+    params: &[SqlParam],
+) -> Result<Vec<Vec<SqlValue>>, Box<dyn std::error::Error>> {
+    let mut stmt = conn.prepare(sql)?;
+    let column_count = stmt.column_count();
+    let mut rows = stmt.query(params_from_iter(params.iter()))?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        let mut values = Vec::with_capacity(column_count);
+        for index in 0..column_count {
+            values.push(match row.get_ref(index)? {
+                rusqlite::types::ValueRef::Null => {
+                    return Err("SQLite NULL is not a valid Bumbledb benchmark value".into());
+                }
+                rusqlite::types::ValueRef::Integer(value) => SqlValue::Integer(value),
+                rusqlite::types::ValueRef::Real(_) => {
+                    return Err("SQLite REAL is not a valid Bumbledb benchmark value".into());
+                }
+                rusqlite::types::ValueRef::Text(value) => {
+                    SqlValue::Text(std::str::from_utf8(value)?.to_owned())
+                }
+                rusqlite::types::ValueRef::Blob(value) => SqlValue::Blob(value.to_vec()),
+            });
+        }
+        out.push(values);
+    }
+    Ok(out)
+}
+
+fn bumbledb_sql_rows(
+    output: &QueryOutput,
+) -> Result<Vec<Vec<SqlValue>>, Box<dyn std::error::Error>> {
+    output
+        .result
+        .tuples
+        .iter()
+        .map(|row| row.iter().map(sql_value).collect())
+        .collect()
+}
+
+fn sql_value(value: &Value) -> Result<SqlValue, Box<dyn std::error::Error>> {
+    Ok(match value {
+        Value::Bool(value) => SqlValue::Integer(i64::from(*value)),
+        Value::U64(value) | Value::Serial(value) => SqlValue::Integer((*value).try_into()?),
+        Value::I64(value) => SqlValue::Integer(*value),
+        Value::Timestamp(TimestampMicros(value)) => SqlValue::Integer(*value),
+        Value::Decimal(DecimalRaw(value)) => SqlValue::Integer((*value).try_into()?),
+        Value::Enum(value) => SqlValue::Integer(i64::from(*value)),
+        Value::String(value) => SqlValue::Text(value.clone()),
+        Value::Bytes(value) => SqlValue::Blob(value.clone()),
+    })
+}
+
+fn sorted_sql_rows(mut rows: Vec<Vec<SqlValue>>) -> Vec<Vec<SqlValue>> {
+    rows.sort();
+    rows
+}
+
+fn correctness_mode(query: &TypedQuery) -> CorrectnessMode {
+    if query
+        .find
+        .iter()
+        .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }))
+    {
+        CorrectnessMode::AggregateValues
+    } else {
+        CorrectnessMode::ResultSet
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "benchmark result assembly keeps measured dimensions explicit"
@@ -1220,6 +1328,7 @@ fn benchmark_result(
     compare_mode: CompareMode,
     cache_mode: CacheMode,
     cache_hits: CacheHitStats,
+    correctness_mode: CorrectnessMode,
     timing: QueryTimingSamples,
     query_image_stats: QueryImageBenchStats,
 ) -> BenchmarkRunResult {
@@ -1250,6 +1359,7 @@ fn benchmark_result(
         dataset,
         query: query.name,
         rows: output.result.tuples.len(),
+        correctness_mode: correctness_mode.as_str().to_owned(),
         bumbledb_correctness_execution: timing.bumbledb_correctness_execution,
         sqlite_correctness_execution: timing.sqlite_correctness_execution,
         bumbledb_cold_execution: timing.bumbledb_cold_execution,
@@ -1275,7 +1385,7 @@ fn benchmark_result(
         static_empty_cache_hits: cache_hits.static_empty_cache_hits,
         query_image_sample_cache_hits: cache_hits.query_image_cache_hits,
         bumbledb_materialized_rows: compare_mode == CompareMode::Materialized,
-        sqlite_materialized_rows: false,
+        sqlite_materialized_rows: true,
         cardinality_supported: compare_mode == CompareMode::Rows,
         cardinality_fallback_reason: String::new(),
         timings: output.plan.timings,
@@ -1994,10 +2104,11 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"result\":{{\"logical_rows\":{},\"materialized_rows\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"cache_mode\":\"{}\",\"prepared_result_cache_allowed\":{},\"prepared_result_cache_hit\":{},\"prepared_result_cache_hits\":{},\"static_empty_cache_hit\":{},\"static_empty_cache_hits\":{},\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"bumbledb_materialized_rows\":{},\"sqlite_materialized_rows\":{},\"cardinality_supported\":{},\"cardinality_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
+            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"rows\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_rows\":{},\"materialized_rows\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"cache_mode\":\"{}\",\"prepared_result_cache_allowed\":{},\"prepared_result_cache_hit\":{},\"prepared_result_cache_hits\":{},\"static_empty_cache_hit\":{},\"static_empty_cache_hits\":{},\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"bumbledb_materialized_rows\":{},\"sqlite_materialized_rows\":{},\"cardinality_supported\":{},\"cardinality_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
             json_escape(result.dataset),
             json_escape(result.query),
             result.rows,
+            json_escape(&result.correctness_mode),
             result.rows,
             if result.bumbledb_materialized_rows {
                 result.rows
@@ -2616,7 +2727,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                 name: "triangle_count",
                 build: build_joinstress_triangle_count,
                 inputs: vec![],
-                sqlite: "SELECT COUNT(eab.a) FROM edge_ab eab JOIN edge_ac eac ON eac.a = eab.a JOIN edge_bc ebc ON ebc.b = eab.b AND ebc.c = eac.c",
+                sqlite: "SELECT COUNT(DISTINCT eab.a) FROM edge_ab eab JOIN edge_ac eac ON eac.a = eab.a JOIN edge_bc ebc ON ebc.b = eab.b AND ebc.c = eac.c",
                 sqlite_params: vec![],
             },
         ],
@@ -3423,6 +3534,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn exact_correctness_helpers_catch_count_value_mismatch() {
+        let bumbledb = sorted_sql_rows(vec![vec![SqlValue::Integer(2)]]);
+        let sqlite = sorted_sql_rows(vec![vec![SqlValue::Integer(3)]]);
+
+        assert_ne!(bumbledb, sqlite);
+    }
+
+    #[test]
+    fn exact_correctness_helpers_catch_projection_duplicates() {
+        let bumbledb = sorted_sql_rows(vec![vec![SqlValue::Integer(1)]]);
+        let sqlite = sorted_sql_rows(vec![vec![SqlValue::Integer(1)], vec![SqlValue::Integer(1)]]);
+
+        assert_ne!(bumbledb, sqlite);
+    }
+
+    #[test]
     fn markdown_renderer_emits_gate_tables() {
         let sample_stats = TimingStats::from_samples(vec![
             Duration::from_micros(9),
@@ -3433,6 +3560,7 @@ mod tests {
             dataset: "joinstress",
             query: "triangle_count",
             rows: 1,
+            correctness_mode: "aggregate-values".to_owned(),
             bumbledb_correctness_execution: Duration::from_micros(20),
             sqlite_correctness_execution: Duration::from_micros(12),
             bumbledb_cold_execution: Duration::from_micros(20),
@@ -3546,6 +3674,7 @@ mod tests {
             dataset: "ledger",
             query: "tag_lookup_join",
             rows: 2,
+            correctness_mode: "result-set".to_owned(),
             bumbledb_correctness_execution: Duration::from_micros(21),
             sqlite_correctness_execution: Duration::from_micros(10),
             bumbledb_cold_execution: Duration::from_micros(20),
@@ -3629,6 +3758,7 @@ mod tests {
         assert!(json.contains("\"runtime\":\"Lftj\""));
         assert!(json.contains("\"plan_family\":\"FreeJoinLftj\""));
         assert!(json.contains("\"compare_mode\":\"rows\""));
+        assert!(json.contains("\"correctness_mode\":\"result-set\""));
         assert!(json.contains("\"cache_mode\":\"prepared-result\""));
         assert!(json.contains("\"prepared_result_cache_allowed\":true"));
         assert!(json.contains("\"prepared_result_cache_hit\":true"));
