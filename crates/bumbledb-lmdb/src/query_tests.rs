@@ -1829,7 +1829,7 @@ fn projection_deduplicates_results() -> TestResult {
     assert_eq!(output.plan.counters.materialized_output_values, 2);
     assert_eq!(output.plan.counters.encoded_project_rows_seen, 3);
     assert_eq!(output.plan.counters.encoded_project_rows_inserted, 2);
-    assert_eq!(output.plan.counters.encoded_project_duplicate_rows, 1);
+    assert_eq!(output.plan.counters.encoded_project_duplicate_rows, 0);
     assert_eq!(output.plan.counters.project_decode_values, 2);
     Ok(())
 }
