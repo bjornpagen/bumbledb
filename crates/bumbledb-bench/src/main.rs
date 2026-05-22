@@ -2458,7 +2458,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
                         FieldDescriptor::new("age", ValueType::I64),
                     ],
                 )
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "Boat",
                     vec![
@@ -2472,7 +2472,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
                         ),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality("by_color", ["color", "id"])),
                 RelationDescriptor::new(
                     "Reserve",
@@ -2482,7 +2482,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
                         FieldDescriptor::new("day", ValueType::TimestampMicros).range_indexed(),
                     ],
                 )
-                .with_covering_unique("sailor_boat_day", ["sailor", "boat", "day"])
+                .with_unique("sailor_boat_day", ["sailor", "boat", "day"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "sailor",
                     ["sailor"],
@@ -2574,7 +2574,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                         ),
                     ],
                 )
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "B",
                     vec![
@@ -2588,7 +2588,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                         ),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key("a", ["a"], "A", "id")),
                 RelationDescriptor::new(
                     "C",
@@ -2603,7 +2603,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                         ),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key("b", ["b"], "B", "id")),
                 RelationDescriptor::new(
                     "D",
@@ -2618,27 +2618,27 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                         ),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key("c", ["c"], "C", "id")),
                 RelationDescriptor::new(
                     "EdgeAB",
                     vec![serial_field("AId", "a", "A"), serial_field("BId", "b", "B")],
                 )
-                .with_covering_unique("a_b", ["a", "b"])
+                .with_unique("a_b", ["a", "b"])
                 .with_constraint(ConstraintDescriptor::foreign_key("a", ["a"], "A", "id"))
                 .with_constraint(ConstraintDescriptor::foreign_key("b", ["b"], "B", "id")),
                 RelationDescriptor::new(
                     "EdgeAC",
                     vec![serial_field("AId", "a", "A"), serial_field("CId", "c", "C")],
                 )
-                .with_covering_unique("a_c", ["a", "c"])
+                .with_unique("a_c", ["a", "c"])
                 .with_constraint(ConstraintDescriptor::foreign_key("a", ["a"], "A", "id"))
                 .with_constraint(ConstraintDescriptor::foreign_key("c", ["c"], "C", "id")),
                 RelationDescriptor::new(
                     "EdgeBC",
                     vec![serial_field("BId", "b", "B"), serial_field("CId", "c", "C")],
                 )
-                .with_covering_unique("b_c", ["b", "c"])
+                .with_unique("b_c", ["b", "c"])
                 .with_constraint(ConstraintDescriptor::foreign_key("b", ["b"], "B", "id"))
                 .with_constraint(ConstraintDescriptor::foreign_key("c", ["c"], "C", "id")),
             ],
@@ -2695,7 +2695,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                         FieldDescriptor::new("nation", ValueType::U64),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality("by_nation", ["nation", "id"])),
                 RelationDescriptor::new(
                     "Supplier",
@@ -2704,7 +2704,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                         FieldDescriptor::new("nation", ValueType::U64),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality("by_nation", ["nation", "id"])),
                 RelationDescriptor::new(
                     "Part",
@@ -2713,7 +2713,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                         FieldDescriptor::new("brand", ValueType::U64),
                     ],
                 )
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "Orders",
                     vec![
@@ -2723,7 +2723,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                             .range_indexed(),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "customer",
                     ["customer"],
@@ -2743,7 +2743,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                             .range_indexed(),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "order",
                     ["order"],

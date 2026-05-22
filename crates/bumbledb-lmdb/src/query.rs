@@ -9512,7 +9512,7 @@ fn estimate_atom_variable_access(
         } else {
             index_stats.estimated_rows_for_prefix(prefix_len)
         };
-        if matches!(path.kind, IndexKind::Covering | IndexKind::Unique)
+        if matches!(path.kind, IndexKind::TupleSet | IndexKind::Unique)
             && current_is_next
             && prefix_len + 1 == path.leading_fields.len()
         {
@@ -9730,7 +9730,7 @@ fn recommended_index_fields(
     field: &str,
 ) -> Vec<String> {
     let mut fields = vec![field.to_owned()];
-    for primary in covering_unique_fields(relation) {
+    for primary in first_unique_fields(relation) {
         if !fields.iter().any(|field| field == primary) {
             fields.push(primary.clone());
         }
@@ -9738,18 +9738,15 @@ fn recommended_index_fields(
     fields
 }
 
-fn covering_unique_fields(relation: &bumbledb_core::schema::RelationDescriptor) -> &[String] {
+fn first_unique_fields(relation: &bumbledb_core::schema::RelationDescriptor) -> &[String] {
     relation
         .constraints
         .iter()
         .find_map(|constraint| match constraint {
-            bumbledb_core::schema::ConstraintDescriptor::Unique {
-                fields,
-                covering: true,
-                ..
-            } => Some(fields.as_slice()),
-            bumbledb_core::schema::ConstraintDescriptor::Unique { .. }
-            | bumbledb_core::schema::ConstraintDescriptor::ForeignKey { .. } => None,
+            bumbledb_core::schema::ConstraintDescriptor::Unique { fields, .. } => {
+                Some(fields.as_slice())
+            }
+            bumbledb_core::schema::ConstraintDescriptor::ForeignKey { .. } => None,
         })
         .unwrap_or(&[])
 }

@@ -791,7 +791,7 @@ mod tests {
                     },
                 )],
             )
-            .with_covering_unique("id", ["id"]),
+            .with_unique("id", ["id"]),
         );
         schema
     }

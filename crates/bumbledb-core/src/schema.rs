@@ -84,17 +84,6 @@ pub enum SchemaError {
         reason: String,
     },
 
-    /// A relation did not declare one covering unique constraint.
-    #[error("relation {relation} must declare exactly one covering unique constraint")]
-    MissingCoveringConstraint { relation: String },
-
-    /// A relation declared more than one covering unique constraint.
-    #[error("relation {relation} declares multiple covering unique constraints: {constraints:?}")]
-    MultipleCoveringConstraints {
-        relation: String,
-        constraints: Vec<String>,
-    },
-
     /// A foreign-key constraint targeted an unknown named constraint.
     #[error(
         "constraint {relation}.{constraint} targets unknown constraint {target_relation}.{target_constraint}"
@@ -284,7 +273,7 @@ impl SchemaDescriptor {
 
     fn canonical_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        push_str(&mut out, "bumbledb.schema.v2");
+        push_str(&mut out, "bumbledb.schema.v4.set-native-layout");
         push_str(&mut out, &self.name);
         push_u32(&mut out, self.enums.len() as u32);
         for enum_descriptor in &self.enums {
@@ -363,7 +352,6 @@ impl SchemaDescriptor {
     fn validate_constraints(&self, relation: &RelationDescriptor) -> Result<()> {
         let mut names = BTreeSet::new();
         let mut unique_field_sets = BTreeSet::new();
-        let mut covering_constraints = Vec::new();
         for constraint in &relation.constraints {
             let constraint_name = constraint.name();
             if constraint_name.is_empty() {
@@ -378,14 +366,7 @@ impl SchemaDescriptor {
                 });
             }
             match constraint {
-                ConstraintDescriptor::Unique {
-                    name,
-                    fields,
-                    covering,
-                } => {
-                    if *covering {
-                        covering_constraints.push(name.clone());
-                    }
+                ConstraintDescriptor::Unique { name, fields } => {
                     if fields.is_empty() {
                         return Err(SchemaError::InvalidConstraint {
                             relation: relation.name.clone(),
@@ -448,16 +429,7 @@ impl SchemaDescriptor {
                 }
             }
         }
-        match covering_constraints.as_slice() {
-            [_] => Ok(()),
-            [] => Err(SchemaError::MissingCoveringConstraint {
-                relation: relation.name.clone(),
-            }),
-            _ => Err(SchemaError::MultipleCoveringConstraints {
-                relation: relation.name.clone(),
-                constraints: covering_constraints,
-            }),
-        }
+        Ok(())
     }
 
     fn validate_foreign_key_constraint(
@@ -773,14 +745,14 @@ impl RelationDescriptor {
         self
     }
 
-    /// Adds the relation's single covering unique constraint.
-    pub fn with_covering_unique(
+    /// Adds a named unique constraint.
+    pub fn with_unique(
         mut self,
         name: impl Into<String>,
         fields: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
         self.constraints
-            .push(ConstraintDescriptor::unique_covering(name, fields));
+            .push(ConstraintDescriptor::unique(name, fields));
         self
     }
 
@@ -798,28 +770,14 @@ impl RelationDescriptor {
     fn index_candidates(&self) -> Vec<IndexCandidate> {
         let mut candidates = Vec::new();
 
-        for constraint in &self.constraints {
-            if let ConstraintDescriptor::Unique {
-                fields,
-                covering: true,
-                ..
-            } = constraint
-            {
-                candidates.push(IndexCandidate {
-                    name: "covering".to_owned(),
-                    kind: IndexKind::Covering,
-                    fields: fields.clone(),
-                });
-            }
-        }
+        candidates.push(IndexCandidate {
+            name: "tuple_set".to_owned(),
+            kind: IndexKind::TupleSet,
+            fields: self.fields.iter().map(|field| field.name.clone()).collect(),
+        });
 
         for constraint in &self.constraints {
-            if let ConstraintDescriptor::Unique {
-                name,
-                fields,
-                covering: false,
-            } = constraint
-            {
+            if let ConstraintDescriptor::Unique { name, fields } = constraint {
                 candidates.push(IndexCandidate {
                     name: format!("unique_{name}"),
                     kind: IndexKind::Unique,
@@ -887,7 +845,7 @@ impl RelationDescriptor {
 
         for field in &self.fields {
             if seen.insert(field.name.clone()) {
-                components.push(IndexComponent::new(field, ComponentRole::Covering));
+                components.push(IndexComponent::new(field, ComponentRole::Payload));
             }
         }
 
@@ -1062,11 +1020,7 @@ impl fmt::Display for ValueType {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConstraintDescriptor {
     /// Unique key constraint.
-    Unique {
-        name: String,
-        fields: Vec<String>,
-        covering: bool,
-    },
+    Unique { name: String, fields: Vec<String> },
     /// Foreign key constraint.
     ForeignKey {
         name: String,
@@ -1093,19 +1047,6 @@ impl ConstraintDescriptor {
         Self::Unique {
             name: name.into(),
             fields: fields.into_iter().map(Into::into).collect(),
-            covering: false,
-        }
-    }
-
-    /// Creates a covering unique constraint.
-    pub fn unique_covering(
-        name: impl Into<String>,
-        fields: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
-        Self::Unique {
-            name: name.into(),
-            fields: fields.into_iter().map(Into::into).collect(),
-            covering: true,
         }
     }
 
@@ -1134,15 +1075,10 @@ impl ConstraintDescriptor {
 
     fn push_canonical(&self, out: &mut Vec<u8>) {
         match self {
-            ConstraintDescriptor::Unique {
-                name,
-                fields,
-                covering,
-            } => {
+            ConstraintDescriptor::Unique { name, fields } => {
                 push_u8(out, 1);
                 push_str(out, name);
                 push_string_list(out, fields);
-                push_u8(out, u8::from(*covering));
             }
             ConstraintDescriptor::ForeignKey {
                 name,
@@ -1221,15 +1157,15 @@ impl IndexDescriptor {
 /// Current index kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IndexKind {
-    /// Relation-level full covering access path.
-    Covering,
-    /// Unique leading covering index.
+    /// Canonical tuple-set access path.
+    TupleSet,
+    /// Unique leading index.
     Unique,
-    /// Foreign-key leading covering index.
+    /// Foreign-key leading index.
     ForeignKey,
-    /// Range leading covering index.
+    /// Range leading index.
     Range,
-    /// Equality leading covering index.
+    /// Equality leading index.
     Equality,
     /// Explicit alternate component-order index.
     Permutation,
@@ -1240,7 +1176,7 @@ impl IndexKind {
         push_u8(
             out,
             match self {
-                IndexKind::Covering => 1,
+                IndexKind::TupleSet => 1,
                 IndexKind::Unique => 2,
                 IndexKind::ForeignKey => 3,
                 IndexKind::Range => 4,
@@ -1266,7 +1202,7 @@ pub struct CurrentIndexLayout {
     pub kind: IndexKind,
     /// Leading fields used for prefix access.
     pub leading_fields: Vec<String>,
-    /// Full covering components in encoded order.
+    /// Full payload components in encoded order.
     pub components: Vec<IndexComponent>,
     /// Total encoded key length including namespace/relation/index overhead.
     pub encoded_len: usize,
@@ -1284,8 +1220,8 @@ impl CurrentIndexLayout {
 pub enum ComponentRole {
     /// Leading prefix component.
     Leading,
-    /// Covering payload component inside the key.
-    Covering,
+    /// Payload payload component inside the key.
+    Payload,
 }
 
 /// A field component inside an index key.
@@ -1321,6 +1257,7 @@ struct IndexCandidate {
 
 fn generated_index_names(relation: &RelationDescriptor) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
+    names.insert("tuple_set".to_owned());
     for field in &relation.fields {
         if field.indexing.range {
             names.insert(format!("by_{}", field.name));
@@ -1328,12 +1265,8 @@ fn generated_index_names(relation: &RelationDescriptor) -> BTreeSet<String> {
     }
     for constraint in &relation.constraints {
         match constraint {
-            ConstraintDescriptor::Unique { name, covering, .. } => {
-                if *covering {
-                    names.insert("covering".to_owned());
-                } else {
-                    names.insert(format!("unique_{name}"));
-                }
+            ConstraintDescriptor::Unique { name, .. } => {
+                names.insert(format!("unique_{name}"));
             }
             ConstraintDescriptor::ForeignKey { name, .. } => {
                 names.insert(format!("by_fk_{name}"));
@@ -1414,10 +1347,13 @@ mod tests {
     fn computes_current_index_layouts() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let layouts = ledger_schema().current_index_layouts(511)?;
 
-        let account_covering = find_layout(&layouts, "Account", "covering")?;
-        assert_eq!(account_covering.kind, IndexKind::Covering);
-        assert_eq!(account_covering.leading_fields, ["id"]);
-        assert_eq!(field_names(account_covering), ["id", "holder", "currency"]);
+        let account_tuple_set = find_layout(&layouts, "Account", "tuple_set")?;
+        assert_eq!(account_tuple_set.kind, IndexKind::TupleSet);
+        assert_eq!(
+            account_tuple_set.leading_fields,
+            ["id", "holder", "currency"]
+        );
+        assert_eq!(field_names(account_tuple_set), ["id", "holder", "currency"]);
 
         let posting_at = find_layout(&layouts, "Posting", "by_at")?;
         assert_eq!(posting_at.kind, IndexKind::Range);
@@ -1464,7 +1400,7 @@ mod tests {
     }
 
     #[test]
-    fn covering_layout_is_first_even_when_declared_later()
+    fn tuple_set_layout_is_first_even_when_declared_later()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let schema = SchemaDescriptor::new(
             "Ordering",
@@ -1477,13 +1413,13 @@ mod tests {
                     ],
                 )
                 .with_constraint(ConstraintDescriptor::unique("code", ["code"]))
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
             ],
         );
 
         let layouts = schema.current_index_layouts(511)?;
-        assert_eq!(layouts[0].index_name, "covering");
-        assert_eq!(layouts[0].kind, IndexKind::Covering);
+        assert_eq!(layouts[0].index_name, "tuple_set");
+        assert_eq!(layouts[0].kind, IndexKind::TupleSet);
         assert_eq!(layouts[1].index_name, "unique_code");
         Ok(())
     }
@@ -1502,8 +1438,8 @@ mod tests {
         assert!(name.value_type.is_interned_placeholder());
         assert_eq!(name.encoded_width, 8);
 
-        let source_covering = find_layout(&layouts, "SourceDocument", "covering")?;
-        let payload = source_covering
+        let source_tuple_set = find_layout(&layouts, "SourceDocument", "tuple_set")?;
+        let payload = source_tuple_set
             .components
             .iter()
             .find(|component| component.field_name == "payload")
@@ -1511,8 +1447,8 @@ mod tests {
         assert!(payload.value_type.is_interned_placeholder());
         assert_eq!(payload.encoded_width, 8);
 
-        let account_covering = find_layout(&layouts, "Account", "covering")?;
-        let currency = account_covering
+        let account_tuple_set = find_layout(&layouts, "Account", "tuple_set")?;
+        let currency = account_tuple_set
             .components
             .iter()
             .find(|component| component.field_name == "currency")
@@ -1537,7 +1473,7 @@ mod tests {
                         })
                         .collect(),
                 )
-                .with_covering_unique("id", ["f0"]),
+                .with_unique("id", ["f0"]),
             ],
         );
 
@@ -1564,7 +1500,7 @@ mod tests {
                         ),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality(
                     "bad_currency",
                     ["currency", "currency"],
@@ -1605,33 +1541,22 @@ mod tests {
     }
 
     #[test]
-    fn validation_rejects_missing_covering_unique() {
-        let mut schema = valid_schema();
-        schema.relations[0].constraints.retain(|constraint| {
-            !matches!(
-                constraint,
-                ConstraintDescriptor::Unique { covering: true, .. }
-            )
-        });
-        assert!(matches!(
-            schema.validate(),
-            Err(SchemaError::MissingCoveringConstraint { relation }) if relation == "Parent"
-        ));
-    }
-
-    #[test]
-    fn validation_rejects_multiple_covering_uniques() {
+    fn validation_allows_relation_without_named_unique() {
         let mut schema = valid_schema();
         schema.relations[0]
             .constraints
-            .push(ConstraintDescriptor::unique_covering(
-                "id_code",
-                ["id", "code"],
-            ));
-        assert!(matches!(
-            schema.validate(),
-            Err(SchemaError::MultipleCoveringConstraints { relation, .. }) if relation == "Parent"
-        ));
+            .retain(|constraint| !matches!(constraint, ConstraintDescriptor::Unique { .. }));
+        schema.relations[1].constraints.clear();
+        assert!(schema.validate().is_ok());
+    }
+
+    #[test]
+    fn validation_accepts_multiple_named_unique_constraints() {
+        let mut schema = valid_schema();
+        schema.relations[0]
+            .constraints
+            .push(ConstraintDescriptor::unique("id_code", ["id", "code"]));
+        assert!(schema.validate().is_ok());
     }
 
     #[test]
@@ -1819,10 +1744,11 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_changes_when_covering_flag_changes() {
+    fn fingerprint_changes_when_unique_fields_change() {
         let schema = valid_schema();
         let mut changed = valid_schema();
-        changed.relations[0].constraints[0] = ConstraintDescriptor::unique("id", ["id"]);
+        changed.relations[0].constraints[0] =
+            ConstraintDescriptor::unique("id_code", ["id", "code"]);
         assert_ne!(schema.fingerprint(), changed.fingerprint());
     }
 
@@ -1913,7 +1839,7 @@ mod tests {
                         ),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::unique(
                     "holder_currency",
                     ["holder", "currency"],
@@ -1942,7 +1868,7 @@ mod tests {
                         FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "account",
                     ["account"],
@@ -1956,7 +1882,7 @@ mod tests {
                         FieldDescriptor::new("name", ValueType::String),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::unique("name", ["name"])),
                 RelationDescriptor::new(
                     "SourceDocument",
@@ -1968,7 +1894,7 @@ mod tests {
                         FieldDescriptor::new("payload", ValueType::Bytes),
                     ],
                 )
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "OrgParent",
                     vec![
@@ -1976,7 +1902,7 @@ mod tests {
                         FieldDescriptor::new("parent", serial_type("OrgId", "Org")),
                     ],
                 )
-                .with_covering_unique("child_parent", ["child", "parent"]),
+                .with_unique("child_parent", ["child", "parent"]),
             ],
         )
         .with_enum(EnumDescriptor::codes("Currency", [1, 2]))
@@ -1993,7 +1919,7 @@ mod tests {
                         FieldDescriptor::new("code", ValueType::U64),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::unique("code", ["code"]))
                 .with_index(IndexDescriptor::equality("by_code_exact", ["code", "id"])),
                 RelationDescriptor::new(
@@ -2003,7 +1929,7 @@ mod tests {
                         FieldDescriptor::new("parent", serial_type("ParentId", "Parent")),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "parent",
                     ["parent"],
@@ -2025,7 +1951,7 @@ mod tests {
                         FieldDescriptor::new("b", ValueType::U64),
                     ],
                 )
-                .with_covering_unique("by_ab", ["a", "b"]),
+                .with_unique("by_ab", ["a", "b"]),
                 RelationDescriptor::new(
                     "Child",
                     vec![
@@ -2034,7 +1960,7 @@ mod tests {
                         FieldDescriptor::new("parent_b", ValueType::U64),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "parent",
                     ["parent_a", "parent_b"],
@@ -2058,7 +1984,7 @@ mod tests {
                         },
                     )],
                 )
-                .with_covering_unique("by_code", ["code"]),
+                .with_unique("by_code", ["code"]),
                 RelationDescriptor::new(
                     "Account",
                     vec![
@@ -2071,7 +1997,7 @@ mod tests {
                         ),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "currency",
                     ["currency"],
@@ -2105,7 +2031,7 @@ mod tests {
                         ),
                     ],
                 )
-                .with_covering_unique("by_country_currency", ["country", "currency"]),
+                .with_unique("by_country_currency", ["country", "currency"]),
                 RelationDescriptor::new(
                     "Account",
                     vec![
@@ -2124,7 +2050,7 @@ mod tests {
                         ),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "policy",
                     ["country", "currency"],
@@ -2153,7 +2079,7 @@ mod tests {
                         ),
                     ],
                 )
-                .with_covering_unique("by_account_currency", ["account", "currency"]),
+                .with_unique("by_account_currency", ["account", "currency"]),
                 RelationDescriptor::new(
                     "Posting",
                     vec![
@@ -2167,7 +2093,7 @@ mod tests {
                         ),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "account_currency",
                     ["account", "currency"],

@@ -8,7 +8,7 @@ use bumbledb_core::schema::{RelationDescriptor, SchemaFingerprint, ValueType};
 
 use crate::planner_stats::{PlannerStatsCache, PlannerStatsCacheDiagnostics};
 use crate::query::ExecutionPlan;
-use crate::storage_schema::COVERING_ACCESS_NAME;
+use crate::storage_schema::TUPLE_SET_ACCESS_NAME;
 use crate::{
     AccessId, EncodedOwned, Error, ReadTxn, Result, SegmentDescriptor, SortedTrieIndex,
     StorageSchema,
@@ -721,7 +721,7 @@ pub struct RelationIndexImage {
     pub access: AccessId,
     /// Leading fields in access-path order.
     pub fields: Vec<FieldId>,
-    /// Full covering components in encoded key order.
+    /// Full payload components in encoded key order.
     pub components: Vec<RelationIndexComponent>,
     /// Bytes per encoded index entry.
     pub encoded_len: usize,
@@ -1583,8 +1583,8 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
         let mut builders = encoded_column_builders(&fields, 0)?;
         let layout = self
             .schema
-            .covering_layout(&self.relation.name)
-            .ok_or_else(|| Error::unknown_index(&self.relation.name, COVERING_ACCESS_NAME))?;
+            .tuple_set_layout(&self.relation.name)
+            .ok_or_else(|| Error::unknown_index(&self.relation.name, TUPLE_SET_ACCESS_NAME))?;
         let component_by_field = layout
             .components
             .iter()
@@ -1594,8 +1594,8 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
 
         let covering = self
             .schema
-            .covering_index_name(&self.relation.name)
-            .ok_or_else(|| Error::unknown_index(&self.relation.name, COVERING_ACCESS_NAME))?;
+            .tuple_set_index_name(&self.relation.name)
+            .ok_or_else(|| Error::unknown_index(&self.relation.name, TUPLE_SET_ACCESS_NAME))?;
         let scan =
             self.txn
                 .scan_encoded_index_prefix(self.schema, &self.relation.name, covering, &[])?;
@@ -2210,7 +2210,7 @@ mod tests {
         }
         SchemaDescriptor::new(
             "Accounts",
-            vec![RelationDescriptor::new("Account", fields).with_covering_unique("id", ["id"])],
+            vec![RelationDescriptor::new("Account", fields).with_unique("id", ["id"])],
         )
         .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
             "Currency",
@@ -2226,9 +2226,9 @@ mod tests {
                     "Account",
                     vec![FieldDescriptor::new("id", ValueType::U64)],
                 )
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
                 RelationDescriptor::new("Audit", vec![FieldDescriptor::new("id", ValueType::U64)])
-                    .with_covering_unique("id", ["id"]),
+                    .with_unique("id", ["id"]),
             ],
         )
     }

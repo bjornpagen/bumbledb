@@ -415,7 +415,7 @@ fn sailors_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("rating", ValueType::U64),
                 ],
             )
-            .with_covering_unique("id", ["id"]),
+            .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "Boat",
                 vec![
@@ -428,7 +428,7 @@ fn sailors_schema() -> SchemaDescriptor {
                     ),
                 ],
             )
-            .with_covering_unique("id", ["id"]),
+            .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "Reserve",
                 vec![
@@ -437,7 +437,7 @@ fn sailors_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("day", ValueType::TimestampMicros),
                 ],
             )
-            .with_covering_unique("sailor_boat_day", ["sailor", "boat", "day"])
+            .with_unique("sailor_boat_day", ["sailor", "boat", "day"])
             .with_constraint(ConstraintDescriptor::foreign_key(
                 "sailor",
                 ["sailor"],
@@ -466,7 +466,7 @@ fn triangle_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("b", ValueType::U64),
                 ],
             )
-            .with_covering_unique("ab", ["a", "b"]),
+            .with_unique("ab", ["a", "b"]),
             RelationDescriptor::new(
                 "EdgeAC",
                 vec![
@@ -474,7 +474,7 @@ fn triangle_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("c", ValueType::U64),
                 ],
             )
-            .with_covering_unique("ac", ["a", "c"]),
+            .with_unique("ac", ["a", "c"]),
             RelationDescriptor::new(
                 "EdgeBC",
                 vec![
@@ -482,7 +482,7 @@ fn triangle_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("c", ValueType::U64),
                 ],
             )
-            .with_covering_unique("bc", ["b", "c"]),
+            .with_unique("bc", ["b", "c"]),
         ],
     )
 }
@@ -498,7 +498,7 @@ fn tpch_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("nation", ValueType::U64),
                 ],
             )
-            .with_covering_unique("id", ["id"]),
+            .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "Supplier",
                 vec![
@@ -506,7 +506,7 @@ fn tpch_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("nation", ValueType::U64),
                 ],
             )
-            .with_covering_unique("id", ["id"]),
+            .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "Orders",
                 vec![
@@ -514,7 +514,7 @@ fn tpch_schema() -> SchemaDescriptor {
                     serial_field("CustomerId", "customer", "Customer"),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_constraint(ConstraintDescriptor::foreign_key(
                 "customer",
                 ["customer"],
@@ -529,7 +529,7 @@ fn tpch_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("extended_price", ValueType::Decimal { scale: 2 }),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_constraint(ConstraintDescriptor::foreign_key(
                 "order",
                 ["order"],
@@ -551,9 +551,9 @@ fn imdb_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("year", ValueType::I64),
                 ],
             )
-            .with_covering_unique("id", ["id"]),
+            .with_unique("id", ["id"]),
             RelationDescriptor::new("Name", vec![serial_id("NameId", "Name")])
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "Principal",
                 vec![
@@ -568,7 +568,7 @@ fn imdb_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("ordering", ValueType::U64),
                 ],
             )
-            .with_covering_unique(
+            .with_unique(
                 "title_name_category_order",
                 ["title", "name", "category", "ordering"],
             )
@@ -594,7 +594,7 @@ fn lahman_schema() -> SchemaDescriptor {
         "GoldenLahmanDb",
         vec![
             RelationDescriptor::new("Player", vec![serial_id("PlayerId", "Player")])
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "Team",
                 vec![
@@ -602,7 +602,7 @@ fn lahman_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("year", ValueType::I64),
                 ],
             )
-            .with_covering_unique("id", ["id"]),
+            .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "Batting",
                 vec![
@@ -612,7 +612,7 @@ fn lahman_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("hits", ValueType::I64),
                 ],
             )
-            .with_covering_unique("player_team_year", ["player", "team", "year"]),
+            .with_unique("player_team_year", ["player", "team", "year"]),
             RelationDescriptor::new(
                 "Salary",
                 vec![
@@ -622,7 +622,7 @@ fn lahman_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("salary", ValueType::I64),
                 ],
             )
-            .with_covering_unique("player_team_year", ["player", "team", "year"]),
+            .with_unique("player_team_year", ["player", "team", "year"]),
         ],
     )
 }
@@ -632,7 +632,7 @@ fn ldbc_schema() -> SchemaDescriptor {
         "GoldenLdbcDb",
         vec![
             RelationDescriptor::new("Person", vec![serial_id("PersonId", "Person")])
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "Knows",
                 vec![
@@ -640,7 +640,7 @@ fn ldbc_schema() -> SchemaDescriptor {
                     serial_field("PersonId", "person2", "Person"),
                 ],
             )
-            .with_covering_unique("person1_person2", ["person1", "person2"]),
+            .with_unique("person1_person2", ["person1", "person2"]),
         ],
     )
 }

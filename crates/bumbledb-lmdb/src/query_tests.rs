@@ -3269,7 +3269,7 @@ fn static_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     ),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"])),
             RelationDescriptor::new(
                 "OtherDim",
@@ -3283,7 +3283,7 @@ fn static_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     ),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"])),
             RelationDescriptor::new(
                 "Fact",
@@ -3292,7 +3292,7 @@ fn static_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("item", ValueType::U64),
                 ],
             )
-            .with_covering_unique("dim_item", ["dim", "item"])
+            .with_unique("dim_item", ["dim", "item"])
             .with_index(IndexDescriptor::equality("by_item", ["item", "dim"])),
             RelationDescriptor::new(
                 "OwnerGroup",
@@ -3307,7 +3307,7 @@ fn static_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("group", ValueType::U64),
                 ],
             )
-            .with_covering_unique("owner_group", ["owner", "group"])
+            .with_unique("owner_group", ["owner", "group"])
             .with_index(IndexDescriptor::equality("by_group", ["group", "owner"])),
             RelationDescriptor::new(
                 "OwnedFact",
@@ -3323,7 +3323,7 @@ fn static_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("item", ValueType::U64),
                 ],
             )
-            .with_covering_unique("owner_group_item", ["owner", "group", "item"])
+            .with_unique("owner_group_item", ["owner", "group", "item"])
             .with_index(IndexDescriptor::equality(
                 "by_group",
                 ["group", "owner", "item"],
@@ -3335,7 +3335,7 @@ fn static_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("right", ValueType::U64),
                 ],
             )
-            .with_covering_unique("left_right", ["left", "right"])
+            .with_unique("left_right", ["left", "right"])
             .with_index(IndexDescriptor::equality("by_right", ["right", "left"])),
         ],
     )
@@ -3356,9 +3356,9 @@ fn static_semijoin_budget_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("id", ValueType::U64),
                 ],
             )
-            .with_covering_unique("pad_id", ["pad", "id"]),
+            .with_unique("pad_id", ["pad", "id"]),
             RelationDescriptor::new("Link", vec![FieldDescriptor::new("id", ValueType::U64)])
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
         ],
     )
 }
@@ -3371,12 +3371,12 @@ fn q24_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                 "Alias",
                 vec![FieldDescriptor::new("person", ValueType::U64)],
             )
-            .with_covering_unique("person", ["person"]),
+            .with_unique("person", ["person"]),
             RelationDescriptor::new(
                 "Character",
                 vec![FieldDescriptor::new("id", ValueType::U64)],
             )
-            .with_covering_unique("id", ["id"]),
+            .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "Appearance",
                 vec![
@@ -3386,7 +3386,7 @@ fn q24_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("role", ValueType::U64),
                 ],
             )
-            .with_covering_unique("person_work_role", ["person", "work", "role", "character"])
+            .with_unique("person_work_role", ["person", "work", "role", "character"])
             .with_index(IndexDescriptor::equality(
                 "by_role_work",
                 ["role", "work", "person", "character"],
@@ -3398,7 +3398,7 @@ fn q24_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("country", ValueType::String),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_country", ["country", "id"])),
             RelationDescriptor::new(
                 "Keyword",
@@ -3407,7 +3407,7 @@ fn q24_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("word", ValueType::String),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_word", ["word", "id"])),
             RelationDescriptor::new(
                 "WorkCompany",
@@ -3416,7 +3416,7 @@ fn q24_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("company", ValueType::U64),
                 ],
             )
-            .with_covering_unique("work_company", ["work", "company"])
+            .with_unique("work_company", ["work", "company"])
             .with_index(IndexDescriptor::equality("by_company", ["company", "work"])),
             RelationDescriptor::new(
                 "WorkKeyword",
@@ -3425,7 +3425,7 @@ fn q24_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("keyword", ValueType::U64),
                 ],
             )
-            .with_covering_unique("work_keyword", ["work", "keyword"])
+            .with_unique("work_keyword", ["work", "keyword"])
             .with_index(IndexDescriptor::equality("by_keyword", ["keyword", "work"])),
             RelationDescriptor::new(
                 "Person",
@@ -3434,7 +3434,7 @@ fn q24_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("gender", ValueType::String),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_gender", ["gender", "id"])),
             RelationDescriptor::new(
                 "Role",
@@ -3443,7 +3443,7 @@ fn q24_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("name", ValueType::String),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_name", ["name", "id"])),
             RelationDescriptor::new(
                 "Title",
@@ -3452,7 +3452,7 @@ fn q24_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("year", ValueType::I64),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_year", ["year", "id"])),
         ],
     )
@@ -3466,7 +3466,7 @@ fn q16_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                 "Alias",
                 vec![FieldDescriptor::new("person", ValueType::U64)],
             )
-            .with_covering_unique("person", ["person"]),
+            .with_unique("person", ["person"]),
             RelationDescriptor::new(
                 "Cast",
                 vec![
@@ -3474,7 +3474,7 @@ fn q16_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("work", ValueType::U64),
                 ],
             )
-            .with_covering_unique("person_work", ["person", "work"])
+            .with_unique("person_work", ["person", "work"])
             .with_index(IndexDescriptor::equality(
                 "by_work_person",
                 ["work", "person"],
@@ -3486,7 +3486,7 @@ fn q16_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("country", ValueType::String),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_country", ["country", "id"])),
             RelationDescriptor::new(
                 "Keyword",
@@ -3495,7 +3495,7 @@ fn q16_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("word", ValueType::String),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_word", ["word", "id"])),
             RelationDescriptor::new(
                 "WorkCompany",
@@ -3504,7 +3504,7 @@ fn q16_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("company", ValueType::U64),
                 ],
             )
-            .with_covering_unique("work_company", ["work", "company"])
+            .with_unique("work_company", ["work", "company"])
             .with_index(IndexDescriptor::equality("by_company", ["company", "work"])),
             RelationDescriptor::new(
                 "WorkKeyword",
@@ -3513,10 +3513,10 @@ fn q16_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("keyword", ValueType::U64),
                 ],
             )
-            .with_covering_unique("work_keyword", ["work", "keyword"])
+            .with_unique("work_keyword", ["work", "keyword"])
             .with_index(IndexDescriptor::equality("by_keyword", ["keyword", "work"])),
             RelationDescriptor::new("Person", vec![FieldDescriptor::new("id", ValueType::U64)])
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "Title",
                 vec![
@@ -3524,7 +3524,7 @@ fn q16_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("episode", ValueType::I64),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_episode", ["episode", "id"])),
         ],
     )
@@ -3606,7 +3606,7 @@ fn ledger_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("name", ValueType::String),
                 ],
             )
-            .with_covering_unique("id", ["id"]),
+            .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "Account",
                 vec![
@@ -3632,7 +3632,7 @@ fn ledger_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     ),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_constraint(ConstraintDescriptor::foreign_key(
                 "holder",
                 ["holder"],
@@ -3660,7 +3660,7 @@ fn ledger_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_constraint(ConstraintDescriptor::foreign_key(
                 "account",
                 ["account"],
@@ -3693,7 +3693,7 @@ fn overflow_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("d", ValueType::Decimal { scale: 0 }),
                 ],
             )
-            .with_covering_unique("id", ["id"]),
+            .with_unique("id", ["id"]),
         ],
     )
 }
@@ -3720,7 +3720,7 @@ fn optimizer_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     ),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"])),
         ],
     )
@@ -3738,7 +3738,7 @@ fn triangle_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("b", ValueType::U64),
                 ],
             )
-            .with_covering_unique("a_b", ["a", "b"]),
+            .with_unique("a_b", ["a", "b"]),
             RelationDescriptor::new(
                 "EdgeAC",
                 vec![
@@ -3746,7 +3746,7 @@ fn triangle_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("c", ValueType::U64),
                 ],
             )
-            .with_covering_unique("a_c", ["a", "c"]),
+            .with_unique("a_c", ["a", "c"]),
             RelationDescriptor::new(
                 "EdgeBC",
                 vec![
@@ -3754,7 +3754,7 @@ fn triangle_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("c", ValueType::U64),
                 ],
             )
-            .with_covering_unique("b_c", ["b", "c"]),
+            .with_unique("b_c", ["b", "c"]),
         ],
     )
 }
@@ -3764,7 +3764,7 @@ fn chain_schema() -> bumbledb_core::schema::SchemaDescriptor {
         "ChainDb",
         vec![
             RelationDescriptor::new("A", vec![FieldDescriptor::new("id", ValueType::U64)])
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "B",
                 vec![
@@ -3772,7 +3772,7 @@ fn chain_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("a", ValueType::U64),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_a", ["a", "id"])),
         ],
     )
@@ -3790,7 +3790,7 @@ fn direct_sailors_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("day", ValueType::TimestampMicros).range_indexed(),
                 ],
             )
-            .with_covering_unique("sailor_boat_day", ["sailor", "boat", "day"]),
+            .with_unique("sailor_boat_day", ["sailor", "boat", "day"]),
         ],
     )
 }
@@ -3800,7 +3800,7 @@ fn direct_chain4_schema() -> bumbledb_core::schema::SchemaDescriptor {
         "DirectChain4Db",
         vec![
             RelationDescriptor::new("A", vec![FieldDescriptor::new("id", ValueType::U64)])
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "B",
                 vec![
@@ -3808,7 +3808,7 @@ fn direct_chain4_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("a", ValueType::U64),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_a", ["a", "id"])),
             RelationDescriptor::new(
                 "C",
@@ -3817,7 +3817,7 @@ fn direct_chain4_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("b", ValueType::U64),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_b", ["b", "id"])),
             RelationDescriptor::new(
                 "D",
@@ -3826,7 +3826,7 @@ fn direct_chain4_schema() -> bumbledb_core::schema::SchemaDescriptor {
                     FieldDescriptor::new("c", ValueType::U64),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_c", ["c", "id"])),
         ],
     )

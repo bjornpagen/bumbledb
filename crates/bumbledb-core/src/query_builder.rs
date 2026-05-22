@@ -851,7 +851,7 @@ mod tests {
                         FieldDescriptor::new("name", ValueType::String),
                     ],
                 )
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "Account",
                     vec![
@@ -865,7 +865,7 @@ mod tests {
                         ),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "holder",
                     ["holder"],
@@ -881,7 +881,7 @@ mod tests {
                         FieldDescriptor::new("at", ValueType::TimestampMicros),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "account",
                     ["account"],

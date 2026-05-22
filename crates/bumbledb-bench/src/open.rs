@@ -874,7 +874,7 @@ fn job_schema() -> SchemaDescriptor {
 }
 
 fn job_relation(name: impl Into<String>, fields: Vec<FieldDescriptor>) -> RelationDescriptor {
-    RelationDescriptor::new(name, fields).with_covering_unique("id", ["id"])
+    RelationDescriptor::new(name, fields).with_unique("id", ["id"])
 }
 
 fn add_serial_foreign_keys(mut schema: SchemaDescriptor) -> SchemaDescriptor {
@@ -1704,7 +1704,7 @@ fn imdb_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("start_year", ValueType::I64).range_indexed(),
                 ],
             )
-            .with_covering_unique("id", ["id"]),
+            .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "Name",
                 vec![
@@ -1713,7 +1713,7 @@ fn imdb_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("birth_year", ValueType::I64).range_indexed(),
                 ],
             )
-            .with_covering_unique("id", ["id"]),
+            .with_unique("id", ["id"]),
             RelationDescriptor::new(
                 "TitleRating",
                 vec![
@@ -1722,7 +1722,7 @@ fn imdb_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("votes", ValueType::I64),
                 ],
             )
-            .with_covering_unique("title", ["title"])
+            .with_unique("title", ["title"])
             .with_constraint(ConstraintDescriptor::foreign_key(
                 "title",
                 ["title"],
@@ -1738,7 +1738,7 @@ fn imdb_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("ordering", ValueType::U64),
                 ],
             )
-            .with_covering_unique(
+            .with_unique(
                 "title_name_category_ordering",
                 ["title", "name", "category", "ordering"],
             )
@@ -2173,7 +2173,7 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                         FieldDescriptor::new("last", ValueType::String),
                     ],
                 )
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "Team",
                     vec![
@@ -2183,7 +2183,7 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                         FieldDescriptor::new("name", ValueType::String),
                     ],
                 )
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "Batting",
                     vec![
@@ -2194,7 +2194,7 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                         FieldDescriptor::new("hits", ValueType::I64),
                     ],
                 )
-                .with_covering_unique("player_team_year", ["player", "team", "year"])
+                .with_unique("player_team_year", ["player", "team", "year"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "player",
                     ["player"],
@@ -2220,7 +2220,7 @@ fn lahman_from_rows(rows: Vec<Row>) -> Dataset {
                         FieldDescriptor::new("salary", ValueType::I64),
                     ],
                 )
-                .with_covering_unique("player_team_year", ["player", "team", "year"])
+                .with_unique("player_team_year", ["player", "team", "year"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "player",
                     ["player"],
@@ -2295,7 +2295,7 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
                 )
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
                 RelationDescriptor::new(
                     "Post",
                     vec![
@@ -2304,7 +2304,7 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "creator",
                     ["creator"],
@@ -2319,7 +2319,7 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
                 )
-                .with_covering_unique("person1_person2", ["person1", "person2"])
+                .with_unique("person1_person2", ["person1", "person2"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "person1",
                     ["person1"],
@@ -2344,7 +2344,7 @@ fn ldbc_from_rows(rows: Vec<Row>) -> Dataset {
                         FieldDescriptor::new("created", ValueType::TimestampMicros).range_indexed(),
                     ],
                 )
-                .with_covering_unique("person_post", ["person", "post"])
+                .with_unique("person_post", ["person", "post"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "person",
                     ["person"],

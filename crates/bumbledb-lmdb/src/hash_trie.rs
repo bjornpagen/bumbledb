@@ -570,7 +570,7 @@ mod tests {
                         FieldDescriptor::new("active", ValueType::Bool),
                     ],
                 )
-                .with_covering_unique("id", ["id"]),
+                .with_unique("id", ["id"]),
             ],
         )
         .with_enum(bumbledb_core::schema::EnumDescriptor::codes(

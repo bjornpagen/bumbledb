@@ -75,7 +75,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                     ),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_constraint(ConstraintDescriptor::foreign_key(
                 "holder",
                 ["holder"],
@@ -90,7 +90,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("created_at", ValueType::TimestampMicros).range_indexed(),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_constraint(ConstraintDescriptor::foreign_key(
                 "source",
                 ["source"],
@@ -108,7 +108,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_constraint(ConstraintDescriptor::foreign_key(
                 "entry",
                 ["entry"],
@@ -139,7 +139,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                     ),
                 ],
             )
-            .with_covering_unique("posting_tag", ["posting", "tag"])
+            .with_unique("posting_tag", ["posting", "tag"])
             .with_constraint(ConstraintDescriptor::foreign_key(
                 "posting",
                 ["posting"],
@@ -154,7 +154,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                     serial_field("OrgId", "parent", "Org"),
                 ],
             )
-            .with_covering_unique("child_parent", ["child", "parent"])
+            .with_unique("child_parent", ["child", "parent"])
             .with_constraint(ConstraintDescriptor::foreign_key(
                 "child",
                 ["child"],
@@ -180,7 +180,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                     ),
                 ],
             )
-            .with_covering_unique(
+            .with_unique(
                 "subject_object_permission",
                 ["subject", "object", "permission"],
             )
@@ -206,7 +206,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("rate", ValueType::Decimal { scale: 8 }),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_constraint(ConstraintDescriptor::foreign_key(
                 "base",
                 ["base"],
@@ -401,7 +401,7 @@ fn postings_for_holder_range_query(schema: &SchemaDescriptor) -> QueryBuildResul
 fn entity(name: &str, id_type: &str, fields: Vec<FieldDescriptor>) -> RelationDescriptor {
     let mut all = vec![serial_key_field(id_type, name)];
     all.extend(fields);
-    RelationDescriptor::new(name, all).with_covering_unique("id", ["id"])
+    RelationDescriptor::new(name, all).with_unique("id", ["id"])
 }
 
 fn serial_key_field(id_type: &str, relation: &str) -> FieldDescriptor {

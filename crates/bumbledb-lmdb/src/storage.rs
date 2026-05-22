@@ -10,7 +10,7 @@ use bumbledb_core::schema::{
     SchemaDescriptor, ValueType,
 };
 
-use crate::storage_schema::COVERING_ACCESS_NAME;
+use crate::storage_schema::TUPLE_SET_ACCESS_NAME;
 use crate::{
     AccessId, ColumnSegmentDescriptor, Error, FieldId, IndexSegmentDescriptor, IndexStatsSummary,
     ReadTxn, RelationId, Result, SegmentDescriptor, StorageSchema, WriteTxn,
@@ -416,8 +416,8 @@ impl WriteTxn<'_> {
         tuple: &EncodedTuple,
     ) -> Result<bool> {
         let covering = schema
-            .covering_layout(&relation.name)
-            .ok_or_else(|| Error::unknown_index(&relation.name, COVERING_ACCESS_NAME))?;
+            .tuple_set_layout(&relation.name)
+            .ok_or_else(|| Error::unknown_index(&relation.name, TUPLE_SET_ACCESS_NAME))?;
         let key = current_index_key(covering, relation, tuple)?;
         Ok(self.dbs.index.get(&self.txn, key.as_slice())?.is_some())
     }
@@ -532,10 +532,10 @@ impl WriteTxn<'_> {
         relation_id: u16,
         relation: &RelationDescriptor,
     ) -> Result<PendingRelationSegment> {
-        let covering_layout = schema
-            .covering_layout(&relation.name)
-            .ok_or_else(|| Error::unknown_index(&relation.name, COVERING_ACCESS_NAME))?;
-        let component_by_field = covering_layout
+        let tuple_set_layout = schema
+            .tuple_set_layout(&relation.name)
+            .ok_or_else(|| Error::unknown_index(&relation.name, TUPLE_SET_ACCESS_NAME))?;
+        let component_by_field = tuple_set_layout
             .components
             .iter()
             .enumerate()
@@ -551,20 +551,20 @@ impl WriteTxn<'_> {
             })
             .collect::<Vec<_>>();
 
-        let covering_prefix = current_index_prefix(relation_id, covering_layout.index_id);
+        let covering_prefix = current_index_prefix(relation_id, tuple_set_layout.index_id);
         let mut row_count = 0usize;
         let mut iter = self
             .dbs
             .index
             .prefix_iter(&self.txn, covering_prefix.as_slice())?;
         while let Some((key, _)) = iter.next().transpose()? {
-            let item = encoded_index_item(covering_layout, &covering_prefix, key)?;
+            let item = encoded_index_item(tuple_set_layout, &covering_prefix, key)?;
             for (field_id, field) in relation.fields.iter().enumerate() {
                 let component_index = *component_by_field
                     .get(field.name.as_str())
                     .ok_or_else(|| Error::corrupt("segment missing covering component"))?;
                 let bytes = item
-                    .component(&covering_layout.components, component_index)
+                    .component(&tuple_set_layout.components, component_index)
                     .ok_or_else(|| Error::corrupt("segment covering component truncated"))?;
                 columns[field_id].bytes.extend_from_slice(bytes);
             }
@@ -915,8 +915,8 @@ impl<'env> ReadTxn<'env> {
         relation_name: &str,
     ) -> Result<IndexScan<'borrow, 'env, 'schema>> {
         let covering = schema
-            .covering_index_name(relation_name)
-            .ok_or_else(|| Error::unknown_index(relation_name, COVERING_ACCESS_NAME))?;
+            .tuple_set_index_name(relation_name)
+            .ok_or_else(|| Error::unknown_index(relation_name, TUPLE_SET_ACCESS_NAME))?;
         self.scan_index_with_prefix(schema, relation_name, covering, &[], None)
     }
 
@@ -1230,7 +1230,7 @@ impl<'env> ReadTxn<'env> {
 
     /// Checks whether the exact row exists in the covering access path.
     pub fn exact_row_exists(&self, schema: &StorageSchema, row: &Row) -> Result<bool> {
-        self.current_index_entry_exists(schema, row, COVERING_ACCESS_NAME)
+        self.current_index_entry_exists(schema, row, TUPLE_SET_ACCESS_NAME)
     }
 
     /// Looks up an interned string ID.
@@ -1691,13 +1691,8 @@ fn unique_constraint_layout<'a>(
         .find_map(|constraint| match constraint {
             ConstraintDescriptor::Unique {
                 name: constraint_name,
-                covering,
                 ..
-            } if constraint_name == name => Some(if *covering {
-                COVERING_ACCESS_NAME.to_owned()
-            } else {
-                format!("unique_{name}")
-            }),
+            } if constraint_name == name => Some(format!("unique_{name}")),
             ConstraintDescriptor::Unique { .. } | ConstraintDescriptor::ForeignKey { .. } => None,
         })
         .ok_or_else(|| {
@@ -2007,12 +2002,12 @@ mod tests {
             assert_eq!(txn.relation_row_count(&schema, "Holder")?, 1);
             assert_eq!(txn.relation_row_count(&schema, "Account")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "Holder", COVERING_ACCESS_NAME)?,
+                txn.index_entry_count(&schema, "Holder", TUPLE_SET_ACCESS_NAME)?,
                 1
             );
             assert_eq!(txn.index_entry_count(&schema, "Holder", "unique_name")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "Account", COVERING_ACCESS_NAME)?,
+                txn.index_entry_count(&schema, "Account", TUPLE_SET_ACCESS_NAME)?,
                 1
             );
             assert_eq!(txn.index_entry_count(&schema, "Account", "by_holder")?, 1);
@@ -2023,7 +2018,7 @@ mod tests {
             assert!(txn.current_index_entry_exists(
                 &schema,
                 &holder_row(1, "Alice"),
-                COVERING_ACCESS_NAME
+                TUPLE_SET_ACCESS_NAME
             )?);
             assert!(txn.current_index_entry_exists(&schema, &account_row(1, 1, 1), "by_holder")?);
             assert!(txn.dictionary_string_id("Alice")?.is_some());
@@ -2063,7 +2058,7 @@ mod tests {
             assert_eq!(txn.history_entry_count()?, 1);
             assert_eq!(txn.relation_row_count(&schema, "Holder")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "Holder", COVERING_ACCESS_NAME)?,
+                txn.index_entry_count(&schema, "Holder", TUPLE_SET_ACCESS_NAME)?,
                 1
             );
             Ok::<(), Error>(())
@@ -2482,18 +2477,18 @@ mod tests {
             assert_eq!(txn.history_entry_count()?, 4);
             assert_eq!(txn.relation_row_count(&schema, "Account")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "Account", COVERING_ACCESS_NAME)?,
+                txn.index_entry_count(&schema, "Account", TUPLE_SET_ACCESS_NAME)?,
                 1
             );
             assert!(!txn.current_index_entry_exists(
                 &schema,
                 &account_row(1, 1, 1),
-                COVERING_ACCESS_NAME
+                TUPLE_SET_ACCESS_NAME
             )?);
             assert!(txn.current_index_entry_exists(
                 &schema,
                 &account_row(1, 1, 2),
-                COVERING_ACCESS_NAME
+                TUPLE_SET_ACCESS_NAME
             )?);
             Ok::<(), Error>(())
         })?;
@@ -2561,7 +2556,7 @@ mod tests {
             assert_eq!(txn.relation_row_count(&schema, "AccountTag")?, 1);
             assert_eq!(txn.history_entry_count()?, 3);
             assert_eq!(
-                txn.index_entry_count(&schema, "AccountTag", COVERING_ACCESS_NAME)?,
+                txn.index_entry_count(&schema, "AccountTag", TUPLE_SET_ACCESS_NAME)?,
                 1
             );
             assert_eq!(
@@ -2580,7 +2575,7 @@ mod tests {
         env.read(|txn| {
             assert_eq!(txn.relation_row_count(&schema, "AccountTag")?, 0);
             assert_eq!(
-                txn.index_entry_count(&schema, "AccountTag", COVERING_ACCESS_NAME)?,
+                txn.index_entry_count(&schema, "AccountTag", TUPLE_SET_ACCESS_NAME)?,
                 0
             );
             assert_eq!(
@@ -2614,7 +2609,7 @@ mod tests {
             assert!(
                 access_paths
                     .iter()
-                    .any(|path| path.index_name == COVERING_ACCESS_NAME)
+                    .any(|path| path.index_name == TUPLE_SET_ACCESS_NAME)
             );
             assert!(
                 access_paths
@@ -2722,7 +2717,7 @@ mod tests {
                             FieldDescriptor::new("b", ValueType::U64),
                         ],
                     )
-                    .with_covering_unique("by_ab", ["a", "b"]),
+                    .with_unique("by_ab", ["a", "b"]),
                     RelationDescriptor::new(
                         "Child",
                         vec![
@@ -2731,7 +2726,7 @@ mod tests {
                             FieldDescriptor::new("parent_b", ValueType::U64),
                         ],
                     )
-                    .with_covering_unique("id", ["id"])
+                    .with_unique("id", ["id"])
                     .with_constraint(ConstraintDescriptor::foreign_key(
                         "parent",
                         ["parent_a", "parent_b"],
@@ -2758,7 +2753,7 @@ mod tests {
                             },
                         )],
                     )
-                    .with_covering_unique("code", ["code"]),
+                    .with_unique("code", ["code"]),
                     RelationDescriptor::new(
                         "Account",
                         vec![
@@ -2771,7 +2766,7 @@ mod tests {
                             ),
                         ],
                     )
-                    .with_covering_unique("id", ["id"])
+                    .with_unique("id", ["id"])
                     .with_constraint(ConstraintDescriptor::foreign_key(
                         "currency",
                         ["currency"],
@@ -2810,7 +2805,7 @@ mod tests {
                             ),
                         ],
                     )
-                    .with_covering_unique("by_country_currency", ["country", "currency"]),
+                    .with_unique("by_country_currency", ["country", "currency"]),
                     RelationDescriptor::new(
                         "Account",
                         vec![
@@ -2829,7 +2824,7 @@ mod tests {
                             ),
                         ],
                     )
-                    .with_covering_unique("id", ["id"])
+                    .with_unique("id", ["id"])
                     .with_constraint(ConstraintDescriptor::foreign_key(
                         "policy",
                         ["country", "currency"],
@@ -2873,7 +2868,7 @@ mod tests {
                             ),
                         ],
                     )
-                    .with_covering_unique("by_account_currency", ["account", "currency"]),
+                    .with_unique("by_account_currency", ["account", "currency"]),
                     RelationDescriptor::new(
                         "Posting",
                         vec![
@@ -2893,7 +2888,7 @@ mod tests {
                             ),
                         ],
                     )
-                    .with_covering_unique("id", ["id"])
+                    .with_unique("id", ["id"])
                     .with_constraint(ConstraintDescriptor::foreign_key(
                         "account_currency",
                         ["account", "currency"],
@@ -2927,7 +2922,7 @@ mod tests {
                         FieldDescriptor::new("name", ValueType::String),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_constraint(ConstraintDescriptor::unique("name", ["name"])),
                 RelationDescriptor::new(
                     "Account",
@@ -2955,7 +2950,7 @@ mod tests {
                         FieldDescriptor::new("opened", ValueType::TimestampMicros).range_indexed(),
                     ],
                 )
-                .with_covering_unique("id", ["id"])
+                .with_unique("id", ["id"])
                 .with_index(IndexDescriptor::equality("by_holder", ["holder"]))
                 .with_constraint(ConstraintDescriptor::unique(
                     "holder_currency",
@@ -2985,7 +2980,7 @@ mod tests {
                         ),
                     ],
                 )
-                .with_covering_unique("account_tag", ["account", "tag"])
+                .with_unique("account_tag", ["account", "tag"])
                 .with_constraint(ConstraintDescriptor::foreign_key(
                     "account",
                     ["account"],

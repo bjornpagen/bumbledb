@@ -17,7 +17,7 @@ pub struct StorageSchema {
     layout_by_relation_name: BTreeMap<(String, String), AccessId>,
 }
 
-pub(crate) const COVERING_ACCESS_NAME: &str = "covering";
+pub(crate) const TUPLE_SET_ACCESS_NAME: &str = "tuple_set";
 
 /// Bulk ETL load report.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -171,12 +171,12 @@ impl StorageSchema {
             })
     }
 
-    pub(crate) fn covering_layout(&self, relation: &str) -> Option<&CurrentIndexLayout> {
-        self.layout(relation, COVERING_ACCESS_NAME)
+    pub(crate) fn tuple_set_layout(&self, relation: &str) -> Option<&CurrentIndexLayout> {
+        self.layout(relation, TUPLE_SET_ACCESS_NAME)
     }
 
-    pub(crate) fn covering_index_name(&self, relation: &str) -> Option<&str> {
-        self.covering_layout(relation)
+    pub(crate) fn tuple_set_index_name(&self, relation: &str) -> Option<&str> {
+        self.tuple_set_layout(relation)
             .map(|layout| layout.index_name.as_str())
     }
 }

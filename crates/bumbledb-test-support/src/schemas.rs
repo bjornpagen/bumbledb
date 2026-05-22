@@ -17,7 +17,7 @@ pub fn ledger_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("name", ValueType::String),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_constraint(ConstraintDescriptor::unique("name", ["name"])),
             RelationDescriptor::new(
                 "Account",
@@ -32,7 +32,7 @@ pub fn ledger_schema() -> SchemaDescriptor {
                     ),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_constraint(ConstraintDescriptor::unique(
                 "holder_currency",
                 ["holder", "currency"],
@@ -52,7 +52,7 @@ pub fn ledger_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
                 ],
             )
-            .with_covering_unique("id", ["id"])
+            .with_unique("id", ["id"])
             .with_constraint(ConstraintDescriptor::foreign_key(
                 "account",
                 ["account"],
@@ -71,7 +71,7 @@ pub fn ledger_schema() -> SchemaDescriptor {
                     ),
                 ],
             )
-            .with_covering_unique("account_tag", ["account", "tag"])
+            .with_unique("account_tag", ["account", "tag"])
             .with_constraint(ConstraintDescriptor::foreign_key(
                 "account",
                 ["account"],
@@ -97,7 +97,7 @@ pub fn overflow_schema() -> SchemaDescriptor {
                     FieldDescriptor::new("d", ValueType::Decimal { scale: 0 }),
                 ],
             )
-            .with_covering_unique("id", ["id"]),
+            .with_unique("id", ["id"]),
         ],
     )
 }
@@ -110,7 +110,7 @@ pub fn changed_ledger_schema() -> SchemaDescriptor {
             "Extra",
             vec![FieldDescriptor::new("id", serial_type("ExtraId", "Extra"))],
         )
-        .with_covering_unique("id", ["id"]),
+        .with_unique("id", ["id"]),
     );
     schema
 }
