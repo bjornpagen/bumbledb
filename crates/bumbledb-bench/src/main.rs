@@ -1174,9 +1174,6 @@ fn timed_bumbledb_samples<E>(
         let start = Instant::now();
         let plan = f()?;
         durations.push(start.elapsed());
-        if plan.timings.prepared_count_cache_emit_micros > 0 {
-            cache_hits.prepared_result_cache_hits += 1;
-        }
         if plan.counters.static_empty_cache_hits > 0 {
             cache_hits.static_empty_cache_hits += 1;
         }
@@ -1364,10 +1361,6 @@ fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
         total_micros = timings.total_micros,
         plan_micros = timings.plan_micros,
         static_semijoin_proof_micros = timings.static_semijoin_proof_micros,
-        direct_count_micros = timings.direct_count_micros,
-        prepared_count_cache_micros = timings
-            .prepared_count_cache_lookup_micros
-            .saturating_add(timings.prepared_count_cache_emit_micros),
         execute_micros = timings.execute_micros,
         unaccounted_micros = timings.unaccounted_micros,
         sink_finish_micros = timings.sink_finish_micros,
@@ -1494,40 +1487,6 @@ fn evaluate_gate(
                 notes.push(format!(
                     "hash index build rows during direct chain query: {}",
                     output.plan.counters.hash_index_build_rows
-                ));
-            }
-        }
-        if dataset == "job" && query.name == "job_q09_voice_us_actor" {
-            if output.plan.counters.factorized_counted_bindings == 0 {
-                passed = false;
-                notes.push("q09 did not use factorized count bindings".to_owned());
-            }
-            if output.plan.counters.direct_kernel_probes == 0 {
-                passed = false;
-                notes.push("q09 did not use direct kernel probes".to_owned());
-            }
-            if !output
-                .plan
-                .direct_kernel
-                .as_ref()
-                .is_some_and(|kernel| kernel.target.contains("factorized_count"))
-            {
-                passed = false;
-                notes.push("q09 direct kernel target is not factorized_count".to_owned());
-            }
-            if cache_mode == CacheMode::PreparedResult {
-                if cache_hits.prepared_result_cache_hits == 0 {
-                    passed = false;
-                    notes.push(
-                        "q09 prepared-result mode did not report result cache hits".to_owned(),
-                    );
-                }
-            } else if cache_hits.prepared_result_cache_hits != 0 {
-                passed = false;
-                notes.push(format!(
-                    "q09 {} mode unexpectedly used {} prepared result cache hit(s)",
-                    cache_mode.as_str(),
-                    cache_hits.prepared_result_cache_hits
                 ));
             }
         }
@@ -1846,15 +1805,15 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Phase Timing\n\n");
-    out.push_str("| dataset | query | runtime | total us | validate us | normalize us | encode us | image us | static empty lookup us | static literal proof us | static semijoin proof us | direct count us | direct storage us | prepared count cache lookup us | prepared count cache emit us | plan us | lftj build us | hash index us | execute us | lftj exec us | hash exec us | sink emit us | sink finish us | decode us | unaccounted us |\n");
+    out.push_str("| dataset | query | runtime | total us | validate us | normalize us | encode us | image us | static empty lookup us | static literal proof us | static semijoin proof us | direct storage us | plan us | lftj build us | hash index us | execute us | lftj exec us | hash exec us | sink emit us | sink finish us | decode us | unaccounted us |\n");
     out.push_str(
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
     );
     for result in results {
         let timings = result.timings;
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             markdown_escape(&result.runtime_kind),
@@ -1866,10 +1825,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             timings.static_empty_lookup_micros,
             timings.static_literal_proof_micros,
             timings.static_semijoin_proof_micros,
-            timings.direct_count_micros,
             timings.direct_storage_micros,
-            timings.prepared_count_cache_lookup_micros,
-            timings.prepared_count_cache_emit_micros,
             timings.plan_micros,
             timings.lftj_build_micros,
             timings.hash_index_micros,
@@ -2115,7 +2071,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         let allocations = result.allocations;
         let _ = write!(
             out,
-            ",\"phase_timing\":{{\"scope\":\"{}\",\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"static_empty_lookup_us\":{},\"static_literal_proof_us\":{},\"static_semijoin_proof_us\":{},\"direct_count_us\":{},\"direct_storage_us\":{},\"prepared_count_cache_lookup_us\":{},\"prepared_count_cache_emit_us\":{},\"prepared_count_cache_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"hash_index_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"hash_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{},\"unaccounted_us\":{}}},\"allocations\":{{\"scope\":\"{}\",\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
+            ",\"phase_timing\":{{\"scope\":\"{}\",\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"static_empty_lookup_us\":{},\"static_literal_proof_us\":{},\"static_semijoin_proof_us\":{},\"direct_storage_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"hash_index_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"hash_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{},\"unaccounted_us\":{}}},\"allocations\":{{\"scope\":\"{}\",\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
             json_escape(&result.allocation_scope),
             timings.total_micros,
             timings.validate_inputs_micros,
@@ -2125,13 +2081,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             timings.static_empty_lookup_micros,
             timings.static_literal_proof_micros,
             timings.static_semijoin_proof_micros,
-            timings.direct_count_micros,
             timings.direct_storage_micros,
-            timings.prepared_count_cache_lookup_micros,
-            timings.prepared_count_cache_emit_micros,
-            timings
-                .prepared_count_cache_lookup_micros
-                .saturating_add(timings.prepared_count_cache_emit_micros),
             timings.plan_micros,
             timings.lftj_build_micros,
             timings.hash_index_micros,
@@ -2180,14 +2130,13 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"sink_emit_count_range_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_rows_seen\":{},\"encoded_project_rows_inserted\":{},\"encoded_project_duplicate_rows\":{},\"encoded_project_row_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"direct_kernel_probes\":{},\"direct_kernel_rows\":{},\"direct_kernel_predicates\":{},\"direct_bind_attempts\":{},\"direct_bind_successes\":{},\"direct_chain_steps\":{},\"direct_chain_step_rows\":{},\"direct_chain_output_rows\":{},\"direct_chain_output_values\":{},\"direct_storage_output_rows\":{},\"direct_batch_rows\":{},\"direct_batch_row_bytes\":{},\"direct_batch_fallback_rows\":{},\"direct_binding_reuses\":{},\"query_image_relations_loaded\":{},\"query_image_rows_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{},\"hash_trie_bytes\":{},\"static_empty_atoms_checked\":{},\"static_empty_rows_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{},\"prepared_result_cache_hits\":{},\"prepared_result_cache_misses\":{},\"prepared_result_cache_inserts\":{},\"prepared_result_cache_bypasses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            "]}},\"counters\":{{\"cursor_seeks\":{},\"rows_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_rows_seen\":{},\"encoded_project_rows_inserted\":{},\"encoded_project_duplicate_rows\":{},\"encoded_project_row_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"direct_kernel_probes\":{},\"direct_kernel_rows\":{},\"direct_kernel_predicates\":{},\"direct_bind_attempts\":{},\"direct_bind_successes\":{},\"direct_chain_steps\":{},\"direct_chain_step_rows\":{},\"direct_chain_output_rows\":{},\"direct_chain_output_values\":{},\"direct_storage_output_rows\":{},\"direct_batch_rows\":{},\"direct_batch_row_bytes\":{},\"direct_batch_fallback_rows\":{},\"direct_binding_reuses\":{},\"query_image_relations_loaded\":{},\"query_image_rows_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{},\"hash_trie_bytes\":{},\"static_empty_atoms_checked\":{},\"static_empty_rows_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{},\"prepared_result_cache_hits\":{},\"prepared_result_cache_misses\":{},\"prepared_result_cache_inserts\":{},\"prepared_result_cache_bypasses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.counters.cursor_seeks,
             result.counters.rows_scanned,
             result.dictionary_reverse_lookups,
             result.materialized_values,
             result.counters.bindings_completed,
             result.counters.sink_emit_calls,
-            result.counters.sink_emit_count_range_calls,
             result.counters.aggregate_emit_calls,
             result.counters.aggregate_count_range_calls,
             result.counters.encoded_project_rows_seen,
@@ -3522,7 +3471,6 @@ mod tests {
             timings: QueryTimings {
                 total_micros: 10,
                 execute_micros: 4,
-                direct_count_micros: 4,
                 sink_finish_micros: 1,
                 unaccounted_micros: 5,
                 ..QueryTimings::default()
@@ -3579,8 +3527,7 @@ mod tests {
         assert!(markdown.contains("| pure_lftj | Lftj | FreeJoinLftj |"));
         assert!(markdown.contains("## Phase Timing"));
         assert!(markdown.contains("static semijoin proof us"));
-        assert!(markdown.contains("direct count us"));
-        assert!(markdown.contains("prepared count cache lookup us"));
+        assert!(markdown.contains("direct storage us"));
         assert!(markdown.contains("unaccounted us"));
         assert!(markdown.contains("## Mechanics Counters"));
         assert!(markdown.contains("sink emits"));
@@ -3637,8 +3584,6 @@ mod tests {
             timings: QueryTimings {
                 total_micros: 20,
                 static_semijoin_proof_micros: 12,
-                prepared_count_cache_lookup_micros: 1,
-                prepared_count_cache_emit_micros: 2,
                 hash_execute_micros: 4,
                 unaccounted_micros: 7,
                 ..QueryTimings::default()
@@ -3708,7 +3653,7 @@ mod tests {
         assert!(json.contains("\"query_image_built_during_query\":true"));
         assert!(json.contains("\"phase_timing\""));
         assert!(json.contains("\"static_semijoin_proof_us\":12"));
-        assert!(json.contains("\"prepared_count_cache_us\":3"));
+        assert!(json.contains("\"hash_execute_us\":4"));
         assert!(json.contains("\"unaccounted_us\":7"));
         assert!(json.contains("\"sink_emit_calls\""));
         assert!(json.contains("\"encoded_project_rows_seen\""));

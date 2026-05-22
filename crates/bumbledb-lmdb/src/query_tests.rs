@@ -756,12 +756,12 @@ fn domain_count_falls_back_to_lftj_until_fast_paths_are_rebuilt() -> TestResult 
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
     assert!(output.plan.direct_kernel.is_none());
-    assert!(!output.explain().contains("target=factorized_count"));
+    assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
 }
 
 #[test]
-fn factorized_count_supports_serial_literal_filter() -> TestResult {
+fn domain_count_serial_literal_filter_uses_lftj() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
@@ -792,12 +792,12 @@ fn factorized_count_supports_serial_literal_filter() -> TestResult {
 
     assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert!(!output.explain().contains("target=factorized_count"));
+    assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
 }
 
 #[test]
-fn factorized_count_supports_enum_literal_filter() -> TestResult {
+fn domain_count_enum_literal_filter_uses_lftj() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
@@ -828,12 +828,12 @@ fn factorized_count_supports_enum_literal_filter() -> TestResult {
 
     assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert!(!output.explain().contains("target=factorized_count"));
+    assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
 }
 
 #[test]
-fn factorized_count_supports_range_filter() -> TestResult {
+fn domain_count_range_filter_uses_lftj() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
@@ -913,12 +913,12 @@ fn factorized_count_supports_range_filter() -> TestResult {
 
     assert_eq!(output.rows, vec![vec![Value::U64(2)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert!(!output.explain().contains("target=factorized_count"));
+    assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
 }
 
 #[test]
-fn factorized_count_supports_literal_and_range_filters() -> TestResult {
+fn domain_count_literal_and_range_filters_use_lftj() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
@@ -1021,12 +1021,12 @@ fn factorized_count_supports_literal_and_range_filters() -> TestResult {
 
     assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert!(!output.explain().contains("target=factorized_count"));
+    assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
 }
 
 #[test]
-fn factorized_count_rejects_unsafe_cycle() -> TestResult {
+fn domain_count_unsafe_cycle_uses_generic_lftj() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
@@ -1053,7 +1053,7 @@ fn factorized_count_rejects_unsafe_cycle() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.rows, vec![vec![Value::U64(1)]]);
-    assert!(!output.explain().contains("target=factorized_count"));
+    assert!(!output.explain().contains("domain_count_fast_path"));
     Ok(())
 }
 
@@ -1494,7 +1494,7 @@ fn prepared_query_reuses_normalized_snapshot_shape() -> TestResult {
 }
 
 #[test]
-fn prepared_result_cache_options_control_count_cache() -> TestResult {
+fn prepared_result_cache_options_do_not_cache_aggregate_results() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
@@ -1529,14 +1529,12 @@ fn prepared_result_cache_options_control_count_cache() -> TestResult {
     })?;
 
     assert_eq!(first.rows, vec![vec![Value::U64(1)]]);
-    assert_eq!(first.plan.counters.prepared_result_cache_misses, 1);
+    assert_eq!(first.plan.counters.prepared_result_cache_misses, 0);
     assert_eq!(first.plan.counters.prepared_result_cache_inserts, 0);
     assert_eq!(cached.rows, first.rows);
     assert_eq!(cached.plan.counters.prepared_result_cache_hits, 0);
-    assert_eq!(cached.plan.timings.prepared_count_cache_emit_micros, 0);
     assert_eq!(disabled.rows, first.rows);
     assert_eq!(disabled.plan.counters.prepared_result_cache_bypasses, 1);
-    assert_eq!(disabled.plan.timings.prepared_count_cache_emit_micros, 0);
 
     env.write(|txn| {
         txn.insert(
@@ -1548,13 +1546,13 @@ fn prepared_result_cache_options_control_count_cache() -> TestResult {
     let after_write =
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
     assert_eq!(after_write.rows, vec![vec![Value::U64(1)]]);
-    assert_eq!(after_write.plan.counters.prepared_result_cache_misses, 1);
+    assert_eq!(after_write.plan.counters.prepared_result_cache_misses, 0);
     assert_eq!(after_write.plan.counters.prepared_result_cache_inserts, 0);
     Ok(())
 }
 
 #[test]
-fn prepared_result_cache_key_includes_inputs() -> TestResult {
+fn aggregate_domain_results_are_recomputed_for_different_inputs() -> TestResult {
     let (env, schema) = seeded_db()?;
     let query = typed_query(&schema, |query| {
         query
@@ -1575,12 +1573,12 @@ fn prepared_result_cache_key_includes_inputs() -> TestResult {
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &holder_two))?;
 
     assert_eq!(first.rows, vec![vec![Value::U64(2)]]);
-    assert_eq!(first.plan.counters.prepared_result_cache_misses, 1);
+    assert_eq!(first.plan.counters.prepared_result_cache_misses, 0);
     assert_eq!(cached.plan.counters.prepared_result_cache_hits, 0);
     assert_eq!(different_input.rows, vec![vec![Value::U64(1)]]);
     assert_eq!(
         different_input.plan.counters.prepared_result_cache_misses,
-        1
+        0
     );
     assert_eq!(different_input.plan.counters.prepared_result_cache_hits, 0);
     Ok(())
@@ -1868,7 +1866,6 @@ fn materialized_projection_does_not_use_prepared_result_cache() -> TestResult {
     assert_same_rows(&first.rows, &[vec![Value::U64(20)], vec![Value::U64(21)]]);
     assert_eq!(second.rows, first.rows);
     assert_eq!(second.plan.counters.prepared_result_cache_hits, 0);
-    assert_eq!(second.plan.timings.prepared_count_cache_emit_micros, 0);
     assert!(second.plan.counters.materialized_output_values <= second.rows.len() as u64);
     Ok(())
 }
@@ -1886,7 +1883,6 @@ fn count_sink_avoids_decoding_counted_variable() -> TestResult {
 
     assert_eq!(output.rows, vec![vec![Value::U64(3)]]);
     assert_eq!(output.plan.counters.bindings_yielded, 3);
-    assert_eq!(output.plan.counters.factorized_counted_bindings, 0);
     assert_eq!(output.plan.counters.aggregate_groups, 1);
     assert_eq!(output.plan.counters.decoded_values, 0);
     assert_eq!(output.plan.counters.materialized_output_values, 1);
