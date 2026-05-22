@@ -1,5 +1,7 @@
 # V4 Current Benchmark Bugs RCA
 
+Historical note: this document predates the set-native v4 rewrite. References to prepared count caches and direct-count behavior describe removed legacy systems, not the current architecture.
+
 ## Artifact Paths
 
 Fresh v4 baseline artifacts:

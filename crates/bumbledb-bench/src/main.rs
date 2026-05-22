@@ -3056,6 +3056,7 @@ fn build_tpch_revenue_by_customer_range(schema: &SchemaDescriptor) -> QueryBuild
         .var("customer", "customer")?
         .done()
         .rel("LineItem")?
+        .var("id", "line")?
         .var("order", "order")?
         .var("extended_price", "price")?
         .var("ship_date", "ship")?

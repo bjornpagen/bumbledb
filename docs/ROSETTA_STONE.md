@@ -1,67 +1,53 @@
 # Rosetta Stone
 
-This document is the normative product and architecture contract for Bumbledb v3.
+This document is the normative product and architecture contract for Bumbledb v4.
 
 ## Product Thesis
 
 Bumbledb is an embedded, typed, schemaful, set-semantic relational database for highly normalized application data.
 
-The target workload is BCNF/ledger-like data with many narrow relations and many joins. The engine is not a general-purpose SQL database, not an OLAP column store, not a schemaless graph database, and not a server.
+The target workload is BCNF/ledger-like data with many narrow relations and many joins. Bumbledb is not SQL, not a server, not a document store, not a vector store, and not an OLAP engine.
 
-Bumbledb competes on one battlefield: embedded, read-heavy, single-writer, multi-reader, highly relational, typed query IR workloads over LMDB.
-
-## Current Query Contract
-
-- The current executable query surface is typed query IR.
-- The Datalog frontend was deleted intentionally.
-- No query text parser is part of v3.
-- Logica is the intended future frontend, but it is not implemented in v3.
-- Future Logica lowering must target `query_ir`; it must not reintroduce Datalog as an intermediate layer.
-- SQL is not supported.
+Bumbledb competes on one battlefield: embedded, read-heavy, single-writer, multi-reader, typed relational query workloads over LMDB.
 
 ## Core Commitments
 
 - Language: Rust.
-- Rust channel: nightly allowed, but not gratuitously.
 - Storage backend: LMDB only.
+- Query surface: typed query IR.
+- Runtime DDL: forbidden.
 - Server mode: forbidden.
 - Network protocol: forbidden.
-- Runtime DDL: forbidden.
-- Migrations: forbidden.
-- Schema changes require ETL into a new database.
-- Schema mismatch on open is a hard failure.
-- Storage format mismatch on open is a hard failure.
+- SQL frontend: forbidden.
 - Nulls: forbidden.
 - Floating-point persistence: forbidden.
-- Multiple writers: no, inherited from LMDB's single-writer model.
+- Async API: forbidden.
+- Multiple writers: no, inherited from LMDB.
 - Multiple readers: yes, inherited from LMDB MVCC.
-- Async API: no.
-- Unsafe durability flags: not in scope.
 
 ## Compatibility Policy
 
-Bumbledb v3 is not compatible with v1 or v2 databases.
+Bumbledb v4 is not compatible with v1, v2, or v3 databases.
 
-There is no migration path except ETL into a new database. There is no attempt to read old fingerprints, translate old descriptors, preserve old index names, or tolerate partial schema drift.
-
-Backwards compatibility is explicitly out of scope while the storage and query architecture is still being made correct.
+Storage format mismatch on open is a hard failure. Schema mismatch on open is a hard failure. There is no migration path except explicit ETL into a new database. There are no compatibility readers, no old layout translators, no compatibility aliases, and no in-place upgrades.
 
 ## Relation Semantics
 
 - Every relation is a set of full tuples.
 - Exact duplicate insert is an idempotent no-op.
-- Same unique prefix with a different tuple is a uniqueness violation.
 - Delete is exact tuple deletion.
-- Delete of an absent tuple is non-exceptional.
+- Delete of an absent tuple is an idempotent no-op.
+- There is no update operation.
+- There is no DB-side generated ID allocator.
 - Projection output has set semantics.
+- SQL-style bag semantics are rejected.
 - There is no `SELECT DISTINCT` concept because distinctness is the default.
-- SQL-style bag semantics are intentionally rejected.
 
 ## Schema Model
 
 Schemas are declared in Rust and compiled into the binary.
 
-The schema descriptor has these relation-level facts:
+The schema descriptor has relation-level facts:
 
 ```rust
 pub struct RelationDescriptor {
@@ -72,25 +58,15 @@ pub struct RelationDescriptor {
 }
 ```
 
-There is no primary key descriptor.
+There is no primary-key descriptor, no generated-ID descriptor, and no relation-kind enum.
 
-There is no generated ID descriptor.
+Canonical tuple membership is implicit for every relation. It is not modeled as a primary key or as a required covering unique constraint.
 
-There is no relation kind enum.
-
-There are no implicit foreign keys from field types.
-
-Every relation must declare exactly one covering unique constraint:
+Unique constraints are named logical constraints:
 
 ```rust
-ConstraintDescriptor::Unique {
-    name,
-    fields,
-    covering: true,
-}
+ConstraintDescriptor::Unique { name, fields }
 ```
-
-The covering unique constraint owns the canonical access path for the tuple. It is not a privileged logical primary key. It is the declared physical covering prefix.
 
 Foreign keys are explicit and target named unique constraints:
 
@@ -108,9 +84,7 @@ Foreign keys are generic exact-key constraints. They can target single-field or 
 
 ## Serial Model
 
-Nominal serial types are preserved, but `Id` and `Ref` field types are gone.
-
-Serial is a nominal value type:
+Nominal serial values are preserved as ordinary values. They are not generated by the database.
 
 ```rust
 ValueType::Serial {
@@ -119,9 +93,7 @@ ValueType::Serial {
 }
 ```
 
-An `AccountId` is not an `InstrumentId`, even if both are encoded as 64-bit integers. Query building must reject unifying variables across different serial types.
-
-A referencing column uses the target serial type. The fact that the column is a foreign key is expressed only by an explicit foreign-key constraint.
+An `AccountId` is not an `InstrumentId`, even if both encode as 64-bit integers. Query building rejects unifying variables across different serial types.
 
 ## Primitive Value Types
 
@@ -137,40 +109,22 @@ Supported persistent types:
 - `Bytes`
 - `Serial { type_name, owning_relation }`
 
-There is no `Code` type and no persistent UUID type. Open numeric domains use `U64`. Closed domains use one-byte `Enum` values. Enum codes must be in `0..=255`.
-
-There are no nulls. Optional facts are represented by absent tuples in separate relations.
+Open numeric domains use `U64`. Closed domains use one-byte `Enum` values. String and bytes values are interned. There are no nulls; optional facts are represented by absent tuples in separate relations.
 
 ## Storage Model
 
 LMDB is the only storage backend.
 
-The physical storage model is full-covering access paths over encoded tuples:
+Current storage has a canonical fact namespace plus access namespaces:
 
 ```text
-current access key = namespace || relation_id || access_id || encoded tuple permutation
+canonical fact = T | relation_id | tuple_bytes -> empty
+access entry = A | relation_id | access_id | access_key_bytes -> empty
 ```
 
-Every access path contains every relation field exactly once. Leading fields provide the lookup prefix; unseen fields are appended in declaration order.
+The canonical fact namespace owns exact tuple membership. Access entries support scans, constraints, and query-image construction. Access layouts are generated from tuple-set access, named unique constraints, foreign keys, range annotations, and explicit physical indexes.
 
-There is no current-row payload namespace. There is no primary-row store. Any access path key can decode the full tuple.
-
-String and bytes values are interned. Hot tuple/index keys store intern IDs, not raw strings or raw byte arrays.
-
-## Index Model
-
-Generated access path kinds:
-
-- `Covering`
-- `Unique`
-- `ForeignKey`
-- `Range`
-- `Equality`
-- `Permutation`
-
-`Covering` is generated from the one covering unique constraint. Non-covering unique constraints and foreign-key constraints still produce full-covering physical access paths.
-
-The engine rejects schemas whose generated LMDB keys exceed the configured max key size. There is no fallback to row payload storage.
+Query images are built from current access state under an LMDB read snapshot. Durable full-relation segment publication and history/audit records are not part of the v4 write path.
 
 ## Write Semantics
 
@@ -178,32 +132,86 @@ The engine rejects schemas whose generated LMDB keys exceed the configured max k
 
 `delete` returns whether the tuple was deleted or absent.
 
-Bulk load counts only newly inserted tuples.
+Bulk load is an ETL convenience that applies insert semantics in one write transaction and counts only newly inserted tuples.
 
-Foreign-key and uniqueness checks use covering access path prefix probes. There is no unique guard namespace.
+Successful logical writes advance the Bumbledb storage transaction ID. Duplicate inserts and absent deletes do not change logical storage state.
 
-History records full old/new tuple bytes, not primary-key bytes.
+Failed writes leave no partial canonical fact, access entry, constraint, dictionary, or cardinality state committed.
 
-## Query Execution
+## Query Semantics
 
 Queries are built as typed IR with schema-aware validation.
 
-The query runtime normalizes typed IR, plans access paths, executes direct/hash/LFTJ/factorized paths, and emits set-semantic results through encoded sinks.
+The logical solution of a query is a set of variable bindings. Projection returns the set of projected tuples. Existential variables do not multiply projected output.
 
-Aggregates are set-domain operations. Count semantics must be expressed as explicit domain counts or distinct-value counts; SQL-style hidden witness multiplicity is not part of the contract.
+Aggregates are explicit set-domain operations:
 
-Benchmark-shaped fast paths must be represented as structural plan candidates or executor nodes. Engine code must not depend on JOB-specific relation names.
+```text
+count_domain([posting])
+count_distinct(account)
+sum(amount).over([posting])
+min(t).over([posting])
+max(t).over([posting])
+```
 
-Global `count` over empty input returns one row containing `0`. Grouped aggregates over empty input return zero rows. Null-like aggregate outputs are not introduced.
+`count_domain(domain_vars)` counts distinct domain tuples per group. `count_distinct(var)` counts distinct variable values per group. `sum(value).over(domain_vars)` sums one value per distinct domain tuple per group; the builder rejects aggregate measures not determined by the declared domain. `min` and `max` use the values induced by the declared domain.
 
-## Ownership Contract
+Global domain count over an empty input returns one row containing `0`. Grouped aggregates over empty input return zero rows.
 
-- Public API owns user-facing `Row`, `Value`, and strings.
-- `StorageSchema` owns compiled relation, field, constraint, and access layout metadata.
-- Storage write paths convert public rows to field-order encoded tuples once.
-- Query images own immutable encoded column/index bytes and are shared by `Arc`.
-- Query execution borrows encoded bytes where possible and owns fixed-width `EncodedOwned` values only when needed for bindings, tries, hashes, or output sink keys.
-- Decoding happens at API/output boundaries.
+## Query Execution
+
+The retained execution backbone is Free Join/LFTJ plus narrow direct projection/storage paths. Legacy product-of-fanout count kernels and scalar prepared count caches were deleted because they encoded bag-style witness multiplicity.
+
+Projection materialization uses a result-set sink. Duplicate projected tuples are rejected before final output decoding.
+
+Query image access APIs expose relation cardinality, access-prefix existence, and access-prefix cardinality directly over current set/access state.
+
+## Public Output Contract
+
+Query execution returns `QueryOutput` containing a `QueryResultSet`:
+
+```rust
+pub struct QueryResultSet {
+    pub columns: Vec<ResultColumn>,
+    pub tuples: Vec<ResultTuple>,
+}
+```
+
+`QueryResultSet` is duplicate-free and canonicalized. Cardinality-only execution uses `QueryResultCardinality { cardinality, plan }` and cannot be confused with aggregate count values.
+
+## Benchmark Contract
+
+Benchmarks must validate exact Bumbledb result values against SQLite before timing numbers matter.
+
+SQLite projection references use `SELECT DISTINCT`. SQLite count references use domain-correct `COUNT(DISTINCT ...)` or equivalent subqueries. Aggregate values are compared directly, not by counting returned SQLite rows.
+
+Prepared-result cache behavior must be explicitly reported; it must never be hidden as normal execution.
+
+## Golden Examples
+
+Golden examples are permanent non-regression fixtures for:
+
+- Ledger.
+- Sailors.
+- Joinstress.
+- TPC-H subset.
+- IMDb/JOB subset.
+- Lahman subset.
+- LDBC subset.
+
+They cover duplicate witnesses, exact projection sets, explicit aggregate domains, duplicate insert no-ops, absent delete no-ops, and constraint behavior.
+
+## Validation Contract
+
+Required validation includes:
+
+- Full workspace formatting, check, clippy, and tests.
+- Fuzz crate check.
+- Insert/delete operation-sequence property tests.
+- Query-vs-reference differential tests.
+- Failpoint tests around dictionary, access, canonical fact, stats, and commit stages.
+- Golden example tests.
+- Exact benchmark correctness checks.
 
 ## Modeling Guidance
 
@@ -216,15 +224,16 @@ Holder(id, name)
 Account(id, holder, currency)
 JournalEntry(id, source, created_at)
 Posting(id, entry, account, instrument, amount, at)
-AccountTag(account, tag)
+PostingTag(posting, tag)
 ```
 
 Natural edge relations are allowed when they represent real domain facts:
 
 ```text
 OrgParent(child, parent)
-AccountTag(account, tag)
 Permission(subject, object, permission)
+Knows(person1, person2)
+Likes(person, post)
 ```
 
 Forbidden modeling:
@@ -235,18 +244,4 @@ Posting(id, nullable_field)
 GenericFact(entity, attribute, value)
 ```
 
-## Historical Data
-
-Historical logging is part of the storage direction, but as-of query execution is not a v2 requirement.
-
-Event-sourced modeling is preferred for validity, status, ordering, hierarchy, soft delete, and derived aggregates. These should be represented as immutable event facts or derived query predicates, not nullable mutable columns.
-
-## Future Work
-
-- Logica frontend lowering into `query_ir`.
-- Recursion.
-- Stratified negation.
-- As-of execution.
-- Check constraints.
-- More exact planner statistics where justified by benchmarks.
-- Dictionary compaction or GC if needed.
+Historical, temporal, validity, status, ordering, hierarchy, soft delete, and derived aggregates should be represented as immutable event facts or derived query predicates, not nullable mutable columns.

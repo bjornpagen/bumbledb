@@ -1,5 +1,7 @@
 # V5 Algorithm Contribution Baseline
 
+Historical note: this document predates the set-native v4 rewrite. References to hash probe or other deleted execution families describe removed legacy systems, not the current architecture.
+
 ## Artifact Paths
 
 ```text
@@ -82,7 +84,7 @@ This makes mixed hash/LFTJ the first deletion candidate. Its value must come fro
 
 No benchmark query in the v5 baseline selected `HashProbe`.
 
-This makes hash probe the second deletion candidate. Its value must come from correctness tests or unbenchmarked shapes, not from the full benchmark suite.
+This made deleted hash-probe execution the second deletion candidate. Its value had to come from correctness tests or unbenchmarked shapes, not from the full benchmark suite.
 
 ### StaticEmpty
 

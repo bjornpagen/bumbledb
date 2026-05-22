@@ -1,5 +1,7 @@
 # job_broad_movie_info_star RCA
 
+Historical note: this trace report predates the set-native v4 rewrite. References to factorized count, hash probe, direct-count dispatch, or line-number anchors describe removed legacy systems.
+
 ## Verdict
 
 - The measured sample-time cost is real product execution cost: `305.670 ms` of `310.230 ms` sample busy time is inside `bumbledb.query.free_join.dispatch`, which dispatches to the direct count kernel, so `98.53%` of measured sample time is the count/probe loop.
@@ -39,7 +41,7 @@
 
 - Source query is a broad star count over `?movie` with 10 atoms and no inputs or predicates, defined at `crates/bumbledb-bench/src/open.rs:963-996`.
 - The central count variable appears in `Title`, `CastInfo`, `MovieCompanies`, `MovieKeyword`, `MovieInfo`, and `MovieInfoIdx`; dimension atoms validate role/company/keyword/info-type IDs.
-- This shape matches the factorized count direct kernel in `try_execute_factorized_count`, which requires no inputs, no predicates, aggregate count, no groups, and at least two fact indexes at `crates/bumbledb-lmdb/src/query.rs:2669-2734`.
+- Historical legacy detail: this shape matched a deleted direct count-kernel family that required no inputs, no predicates, aggregate count, no groups, and at least two fact indexes.
 
 ## Timing: Phase Timing
 
@@ -135,7 +137,7 @@ All 33 Bumbledb executions are `1 prepare + 2 warmups + 30 samples`.
 | trace dispatch busy, samples | 305,670 us |
 | trace dispatch pct, samples | 98.530% |
 
-- Dispatch enters `execute_free_join` at `crates/bumbledb-lmdb/src/query.rs:2609-2651` and tries `try_execute_factorized_count` before ordinary direct-kernel, hash-probe, mixed, or LFTJ execution.
+- Historical legacy detail: dispatch entered `execute_free_join` and tried a deleted count-kernel family before ordinary direct-kernel, deleted hash-probe, mixed, or LFTJ execution.
 - This query uses the factorized count special case, not ordinary tuple materialization. The code builds fact indexes, picks the smallest driver by encoded byte size, deduplicates central movie IDs, probes each fact index by prefix, multiplies counts, and emits one aggregate count at `crates/bumbledb-lmdb/src/query.rs:2698-2783`.
 - `direct_kernel_rows = 54,075,120` is the computed factorized cardinality, not materialized row output. The output remains one row.
 - `direct_kernel_probes = 37,151` reflects prefix-count probes across central values and fact indexes, with early exits when a count is zero.
@@ -195,7 +197,7 @@ Allocation telemetry corresponds to the first Bumbledb execution for this query.
 
 | priority | change | expected effect | risk |
 |---:|---|---|---|
-| 1 | Replace `BTreeSet<Vec<u8>> central_values` in `try_execute_factorized_count` with a zero-copy streaming distinct iterator over the chosen driver index, comparing borrowed encoded prefixes and counting each distinct movie once. | Removes most of `execute` allocation calls: target `35,728` calls and `834,104 B`; should also reduce sample dispatch time by avoiding tree insertion and `Vec<u8>` copies. | Medium: must preserve distinct central movie semantics when driver entries repeat. |
+| 1 | Historical legacy proposal for the deleted count-kernel family: replace copied central values with a zero-copy streaming distinct iterator. | Removes most of `execute` allocation calls: target `35,728` calls and `834,104 B`; should also reduce sample dispatch time by avoiding tree insertion and `Vec<u8>` copies. | Medium: must preserve distinct central movie semantics when driver entries repeat. |
 | 2 | Add a direct aggregate-count output path for ungrouped `count` that writes the final `u64` result directly, bypassing `AggregateSink`, `BTreeMap`, `SmallEncodedRow`, `Vec<AggregateState>`, row sort, and generic decode. | Removes most sink/aggregate overhead: `394.8 us` sample sink finish, `27.19 us` sample aggregate span, and `5,040 B` first-execution sink allocations; keeps output at one scalar. | Low: narrow to ungrouped `count`, already semantically special-cased by factorized count. |
 | 3 | Cache or precompute planner relation stats across the image before benchmarked queries, and make the benchmark optionally warm prepared plans before measurement. | Moves or removes `1,720 us` stats time and much of `1,595,918 B` plan allocation from first-query telemetry; does not change sample time because samples already hit the prepared plan. | Medium: changes benchmark accounting and cache lifecycle, not query semantics. |
 | 4 | Replace planner `BTreeMap<String, ...>` structures with relation/field/index IDs and dense `Vec`/`SmallVec` storage during planning. | Targets the `plan` allocation owner: `17,350` calls and `1.596 MB`; avoids relation/field/index string clones in stats and access labels. | Medium: broad planner refactor and explain output must still recover names. |

@@ -1301,13 +1301,13 @@ pub struct PlanCounters {
     pub lftj_atom_column_micros: u64,
     /// LFTJ atom sorted trie construction microseconds.
     pub lftj_atom_sort_micros: u64,
-    /// Number of hash trie indexes built for hash probe execution.
+    /// Number of hash trie indexes built for direct execution.
     pub hash_index_builds: u64,
     /// Number of source rows used to build hash indexes.
     pub hash_index_build_rows: u64,
     /// Number of row IDs returned from hash prefix probes.
     pub hash_rows_returned: u64,
-    /// Number of bindings emitted by hash probe nodes.
+    /// Number of bindings emitted from hash-backed direct nodes.
     pub hash_distinct_emits: u64,
     /// Number of direct kernel prefix/point probes.
     pub direct_kernel_probes: u64,
@@ -2271,7 +2271,7 @@ impl<'env> ReadTxn<'env> {
     }
 
     /// Executes a prepared typed query and returns only the output row count.
-    #[tracing::instrument(name = "bumbledb.query.execute_prepared_count", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
+    #[tracing::instrument(name = "bumbledb.query.execute_prepared_cardinality", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
     pub fn execute_prepared_result_cardinality(
         &self,
         schema: &StorageSchema,
@@ -2287,7 +2287,7 @@ impl<'env> ReadTxn<'env> {
     }
 
     /// Executes a prepared typed query count-only with explicit cache controls.
-    #[tracing::instrument(name = "bumbledb.query.execute_prepared_count_with_options", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
+    #[tracing::instrument(name = "bumbledb.query.execute_prepared_cardinality_with_options", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
     pub fn execute_prepared_result_cardinality_with_options(
         &self,
         schema: &StorageSchema,

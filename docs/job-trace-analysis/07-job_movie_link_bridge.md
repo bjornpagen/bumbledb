@@ -1,5 +1,7 @@
 # job_movie_link_bridge RCA
 
+Historical note: this trace report predates the set-native v4 rewrite. References to factorized count, hash probe, direct-count dispatch, or line-number anchors describe removed legacy systems.
+
 **Verdict**
 
 `job_movie_link_bridge` is a tiny direct count kernel wearing a full generic free-join planning costume. The first Bumbledb execution spends 42.7% of `phase_timing` in planning before discovering the direct kernel at execution dispatch. Repeated measured samples avoid the cold plan, but still spend 84.8% of sampled execution busy time inside `bumbledb.query.free_join.dispatch`, because the direct kernel scans every `MovieLink` row and performs 4 prefix-count probes per row.
@@ -115,7 +117,7 @@ Planning owns allocation calls and bytes: 98.611% of allocation calls and 93.290
 
 | Cause | Evidence | Effect |
 |---|---|---|
-| Direct count is detected too late | `execute_query` validates, normalizes, encodes, gets image, checks static-empty, then calls `plan_query` at `crates/bumbledb-lmdb/src/query.rs:1397-1552`; only after planning does `execute_free_join` call `try_execute_factorized_count` at `crates/bumbledb-lmdb/src/query.rs:2609-2625` | First execution pays 943-959 us planning for a direct-count path that does not need the generic plan |
+| Direct count is detected too late | Historical legacy detail: the old executor planned generically before invoking a deleted count-kernel family | First execution pays 943-959 us planning for a direct-count path that does not need the generic plan |
 | Planner builds full generic candidate machinery | `plan_query` collects stats, chooses variable order, builds node rows, missing-index recommendations, and optimizes candidates at `crates/bumbledb-lmdb/src/query.rs:5887-6002` | Planning is 42.7% of first execution and 93.3% of allocated bytes |
 | Variable ordering allocates and sorts repeatedly | `choose_variable_order` creates `BTreeSet`s, allocates a candidate `Vec` each iteration, sorts by a key containing cloned variable names at `crates/bumbledb-lmdb/src/query.rs:6038-6077` | 298 us prepare span and allocator churn for a plan that will not run |
 | Planner stats allocate per relation | `PlannerStats::collect` inserts cloned relation names and cached stats into a `BTreeMap` at `crates/bumbledb-lmdb/src/query.rs:1180-1205`; relation stats build field/index maps at `crates/bumbledb-lmdb/src/planner_stats.rs:145-175` | 229 us prepare span and part of the 1.039 MB planner allocations |
