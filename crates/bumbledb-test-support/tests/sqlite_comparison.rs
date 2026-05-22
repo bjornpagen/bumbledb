@@ -1,10 +1,10 @@
 #![allow(clippy::result_large_err)]
 
-use bumbledb_core::encoding::TimestampMicros;
+use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::query_builder::{OperandRef, QueryBuilder};
 use bumbledb_core::query_ir::ComparisonOperator;
 use bumbledb_lmdb::{Environment, InputBindings, StorageSchema, Value};
-use bumbledb_test_support::assertions::execute_sorted;
+use bumbledb_test_support::assertions::{assert_same_rows, execute_sorted};
 use bumbledb_test_support::rows::seeded_ledger_rows;
 use bumbledb_test_support::schemas::ledger_schema;
 use bumbledb_test_support::sqlite::{load_ledger, query_i64_rows};
@@ -46,14 +46,23 @@ fn sqlite_comparison_queries_match_bumbledb() -> Result<(), Box<dyn std::error::
     let sqlite_rows = query_i64_rows(
         &sqlite,
         r#"
-        SELECT p.id, p.amount
+        SELECT DISTINCT p.id, p.amount
         FROM posting p JOIN account a ON a.id = p.account
         WHERE a.holder = ?1 AND p.at >= ?2 AND p.at < ?3
         "#,
         &[1, 0, 1_000_000],
     )?;
+    let sqlite_rows = sqlite_rows
+        .into_iter()
+        .map(|row| {
+            vec![
+                Value::Serial(row[0] as u64),
+                Value::Decimal(DecimalRaw(row[1] as i128)),
+            ]
+        })
+        .collect();
 
-    assert_eq!(bumbledb_rows.len(), sqlite_rows.len());
+    assert_same_rows(bumbledb_rows, sqlite_rows);
     Ok(())
 }
 

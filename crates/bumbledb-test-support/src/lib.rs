@@ -3,6 +3,7 @@
 #![allow(clippy::result_large_err)]
 
 pub mod assertions;
+pub mod golden;
 pub mod operations;
 pub mod reference;
 pub mod rows;
