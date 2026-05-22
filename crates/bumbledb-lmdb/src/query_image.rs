@@ -1618,6 +1618,79 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
         let row_count = builders.first().map_or(0, EncodedColumnBuilder::len);
         let columns = finish_column_builders(builders);
         let encoded_column_bytes = columns.iter().map(ColumnImage::byte_len).sum();
+        let indexes = self
+            .schema
+            .layouts_for_relation(self.relation_id.0)
+            .filter(|layout| {
+                self.scope.include_all_indexes
+                    || self.scope.indexes.contains(&AccessId(layout.index_id))
+            })
+            .map(|layout| {
+                let mut bytes = Vec::new();
+                let scan = self.txn.scan_encoded_index_prefix(
+                    self.schema,
+                    &self.relation.name,
+                    &layout.index_name,
+                    &[],
+                )?;
+                for item in scan {
+                    bytes.extend_from_slice(item?.key());
+                }
+                let prefix_len = layout.encoded_len
+                    - layout
+                        .components
+                        .iter()
+                        .map(|component| component.encoded_width)
+                        .sum::<usize>();
+                let mut offset = prefix_len;
+                let components = layout
+                    .components
+                    .iter()
+                    .map(|component| {
+                        let Some(field) = self
+                            .relation
+                            .fields
+                            .iter()
+                            .position(|field| field.name == component.field_name)
+                            .map(|field| FieldId(field as u16))
+                        else {
+                            return Ok(None);
+                        };
+                        let image_component = RelationIndexComponent {
+                            field,
+                            offset,
+                            width: component.encoded_width,
+                        };
+                        offset += component.encoded_width;
+                        Ok(Some(image_component))
+                    })
+                    .collect::<Result<Option<Vec<_>>>>()?;
+                let Some(components) = components else {
+                    return Ok(None);
+                };
+                Ok(Some(RelationIndexImage {
+                    access: AccessId(layout.index_id),
+                    fields: layout
+                        .leading_fields
+                        .iter()
+                        .filter_map(|field| {
+                            self.relation
+                                .fields
+                                .iter()
+                                .position(|relation_field| relation_field.name == *field)
+                                .map(|field_id| FieldId(field_id as u16))
+                        })
+                        .collect(),
+                    components,
+                    encoded_len: layout.encoded_len,
+                    prefix_len,
+                    bytes,
+                }))
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
         Ok(BuiltRelationImage {
             relation: RelationImage {
                 id: self.relation_id,
@@ -1625,8 +1698,8 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
                 row_count,
                 fields,
                 columns,
-                indexes: Vec::new(),
-                sorted_index_count: 0,
+                sorted_index_count: indexes.len(),
+                indexes,
                 hash_index_count: 0,
                 stats: RelationStats {
                     row_count,
@@ -1850,19 +1923,12 @@ mod tests {
 
         assert_eq!(image.stats().relation_count, 1);
         assert_eq!(image.stats().row_count, 2);
-        assert!(image.stats().sorted_trie_bytes > 0);
+        assert_eq!(image.stats().sorted_trie_bytes, 0);
         assert_eq!(image.stats().hash_trie_bytes, 0);
-        assert_eq!(image.stats().segment_count, 1);
-        assert!(image.stats().segment_bytes > 0);
-        assert!(image.stats().built_from_segments);
+        assert_eq!(image.stats().segment_count, 0);
+        assert_eq!(image.stats().segment_bytes, 0);
+        assert!(!image.stats().built_from_segments);
         assert_eq!(diagnostics.relations[0].row_count, 2);
-
-        let segments = env.read(|txn| txn.visible_segments(&schema))?;
-        assert_eq!(segments.len(), 1);
-        assert_eq!(segments[0].row_count, 2);
-        assert_eq!(segments[0].columns.len(), 5);
-        assert_eq!(segments[0].columns[0].byte_len, 16);
-        assert!(!segments[0].indexes.is_empty());
 
         let account = account_relation(&image)?;
         assert_eq!(account.row_count, 2);
@@ -1977,7 +2043,7 @@ mod tests {
     }
 
     #[test]
-    fn bulk_loaded_query_image_exposes_segment_index_images() -> TestResult {
+    fn bulk_loaded_query_image_exposes_current_access_images() -> TestResult {
         let dir = tempfile::tempdir().map_err(|error| crate::Error::io("tempdir", error))?;
         let path = dir.keep();
         let env = Environment::open(&path)?;
@@ -1998,7 +2064,7 @@ mod tests {
             .indexes()
             .iter()
             .find(|index| index.fields == vec![FieldId(0)])
-            .ok_or_else(|| crate::Error::internal("missing covering segment index image"))?;
+            .ok_or_else(|| crate::Error::internal("missing tuple-set index image"))?;
         assert_eq!(
             covering.bytes.len(),
             covering.encoded_len * account.row_count
@@ -2039,7 +2105,7 @@ mod tests {
     }
 
     #[test]
-    fn reopened_query_image_uses_durable_segments() -> TestResult {
+    fn reopened_query_image_uses_current_access_fallback() -> TestResult {
         let dir = tempfile::tempdir()?;
         let path = dir.keep();
         let env = Environment::open(&path)?;
@@ -2056,40 +2122,35 @@ mod tests {
         let reopened = Environment::open(&path)?;
         let image = reopened.query_image(&schema)?;
 
-        assert!(image.stats().built_from_segments);
-        assert_eq!(image.stats().segment_count, 1);
+        assert!(!image.stats().built_from_segments);
+        assert_eq!(image.stats().segment_count, 0);
         assert_eq!(account_relation(&image)?.row_count, 2);
         Ok(())
     }
 
     #[test]
-    fn read_snapshot_sees_stable_visible_segments() -> TestResult {
+    fn read_snapshot_sees_stable_current_access_image() -> TestResult {
         let (env, schema) = seeded_env()?;
 
         env.read(|read| {
-            let before = read.visible_segments(&schema)?;
-            assert_eq!(before[0].row_count, 2);
-
             env.write(|write| {
                 write.insert(&schema, account_row(3, 3, true, vec![7, 8, 9], "Cash GBP"))?;
                 Ok::<_, crate::Error>(())
             })?;
 
-            let still_before = read.visible_segments(&schema)?;
-            assert_eq!(still_before[0].row_count, 2);
             let image =
                 QueryImageBuilder::new(read, &schema, QueryImageScope::full(&schema)).build()?;
             assert_eq!(account_relation(&image)?.row_count, 2);
             Ok::<_, crate::Error>(())
         })?;
 
-        let after = env.read(|read| read.visible_segments(&schema))?;
-        assert_eq!(after[0].row_count, 3);
+        let after = env.query_image(&schema)?;
+        assert_eq!(account_relation(&after)?.row_count, 3);
         Ok(())
     }
 
     #[test]
-    fn exact_delete_and_insert_publish_visible_segments() -> TestResult {
+    fn exact_delete_and_insert_update_current_access_image() -> TestResult {
         let (env, schema) = seeded_env()?;
 
         env.write(|txn| {
@@ -2101,7 +2162,7 @@ mod tests {
 
         let image = env.query_image(&schema)?;
         let account = account_relation(&image)?;
-        assert!(image.stats().built_from_segments);
+        assert!(!image.stats().built_from_segments);
         assert_eq!(account.row_count, 1);
 
         env.read(|txn| {
@@ -2110,9 +2171,6 @@ mod tests {
                 rows,
                 vec![account_row(2, 3, true, vec![9, 9, 9], "Cash GBP")]
             );
-            let segments = txn.visible_segments(&schema)?;
-            assert_eq!(segments[0].row_count, 1);
-            assert!(segments[0].tx_end.is_none());
             Ok::<_, crate::Error>(())
         })?;
         Ok(())

@@ -22,7 +22,6 @@ mod sorted_trie;
 mod storage;
 mod storage_schema;
 
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -400,9 +399,6 @@ impl Environment {
             txn,
             dbs: self.dbs,
             active_tx_id: None,
-            history_seq: 0,
-            defer_relation_segments: false,
-            touched_relation_segments: BTreeSet::new(),
         };
 
         match f(&mut write) {
@@ -493,9 +489,6 @@ pub struct WriteTxn<'env> {
     txn: RwTxn<'env>,
     dbs: Databases,
     active_tx_id: Option<u64>,
-    history_seq: u32,
-    defer_relation_segments: bool,
-    touched_relation_segments: BTreeSet<u16>,
 }
 
 impl WriteTxn<'_> {
@@ -680,8 +673,6 @@ mod tests {
 
         let diagnostics = env.storage_diagnostics(&schema)?;
         assert_eq!(diagnostics.storage_tx_id, 1);
-        let segments = env.read(|txn| txn.visible_segments(&schema))?;
-        assert!(!segments.is_empty());
         assert_eq!(
             diagnostics
                 .relations
@@ -783,8 +774,8 @@ mod tests {
         let diagnostics = env.storage_diagnostics(&schema)?;
         assert!(diagnostics.lmdb_map_size > 0);
         assert!(diagnostics.storage_tx_id > 0);
-        assert!(diagnostics.visible_segments > 0);
-        assert!(diagnostics.visible_segment_bytes > 0);
+        assert_eq!(diagnostics.visible_segments, 0);
+        assert_eq!(diagnostics.visible_segment_bytes, 0);
         Ok(())
     }
 

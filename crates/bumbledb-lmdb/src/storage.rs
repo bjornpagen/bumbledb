@@ -18,13 +18,9 @@ use crate::{
 
 const NS_CANONICAL_FACT: u8 = 0x10;
 const NS_ACCESS_ENTRY: u8 = 0x11;
-const NS_HISTORY: u8 = 0x30;
-
 const SEGMENT_META_PREFIX: &[u8] = b"segment:meta:";
 const SEGMENT_COLUMN_PREFIX: &[u8] = b"segment:column:";
 const SEGMENT_INDEX_PREFIX: &[u8] = b"segment:index:";
-const SEGMENT_NEXT_PREFIX: &[u8] = b"segment:next:";
-
 const DICT_FWD: u8 = 0x01;
 const DICT_REV: u8 = 0x02;
 const DICT_STRING: u8 = 0x01;
@@ -186,6 +182,11 @@ pub(crate) struct EncodedIndexItem {
 }
 
 impl EncodedIndexItem {
+    /// Returns the encoded index key bytes.
+    pub fn key(&self) -> &[u8] {
+        &self.key
+    }
+
     /// Returns an encoded component by ordinal.
     pub fn component(&self, components: &[IndexComponent], index: usize) -> Option<&[u8]> {
         let mut offset = self.prefix_len;
@@ -312,7 +313,7 @@ impl WriteTxn<'_> {
     /// Bulk-loads rows in deterministic schema relation order.
     ///
     /// This is one write transaction: any constraint failure aborts all current
-    /// rows, indexes, stats, history, counters, and dictionary inserts made by
+    /// rows, indexes, stats, counters, and dictionary inserts made by
     /// the attempted load.
     pub fn bulk_load(
         &mut self,
@@ -324,44 +325,28 @@ impl WriteTxn<'_> {
         tracing::debug!(rows = rows.len(), "bulk load rows sorted by relation order");
         rows.sort_by_key(|row| relation_sort_key(schema, row.relation()));
 
-        let previous_defer = self.defer_relation_segments;
-        self.defer_relation_segments = true;
-        let result = (|| {
-            let mut inserted = 0;
-            for row in rows {
-                if self.insert(schema, row)? == InsertOutcome::Inserted {
-                    inserted += 1;
-                }
+        let mut inserted = 0;
+        for row in rows {
+            if self.insert(schema, row)? == InsertOutcome::Inserted {
+                inserted += 1;
             }
-            self.flush_relation_segments(schema)?;
-            Ok(inserted)
-        })();
-        self.defer_relation_segments = previous_defer;
-        result
+        }
+        Ok(inserted)
     }
 
     /// Runs a streaming bulk load with relation segment publication deferred.
     pub fn bulk_load_streaming<T, E>(
         &mut self,
-        schema: &StorageSchema,
+        _schema: &StorageSchema,
         load: impl FnOnce(&mut Self) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E>
     where
         E: From<Error>,
     {
-        let previous_defer = self.defer_relation_segments;
-        self.defer_relation_segments = true;
         let result = load(self);
         match result {
-            Ok(value) => {
-                self.flush_relation_segments(schema).map_err(E::from)?;
-                self.defer_relation_segments = previous_defer;
-                Ok(value)
-            }
-            Err(error) => {
-                self.defer_relation_segments = previous_defer;
-                Err(error)
-            }
+            Ok(value) => Ok(value),
+            Err(error) => Err(error),
         }
     }
 
@@ -382,8 +367,7 @@ impl WriteTxn<'_> {
         self.insert_current_indexes(schema, relation_id, relation, &encoded)?;
         self.insert_canonical_fact(relation_id, &encoded)?;
         adjust_relation_row_count(self, relation_id, 1)?;
-        self.append_history(b'I', relation_id, None, Some(&encoded))?;
-        self.record_relation_segment_change(schema, relation_id, relation)?;
+        self.ensure_tx_id()?;
         Ok(InsertOutcome::Inserted)
     }
 
@@ -407,8 +391,7 @@ impl WriteTxn<'_> {
         self.delete_current_indexes(schema, relation_id, relation, &old_encoded)?;
         self.delete_canonical_fact(relation_id, &old_encoded)?;
         adjust_relation_row_count(self, relation_id, -1)?;
-        self.append_history(b'D', relation_id, Some(&old_encoded), None)?;
-        self.record_relation_segment_change(schema, relation_id, relation)?;
+        self.ensure_tx_id()?;
         Ok(DeleteOutcome::Deleted)
     }
 
@@ -427,181 +410,6 @@ impl WriteTxn<'_> {
         let key = canonical_fact_key(relation_id, fact);
         self.dbs.index.delete(&mut self.txn, key.as_slice())?;
         Ok(())
-    }
-
-    fn record_relation_segment_change(
-        &mut self,
-        schema: &StorageSchema,
-        relation_id: u16,
-        relation: &RelationDescriptor,
-    ) -> Result<()> {
-        if self.defer_relation_segments {
-            self.touched_relation_segments.insert(relation_id);
-            Ok(())
-        } else {
-            self.append_relation_segment(schema, relation_id, relation)
-        }
-    }
-
-    fn flush_relation_segments(&mut self, schema: &StorageSchema) -> Result<()> {
-        let touched = std::mem::take(&mut self.touched_relation_segments);
-        for relation_id in touched {
-            let relation = schema
-                .descriptor
-                .relations
-                .get(relation_id as usize)
-                .ok_or_else(|| Error::corrupt("touched relation id missing from schema"))?;
-            self.append_relation_segment(schema, relation_id, relation)?;
-        }
-        Ok(())
-    }
-
-    fn append_relation_segment(
-        &mut self,
-        schema: &StorageSchema,
-        relation_id: u16,
-        relation: &RelationDescriptor,
-    ) -> Result<()> {
-        let _span = tracing::trace_span!(
-            "bumbledb.storage.segment_publish",
-            relation = %relation.name,
-        )
-        .entered();
-        let tx_id = self.ensure_tx_id()?;
-        let segment_id = self.next_segment_id(relation_id)?;
-        let segment = self.build_relation_segment(schema, relation_id, relation)?;
-
-        self.close_visible_relation_segments(relation_id, tx_id)?;
-
-        for column in &segment.columns {
-            self.dbs.index.put(
-                &mut self.txn,
-                segment_column_key(relation_id, segment_id, column.field.0).as_slice(),
-                column.bytes.as_slice(),
-            )?;
-        }
-        for index in &segment.indexes {
-            self.dbs.index.put(
-                &mut self.txn,
-                segment_index_key(relation_id, segment_id, index.index_id).as_slice(),
-                index.bytes.as_slice(),
-            )?;
-        }
-
-        self.dbs.index.put(
-            &mut self.txn,
-            segment_meta_key(relation_id, segment_id).as_slice(),
-            encode_segment_meta(tx_id, None, segment.row_count).as_slice(),
-        )?;
-        tracing::trace!(
-            relation = %relation.name,
-            segment_id,
-            tx_id,
-            rows = segment.row_count,
-            "relation segment published"
-        );
-        Ok(())
-    }
-
-    fn next_segment_id(&mut self, relation_id: u16) -> Result<u64> {
-        let key = segment_next_key(relation_id);
-        let next = read_u64_meta(self, &key)?.unwrap_or(1);
-        write_u64_meta(self, &key, next + 1)?;
-        Ok(next)
-    }
-
-    fn close_visible_relation_segments(&mut self, relation_id: u16, tx_end: u64) -> Result<()> {
-        let mut active = Vec::new();
-        let prefix = segment_meta_prefix(relation_id);
-        let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
-        while let Some((key, value)) = iter.next().transpose()? {
-            let segment_id = parse_segment_id_from_meta_key(&prefix, key)?;
-            let meta = decode_segment_meta(value)?;
-            if meta.tx_end.is_none() {
-                active.push((segment_id, meta));
-            }
-        }
-        drop(iter);
-
-        for (segment_id, meta) in active {
-            self.dbs.index.put(
-                &mut self.txn,
-                segment_meta_key(relation_id, segment_id).as_slice(),
-                encode_segment_meta(meta.tx_start, Some(tx_end), meta.row_count).as_slice(),
-            )?;
-        }
-        Ok(())
-    }
-
-    fn build_relation_segment(
-        &self,
-        schema: &StorageSchema,
-        relation_id: u16,
-        relation: &RelationDescriptor,
-    ) -> Result<PendingRelationSegment> {
-        let tuple_set_layout = schema
-            .tuple_set_layout(&relation.name)
-            .ok_or_else(|| Error::unknown_index(&relation.name, TUPLE_SET_ACCESS_NAME))?;
-        let component_by_field = tuple_set_layout
-            .components
-            .iter()
-            .enumerate()
-            .map(|(index, component)| (component.field_name.as_str(), index))
-            .collect::<BTreeMap<_, _>>();
-        let mut columns = relation
-            .fields
-            .iter()
-            .enumerate()
-            .map(|(field_id, _)| PendingColumnSegment {
-                field: FieldId(field_id as u16),
-                bytes: Vec::new(),
-            })
-            .collect::<Vec<_>>();
-
-        let covering_prefix = current_index_prefix(relation_id, tuple_set_layout.index_id);
-        let mut row_count = 0usize;
-        let mut iter = self
-            .dbs
-            .index
-            .prefix_iter(&self.txn, covering_prefix.as_slice())?;
-        while let Some((key, _)) = iter.next().transpose()? {
-            let item = encoded_index_item(tuple_set_layout, &covering_prefix, key)?;
-            for (field_id, field) in relation.fields.iter().enumerate() {
-                let component_index = *component_by_field
-                    .get(field.name.as_str())
-                    .ok_or_else(|| Error::corrupt("segment missing covering component"))?;
-                let bytes = item
-                    .component(&tuple_set_layout.components, component_index)
-                    .ok_or_else(|| Error::corrupt("segment covering component truncated"))?;
-                columns[field_id].bytes.extend_from_slice(bytes);
-            }
-            row_count += 1;
-        }
-        drop(iter);
-
-        let indexes = schema
-            .layouts_for_relation(relation_id)
-            .map(|layout| self.build_index_segment(layout))
-            .collect::<Result<Vec<_>>>()?;
-
-        Ok(PendingRelationSegment {
-            row_count,
-            columns,
-            indexes,
-        })
-    }
-
-    fn build_index_segment(&self, layout: &CurrentIndexLayout) -> Result<PendingIndexSegment> {
-        let prefix = current_index_prefix(layout.relation_id, layout.index_id);
-        let mut bytes = Vec::new();
-        let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
-        while let Some((key, _)) = iter.next().transpose()? {
-            bytes.extend_from_slice(key);
-        }
-        Ok(PendingIndexSegment {
-            index_id: layout.index_id,
-            bytes,
-        })
     }
 
     fn encode_row(
@@ -802,37 +610,6 @@ impl WriteTxn<'_> {
         Ok(())
     }
 
-    fn append_history(
-        &mut self,
-        op: u8,
-        relation_id: u16,
-        old: Option<&EncodedFact>,
-        new: Option<&EncodedFact>,
-    ) -> Result<()> {
-        let tx_id = self.ensure_tx_id()?;
-        let seq = self.history_seq;
-        self.history_seq = self
-            .history_seq
-            .checked_add(1)
-            .ok_or_else(|| Error::internal("too many history records in one transaction"))?;
-
-        let mut key = vec![NS_HISTORY];
-        push_u64(&mut key, tx_id);
-        push_u32(&mut key, seq);
-
-        let mut value = Vec::new();
-        value.push(op);
-        push_u16(&mut value, relation_id);
-        push_optional_bytes(&mut value, old.map(EncodedFact::bytes));
-        push_optional_bytes(&mut value, new.map(EncodedFact::bytes));
-
-        self.dbs
-            .index
-            .put(&mut self.txn, key.as_slice(), value.as_slice())?;
-        crate::failpoints::check(crate::failpoints::Failpoint::AfterHistoryAppend)?;
-        Ok(())
-    }
-
     fn ensure_tx_id(&mut self) -> Result<u64> {
         if let Some(tx_id) = self.active_tx_id {
             return Ok(tx_id);
@@ -880,22 +657,6 @@ impl WriteTxn<'_> {
     fn lookup_intern_value(&self, kind: u8, raw: &[u8]) -> Result<Option<u64>> {
         lookup_intern_value(&self.dbs.dict, &self.txn, kind, raw)
     }
-}
-
-struct PendingRelationSegment {
-    row_count: usize,
-    columns: Vec<PendingColumnSegment>,
-    indexes: Vec<PendingIndexSegment>,
-}
-
-struct PendingColumnSegment {
-    field: FieldId,
-    bytes: Vec<u8>,
-}
-
-struct PendingIndexSegment {
-    index_id: u16,
-    bytes: Vec<u8>,
 }
 
 #[derive(Clone, Copy)]
@@ -1222,17 +983,6 @@ impl<'env> ReadTxn<'env> {
             .get(&self.txn, key)?
             .map(ToOwned::to_owned)
             .ok_or_else(|| Error::corrupt("segment bytes missing"))
-    }
-
-    /// Counts history entries by scanning the history namespace.
-    pub fn history_entry_count(&self) -> Result<usize> {
-        let prefix = [NS_HISTORY];
-        let mut iter = self.dbs.index.prefix_iter(&self.txn, &prefix[..])?;
-        let mut count = 0;
-        while iter.next().transpose()?.is_some() {
-            count += 1;
-        }
-        Ok(count)
     }
 
     /// Checks whether a current covering index entry exists for a full row.
@@ -1788,12 +1538,6 @@ fn segment_meta_prefix(relation_id: u16) -> Vec<u8> {
     key
 }
 
-fn segment_meta_key(relation_id: u16, segment_id: u64) -> Vec<u8> {
-    let mut key = segment_meta_prefix(relation_id);
-    push_u64(&mut key, segment_id);
-    key
-}
-
 fn segment_column_key(relation_id: u16, segment_id: u64, field_id: u16) -> Vec<u8> {
     let mut key = SEGMENT_COLUMN_PREFIX.to_vec();
     push_u16(&mut key, relation_id);
@@ -1810,12 +1554,6 @@ fn segment_index_key(relation_id: u16, segment_id: u64, index_id: u16) -> Vec<u8
     key
 }
 
-fn segment_next_key(relation_id: u16) -> Vec<u8> {
-    let mut key = SEGMENT_NEXT_PREFIX.to_vec();
-    push_u16(&mut key, relation_id);
-    key
-}
-
 fn parse_segment_id_from_meta_key(prefix: &[u8], key: &[u8]) -> Result<u64> {
     let bytes = key
         .get(prefix.len()..prefix.len() + 8)
@@ -1824,14 +1562,6 @@ fn parse_segment_id_from_meta_key(prefix: &[u8], key: &[u8]) -> Result<u64> {
         .try_into()
         .map_err(|_| Error::corrupt("segment id width invalid"))?;
     Ok(u64::from_be_bytes(bytes))
-}
-
-fn encode_segment_meta(tx_start: u64, tx_end: Option<u64>, row_count: usize) -> Vec<u8> {
-    let mut value = Vec::with_capacity(24);
-    push_u64(&mut value, tx_start);
-    push_u64(&mut value, tx_end.unwrap_or(0));
-    push_u64(&mut value, row_count as u64);
-    value
 }
 
 fn decode_segment_meta(value: &[u8]) -> Result<SegmentMeta> {
@@ -1991,27 +1721,8 @@ fn push_u16(out: &mut Vec<u8>, value: u16) {
     out.extend_from_slice(&value.to_be_bytes());
 }
 
-fn push_u32(out: &mut Vec<u8>, value: u32) {
-    out.extend_from_slice(&value.to_be_bytes());
-}
-
 fn push_u64(out: &mut Vec<u8>, value: u64) {
     out.extend_from_slice(&value.to_be_bytes());
-}
-
-fn push_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
-    push_u32(out, bytes.len() as u32);
-    out.extend_from_slice(bytes);
-}
-
-fn push_optional_bytes(out: &mut Vec<u8>, bytes: Option<&[u8]>) {
-    match bytes {
-        Some(bytes) => {
-            out.push(1);
-            push_bytes(out, bytes);
-        }
-        None => out.push(0),
-    }
 }
 
 #[cfg(test)]
@@ -2023,7 +1734,7 @@ mod tests {
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     #[test]
-    fn inserts_rows_indexes_history_stats_and_reopens() -> TestResult {
+    fn inserts_rows_indexes_stats_and_reopens() -> TestResult {
         let dir = tempfile::tempdir()?;
         let env = Environment::open(dir.path())?;
         let schema = storage_schema(&env)?;
@@ -2036,7 +1747,6 @@ mod tests {
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 1);
-            assert_eq!(txn.history_entry_count()?, 2);
             assert_eq!(txn.relation_row_count(&schema, "Holder")?, 1);
             assert_eq!(txn.canonical_fact_count(&schema, "Holder")?, 1);
             assert_eq!(txn.relation_row_count(&schema, "Account")?, 1);
@@ -2096,7 +1806,6 @@ mod tests {
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 1);
-            assert_eq!(txn.history_entry_count()?, 1);
             assert_eq!(txn.relation_row_count(&schema, "Holder")?, 1);
             assert_eq!(
                 txn.index_entry_count(&schema, "Holder", TUPLE_SET_ACCESS_NAME)?,
@@ -2127,7 +1836,6 @@ mod tests {
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 1);
-            assert_eq!(txn.history_entry_count()?, 1);
             assert_eq!(txn.relation_row_count(&schema, "Holder")?, 1);
             assert_eq!(txn.relation_row_count(&schema, "Account")?, 0);
             assert_eq!(txn.dictionary_string_id("Bob")?, None);
@@ -2155,7 +1863,6 @@ mod tests {
 
         env.read(|txn| {
             assert_eq!(txn.relation_row_count(&schema, "Account")?, 0);
-            assert_eq!(txn.history_entry_count()?, 1);
             Ok::<(), Error>(())
         })?;
         Ok(())
@@ -2515,7 +2222,6 @@ mod tests {
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 2);
-            assert_eq!(txn.history_entry_count()?, 4);
             assert_eq!(txn.relation_row_count(&schema, "Account")?, 1);
             assert_eq!(
                 txn.index_entry_count(&schema, "Account", TUPLE_SET_ACCESS_NAME)?,
@@ -2567,7 +2273,6 @@ mod tests {
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 2);
-            assert_eq!(txn.history_entry_count()?, 4);
             assert_eq!(txn.relation_row_count(&schema, "Holder")?, 0);
             assert_eq!(txn.relation_row_count(&schema, "Account")?, 0);
             assert!(!txn.exact_row_exists(&schema, &holder_row(1, "Alice"))?);
@@ -2595,7 +2300,6 @@ mod tests {
 
         env.read(|txn| {
             assert_eq!(txn.relation_row_count(&schema, "AccountTag")?, 1);
-            assert_eq!(txn.history_entry_count()?, 3);
             assert_eq!(
                 txn.index_entry_count(&schema, "AccountTag", TUPLE_SET_ACCESS_NAME)?,
                 1

@@ -502,10 +502,6 @@ pub enum InternalError {
     /// Internal invariant failure.
     #[error("internal invariant failed: {message}")]
     Invariant { message: String },
-
-    /// Too many history records in one transaction.
-    #[error("too many history records in one transaction")]
-    TooManyHistoryRecords,
 }
 
 /// Test-only injected failure.

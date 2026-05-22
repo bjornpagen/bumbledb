@@ -18,8 +18,6 @@ pub enum Failpoint {
     AfterCurrentIndexPut,
     /// After updating stats metadata.
     AfterStatsUpdate,
-    /// After appending a history record.
-    AfterHistoryAppend,
     /// Immediately before LMDB commit.
     BeforeCommit,
 }
@@ -33,7 +31,6 @@ impl Failpoint {
             Failpoint::AfterDictionaryPut => "after_dictionary_put",
             Failpoint::AfterCurrentIndexPut => "after_current_index_put",
             Failpoint::AfterStatsUpdate => "after_stats_update",
-            Failpoint::AfterHistoryAppend => "after_history_append",
             Failpoint::BeforeCommit => "before_commit",
         }
     }

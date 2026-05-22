@@ -18,7 +18,6 @@ fn failpoints_abort_insert_delete_and_bulk_load() -> Result<(), Box<dyn std::err
         Failpoint::AfterDictionaryPut,
         Failpoint::AfterCurrentIndexPut,
         Failpoint::AfterStatsUpdate,
-        Failpoint::AfterHistoryAppend,
         Failpoint::BeforeCommit,
     ] {
         failpoint_insert_is_atomic(failpoint)?;
@@ -67,7 +66,7 @@ fn failpoint_delete_and_bulk_are_atomic() -> Result<(), Box<dyn std::error::Erro
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(ledger_schema(), env.max_key_size())?;
-    failpoints::set(Failpoint::AfterHistoryAppend);
+    failpoints::set(Failpoint::AfterCurrentIndexPut);
     assert!(matches!(
         env.bulk_load(
             &schema,
