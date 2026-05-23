@@ -4,6 +4,10 @@
 
 Not started.
 
+## Current State
+
+This is the final audit after PRDs 10 through 17. It must verify that the codebase is not merely passing tests, but has no source/doc residue from deleted architectures or mechanics.
+
 ## Objective
 
 Run the final audit proving the codebase is a minimal Free Join set engine with no deleted architecture residue.
@@ -28,10 +32,16 @@ CardinalitySink
 AggregateFunction
 AggregateSink
 NodeImpl
+SubAtom
+free_join_subatom
 SortedTrieIndex
 sorted_trie_cache
+LftjAtomKey
 build_lftj_sorted_trie
 atom_temp_relation
+sorted_trie_builds
+sorted_trie_cache_hits
+sorted_trie_cache_misses
 hash_build_facts
 CostKey
 PlanCandidate
@@ -44,12 +54,22 @@ candidate_plan
 free_join_estimates
 iterator_ops
 build_facts
+cursor_seeks
+facts_scanned
+facts_matched
 uses_indexed_multiway_join
-QueryImage
-RelationImage
 ```
 
-Allowed exceptions must be listed in this PRD before deletion, but the target is zero.
+Allowed exceptions must be listed in this PRD before deletion, but the target is zero for deleted mechanics. `QueryImage`/`RelationImage` may remain only as private implementation names after PRD 14; they must not be public API exports or benchmark-facing concepts.
+
+## Final Public API Must Not Export
+
+- query image internals
+- relation image internals
+- raw encoded components
+- physical plan internals beyond stable diagnostics
+- forged mutable typed IR fields
+- backup/compact helpers unless explicitly retained as embedded operational API
 
 ## Final Public API Must Include Only
 
