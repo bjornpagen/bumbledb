@@ -59,15 +59,14 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Cache Diagnostics\n\n");
-    out.push_str("| dataset | query | cache mode | query image sample cache hits |\n");
-    out.push_str("|---|---|---|---:|\n");
+    out.push_str("| dataset | query | query image sample cache hits |\n");
+    out.push_str("|---|---|---:|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} |",
+            "| {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
-            markdown_escape(&result.cache_mode),
             result.query_image_sample_cache_hits,
         );
     }

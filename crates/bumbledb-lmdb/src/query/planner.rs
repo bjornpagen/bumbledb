@@ -3,7 +3,6 @@ fn plan_query(
     query: &mut NormalizedQuery,
     image: &crate::QueryImage,
     query_image_cache: QueryImageCacheDiagnostics,
-    prepared_plan_cache: PreparedPlanCacheDiagnostics,
 ) -> Result<ExecutionPlan> {
     let _span = tracing::debug_span!("bumbledb.query.plan").entered();
     let (stats, variable_order_ids, variable_costs) = {
@@ -88,7 +87,6 @@ fn plan_query(
             optimizer,
             query_image_cache,
             planner_stats,
-            prepared_plan_cache,
             node_facts,
             node_timings,
             free_join,

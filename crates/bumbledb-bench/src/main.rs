@@ -74,12 +74,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !config.format.is_json_only() {
         println!("BumbleDB benchmark suite");
         println!(
-            "scale={} open_limit={:?} repeats={} warmup={} cache_mode={} datasets={:?} queries={:?} open_datasets={}",
+            "scale={} open_limit={:?} repeats={} warmup={} datasets={:?} queries={:?} open_datasets={}",
             config.scale,
             config.open_limit,
             config.repeats,
             config.warmup,
-            config.cache_mode.as_str(),
             config.datasets,
             config.queries,
             config.has_open_datasets()

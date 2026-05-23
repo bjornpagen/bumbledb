@@ -7,7 +7,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"facts\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_facts\":{},\"materialized_facts\":{},\"materialized_values\":{},\"output_mode\":\"materialized\"}},\"chosen_plan\":\"{}\",\"cache_mode\":\"{}\",\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"sqlite_materialized_facts\":{},\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",",
+            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"facts\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_facts\":{},\"materialized_facts\":{},\"materialized_values\":{},\"output_mode\":\"materialized\"}},\"chosen_plan\":\"{}\",\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"sqlite_materialized_facts\":{},\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",",
             json_escape(result.dataset),
             json_escape(result.query),
             result.facts,
@@ -16,7 +16,6 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.facts,
             result.final_output_values,
             json_escape(&result.chosen_plan),
-            json_escape(&result.cache_mode),
             result.query_image_sample_cache_hits > 0,
             result.query_image_sample_cache_hits,
             result.sqlite_materialized_facts,

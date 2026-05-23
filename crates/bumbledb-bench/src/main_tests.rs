@@ -42,7 +42,6 @@ fn markdown_renderer_emits_gate_tables() {
         sqlite_avg: Duration::from_micros(5),
         sqlite_ratio: 2.0,
         chosen_plan: "free_join_sorted_leapfrog".to_owned(),
-        cache_mode: "prepared-plan".to_owned(),
         query_image_sample_cache_hits: 1,
         sqlite_materialized_facts: false,
         timings: QueryTimings {
@@ -100,7 +99,7 @@ fn markdown_renderer_emits_gate_tables() {
     assert!(markdown.contains("## Mechanics Counters"));
     assert!(markdown.contains("sink emits"));
     assert!(markdown.contains("## Cache Diagnostics"));
-    assert!(markdown.contains("| joinstress | triangle_count | prepared-plan | 1 |"));
+    assert!(markdown.contains("| joinstress | triangle_count | 1 |"));
     assert!(markdown.contains("## Measurement Contract"));
     assert!(markdown.contains("bumbledb.correctness_execution"));
     assert!(markdown.contains("## Allocation Summary"));
@@ -131,7 +130,6 @@ fn json_renderer_emits_structured_results() {
         sqlite_avg: Duration::from_micros(3),
         sqlite_ratio: 3.0,
         chosen_plan: "free_join_sorted_leapfrog".to_owned(),
-        cache_mode: "prepared-plan".to_owned(),
         query_image_sample_cache_hits: 1,
         sqlite_materialized_facts: false,
         timings: QueryTimings {
@@ -178,7 +176,6 @@ fn json_renderer_emits_structured_results() {
     let json = render_json_results(&[result]);
     assert!(json.contains("\"dataset\":\"ledger\""));
     assert!(json.contains("\"correctness_mode\":\"result-set\""));
-    assert!(json.contains("\"cache_mode\":\"prepared-plan\""));
     assert!(json.contains("\"query_image_cache_hit\":true"));
     assert!(json.contains("\"allocation_scope\":\"bumbledb.correctness_execution\""));
     assert!(json.contains("\"query_image_scope\":\"full_schema\""));
@@ -209,8 +206,6 @@ fn cli_parser_accepts_repeated_query_filters() -> Result<(), Box<dyn std::error:
             "balances_by_instrument",
             "--warmup",
             "2",
-            "--cache-mode",
-            "prepared-plan",
             "--open-limit",
             "123",
             "--job-dir",
@@ -230,7 +225,6 @@ fn cli_parser_accepts_repeated_query_filters() -> Result<(), Box<dyn std::error:
     );
     assert_eq!(config.open_limit, Some(123));
     assert_eq!(config.warmup, 2);
-    assert_eq!(config.cache_mode, CacheMode::PreparedPlan);
     assert_eq!(config.job_dir.as_deref(), Some("/tmp/job"));
     assert!(config.has_open_datasets());
     assert_eq!(config.format, OutputFormat::Json);

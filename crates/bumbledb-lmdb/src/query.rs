@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::ops::Range;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Instant;
 
 use smallvec::SmallVec;
@@ -11,7 +11,7 @@ use bumbledb_core::query_ir::{
     ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm, TypedLiteral,
     TypedOperand, TypedQuery, TypedRelationAtom, TypedTerm,
 };
-use bumbledb_core::schema::{IndexKind, SchemaFingerprint, ValueType};
+use bumbledb_core::schema::{IndexKind, ValueType};
 
 use crate::query_image::{FactId, FactRange};
 use crate::{
@@ -20,15 +20,15 @@ use crate::{
     RelationStats, Result, SortedTrieIndex, StorageSchema, SubAtom, TrieIter, Value, VarId,
 };
 
+use crate::QueryImageCacheDiagnostics;
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
 use crate::planner_stats::{
     OptimizerFieldStats, OptimizerIndexStats, OptimizerRelationStats, PlannerStatsCacheDiagnostics,
 };
 use crate::query_image::{
-    EncodedColumnBuilder, LftjAtomKey, QueryImageScope, QueryShapeKey, SortedTrieBuild,
-    encoded_column_builders, finish_column_builders,
+    EncodedColumnBuilder, LftjAtomKey, QueryImageScope, SortedTrieBuild, encoded_column_builders,
+    finish_column_builders,
 };
-use crate::{PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics};
 
 const HASH_BUILD_ROWS_PER_MICRO: u64 = 5;
 
@@ -229,62 +229,6 @@ pub struct QueryOutput {
     pub plan: QueryPlan,
 }
 
-/// Reusable typed query shape with snapshot-local normalized query cache.
-#[derive(Debug)]
-pub struct PreparedQuery {
-    schema: SchemaFingerprint,
-    query: TypedQuery,
-    normalized: RwLock<BTreeMap<u64, Arc<NormalizedQuery>>>,
-}
-
-impl PreparedQuery {
-    pub(crate) fn new(schema: &StorageSchema, query: TypedQuery) -> Self {
-        Self {
-            schema: schema.descriptor().fingerprint(),
-            query,
-            normalized: RwLock::default(),
-        }
-    }
-
-    fn query(&self) -> &TypedQuery {
-        &self.query
-    }
-
-    fn normalized_for(
-        &self,
-        txn: &ReadTxn<'_>,
-        schema: &StorageSchema,
-    ) -> Result<(Arc<NormalizedQuery>, bool)> {
-        let schema_fingerprint = schema.descriptor().fingerprint();
-        if self.schema != schema_fingerprint {
-            return Err(Error::schema_mismatch(
-                self.schema.to_string(),
-                schema_fingerprint.to_string(),
-            ));
-        }
-        let tx_id = txn.last_committed_tx_id()?;
-        if let Some(normalized) = self
-            .normalized
-            .read()
-            .map_err(|_| Error::internal("prepared query cache read lock poisoned"))?
-            .get(&tx_id)
-            .cloned()
-        {
-            return Ok((normalized, false));
-        }
-        let normalized = Arc::new(normalize_query(txn, schema, &self.query)?);
-        let mut cache = self
-            .normalized
-            .write()
-            .map_err(|_| Error::internal("prepared query cache write lock poisoned"))?;
-        if let Some(existing) = cache.get(&tx_id).cloned() {
-            return Ok((existing, false));
-        }
-        cache.insert(tx_id, normalized.clone());
-        Ok((normalized, true))
-    }
-}
-
 impl QueryOutput {
     /// Renders a human-readable explain plan for this executed query.
     pub fn explain(&self) -> String {
@@ -314,8 +258,6 @@ pub struct QueryPlan {
     pub query_image_cache: QueryImageCacheDiagnostics,
     /// Planner statistics cache diagnostics after planning.
     pub planner_stats: PlannerStatsCacheDiagnostics,
-    /// Prepared physical plan cache diagnostics after planning.
-    pub prepared_plan_cache: PreparedPlanCacheDiagnostics,
     /// Node-level estimated and observed fact/candidate counts.
     pub node_facts: Vec<NodeFactEstimate>,
     /// Node-level execution summaries.
@@ -434,14 +376,6 @@ impl QueryPlan {
             self.planner_stats.index_stats_built,
             self.planner_stats.stats_from_access_images,
             self.planner_stats.stats_exact_scans
-        ));
-        out.push_str(&format!(
-            "  prepared_plan_cache cached_plans={} hits={} misses={} builds={} build_micros={}\n",
-            self.prepared_plan_cache.cached_plans,
-            self.prepared_plan_cache.hits,
-            self.prepared_plan_cache.misses,
-            self.prepared_plan_cache.builds,
-            self.prepared_plan_cache.build_micros
         ));
         out.push_str(&format!("  chosen_plan: {}\n", self.optimizer.chosen));
         for candidate in &self.optimizer.candidates {
@@ -1056,29 +990,6 @@ pub(crate) struct ExecutionPlan {
     relation_atoms: Vec<NormAtom>,
     comparisons: Vec<NormPredicate>,
     summary: QueryPlan,
-}
-
-impl ExecutionPlan {
-    fn instantiate(
-        &self,
-        query_image_cache: QueryImageCacheDiagnostics,
-        planner_stats: PlannerStatsCacheDiagnostics,
-        prepared_plan_cache: PreparedPlanCacheDiagnostics,
-    ) -> Self {
-        let mut plan = self.clone();
-        plan.summary.query_image_cache = query_image_cache;
-        plan.summary.planner_stats = planner_stats;
-        plan.summary.prepared_plan_cache = prepared_plan_cache;
-        plan.summary.timings = QueryTimings::default();
-        plan.summary.allocations = QueryAllocationStats::default();
-        plan.summary.counters = PlanCounters::default();
-        for facts in &mut plan.summary.node_facts {
-            facts.actual_facts = 0;
-        }
-        plan.summary.node_timings =
-            query_node_timings(&plan.summary.free_join, &plan.summary.node_facts);
-        plan
-    }
 }
 
 #[derive(Clone, Debug)]

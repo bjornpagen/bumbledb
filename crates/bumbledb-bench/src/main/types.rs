@@ -28,7 +28,6 @@ struct BenchmarkRunResult {
     sqlite_avg: Duration,
     sqlite_ratio: f64,
     chosen_plan: String,
-    cache_mode: String,
     query_image_sample_cache_hits: u64,
     sqlite_materialized_facts: bool,
     timings: QueryTimings,

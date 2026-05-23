@@ -32,21 +32,6 @@ enum TraceFormat {
     Flame,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CacheMode {
-    Recompute,
-    PreparedPlan,
-}
-
-impl CacheMode {
-    fn as_str(self) -> &'static str {
-        match self {
-            CacheMode::Recompute => "recompute",
-            CacheMode::PreparedPlan => "prepared-plan",
-        }
-    }
-}
-
 #[derive(Debug)]
 struct Config {
     scale: u64,
@@ -65,7 +50,6 @@ struct Config {
     trace_output: Option<String>,
     trace_format: TraceFormat,
     format: OutputFormat,
-    cache_mode: CacheMode,
     fail_gates: bool,
 }
 
@@ -94,7 +78,6 @@ impl Config {
         let mut trace_format = TraceFormat::Fmt;
         let mut format = OutputFormat::Text;
         let mut format_explicit = false;
-        let mut cache_mode = CacheMode::PreparedPlan;
         let mut fail_gates = false;
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -159,13 +142,6 @@ impl Config {
                         other => return Err(bench_error(format!("unknown --format {other}"))),
                     }
                 }
-                "--cache-mode" => {
-                    cache_mode = match next_arg(&mut args, "--cache-mode")?.as_str() {
-                        "recompute" => CacheMode::Recompute,
-                        "prepared-plan" => CacheMode::PreparedPlan,
-                        other => return Err(bench_error(format!("unknown --cache-mode {other}"))),
-                    }
-                }
                 "--markdown" => {
                     format_explicit = true;
                     format = OutputFormat::Markdown;
@@ -177,7 +153,7 @@ impl Config {
                 "--fail-gates" => fail_gates = true,
                 "--help" | "-h" => {
                     println!(
-                        "usage: cargo run -p bumbledb-bench --release -- [--preset quick|nonjob|job|job-sample|job-full] [--scale N] [--open-limit N|--open-full] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--cache-mode recompute|prepared-plan] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
+                        "usage: cargo run -p bumbledb-bench --release -- [--preset quick|nonjob|job|job-sample|job-full] [--scale N] [--open-limit N|--open-full] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
                     );
                     return Ok(None);
                 }
@@ -201,7 +177,6 @@ impl Config {
             trace_output,
             trace_format,
             format,
-            cache_mode,
             fail_gates,
         };
         config.apply_preset(format_explicit)?;

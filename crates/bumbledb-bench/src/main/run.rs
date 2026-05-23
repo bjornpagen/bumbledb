@@ -113,17 +113,11 @@ fn run_dataset(
     let mut results = Vec::new();
     for query in selected_queries {
         let typed = (query.build)(bumble_schema.descriptor())?;
-        let prepared = bumble_env.prepare_query(&bumble_schema, &typed)?;
         let inputs = InputBindings::from_values(query.inputs.clone());
         let params = query.sqlite_params.clone();
 
-        let materialized_once = timed(|| match config.cache_mode {
-            CacheMode::Recompute => {
-                bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))
-            }
-            CacheMode::PreparedPlan => bumble_env
-                .read(|txn| txn.execute_prepared_query(&bumble_schema, &prepared, &inputs)),
-        })?;
+        let materialized_once =
+            timed(|| bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs)))?;
         let materialized_output = materialized_once.value;
         let bumble_cold_execution = materialized_once.elapsed;
         let bumble_output = materialized_output.clone();
@@ -154,13 +148,7 @@ fn run_dataset(
         }
 
         let (bumble_warmup, _) = timed_bumbledb_samples(config.warmup, || {
-            let output = match config.cache_mode {
-                CacheMode::Recompute => {
-                    bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?
-                }
-                CacheMode::PreparedPlan => bumble_env
-                    .read(|txn| txn.execute_prepared_query(&bumble_schema, &prepared, &inputs))?,
-            };
+            let output = bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?;
             black_box(output.result.facts.len());
             Ok::<_, bumbledb_lmdb::Error>(output.plan)
         })?;
@@ -171,13 +159,7 @@ fn run_dataset(
         })?;
 
         let (bumble_samples, bumble_sample_cache_hits) = timed_bumbledb_samples(config.repeats, || {
-            let output = match config.cache_mode {
-                CacheMode::Recompute => {
-                    bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?
-                }
-                CacheMode::PreparedPlan => bumble_env
-                    .read(|txn| txn.execute_prepared_query(&bumble_schema, &prepared, &inputs))?,
-            };
+            let output = bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?;
             black_box(output.result.facts.len());
             Ok::<_, bumbledb_lmdb::Error>(output.plan)
         })?;
@@ -191,7 +173,6 @@ fn run_dataset(
             dataset.name,
             &query,
             &bumble_output,
-            config.cache_mode,
             bumble_sample_cache_hits,
             correctness_mode,
             QueryTimingSamples {
@@ -209,10 +190,9 @@ fn run_dataset(
         emit_profile_summary(dataset.name, query.name, &bumble_output);
         if format.includes_text() {
             println!(
-                "query={} facts={} cache_mode={} sink_emit_calls={} encoded_project_facts_seen={} lftj_next_calls={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
+                "query={} facts={} sink_emit_calls={} encoded_project_facts_seen={} lftj_next_calls={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
                 query.name,
                 bumble_output.result.facts.len(),
-                result.cache_mode,
                 result.counters.sink_emit_calls,
                 result.counters.encoded_project_facts_seen,
                 result.counters.lftj_next_calls,

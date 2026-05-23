@@ -448,11 +448,10 @@ mod tests {
 
         let query = &benchmark_queries()[0];
         let typed = (query.build)(schema.descriptor())?;
-        let prepared = env.prepare_query(&schema, &typed)?;
         let bumbledb = env.read(|txn| {
-            txn.execute_prepared_query(
+            txn.execute_query(
                 &schema,
-                &prepared,
+                &typed,
                 &InputBindings::from_values([
                     ("holder", Value::Serial(1)),
                     ("start", Value::Timestamp(TimestampMicros(0))),

@@ -7,7 +7,6 @@ use std::time::Instant;
 use bumbledb_core::schema::{RelationDescriptor, SchemaFingerprint, ValueType};
 
 use crate::planner_stats::{PlannerStatsCache, PlannerStatsCacheDiagnostics};
-use crate::query::ExecutionPlan;
 use crate::storage_schema::FACT_SET_ACCESS_NAME;
 use crate::{
     AccessId, EncodedOwned, Error, IndexSpec, ReadTxn, Result, SortedTrieIndex, StorageSchema,
@@ -42,9 +41,6 @@ pub struct RelationScope {
     include_all_columns: bool,
     include_all_indexes: bool,
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct QueryShapeKey(pub(crate) [u8; 32]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct LftjAtomKey(pub(crate) [u8; 32]);
@@ -206,7 +202,6 @@ pub struct QueryImage {
     relation_by_name: BTreeMap<String, RelationId>,
     stats: QueryImageStats,
     planner_stats: PlannerStatsCache,
-    prepared_plans: PreparedPlanCache,
     sorted_trie_cache: Arc<RwLock<BTreeMap<LftjAtomKey, Arc<SortedTrieIndex>>>>,
 }
 
@@ -249,7 +244,6 @@ impl QueryImage {
                 build_micros,
             },
             planner_stats: PlannerStatsCache::default(),
-            prepared_plans: PreparedPlanCache::default(),
             sorted_trie_cache: Arc::default(),
         }
     }
@@ -288,26 +282,6 @@ impl QueryImage {
         relation: &RelationImage,
     ) -> Result<std::sync::Arc<crate::planner_stats::OptimizerRelationStats>> {
         self.planner_stats.get_or_build(schema, relation)
-    }
-
-    pub(crate) fn prepared_plan_diagnostics(&self) -> PreparedPlanCacheDiagnostics {
-        self.prepared_plans.diagnostics()
-    }
-
-    pub(crate) fn cached_prepared_plan(
-        &self,
-        key: QueryShapeKey,
-    ) -> Result<Option<Arc<ExecutionPlan>>> {
-        self.prepared_plans.get(key)
-    }
-
-    pub(crate) fn insert_prepared_plan(
-        &self,
-        key: QueryShapeKey,
-        plan: ExecutionPlan,
-        build_micros: u64,
-    ) -> Result<Arc<ExecutionPlan>> {
-        self.prepared_plans.insert(key, plan, build_micros)
     }
 
     pub(crate) fn cached_sorted_trie(
@@ -387,95 +361,6 @@ impl QueryImage {
         }
         *hasher.finalize().as_bytes()
     }
-}
-
-#[derive(Clone, Default)]
-struct PreparedPlanCache {
-    inner: Arc<PreparedPlanCacheInner>,
-}
-
-#[derive(Default)]
-struct PreparedPlanCacheInner {
-    plans: RwLock<BTreeMap<QueryShapeKey, Arc<ExecutionPlan>>>,
-    hits: AtomicU64,
-    misses: AtomicU64,
-    builds: AtomicU64,
-    build_micros: AtomicU64,
-}
-
-impl std::fmt::Debug for PreparedPlanCache {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PreparedPlanCache")
-            .field("diagnostics", &self.diagnostics())
-            .finish()
-    }
-}
-
-impl PreparedPlanCache {
-    fn get(&self, key: QueryShapeKey) -> Result<Option<Arc<ExecutionPlan>>> {
-        let plan = self
-            .inner
-            .plans
-            .read()
-            .map_err(|_| Error::internal("prepared plan cache read lock poisoned"))?
-            .get(&key)
-            .cloned();
-        if plan.is_some() {
-            self.inner.hits.fetch_add(1, Ordering::Relaxed);
-        } else {
-            self.inner.misses.fetch_add(1, Ordering::Relaxed);
-        }
-        Ok(plan)
-    }
-
-    fn insert(
-        &self,
-        key: QueryShapeKey,
-        plan: ExecutionPlan,
-        build_micros: u64,
-    ) -> Result<Arc<ExecutionPlan>> {
-        let mut plans = self
-            .inner
-            .plans
-            .write()
-            .map_err(|_| Error::internal("prepared plan cache write lock poisoned"))?;
-        if let Some(existing) = plans.get(&key).cloned() {
-            self.inner.hits.fetch_add(1, Ordering::Relaxed);
-            return Ok(existing);
-        }
-        let plan = Arc::new(plan);
-        plans.insert(key, plan.clone());
-        self.inner.builds.fetch_add(1, Ordering::Relaxed);
-        self.inner
-            .build_micros
-            .fetch_add(build_micros, Ordering::Relaxed);
-        Ok(plan)
-    }
-
-    fn diagnostics(&self) -> PreparedPlanCacheDiagnostics {
-        PreparedPlanCacheDiagnostics {
-            cached_plans: self.inner.plans.read().map_or(0, |plans| plans.len()),
-            hits: self.inner.hits.load(Ordering::Relaxed),
-            misses: self.inner.misses.load(Ordering::Relaxed),
-            builds: self.inner.builds.load(Ordering::Relaxed),
-            build_micros: self.inner.build_micros.load(Ordering::Relaxed),
-        }
-    }
-}
-
-/// Prepared physical plan cache diagnostics.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PreparedPlanCacheDiagnostics {
-    /// Cached prepared physical plans.
-    pub cached_plans: usize,
-    /// Prepared plan cache hits.
-    pub hits: u64,
-    /// Prepared plan cache misses.
-    pub misses: u64,
-    /// Prepared physical plan builds inserted into the cache.
-    pub builds: u64,
-    /// Total cold physical planning time inserted into the cache.
-    pub build_micros: u64,
 }
 
 pub(crate) struct CachedSortedTrie {

@@ -79,20 +79,18 @@ fn lftj_atom_cache_separates_prepared_input_local_comparison_filters() -> TestRe
     seed_title_company_range_facts(&env, &schema)?;
 
     let query = title_company_count_query(&schema, OperandRef::input("max_year"))?;
-    let prepared = env.prepare_query(&schema, &query)?;
     let through_2015 = InputBindings::from_values([("max_year", Value::I64(2015))]);
     let through_2020 = InputBindings::from_values([("max_year", Value::I64(2020))]);
 
     env.read(|txn| {
-        let first = txn.execute_prepared_query(&schema, &prepared, &through_2015)?;
-        let second = txn.execute_prepared_query(&schema, &prepared, &through_2020)?;
+        let first = txn.execute_query(&schema, &query, &through_2015)?;
+        let second = txn.execute_query(&schema, &query, &through_2020)?;
 
         assert_eq!(first.result.facts, vec![vec![Value::U64(20)], vec![Value::U64(30)]]);
         assert_eq!(
             second.result.facts,
             vec![vec![Value::U64(20)], vec![Value::U64(30)], vec![Value::U64(40)]]
         );
-        assert!(second.plan.prepared_plan_cache.hits >= 1);
         assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
         assert!(second.plan.counters.sorted_trie_cache_misses >= 1);
         Ok::<_, Error>(())

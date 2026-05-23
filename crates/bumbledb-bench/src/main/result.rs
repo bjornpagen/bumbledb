@@ -1,12 +1,7 @@
-#[expect(
-    clippy::too_many_arguments,
-    reason = "benchmark result assembly keeps measured dimensions explicit"
-)]
 fn benchmark_result(
     dataset: &'static str,
     query: &BenchQuery,
     output: &QueryOutput,
-    cache_mode: CacheMode,
     cache_hits: CacheHitStats,
     correctness_mode: CorrectnessMode,
     timing: QueryTimingSamples,
@@ -26,7 +21,6 @@ fn benchmark_result(
         dataset,
         query,
         output,
-        cache_mode,
         bumbledb_avg,
         sqlite_ratio,
         final_output_values,
@@ -51,7 +45,6 @@ fn benchmark_result(
         sqlite_avg,
         sqlite_ratio,
         chosen_plan: output.plan.optimizer.chosen.clone(),
-        cache_mode: cache_mode.as_str().to_owned(),
         query_image_sample_cache_hits: cache_hits.query_image_cache_hits,
         sqlite_materialized_facts: true,
         timings: output.plan.timings,
@@ -129,15 +122,10 @@ fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "benchmark gates need result context without building a heap object"
-)]
 fn evaluate_gate(
     dataset: &'static str,
     query: &BenchQuery,
     output: &QueryOutput,
-    cache_mode: CacheMode,
     bumbledb_avg: Duration,
     sqlite_ratio: f64,
     final_output_values: u64,
@@ -148,8 +136,7 @@ fn evaluate_gate(
     if let Some(gate) = benchmark_gate(dataset, query.name) {
         notes.push(format!("performance gate {}.{}", gate.dataset, gate.query));
         let avg_micros = duration_micros(bumbledb_avg);
-        let max_bumbledb_avg_micros = job_cache_mode_avg_limit(dataset, query.name, cache_mode)
-            .or(gate.max_bumbledb_avg_micros);
+        let max_bumbledb_avg_micros = gate.max_bumbledb_avg_micros;
         if let Some(max) = max_bumbledb_avg_micros
             && avg_micros > u128::from(max)
         {
@@ -289,22 +276,4 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
         _ => return None,
     };
     Some(gate)
-}
-
-fn job_cache_mode_avg_limit(
-    dataset: &'static str,
-    query: &'static str,
-    cache_mode: CacheMode,
-) -> Option<u64> {
-    if dataset != "job" {
-        return None;
-    }
-    match (query, cache_mode) {
-        ("job_q09_voice_us_actor", _) => Some(3_000),
-        ("job_q16_character_title_us", CacheMode::PreparedPlan)
-        | ("job_q24_voice_keyword_actor", CacheMode::PreparedPlan) => Some(1_000),
-        ("job_q16_character_title_us", CacheMode::Recompute)
-        | ("job_q24_voice_keyword_actor", CacheMode::Recompute) => Some(5_000),
-        _ => None,
-    }
 }

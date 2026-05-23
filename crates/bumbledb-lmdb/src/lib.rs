@@ -27,8 +27,6 @@ use std::sync::Arc;
 use heed::types::Bytes;
 use heed::{CompactionOption, Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
-use bumbledb_core::query_ir::TypedQuery;
-
 pub use error::*;
 pub use free_join::{
     AccessId, AtomId, FreeJoinPlan, NodeId, NodeImpl, OutputPlan, PlanEstimates, PlanNode,
@@ -37,16 +35,14 @@ pub use free_join::{
 pub use planner_stats::PlannerStatsCacheDiagnostics;
 pub use query::{
     AllocationPhaseStats, CostKey, InputBindings, MissingIndexRecommendation, NodeFactEstimate,
-    OptimizerTrace, PlanCandidate, PlanCounters, PreparedQuery, QueryAllocationStats,
-    QueryNodeTiming, QueryOutput, QueryPlan, QueryResultSet, QueryTimings, ResultColumn,
-    ResultFact, VariableEstimate,
+    OptimizerTrace, PlanCandidate, PlanCounters, QueryAllocationStats, QueryNodeTiming,
+    QueryOutput, QueryPlan, QueryResultSet, QueryTimings, ResultColumn, ResultFact,
+    VariableEstimate,
 };
 pub(crate) use query_image::{
     EncodedRef, FieldImage, QueryImage, QueryImageCache, RelationImage, RelationStats,
 };
-pub use query_image::{
-    FieldId, PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics, QueryImageStats, RelationId,
-};
+pub use query_image::{FieldId, QueryImageCacheDiagnostics, QueryImageStats, RelationId};
 pub(crate) use sorted_trie::{
     EncodedOwned, IndexSpec, LinearIter, SortedTrieIndex, SortedTrieIter, TrieIter, TrieLevel,
     TrieStats,
@@ -319,15 +315,6 @@ impl Environment {
     /// Returns the immutable query image for the latest committed snapshot.
     pub(crate) fn query_image(&self, schema: &StorageSchema) -> Result<Arc<QueryImage>> {
         self.read(|txn| self.query_images.get_or_build(txn, schema))
-    }
-
-    /// Prepares a typed query for repeated execution against read snapshots.
-    pub fn prepare_query(
-        &self,
-        schema: &StorageSchema,
-        query: &TypedQuery,
-    ) -> Result<PreparedQuery> {
-        Ok(PreparedQuery::new(schema, query.clone()))
     }
 
     /// Returns current query image cache diagnostics.
@@ -606,7 +593,6 @@ mod tests {
         assert!(report.dictionary_entries > 0);
 
         let typed = (benchmark_queries()[0].build)(schema.descriptor())?;
-        let query = fact_env.prepare_query(&schema, &typed)?;
         let inputs = InputBindings::from_values([
             ("holder", Value::Serial(1)),
             (
@@ -619,11 +605,11 @@ mod tests {
             ),
         ]);
         let fact_result = fact_env
-            .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
+            .read(|txn| txn.execute_query(&schema, &typed, &inputs))?
             .result
             .facts;
         let bulk_result = bulk_env
-            .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
+            .read(|txn| txn.execute_query(&schema, &typed, &inputs))?
             .result
             .facts;
         assert_eq!(sorted_facts(fact_result), sorted_facts(bulk_result));
@@ -699,7 +685,6 @@ mod tests {
         let compact = Environment::open_with_schema(compact_dir.path(), &schema)?;
 
         let typed = (benchmark_queries()[0].build)(schema.descriptor())?;
-        let query = env.prepare_query(&schema, &typed)?;
         let inputs = InputBindings::from_values([
             ("holder", Value::Serial(1)),
             (
@@ -713,15 +698,15 @@ mod tests {
         ]);
 
         let original = env
-            .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
+            .read(|txn| txn.execute_query(&schema, &typed, &inputs))?
             .result
             .facts;
         let backup_facts = backup
-            .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
+            .read(|txn| txn.execute_query(&schema, &typed, &inputs))?
             .result
             .facts;
         let compact_facts = compact
-            .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
+            .read(|txn| txn.execute_query(&schema, &typed, &inputs))?
             .result
             .facts;
 
