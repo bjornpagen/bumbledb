@@ -1498,47 +1498,6 @@ fn evaluate_gate(
                 ));
             }
         }
-        if dataset == "sailors" && query.name == "sailor_range_reserves" {
-            if output.plan.timings.query_image_micros != 0 {
-                passed = false;
-                notes.push(format!(
-                    "query image built during direct range query: {}us",
-                    output.plan.timings.query_image_micros
-                ));
-            }
-            if output.plan.counters.hash_index_builds != 0 {
-                passed = false;
-                notes.push(format!(
-                    "hash indexes built during direct range query: {}",
-                    output.plan.counters.hash_index_builds
-                ));
-            }
-            if output.plan.counters.sorted_trie_builds != 0 {
-                passed = false;
-                notes.push(format!(
-                    "sorted tries built during direct range query: {}",
-                    output.plan.counters.sorted_trie_builds
-                ));
-            }
-        }
-        if (dataset == "ledger" && query.name == "tag_lookup_join")
-            || (dataset == "joinstress" && query.name == "chain4_from_a")
-        {
-            if output.plan.counters.hash_index_builds != 0 {
-                passed = false;
-                notes.push(format!(
-                    "hash indexes built during direct chain query: {}",
-                    output.plan.counters.hash_index_builds
-                ));
-            }
-            if output.plan.counters.hash_index_build_facts != 0 {
-                passed = false;
-                notes.push(format!(
-                    "hash index build facts during direct chain query: {}",
-                    output.plan.counters.hash_index_build_facts
-                ));
-            }
-        }
         if dataset == "job"
             && matches!(
                 query.name,

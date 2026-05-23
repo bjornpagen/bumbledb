@@ -71,7 +71,7 @@ pub enum QueryBuildError {
     AmbiguousAggregateDomain { variable: String },
 }
 
-/// Direct schema-aware builder for typed query IR.
+/// Schema-aware builder for typed query IR.
 #[derive(Debug)]
 pub struct QueryBuilder<'schema> {
     schema: &'schema SchemaDescriptor,
