@@ -156,7 +156,6 @@ fn explain_and_storage_diagnostics_are_available() -> TestResult {
     assert!(explain.contains("query_timing"));
     assert!(explain.contains("allocations:"));
     assert!(explain.contains("allocation_summary"));
-    assert!(explain.contains("node_timing"));
     assert!(explain.contains("variable_estimate"));
     assert!(explain.contains("free_join_node"));
     assert!(explain.contains("candidate_plan"));
@@ -191,4 +190,3 @@ fn explain_and_storage_diagnostics_are_available() -> TestResult {
     );
     Ok(())
 }
-

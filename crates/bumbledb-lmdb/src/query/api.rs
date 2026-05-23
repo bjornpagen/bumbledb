@@ -98,7 +98,6 @@ impl<'env> ReadTxn<'env> {
         finish_timings(&mut plan.summary.timings, total_start);
         let total_alloc = allocation_delta_since(total_alloc_start);
         plan.summary.allocations = plan.summary.allocations.with_total(total_alloc);
-        plan.summary.refresh_node_timings();
         tracing::debug!(?plan.summary.counters, "free join query executed");
         Ok(QueryOutput {
             result: QueryResultSet::new(columns, facts),

@@ -1,7 +1,7 @@
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | facts | sqlite materialized | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | lazy access slices | eager builds avoided | atom temp builds | iterator ops | hash build est | materialized | dict lookups | gate |\n");
+    out.push_str("| dataset | query | facts | sqlite materialized | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | lazy access slices | eager builds avoided | atom temp builds | iterator ops | build facts est | materialized | dict lookups | gate |\n");
     out.push_str("|---|---|---:|---|---:|---:|---:|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
@@ -34,7 +34,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.lftj_eager_builds_avoided,
             result.atom_temp_relation_builds,
             result.iterator_ops,
-            result.hash_build_facts,
+            result.build_facts,
             result.materialized_values,
             result.dictionary_reverse_lookups,
             if result.gate.passed { "pass" } else { "fail" },

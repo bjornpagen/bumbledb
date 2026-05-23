@@ -250,8 +250,6 @@ pub struct QueryPlan {
     pub variable_order: Vec<String>,
     /// Estimated work for variables in execution order.
     pub variable_estimates: Vec<VariableEstimate>,
-    /// Physical index recommendations for predicates not served by leading indexes.
-    pub missing_indexes: Vec<MissingIndexRecommendation>,
     /// Optimizer candidates and chosen cost key.
     pub optimizer: OptimizerTrace,
     /// Query image cache diagnostics after acquiring this query image.
@@ -260,8 +258,6 @@ pub struct QueryPlan {
     pub planner_stats: PlannerStatsCacheDiagnostics,
     /// Node-level estimated and observed fact/candidate counts.
     pub node_facts: Vec<NodeFactEstimate>,
-    /// Node-level execution summaries.
-    pub node_timings: Vec<QueryNodeTiming>,
     /// Free Join physical plan IR.
     pub free_join: FreeJoinPlan,
     /// Coarse query phase timings.
@@ -270,8 +266,6 @@ pub struct QueryPlan {
     pub allocations: QueryAllocationStats,
     /// Execution counters.
     pub counters: PlanCounters,
-    /// True when multiple relation atoms are evaluated as one indexed multiway search.
-    pub uses_indexed_multiway_join: bool,
 }
 
 impl QueryPlan {
@@ -280,10 +274,6 @@ impl QueryPlan {
         let mut out = String::new();
         out.push_str("QueryPlan\n");
         out.push_str(&format!("variable_order: {:?}\n", self.variable_order));
-        out.push_str(&format!(
-            "uses_indexed_multiway_join: {}\n",
-            self.uses_indexed_multiway_join
-        ));
         out.push_str("timings:\n");
         out.push_str(&format!(
             "  query_timing total_micros={} validate_inputs_micros={} normalize_micros={} encode_inputs_micros={} query_image_micros={} plan_micros={} lftj_build_micros={} execute_micros={} lftj_execute_micros={} sink_emit_micros={} sink_finish_micros={} decode_micros={} unaccounted_micros={}\n",
@@ -347,15 +337,6 @@ impl QueryPlan {
                 estimate.reason
             ));
         }
-        if !self.missing_indexes.is_empty() {
-            out.push_str("missing_indexes:\n");
-            for missing in &self.missing_indexes {
-                out.push_str(&format!(
-                    "  missing_index relation={} fields={:?} reason={}\n",
-                    missing.relation, missing.fields, missing.reason
-                ));
-            }
-        }
         out.push_str("optimizer:\n");
         out.push_str(&format!(
             "  query_image_cache cached_images={} hits={} misses={} builds={} build_micros={}\n",
@@ -380,24 +361,22 @@ impl QueryPlan {
         out.push_str(&format!("  chosen_plan: {}\n", self.optimizer.chosen));
         for candidate in &self.optimizer.candidates {
             out.push_str(&format!(
-                "  candidate_plan name={} selected={} estimated_micros={} setup_micros={} memory_bytes={} materialization_penalty={} candidate_rank={} implementation_mask={} rejected_reason={} impls={:?}\n",
+                "  candidate_plan name={} selected={} estimated_micros={} setup_micros={} memory_bytes={} materialization_penalty={} rejected_reason={} impls={:?}\n",
                 candidate.name,
                 candidate.selected,
                 candidate.cost.estimated_micros,
                 candidate.cost.setup_micros,
                 candidate.cost.memory_bytes,
                 candidate.cost.materialization_penalty,
-                candidate.cost.candidate_rank,
-                candidate.cost.implementation_mask,
                 candidate.rejected_reason,
                 candidate.implementations
             ));
         }
         out.push_str(&format!(
-            "free_join_estimates: output_facts={} iterator_ops={} hash_build_facts={} materialized_values={} memory_bytes={} actual_output_facts={}\n",
+            "free_join_estimates: output_facts={} iterator_ops={} build_facts={} materialized_values={} memory_bytes={} actual_output_facts={}\n",
             self.free_join.estimates.output_facts,
             self.free_join.estimates.iterator_ops,
-            self.free_join.estimates.hash_build_facts,
+            self.free_join.estimates.build_facts,
             self.free_join.estimates.materialized_values,
             self.free_join.estimates.memory_bytes,
             self.counters.output_facts
@@ -415,16 +394,6 @@ impl QueryPlan {
                 out.push_str(&format!(
                     "    node_facts variable={} estimated_facts={} actual_facts={}\n",
                     facts.variable, facts.estimated_facts, facts.actual_facts
-                ));
-            }
-            if let Some(timing) = self.node_timings.get(node.id.0 as usize) {
-                out.push_str(&format!(
-                    "    node_timing node={} impl={:?} estimated_facts={} actual_facts={} execute_micros={}\n",
-                    timing.node.0,
-                    timing.implementation,
-                    timing.estimated_facts,
-                    timing.actual_facts,
-                    timing.execute_micros
                 ));
             }
             for subatom in &node.subatoms {
@@ -562,14 +531,6 @@ impl QueryPlan {
         ));
         out.push_str(&format!("  output_facts: {}\n", self.counters.output_facts));
         out
-    }
-
-    fn refresh_node_timings(&mut self) {
-        for timing in &mut self.node_timings {
-            if let Some(facts) = self.node_facts.get(timing.node.0 as usize) {
-                timing.actual_facts = facts.actual_facts;
-            }
-        }
     }
 }
 
@@ -747,23 +708,6 @@ impl QueryAllocationStats {
     }
 }
 
-/// Node-level execution timing and counter summary.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct QueryNodeTiming {
-    /// Dense Free Join node ID.
-    pub node: NodeId,
-    /// Runtime implementation selected for the node.
-    pub implementation: NodeImpl,
-    /// Variables bound by this node.
-    pub bind_vars: Vec<VarId>,
-    /// Estimated facts/candidates for this node.
-    pub estimated_facts: u64,
-    /// Observed accepted candidates for this node.
-    pub actual_facts: u64,
-    /// Coarse node execution time, zero until node-level timing is enabled.
-    pub execute_micros: u128,
-}
-
 /// Optimizer estimate for one variable in execution order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VariableEstimate {
@@ -780,17 +724,6 @@ pub struct VariableEstimate {
     /// Stats-backed access path used for the estimate.
     pub access: String,
     /// Human-readable stats explanation for the chosen variable order step.
-    pub reason: String,
-}
-
-/// Physical index recommendation emitted by the planner.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MissingIndexRecommendation {
-    /// Relation name.
-    pub relation: String,
-    /// Suggested leading fields.
-    pub fields: Vec<String>,
-    /// Why the planner wants this index.
     pub reason: String,
 }
 
@@ -829,10 +762,6 @@ pub struct CostKey {
     pub memory_bytes: usize,
     /// Penalty for materializing output values or intermediate payload.
     pub materialization_penalty: u64,
-    /// Stable candidate rank tie-breaker.
-    pub candidate_rank: u8,
-    /// Stable implementation-shape tie-breaker.
-    pub implementation_mask: u64,
 }
 
 /// Estimated and observed facts/candidates for one Free Join node.

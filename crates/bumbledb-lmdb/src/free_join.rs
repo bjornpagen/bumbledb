@@ -107,8 +107,8 @@ pub struct PlanEstimates {
     pub output_facts: u64,
     /// Estimated iterator operations.
     pub iterator_ops: u64,
-    /// Estimated hash build facts.
-    pub hash_build_facts: u64,
+    /// Estimated access build facts.
+    pub build_facts: u64,
     /// Estimated materialized logical values.
     pub materialized_values: u64,
     /// Estimated memory bytes.

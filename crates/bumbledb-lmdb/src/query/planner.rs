@@ -54,7 +54,6 @@ fn plan_query(
             actual_facts: 0,
         })
         .collect::<Vec<_>>();
-    let missing_indexes = missing_index_recommendations(schema, query, &relation_atoms)?;
     let (free_join, optimizer) = {
         let _span = tracing::debug_span!(
             "bumbledb.query.plan.optimize_free_join",
@@ -72,10 +71,8 @@ fn plan_query(
         )?
     };
     free_join.validate()?;
-    let node_timings = query_node_timings(&free_join, &node_facts);
     let planner_stats = image.planner_stats_diagnostics();
 
-    let uses_indexed_multiway_join = relation_atoms.len() > 1;
     let execution_plan = ExecutionPlan {
         variable_order_ids,
         relation_atoms: query.atoms.clone(),
@@ -83,41 +80,17 @@ fn plan_query(
         summary: QueryPlan {
             variable_order,
             variable_estimates,
-            missing_indexes,
             optimizer,
             query_image_cache,
             planner_stats,
             node_facts,
-            node_timings,
             free_join,
             timings: QueryTimings::default(),
             allocations: QueryAllocationStats::default(),
             counters: PlanCounters::default(),
-            uses_indexed_multiway_join,
         },
     };
     Ok(execution_plan)
-}
-
-fn query_node_timings(
-    free_join: &FreeJoinPlan,
-    node_facts: &[NodeFactEstimate],
-) -> Vec<QueryNodeTiming> {
-    free_join
-        .nodes
-        .iter()
-        .map(|node| {
-            let facts = node_facts.get(node.id.0 as usize);
-            QueryNodeTiming {
-                node: node.id,
-                implementation: node.implementation,
-                bind_vars: node.bind_vars.clone(),
-                estimated_facts: facts.map_or(0, |facts| facts.estimated_facts),
-                actual_facts: facts.map_or(0, |facts| facts.actual_facts),
-                execute_micros: 0,
-            }
-        })
-        .collect()
 }
 
 fn choose_variable_order(
@@ -500,91 +473,6 @@ fn operand_constrains_for_estimate(
     }
 }
 
-fn missing_index_recommendations(
-    schema: &StorageSchema,
-    query: &NormalizedQuery,
-    atoms: &[&NormAtom],
-) -> Result<Vec<MissingIndexRecommendation>> {
-    let mut seen = BTreeSet::new();
-    let mut out = Vec::new();
-    let mut variable_degree = vec![0usize; query.vars.len()];
-    for atom in atoms {
-        for variable in atom_variables(atom) {
-            variable_degree[variable] += 1;
-        }
-    }
-    for atom in atoms {
-        let (_, relation) = schema.relation(&atom.relation_name)?;
-        for field in &atom.fields {
-            match field.term {
-                NormTerm::Input(_) | NormTerm::Literal(_) => {
-                    if has_leading_index(schema, &atom.relation_name, &field.field_name)? {
-                        continue;
-                    }
-                    let fields = recommended_index_fields(relation, &field.field_name);
-                    if seen.insert((atom.relation_name.clone(), fields.clone())) {
-                        out.push(MissingIndexRecommendation {
-                            relation: atom.relation_name.clone(),
-                            fields,
-                            reason: "StaticPredicate: chosen prefix has no leading index"
-                                .to_owned(),
-                        });
-                    }
-                }
-                NormTerm::Var(variable) if variable_degree[variable.0 as usize] > 1 => {
-                    if has_leading_index(schema, &atom.relation_name, &field.field_name)? {
-                        continue;
-                    }
-                    let fields = recommended_index_fields(relation, &field.field_name);
-                    if seen.insert((atom.relation_name.clone(), fields.clone())) {
-                        out.push(MissingIndexRecommendation {
-                            relation: atom.relation_name.clone(),
-                            fields,
-                            reason: "JoinPrefix: joined variable has no leading index".to_owned(),
-                        });
-                    }
-                }
-                NormTerm::Var(_) | NormTerm::Wildcard => {}
-            }
-        }
-    }
-    Ok(out)
-}
-
-fn has_leading_index(schema: &StorageSchema, relation: &str, field: &str) -> Result<bool> {
-    Ok(schema.access_paths(relation)?.iter().any(|path| {
-        path.leading_fields
-            .first()
-            .is_some_and(|leading| leading == field)
-    }))
-}
-
-fn recommended_index_fields(
-    relation: &bumbledb_core::schema::RelationDescriptor,
-    field: &str,
-) -> Vec<String> {
-    let mut fields = vec![field.to_owned()];
-    for primary in first_unique_fields(relation) {
-        if !fields.iter().any(|field| field == primary) {
-            fields.push(primary.clone());
-        }
-    }
-    fields
-}
-
-fn first_unique_fields(relation: &bumbledb_core::schema::RelationDescriptor) -> &[String] {
-    relation
-        .constraints
-        .iter()
-        .find_map(|constraint| match constraint {
-            bumbledb_core::schema::ConstraintDescriptor::Unique { fields, .. } => {
-                Some(fields.as_slice())
-            }
-            bumbledb_core::schema::ConstraintDescriptor::ForeignKey { .. } => None,
-        })
-        .unwrap_or(&[])
-}
-
 fn optimize_free_join_plan(
     schema: &StorageSchema,
     query: &NormalizedQuery,
@@ -671,13 +559,11 @@ fn build_plan_candidate(
     let cost = CostKey {
         estimated_micros: estimates
             .iterator_ops
-            .saturating_add(estimates.hash_build_facts / HASH_BUILD_ROWS_PER_MICRO)
+            .saturating_add(estimates.build_facts / HASH_BUILD_ROWS_PER_MICRO)
             .saturating_add(estimates.materialized_values),
         setup_micros: estimated_setup_micros(name, &estimates),
         memory_bytes: estimates.memory_bytes,
         materialization_penalty: estimates.materialized_values,
-        candidate_rank: candidate_rank(name),
-        implementation_mask: implementation_mask(&implementations),
     };
     Ok(OptimizerCandidate {
         name: name.to_owned(),
@@ -687,36 +573,16 @@ fn build_plan_candidate(
     })
 }
 
-fn candidate_rank(name: &str) -> u8 {
-    match name {
-        "free_join_sorted_leapfrog" => 0,
-        _ => u8::MAX,
-    }
-}
-
-fn implementation_mask(implementations: &[NodeImpl]) -> u64 {
-    implementations
-        .iter()
-        .take(16)
-        .enumerate()
-        .fold(0u64, |mask, (index, implementation)| {
-            let code = match implementation {
-                NodeImpl::SortedLeapfrog => 1,
-            };
-            mask | ((code as u64) << (index * 4))
-        })
-}
-
 fn estimated_setup_micros(name: &str, estimates: &PlanEstimates) -> u64 {
     let query_image_cost = estimates.output_facts.clamp(1, 1_000);
-    let hash_cost = estimates.hash_build_facts / HASH_BUILD_ROWS_PER_MICRO;
+    let build_cost = estimates.build_facts / HASH_BUILD_ROWS_PER_MICRO;
     let sorted_cost = if name == "free_join_sorted_leapfrog" {
         estimates.iterator_ops / 10
     } else {
         0
     };
     query_image_cost
-        .saturating_add(hash_cost)
+        .saturating_add(build_cost)
         .saturating_add(sorted_cost)
 }
 
@@ -790,7 +656,7 @@ fn estimate_free_join_plan(
     cyclic: bool,
 ) -> PlanEstimates {
     let mut iterator_ops = 0u64;
-    let mut hash_build_facts = 0u64;
+    let mut build_facts = 0u64;
     for cost in variable_costs {
         let variable_ops =
             cost.estimated_candidates
@@ -800,8 +666,7 @@ fn estimate_free_join_plan(
     }
     for atom in atoms {
         if atom_variables(atom).is_empty() {
-            hash_build_facts =
-                hash_build_facts.saturating_add(stats.relation_facts(&atom.relation_name));
+            build_facts = build_facts.saturating_add(stats.relation_facts(&atom.relation_name));
         }
     }
 
@@ -811,14 +676,14 @@ fn estimate_free_join_plan(
 
     let output_facts = estimate_output_facts(variable_costs);
     let materialized_values = estimate_materialized_values(query, output_facts);
-    let memory_bytes = (hash_build_facts as usize)
+    let memory_bytes = (build_facts as usize)
         .saturating_mul(32)
         .saturating_add(materialized_values as usize * 16);
 
     PlanEstimates {
         output_facts,
         iterator_ops,
-        hash_build_facts,
+        build_facts,
         materialized_values,
         memory_bytes,
     }

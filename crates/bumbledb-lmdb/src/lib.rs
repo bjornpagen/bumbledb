@@ -34,10 +34,9 @@ pub use free_join::{
 };
 pub use planner_stats::PlannerStatsCacheDiagnostics;
 pub use query::{
-    AllocationPhaseStats, CostKey, InputBindings, MissingIndexRecommendation, NodeFactEstimate,
-    OptimizerTrace, PlanCandidate, PlanCounters, QueryAllocationStats, QueryNodeTiming,
-    QueryOutput, QueryPlan, QueryResultSet, QueryTimings, ResultColumn, ResultFact,
-    VariableEstimate,
+    AllocationPhaseStats, CostKey, InputBindings, NodeFactEstimate, OptimizerTrace, PlanCandidate,
+    PlanCounters, QueryAllocationStats, QueryOutput, QueryPlan, QueryResultSet, QueryTimings,
+    ResultColumn, ResultFact, VariableEstimate,
 };
 pub(crate) use query_image::{
     EncodedRef, FieldImage, QueryImage, QueryImageCache, RelationImage, RelationStats,

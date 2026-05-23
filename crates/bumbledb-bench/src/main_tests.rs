@@ -53,7 +53,7 @@ fn markdown_renderer_emits_gate_tables() {
         },
         allocations: QueryAllocationStats::default(),
         iterator_ops: 7,
-        hash_build_facts: 0,
+        build_facts: 0,
         materialized_values: 1,
         dictionary_reverse_lookups: 0,
         counters: PlanCounters {
@@ -139,7 +139,7 @@ fn json_renderer_emits_structured_results() {
         },
         allocations: QueryAllocationStats::default(),
         iterator_ops: 1,
-        hash_build_facts: 1,
+        build_facts: 1,
         materialized_values: 2,
         dictionary_reverse_lookups: 0,
         counters: PlanCounters::default(),

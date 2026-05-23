@@ -223,7 +223,6 @@ fn print_explain(explain: &str) {
             || line.contains("query_timing")
             || line.contains("allocation_summary")
             || line.contains("variable_estimate")
-            || line.contains("missing_index")
             || line.contains("query_image_cache")
             || line.contains("planner_stats")
             || line.contains("chosen_plan")

@@ -33,7 +33,7 @@ struct BenchmarkRunResult {
     timings: QueryTimings,
     allocations: QueryAllocationStats,
     iterator_ops: u64,
-    hash_build_facts: u64,
+    build_facts: u64,
     materialized_values: u64,
     dictionary_reverse_lookups: u64,
     counters: PlanCounters,

@@ -113,12 +113,6 @@ fn planner_recommends_missing_static_predicate_index() -> TestResult {
         &output.result.facts,
         &[vec![Value::Serial(1)], vec![Value::Serial(3)]],
     );
-    let expected_fields = vec!["currency".to_owned(), "id".to_owned()];
-    assert!(output.plan.missing_indexes.iter().any(|missing| {
-        missing.relation == "Account"
-            && missing.fields == expected_fields
-            && missing.reason.contains("StaticPredicate")
-    }));
     Ok(())
 }
 

@@ -50,7 +50,7 @@ fn benchmark_result(
         timings: output.plan.timings,
         allocations: output.plan.allocations,
         iterator_ops: output.plan.free_join.estimates.iterator_ops,
-        hash_build_facts: output.plan.free_join.estimates.hash_build_facts,
+        build_facts: output.plan.free_join.estimates.build_facts,
         materialized_values: output.plan.counters.materialized_output_values,
         dictionary_reverse_lookups: output.plan.counters.dictionary_reverse_lookups,
         counters: output.plan.counters.clone(),
@@ -108,18 +108,6 @@ fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
         allocations_enabled = plan.allocations.enabled,
         "benchmark query profile"
     );
-    for node in &plan.node_timings {
-        tracing::debug!(
-            dataset,
-            query,
-            node = node.node.0,
-            implementation = ?node.implementation,
-            estimated_facts = node.estimated_facts,
-            actual_facts = node.actual_facts,
-            execute_micros = node.execute_micros,
-            "benchmark node profile"
-        );
-    }
 }
 
 fn evaluate_gate(
