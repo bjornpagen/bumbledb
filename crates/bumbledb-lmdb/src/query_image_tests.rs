@@ -187,7 +187,6 @@ fn builds_query_image_from_snapshot_and_matches_diagnostics() -> TestResult {
 
     assert_eq!(image.stats().relation_count, 1);
     assert_eq!(image.stats().fact_count, 2);
-    assert_eq!(image.stats().sorted_trie_bytes, 0);
     assert_eq!(diagnostics.relations[0].fact_count, 2);
 
     let account = account_relation(&image)?;

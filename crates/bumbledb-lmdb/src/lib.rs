@@ -38,9 +38,7 @@ pub use query::{
 };
 pub(crate) use query_image::{EncodedRef, QueryImage, QueryImageCache, RelationImage};
 pub use query_image::{FieldId, QueryImageCacheDiagnostics, QueryImageStats, RelationId};
-pub(crate) use sorted_trie::{
-    EncodedOwned, LinearIter, SortedTrieIndex, SortedTrieIter, TrieIter, TrieLevel, TrieStats,
-};
+pub(crate) use sorted_trie::{EncodedOwned, LinearIter, TrieIter};
 pub use storage::{
     DeleteOutcome, EncodedComponent, Fact, FactCursor, FactCursorRecord, FieldValues,
     InsertOutcome, Value,

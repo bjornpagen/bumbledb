@@ -77,7 +77,6 @@ fn execute_lftj<'txn, 'query, S: FactSink>(
         } else {
             Some(build_lftj_atom_plans(
                 image,
-                query,
                 inputs,
                 &query.atoms,
                 &variable_order_ids,
@@ -200,7 +199,6 @@ fn lftj_prefix_proves_empty(
         }
         let atom_plans = build_lftj_atom_plans(
             image,
-            query,
             inputs,
             &prefix_atoms,
             variable_order_ids,

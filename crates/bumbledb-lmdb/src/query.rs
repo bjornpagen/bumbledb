@@ -13,17 +13,15 @@ use bumbledb_core::query_ir::{
 };
 use bumbledb_core::schema::{IndexKind, ValueType};
 
-use crate::query_image::{FactId, FactRange};
 use crate::{
     AtomId, EncodedOwned, Error, FieldId, FreeJoinPlan, LinearIter, NodeId, OutputPlan, PlanNode,
-    ProjectPlan, ReadTxn, RelationImage, Result, SortedTrieIndex, StorageSchema, TrieIter, Value,
-    VarId,
+    ProjectPlan, ReadTxn, RelationImage, Result, StorageSchema, TrieIter, Value, VarId,
 };
 
 use crate::QueryImageCacheDiagnostics;
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
 use crate::planner_stats::{PlannerIndexStats, PlannerRelationStats, PlannerStatsCacheDiagnostics};
-use crate::query_image::{LftjAtomKey, QueryImageScope, SortedTrieBuild};
+use crate::query_image::QueryImageScope;
 
 /// Query input bindings keyed by input name without `$`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -399,64 +397,12 @@ impl QueryPlan {
             self.counters.trie_key_reads
         ));
         out.push_str(&format!(
-            "  sorted_trie_cache_hits: {}\n",
-            self.counters.sorted_trie_cache_hits
-        ));
-        out.push_str(&format!(
-            "  sorted_trie_cache_misses: {}\n",
-            self.counters.sorted_trie_cache_misses
-        ));
-        out.push_str(&format!(
-            "  sorted_trie_builds: {}\n",
-            self.counters.sorted_trie_builds
-        ));
-        out.push_str(&format!(
-            "  sorted_trie_build_micros: {}\n",
-            self.counters.sorted_trie_build_micros
-        ));
-        out.push_str(&format!(
             "  lftj_lazy_access_slices: {}\n",
             self.counters.lftj_lazy_access_slices
         ));
         out.push_str(&format!(
             "  lftj_eager_builds_avoided: {}\n",
             self.counters.lftj_eager_builds_avoided
-        ));
-        out.push_str(&format!(
-            "  atom_temp_relation_builds: {}\n",
-            self.counters.atom_temp_relation_builds
-        ));
-        out.push_str(&format!(
-            "  atom_temp_relation_source_facts: {}\n",
-            self.counters.atom_temp_relation_source_facts
-        ));
-        out.push_str(&format!(
-            "  atom_temp_relation_facts: {}\n",
-            self.counters.atom_temp_relation_facts
-        ));
-        out.push_str(&format!(
-            "  lftj_atom_source_facts_scanned: {}\n",
-            self.counters.lftj_atom_source_facts_scanned
-        ));
-        out.push_str(&format!(
-            "  lftj_atom_facts_retained: {}\n",
-            self.counters.lftj_atom_facts_retained
-        ));
-        out.push_str(&format!(
-            "  lftj_atom_bytes_copied: {}\n",
-            self.counters.lftj_atom_bytes_copied
-        ));
-        out.push_str(&format!(
-            "  lftj_atom_scan_micros: {}\n",
-            self.counters.lftj_atom_scan_micros
-        ));
-        out.push_str(&format!(
-            "  lftj_atom_column_micros: {}\n",
-            self.counters.lftj_atom_column_micros
-        ));
-        out.push_str(&format!(
-            "  lftj_atom_sort_micros: {}\n",
-            self.counters.lftj_atom_sort_micros
         ));
         out.push_str(&format!("  output_facts: {}\n", self.counters.output_facts));
         out
@@ -700,36 +646,10 @@ pub struct PlanCounters {
     pub lftj_bind_rejects: u64,
     /// Number of LFTJ completed bindings.
     pub lftj_completed_bindings: u64,
-    /// Number of sorted trie cache hits while preparing query atom indexes.
-    pub sorted_trie_cache_hits: u64,
-    /// Number of sorted trie cache misses while preparing query atom indexes.
-    pub sorted_trie_cache_misses: u64,
-    /// Number of sorted trie builds while preparing query atom indexes.
-    pub sorted_trie_builds: u64,
-    /// Total sorted trie build time while preparing query atom indexes.
-    pub sorted_trie_build_micros: u64,
     /// Number of LFTJ atom sources backed directly by durable access slices.
     pub lftj_lazy_access_slices: u64,
     /// Number of eager sorted trie atom builds avoided by lazy access slices.
     pub lftj_eager_builds_avoided: u64,
-    /// Number of temporary atom relation images built on cache misses.
-    pub atom_temp_relation_builds: u64,
-    /// Number of source facts inspected while building temporary atom relations.
-    pub atom_temp_relation_source_facts: u64,
-    /// Number of facts retained in temporary atom relations.
-    pub atom_temp_relation_facts: u64,
-    /// Number of source facts inspected by LFTJ atom build subphase tracing.
-    pub lftj_atom_source_facts_scanned: u64,
-    /// Number of facts retained by LFTJ atom build subphase tracing.
-    pub lftj_atom_facts_retained: u64,
-    /// Number of encoded bytes copied by LFTJ atom build subphase tracing.
-    pub lftj_atom_bytes_copied: u64,
-    /// LFTJ atom scan/filter/copy microseconds.
-    pub lftj_atom_scan_micros: u64,
-    /// LFTJ atom temporary column construction microseconds.
-    pub lftj_atom_column_micros: u64,
-    /// LFTJ atom sorted trie construction microseconds.
-    pub lftj_atom_sort_micros: u64,
     /// Number of encoded projection facts observed before set insertion.
     pub encoded_project_facts_seen: u64,
     /// Number of encoded projection facts inserted into the result set.
@@ -822,6 +742,7 @@ impl PlannerStats {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct VariableOrderScore {
     variable: usize,
+    field_position: usize,
     candidate_estimate: u64,
     static_constraints: usize,
     bound_constraints: usize,
@@ -851,49 +772,42 @@ struct LftjAtomPlan<'a> {
 }
 
 enum LftjAtomSource<'a> {
-    SortedTrie(Arc<SortedTrieIndex>),
     LazyAccess(LazyAccessSlice<'a>),
 }
 
 impl<'a> LftjAtomSource<'a> {
     fn iter(&'a self) -> LftjTrieIter<'a> {
         match self {
-            LftjAtomSource::SortedTrie(index) => LftjTrieIter::Sorted(index.iter()),
             LftjAtomSource::LazyAccess(slice) => LftjTrieIter::Lazy(slice.iter()),
         }
     }
 }
 
 enum LftjTrieIter<'a> {
-    Sorted(crate::SortedTrieIter<'a>),
     Lazy(LazyAccessIter<'a>),
 }
 
 impl LinearIter for LftjTrieIter<'_> {
     fn key(&self) -> Option<crate::EncodedRef<'_>> {
         match self {
-            LftjTrieIter::Sorted(iter) => iter.key(),
             LftjTrieIter::Lazy(iter) => iter.key(),
         }
     }
 
     fn next(&mut self) {
         match self {
-            LftjTrieIter::Sorted(iter) => iter.next(),
             LftjTrieIter::Lazy(iter) => iter.next(),
         }
     }
 
     fn seek(&mut self, target: crate::EncodedRef<'_>) {
         match self {
-            LftjTrieIter::Sorted(iter) => iter.seek(target),
             LftjTrieIter::Lazy(iter) => iter.seek(target),
         }
     }
 
     fn at_end(&self) -> bool {
         match self {
-            LftjTrieIter::Sorted(iter) => iter.at_end(),
             LftjTrieIter::Lazy(iter) => iter.at_end(),
         }
     }
@@ -902,36 +816,13 @@ impl LinearIter for LftjTrieIter<'_> {
 impl TrieIter for LftjTrieIter<'_> {
     fn open(&mut self) {
         match self {
-            LftjTrieIter::Sorted(iter) => iter.open(),
             LftjTrieIter::Lazy(iter) => iter.open(),
         }
     }
 
     fn up(&mut self) {
         match self {
-            LftjTrieIter::Sorted(iter) => iter.up(),
             LftjTrieIter::Lazy(iter) => iter.up(),
-        }
-    }
-
-    fn depth(&self) -> usize {
-        match self {
-            LftjTrieIter::Sorted(iter) => iter.depth(),
-            LftjTrieIter::Lazy(iter) => iter.depth(),
-        }
-    }
-
-    fn current_fact_range(&self) -> FactRange {
-        match self {
-            LftjTrieIter::Sorted(iter) => iter.current_fact_range(),
-            LftjTrieIter::Lazy(iter) => iter.current_fact_range(),
-        }
-    }
-
-    fn count(&self) -> usize {
-        match self {
-            LftjTrieIter::Sorted(iter) => iter.count(),
-            LftjTrieIter::Lazy(iter) => iter.count(),
         }
     }
 }
@@ -939,8 +830,15 @@ impl TrieIter for LftjTrieIter<'_> {
 struct LazyAccessSlice<'a> {
     index: &'a crate::query_image::RelationIndexImage,
     fields: Vec<FieldId>,
+    filters: Vec<LazyFieldFilter>,
     range: Range<usize>,
     fact_count: usize,
+}
+
+#[derive(Clone)]
+struct LazyFieldFilter {
+    field: FieldId,
+    expected: EncodedOwned,
 }
 
 impl<'a> LazyAccessSlice<'a> {
@@ -948,6 +846,7 @@ impl<'a> LazyAccessSlice<'a> {
         LazyAccessIter {
             index: self.index,
             fields: &self.fields,
+            filters: &self.filters,
             root: self.range.clone(),
             stack: SmallVec::new(),
         }
@@ -957,6 +856,7 @@ impl<'a> LazyAccessSlice<'a> {
 struct LazyAccessIter<'a> {
     index: &'a crate::query_image::RelationIndexImage,
     fields: &'a [FieldId],
+    filters: &'a [LazyFieldFilter],
     root: Range<usize>,
     stack: SmallVec<[LazyAccessFrame; 4]>,
 }
@@ -982,6 +882,39 @@ impl LazyAccessIter<'_> {
         let entry = self.index.entry_at(position)?;
         let bytes = self.index.component_bytes(entry, field)?;
         encoded_ref_for_width(bytes)
+    }
+
+    fn entry_matches_filters(&self, position: usize) -> bool {
+        let Some(entry) = self.index.entry_at(position) else {
+            return false;
+        };
+        self.filters.iter().all(|filter| {
+            self.index
+                .component_bytes(entry, filter.field)
+                .is_some_and(|bytes| bytes == filter.expected.as_bytes())
+        })
+    }
+
+    fn group_matches_filters(&self, range: Range<usize>) -> bool {
+        self.filters.is_empty() || range.into_iter().any(|pos| self.entry_matches_filters(pos))
+    }
+
+    fn advance_to_valid_group(&mut self) {
+        loop {
+            let Some(frame) = self.current_frame().copied() else {
+                return;
+            };
+            if frame.pos >= frame.end || frame.depth >= self.fields.len() {
+                return;
+            }
+            let range = self.group_bounds(frame);
+            if self.group_matches_filters(range.clone()) {
+                return;
+            }
+            if let Some(frame) = self.current_frame_mut() {
+                frame.pos = range.end;
+            }
+        }
     }
 
     fn group_bounds(&self, frame: LazyAccessFrame) -> Range<usize> {
@@ -1050,6 +983,7 @@ impl LinearIter for LazyAccessIter<'_> {
         if let Some(frame) = self.current_frame_mut() {
             frame.pos = end;
         }
+        self.advance_to_valid_group();
     }
 
     fn seek(&mut self, target: crate::EncodedRef<'_>) {
@@ -1078,6 +1012,7 @@ impl LinearIter for LazyAccessIter<'_> {
         if let Some(frame) = self.current_frame_mut() {
             frame.pos = pos;
         }
+        self.advance_to_valid_group();
     }
 
     fn at_end(&self) -> bool {
@@ -1111,36 +1046,11 @@ impl TrieIter for LazyAccessIter<'_> {
             end: range.end,
             pos: range.start,
         });
+        self.advance_to_valid_group();
     }
 
     fn up(&mut self) {
         self.stack.pop();
-    }
-
-    fn depth(&self) -> usize {
-        self.current_frame().map_or(0, |frame| frame.depth)
-    }
-
-    fn current_fact_range(&self) -> FactRange {
-        let Some(frame) = self.current_frame().copied() else {
-            return FactRange {
-                start: FactId(0),
-                end: FactId(0),
-            };
-        };
-        let range = self.group_bounds(frame);
-        FactRange {
-            start: FactId(range.start as u32),
-            end: FactId(range.end as u32),
-        }
-    }
-
-    fn count(&self) -> usize {
-        let Some(frame) = self.current_frame().copied() else {
-            return 0;
-        };
-        let range = self.group_bounds(frame);
-        range.end.saturating_sub(range.start)
     }
 }
 

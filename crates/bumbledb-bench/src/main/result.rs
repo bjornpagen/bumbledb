@@ -65,16 +65,11 @@ fn benchmark_result(
         planner_stats_misses: output.plan.planner_stats.misses,
         planner_stats_builds: output.plan.planner_stats.builds,
         planner_stats_build_micros: output.plan.planner_stats.build_micros,
-        sorted_trie_cache_hits: output.plan.counters.sorted_trie_cache_hits,
-        sorted_trie_cache_misses: output.plan.counters.sorted_trie_cache_misses,
-        sorted_trie_builds: output.plan.counters.sorted_trie_builds,
         lftj_lazy_access_slices: output.plan.counters.lftj_lazy_access_slices,
         lftj_eager_builds_avoided: output.plan.counters.lftj_eager_builds_avoided,
-        atom_temp_relation_builds: output.plan.counters.atom_temp_relation_builds,
         query_image_relation_count: query_image_stats.relation_count,
         query_image_fact_count: query_image_stats.fact_count,
         query_image_encoded_column_bytes: query_image_stats.encoded_column_bytes,
-        query_image_sorted_trie_bytes: query_image_stats.sorted_trie_bytes,
         gate,
     }
 }

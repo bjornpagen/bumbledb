@@ -10,7 +10,7 @@ use bumbledb_core::schema::{RelationDescriptor, SchemaFingerprint, ValueType};
 use crate::EncodedOwned;
 use crate::planner_stats::{PlannerStatsCache, PlannerStatsCacheDiagnostics};
 use crate::storage_schema::FACT_SET_ACCESS_NAME;
-use crate::{AccessId, Error, ReadTxn, Result, SortedTrieIndex, StorageSchema};
+use crate::{AccessId, Error, ReadTxn, Result, StorageSchema};
 
 /// Cache key for an immutable query image.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -41,9 +41,6 @@ pub struct RelationScope {
     include_all_columns: bool,
     include_all_indexes: bool,
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct LftjAtomKey(pub(crate) [u8; 32]);
 
 impl PartialOrd for QueryImageKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -157,15 +154,6 @@ pub struct FieldId(pub u16);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FactId(pub u32);
 
-/// Half-open fact-id range inside a relation image.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FactRange {
-    /// Inclusive start fact id.
-    pub start: FactId,
-    /// Exclusive end fact id.
-    pub end: FactId,
-}
-
 /// Borrowed fixed-width encoded value reference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EncodedRef<'a> {
@@ -202,7 +190,6 @@ pub struct QueryImage {
     relation_by_name: BTreeMap<String, RelationId>,
     stats: QueryImageStats,
     planner_stats: PlannerStatsCache,
-    sorted_trie_cache: Arc<RwLock<BTreeMap<LftjAtomKey, Arc<SortedTrieIndex>>>>,
 }
 
 impl QueryImage {
@@ -240,11 +227,9 @@ impl QueryImage {
                 fact_count,
                 encoded_column_bytes,
                 access_key_bytes,
-                sorted_trie_bytes: 0,
                 build_micros,
             },
             planner_stats: PlannerStatsCache::default(),
-            sorted_trie_cache: Arc::default(),
         }
     }
 
@@ -284,66 +269,6 @@ impl QueryImage {
         self.planner_stats.get_or_build(schema, relation)
     }
 
-    pub(crate) fn cached_sorted_trie(
-        &self,
-        key: LftjAtomKey,
-        build: impl FnOnce() -> Result<SortedTrieBuild>,
-    ) -> Result<CachedSortedTrie> {
-        if let Some(index) = self
-            .sorted_trie_cache
-            .read()
-            .map_err(|_| Error::internal("sorted trie cache read lock poisoned"))?
-            .get(&key)
-            .cloned()
-        {
-            return Ok(CachedSortedTrie {
-                index,
-                hit: true,
-                build_micros: 0,
-                source_facts_scanned: 0,
-                facts_retained: 0,
-                bytes_copied: 0,
-                scan_micros: 0,
-                column_micros: 0,
-                sort_micros: 0,
-            });
-        }
-
-        let start = Instant::now();
-        let built = build()?;
-        let index = Arc::new(built.index);
-        let build_micros = start.elapsed().as_micros();
-        let mut cache = self
-            .sorted_trie_cache
-            .write()
-            .map_err(|_| Error::internal("sorted trie cache write lock poisoned"))?;
-        if let Some(existing) = cache.get(&key).cloned() {
-            return Ok(CachedSortedTrie {
-                index: existing,
-                hit: true,
-                build_micros: 0,
-                source_facts_scanned: 0,
-                facts_retained: 0,
-                bytes_copied: 0,
-                scan_micros: 0,
-                column_micros: 0,
-                sort_micros: 0,
-            });
-        }
-        cache.insert(key, index.clone());
-        Ok(CachedSortedTrie {
-            index,
-            hit: false,
-            build_micros,
-            source_facts_scanned: built.source_facts_scanned,
-            facts_retained: built.facts_retained,
-            bytes_copied: built.bytes_copied,
-            scan_micros: built.scan_micros,
-            column_micros: built.column_micros,
-            sort_micros: built.sort_micros,
-        })
-    }
-
     #[cfg(test)]
     fn content_fingerprint(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
@@ -363,28 +288,6 @@ impl QueryImage {
     }
 }
 
-pub(crate) struct CachedSortedTrie {
-    pub index: Arc<SortedTrieIndex>,
-    pub hit: bool,
-    pub build_micros: u128,
-    pub source_facts_scanned: u64,
-    pub facts_retained: u64,
-    pub bytes_copied: u64,
-    pub scan_micros: u64,
-    pub column_micros: u64,
-    pub sort_micros: u64,
-}
-
-pub(crate) struct SortedTrieBuild {
-    pub index: SortedTrieIndex,
-    pub source_facts_scanned: u64,
-    pub facts_retained: u64,
-    pub bytes_copied: u64,
-    pub scan_micros: u64,
-    pub column_micros: u64,
-    pub sort_micros: u64,
-}
-
 /// Query image build/cache statistics.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QueryImageStats {
@@ -396,8 +299,6 @@ pub struct QueryImageStats {
     pub encoded_column_bytes: usize,
     /// Encoded access-key bytes stored in relation images.
     pub access_key_bytes: usize,
-    /// Bytes used by cached sorted trie indexes.
-    pub sorted_trie_bytes: usize,
     /// Build elapsed time in microseconds.
     pub build_micros: u128,
 }
@@ -429,6 +330,7 @@ pub struct RelationImage {
 #[derive(Clone, Debug)]
 pub struct RelationIndexImage {
     /// Dense storage access ID.
+    #[cfg_attr(not(test), expect(dead_code, reason = "access id is diagnostic"))]
     pub access: AccessId,
     /// Leading fields in access-path order.
     pub fields: Vec<FieldId>,

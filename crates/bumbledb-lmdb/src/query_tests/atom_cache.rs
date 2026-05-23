@@ -1,5 +1,5 @@
 #[test]
-fn lftj_atom_cache_reuses_equivalent_relation_aliases() -> TestResult {
+fn lftj_handles_equivalent_relation_aliases() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
@@ -16,13 +16,12 @@ fn lftj_atom_cache_reuses_equivalent_relation_aliases() -> TestResult {
     })?;
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-    assert!(output.plan.counters.sorted_trie_builds <= 1);
     assert_eq!(output.result.facts.len(), 4);
     Ok(())
 }
 
 #[test]
-fn lftj_atom_cache_separates_literal_local_comparison_filters() -> TestResult {
+fn lftj_literal_local_comparison_filters_results() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(q24_like_join_schema(), env.max_key_size())?;
@@ -40,8 +39,6 @@ fn lftj_atom_cache_separates_literal_local_comparison_filters() -> TestResult {
             second.result.facts,
             vec![vec![Value::U64(20)], vec![Value::U64(30)], vec![Value::U64(40)]]
         );
-        assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
-        assert!(second.plan.counters.sorted_trie_cache_misses >= 1);
         Ok::<_, Error>(())
     })?;
 
@@ -49,7 +46,7 @@ fn lftj_atom_cache_separates_literal_local_comparison_filters() -> TestResult {
 }
 
 #[test]
-fn lftj_atom_cache_reuses_identical_local_comparison_filters() -> TestResult {
+fn lftj_identical_local_comparison_filters_results() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(q24_like_join_schema(), env.max_key_size())?;
@@ -63,8 +60,6 @@ fn lftj_atom_cache_reuses_identical_local_comparison_filters() -> TestResult {
 
         assert_eq!(first.result.facts, vec![vec![Value::U64(20)], vec![Value::U64(30)]]);
         assert_eq!(second.result.facts, vec![vec![Value::U64(20)], vec![Value::U64(30)]]);
-        assert!(second.plan.counters.sorted_trie_cache_hits >= 2);
-        assert_eq!(second.plan.counters.sorted_trie_cache_misses, 0);
         Ok::<_, Error>(())
     })?;
 
@@ -72,7 +67,7 @@ fn lftj_atom_cache_reuses_identical_local_comparison_filters() -> TestResult {
 }
 
 #[test]
-fn lftj_atom_cache_separates_prepared_input_local_comparison_filters() -> TestResult {
+fn lftj_prepared_input_local_comparison_filters_results() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(q24_like_join_schema(), env.max_key_size())?;
@@ -91,8 +86,6 @@ fn lftj_atom_cache_separates_prepared_input_local_comparison_filters() -> TestRe
             second.result.facts,
             vec![vec![Value::U64(20)], vec![Value::U64(30)], vec![Value::U64(40)]]
         );
-        assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
-        assert!(second.plan.counters.sorted_trie_cache_misses >= 1);
         Ok::<_, Error>(())
     })?;
 
@@ -119,11 +112,7 @@ fn lftj_reuses_lazy_access_across_cross_atom_comparison_filters() -> TestResult 
 
         assert_same_facts(&first.result.facts, &[vec![Value::U64(10)]]);
         assert_same_facts(&second.result.facts, &[vec![Value::U64(30)]]);
-        assert!(
-            second.plan.counters.sorted_trie_cache_hits
-                + second.plan.counters.lftj_eager_builds_avoided
-                >= 2
-        );
+        assert!(second.plan.counters.lftj_eager_builds_avoided >= 2);
         Ok::<_, Error>(())
     })?;
 

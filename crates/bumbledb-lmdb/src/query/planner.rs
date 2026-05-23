@@ -66,11 +66,18 @@ fn choose_variable_order(
     let mut remaining_count = query.vars.len();
     let mut bound = BTreeSet::new();
     let mut order = Vec::with_capacity(query.vars.len());
+    let predecessors = variable_predecessors(schema, query.vars.len(), atoms)?;
 
     while remaining_count != 0 {
         let mut best = None;
         for (variable, is_remaining) in remaining.iter().copied().enumerate() {
             if !is_remaining {
+                continue;
+            }
+            if predecessors[variable]
+                .iter()
+                .any(|predecessor| remaining[*predecessor])
+            {
                 continue;
             }
             let score = variable_order_score(schema, atoms, comparisons, stats, &bound, variable)?;
@@ -80,7 +87,23 @@ fn choose_variable_order(
                 best = Some(score);
             }
         }
-        let best = best.ok_or_else(|| Error::internal("query has no remaining variables"))?;
+        let best = if let Some(best) = best {
+            best
+        } else {
+            let mut fallback = None;
+            for (variable, is_remaining) in remaining.iter().copied().enumerate() {
+                if !is_remaining {
+                    continue;
+                }
+                let score = variable_order_score(schema, atoms, comparisons, stats, &bound, variable)?;
+                if fallback.as_ref().is_none_or(|best: &VariableOrderScore| {
+                    variable_order_key(&score, query) < variable_order_key(best, query)
+                }) {
+                    fallback = Some(score);
+                }
+            }
+            fallback.ok_or_else(|| Error::internal("query has no remaining variables"))?
+        };
         remaining[best.variable] = false;
         remaining_count -= 1;
         bound.insert(best.variable);
@@ -90,7 +113,81 @@ fn choose_variable_order(
     Ok(order)
 }
 
+fn variable_predecessors(
+    schema: &StorageSchema,
+    variable_count: usize,
+    atoms: &[&NormAtom],
+) -> Result<Vec<BTreeSet<usize>>> {
+    let mut predecessors = vec![BTreeSet::new(); variable_count];
+    for atom in atoms {
+        let variables = access_order_variables(schema, atom)?;
+        for left in 0..variables.len() {
+            for right in left + 1..variables.len() {
+                let predecessor = variables[left];
+                let variable = variables[right];
+                if variable < predecessors.len() && predecessor != variable {
+                    predecessors[variable].insert(predecessor);
+                }
+            }
+        }
+    }
+    Ok(predecessors)
+}
+
+fn access_order_variables(schema: &StorageSchema, atom: &NormAtom) -> Result<Vec<usize>> {
+    let atom_variables = atom_variables(atom);
+    let mut best = Vec::new();
+    for path in schema.access_paths(&atom.relation_name)? {
+        let mut saw_variable = false;
+        let mut variables = Vec::new();
+        for field_name in &path.leading_fields {
+            let Some(field) = atom
+                .fields
+                .iter()
+                .find(|field| &field.field_name == field_name)
+            else {
+                if saw_variable {
+                    continue;
+                }
+                break;
+            };
+            match field.term {
+                NormTerm::Var(variable) => {
+                    saw_variable = true;
+                    let variable = variable.0 as usize;
+                    if !variables.contains(&variable) {
+                        variables.push(variable);
+                    }
+                }
+                NormTerm::Input(_) | NormTerm::Literal(_) => {}
+                NormTerm::Wildcard if saw_variable => {}
+                NormTerm::Wildcard => break,
+            }
+        }
+        if atom_variables.iter().all(|variable| variables.contains(variable))
+            && variables.len() > best.len()
+        {
+            best = variables;
+        }
+    }
+    if best.is_empty() {
+        let mut variables = atom
+            .fields
+            .iter()
+            .filter_map(|field| match field.term {
+                NormTerm::Var(variable) => Some((field.field.0, variable.0 as usize)),
+                NormTerm::Input(_) | NormTerm::Literal(_) | NormTerm::Wildcard => None,
+            })
+            .collect::<Vec<_>>();
+        variables.sort_unstable();
+        variables.dedup_by_key(|(_, variable)| *variable);
+        best = variables.into_iter().map(|(_, variable)| variable).collect();
+    }
+    Ok(best)
+}
+
 type VariableOrderKey<'a> = (
+    usize,
     u64,
     std::cmp::Reverse<usize>,
     std::cmp::Reverse<usize>,
@@ -104,6 +201,7 @@ fn variable_order_key<'a>(
     query: &'a NormalizedQuery,
 ) -> VariableOrderKey<'a> {
     (
+        score.field_position,
         score.candidate_estimate,
         std::cmp::Reverse(score.static_constraints),
         std::cmp::Reverse(score.bound_constraints),
@@ -178,6 +276,15 @@ fn variable_order_score(
         .iter()
         .filter(|atom| atom_contains_variable(atom, variable))
         .count();
+    let field_position = atoms
+        .iter()
+        .flat_map(|atom| atom.fields.iter())
+        .filter_map(|field| match field.term {
+            NormTerm::Var(id) if id.0 as usize == variable => Some(field.field.0 as usize),
+            _ => None,
+        })
+        .min()
+        .unwrap_or(usize::MAX);
     let mut candidate_estimate = best_access
         .as_ref()
         .map(|estimate| estimate.fact_estimate)
@@ -198,6 +305,7 @@ fn variable_order_score(
 
     Ok(VariableOrderScore {
         variable,
+        field_position,
         candidate_estimate,
         static_constraints,
         bound_constraints,

@@ -68,7 +68,6 @@ fn run_dataset(
             relation_count: stats.relation_count,
             fact_count: stats.fact_count,
             encoded_column_bytes: stats.encoded_column_bytes,
-            sorted_trie_bytes: stats.sorted_trie_bytes,
             build_micros: stats.build_micros,
         }
     };

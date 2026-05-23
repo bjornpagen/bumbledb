@@ -48,16 +48,11 @@ struct BenchmarkRunResult {
     planner_stats_misses: u64,
     planner_stats_builds: u64,
     planner_stats_build_micros: u64,
-    sorted_trie_cache_hits: u64,
-    sorted_trie_cache_misses: u64,
-    sorted_trie_builds: u64,
     lftj_lazy_access_slices: u64,
     lftj_eager_builds_avoided: u64,
-    atom_temp_relation_builds: u64,
     query_image_relation_count: usize,
     query_image_fact_count: usize,
     query_image_encoded_column_bytes: usize,
-    query_image_sorted_trie_bytes: usize,
     gate: GateOutcome,
 }
 
@@ -114,7 +109,6 @@ struct QueryImageBenchStats {
     relation_count: usize,
     fact_count: usize,
     encoded_column_bytes: usize,
-    sorted_trie_bytes: usize,
     build_micros: u128,
 }
 
@@ -124,7 +118,6 @@ impl QueryImageBenchStats {
             relation_count: 0,
             fact_count: 0,
             encoded_column_bytes: 0,
-            sorted_trie_bytes: 0,
             build_micros: 0,
         }
     }
