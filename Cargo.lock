@@ -74,16 +74,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bumbledb"
-version = "0.1.0"
-dependencies = [
- "bumbledb-core",
- "bumbledb-lmdb",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
 name = "bumbledb-bench"
 version = "0.1.0"
 dependencies = [

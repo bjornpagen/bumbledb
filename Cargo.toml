@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "crates/bumbledb",
     "crates/bumbledb-bench",
     "crates/bumbledb-core",
     "crates/bumbledb-lmdb",

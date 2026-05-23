@@ -65,7 +65,6 @@ Primary files:
 - `crates/bumbledb-lmdb/src/lib.rs`.
 - `crates/bumbledb-lmdb/src/storage.rs`.
 - `crates/bumbledb-lmdb/src/error.rs`.
-- `crates/bumbledb/src/lib.rs` if facade open behavior changes.
 
 Relevant current regions:
 
