@@ -33,4 +33,6 @@ include!("query_tests/sinks_and_projection.rs");
 
 include!("query_tests/differential.rs");
 
+include!("query_tests/typed_ir_validation.rs");
+
 include!("query_test_helpers.rs");

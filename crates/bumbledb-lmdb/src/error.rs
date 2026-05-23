@@ -198,6 +198,13 @@ impl Error {
         .into()
     }
 
+    pub(crate) fn invalid_query(reason: impl Into<String>) -> Self {
+        QueryError::Execute(ExecuteError::InvalidQuery {
+            reason: reason.into(),
+        })
+        .into()
+    }
+
     pub(crate) fn integer_overflow(operation: &'static str) -> Self {
         QueryError::Aggregate(AggregateError::IntegerOverflow { operation }).into()
     }
@@ -446,6 +453,10 @@ pub enum ExecuteError {
     /// Literal mismatch.
     #[error("typed literal does not match literal value")]
     LiteralMismatch,
+
+    /// Public typed query IR is malformed.
+    #[error("invalid typed query: {reason}")]
+    InvalidQuery { reason: String },
 }
 
 /// Aggregation failures.

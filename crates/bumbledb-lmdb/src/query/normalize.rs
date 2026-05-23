@@ -3,8 +3,216 @@ fn validate_inputs(
     query: &TypedQuery,
     inputs: &InputBindings,
 ) -> Result<()> {
+    validate_typed_query(schema, query)?;
     for input in &query.inputs {
         input_value(schema, query, inputs, input.id)?;
+    }
+    Ok(())
+}
+
+fn validate_typed_query(schema: &StorageSchema, query: &TypedQuery) -> Result<()> {
+    let descriptor = schema.descriptor();
+    for (index, variable) in query.variables.iter().enumerate() {
+        if variable.id != index {
+            return Err(Error::invalid_query(format!(
+                "variable id {} is not dense at position {index}",
+                variable.id
+            )));
+        }
+    }
+    for (index, input) in query.inputs.iter().enumerate() {
+        if input.id != index {
+            return Err(Error::invalid_query(format!(
+                "input id {} is not dense at position {index}",
+                input.id
+            )));
+        }
+    }
+
+    let mut bound_variables = BTreeSet::new();
+    for clause in &query.clauses {
+        match clause {
+            TypedClause::Relation(atom) => {
+                let relation = descriptor.relations.get(atom.relation_id).ok_or_else(|| {
+                    Error::invalid_query(format!("relation id {} is out of range", atom.relation_id))
+                })?;
+                if relation.name != atom.relation {
+                    return Err(Error::invalid_query(format!(
+                        "relation id {} names {}, not {}",
+                        atom.relation_id, relation.name, atom.relation
+                    )));
+                }
+                for field in &atom.fields {
+                    let descriptor = relation.fields.get(field.field_id).ok_or_else(|| {
+                        Error::invalid_query(format!(
+                            "field id {} is out of range for {}",
+                            field.field_id, relation.name
+                        ))
+                    })?;
+                    if descriptor.name != field.field {
+                        return Err(Error::invalid_query(format!(
+                            "field id {} names {}, not {}",
+                            field.field_id, descriptor.name, field.field
+                        )));
+                    }
+                    if descriptor.value_type != field.value_type {
+                        return Err(Error::invalid_query(format!(
+                            "field {}.{} has type {}, not {}",
+                            relation.name,
+                            descriptor.name,
+                            value_type_name(&descriptor.value_type),
+                            value_type_name(&field.value_type)
+                        )));
+                    }
+                    validate_typed_term(query, &field.term, Some(&field.value_type))?;
+                    if let TypedTerm::Variable(variable) = field.term {
+                        bound_variables.insert(variable);
+                    }
+                }
+            }
+            TypedClause::Comparison(comparison) => {
+                validate_typed_operand(query, &comparison.left, &comparison.value_type)?;
+                validate_typed_operand(query, &comparison.right, &comparison.value_type)?;
+            }
+        }
+    }
+
+    for term in &query.find {
+        match term {
+            TypedFindTerm::Variable { variable } => {
+                validate_variable_id(query, *variable)?;
+                if !bound_variables.contains(variable) {
+                    return Err(Error::invalid_query(format!(
+                        "projection variable {variable} is not bound by a relation atom"
+                    )));
+                }
+            }
+            TypedFindTerm::Aggregate {
+                function,
+                variable,
+                domain,
+                value_type,
+            } => {
+                validate_variable_id(query, *variable)?;
+                if !bound_variables.contains(variable) {
+                    return Err(Error::invalid_query(format!(
+                        "aggregate variable {variable} is not bound by a relation atom"
+                    )));
+                }
+                if matches!(
+                    function,
+                    AggregateFunction::Sum | AggregateFunction::Min | AggregateFunction::Max
+                ) && query.variables[*variable].value_type != *value_type
+                {
+                    return Err(Error::invalid_query(format!(
+                        "aggregate variable {variable} has type {}, not {}",
+                        value_type_name(&query.variables[*variable].value_type),
+                        value_type_name(value_type)
+                    )));
+                }
+                if domain.is_empty() {
+                    return Err(Error::invalid_query("aggregate domain is empty"));
+                }
+                let mut seen = BTreeSet::new();
+                for variable in domain {
+                    validate_variable_id(query, *variable)?;
+                    if !seen.insert(*variable) {
+                        return Err(Error::invalid_query(format!(
+                            "aggregate domain repeats variable {variable}"
+                        )));
+                    }
+                    if !bound_variables.contains(variable) {
+                        return Err(Error::invalid_query(format!(
+                            "aggregate domain variable {variable} is not bound by a relation atom"
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_typed_term(
+    query: &TypedQuery,
+    term: &TypedTerm,
+    expected_type: Option<&ValueType>,
+) -> Result<()> {
+    match term {
+        TypedTerm::Variable(variable) => validate_variable_id(query, *variable),
+        TypedTerm::Input(input) => validate_input_id(query, *input),
+        TypedTerm::Literal(literal) => {
+            if let Some(expected) = expected_type
+                && literal.value_type != *expected
+            {
+                return Err(Error::invalid_query(format!(
+                    "literal has type {}, not {}",
+                    value_type_name(&literal.value_type),
+                    value_type_name(expected)
+                )));
+            }
+            Ok(())
+        }
+        TypedTerm::Wildcard => Ok(()),
+    }
+}
+
+fn validate_typed_operand(
+    query: &TypedQuery,
+    operand: &TypedOperand,
+    expected_type: &ValueType,
+) -> Result<()> {
+    match operand {
+        TypedOperand::Variable(variable) => {
+            validate_variable_id(query, *variable)?;
+            if query.variables[*variable].value_type != *expected_type {
+                return Err(Error::invalid_query(format!(
+                    "comparison variable {variable} has type {}, not {}",
+                    value_type_name(&query.variables[*variable].value_type),
+                    value_type_name(expected_type)
+                )));
+            }
+            Ok(())
+        }
+        TypedOperand::Input(input) => {
+            validate_input_id(query, *input)?;
+            if query.inputs[*input].value_type != *expected_type {
+                return Err(Error::invalid_query(format!(
+                    "comparison input {input} has type {}, not {}",
+                    value_type_name(&query.inputs[*input].value_type),
+                    value_type_name(expected_type)
+                )));
+            }
+            Ok(())
+        }
+        TypedOperand::Literal(literal) => {
+            if literal.value_type != *expected_type {
+                return Err(Error::invalid_query(format!(
+                    "comparison literal has type {}, not {}",
+                    value_type_name(&literal.value_type),
+                    value_type_name(expected_type)
+                )));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_variable_id(query: &TypedQuery, variable: usize) -> Result<()> {
+    if variable >= query.variables.len() {
+        return Err(Error::invalid_query(format!(
+            "variable id {variable} is out of range"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_input_id(query: &TypedQuery, input: usize) -> Result<()> {
+    if input >= query.inputs.len() {
+        return Err(Error::invalid_query(format!(
+            "input id {input} is out of range"
+        )));
     }
     Ok(())
 }
@@ -300,4 +508,3 @@ fn result_columns(query: &NormalizedQuery) -> Vec<ResultColumn> {
         })
         .collect()
 }
-
