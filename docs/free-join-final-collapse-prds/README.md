@@ -2,13 +2,13 @@
 
 ## Status
 
-In progress. PRDs 01 through 09 and obsolete PRD 14 have been completed or removed. The remaining suite starts from the current `ec25f85` state: one Free Join execution path, no public plan-cost optimizer, but still too much explanatory plan surface, eager sorted-trie fallback, query-image/cache bulk, stale counters, public typed IR construction, and oversized modules.
+In progress. PRDs 01 through 15 have been completed, cancelled, or removed. The remaining suite starts from the current minimal Free Join state: one execution path, no public plan-cost optimizer, scoped query images, but still a broad storage API and oversized modules.
 
 ## Purpose
 
 This suite is the final ordered contract for reducing Bumbledb to the smallest useful embedded set database whose only query execution architecture is Free Join.
 
-The previous work removed the obvious direct/hash/static sidecars, aggregate/cardinality/prepared query APIs, fake optimizer/cost surface, and single-variant node implementation indirection. The remaining work is not feature expansion. It is culling: delete explanatory plan structures that do not execute, delete eager atom materialization, delete sorted-trie caches, bound/minimize query images, seal public construction surfaces, and split the large modules only after behavior is smaller.
+The previous work removed the obvious direct/hash/static sidecars, aggregate/cardinality/prepared query APIs, fake optimizer/cost surface, single-variant node implementation indirection, explanatory plan structures, eager atom materialization, sorted-trie caches, stale counters, and broad query-image loading. The remaining work is not feature expansion. It is culling: narrow storage API exposure and split the large modules only after behavior is smaller.
 
 ## Non-Negotiable Rules
 
@@ -103,7 +103,7 @@ Completed and deleted PRDs:
 
 1. `01-delete-public-facade-crate.md`
 2. `02-minimize-public-lmdb-api.md`
-3. `03-seal-typed-ir-builder-boundary.md` as execution-boundary validation only; public typed IR sealing is reintroduced below because public fields still allow forged IR construction.
+3. `03-seal-typed-ir-builder-boundary.md` as execution-boundary validation only; it is not a public API stability or field-privacy commitment.
 4. `04-delete-aggregate-query-surface.md`
 5. `05-delete-cardinality-only-query-api.md`
 6. `06-delete-prepared-query-and-plan-cache.md`
@@ -116,9 +116,12 @@ Completed and deleted PRDs:
 13. `13-delete-stale-diagnostics-and-bench-mechanics.md`
 14. `14-minimize-query-image-and-cache.md`
 
+Cancelled and deleted PRDs:
+
+15. `15-seal-typed-ir-and-public-query-surface.md`; the typed IR and public query interface are intentionally unstable right now, so freezing or sealing that boundary is not a final-collapse requirement.
+
 Remaining ordered PRDs:
 
-15. `15-seal-typed-ir-and-public-query-surface.md`
 16. `16-minimize-storage-api.md`
 17. `17-hard-module-split-gate.md`
 18. `18-final-collapse-gate.md`
@@ -127,7 +130,7 @@ Remaining ordered PRDs:
 
 - Workspace has no placeholder public facade.
 - Public API exposes only embedded environment, schema, facts, values, set query execution, insert, delete, and required diagnostics.
-- Public typed IR cannot bypass builder/schema validation.
+- Typed IR and the Rust public query interface remain unstable; execution-boundary validation must reject malformed IR.
 - Aggregate query surface is gone unless reintroduced by a later explicit feature PRD.
 - Cardinality-only and prepared-query APIs are gone.
 - FreeJoinPlan contains only data consumed by execution.
@@ -135,7 +138,6 @@ Remaining ordered PRDs:
 - Sorted trie cache and temporary atom relation builds are gone.
 - No public plan-cost optimizer/candidate surface remains; variable-order scoring stays private.
 - Query image is scoped, bounded, compact, and private where possible.
-- Public typed IR cannot be forged outside builder/schema validation.
 - Stale zero counters and benchmark columns for removed mechanics are gone.
 - Large source files are split below the suite limit.
 - Full validation and hygiene gates pass.

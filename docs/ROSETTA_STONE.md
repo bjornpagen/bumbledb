@@ -14,7 +14,7 @@ Bumbledb competes on one battlefield: embedded, read-heavy, single-writer, multi
 
 - Language: Rust.
 - Storage backend: LMDB only.
-- Query surface: typed query IR.
+- Query surface: unstable Rust typed query IR and builder API.
 - Runtime DDL: forbidden.
 - Server mode: forbidden.
 - Network protocol: forbidden.
@@ -30,6 +30,8 @@ Bumbledb competes on one battlefield: embedded, read-heavy, single-writer, multi
 Bumbledb v4 is not compatible with v1, v2, or v3 databases.
 
 Storage format mismatch on open is a hard failure. Schema mismatch on open is a hard failure. There is no migration path except explicit ETL into a new database. There are no compatibility readers, no old layout translators, no compatibility aliases, and no in-place upgrades.
+
+The Rust API is also not a frozen public interface. The typed query IR is an internal/product work surface exposed for current development and tests; external stability, field sealing, and long-term API compatibility are not goals in this phase. Malformed IR must still be rejected at execution boundaries.
 
 ## Relation Semantics
 
@@ -143,31 +145,17 @@ Failed writes leave no partial canonical fact, access entry, constraint, diction
 
 ## Query Semantics
 
-Queries are built as typed IR with schema-aware validation.
+Queries are built as typed IR with schema-aware builder support and execution-boundary validation. The IR shape is intentionally unstable and may change freely while the engine is still being collapsed.
 
 The logical solution of a query is a set of variable bindings. Projection returns the set of projected facts. Existential variables do not multiply projected output.
 
-Aggregates are explicit set-domain operations:
-
-```text
-count_domain([posting])
-count_distinct(account)
-sum(amount).over([posting])
-min(t).over([posting])
-max(t).over([posting])
-```
-
-`count_domain(domain_vars)` counts distinct domain facts per group. `count_distinct(var)` counts distinct variable values per group. `sum(value).over(domain_vars)` sums one value per distinct domain fact per group; the builder rejects aggregate measures not determined by the declared domain. `min` and `max` use the values induced by the declared domain.
-
-Global domain count over an empty input returns one fact containing `0`. Grouped aggregates over empty input return zero facts.
-
 ## Query Execution
 
-The retained execution backbone is Free Join/LFTJ plus fact-native projection/storage paths. Legacy product-of-fanout count kernels and scalar prepared count caches were deleted because they encoded witness multiplicity instead of set semantics.
+The retained execution backbone is Free Join/LFTJ plus fact-native projection/storage paths. Legacy product-of-fanout count kernels, aggregate surfaces, cardinality-only APIs, and scalar prepared caches were deleted because they encoded witness multiplicity or preserved mechanics outside the minimal set engine.
 
 Projection materialization uses a result-set sink. Duplicate projected facts are rejected before final output decoding.
 
-Query image access APIs expose relation cardinality, access-prefix existence, and access-prefix cardinality directly over current set/access state.
+Query images are internal snapshot-local execution structures. They are scoped to required fields/accesses and are not a public API contract.
 
 ## Public Output Contract
 
@@ -180,15 +168,13 @@ pub struct QueryResultSet {
 }
 ```
 
-`QueryResultSet` is duplicate-free and canonicalized. Cardinality-only execution uses `QueryResultCardinality { cardinality, plan }` and cannot be confused with aggregate count values.
+`QueryResultSet` is duplicate-free and canonicalized. There is no separate cardinality-only query API in the current minimal engine.
 
 ## Benchmark Contract
 
 Benchmarks must validate exact Bumbledb result values against SQLite before timing numbers matter.
 
-SQLite projection references use `SELECT DISTINCT`. SQLite count references use domain-correct `COUNT(DISTINCT ...)` or equivalent subqueries. Aggregate values are compared directly, not by counting returned SQLite facts.
-
-Prepared-result cache behavior must be explicitly reported; it must never be hidden as normal execution.
+SQLite projection references use `SELECT DISTINCT`. Benchmark comparisons must compare exact projected values, not just returned fact counts.
 
 ## Golden Examples
 
@@ -202,7 +188,7 @@ Golden examples are permanent non-regression fixtures for:
 - Lahman subset.
 - LDBC subset.
 
-They cover duplicate witnesses, exact projection sets, explicit aggregate domains, duplicate insert no-ops, absent delete no-ops, and constraint behavior.
+They cover duplicate witnesses, exact projection sets, duplicate insert no-ops, absent delete no-ops, and constraint behavior.
 
 ## Validation Contract
 
