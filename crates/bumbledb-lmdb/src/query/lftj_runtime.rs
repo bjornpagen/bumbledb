@@ -11,9 +11,7 @@ fn execute_free_join<'txn, 'query, S: FactSink>(
         nodes = plan.summary.free_join.nodes.len()
     )
     .entered();
-    if !plan.summary.free_join.is_free_join_sorted_leapfrog() {
-        return Err(Error::internal("non-pure free join plan has no runtime"));
-    }
+    plan.summary.free_join.validate()?;
     execute_lftj(image, txn, query, inputs, plan, sink)
 }
 
@@ -377,9 +375,6 @@ impl<S: FactSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
                     &mut self.plan.summary.counters,
                 )?;
                 if keep {
-                    if let Some(facts) = self.plan.summary.node_facts.get_mut(depth) {
-                        facts.actual_facts = facts.actual_facts.saturating_add(1);
-                    }
                     self.execute(depth + 1)?;
                 }
                 self.binding.unbind(variable);

@@ -280,7 +280,7 @@ impl QueryImage {
         &self,
         schema: &StorageSchema,
         relation: &RelationImage,
-    ) -> Result<std::sync::Arc<crate::planner_stats::OptimizerRelationStats>> {
+    ) -> Result<std::sync::Arc<crate::planner_stats::PlannerRelationStats>> {
         self.planner_stats.get_or_build(schema, relation)
     }
 

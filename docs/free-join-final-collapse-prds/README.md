@@ -68,6 +68,17 @@ QueryRuntimeKind
 PlanFamily
 runtime_kind
 plan_family
+CostKey
+PlanCandidate
+OptimizerTrace
+PlanEstimates
+VariableEstimate
+NodeFactEstimate
+chosen_plan
+candidate_plan
+free_join_estimates
+iterator_ops
+build_facts
 FreeJoinLftj
 pure_lftj
 count-cache
@@ -96,11 +107,10 @@ The words `borrow` and Rust lifetime names are not part of this gate.
 11. `11-delete-sorted-trie-cache-and-temp-builds.md`
 12. `12-free-join-factoring.md`
 13. `13-vectorized-free-join-batches.md`
-14. `14-real-cover-cost-optimizer.md`
-15. `15-minimize-query-image.md`
-16. `16-minimize-storage-api.md`
-17. `17-hard-module-split-gate.md`
-18. `18-final-collapse-gate.md`
+14. `15-minimize-query-image.md`
+15. `16-minimize-storage-api.md`
+16. `17-hard-module-split-gate.md`
+17. `18-final-collapse-gate.md`
 
 ## Final Done Definition
 
@@ -112,7 +122,7 @@ The words `borrow` and Rust lifetime names are not part of this gate.
 - FreeJoinPlan drives execution.
 - Lazy access replaces eager sorted-trie atom construction.
 - Sorted trie cache and temporary atom relation builds are gone.
-- Optimizer names only real Free Join covers and costs.
+- No public plan-cost optimizer/candidate surface remains; variable-order scoring stays private.
 - Query image is scoped, compact, and private where possible.
 - Large source files are split below the suite limit.
 - Full validation and hygiene gates pass.

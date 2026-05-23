@@ -1,5 +1,5 @@
 #[test]
-fn optimizer_trace_and_cost_tiebreak_are_stable() -> TestResult {
+fn variable_order_is_stable() -> TestResult {
     let (env, schema) = seeded_db()?;
     let query = typed_query(&schema, |query| {
         query
@@ -19,11 +19,9 @@ fn optimizer_trace_and_cost_tiebreak_are_stable() -> TestResult {
     let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(first.plan.optimizer, second.plan.optimizer);
-    assert!(first.explain().contains("setup_micros"));
-    assert!(first.explain().contains("candidate_plan"));
-    assert!(first.explain().contains("free_join_estimates"));
-    assert!(first.explain().contains("reason=stats"));
+    assert_eq!(first.plan.variable_order, second.plan.variable_order);
+    assert!(first.explain().contains("planner_stats"));
+    assert!(first.explain().contains("free_join_plan"));
     Ok(())
 }
 
@@ -118,7 +116,7 @@ fn execute_query_cache_misses_after_write_commit() -> TestResult {
 fn execute_query_cache_is_schema_fingerprint_scoped() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema_a = StorageSchema::new(optimizer_schema(), env.max_key_size())?;
+    let schema_a = StorageSchema::new(variable_order_schema(), env.max_key_size())?;
     let schema_b = StorageSchema::new(triangle_schema(), env.max_key_size())?;
     let item_query = typed_query(&schema_a, |query| {
         query
@@ -257,4 +255,3 @@ fn normalized_query_preserves_typed_query_shape() -> TestResult {
     ));
     Ok(())
 }
-

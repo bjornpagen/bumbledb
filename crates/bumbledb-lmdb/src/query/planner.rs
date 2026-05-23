@@ -5,7 +5,7 @@ fn plan_query(
     query_image_cache: QueryImageCacheDiagnostics,
 ) -> Result<ExecutionPlan> {
     let _span = tracing::debug_span!("bumbledb.query.plan").entered();
-    let (stats, variable_order_ids, variable_costs) = {
+    let variable_order_ids = {
         let relation_atoms = query.atoms.iter().collect::<Vec<_>>();
         let comparisons = query.predicates.iter().collect::<Vec<_>>();
         let stats = {
@@ -14,15 +14,14 @@ fn plan_query(
                     .entered();
             PlannerStats::collect(schema, image, &relation_atoms)?
         };
-        let (variable_order_ids, variable_costs) = {
+        {
             let _span = tracing::debug_span!(
                 "bumbledb.query.plan.variable_order",
                 variables = query.vars.len()
             )
             .entered();
             choose_variable_order(schema, query, &relation_atoms, &comparisons, &stats)?
-        };
-        (stats, variable_order_ids, variable_costs)
+        }
     };
     attach_predicate_depths(query, &variable_order_ids);
     let relation_atoms = query.atoms.iter().collect::<Vec<_>>();
@@ -30,45 +29,14 @@ fn plan_query(
         .iter()
         .map(|id| query.vars[*id].name.clone())
         .collect::<Vec<_>>();
-    let variable_estimates = variable_costs
-        .iter()
-        .map(|cost| VariableEstimate {
-            variable: query.vars[cost.variable].name.clone(),
-            estimated_candidates: cost.estimated_candidates,
-            static_constraints: cost.static_constraints,
-            bound_constraints: cost.bound_constraints,
-            relation_constraints: cost.relation_constraints,
-            access: cost.access.clone(),
-            reason: cost.reason.clone(),
-        })
-        .collect::<Vec<_>>();
-    let node_facts = variable_order_ids
-        .iter()
-        .enumerate()
-        .map(|(node_id, variable)| NodeFactEstimate {
-            node: NodeId(node_id as u16),
-            variable: query.vars[*variable].name.clone(),
-            estimated_facts: variable_costs
-                .get(node_id)
-                .map_or(1, |cost| cost.estimated_candidates),
-            actual_facts: 0,
-        })
-        .collect::<Vec<_>>();
-    let (free_join, optimizer) = {
+    let free_join = {
         let _span = tracing::debug_span!(
-            "bumbledb.query.plan.optimize_free_join",
+            "bumbledb.query.plan.free_join",
             atoms = relation_atoms.len(),
             variables = variable_order_ids.len()
         )
         .entered();
-        optimize_free_join_plan(
-            schema,
-            query,
-            &relation_atoms,
-            &variable_order_ids,
-            &variable_costs,
-            &stats,
-        )?
+        build_free_join_plan(query, &relation_atoms, &variable_order_ids)?
     };
     free_join.validate()?;
     let planner_stats = image.planner_stats_diagnostics();
@@ -77,11 +45,8 @@ fn plan_query(
         comparisons: query.predicates.clone(),
         summary: QueryPlan {
             variable_order,
-            variable_estimates,
-            optimizer,
             query_image_cache,
             planner_stats,
-            node_facts,
             free_join,
             timings: QueryTimings::default(),
             allocations: QueryAllocationStats::default(),
@@ -97,12 +62,11 @@ fn choose_variable_order(
     atoms: &[&NormAtom],
     comparisons: &[&NormPredicate],
     stats: &PlannerStats,
-) -> Result<(Vec<usize>, Vec<VariableCost>)> {
+) -> Result<Vec<usize>> {
     let mut remaining = vec![true; query.vars.len()];
     let mut remaining_count = query.vars.len();
     let mut bound = BTreeSet::new();
     let mut order = Vec::with_capacity(query.vars.len());
-    let mut costs = Vec::with_capacity(query.vars.len());
 
     while remaining_count != 0 {
         let mut best = None;
@@ -110,11 +74,11 @@ fn choose_variable_order(
             if !is_remaining {
                 continue;
             }
-            let cost = estimate_variable_cost(schema, atoms, comparisons, stats, &bound, variable)?;
-            if best.as_ref().is_none_or(|best: &VariableCost| {
-                variable_cost_order_key(&cost, query) < variable_cost_order_key(best, query)
+            let score = variable_order_score(schema, atoms, comparisons, stats, &bound, variable)?;
+            if best.as_ref().is_none_or(|best: &VariableOrderScore| {
+                variable_order_key(&score, query) < variable_order_key(best, query)
             }) {
-                best = Some(cost);
+                best = Some(score);
             }
         }
         let best = best.ok_or_else(|| Error::internal("query has no remaining variables"))?;
@@ -122,13 +86,12 @@ fn choose_variable_order(
         remaining_count -= 1;
         bound.insert(best.variable);
         order.push(best.variable);
-        costs.push(best);
     }
 
-    Ok((order, costs))
+    Ok(order)
 }
 
-type VariableCostOrderKey<'a> = (
+type VariableOrderKey<'a> = (
     u64,
     std::cmp::Reverse<usize>,
     std::cmp::Reverse<usize>,
@@ -137,28 +100,28 @@ type VariableCostOrderKey<'a> = (
     &'a str,
 );
 
-fn variable_cost_order_key<'a>(
-    cost: &'a VariableCost,
+fn variable_order_key<'a>(
+    score: &'a VariableOrderScore,
     query: &'a NormalizedQuery,
-) -> VariableCostOrderKey<'a> {
+) -> VariableOrderKey<'a> {
     (
-        cost.estimated_candidates,
-        std::cmp::Reverse(cost.static_constraints),
-        std::cmp::Reverse(cost.bound_constraints),
-        std::cmp::Reverse(cost.relation_constraints),
-        std::cmp::Reverse(cost.degree),
-        query.vars[cost.variable].name.as_str(),
+        score.candidate_estimate,
+        std::cmp::Reverse(score.static_constraints),
+        std::cmp::Reverse(score.bound_constraints),
+        std::cmp::Reverse(score.relation_constraints),
+        std::cmp::Reverse(score.degree),
+        query.vars[score.variable].name.as_str(),
     )
 }
 
-fn estimate_variable_cost(
+fn variable_order_score(
     schema: &StorageSchema,
     atoms: &[&NormAtom],
     comparisons: &[&NormPredicate],
     stats: &PlannerStats,
     bound: &BTreeSet<usize>,
     variable: usize,
-) -> Result<VariableCost> {
+) -> Result<VariableOrderScore> {
     let mut has_constrained_stream = false;
     let mut has_unconstrained_payload_stream = false;
     for atom in atoms
@@ -174,7 +137,7 @@ fn estimate_variable_cost(
         has_constrained_stream |= strength > 0;
         has_unconstrained_payload_stream |= strength == 0 && has_unbound_other;
     }
-    let mut best_access: Option<AccessEstimate> = None;
+    let mut best_access: Option<VariableAccessScore> = None;
     let mut relation_constraints = 0usize;
     let mut static_constraints = comparison_static_constraint_count(comparisons, variable, bound);
     let mut bound_constraints = comparison_bound_constraint_count(comparisons, variable, bound);
@@ -194,15 +157,15 @@ fn estimate_variable_cost(
         if has_constrained_stream && strength == 0 && has_unbound_other {
             continue;
         }
-        let estimate = estimate_atom_variable_access(schema, stats, bound, atom, variable)?;
+        let estimate = variable_access_score(schema, stats, bound, atom, variable)?;
         if best_access.as_ref().is_none_or(|best| {
             (
-                estimate.estimated_facts,
+                estimate.fact_estimate,
                 std::cmp::Reverse(estimate.prefix_len),
                 std::cmp::Reverse(estimate.current_is_next),
                 estimate.access_label(),
             ) < (
-                best.estimated_facts,
+                best.fact_estimate,
                 std::cmp::Reverse(best.prefix_len),
                 std::cmp::Reverse(best.current_is_next),
                 best.access_label(),
@@ -216,9 +179,9 @@ fn estimate_variable_cost(
         .iter()
         .filter(|atom| atom_contains_variable(atom, variable))
         .count();
-    let mut estimated_candidates = best_access
+    let mut candidate_estimate = best_access
         .as_ref()
-        .map(|estimate| estimate.estimated_facts)
+        .map(|estimate| estimate.fact_estimate)
         .unwrap_or(u64::MAX / 4)
         .max(1);
     if static_constraints == 0
@@ -226,44 +189,34 @@ fn estimate_variable_cost(
         && degree == 1
         && has_unconstrained_payload_stream
     {
-        estimated_candidates = estimated_candidates.max(
+        candidate_estimate = candidate_estimate.max(
             best_access
                 .as_ref()
                 .map(|estimate| stats.relation_facts(&estimate.relation))
                 .unwrap_or(u64::MAX / 8),
         );
     }
-    let access = best_access
-        .as_ref()
-        .map(AccessEstimate::access_label)
-        .unwrap_or_else(|| "unindexed".to_owned());
-    let reason = best_access
-        .as_ref()
-        .map(AccessEstimate::reason)
-        .unwrap_or_else(|| "no relation stats for variable".to_owned());
 
-    Ok(VariableCost {
+    Ok(VariableOrderScore {
         variable,
-        estimated_candidates,
+        candidate_estimate,
         static_constraints,
         bound_constraints,
         relation_constraints,
         degree,
-        access,
-        reason,
     })
 }
 
-fn estimate_atom_variable_access(
+fn variable_access_score(
     schema: &StorageSchema,
     stats: &PlannerStats,
     bound: &BTreeSet<usize>,
     atom: &NormAtom,
     variable: usize,
-) -> Result<AccessEstimate> {
+) -> Result<VariableAccessScore> {
     let paths = schema.access_paths(&atom.relation_name)?;
     let relation_facts = stats.relation_facts(&atom.relation_name);
-    let mut best: Option<AccessEstimate> = None;
+    let mut best: Option<VariableAccessScore> = None;
 
     for path in paths {
         if !path.components.iter().any(|component| {
@@ -323,39 +276,21 @@ fn estimate_atom_variable_access(
         {
             estimate = estimate.min(1);
         }
-        let variable_field_stats = atom
-            .fields
-            .iter()
-            .find(|field| matches!(field.term, NormTerm::Var(id) if id.0 as usize == variable))
-            .and_then(|field| stats.field_stats(&atom.relation_name, &field.field_name));
-        let distinct = index_stats
-            .distinct_by_depth
-            .get(prefix_len.saturating_sub(1))
-            .copied()
-            .unwrap_or(1);
-        let candidate = AccessEstimate {
+        let candidate = VariableAccessScore {
             relation: atom.relation_name.clone(),
             index: path.index_name,
-            access: index_stats.index,
-            estimated_facts: estimate.max(1),
+            fact_estimate: estimate.max(1),
             prefix_len,
             current_is_next,
-            distinct,
-            avg_fanout: index_stats.fanout_after_prefix(prefix_len),
-            max_fanout: index_stats.max_fanout_after_prefix(prefix_len),
-            variable_distinct: variable_field_stats.map_or(1, |stats| stats.distinct),
-            has_min: variable_field_stats.is_some_and(|stats| stats.min.is_some()),
-            has_max: variable_field_stats.is_some_and(|stats| stats.max.is_some()),
-            heavy_hitters: variable_field_stats.map_or(0, |stats| stats.heavy_hitters.len()),
         };
         if best.as_ref().is_none_or(|best| {
             (
-                candidate.estimated_facts,
+                candidate.fact_estimate,
                 std::cmp::Reverse(candidate.prefix_len),
                 std::cmp::Reverse(candidate.current_is_next),
                 candidate.access_label(),
             ) < (
-                best.estimated_facts,
+                best.fact_estimate,
                 std::cmp::Reverse(best.prefix_len),
                 std::cmp::Reverse(best.current_is_next),
                 best.access_label(),
@@ -365,20 +300,12 @@ fn estimate_atom_variable_access(
         }
     }
 
-    Ok(best.unwrap_or_else(|| AccessEstimate {
+    Ok(best.unwrap_or_else(|| VariableAccessScore {
         relation: atom.relation_name.clone(),
         index: "full_scan".to_owned(),
-        access: AccessId(0),
-        estimated_facts: relation_facts.saturating_mul(4).max(1),
+        fact_estimate: relation_facts.saturating_mul(4).max(1),
         prefix_len: 0,
         current_is_next: false,
-        distinct: 1,
-        avg_fanout: relation_facts.max(1),
-        max_fanout: relation_facts as usize,
-        variable_distinct: 1,
-        has_min: false,
-        has_max: false,
-        heavy_hitters: 0,
     }))
 }
 
@@ -471,130 +398,12 @@ fn operand_constrains_for_estimate(
     }
 }
 
-fn optimize_free_join_plan(
-    schema: &StorageSchema,
-    query: &NormalizedQuery,
-    atoms: &[&NormAtom],
-    variable_order_ids: &[usize],
-    variable_costs: &[VariableCost],
-    stats: &PlannerStats,
-) -> Result<(FreeJoinPlan, OptimizerTrace)> {
-    let cyclic = is_cyclic_multiway_query(query, atoms);
-    let mut candidates = Vec::new();
-
-    let lftj_impls = vec![NodeImpl::SortedLeapfrog; variable_order_ids.len()];
-    candidates.push(build_plan_candidate(
-        "free_join_sorted_leapfrog",
-        query,
-        atoms,
-        variable_costs,
-        stats,
-        lftj_impls,
-        cyclic,
-    )?);
-
-    candidates.sort_by_key(|candidate| candidate.cost.clone());
-    let chosen = candidates
-        .first()
-        .ok_or_else(|| Error::internal("no optimizer plan candidates"))?
-        .name
-        .clone();
-    let chosen_candidate = candidates
-        .iter()
-        .find(|candidate| candidate.name == chosen)
-        .ok_or_else(|| Error::internal("chosen optimizer candidate missing"))?;
-    let plan = build_free_join_plan(
-        schema,
-        query,
-        atoms,
-        variable_order_ids,
-        &chosen_candidate.implementations,
-        stats,
-        chosen_candidate.estimates.clone(),
-    )?;
-    let trace_candidates = candidates
-        .into_iter()
-        .map(|candidate| PlanCandidate {
-            selected: candidate.name == chosen,
-            rejected_reason: if candidate.name == chosen {
-                "selected minimum stable cost".to_owned()
-            } else {
-                "higher stable cost".to_owned()
-            },
-            name: candidate.name,
-            implementations: candidate.implementations,
-            cost: candidate.cost,
-        })
-        .collect::<Vec<_>>();
-
-    Ok((
-        plan,
-        OptimizerTrace {
-            chosen,
-            candidates: trace_candidates,
-        },
-    ))
-}
-
-#[derive(Clone, Debug)]
-struct OptimizerCandidate {
-    name: String,
-    implementations: Vec<NodeImpl>,
-    cost: CostKey,
-    estimates: PlanEstimates,
-}
-
-fn build_plan_candidate(
-    name: &str,
-    query: &NormalizedQuery,
-    atoms: &[&NormAtom],
-    variable_costs: &[VariableCost],
-    stats: &PlannerStats,
-    implementations: Vec<NodeImpl>,
-    cyclic: bool,
-) -> Result<OptimizerCandidate> {
-    let estimates = estimate_free_join_plan(name, query, atoms, variable_costs, stats, cyclic);
-    let cost = CostKey {
-        estimated_micros: estimates
-            .iterator_ops
-            .saturating_add(estimates.build_facts / HASH_BUILD_ROWS_PER_MICRO)
-            .saturating_add(estimates.materialized_values),
-        setup_micros: estimated_setup_micros(name, &estimates),
-        memory_bytes: estimates.memory_bytes,
-        materialization_penalty: estimates.materialized_values,
-    };
-    Ok(OptimizerCandidate {
-        name: name.to_owned(),
-        implementations,
-        cost,
-        estimates,
-    })
-}
-
-fn estimated_setup_micros(name: &str, estimates: &PlanEstimates) -> u64 {
-    let query_image_cost = estimates.output_facts.clamp(1, 1_000);
-    let build_cost = estimates.build_facts / HASH_BUILD_ROWS_PER_MICRO;
-    let sorted_cost = if name == "free_join_sorted_leapfrog" {
-        estimates.iterator_ops / 10
-    } else {
-        0
-    };
-    query_image_cost
-        .saturating_add(build_cost)
-        .saturating_add(sorted_cost)
-}
-
 fn build_free_join_plan(
-    schema: &StorageSchema,
     query: &NormalizedQuery,
     atoms: &[&NormAtom],
     variable_order_ids: &[usize],
-    implementations: &[NodeImpl],
-    stats: &PlannerStats,
-    estimates: PlanEstimates,
 ) -> Result<FreeJoinPlan> {
     let mut nodes = Vec::new();
-    let mut bound = BTreeSet::new();
     for (node_id, variable) in variable_order_ids.iter().enumerate() {
         let var_id = VarId(*variable as u16);
         let subatoms = atoms
@@ -612,14 +421,11 @@ fn build_free_join_plan(
                 if fields.is_empty() {
                     return Ok(None);
                 }
-                let access =
-                    estimate_atom_variable_access(schema, stats, &bound, atom, *variable)?.access;
                 Ok(Some(SubAtom {
                     atom_id: AtomId(atom_id as u16),
                     relation: atom.relation,
                     vars: vec![var_id; fields.len()],
                     fields,
-                    access,
                 }))
             })
             .collect::<Result<Vec<_>>>()?
@@ -630,103 +436,13 @@ fn build_free_join_plan(
             id: NodeId(node_id as u16),
             bind_vars: vec![var_id],
             subatoms,
-            implementation: implementations
-                .get(node_id)
-                .copied()
-                .unwrap_or(NodeImpl::SortedLeapfrog),
         });
-        bound.insert(*variable);
     }
 
     Ok(FreeJoinPlan {
         nodes,
         output: output_plan(query),
-        estimates,
     })
-}
-
-fn estimate_free_join_plan(
-    name: &str,
-    query: &NormalizedQuery,
-    atoms: &[&NormAtom],
-    variable_costs: &[VariableCost],
-    stats: &PlannerStats,
-    cyclic: bool,
-) -> PlanEstimates {
-    let mut iterator_ops = 0u64;
-    let mut build_facts = 0u64;
-    for cost in variable_costs {
-        let variable_ops =
-            cost.estimated_candidates
-                .max(1)
-                .saturating_mul(if cyclic { 1 } else { 3 });
-        iterator_ops = iterator_ops.saturating_add(variable_ops);
-    }
-    for atom in atoms {
-        if atom_variables(atom).is_empty() {
-            build_facts = build_facts.saturating_add(stats.relation_facts(&atom.relation_name));
-        }
-    }
-
-    if cyclic && name != "free_join_sorted_leapfrog" {
-        iterator_ops = iterator_ops.saturating_mul(8);
-    }
-
-    let output_facts = estimate_output_facts(variable_costs);
-    let materialized_values = estimate_materialized_values(query, output_facts);
-    let memory_bytes = (build_facts as usize)
-        .saturating_mul(32)
-        .saturating_add(materialized_values as usize * 16);
-
-    PlanEstimates {
-        output_facts,
-        iterator_ops,
-        build_facts,
-        materialized_values,
-        memory_bytes,
-    }
-}
-
-fn estimate_output_facts(variable_costs: &[VariableCost]) -> u64 {
-    variable_costs
-        .iter()
-        .map(|cost| cost.estimated_candidates)
-        .min()
-        .unwrap_or(1)
-        .max(1)
-}
-
-fn estimate_materialized_values(query: &NormalizedQuery, output_facts: u64) -> u64 {
-    let projected_values = query.find.len() as u64;
-    output_facts
-        .saturating_mul(projected_values)
-        .max(projected_values)
-}
-
-fn is_cyclic_multiway_query(query: &NormalizedQuery, atoms: &[&NormAtom]) -> bool {
-    if atoms.len() < 3 {
-        return false;
-    }
-    let mut degree = vec![0usize; query.vars.len()];
-    for atom in atoms {
-        for variable in atom_variables(atom) {
-            degree[variable] += 1;
-        }
-    }
-    degree
-        .into_iter()
-        .filter(|count| *count > 0)
-        .all(|count| count >= 2)
-}
-
-fn atom_variables(atom: &NormAtom) -> BTreeSet<usize> {
-    atom.fields
-        .iter()
-        .filter_map(|field| match field.term {
-            NormTerm::Var(variable) => Some(variable.0 as usize),
-            NormTerm::Input(_) | NormTerm::Literal(_) | NormTerm::Wildcard => None,
-        })
-        .collect()
 }
 
 fn output_plan(query: &NormalizedQuery) -> OutputPlan {
@@ -748,6 +464,16 @@ fn atom_contains_variable(atom: &NormAtom, variable: usize) -> bool {
     atom.fields
         .iter()
         .any(|field| matches!(field.term, NormTerm::Var(id) if id.0 as usize == variable))
+}
+
+fn atom_variables(atom: &NormAtom) -> BTreeSet<usize> {
+    atom.fields
+        .iter()
+        .filter_map(|field| match field.term {
+            NormTerm::Var(variable) => Some(variable.0 as usize),
+            NormTerm::Input(_) | NormTerm::Literal(_) | NormTerm::Wildcard => None,
+        })
+        .collect()
 }
 
 fn comparisons_ready_pass(

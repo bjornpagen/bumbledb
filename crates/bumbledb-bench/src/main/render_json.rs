@@ -7,7 +7,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"facts\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_facts\":{},\"materialized_facts\":{},\"materialized_values\":{},\"output_mode\":\"materialized\"}},\"chosen_plan\":\"{}\",\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"sqlite_materialized_facts\":{},\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",",
+            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"facts\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_facts\":{},\"materialized_facts\":{},\"materialized_values\":{},\"output_mode\":\"materialized\"}},\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"sqlite_materialized_facts\":{},\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",",
             json_escape(result.dataset),
             json_escape(result.query),
             result.facts,
@@ -15,7 +15,6 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.facts,
             result.facts,
             result.final_output_values,
-            json_escape(&result.chosen_plan),
             result.query_image_sample_cache_hits > 0,
             result.query_image_sample_cache_hits,
             result.sqlite_materialized_facts,
@@ -222,15 +221,9 @@ fn print_explain(explain: &str) {
         if line.contains("relation=")
             || line.contains("query_timing")
             || line.contains("allocation_summary")
-            || line.contains("variable_estimate")
             || line.contains("query_image_cache")
             || line.contains("planner_stats")
-            || line.contains("chosen_plan")
-            || line.contains("candidate_plan")
-            || line.contains("free_join_estimates")
             || line.contains("free_join_node")
-            || line.contains("node_facts")
-            || line.contains("node_timing")
             || line.contains("free_join_subatom")
             || line.contains("facts_scanned")
             || line.contains("cursor_seeks")

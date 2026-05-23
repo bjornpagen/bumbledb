@@ -120,7 +120,7 @@ fn planner_recommends_missing_static_predicate_index() -> TestResult {
 fn static_lookup_uses_planned_lftj_after_storage_bypass_deletion() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(optimizer_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(variable_order_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, item_fact(1, 1))?;
         txn.insert(&schema, item_fact(2, 1))?;
@@ -144,7 +144,6 @@ fn static_lookup_uses_planned_lftj_after_storage_bypass_deletion() -> TestResult
             &InputBindings::from_values([("kind", Value::Enum(1))]),
         )
     })?;
-    assert_eq!(output.plan.optimizer.chosen, "free_join_sorted_leapfrog");
     assert_eq!(output.plan.query_image_cache.builds, 1);
     assert_same_facts(
         &output.result.facts,
@@ -219,7 +218,7 @@ fn partial_probe_shape_falls_back_to_lftj() -> TestResult {
             .free_join
             .nodes
             .iter()
-            .any(|node| node.implementation == NodeImpl::SortedLeapfrog)
+            .any(|node| node.bind_vars.len() == 1)
     );
     assert!(output.plan.counters.trie_next > 0);
     assert_same_facts(
@@ -612,7 +611,7 @@ fn chain_broken_path_returns_zero_facts() -> TestResult {
 }
 
 #[test]
-fn optimizer_keeps_cyclic_triangle_on_lftj() -> TestResult {
+fn cyclic_triangle_uses_free_join_nodes() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
@@ -642,15 +641,8 @@ fn optimizer_keeps_cyclic_triangle_on_lftj() -> TestResult {
             .free_join
             .nodes
             .iter()
-            .all(|node| node.implementation == NodeImpl::SortedLeapfrog)
+            .all(|node| node.bind_vars.len() == 1)
     );
-    assert!(
-        output
-            .plan
-            .optimizer
-            .candidates
-            .iter()
-            .any(|candidate| candidate.name == "free_join_sorted_leapfrog")
-    );
+    assert!(!output.plan.free_join.nodes.is_empty());
     Ok(())
 }

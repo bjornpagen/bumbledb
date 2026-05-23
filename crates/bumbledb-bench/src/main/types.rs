@@ -4,7 +4,7 @@ struct BenchmarkGate {
     query: &'static str,
     max_bumbledb_avg_micros: Option<u64>,
     max_sqlite_ratio: Option<f64>,
-    max_iterator_ops: Option<u64>,
+    max_lftj_next_calls: Option<u64>,
     max_materialized_values: Option<u64>,
 }
 
@@ -27,13 +27,10 @@ struct BenchmarkRunResult {
     bumbledb_avg: Duration,
     sqlite_avg: Duration,
     sqlite_ratio: f64,
-    chosen_plan: String,
     query_image_sample_cache_hits: u64,
     sqlite_materialized_facts: bool,
     timings: QueryTimings,
     allocations: QueryAllocationStats,
-    iterator_ops: u64,
-    build_facts: u64,
     materialized_values: u64,
     dictionary_reverse_lookups: u64,
     counters: PlanCounters,

@@ -156,11 +156,7 @@ fn explain_and_storage_diagnostics_are_available() -> TestResult {
     assert!(explain.contains("query_timing"));
     assert!(explain.contains("allocations:"));
     assert!(explain.contains("allocation_summary"));
-    assert!(explain.contains("variable_estimate"));
     assert!(explain.contains("free_join_node"));
-    assert!(explain.contains("candidate_plan"));
-    assert!(explain.contains("free_join_estimates"));
-    assert!(explain.contains("node_facts"));
     assert!(explain.contains("free_join_subatom"));
     assert!(!explain.contains("atoms:\n"));
     assert!(!explain.contains("index="));

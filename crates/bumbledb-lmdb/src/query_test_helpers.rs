@@ -207,9 +207,9 @@ fn ledger_schema() -> bumbledb_core::schema::SchemaDescriptor {
     ))
 }
 
-fn optimizer_schema() -> bumbledb_core::schema::SchemaDescriptor {
+fn variable_order_schema() -> bumbledb_core::schema::SchemaDescriptor {
     bumbledb_core::schema::SchemaDescriptor::new(
-        "OptimizerDb",
+        "VariableOrderDb",
         vec![
             RelationDescriptor::new(
                 "Item",

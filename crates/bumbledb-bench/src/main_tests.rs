@@ -41,7 +41,6 @@ fn markdown_renderer_emits_gate_tables() {
         bumbledb_avg: Duration::from_micros(10),
         sqlite_avg: Duration::from_micros(5),
         sqlite_ratio: 2.0,
-        chosen_plan: "free_join_sorted_leapfrog".to_owned(),
         query_image_sample_cache_hits: 1,
         sqlite_materialized_facts: false,
         timings: QueryTimings {
@@ -52,8 +51,6 @@ fn markdown_renderer_emits_gate_tables() {
             ..QueryTimings::default()
         },
         allocations: QueryAllocationStats::default(),
-        iterator_ops: 7,
-        build_facts: 0,
         materialized_values: 1,
         dictionary_reverse_lookups: 0,
         counters: PlanCounters {
@@ -93,7 +90,6 @@ fn markdown_renderer_emits_gate_tables() {
 
     let markdown = render_markdown_results(&[result]);
     assert!(markdown.contains("| joinstress | triangle_count |"));
-    assert!(markdown.contains("| free_join_sorted_leapfrog |"));
     assert!(markdown.contains("## Phase Timing"));
     assert!(markdown.contains("unaccounted us"));
     assert!(markdown.contains("## Mechanics Counters"));
@@ -129,7 +125,6 @@ fn json_renderer_emits_structured_results() {
         bumbledb_avg: Duration::from_micros(9),
         sqlite_avg: Duration::from_micros(3),
         sqlite_ratio: 3.0,
-        chosen_plan: "free_join_sorted_leapfrog".to_owned(),
         query_image_sample_cache_hits: 1,
         sqlite_materialized_facts: false,
         timings: QueryTimings {
@@ -138,8 +133,6 @@ fn json_renderer_emits_structured_results() {
             ..QueryTimings::default()
         },
         allocations: QueryAllocationStats::default(),
-        iterator_ops: 1,
-        build_facts: 1,
         materialized_values: 2,
         dictionary_reverse_lookups: 0,
         counters: PlanCounters::default(),

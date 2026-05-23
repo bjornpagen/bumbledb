@@ -15,22 +15,18 @@ use bumbledb_core::schema::{IndexKind, ValueType};
 
 use crate::query_image::{FactId, FactRange};
 use crate::{
-    AccessId, AtomId, EncodedOwned, Error, FieldId, FreeJoinPlan, IndexSpec, LinearIter, NodeId,
-    NodeImpl, OutputPlan, PlanEstimates, PlanNode, ProjectPlan, ReadTxn, RelationImage,
-    RelationStats, Result, SortedTrieIndex, StorageSchema, SubAtom, TrieIter, Value, VarId,
+    AtomId, EncodedOwned, Error, FieldId, FreeJoinPlan, IndexSpec, LinearIter, NodeId, OutputPlan,
+    PlanNode, ProjectPlan, ReadTxn, RelationImage, RelationStats, Result, SortedTrieIndex,
+    StorageSchema, SubAtom, TrieIter, Value, VarId,
 };
 
 use crate::QueryImageCacheDiagnostics;
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
-use crate::planner_stats::{
-    OptimizerFieldStats, OptimizerIndexStats, OptimizerRelationStats, PlannerStatsCacheDiagnostics,
-};
+use crate::planner_stats::{PlannerIndexStats, PlannerRelationStats, PlannerStatsCacheDiagnostics};
 use crate::query_image::{
     EncodedColumnBuilder, LftjAtomKey, QueryImageScope, SortedTrieBuild, encoded_column_builders,
     finish_column_builders,
 };
-
-const HASH_BUILD_ROWS_PER_MICRO: u64 = 5;
 
 /// Query input bindings keyed by input name without `$`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -246,18 +242,12 @@ pub enum ResultColumn {
 /// Physical query plan summary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryPlan {
-    /// Deterministic variable ordering optimizer output.
+    /// Deterministic Free Join variable binding order.
     pub variable_order: Vec<String>,
-    /// Estimated work for variables in execution order.
-    pub variable_estimates: Vec<VariableEstimate>,
-    /// Optimizer candidates and chosen cost key.
-    pub optimizer: OptimizerTrace,
     /// Query image cache diagnostics after acquiring this query image.
     pub query_image_cache: QueryImageCacheDiagnostics,
     /// Planner statistics cache diagnostics after planning.
     pub planner_stats: PlannerStatsCacheDiagnostics,
-    /// Node-level estimated and observed fact/candidate counts.
-    pub node_facts: Vec<NodeFactEstimate>,
     /// Free Join physical plan IR.
     pub free_join: FreeJoinPlan,
     /// Coarse query phase timings.
@@ -324,20 +314,7 @@ impl QueryPlan {
         self.allocations
             .sink_finish
             .write_explain(&mut out, "sink_finish");
-        out.push_str("variable_estimates:\n");
-        for estimate in &self.variable_estimates {
-            out.push_str(&format!(
-                "  variable_estimate name={} estimated_candidates={} static_constraints={} bound_constraints={} relation_constraints={} access={} reason={}\n",
-                estimate.variable,
-                estimate.estimated_candidates,
-                estimate.static_constraints,
-                estimate.bound_constraints,
-                estimate.relation_constraints,
-                estimate.access,
-                estimate.reason
-            ));
-        }
-        out.push_str("optimizer:\n");
+        out.push_str("planner:\n");
         out.push_str(&format!(
             "  query_image_cache cached_images={} hits={} misses={} builds={} build_micros={}\n",
             self.query_image_cache.cached_images,
@@ -358,47 +335,17 @@ impl QueryPlan {
             self.planner_stats.stats_from_access_images,
             self.planner_stats.stats_exact_scans
         ));
-        out.push_str(&format!("  chosen_plan: {}\n", self.optimizer.chosen));
-        for candidate in &self.optimizer.candidates {
-            out.push_str(&format!(
-                "  candidate_plan name={} selected={} estimated_micros={} setup_micros={} memory_bytes={} materialization_penalty={} rejected_reason={} impls={:?}\n",
-                candidate.name,
-                candidate.selected,
-                candidate.cost.estimated_micros,
-                candidate.cost.setup_micros,
-                candidate.cost.memory_bytes,
-                candidate.cost.materialization_penalty,
-                candidate.rejected_reason,
-                candidate.implementations
-            ));
-        }
-        out.push_str(&format!(
-            "free_join_estimates: output_facts={} iterator_ops={} build_facts={} materialized_values={} memory_bytes={} actual_output_facts={}\n",
-            self.free_join.estimates.output_facts,
-            self.free_join.estimates.iterator_ops,
-            self.free_join.estimates.build_facts,
-            self.free_join.estimates.materialized_values,
-            self.free_join.estimates.memory_bytes,
-            self.counters.output_facts
-        ));
         out.push_str("free_join_plan:\n");
         for node in &self.free_join.nodes {
             out.push_str(&format!(
-                "  free_join_node id={} impl={:?} bind_vars={:?} subatoms={}\n",
+                "  free_join_node id={} bind_vars={:?} subatoms={}\n",
                 node.id.0,
-                node.implementation,
                 node.bind_vars.iter().map(|var| var.0).collect::<Vec<_>>(),
                 node.subatoms.len()
             ));
-            if let Some(facts) = self.node_facts.get(node.id.0 as usize) {
-                out.push_str(&format!(
-                    "    node_facts variable={} estimated_facts={} actual_facts={}\n",
-                    facts.variable, facts.estimated_facts, facts.actual_facts
-                ));
-            }
             for subatom in &node.subatoms {
                 out.push_str(&format!(
-                    "    free_join_subatom atom={} relation={} fields={:?} vars={:?} access={}\n",
+                    "    free_join_subatom atom={} relation={} fields={:?} vars={:?}\n",
                     subatom.atom_id.0,
                     subatom.relation.0,
                     subatom
@@ -406,8 +353,7 @@ impl QueryPlan {
                         .iter()
                         .map(|field| field.0)
                         .collect::<Vec<_>>(),
-                    subatom.vars.iter().map(|var| var.0).collect::<Vec<_>>(),
-                    subatom.access.0
+                    subatom.vars.iter().map(|var| var.0).collect::<Vec<_>>()
                 ));
             }
         }
@@ -708,75 +654,6 @@ impl QueryAllocationStats {
     }
 }
 
-/// Optimizer estimate for one variable in execution order.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VariableEstimate {
-    /// Variable name without `?`.
-    pub variable: String,
-    /// Estimated candidate domain size at the point this variable is bound.
-    pub estimated_candidates: u64,
-    /// Input/literal/comparison constraints available before binding this variable.
-    pub static_constraints: usize,
-    /// Already-bound variable constraints available before binding this variable.
-    pub bound_constraints: usize,
-    /// Number of relation atoms constraining this variable.
-    pub relation_constraints: usize,
-    /// Stats-backed access path used for the estimate.
-    pub access: String,
-    /// Human-readable stats explanation for the chosen variable order step.
-    pub reason: String,
-}
-
-/// Optimizer trace for one planned query.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct OptimizerTrace {
-    /// Chosen candidate name.
-    pub chosen: String,
-    /// Candidate plans considered by the optimizer.
-    pub candidates: Vec<PlanCandidate>,
-}
-
-/// One optimizer candidate and its stable cost key.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PlanCandidate {
-    /// Stable candidate name.
-    pub name: String,
-    /// Node implementations in plan order.
-    pub implementations: Vec<NodeImpl>,
-    /// Stable cost key used for ordering.
-    pub cost: CostKey,
-    /// True for the selected candidate.
-    pub selected: bool,
-    /// Top-level rejection reason for non-selected candidates.
-    pub rejected_reason: String,
-}
-
-/// Stable optimizer cost key.
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct CostKey {
-    /// Estimated execution time in microseconds.
-    pub estimated_micros: u64,
-    /// Estimated setup/build time in microseconds.
-    pub setup_micros: u64,
-    /// Estimated extra memory footprint in bytes.
-    pub memory_bytes: usize,
-    /// Penalty for materializing output values or intermediate payload.
-    pub materialization_penalty: u64,
-}
-
-/// Estimated and observed facts/candidates for one Free Join node.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NodeFactEstimate {
-    /// Dense node ID.
-    pub node: NodeId,
-    /// Variable bound by this node.
-    pub variable: String,
-    /// Estimated facts/candidates for this node.
-    pub estimated_facts: u64,
-    /// Observed accepted candidates for this node.
-    pub actual_facts: u64,
-}
-
 /// Execution counters for the Free Join query executor.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlanCounters {
@@ -921,7 +798,7 @@ pub(crate) struct ExecutionPlan {
 
 #[derive(Clone, Debug)]
 struct PlannerStats {
-    relations: BTreeMap<String, Arc<OptimizerRelationStats>>,
+    relations: BTreeMap<String, Arc<PlannerRelationStats>>,
 }
 
 impl PlannerStats {
@@ -954,61 +831,33 @@ impl PlannerStats {
             .max(1)
     }
 
-    fn field_stats(&self, relation: &str, field: &str) -> Option<&OptimizerFieldStats> {
-        self.relations.get(relation)?.fields.get(field)
-    }
-
-    fn index_stats(&self, relation: &str, index: &str) -> Option<&OptimizerIndexStats> {
+    fn index_stats(&self, relation: &str, index: &str) -> Option<&PlannerIndexStats> {
         self.relations.get(relation)?.indexes.get(index)
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct VariableCost {
+struct VariableOrderScore {
     variable: usize,
-    estimated_candidates: u64,
+    candidate_estimate: u64,
     static_constraints: usize,
     bound_constraints: usize,
     relation_constraints: usize,
     degree: usize,
-    access: String,
-    reason: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct AccessEstimate {
+struct VariableAccessScore {
     relation: String,
     index: String,
-    access: AccessId,
-    estimated_facts: u64,
+    fact_estimate: u64,
     prefix_len: usize,
     current_is_next: bool,
-    distinct: usize,
-    avg_fanout: u64,
-    max_fanout: usize,
-    variable_distinct: usize,
-    has_min: bool,
-    has_max: bool,
-    heavy_hitters: usize,
 }
 
-impl AccessEstimate {
+impl VariableAccessScore {
     fn access_label(&self) -> String {
         format!("{}.{}", self.relation, self.index)
-    }
-
-    fn reason(&self) -> String {
-        format!(
-            "stats(prefix_len={},prefix_distinct={},avg_fanout={},max_fanout={},variable_distinct={},min={},max={},heavy_hitters={})",
-            self.prefix_len,
-            self.distinct,
-            self.avg_fanout,
-            self.max_fanout,
-            self.variable_distinct,
-            self.has_min,
-            self.has_max,
-            self.heavy_hitters
-        )
     }
 }
 

@@ -44,13 +44,10 @@ fn benchmark_result(
         bumbledb_avg,
         sqlite_avg,
         sqlite_ratio,
-        chosen_plan: output.plan.optimizer.chosen.clone(),
         query_image_sample_cache_hits: cache_hits.query_image_cache_hits,
         sqlite_materialized_facts: true,
         timings: output.plan.timings,
         allocations: output.plan.allocations,
-        iterator_ops: output.plan.free_join.estimates.iterator_ops,
-        build_facts: output.plan.free_join.estimates.build_facts,
         materialized_values: output.plan.counters.materialized_output_values,
         dictionary_reverse_lookups: output.plan.counters.dictionary_reverse_lookups,
         counters: output.plan.counters.clone(),
@@ -137,13 +134,13 @@ fn evaluate_gate(
             passed = false;
             notes.push(format!("sqlite ratio {sqlite_ratio:.2} exceeds {max:.2}"));
         }
-        if let Some(max) = gate.max_iterator_ops
-            && output.plan.free_join.estimates.iterator_ops > max
+        if let Some(max) = gate.max_lftj_next_calls
+            && output.plan.counters.lftj_next_calls > max
         {
             passed = false;
             notes.push(format!(
-                "iterator_ops {} exceeds {max}",
-                output.plan.free_join.estimates.iterator_ops
+                "lftj_next_calls {} exceeds {max}",
+                output.plan.counters.lftj_next_calls
             ));
         }
         if let Some(max) = gate.max_materialized_values
@@ -194,7 +191,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             query,
             max_bumbledb_avg_micros: Some(250_000),
             max_sqlite_ratio: None,
-            max_iterator_ops: Some(1_000_000),
+            max_lftj_next_calls: Some(1_000_000),
             max_materialized_values: Some(1),
         },
         ("ledger", "tag_lookup_join") => BenchmarkGate {
@@ -202,7 +199,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             query,
             max_bumbledb_avg_micros: Some(250_000),
             max_sqlite_ratio: None,
-            max_iterator_ops: Some(2_000_000),
+            max_lftj_next_calls: Some(2_000_000),
             max_materialized_values: None,
         },
         ("sailors", "red_boat_sailors") => BenchmarkGate {
@@ -210,7 +207,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             query,
             max_bumbledb_avg_micros: Some(250_000),
             max_sqlite_ratio: None,
-            max_iterator_ops: Some(2_000_000),
+            max_lftj_next_calls: Some(2_000_000),
             max_materialized_values: None,
         },
         ("tpch", "supplier_nation_orders") => BenchmarkGate {
@@ -218,7 +215,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             query,
             max_bumbledb_avg_micros: Some(250_000),
             max_sqlite_ratio: None,
-            max_iterator_ops: Some(2_000_000),
+            max_lftj_next_calls: Some(2_000_000),
             max_materialized_values: None,
         },
         ("sailors", "sailor_range_reserves") => BenchmarkGate {
@@ -226,7 +223,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             query,
             max_bumbledb_avg_micros: Some(75),
             max_sqlite_ratio: None,
-            max_iterator_ops: None,
+            max_lftj_next_calls: None,
             max_materialized_values: None,
         },
         ("joinstress", "chain4_from_a") => BenchmarkGate {
@@ -234,7 +231,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             query,
             max_bumbledb_avg_micros: Some(75),
             max_sqlite_ratio: None,
-            max_iterator_ops: None,
+            max_lftj_next_calls: None,
             max_materialized_values: None,
         },
         ("job", "job_q09_voice_us_actor") => BenchmarkGate {
@@ -242,7 +239,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             query,
             max_bumbledb_avg_micros: Some(3_000),
             max_sqlite_ratio: Some(1.0),
-            max_iterator_ops: None,
+            max_lftj_next_calls: None,
             max_materialized_values: Some(1),
         },
         ("job", "job_q16_character_title_us") => BenchmarkGate {
@@ -250,7 +247,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             query,
             max_bumbledb_avg_micros: Some(1_000),
             max_sqlite_ratio: Some(1.0),
-            max_iterator_ops: None,
+            max_lftj_next_calls: None,
             max_materialized_values: Some(1),
         },
         ("job", "job_q24_voice_keyword_actor") => BenchmarkGate {
@@ -258,7 +255,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             query,
             max_bumbledb_avg_micros: Some(1_000),
             max_sqlite_ratio: Some(1.0),
-            max_iterator_ops: None,
+            max_lftj_next_calls: None,
             max_materialized_values: Some(0),
         },
         _ => return None,

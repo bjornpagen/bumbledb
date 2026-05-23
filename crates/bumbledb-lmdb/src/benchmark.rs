@@ -471,7 +471,7 @@ mod tests {
         assert_eq!(comparison.bumbledb_facts, comparison.sqlite_facts);
         assert!(comparison.bumbledb_facts > 0);
         assert!(comparison.explain.contains("facts_scanned"));
-        assert!(comparison.explain.contains("candidate_plan"));
+        assert!(comparison.explain.contains("free_join_plan"));
         Ok(())
     }
 

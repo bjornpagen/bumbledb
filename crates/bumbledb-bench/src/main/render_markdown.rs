@@ -1,12 +1,12 @@
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | facts | sqlite materialized | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | lazy access slices | eager builds avoided | atom temp builds | iterator ops | build facts est | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---|---:|---:|---:|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | facts | sqlite materialized | bumbledb avg us | sqlite avg us | sqlite ratio | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | lazy access slices | eager builds avoided | atom temp builds | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.facts,
@@ -14,7 +14,6 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             duration_micros(result.bumbledb_avg),
             duration_micros(result.sqlite_avg),
             result.sqlite_ratio,
-            markdown_escape(&result.chosen_plan),
             result.query_image_build_micros,
             result.query_image_built_during_query,
             result.query_image_cache_cached_images,
@@ -33,8 +32,6 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.lftj_lazy_access_slices,
             result.lftj_eager_builds_avoided,
             result.atom_temp_relation_builds,
-            result.iterator_ops,
-            result.build_facts,
             result.materialized_values,
             result.dictionary_reverse_lookups,
             if result.gate.passed { "pass" } else { "fail" },

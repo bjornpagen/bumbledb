@@ -33,6 +33,17 @@ sorted_trie_cache
 build_lftj_sorted_trie
 atom_temp_relation
 hash_build_facts
+CostKey
+PlanCandidate
+OptimizerTrace
+PlanEstimates
+VariableEstimate
+NodeFactEstimate
+chosen_plan
+candidate_plan
+free_join_estimates
+iterator_ops
+build_facts
 uses_indexed_multiway_join
 QueryImage
 RelationImage

@@ -29,14 +29,12 @@ use heed::{CompactionOption, Database, Env, EnvOpenOptions, RoTxn, RwTxn, Withou
 
 pub use error::*;
 pub use free_join::{
-    AccessId, AtomId, FreeJoinPlan, NodeId, NodeImpl, OutputPlan, PlanEstimates, PlanNode,
-    ProjectPlan, SubAtom, VarId,
+    AccessId, AtomId, FreeJoinPlan, NodeId, OutputPlan, PlanNode, ProjectPlan, SubAtom, VarId,
 };
 pub use planner_stats::PlannerStatsCacheDiagnostics;
 pub use query::{
-    AllocationPhaseStats, CostKey, InputBindings, NodeFactEstimate, OptimizerTrace, PlanCandidate,
-    PlanCounters, QueryAllocationStats, QueryOutput, QueryPlan, QueryResultSet, QueryTimings,
-    ResultColumn, ResultFact, VariableEstimate,
+    AllocationPhaseStats, InputBindings, PlanCounters, QueryAllocationStats, QueryOutput,
+    QueryPlan, QueryResultSet, QueryTimings, ResultColumn, ResultFact,
 };
 pub(crate) use query_image::{
     EncodedRef, FieldImage, QueryImage, QueryImageCache, RelationImage, RelationStats,

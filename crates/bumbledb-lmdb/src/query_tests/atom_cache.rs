@@ -149,7 +149,6 @@ fn lftj_empty_variable_atom_short_circuits_execution() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert!(output.result.facts.is_empty());
-    assert_eq!(output.plan.optimizer.chosen, "free_join_sorted_leapfrog");
     assert_eq!(output.plan.counters.trie_open, 0);
     assert_eq!(output.plan.counters.variable_candidates, 0);
     Ok(())

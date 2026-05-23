@@ -7,8 +7,6 @@ pub struct FreeJoinPlan {
     pub nodes: Vec<PlanNode>,
     /// Output/projection/aggregation plan.
     pub output: OutputPlan,
-    /// Planner estimates for this plan.
-    pub estimates: PlanEstimates,
 }
 
 impl FreeJoinPlan {
@@ -18,6 +16,11 @@ impl FreeJoinPlan {
             if node.id.0 as usize != expected {
                 return Err(Error::internal(
                     "free join node ids must be dense and ordered",
+                ));
+            }
+            if node.bind_vars.len() != 1 {
+                return Err(Error::internal(
+                    "free join nodes must bind exactly one variable",
                 ));
             }
             for subatom in &node.subatoms {
@@ -36,13 +39,6 @@ impl FreeJoinPlan {
         }
         Ok(())
     }
-
-    /// Returns true when this plan uses single-variable sorted-leapfrog Free Join nodes.
-    pub fn is_free_join_sorted_leapfrog(&self) -> bool {
-        self.nodes.iter().all(|node| {
-            node.implementation == NodeImpl::SortedLeapfrog && node.bind_vars.len() == 1
-        })
-    }
 }
 
 /// One physical Free Join node.
@@ -54,15 +50,6 @@ pub struct PlanNode {
     pub bind_vars: Vec<VarId>,
     /// Subatoms consumed by this node.
     pub subatoms: Vec<SubAtom>,
-    /// Node implementation strategy.
-    pub implementation: NodeImpl,
-}
-
-/// Node implementation strategy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NodeImpl {
-    /// Sorted trie leapfrog node.
-    SortedLeapfrog,
 }
 
 /// Subatom partition inside a Free Join node.
@@ -76,8 +63,6 @@ pub struct SubAtom {
     pub fields: Vec<FieldId>,
     /// Variables corresponding to `fields`.
     pub vars: Vec<VarId>,
-    /// Physical access ID. This is index-layout ID for now.
-    pub access: AccessId,
 }
 
 /// Output/projection/aggregation plan.
@@ -98,21 +83,6 @@ impl Default for OutputPlan {
 pub struct ProjectPlan {
     /// Projected variables in output order.
     pub vars: Vec<VarId>,
-}
-
-/// Planner estimates for one Free Join plan.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct PlanEstimates {
-    /// Estimated output facts.
-    pub output_facts: u64,
-    /// Estimated iterator operations.
-    pub iterator_ops: u64,
-    /// Estimated access build facts.
-    pub build_facts: u64,
-    /// Estimated materialized logical values.
-    pub materialized_values: u64,
-    /// Estimated memory bytes.
-    pub memory_bytes: usize,
 }
 
 /// Dense variable ID.
@@ -146,18 +116,14 @@ mod tests {
                     relation: RelationId(0),
                     fields: vec![FieldId(0)],
                     vars: vec![VarId(0)],
-                    access: AccessId(0),
                 }],
-                implementation: NodeImpl::SortedLeapfrog,
             }],
             output: OutputPlan::Project(ProjectPlan {
                 vars: vec![VarId(0)],
             }),
-            estimates: PlanEstimates::default(),
         };
 
         plan.validate()?;
-        assert!(plan.is_free_join_sorted_leapfrog());
         Ok(())
     }
 
@@ -172,12 +138,23 @@ mod tests {
                     relation: RelationId(0),
                     fields: vec![FieldId(0)],
                     vars: vec![VarId(1)],
-                    access: AccessId(0),
                 }],
-                implementation: NodeImpl::SortedLeapfrog,
             }],
             output: OutputPlan::default(),
-            estimates: PlanEstimates::default(),
+        };
+
+        assert!(plan.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_multi_variable_nodes() {
+        let plan = FreeJoinPlan {
+            nodes: vec![PlanNode {
+                id: NodeId(0),
+                bind_vars: vec![VarId(0), VarId(1)],
+                subatoms: Vec::new(),
+            }],
+            output: OutputPlan::default(),
         };
 
         assert!(plan.validate().is_err());
