@@ -119,9 +119,6 @@ impl<'env> ReadTxn<'env> {
         plan.summary.timings.sink_finish_micros = elapsed_micros(sink_finish_start);
         plan.summary.allocations.sink_finish = allocation_delta_since(sink_finish_alloc_start);
         plan.summary.counters.output_facts = facts.len() as u64;
-        if has_aggregate(&normalized) {
-            plan.summary.counters.aggregate_groups = facts.len() as u64;
-        }
         finish_timings(&mut plan.summary.timings, total_start);
         let total_alloc = allocation_delta_since(total_alloc_start);
         plan.summary.allocations = plan.summary.allocations.with_total(total_alloc);
@@ -258,9 +255,6 @@ impl<'env> ReadTxn<'env> {
         plan.summary.timings.sink_finish_micros = elapsed_micros(sink_finish_start);
         plan.summary.allocations.sink_finish = allocation_delta_since(sink_finish_alloc_start);
         plan.summary.counters.output_facts = facts.len() as u64;
-        if has_aggregate(normalized) {
-            plan.summary.counters.aggregate_groups = facts.len() as u64;
-        }
         finish_timings(&mut plan.summary.timings, total_start);
         let total_alloc = allocation_delta_since(total_alloc_start);
         plan.summary.allocations = plan.summary.allocations.with_total(total_alloc);
@@ -373,9 +367,6 @@ impl<'env> ReadTxn<'env> {
 
         let facts = sink.finish_count()?;
         plan.summary.counters.output_facts = facts as u64;
-        if has_aggregate(&normalized) {
-            plan.summary.counters.aggregate_groups = facts as u64;
-        }
         finish_timings(&mut plan.summary.timings, total_start);
         plan.summary.allocations = plan
             .summary
@@ -388,4 +379,3 @@ impl<'env> ReadTxn<'env> {
         })
     }
 }
-

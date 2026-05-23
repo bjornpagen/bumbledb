@@ -67,3 +67,19 @@ fn input_value<'a>(
     Ok(value)
 }
 
+fn value_type_name(value_type: &ValueType) -> String {
+    match value_type {
+        ValueType::Bool => "bool".to_owned(),
+        ValueType::U64 => "u64".to_owned(),
+        ValueType::I64 => "i64".to_owned(),
+        ValueType::TimestampMicros => "timestamp".to_owned(),
+        ValueType::Decimal { scale } => format!("decimal(scale={scale})"),
+        ValueType::Enum { name } => name.clone(),
+        ValueType::String => "string".to_owned(),
+        ValueType::Bytes => "bytes".to_owned(),
+        ValueType::Serial {
+            type_name,
+            owning_relation,
+        } => format!("{type_name}@{owning_relation}"),
+    }
+}

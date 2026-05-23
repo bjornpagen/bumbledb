@@ -5,7 +5,6 @@
 fn benchmark_result(
     dataset: &'static str,
     query: &BenchQuery,
-    typed: &TypedQuery,
     output: &QueryOutput,
     compare_mode: CompareMode,
     cache_mode: CacheMode,
@@ -27,7 +26,6 @@ fn benchmark_result(
     let gate = evaluate_gate(
         dataset,
         query,
-        typed,
         output,
         compare_mode,
         cache_mode,
@@ -157,7 +155,6 @@ fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
 fn evaluate_gate(
     dataset: &'static str,
     query: &BenchQuery,
-    typed: &TypedQuery,
     output: &QueryOutput,
     compare_mode: CompareMode,
     cache_mode: CacheMode,
@@ -222,13 +219,7 @@ fn evaluate_gate(
             counters.dictionary_reverse_lookups
         ));
     }
-    let has_aggregate = output
-        .result
-        .columns
-        .iter()
-        .any(|column| matches!(column, ResultColumn::Aggregate { .. }));
     if compare_mode == CompareMode::Materialized
-        && !has_aggregate
         && counters.materialized_output_values != final_output_values
     {
         passed = false;
@@ -237,34 +228,10 @@ fn evaluate_gate(
             counters.materialized_output_values, final_output_values
         ));
     }
-    if compare_mode == CompareMode::Materialized
-        && has_aggregate
-        && typed_query_has_count_aggregate(typed)
-        && counters.materialized_output_values > final_output_values
-    {
-        passed = false;
-        notes.push(format!(
-            "count aggregate materialized {} values for {} final values",
-            counters.materialized_output_values, final_output_values
-        ));
-    }
-
     if passed && notes.is_empty() {
         notes.push("all configured gates passed".to_owned());
     }
     GateOutcome { passed, notes }
-}
-
-fn typed_query_has_count_aggregate(query: &TypedQuery) -> bool {
-    query.find.iter().any(|term| {
-        matches!(
-            term,
-            TypedFindTerm::Aggregate {
-                function: AggregateFunction::CountDomain | AggregateFunction::CountDistinct,
-                ..
-            }
-        )
-    })
 }
 
 fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<BenchmarkGate> {

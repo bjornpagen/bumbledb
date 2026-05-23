@@ -31,7 +31,7 @@ fn build_job_broad_cast_keyword_company(schema: &SchemaDescriptor) -> QueryBuild
         .rel("CompanyType")?
         .var("id", "company_type")?
         .done()
-        .find_count_domain(["movie"])?
+        .find_var("movie")?
         .finish()
 }
 
@@ -76,7 +76,7 @@ fn build_job_broad_movie_info_star(schema: &SchemaDescriptor) -> QueryBuildResul
         .rel("InfoType")?
         .var("id", "idx_info_type")?
         .done()
-        .find_count_domain(["movie"])?
+        .find_var("movie")?
         .finish()
 }
 
@@ -102,7 +102,7 @@ fn build_job_q01_top_production(schema: &SchemaDescriptor) -> QueryBuildResult<T
         .rel("Title")?
         .var("id", "movie")?
         .done()
-        .find_count_domain(["movie"])?
+        .find_var("movie")?
         .finish()
 }
 
@@ -151,7 +151,7 @@ fn build_job_q09_voice_us_actor(schema: &SchemaDescriptor) -> QueryBuildResult<T
             ComparisonOperator::Lte,
             OperandRef::literal(Literal::Integer(2015)),
         )?
-        .find_count_domain(["movie"])?
+        .find_var("movie")?
         .finish()
 }
 
@@ -198,7 +198,7 @@ fn build_job_q16_character_title_us(schema: &SchemaDescriptor) -> QueryBuildResu
             ComparisonOperator::Lt,
             OperandRef::literal(Literal::Integer(100)),
         )?
-        .find_count_domain(["movie"])?
+        .find_var("movie")?
         .finish()
 }
 
@@ -299,7 +299,7 @@ fn build_job_movie_link_bridge(schema: &SchemaDescriptor) -> QueryBuildResult<Ty
         .rel("InfoType")?
         .var("id", "info_type2")?
         .done()
-        .find_count_domain(["movie1"])?
+        .find_var("movie1")?
         .finish()
 }
 
@@ -359,7 +359,7 @@ fn build_job_q33_linked_series_companies(
             ComparisonOperator::Lte,
             OperandRef::literal(Literal::Integer(2008)),
         )?
-        .find_count_domain(["movie1"])?
+        .find_var("movie1")?
         .finish()
 }
 

@@ -8,17 +8,16 @@ use smallvec::SmallVec;
 
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::query_ir::{
-    AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm,
-    TypedLiteral, TypedOperand, TypedQuery, TypedRelationAtom, TypedTerm,
+    ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm, TypedLiteral,
+    TypedOperand, TypedQuery, TypedRelationAtom, TypedTerm,
 };
 use bumbledb_core::schema::{IndexKind, SchemaFingerprint, ValueType};
 
 use crate::query_image::{FactId, FactRange};
 use crate::{
-    AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FreeJoinPlan,
-    IndexSpec, LinearIter, NodeId, NodeImpl, OutputPlan, PlanEstimates, PlanNode, ProjectPlan,
-    ReadTxn, RelationImage, RelationStats, Result, SortedTrieIndex, StorageSchema, SubAtom,
-    TrieIter, Value, VarId,
+    AccessId, AtomId, EncodedOwned, Error, FieldId, FreeJoinPlan, IndexSpec, LinearIter, NodeId,
+    NodeImpl, OutputPlan, PlanEstimates, PlanNode, ProjectPlan, ReadTxn, RelationImage,
+    RelationStats, Result, SortedTrieIndex, StorageSchema, SubAtom, TrieIter, Value, VarId,
 };
 
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
@@ -182,17 +181,6 @@ pub enum NormOperand {
 pub enum NormFindTerm {
     /// Projected variable.
     Variable { variable: VarId },
-    /// Aggregate over an explicit set domain.
-    Aggregate {
-        /// Aggregate function.
-        function: AggregateFunction,
-        /// Measured variable or first domain variable for domain count.
-        variable: VarId,
-        /// Distinct set domain for this aggregate.
-        domain: Vec<VarId>,
-        /// Aggregate operand type.
-        value_type: ValueType,
-    },
 }
 
 #[derive(Clone, Debug)]
@@ -318,13 +306,6 @@ impl QueryOutput {
 pub enum ResultColumn {
     /// Projected variable.
     Variable(String),
-    /// Aggregate over a variable.
-    Aggregate {
-        /// Aggregate function.
-        function: AggregateFunction,
-        /// Variable name.
-        variable: String,
-    },
 }
 
 /// Physical query plan summary.
@@ -557,10 +538,6 @@ impl QueryPlan {
         out.push_str(&format!(
             "  comparisons_failed: {}\n",
             self.counters.comparisons_failed
-        ));
-        out.push_str(&format!(
-            "  aggregate_groups: {}\n",
-            self.counters.aggregate_groups
         ));
         out.push_str(&format!(
             "  trie_intersections: {}\n",
@@ -961,18 +938,12 @@ pub struct PlanCounters {
     pub comparisons_evaluated: u64,
     /// Number of comparison predicate failures.
     pub comparisons_failed: u64,
-    /// Number of aggregate groups produced.
-    pub aggregate_groups: u64,
     /// Number of final output facts.
     pub output_facts: u64,
     /// Number of complete bindings that reached an output boundary.
     pub bindings_completed: u64,
     /// Number of sink emit calls.
     pub sink_emit_calls: u64,
-    /// Number of aggregate sink emit calls.
-    pub aggregate_emit_calls: u64,
-    /// Number of aggregate sink count-range emit calls.
-    pub aggregate_count_range_calls: u64,
     /// Number of variable-domain intersections performed.
     pub trie_intersections: u64,
     /// Number of candidate variable values produced after intersection.

@@ -35,8 +35,11 @@ fn lftj_atom_cache_separates_literal_local_comparison_filters() -> TestResult {
         let first = txn.execute_query(&schema, &through_2015, &InputBindings::new())?;
         let second = txn.execute_query(&schema, &through_2020, &InputBindings::new())?;
 
-        assert_eq!(first.result.facts, vec![vec![Value::U64(2)]]);
-        assert_eq!(second.result.facts, vec![vec![Value::U64(3)]]);
+        assert_eq!(first.result.facts, vec![vec![Value::U64(20)], vec![Value::U64(30)]]);
+        assert_eq!(
+            second.result.facts,
+            vec![vec![Value::U64(20)], vec![Value::U64(30)], vec![Value::U64(40)]]
+        );
         assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
         assert!(second.plan.counters.sorted_trie_cache_misses >= 1);
         Ok::<_, Error>(())
@@ -58,8 +61,8 @@ fn lftj_atom_cache_reuses_identical_local_comparison_filters() -> TestResult {
         let first = txn.execute_query(&schema, &query, &InputBindings::new())?;
         let second = txn.execute_query(&schema, &query, &InputBindings::new())?;
 
-        assert_eq!(first.result.facts, vec![vec![Value::U64(2)]]);
-        assert_eq!(second.result.facts, vec![vec![Value::U64(2)]]);
+        assert_eq!(first.result.facts, vec![vec![Value::U64(20)], vec![Value::U64(30)]]);
+        assert_eq!(second.result.facts, vec![vec![Value::U64(20)], vec![Value::U64(30)]]);
         assert!(second.plan.counters.sorted_trie_cache_hits >= 2);
         assert_eq!(second.plan.counters.sorted_trie_cache_misses, 0);
         Ok::<_, Error>(())
@@ -84,8 +87,11 @@ fn lftj_atom_cache_separates_prepared_input_local_comparison_filters() -> TestRe
         let first = txn.execute_prepared_query(&schema, &prepared, &through_2015)?;
         let second = txn.execute_prepared_query(&schema, &prepared, &through_2020)?;
 
-        assert_eq!(first.result.facts, vec![vec![Value::U64(2)]]);
-        assert_eq!(second.result.facts, vec![vec![Value::U64(3)]]);
+        assert_eq!(first.result.facts, vec![vec![Value::U64(20)], vec![Value::U64(30)]]);
+        assert_eq!(
+            second.result.facts,
+            vec![vec![Value::U64(20)], vec![Value::U64(30)], vec![Value::U64(40)]]
+        );
         assert!(second.plan.prepared_plan_cache.hits >= 1);
         assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
         assert!(second.plan.counters.sorted_trie_cache_misses >= 1);
@@ -150,4 +156,3 @@ fn lftj_empty_variable_atom_short_circuits_execution() -> TestResult {
     assert_eq!(output.plan.counters.variable_candidates, 0);
     Ok(())
 }
-

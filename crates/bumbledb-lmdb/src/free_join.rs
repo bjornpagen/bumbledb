@@ -1,6 +1,3 @@
-use bumbledb_core::query_ir::AggregateFunction;
-use bumbledb_core::schema::ValueType;
-
 use crate::{Error, FieldId, RelationId, Result};
 
 /// Free Join physical plan.
@@ -88,8 +85,6 @@ pub struct SubAtom {
 pub enum OutputPlan {
     /// Projection with set semantics.
     Project(ProjectPlan),
-    /// Aggregate output.
-    Aggregate(AggregatePlan),
 }
 
 impl Default for OutputPlan {
@@ -103,29 +98,6 @@ impl Default for OutputPlan {
 pub struct ProjectPlan {
     /// Projected variables in output order.
     pub vars: Vec<VarId>,
-}
-
-/// Aggregate output plan.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct AggregatePlan {
-    /// Group variables in output order.
-    pub group_vars: Vec<VarId>,
-    /// Aggregate terms in output order.
-    pub aggregates: Vec<AggregateTerm>,
-}
-
-/// Aggregate term metadata.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregateTerm {
-    /// Aggregate function.
-    pub function: AggregateFunction,
-    /// Measured variable. For domain count this is the first domain variable and
-    /// is retained only for diagnostics/result column labeling.
-    pub var: VarId,
-    /// Distinct set domain for this aggregate.
-    pub domain_vars: Vec<VarId>,
-    /// Logical aggregate operand type.
-    pub value_type: ValueType,
 }
 
 /// Planner estimates for one Free Join plan.

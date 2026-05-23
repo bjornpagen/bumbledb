@@ -32,36 +32,6 @@ fn differential_reference_evaluator_matches_lmdb() -> TestResult {
             })?,
             InputBindings::new(),
         ),
-        (
-            typed_query(&schema, |query| {
-                query
-                    .rel("Posting")?
-                    .var("id", "posting")?
-                    .var("account", "account")?
-                    .var("amount", "amount")?
-                    .var("at", "t")?
-                    .done();
-                query.cmp(
-                    OperandRef::var("t"),
-                    ComparisonOperator::Gte,
-                    OperandRef::input("start"),
-                )?;
-                query.cmp(
-                    OperandRef::var("t"),
-                    ComparisonOperator::Lt,
-                    OperandRef::input("end"),
-                )?;
-                query
-                    .find_var("account")?
-                    .find_sum_over("amount", ["posting"])?
-                    .find_count_domain(["posting"])?;
-                Ok(())
-            })?,
-            InputBindings::from_values([
-                ("start", Value::Timestamp(TimestampMicros(0))),
-                ("end", Value::Timestamp(TimestampMicros(100))),
-            ]),
-        ),
     ];
 
     for (query, inputs) in cases {
@@ -74,4 +44,3 @@ fn differential_reference_evaluator_matches_lmdb() -> TestResult {
     }
     Ok(())
 }
-

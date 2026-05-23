@@ -84,6 +84,6 @@ fn job_dataset_runs_against_minimal_csv_export() -> Result<(), Box<dyn std::erro
     };
     let results = crate::run_dataset(dataset, &config)?;
     assert_eq!(results.len(), 8);
-    assert!(results.iter().all(|result| result.facts == 1));
+    assert!(results.iter().all(|result| result.facts >= 1));
     Ok(())
 }

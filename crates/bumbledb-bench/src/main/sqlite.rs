@@ -71,13 +71,6 @@ fn sorted_sql_facts(mut facts: Vec<Vec<SqlValue>>) -> Vec<Vec<SqlValue>> {
 }
 
 fn correctness_mode(query: &TypedQuery) -> CorrectnessMode {
-    if query
-        .find
-        .iter()
-        .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }))
-    {
-        CorrectnessMode::AggregateValues
-    } else {
-        CorrectnessMode::ResultSet
-    }
+    let _ = query;
+    CorrectnessMode::ResultSet
 }

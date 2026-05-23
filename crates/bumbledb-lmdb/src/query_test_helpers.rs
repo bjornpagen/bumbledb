@@ -13,116 +13,6 @@ fn seeded_db() -> Result<(Environment, StorageSchema)> {
     Ok((env, schema))
 }
 
-fn join_filter_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "JoinFilterDb",
-        vec![
-            RelationDescriptor::new(
-                "Dim",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new(
-                        "kind",
-                        ValueType::Enum {
-                            name: "Kind".to_owned(),
-                        },
-                    ),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"])),
-            RelationDescriptor::new(
-                "OtherDim",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new(
-                        "kind",
-                        ValueType::Enum {
-                            name: "Kind".to_owned(),
-                        },
-                    ),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"])),
-            RelationDescriptor::new(
-                "Fact",
-                vec![
-                    FieldDescriptor::new("dim", ValueType::U64),
-                    FieldDescriptor::new("item", ValueType::U64),
-                ],
-            )
-            .with_unique("dim_item", ["dim", "item"])
-            .with_index(IndexDescriptor::equality("by_item", ["item", "dim"])),
-            RelationDescriptor::new(
-                "OwnerGroup",
-                vec![
-                    FieldDescriptor::new(
-                        "owner",
-                        ValueType::Serial {
-                            type_name: "OwnerId".to_owned(),
-                            owning_relation: "OwnerGroup".to_owned(),
-                        },
-                    ),
-                    FieldDescriptor::new("group", ValueType::U64),
-                ],
-            )
-            .with_unique("owner_group", ["owner", "group"])
-            .with_index(IndexDescriptor::equality("by_group", ["group", "owner"])),
-            RelationDescriptor::new(
-                "OwnedFact",
-                vec![
-                    FieldDescriptor::new(
-                        "owner",
-                        ValueType::Serial {
-                            type_name: "OwnerId".to_owned(),
-                            owning_relation: "OwnerGroup".to_owned(),
-                        },
-                    ),
-                    FieldDescriptor::new("group", ValueType::U64),
-                    FieldDescriptor::new("item", ValueType::U64),
-                ],
-            )
-            .with_unique("owner_group_item", ["owner", "group", "item"])
-            .with_index(IndexDescriptor::equality(
-                "by_group",
-                ["group", "owner", "item"],
-            )),
-            RelationDescriptor::new(
-                "Pair",
-                vec![
-                    FieldDescriptor::new("left", ValueType::U64),
-                    FieldDescriptor::new("right", ValueType::U64),
-                ],
-            )
-            .with_unique("left_right", ["left", "right"])
-            .with_index(IndexDescriptor::equality("by_right", ["right", "left"])),
-        ],
-    )
-    .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
-        "Kind",
-        [1, 2, 3],
-    ))
-}
-
-fn join_budget_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "JoinBudgetDb",
-        vec![
-            RelationDescriptor::new(
-                "Big",
-                vec![
-                    FieldDescriptor::new("pad", ValueType::U64),
-                    FieldDescriptor::new("id", ValueType::U64),
-                ],
-            )
-            .with_unique("pad_id", ["pad", "id"]),
-            RelationDescriptor::new("Link", vec![FieldDescriptor::new("id", ValueType::U64)])
-                .with_unique("id", ["id"]),
-        ],
-    )
-}
-
 fn q24_like_join_schema() -> bumbledb_core::schema::SchemaDescriptor {
     bumbledb_core::schema::SchemaDescriptor::new(
         "Q24LikeJoinDb",
@@ -215,124 +105,6 @@ fn q24_like_join_schema() -> bumbledb_core::schema::SchemaDescriptor {
             .with_unique("id", ["id"])
             .with_index(IndexDescriptor::equality("by_year", ["year", "id"])),
         ],
-    )
-}
-
-fn q16_like_join_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "Q16LikeJoinDb",
-        vec![
-            RelationDescriptor::new(
-                "Alias",
-                vec![FieldDescriptor::new("person", ValueType::U64)],
-            )
-            .with_unique("person", ["person"]),
-            RelationDescriptor::new(
-                "Cast",
-                vec![
-                    FieldDescriptor::new("person", ValueType::U64),
-                    FieldDescriptor::new("work", ValueType::U64),
-                ],
-            )
-            .with_unique("person_work", ["person", "work"])
-            .with_index(IndexDescriptor::equality(
-                "by_work_person",
-                ["work", "person"],
-            )),
-            RelationDescriptor::new(
-                "Company",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("country", ValueType::String),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_country", ["country", "id"])),
-            RelationDescriptor::new(
-                "Keyword",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("word", ValueType::String),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_word", ["word", "id"])),
-            RelationDescriptor::new(
-                "WorkCompany",
-                vec![
-                    FieldDescriptor::new("work", ValueType::U64),
-                    FieldDescriptor::new("company", ValueType::U64),
-                ],
-            )
-            .with_unique("work_company", ["work", "company"])
-            .with_index(IndexDescriptor::equality("by_company", ["company", "work"])),
-            RelationDescriptor::new(
-                "WorkKeyword",
-                vec![
-                    FieldDescriptor::new("work", ValueType::U64),
-                    FieldDescriptor::new("keyword", ValueType::U64),
-                ],
-            )
-            .with_unique("work_keyword", ["work", "keyword"])
-            .with_index(IndexDescriptor::equality("by_keyword", ["keyword", "work"])),
-            RelationDescriptor::new("Person", vec![FieldDescriptor::new("id", ValueType::U64)])
-                .with_unique("id", ["id"]),
-            RelationDescriptor::new(
-                "Title",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("episode", ValueType::I64),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_episode", ["episode", "id"])),
-        ],
-    )
-}
-
-fn dim_fact(id: u64, kind: u8) -> Fact {
-    Fact::new("Dim", [("id", Value::U64(id)), ("kind", Value::Enum(kind))])
-}
-
-fn other_dim_fact(id: u64, kind: u8) -> Fact {
-    Fact::new(
-        "OtherDim",
-        [("id", Value::U64(id)), ("kind", Value::Enum(kind))],
-    )
-}
-
-fn fact_fact(dim: u64, item: u64) -> Fact {
-    Fact::new(
-        "Fact",
-        [("dim", Value::U64(dim)), ("item", Value::U64(item))],
-    )
-}
-
-fn owner_group_fact(owner: u64, group: u64) -> Fact {
-    Fact::new(
-        "OwnerGroup",
-        [
-            ("owner", Value::Serial(owner)),
-            ("group", Value::U64(group)),
-        ],
-    )
-}
-
-fn owned_fact_fact(owner: u64, group: u64, item: u64) -> Fact {
-    Fact::new(
-        "OwnedFact",
-        [
-            ("owner", Value::Serial(owner)),
-            ("group", Value::U64(group)),
-            ("item", Value::U64(item)),
-        ],
-    )
-}
-
-fn pair_fact(left: u64, right: u64) -> Fact {
-    Fact::new(
-        "Pair",
-        [("left", Value::U64(left)), ("right", Value::U64(right))],
     )
 }
 
@@ -433,29 +205,6 @@ fn ledger_schema() -> bumbledb_core::schema::SchemaDescriptor {
         "Currency",
         [1, 2],
     ))
-}
-
-fn overflow_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "OverflowDb",
-        vec![
-            RelationDescriptor::new(
-                "Number",
-                vec![
-                    FieldDescriptor::new(
-                        "id",
-                        ValueType::Serial {
-                            type_name: "NumberId".to_owned(),
-                            owning_relation: "Number".to_owned(),
-                        },
-                    ),
-                    FieldDescriptor::new("n", ValueType::I64),
-                    FieldDescriptor::new("d", ValueType::Decimal { scale: 0 }),
-                ],
-            )
-            .with_unique("id", ["id"]),
-        ],
-    )
 }
 
 fn optimizer_schema() -> bumbledb_core::schema::SchemaDescriptor {
@@ -645,7 +394,7 @@ fn title_company_count_query(
             OperandRef::integer(2005),
         )?;
         query.cmp(OperandRef::var("year"), ComparisonOperator::Lte, max_year)?;
-        query.find_count_domain(["company"])?;
+        query.find_var("company")?;
         Ok(())
     })
 }
@@ -692,17 +441,6 @@ fn posting_fact(id: u64, account: u64, amount: i128, at: i64) -> Fact {
             ("account", Value::Serial(account)),
             ("amount", Value::Decimal(DecimalRaw(amount))),
             ("at", Value::Timestamp(TimestampMicros(at))),
-        ],
-    )
-}
-
-fn number_fact(id: u64, n: i64, d: i128) -> Fact {
-    Fact::new(
-        "Number",
-        [
-            ("id", Value::Serial(id)),
-            ("n", Value::I64(n)),
-            ("d", Value::Decimal(DecimalRaw(d))),
         ],
     )
 }
@@ -982,107 +720,16 @@ fn reference_project_results(
     query: &TypedQuery,
     bindings: &[ReferenceBinding],
 ) -> Result<Vec<Vec<Value>>> {
-    let has_aggregate = query
-        .find
-        .iter()
-        .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }));
-    if has_aggregate {
-        reference_project_aggregates(query, bindings)
-    } else {
-        let mut set = BTreeSet::new();
-        for binding in bindings {
-            let mut fact = Vec::new();
-            for term in &query.find {
-                let TypedFindTerm::Variable { variable } = term else {
-                    continue;
-                };
-                fact.push(reference_bound_variable(binding, *variable)?.clone());
-            }
-            set.insert(fact);
-        }
-        Ok(set.into_iter().collect())
-    }
-}
-
-fn reference_project_aggregates(
-    query: &TypedQuery,
-    bindings: &[ReferenceBinding],
-) -> Result<Vec<Vec<Value>>> {
-    let group_terms = query
-        .find
-        .iter()
-        .filter_map(|term| match term {
-            TypedFindTerm::Variable { variable } => Some(*variable),
-            TypedFindTerm::Aggregate { .. } => None,
-        })
-        .collect::<Vec<_>>();
-    let aggregate_terms = query
-        .find
-        .iter()
-        .filter_map(|term| match term {
-            TypedFindTerm::Aggregate {
-                function,
-                variable,
-                domain,
-                value_type,
-            } => Some((*function, *variable, domain.clone(), value_type.clone())),
-            TypedFindTerm::Variable { .. } => None,
-        })
-        .collect::<Vec<_>>();
-
-    let mut groups: BTreeMap<Vec<Value>, Vec<AggregateState>> = BTreeMap::new();
-    let mut seen_domains = BTreeSet::new();
+    let mut set = BTreeSet::new();
     for binding in bindings {
-        let key = group_terms
-            .iter()
-            .map(|variable| reference_bound_variable(binding, *variable).cloned())
-            .collect::<Result<Vec<_>>>()?;
-        let states = groups.entry(key.clone()).or_insert_with(|| {
-            aggregate_terms
-                .iter()
-                .map(|(function, _, _, value_type)| {
-                    AggregateState::new(*function, value_type.clone())
-                })
-                .collect()
-        });
-        for (ordinal, (state, (_, variable, domain, _))) in
-            states.iter_mut().zip(&aggregate_terms).enumerate()
-        {
-            let domain = domain
-                .iter()
-                .map(|variable| reference_bound_variable(binding, *variable).cloned())
-                .collect::<Result<Vec<_>>>()?;
-            if !seen_domains.insert((key.clone(), ordinal, domain)) {
-                continue;
-            }
-            state.apply(reference_bound_variable(binding, *variable)?)?;
-        }
-    }
-
-    let mut facts = Vec::new();
-    for (key, states) in groups {
         let mut fact = Vec::new();
-        let mut key_iter = key.into_iter();
-        let mut state_iter = states.into_iter();
         for term in &query.find {
-            match term {
-                TypedFindTerm::Variable { .. } => fact.push(
-                    key_iter
-                        .next()
-                        .ok_or_else(|| Error::internal("missing reference aggregate group key"))?,
-                ),
-                TypedFindTerm::Aggregate { .. } => {
-                    let state = state_iter
-                        .next()
-                        .ok_or_else(|| Error::internal("missing reference aggregate state"))?;
-                    fact.push(state.finish()?)
-                }
-            }
+            let TypedFindTerm::Variable { variable } = term;
+            fact.push(reference_bound_variable(binding, *variable)?.clone());
         }
-        facts.push(fact);
+        set.insert(fact);
     }
-    facts.sort();
-    Ok(facts)
+    Ok(set.into_iter().collect())
 }
 
 fn reference_bound_variable(binding: &ReferenceBinding, variable: usize) -> Result<&Value> {

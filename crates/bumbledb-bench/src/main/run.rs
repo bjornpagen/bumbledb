@@ -246,7 +246,6 @@ fn run_dataset(
         let result = benchmark_result(
             dataset.name,
             &query,
-            &typed,
             &bumble_output,
             config.compare_mode,
             config.cache_mode,

@@ -162,39 +162,11 @@ fn hash_comparison_operator(hasher: &mut blake3::Hasher, op: ComparisonOperator)
     );
 }
 
-fn hash_aggregate_function(hasher: &mut blake3::Hasher, function: AggregateFunction) {
-    hash_u8(
-        hasher,
-        match function {
-            AggregateFunction::CountDomain => 1,
-            AggregateFunction::CountDistinct => 2,
-            AggregateFunction::Sum => 3,
-            AggregateFunction::Min => 4,
-            AggregateFunction::Max => 5,
-        },
-    );
-}
-
 fn hash_find_term(hasher: &mut blake3::Hasher, term: &NormFindTerm) {
     match term {
         NormFindTerm::Variable { variable } => {
             hash_u8(hasher, 1);
             hash_u16(hasher, variable.0);
-        }
-        NormFindTerm::Aggregate {
-            function,
-            variable,
-            domain,
-            value_type,
-        } => {
-            hash_u8(hasher, 2);
-            hash_aggregate_function(hasher, *function);
-            hash_u16(hasher, variable.0);
-            hash_u64(hasher, domain.len() as u64);
-            for variable in domain {
-                hash_u16(hasher, variable.0);
-            }
-            hash_value_type(hasher, value_type);
         }
     }
 }
@@ -208,23 +180,5 @@ fn hash_output_plan(hasher: &mut blake3::Hasher, output: &OutputPlan) {
                 hash_u16(hasher, variable.0);
             }
         }
-        OutputPlan::Aggregate(aggregate) => {
-            hash_u8(hasher, 2);
-            hash_u64(hasher, aggregate.group_vars.len() as u64);
-            for variable in &aggregate.group_vars {
-                hash_u16(hasher, variable.0);
-            }
-            hash_u64(hasher, aggregate.aggregates.len() as u64);
-            for term in &aggregate.aggregates {
-                hash_aggregate_function(hasher, term.function);
-                hash_u16(hasher, term.var.0);
-                hash_u64(hasher, term.domain_vars.len() as u64);
-                for variable in &term.domain_vars {
-                    hash_u16(hasher, variable.0);
-                }
-                hash_value_type(hasher, &term.value_type);
-            }
-        }
     }
 }
-

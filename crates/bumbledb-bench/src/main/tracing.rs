@@ -136,14 +136,12 @@ pub(crate) struct BenchQuery {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CorrectnessMode {
     ResultSet,
-    AggregateValues,
 }
 
 impl CorrectnessMode {
     fn as_str(self) -> &'static str {
         match self {
             Self::ResultSet => "result-set",
-            Self::AggregateValues => "aggregate-values",
         }
     }
 }

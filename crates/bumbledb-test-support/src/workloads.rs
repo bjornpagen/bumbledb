@@ -63,8 +63,7 @@ pub fn ledger_queries(schema: &SchemaDescriptor) -> QueryBuildResult<Vec<TypedQu
             .var("at", "t")?
             .done()
             .find_var("account")?
-            .find_sum_over("amount", ["posting"])?
-            .find_count_domain(["posting"])?
+            .find_var("amount")?
             .finish()?,
     ])
 }

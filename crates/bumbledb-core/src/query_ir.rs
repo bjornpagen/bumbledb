@@ -1,7 +1,5 @@
 //! Language-neutral typed query IR.
 
-use std::fmt;
-
 use crate::schema::ValueType;
 
 /// Literal value in query text or generated frontend IR.
@@ -30,33 +28,6 @@ pub enum ComparisonOperator {
     Gt,
     /// `>=`.
     Gte,
-}
-
-/// Aggregate function.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AggregateFunction {
-    /// Count distinct aggregate-domain facts.
-    CountDomain,
-    /// Count distinct values of the measured variable.
-    CountDistinct,
-    /// Sum values.
-    Sum,
-    /// Minimum value.
-    Min,
-    /// Maximum value.
-    Max,
-}
-
-impl fmt::Display for AggregateFunction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AggregateFunction::CountDomain => f.write_str("count_domain"),
-            AggregateFunction::CountDistinct => f.write_str("count_distinct"),
-            AggregateFunction::Sum => f.write_str("sum"),
-            AggregateFunction::Min => f.write_str("min"),
-            AggregateFunction::Max => f.write_str("max"),
-        }
-    }
 }
 
 /// Typed logical IR query.
@@ -99,18 +70,6 @@ pub struct TypedInput {
 pub enum TypedFindTerm {
     /// Variable projection.
     Variable { variable: usize },
-    /// Aggregate projection.
-    Aggregate {
-        /// Aggregate function.
-        function: AggregateFunction,
-        /// Measured variable. For `CountDomain`, this is the first domain variable
-        /// and is retained only for diagnostics/result column labeling.
-        variable: usize,
-        /// Distinct set domain for this aggregate.
-        domain: Vec<usize>,
-        /// Aggregate operand type.
-        value_type: ValueType,
-    },
 }
 
 /// Typed clause.

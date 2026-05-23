@@ -4,13 +4,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::query_ir::{
-    AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm,
-    TypedLiteral, TypedOperand, TypedQuery, TypedTerm,
+    ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFindTerm, TypedLiteral,
+    TypedOperand, TypedQuery, TypedTerm,
 };
 use bumbledb_core::schema::ValueType;
 use bumbledb_lmdb::{
-    AggregateError, Error, ExecuteError, Fact, InputBindings, InternalError, QueryError, Result,
-    Value,
+    Error, ExecuteError, Fact, InputBindings, InternalError, QueryError, Result, Value,
 };
 
 /// In-memory reference database.
@@ -230,121 +229,16 @@ fn validate_inputs(query: &TypedQuery, inputs: &InputBindings) -> Result<()> {
 }
 
 fn project_results(query: &TypedQuery, bindings: &[Binding]) -> Result<Vec<Vec<Value>>> {
-    if query
-        .find
-        .iter()
-        .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }))
-    {
-        project_aggregates(query, bindings)
-    } else {
-        let mut set = BTreeSet::new();
-        for binding in bindings {
-            let mut fact = Vec::new();
-            for term in &query.find {
-                let TypedFindTerm::Variable { variable } = term else {
-                    continue;
-                };
-                fact.push(bound_variable(binding, *variable)?.clone());
-            }
-            set.insert(fact);
-        }
-        Ok(set.into_iter().collect())
-    }
-}
-
-fn project_aggregates(query: &TypedQuery, bindings: &[Binding]) -> Result<Vec<Vec<Value>>> {
-    let group_terms = query
-        .find
-        .iter()
-        .filter_map(|term| match term {
-            TypedFindTerm::Variable { variable } => Some(*variable),
-            TypedFindTerm::Aggregate { .. } => None,
-        })
-        .collect::<Vec<_>>();
-    let aggregate_terms = query
-        .find
-        .iter()
-        .filter_map(|term| match term {
-            TypedFindTerm::Aggregate {
-                function,
-                variable,
-                domain,
-                value_type,
-            } => Some((*function, *variable, domain.clone(), value_type.clone())),
-            TypedFindTerm::Variable { .. } => None,
-        })
-        .collect::<Vec<_>>();
-    let mut groups: BTreeMap<Vec<Value>, Vec<AggregateState>> = BTreeMap::new();
-    let global_count = group_terms.is_empty()
-        && aggregate_terms.len() == 1
-        && matches!(
-            aggregate_terms[0].0,
-            AggregateFunction::CountDomain | AggregateFunction::CountDistinct
-        );
-    let mut seen_domains = BTreeSet::new();
+    let mut set = BTreeSet::new();
     for binding in bindings {
-        let key = group_terms
-            .iter()
-            .map(|variable| bound_variable(binding, *variable).cloned())
-            .collect::<Result<Vec<_>>>()?;
-        let states = groups.entry(key.clone()).or_insert_with(|| {
-            aggregate_terms
-                .iter()
-                .map(|(function, _, _, value_type)| {
-                    AggregateState::new(*function, value_type.clone())
-                })
-                .collect()
-        });
-        for (ordinal, (state, (_, variable, domain, _))) in
-            states.iter_mut().zip(&aggregate_terms).enumerate()
-        {
-            let domain = domain
-                .iter()
-                .map(|variable| bound_variable(binding, *variable).cloned())
-                .collect::<Result<Vec<_>>>()?;
-            if !seen_domains.insert((key.clone(), ordinal, domain)) {
-                continue;
-            }
-            state.apply(bound_variable(binding, *variable)?)?;
-        }
-    }
-    if bindings.is_empty() && global_count {
-        groups.insert(
-            Vec::new(),
-            aggregate_terms
-                .iter()
-                .map(|(function, _, _, value_type)| {
-                    AggregateState::new(*function, value_type.clone())
-                })
-                .collect(),
-        );
-    }
-    let mut facts = Vec::new();
-    for (key, states) in groups {
-        let mut key_iter = key.into_iter();
-        let mut state_iter = states.into_iter();
         let mut fact = Vec::new();
         for term in &query.find {
-            match term {
-                TypedFindTerm::Variable { .. } => fact.push(key_iter.next().ok_or_else(|| {
-                    Error::Internal(InternalError::Invariant {
-                        message: "missing aggregate group key".to_owned(),
-                    })
-                })?),
-                TypedFindTerm::Aggregate { .. } => {
-                    let state = state_iter.next().ok_or_else(|| {
-                        Error::Internal(InternalError::Invariant {
-                            message: "missing aggregate state".to_owned(),
-                        })
-                    })?;
-                    fact.push(state.finish()?);
-                }
-            }
+            let TypedFindTerm::Variable { variable } = term;
+            fact.push(bound_variable(binding, *variable)?.clone());
         }
-        facts.push(fact);
+        set.insert(fact);
     }
-    facts.sort();
-    Ok(facts)
+    Ok(set.into_iter().collect())
 }
 
 fn bound_variable(binding: &Binding, variable: usize) -> Result<&Value> {
@@ -353,85 +247,6 @@ fn bound_variable(binding: &Binding, variable: usize) -> Result<&Value> {
             message: format!("variable {variable} is unbound"),
         })
     })
-}
-
-#[derive(Clone, Debug)]
-enum AggregateState {
-    Count(u64),
-    SumI64(i64),
-    SumDecimal(i128),
-    Min(Option<Value>),
-    Max(Option<Value>),
-}
-
-impl AggregateState {
-    fn new(function: AggregateFunction, value_type: ValueType) -> Self {
-        match (function, value_type) {
-            (AggregateFunction::CountDomain | AggregateFunction::CountDistinct, _) => {
-                Self::Count(0)
-            }
-            (AggregateFunction::Sum, ValueType::I64) => Self::SumI64(0),
-            (AggregateFunction::Sum, ValueType::Decimal { .. }) => Self::SumDecimal(0),
-            (AggregateFunction::Min, _) => Self::Min(None),
-            (AggregateFunction::Max, _) => Self::Max(None),
-            _ => Self::Count(0),
-        }
-    }
-
-    fn apply(&mut self, value: &Value) -> Result<()> {
-        match self {
-            Self::Count(count) => {
-                *count = count.checked_add(1).ok_or_else(|| {
-                    Error::Query(QueryError::Aggregate(AggregateError::IntegerOverflow {
-                        operation: "count",
-                    }))
-                })?
-            }
-            Self::SumI64(sum) => {
-                let Value::I64(value) = value else {
-                    return Err(Error::Internal(InternalError::Invariant {
-                        message: "sum(i64) type mismatch".to_owned(),
-                    }));
-                };
-                *sum = sum.checked_add(*value).ok_or_else(|| {
-                    Error::Query(QueryError::Aggregate(AggregateError::IntegerOverflow {
-                        operation: "sum",
-                    }))
-                })?;
-            }
-            Self::SumDecimal(sum) => {
-                let Value::Decimal(DecimalRaw(value)) = value else {
-                    return Err(Error::Internal(InternalError::Invariant {
-                        message: "sum(decimal) type mismatch".to_owned(),
-                    }));
-                };
-                *sum = sum.checked_add(*value).ok_or_else(|| {
-                    Error::Query(QueryError::Aggregate(AggregateError::DecimalOverflow {
-                        operation: "sum",
-                    }))
-                })?;
-            }
-            Self::Min(current) => match current {
-                Some(existing) if &*existing <= value => {}
-                _ => *current = Some(value.clone()),
-            },
-            Self::Max(current) => match current {
-                Some(existing) if &*existing >= value => {}
-                _ => *current = Some(value.clone()),
-            },
-        }
-        Ok(())
-    }
-
-    fn finish(self) -> Result<Value> {
-        Ok(match self {
-            Self::Count(value) => Value::U64(value),
-            Self::SumI64(value) => Value::I64(value),
-            Self::SumDecimal(value) => Value::Decimal(DecimalRaw(value)),
-            Self::Min(Some(value)) | Self::Max(Some(value)) => value,
-            Self::Min(None) | Self::Max(None) => Value::U64(0),
-        })
-    }
 }
 
 fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
@@ -553,41 +368,6 @@ mod tests {
         assert_eq!(
             db.execute(&query, &InputBindings::new())?,
             vec![vec![Value::U64(1)]]
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn from_facts_deduplicates_count_input_facts() -> TestResult {
-        let db = ReferenceDb::from_facts([
-            Fact::new("Item", [("id", Value::U64(1))]),
-            Fact::new("Item", [("id", Value::U64(1))]),
-        ]);
-        let query = item_query(|query| {
-            query.rel("Item")?.var("id", "id")?.done();
-            query.find_count_domain(["id"])?;
-            Ok(())
-        })?;
-
-        assert_eq!(
-            db.execute(&query, &InputBindings::new())?,
-            vec![vec![Value::U64(1)]]
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn global_count_over_empty_input_returns_zero_fact() -> TestResult {
-        let db = ReferenceDb::from_facts([]);
-        let query = item_query(|query| {
-            query.rel("Item")?.var("id", "id")?.done();
-            query.find_count_domain(["id"])?;
-            Ok(())
-        })?;
-
-        assert_eq!(
-            db.execute(&query, &InputBindings::new())?,
-            vec![vec![Value::U64(0)]]
         );
         Ok(())
     }

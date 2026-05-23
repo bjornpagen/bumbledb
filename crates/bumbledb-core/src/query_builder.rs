@@ -3,9 +3,9 @@
 use std::collections::BTreeMap;
 
 use crate::query_ir::{
-    AggregateFunction, ComparisonOperator, Literal, TypedClause, TypedComparison,
-    TypedFieldBinding, TypedFindTerm, TypedInput, TypedLiteral, TypedOperand, TypedQuery,
-    TypedRelationAtom, TypedTerm, TypedVariable,
+    ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFieldBinding, TypedFindTerm,
+    TypedInput, TypedLiteral, TypedOperand, TypedQuery, TypedRelationAtom, TypedTerm,
+    TypedVariable,
 };
 use crate::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
 
@@ -50,25 +50,6 @@ pub enum QueryBuildError {
     /// Comparison has no typed operand to infer from.
     #[error("comparison operand is unbound")]
     UnboundComparisonOperand,
-
-    /// Aggregate function cannot be applied to the value type.
-    #[error("aggregate {function} cannot be applied to type {value_type}")]
-    InvalidAggregateType {
-        function: AggregateFunction,
-        value_type: String,
-    },
-
-    /// Aggregate references an unbound variable.
-    #[error("aggregate variable {variable} is unbound")]
-    UnboundAggregateVariable { variable: String },
-
-    /// Aggregate domain is empty.
-    #[error("aggregate domain must contain at least one variable")]
-    EmptyAggregateDomain,
-
-    /// Aggregate measure is not functionally determined by the declared domain.
-    #[error("aggregate variable {variable} is not determined by aggregate domain")]
-    AmbiguousAggregateDomain { variable: String },
 }
 
 /// Schema-aware builder for typed query IR.
@@ -172,64 +153,6 @@ impl<'schema> QueryBuilder<'schema> {
         Ok(self)
     }
 
-    /// Adds a domain-count aggregate projection term.
-    pub fn find_count_domain<I, S>(&mut self, domain: I) -> QueryBuildResult<&mut Self>
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        let domain = self.domain_variables(domain)?;
-        let variable = *domain
-            .first()
-            .ok_or(QueryBuildError::EmptyAggregateDomain)?;
-        self.find.push(TypedFindTerm::Aggregate {
-            function: AggregateFunction::CountDomain,
-            variable,
-            domain,
-            value_type: ValueType::U64,
-        });
-        Ok(self)
-    }
-
-    /// Adds a distinct-value count aggregate projection term.
-    pub fn find_count_distinct(&mut self, variable: &str) -> QueryBuildResult<&mut Self> {
-        let variable = self.aggregate_variable(variable)?;
-        self.find.push(TypedFindTerm::Aggregate {
-            function: AggregateFunction::CountDistinct,
-            variable,
-            domain: vec![variable],
-            value_type: ValueType::U64,
-        });
-        Ok(self)
-    }
-
-    /// Adds a sum aggregate over an explicit set domain.
-    pub fn find_sum_over<I, S>(&mut self, variable: &str, domain: I) -> QueryBuildResult<&mut Self>
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        self.find_domain_aggregate(AggregateFunction::Sum, variable, domain)
-    }
-
-    /// Adds a minimum aggregate over an explicit set domain.
-    pub fn find_min_over<I, S>(&mut self, variable: &str, domain: I) -> QueryBuildResult<&mut Self>
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        self.find_domain_aggregate(AggregateFunction::Min, variable, domain)
-    }
-
-    /// Adds a maximum aggregate over an explicit set domain.
-    pub fn find_max_over<I, S>(&mut self, variable: &str, domain: I) -> QueryBuildResult<&mut Self>
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        self.find_domain_aggregate(AggregateFunction::Max, variable, domain)
-    }
-
     /// Finishes construction and returns typed query IR.
     pub fn finish(&mut self) -> QueryBuildResult<TypedQuery> {
         Ok(TypedQuery {
@@ -273,83 +196,6 @@ impl<'schema> QueryBuilder<'schema> {
             });
             Ok(id)
         }
-    }
-
-    fn aggregate_variable(&self, variable: &str) -> QueryBuildResult<usize> {
-        self.variable_ids.get(variable).copied().ok_or_else(|| {
-            QueryBuildError::UnboundAggregateVariable {
-                variable: variable.to_owned(),
-            }
-        })
-    }
-
-    fn domain_variables<I, S>(&self, domain: I) -> QueryBuildResult<Vec<usize>>
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        let mut variables = Vec::new();
-        for variable in domain {
-            variables.push(self.aggregate_variable(variable.as_ref())?);
-        }
-        if variables.is_empty() {
-            return Err(QueryBuildError::EmptyAggregateDomain);
-        }
-        Ok(variables)
-    }
-
-    fn find_domain_aggregate<I, S>(
-        &mut self,
-        function: AggregateFunction,
-        variable: &str,
-        domain: I,
-    ) -> QueryBuildResult<&mut Self>
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        let variable = self.aggregate_variable(variable)?;
-        let domain = self.domain_variables(domain)?;
-        let value_type = self.variables[variable].value_type.clone();
-        if !aggregate_supports(function, &value_type) {
-            return Err(QueryBuildError::InvalidAggregateType {
-                function,
-                value_type: type_name(&value_type),
-            });
-        }
-        if matches!(
-            function,
-            AggregateFunction::Sum | AggregateFunction::Min | AggregateFunction::Max
-        ) && !self.aggregate_measure_has_domain_atom(variable, &domain)
-        {
-            return Err(QueryBuildError::AmbiguousAggregateDomain {
-                variable: self.variables[variable].name.clone(),
-            });
-        }
-        self.find.push(TypedFindTerm::Aggregate {
-            function,
-            variable,
-            domain,
-            value_type,
-        });
-        Ok(self)
-    }
-
-    fn aggregate_measure_has_domain_atom(&self, variable: usize, domain: &[usize]) -> bool {
-        self.clauses.iter().any(|clause| {
-            let TypedClause::Relation(atom) = clause else {
-                return false;
-            };
-            let vars = atom
-                .fields
-                .iter()
-                .filter_map(|field| match field.term {
-                    TypedTerm::Variable(variable) => Some(variable),
-                    TypedTerm::Input(_) | TypedTerm::Literal(_) | TypedTerm::Wildcard => None,
-                })
-                .collect::<std::collections::BTreeSet<_>>();
-            vars.contains(&variable) && domain.iter().all(|variable| vars.contains(variable))
-        })
     }
 
     fn bind_input(&mut self, name: &str, incoming: ValueType) -> QueryBuildResult<usize> {
@@ -600,17 +446,6 @@ fn literal_fits_type(schema: &SchemaDescriptor, literal: &Literal, expected: &Va
     }
 }
 
-fn aggregate_supports(function: AggregateFunction, value_type: &ValueType) -> bool {
-    match function {
-        AggregateFunction::CountDomain | AggregateFunction::CountDistinct => true,
-        AggregateFunction::Sum => matches!(
-            value_type,
-            ValueType::U64 | ValueType::I64 | ValueType::Decimal { .. }
-        ),
-        AggregateFunction::Min | AggregateFunction::Max => is_orderable(value_type),
-    }
-}
-
 fn is_orderable(value_type: &ValueType) -> bool {
     matches!(
         value_type,
@@ -709,22 +544,6 @@ mod tests {
 
         assert_eq!(query.inputs.len(), 1);
         assert_eq!(query.clauses.len(), 2);
-        Ok(())
-    }
-
-    #[test]
-    fn builds_aggregate_query() -> QueryBuildResult<()> {
-        let schema = schema();
-        let query = QueryBuilder::new(&schema)
-            .rel("Posting")?
-            .var("id", "posting")?
-            .var("amount", "amount")?
-            .done()
-            .find_sum_over("amount", ["posting"])?
-            .find_count_domain(["posting"])?
-            .finish()?;
-
-        assert_eq!(query.find.len(), 2);
         Ok(())
     }
 
@@ -830,41 +649,6 @@ mod tests {
                 variable: "missing".to_owned()
             }
         );
-    }
-
-    #[test]
-    fn rejects_invalid_aggregate_type() {
-        let schema = schema();
-        let mut builder = QueryBuilder::new(&schema);
-        let result = builder
-            .rel("Holder")
-            .and_then(|atom| atom.var("name", "name"))
-            .map(RelationAtomBuilder::done)
-            .and_then(|builder| builder.find_sum_over("name", ["name"]));
-        assert!(result.is_err(), "invalid aggregate type should fail");
-        let Err(error) = result else { return };
-        assert!(matches!(
-            error,
-            QueryBuildError::InvalidAggregateType { .. }
-        ));
-    }
-
-    #[test]
-    fn rejects_ambiguous_aggregate_domain() {
-        let schema = schema();
-        let mut builder = QueryBuilder::new(&schema);
-        let result = builder
-            .rel("Posting")
-            .and_then(|atom| atom.var("amount", "amount"))
-            .map(RelationAtomBuilder::done)
-            .and_then(|builder| builder.rel("Account"))
-            .and_then(|atom| atom.var("currency", "currency"))
-            .map(RelationAtomBuilder::done)
-            .and_then(|builder| builder.find_sum_over("amount", ["currency"]));
-        assert!(matches!(
-            result,
-            Err(QueryBuildError::AmbiguousAggregateDomain { .. })
-        ));
     }
 
     #[test]

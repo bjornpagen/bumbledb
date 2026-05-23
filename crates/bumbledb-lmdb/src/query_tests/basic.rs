@@ -637,7 +637,7 @@ fn optimizer_keeps_cyclic_triangle_on_lftj() -> TestResult {
         query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
         query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
         query.rel("EdgeBC")?.var("b", "b")?.var("c", "c")?.done();
-        query.find_count_domain(["a"])?;
+        query.find_var("a")?;
         Ok(())
     })?;
 
@@ -662,4 +662,3 @@ fn optimizer_keeps_cyclic_triangle_on_lftj() -> TestResult {
     );
     Ok(())
 }
-

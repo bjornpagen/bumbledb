@@ -32,7 +32,7 @@ fn golden_manifest_lists_all_required_families() {
 }
 
 #[test]
-fn ledger_golden_preserves_set_projection_aggregate_and_restrict() -> TestResult {
+fn ledger_golden_preserves_set_projection_and_restrict() -> TestResult {
     let schema = bumbledb_lmdb::benchmark::benchmark_schema();
     let facts = bumbledb_lmdb::benchmark::benchmark_facts(2);
     let (env, storage) = load(schema, facts)?;
@@ -108,7 +108,7 @@ fn ledger_golden_preserves_set_projection_aggregate_and_restrict() -> TestResult
         .input("holder", "holder")?
         .done()
         .find_var("instrument")?
-        .find_sum_over("amount", ["posting"])?
+        .find_var("amount")?
         .finish()?;
     assert_same_facts(
         execute(
@@ -167,7 +167,7 @@ fn sailors_golden_preserves_duplicate_witness_projection_and_deletes() -> TestRe
 }
 
 #[test]
-fn joinstress_golden_preserves_triangle_domains() -> TestResult {
+fn joinstress_golden_preserves_triangle_projection() -> TestResult {
     let (env, schema) = load(
         triangle_schema(),
         vec![
@@ -191,18 +191,22 @@ fn joinstress_golden_preserves_triangle_domains() -> TestResult {
         .var("b", "b")?
         .var("c", "c")?
         .done()
-        .find_count_distinct("a")?
-        .find_count_domain(["a", "b", "c"])?
+        .find_var("a")?
+        .find_var("b")?
+        .find_var("c")?
         .finish()?;
     assert_same_facts(
         execute(&env, &schema, &query, InputBindings::new())?,
-        vec![vec![Value::U64(1), Value::U64(2)]],
+        vec![
+            vec![Value::U64(1), Value::U64(10), Value::U64(20)],
+            vec![Value::U64(1), Value::U64(11), Value::U64(20)],
+        ],
     );
     Ok(())
 }
 
 #[test]
-fn tpch_golden_preserves_lineitem_revenue_domain() -> TestResult {
+fn tpch_golden_preserves_lineitem_projection() -> TestResult {
     let (env, schema) = load(
         tpch_schema(),
         vec![
@@ -229,17 +233,29 @@ fn tpch_golden_preserves_lineitem_revenue_domain() -> TestResult {
         .var("extended_price", "price")?
         .done()
         .find_var("customer")?
-        .find_sum_over("price", ["line"])?
+        .find_var("line")?
+        .find_var("price")?
         .finish()?;
     assert_same_facts(
         execute(&env, &schema, &query, inputs([("nation", Value::U64(1))]))?,
-        vec![vec![Value::Serial(1), Value::Decimal(DecimalRaw(200))]],
+        vec![
+            vec![
+                Value::Serial(1),
+                Value::Serial(1),
+                Value::Decimal(DecimalRaw(100)),
+            ],
+            vec![
+                Value::Serial(1),
+                Value::Serial(2),
+                Value::Decimal(DecimalRaw(100)),
+            ],
+        ],
     );
     Ok(())
 }
 
 #[test]
-fn imdb_job_golden_preserves_title_count_and_empty_count() -> TestResult {
+fn imdb_job_golden_preserves_title_projection_and_empty_projection() -> TestResult {
     let (env, schema) = load(
         imdb_schema(),
         vec![
@@ -250,7 +266,7 @@ fn imdb_job_golden_preserves_title_count_and_empty_count() -> TestResult {
             principal(1, 2, 1, 2),
         ],
     )?;
-    let count = QueryBuilder::new(schema.descriptor())
+    let titles = QueryBuilder::new(schema.descriptor())
         .rel("Title")?
         .var("id", "title")?
         .done()
@@ -259,16 +275,16 @@ fn imdb_job_golden_preserves_title_count_and_empty_count() -> TestResult {
         .var("name", "name")?
         .input("category", "category")?
         .done()
-        .find_count_domain(["title"])?
+        .find_var("title")?
         .finish()?;
     assert_same_facts(
         execute(
             &env,
             &schema,
-            &count,
+            &titles,
             inputs([("category", Value::Enum(1))]),
         )?,
-        vec![vec![Value::U64(1)]],
+        vec![vec![Value::Serial(1)]],
     );
 
     let empty = QueryBuilder::new(schema.descriptor())
@@ -281,11 +297,11 @@ fn imdb_job_golden_preserves_title_count_and_empty_count() -> TestResult {
             ComparisonOperator::Gt,
             OperandRef::integer(3000),
         )?
-        .find_count_domain(["title"])?
+        .find_var("title")?
         .finish()?;
     assert_same_facts(
         execute(&env, &schema, &empty, InputBindings::new())?,
-        vec![vec![Value::U64(0)]],
+        Vec::new(),
     );
     Ok(())
 }

@@ -215,7 +215,7 @@ fn execute_query_cache_is_schema_fingerprint_scoped() -> TestResult {
             .var("id", "item")?
             .var("kind", "kind")?
             .done();
-        query.find_count_domain(["item"])?;
+        query.find_var("item")?;
         Ok(())
     })?;
     let edge_query = typed_query(&schema_b, |query| {
@@ -432,49 +432,6 @@ fn prepared_query_reuses_normalized_snapshot_shape() -> TestResult {
     assert_eq!(first.result.facts, second.result.facts);
     assert!(first.plan.timings.normalize_micros > 0);
     assert_eq!(second.plan.timings.normalize_micros, 0);
-    Ok(())
-}
-
-#[test]
-fn cache_options_do_not_cache_aggregate_results() -> TestResult {
-    let dir = tempfile::tempdir()?;
-    let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
-    env.write(|txn| {
-        txn.insert(&schema, edge_ab_fact(1, 10))?;
-        txn.insert(&schema, edge_ab_fact(1, 11))?;
-        txn.insert(
-            &schema,
-            Fact::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(20))]),
-        )?;
-        Ok::<_, Error>(())
-    })?;
-    let query = typed_query(&schema, |query| {
-        query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
-        query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
-        query.find_count_domain(["a"])?;
-        Ok(())
-    })?;
-    let prepared = env.prepare_query(&schema, &query)?;
-
-    let first =
-        env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
-    let cached =
-        env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
-
-    assert_eq!(first.result.facts, vec![vec![Value::U64(1)]]);
-    assert_eq!(cached.result.facts, first.result.facts);
-
-    env.write(|txn| {
-        txn.insert(
-            &schema,
-            Fact::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(21))]),
-        )?;
-        Ok::<_, Error>(())
-    })?;
-    let after_write =
-        env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
-    assert_eq!(after_write.result.facts, vec![vec![Value::U64(1)]]);
     Ok(())
 }
 

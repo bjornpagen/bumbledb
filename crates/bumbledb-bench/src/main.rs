@@ -9,14 +9,14 @@ use std::time::{Duration, Instant};
 
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
 use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
-use bumbledb_core::query_ir::{AggregateFunction, ComparisonOperator, TypedFindTerm, TypedQuery};
+use bumbledb_core::query_ir::{ComparisonOperator, TypedQuery};
 use bumbledb_core::schema::{
     ConstraintDescriptor, EnumDescriptor, FieldDescriptor, IndexDescriptor, RelationDescriptor,
     SchemaDescriptor, ValueType,
 };
 use bumbledb_lmdb::{
     AllocationPhaseStats, Environment, Fact, InputBindings, PlanCounters, QueryAllocationStats,
-    QueryOutput, QueryPlan, QueryResultSet, QueryTimings, ResultColumn, StorageSchema, Value,
+    QueryOutput, QueryPlan, QueryResultSet, QueryTimings, StorageSchema, Value,
 };
 use rusqlite::{Connection, params_from_iter};
 use tracing_subscriber::fmt::format::FmtSpan;

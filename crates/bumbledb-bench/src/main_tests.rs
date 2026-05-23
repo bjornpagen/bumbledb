@@ -27,7 +27,7 @@ fn markdown_renderer_emits_gate_tables() {
         dataset: "joinstress",
         query: "triangle_count",
         facts: 1,
-        correctness_mode: "aggregate-values".to_owned(),
+        correctness_mode: "result-set".to_owned(),
         bumbledb_correctness_execution: Duration::from_micros(20),
         sqlite_correctness_execution: Duration::from_micros(12),
         bumbledb_cold_execution: Duration::from_micros(20),

@@ -55,10 +55,9 @@ fn ledger_dataset(scale: u64) -> Dataset {
                 build: build_ledger_balances_by_instrument,
                 inputs: vec![("holder", Value::Serial(1))],
                 sqlite: r#"
-                    SELECT p.instrument, SUM(p.amount) FROM posting p
+                    SELECT DISTINCT p.instrument, p.amount FROM posting p
                     JOIN account a ON a.id = p.account
                     WHERE a.holder = ?1
-                    GROUP BY p.instrument
                 "#,
                 sqlite_params: vec![SqlParam::I64(1)],
             },
@@ -309,7 +308,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
                 name: "triangle_count",
                 build: build_joinstress_triangle_count,
                 inputs: vec![],
-                sqlite: "SELECT COUNT(DISTINCT eab.a) FROM edge_ab eab JOIN edge_ac eac ON eac.a = eab.a JOIN edge_bc ebc ON ebc.b = eab.b AND ebc.c = eac.c",
+                sqlite: "SELECT DISTINCT eab.a FROM edge_ab eab JOIN edge_ac eac ON eac.a = eab.a JOIN edge_bc ebc ON ebc.b = eab.b AND ebc.c = eac.c",
                 sqlite_params: vec![],
             },
         ],
@@ -424,11 +423,10 @@ fn tpch_dataset(scale: u64) -> Dataset {
                     ("end", Value::Timestamp(TimestampMicros(1_000_000_000))),
                 ],
                 sqlite: r#"
-                    SELECT c.id, SUM(l.extended_price) FROM customer c
+                    SELECT DISTINCT c.id, l.extended_price FROM customer c
                     JOIN orders o ON o.customer = c.id
                     JOIN lineitem l ON l.ord = o.id
                     WHERE c.nation = ?1 AND l.ship_date >= ?2 AND l.ship_date < ?3
-                    GROUP BY c.id
                 "#,
                 sqlite_params: vec![
                     SqlParam::I64(1),
@@ -497,7 +495,7 @@ fn build_ledger_balances_by_instrument(schema: &SchemaDescriptor) -> QueryBuildR
         .input("holder", "holder")?
         .done()
         .find_var("instrument")?
-        .find_sum_over("amount", ["posting"])?
+        .find_var("amount")?
         .finish()
 }
 
@@ -622,7 +620,7 @@ fn build_joinstress_triangle_count(schema: &SchemaDescriptor) -> QueryBuildResul
         .var("b", "b")?
         .var("c", "c")?
         .done()
-        .find_count_domain(["a"])?
+        .find_var("a")?
         .finish()
 }
 
@@ -654,7 +652,7 @@ fn build_tpch_revenue_by_customer_range(schema: &SchemaDescriptor) -> QueryBuild
             OperandRef::input("end"),
         )?
         .find_var("customer")?
-        .find_sum_over("price", ["line"])?
+        .find_var("price")?
         .finish()
 }
 
@@ -1129,4 +1127,3 @@ pub(crate) fn serial_field(id_type: &str, field: &str, target: &str) -> FieldDes
         },
     )
 }
-

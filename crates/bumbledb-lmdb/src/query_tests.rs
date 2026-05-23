@@ -1,6 +1,5 @@
 use super::*;
-use crate::query_image::{QueryImageBuilder, QueryImageScope};
-use crate::{AggregateError, Environment, ExecuteError, Fact, QueryError};
+use crate::{Environment, ExecuteError, Fact, QueryError};
 use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
 use bumbledb_core::schema::{
     ConstraintDescriptor, FieldDescriptor, IndexDescriptor, RelationDescriptor,
@@ -21,13 +20,7 @@ include!("query_tests/basic.rs");
 
 include!("query_tests/atom_cache.rs");
 
-include!("query_tests/domain_count.rs");
-
 include!("query_tests/cache_and_planner.rs");
-
-include!("query_tests/aggregate_setup.rs");
-
-include!("query_tests/empty_and_lftj.rs");
 
 include!("query_tests/sinks_and_projection.rs");
 

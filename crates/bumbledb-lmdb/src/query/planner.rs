@@ -811,7 +811,7 @@ fn estimate_free_join_plan(
         iterator_ops = iterator_ops.saturating_mul(8);
     }
 
-    let output_facts = estimate_output_facts(query, variable_costs);
+    let output_facts = estimate_output_facts(variable_costs);
     let materialized_values = estimate_materialized_values(query, output_facts);
     let memory_bytes = (hash_build_facts as usize)
         .saturating_mul(32)
@@ -826,16 +826,7 @@ fn estimate_free_join_plan(
     }
 }
 
-fn estimate_output_facts(query: &NormalizedQuery, variable_costs: &[VariableCost]) -> u64 {
-    let has_aggregate = has_aggregate(query);
-    let group_vars = query
-        .find
-        .iter()
-        .filter(|term| matches!(term, NormFindTerm::Variable { .. }))
-        .count() as u64;
-    if has_aggregate && group_vars == 0 {
-        return 1;
-    }
+fn estimate_output_facts(variable_costs: &[VariableCost]) -> u64 {
     variable_costs
         .iter()
         .map(|cost| cost.estimated_candidates)
@@ -882,43 +873,14 @@ fn output_plan(query: &NormalizedQuery) -> OutputPlan {
 }
 
 fn output_plan_from_find(find: &[NormFindTerm]) -> OutputPlan {
-    if find
-        .iter()
-        .any(|term| matches!(term, NormFindTerm::Aggregate { .. }))
-    {
-        let mut group_vars = Vec::new();
-        let mut aggregates = Vec::new();
-        for term in find {
-            match term {
-                NormFindTerm::Variable { variable } => group_vars.push(*variable),
-                NormFindTerm::Aggregate {
-                    function,
-                    variable,
-                    domain,
-                    value_type,
-                } => aggregates.push(AggregateTerm {
-                    function: *function,
-                    var: *variable,
-                    domain_vars: domain.clone(),
-                    value_type: value_type.clone(),
-                }),
-            }
-        }
-        OutputPlan::Aggregate(AggregatePlan {
-            group_vars,
-            aggregates,
-        })
-    } else {
-        OutputPlan::Project(ProjectPlan {
-            vars: find
-                .iter()
-                .filter_map(|term| match term {
-                    NormFindTerm::Variable { variable } => Some(*variable),
-                    NormFindTerm::Aggregate { .. } => None,
-                })
-                .collect(),
-        })
-    }
+    OutputPlan::Project(ProjectPlan {
+        vars: find
+            .iter()
+            .map(|term| match term {
+                NormFindTerm::Variable { variable } => *variable,
+            })
+            .collect(),
+    })
 }
 
 fn atom_contains_variable(atom: &NormAtom, variable: usize) -> bool {
@@ -1033,4 +995,3 @@ fn compare_encoded_values(left: &[u8], operator: ComparisonOperator, right: &[u8
         ComparisonOperator::Gte => left >= right,
     }
 }
-

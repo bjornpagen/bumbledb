@@ -87,47 +87,6 @@ fn validate_typed_query(schema: &StorageSchema, query: &TypedQuery) -> Result<()
                     )));
                 }
             }
-            TypedFindTerm::Aggregate {
-                function,
-                variable,
-                domain,
-                value_type,
-            } => {
-                validate_variable_id(query, *variable)?;
-                if !bound_variables.contains(variable) {
-                    return Err(Error::invalid_query(format!(
-                        "aggregate variable {variable} is not bound by a relation atom"
-                    )));
-                }
-                if matches!(
-                    function,
-                    AggregateFunction::Sum | AggregateFunction::Min | AggregateFunction::Max
-                ) && query.variables[*variable].value_type != *value_type
-                {
-                    return Err(Error::invalid_query(format!(
-                        "aggregate variable {variable} has type {}, not {}",
-                        value_type_name(&query.variables[*variable].value_type),
-                        value_type_name(value_type)
-                    )));
-                }
-                if domain.is_empty() {
-                    return Err(Error::invalid_query("aggregate domain is empty"));
-                }
-                let mut seen = BTreeSet::new();
-                for variable in domain {
-                    validate_variable_id(query, *variable)?;
-                    if !seen.insert(*variable) {
-                        return Err(Error::invalid_query(format!(
-                            "aggregate domain repeats variable {variable}"
-                        )));
-                    }
-                    if !bound_variables.contains(variable) {
-                        return Err(Error::invalid_query(format!(
-                            "aggregate domain variable {variable} is not bound by a relation atom"
-                        )));
-                    }
-                }
-            }
         }
     }
 
@@ -295,20 +254,6 @@ fn normalize_query(
         .map(|term| match term {
             TypedFindTerm::Variable { variable } => NormFindTerm::Variable {
                 variable: VarId(*variable as u16),
-            },
-            TypedFindTerm::Aggregate {
-                function,
-                variable,
-                domain,
-                value_type,
-            } => NormFindTerm::Aggregate {
-                function: *function,
-                variable: VarId(*variable as u16),
-                domain: domain
-                    .iter()
-                    .map(|variable| VarId(*variable as u16))
-                    .collect(),
-                value_type: value_type.clone(),
             },
         })
         .collect::<Vec<_>>();
@@ -484,13 +429,6 @@ fn attach_predicate_depths(query: &mut NormalizedQuery, variable_order_ids: &[us
     }
 }
 
-fn has_aggregate(query: &NormalizedQuery) -> bool {
-    query
-        .find
-        .iter()
-        .any(|term| matches!(term, NormFindTerm::Aggregate { .. }))
-}
-
 fn result_columns(query: &NormalizedQuery) -> Vec<ResultColumn> {
     query
         .find
@@ -499,12 +437,6 @@ fn result_columns(query: &NormalizedQuery) -> Vec<ResultColumn> {
             NormFindTerm::Variable { variable } => {
                 ResultColumn::Variable(query.vars[variable.0 as usize].name.clone())
             }
-            NormFindTerm::Aggregate {
-                function, variable, ..
-            } => ResultColumn::Aggregate {
-                function: *function,
-                variable: query.vars[variable.0 as usize].name.clone(),
-            },
         })
         .collect()
 }

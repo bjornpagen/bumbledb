@@ -205,18 +205,6 @@ impl Error {
         .into()
     }
 
-    pub(crate) fn integer_overflow(operation: &'static str) -> Self {
-        QueryError::Aggregate(AggregateError::IntegerOverflow { operation }).into()
-    }
-
-    pub(crate) fn decimal_overflow(operation: &'static str) -> Self {
-        QueryError::Aggregate(AggregateError::DecimalOverflow { operation }).into()
-    }
-
-    pub(crate) fn aggregate_type_mismatch(function: &'static str, actual: &'static str) -> Self {
-        QueryError::Aggregate(AggregateError::TypeMismatch { function, actual }).into()
-    }
-
     pub(crate) fn invalid_utf8_dictionary_string() -> Self {
         CorruptionError::InvalidUtf8DictionaryString.into()
     }
@@ -403,10 +391,6 @@ pub enum QueryError {
     /// Execution failure.
     #[error(transparent)]
     Execute(#[from] ExecuteError),
-
-    /// Aggregation failure.
-    #[error(transparent)]
-    Aggregate(#[from] AggregateError),
 }
 
 /// Query planning failures.
@@ -457,26 +441,6 @@ pub enum ExecuteError {
     /// Public typed query IR is malformed.
     #[error("invalid typed query: {reason}")]
     InvalidQuery { reason: String },
-}
-
-/// Aggregation failures.
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum AggregateError {
-    /// Integer overflow.
-    #[error("integer overflow during {operation}")]
-    IntegerOverflow { operation: &'static str },
-
-    /// Decimal overflow.
-    #[error("decimal overflow during {operation}")]
-    DecimalOverflow { operation: &'static str },
-
-    /// Aggregate type mismatch.
-    #[error("aggregate {function} received unexpected value kind {actual}")]
-    TypeMismatch {
-        function: &'static str,
-        actual: &'static str,
-    },
 }
 
 /// Backup/compact-copy failures.
