@@ -73,7 +73,6 @@ fn markdown_renderer_emits_gate_tables() {
         planner_stats_builds: 1,
         planner_stats_build_micros: 9,
         lftj_lazy_access_slices: 0,
-        lftj_eager_builds_avoided: 0,
         query_image_relation_count: 1,
         query_image_fact_count: 3,
         query_image_encoded_column_bytes: 128,
@@ -96,8 +95,8 @@ fn markdown_renderer_emits_gate_tables() {
     assert!(markdown.contains("## Allocation Summary"));
     assert!(markdown.contains("## Allocation Phase Detail"));
     assert!(markdown.contains("## Distribution"));
-    assert!(markdown.contains("| dataset | query | cursor seeks |"));
-    assert!(markdown.contains("| joinstress | triangle_count | 0 | 0 | 1 | 1 | false | 0 | ok |"));
+    assert!(markdown.contains("| dataset | query | final values |"));
+    assert!(markdown.contains("| joinstress | triangle_count | 1 | 1 | false | 0 | ok |"));
 }
 
 #[test]
@@ -146,7 +145,6 @@ fn json_renderer_emits_structured_results() {
         planner_stats_builds: 1,
         planner_stats_build_micros: 1,
         lftj_lazy_access_slices: 0,
-        lftj_eager_builds_avoided: 0,
         query_image_relation_count: 1,
         query_image_fact_count: 2,
         query_image_encoded_column_bytes: 1,
@@ -171,7 +169,6 @@ fn json_renderer_emits_structured_results() {
     assert!(json.contains("\"sink_emit_calls\""));
     assert!(json.contains("\"encoded_project_facts_seen\""));
     assert!(json.contains("\"lftj_next_calls\""));
-    assert!(json.contains("\"lftj_eager_builds_avoided\""));
     assert!(json.contains("\"allocations\""));
     assert!(json.contains("\"phases\""));
     assert!(json.contains("\"size_class_allocs\""));

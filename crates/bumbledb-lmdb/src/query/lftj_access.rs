@@ -25,7 +25,6 @@ fn build_lftj_atom_plan<'image>(
     if variables.is_empty() {
         let slice = static_atom_lazy_access_slice(source, inputs, atom)?;
         counters.lftj_lazy_access_slices += 1;
-        counters.lftj_eager_builds_avoided += 1;
         return Ok(LftjAtomPlan {
             variables,
             fact_count: slice.fact_count,
@@ -34,7 +33,6 @@ fn build_lftj_atom_plan<'image>(
     }
     if let Some(slice) = lazy_lftj_access_slice(source, inputs, atom, &variables)? {
         counters.lftj_lazy_access_slices += 1;
-        counters.lftj_eager_builds_avoided += 1;
         return Ok(LftjAtomPlan {
             variables,
             fact_count: slice.fact_count,

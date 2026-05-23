@@ -112,7 +112,7 @@ fn lftj_reuses_lazy_access_across_cross_atom_comparison_filters() -> TestResult 
 
         assert_same_facts(&first.result.facts, &[vec![Value::U64(10)]]);
         assert_same_facts(&second.result.facts, &[vec![Value::U64(30)]]);
-        assert!(second.plan.counters.lftj_eager_builds_avoided >= 2);
+        assert!(second.plan.counters.lftj_lazy_access_slices >= 2);
         Ok::<_, Error>(())
     })?;
 

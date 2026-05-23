@@ -1,12 +1,12 @@
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | facts | sqlite materialized | bumbledb avg us | sqlite avg us | sqlite ratio | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | lazy access slices | eager builds avoided | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | facts | sqlite materialized | bumbledb avg us | sqlite avg us | sqlite ratio | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | lazy access slices | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.facts,
@@ -27,7 +27,6 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.planner_stats_builds,
             result.planner_stats_build_micros,
             result.lftj_lazy_access_slices,
-            result.lftj_eager_builds_avoided,
             result.materialized_values,
             result.dictionary_reverse_lookups,
             if result.gate.passed { "pass" } else { "fail" },
@@ -77,13 +76,13 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Phase Timing\n\n");
-    out.push_str("| dataset | query | total us | validate us | normalize us | encode us | image us | plan us | lftj build us | execute us | lftj exec us | sink emit us | sink finish us | decode us | unaccounted us |\n");
-    out.push_str("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("| dataset | query | total us | validate us | normalize us | encode us | image us | plan us | lftj build us | execute us | lftj exec us | sink finish us | unaccounted us |\n");
+    out.push_str("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     for result in results {
         let timings = result.timings;
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             timings.total_micros,
@@ -95,9 +94,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             timings.lftj_build_micros,
             timings.execute_micros,
             timings.lftj_execute_micros,
-            timings.sink_emit_micros,
             timings.sink_finish_micros,
-            timings.decode_micros,
             timings.unaccounted_micros,
         );
     }
@@ -208,16 +205,14 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         "| high allocation counts | rerun with alloc-profile and then use a deep heap profiler for callsites |\n",
     );
     out.push_str("\n## Counter Gates\n\n");
-    out.push_str("| dataset | query | cursor seeks | facts scanned | final values | materialized values | dictionary output | dictionary lookups | notes |\n");
-    out.push_str("|---|---|---:|---:|---:|---:|---|---:|---|\n");
+    out.push_str("| dataset | query | final values | materialized values | dictionary output | dictionary lookups | notes |\n");
+    out.push_str("|---|---|---:|---:|---|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
-            result.counters.cursor_seeks,
-            result.counters.facts_scanned,
             result.final_output_values,
             result.materialized_values,
             result.output_contains_dictionary_values,

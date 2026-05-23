@@ -48,7 +48,7 @@ fn planner_stats_are_cached_per_query_image() -> TestResult {
     assert_eq!(second.plan.planner_stats.builds, 1);
     assert_eq!(second.plan.planner_stats.misses, 1);
     assert!(second.plan.planner_stats.hits >= 1);
-    assert!(second.plan.counters.lftj_eager_builds_avoided >= 1);
+    assert!(second.plan.counters.lftj_lazy_access_slices >= 1);
     Ok(())
 }
 

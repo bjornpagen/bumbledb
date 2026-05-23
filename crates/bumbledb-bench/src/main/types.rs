@@ -49,7 +49,6 @@ struct BenchmarkRunResult {
     planner_stats_builds: u64,
     planner_stats_build_micros: u64,
     lftj_lazy_access_slices: u64,
-    lftj_eager_builds_avoided: u64,
     query_image_relation_count: usize,
     query_image_fact_count: usize,
     query_image_encoded_column_bytes: usize,

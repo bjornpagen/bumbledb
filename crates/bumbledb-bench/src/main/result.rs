@@ -66,7 +66,6 @@ fn benchmark_result(
         planner_stats_builds: output.plan.planner_stats.builds,
         planner_stats_build_micros: output.plan.planner_stats.build_micros,
         lftj_lazy_access_slices: output.plan.counters.lftj_lazy_access_slices,
-        lftj_eager_builds_avoided: output.plan.counters.lftj_eager_builds_avoided,
         query_image_relation_count: query_image_stats.relation_count,
         query_image_fact_count: query_image_stats.fact_count,
         query_image_encoded_column_bytes: query_image_stats.encoded_column_bytes,
@@ -152,13 +151,6 @@ fn evaluate_gate(
     }
 
     let counters = &output.plan.counters;
-    if counters.cursor_seeks != 0 || counters.facts_scanned != 0 {
-        passed = false;
-        notes.push(format!(
-            "LMDB scan counters nonzero: cursor_seeks={} facts_scanned={}",
-            counters.cursor_seeks, counters.facts_scanned
-        ));
-    }
     if !output_contains_dictionary_values && counters.dictionary_reverse_lookups != 0 {
         passed = false;
         notes.push(format!(

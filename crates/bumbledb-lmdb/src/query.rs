@@ -261,7 +261,7 @@ impl QueryPlan {
         out.push_str(&format!("variable_order: {:?}\n", self.variable_order));
         out.push_str("timings:\n");
         out.push_str(&format!(
-            "  query_timing total_micros={} validate_inputs_micros={} normalize_micros={} encode_inputs_micros={} query_image_micros={} plan_micros={} lftj_build_micros={} execute_micros={} lftj_execute_micros={} sink_emit_micros={} sink_finish_micros={} decode_micros={} unaccounted_micros={}\n",
+            "  query_timing total_micros={} validate_inputs_micros={} normalize_micros={} encode_inputs_micros={} query_image_micros={} plan_micros={} lftj_build_micros={} execute_micros={} lftj_execute_micros={} sink_finish_micros={} unaccounted_micros={}\n",
             self.timings.total_micros,
             self.timings.validate_inputs_micros,
             self.timings.normalize_micros,
@@ -271,9 +271,7 @@ impl QueryPlan {
             self.timings.lftj_build_micros,
             self.timings.execute_micros,
             self.timings.lftj_execute_micros,
-            self.timings.sink_emit_micros,
             self.timings.sink_finish_micros,
-            self.timings.decode_micros,
             self.timings.unaccounted_micros
         ));
         out.push_str("allocations:\n");
@@ -319,7 +317,7 @@ impl QueryPlan {
             self.query_image_cache.build_micros
         ));
         out.push_str(&format!(
-            "  planner_stats cached_relations={} hits={} misses={} builds={} build_micros={} field_stats_built={} index_stats_built={} stats_from_access_images={} stats_exact_scans={}\n",
+            "  planner_stats cached_relations={} hits={} misses={} builds={} build_micros={} field_stats_built={} index_stats_built={} stats_from_access_images={}\n",
             self.planner_stats.cached_relations,
             self.planner_stats.hits,
             self.planner_stats.misses,
@@ -327,8 +325,7 @@ impl QueryPlan {
             self.planner_stats.build_micros,
             self.planner_stats.field_stats_built,
             self.planner_stats.index_stats_built,
-            self.planner_stats.stats_from_access_images,
-            self.planner_stats.stats_exact_scans
+            self.planner_stats.stats_from_access_images
         ));
         out.push_str("free_join_plan:\n");
         for node in &self.free_join.nodes {
@@ -339,15 +336,6 @@ impl QueryPlan {
             ));
         }
         out.push_str("counters:\n");
-        out.push_str(&format!("  cursor_seeks: {}\n", self.counters.cursor_seeks));
-        out.push_str(&format!(
-            "  facts_scanned: {}\n",
-            self.counters.facts_scanned
-        ));
-        out.push_str(&format!(
-            "  facts_matched: {}\n",
-            self.counters.facts_matched
-        ));
         out.push_str(&format!(
             "  bindings_yielded: {}\n",
             self.counters.bindings_yielded
@@ -400,10 +388,6 @@ impl QueryPlan {
             "  lftj_lazy_access_slices: {}\n",
             self.counters.lftj_lazy_access_slices
         ));
-        out.push_str(&format!(
-            "  lftj_eager_builds_avoided: {}\n",
-            self.counters.lftj_eager_builds_avoided
-        ));
         out.push_str(&format!("  output_facts: {}\n", self.counters.output_facts));
         out
     }
@@ -430,12 +414,8 @@ pub struct QueryTimings {
     pub execute_micros: u128,
     /// LFTJ recursive execution time.
     pub lftj_execute_micros: u128,
-    /// Sink emit timing, zero until per-sink emit timing is enabled.
-    pub sink_emit_micros: u128,
     /// Sink finalization/materialization time.
     pub sink_finish_micros: u128,
-    /// Decode timing, zero until per-decode timing is enabled.
-    pub decode_micros: u128,
     /// Inclusive total minus non-overlapping known top-level phases.
     pub unaccounted_micros: u128,
 }
@@ -451,7 +431,6 @@ impl QueryTimings {
             .saturating_add(self.lftj_build_micros)
             .saturating_add(self.execute_micros)
             .saturating_add(self.sink_finish_micros)
-            .saturating_add(self.decode_micros)
     }
 
     /// Refreshes unaccounted timing from the current total and known phases.
@@ -586,12 +565,6 @@ impl QueryAllocationStats {
 /// Execution counters for the Free Join query executor.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlanCounters {
-    /// Number of encoded index scan openings.
-    pub cursor_seeks: u64,
-    /// Number of encoded index entries inspected.
-    pub facts_scanned: u64,
-    /// Number of encoded index entries accepted by currently bound constraints.
-    pub facts_matched: u64,
     /// Number of complete encoded bindings yielded before projection/aggregation.
     pub bindings_yielded: u64,
     /// Number of comparison predicates evaluated.
@@ -648,8 +621,6 @@ pub struct PlanCounters {
     pub lftj_completed_bindings: u64,
     /// Number of LFTJ atom sources backed directly by durable access slices.
     pub lftj_lazy_access_slices: u64,
-    /// Number of eager sorted trie atom builds avoided by lazy access slices.
-    pub lftj_eager_builds_avoided: u64,
     /// Number of encoded projection facts observed before set insertion.
     pub encoded_project_facts_seen: u64,
     /// Number of encoded projection facts inserted into the result set.

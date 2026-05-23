@@ -159,8 +159,6 @@ fn explain_and_storage_diagnostics_are_available() -> TestResult {
     assert!(explain.contains("free_join_node"));
     assert!(!explain.contains("atoms:\n"));
     assert!(!explain.contains("index="));
-    assert!(explain.contains("cursor_seeks"));
-    assert!(explain.contains("facts_scanned"));
     assert!(explain.contains("bindings_yielded"));
     assert!(explain.contains("decoded_values"));
     assert!(explain.contains("encoded_comparisons_evaluated"));

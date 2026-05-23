@@ -25,7 +25,6 @@ struct PlannerStatsCacheInner {
     field_stats_built: AtomicU64,
     index_stats_built: AtomicU64,
     stats_from_access_images: AtomicU64,
-    stats_exact_scans: AtomicU64,
 }
 
 impl fmt::Debug for PlannerStatsCache {
@@ -101,7 +100,6 @@ impl PlannerStatsCache {
             field_stats_built: self.inner.field_stats_built.load(Ordering::Relaxed),
             index_stats_built: self.inner.index_stats_built.load(Ordering::Relaxed),
             stats_from_access_images: self.inner.stats_from_access_images.load(Ordering::Relaxed),
-            stats_exact_scans: self.inner.stats_exact_scans.load(Ordering::Relaxed),
         }
     }
 }
@@ -125,8 +123,6 @@ pub struct PlannerStatsCacheDiagnostics {
     pub index_stats_built: u64,
     /// Access-path stats derived from relation/access metadata.
     pub stats_from_access_images: u64,
-    /// Exact field/index scans performed during planning.
-    pub stats_exact_scans: u64,
 }
 
 /// Planner relation statistics derived from one relation image.

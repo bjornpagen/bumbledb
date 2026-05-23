@@ -52,7 +52,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         let allocations = result.allocations;
         let _ = write!(
             out,
-            ",\"phase_timing\":{{\"scope\":\"{}\",\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{},\"unaccounted_us\":{}}},\"allocations\":{{\"scope\":\"{}\",\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
+            ",\"phase_timing\":{{\"scope\":\"{}\",\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"sink_finish_us\":{},\"unaccounted_us\":{}}},\"allocations\":{{\"scope\":\"{}\",\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
             json_escape(&result.allocation_scope),
             timings.total_micros,
             timings.validate_inputs_micros,
@@ -63,9 +63,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             timings.lftj_build_micros,
             timings.execute_micros,
             timings.lftj_execute_micros,
-            timings.sink_emit_micros,
             timings.sink_finish_micros,
-            timings.decode_micros,
             timings.unaccounted_micros,
             json_escape(&result.allocation_scope),
             allocations.enabled,
@@ -103,9 +101,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "]}},\"counters\":{{\"cursor_seeks\":{},\"facts_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"encoded_project_facts_seen\":{},\"encoded_project_facts_inserted\":{},\"encoded_project_fact_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"lftj_lazy_access_slices\":{},\"lftj_eager_builds_avoided\":{},\"query_image_relations_loaded\":{},\"query_image_facts_loaded\":{},\"query_image_encoded_bytes\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
-            result.counters.cursor_seeks,
-            result.counters.facts_scanned,
+            "]}},\"counters\":{{\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"encoded_project_facts_seen\":{},\"encoded_project_facts_inserted\":{},\"encoded_project_fact_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"lftj_lazy_access_slices\":{},\"query_image_relations_loaded\":{},\"query_image_facts_loaded\":{},\"query_image_encoded_bytes\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.dictionary_reverse_lookups,
             result.materialized_values,
             result.counters.bindings_completed,
@@ -124,7 +120,6 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.counters.lftj_bind_rejects,
             result.counters.lftj_completed_bindings,
             result.counters.lftj_lazy_access_slices,
-            result.counters.lftj_eager_builds_avoided,
             result.query_image_relation_count,
             result.query_image_fact_count,
             result.query_image_encoded_column_bytes,
@@ -223,8 +218,6 @@ fn print_explain(explain: &str) {
             || line.contains("query_image_cache")
             || line.contains("planner_stats")
             || line.contains("free_join_node")
-            || line.contains("facts_scanned")
-            || line.contains("cursor_seeks")
             || line.contains("trie_intersections")
             || line.contains("variable_candidates")
             || line.contains("decoded_values")
