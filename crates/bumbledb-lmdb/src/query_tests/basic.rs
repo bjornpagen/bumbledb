@@ -415,7 +415,7 @@ fn chain_query_uses_lftj_and_returns_path() -> TestResult {
 }
 
 #[test]
-fn lazy_access_slice_avoids_temp_trie_builds_and_matches_eager_fallback() -> TestResult {
+fn lazy_access_slice_avoids_temp_trie_builds_and_matches_durable_fallback() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
@@ -455,7 +455,8 @@ fn lazy_access_slice_avoids_temp_trie_builds_and_matches_eager_fallback() -> Tes
     assert_eq!(lazy.plan.counters.lftj_atom_bytes_copied, 0);
     assert!(lazy.plan.counters.lftj_eager_builds_avoided >= 2);
     assert!(eager.plan.counters.sorted_trie_builds > lazy.plan.counters.sorted_trie_builds);
-    assert!(eager.plan.counters.lftj_atom_bytes_copied > lazy.plan.counters.lftj_atom_bytes_copied);
+    assert_eq!(eager.plan.counters.atom_temp_relation_builds, 0);
+    assert_eq!(eager.plan.counters.lftj_atom_bytes_copied, 0);
     Ok(())
 }
 

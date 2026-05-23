@@ -1,9 +1,12 @@
+#[cfg(test)]
 use std::time::Instant;
 
 use smallvec::SmallVec;
 
 use crate::query_image::{FactId, FactRange};
-use crate::{EncodedRef, FieldId, RelationId, RelationImage, Result};
+use crate::{EncodedRef, FieldId, RelationId};
+#[cfg(test)]
+use crate::{RelationImage, Result};
 
 /// Owned fixed-width encoded value used in trie levels.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -46,6 +49,7 @@ impl EncodedOwned {
 }
 
 /// Sorted trie index build specification.
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IndexSpec {
     /// Stable index name.
@@ -54,6 +58,7 @@ pub struct IndexSpec {
     pub fields: Vec<FieldId>,
 }
 
+#[cfg(test)]
 impl IndexSpec {
     /// Creates a sorted trie index build specification.
     pub fn new(name: impl Into<String>, fields: impl IntoIterator<Item = FieldId>) -> Self {
@@ -90,6 +95,7 @@ pub struct SortedTrieIndex {
 
 impl SortedTrieIndex {
     /// Builds a sorted trie index from an immutable relation image.
+    #[cfg(test)]
     pub fn build(relation: &RelationImage, spec: IndexSpec) -> Result<Self> {
         let _span = tracing::debug_span!(
             "bumbledb.sorted_trie.build",
@@ -172,6 +178,7 @@ pub struct TrieStats {
 }
 
 impl TrieStats {
+    #[cfg(test)]
     fn from_levels(fact_count: usize, levels: &[TrieLevel], build_micros: u128) -> Self {
         let distinct_by_depth = levels
             .iter()
@@ -399,6 +406,7 @@ impl TrieIter for SortedTrieIter<'_> {
     }
 }
 
+#[cfg(test)]
 fn build_levels(
     relation: &RelationImage,
     order: &[FactId],

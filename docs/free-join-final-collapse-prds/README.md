@@ -111,10 +111,10 @@ Completed and deleted PRDs:
 8. `08-free-join-plan-execution-authority.md` partially; variable order now comes from `FreeJoinPlan`, but explanatory `SubAtom` plan data remains and must be deleted next.
 9. `09-delete-node-implementation-indirection.md`
 10. `10-delete-explanatory-free-join-plan-surface.md`
+11. `11-replace-eager-sorted-trie-fallback.md`
 
 Remaining ordered PRDs:
 
-11. `11-replace-eager-sorted-trie-fallback.md`
 12. `12-delete-sorted-trie-cache-and-temp-builds.md`
 13. `13-delete-stale-diagnostics-and-bench-mechanics.md`
 14. `14-minimize-query-image-and-cache.md`

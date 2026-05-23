@@ -25,6 +25,16 @@ fn build_lftj_atom_plan<'image>(
         .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
     let variables = atom_variables_in_plan_order(atom, variable_order_ids);
     let local_comparisons = atom_local_comparison_predicates(query, atom);
+    if variables.is_empty() {
+        let slice = static_atom_lazy_access_slice(source, inputs, atom)?;
+        counters.lftj_lazy_access_slices += 1;
+        counters.lftj_eager_builds_avoided += 1;
+        return Ok(LftjAtomPlan {
+            variables,
+            fact_count: slice.fact_count,
+            source: LftjAtomSource::LazyAccess(slice),
+        });
+    }
     if let Some(slice) =
         lazy_lftj_access_slice(source, inputs, atom, &variables, &local_comparisons)?
     {
@@ -38,13 +48,20 @@ fn build_lftj_atom_plan<'image>(
     }
     let cache_key = lftj_atom_cache_key(atom, &variables, inputs, &local_comparisons);
     let cached = image.cached_sorted_trie(cache_key, || {
-        if let Some(build) =
-            build_durable_lftj_sorted_trie(source, inputs, atom, &variables, &local_comparisons)?
-        {
-            Ok(build)
-        } else {
-            build_lftj_sorted_trie(source, query, inputs, atom, &variables, &local_comparisons)
-        }
+        build_durable_lftj_sorted_trie(
+            source,
+            inputs,
+            atom,
+            &variables,
+            &local_comparisons,
+            query.vars.len(),
+        )?
+        .ok_or_else(|| {
+            Error::internal(format!(
+                "LFTJ atom {} has no durable lazy access path for variables {:?}",
+                atom.relation_name, variables
+            ))
+        })
     })?;
     if cached.hit {
         counters.sorted_trie_cache_hits += 1;
@@ -54,13 +71,6 @@ fn build_lftj_atom_plan<'image>(
         counters.sorted_trie_build_micros = counters
             .sorted_trie_build_micros
             .saturating_add(cached.build_micros as u64);
-        counters.atom_temp_relation_builds += 1;
-        counters.atom_temp_relation_source_facts = counters
-            .atom_temp_relation_source_facts
-            .saturating_add(cached.source_facts_scanned);
-        counters.atom_temp_relation_facts = counters
-            .atom_temp_relation_facts
-            .saturating_add(cached.index.stats.fact_count as u64);
         counters.lftj_atom_source_facts_scanned = counters
             .lftj_atom_source_facts_scanned
             .saturating_add(cached.source_facts_scanned);
@@ -186,6 +196,69 @@ fn lazy_access_shape(
     }
 }
 
+fn static_atom_lazy_access_slice<'a>(
+    source: &'a RelationImage,
+    inputs: &EncodedInputs,
+    atom: &NormAtom,
+) -> Result<LazyAccessSlice<'a>> {
+    let mut best: Option<(usize, Vec<u8>, &'a crate::query_image::RelationIndexImage)> = None;
+    for index in source.indexes() {
+        if !atom
+            .fields
+            .iter()
+            .all(|field| index.contains_field(field.field))
+        {
+            continue;
+        }
+        let mut prefix = Vec::new();
+        let mut prefix_fields = 0usize;
+        for field in &index.fields {
+            let Some(atom_field) = atom
+                .fields
+                .iter()
+                .find(|atom_field| atom_field.field == *field)
+            else {
+                break;
+            };
+            let expected = match &atom_field.term {
+                NormTerm::Input(input) => inputs.get(*input),
+                NormTerm::Literal(literal) => Some(literal),
+                NormTerm::Var(_) | NormTerm::Wildcard => None,
+            };
+            let Some(expected) = expected else {
+                break;
+            };
+            prefix.extend_from_slice(expected.as_bytes());
+            prefix_fields += 1;
+        }
+        if best
+            .as_ref()
+            .is_none_or(|(existing, _, _)| prefix_fields > *existing)
+        {
+            best = Some((prefix_fields, prefix, index));
+        }
+    }
+    let Some((_, prefix, index)) = best else {
+        return Err(Error::internal("static LFTJ atom has no durable access path"));
+    };
+    let range = index.prefix_range(&prefix);
+    let mut fact_count = 0usize;
+    for position in range.clone() {
+        let entry = index
+            .entry_at(position)
+            .ok_or_else(|| Error::internal("missing durable index entry"))?;
+        if atom_index_entry_value_slots(index, inputs, atom, entry, 0)?.is_some() {
+            fact_count += 1;
+        }
+    }
+    Ok(LazyAccessSlice {
+        index,
+        fields: Vec::new(),
+        range,
+        fact_count,
+    })
+}
+
 fn lazy_access_covers_atom(
     index: &crate::query_image::RelationIndexImage,
     atom: &NormAtom,
@@ -223,10 +296,22 @@ fn build_durable_lftj_sorted_trie(
     atom: &NormAtom,
     variables: &[usize],
     local_comparisons: &[&NormPredicate],
+    variable_count: usize,
 ) -> Result<Option<SortedTrieBuild>> {
-    if variables.is_empty() || !local_comparisons.is_empty() {
+    if variables.is_empty() {
         return Ok(None);
     }
+    let fields = variables
+        .iter()
+        .map(|variable| {
+            atom.fields
+                .iter()
+                .find(|field| matches!(field.term, NormTerm::Var(id) if id.0 as usize == *variable))
+                .map(|field| field.field)
+                .ok_or_else(|| Error::internal("missing LFTJ atom variable field"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut best: Option<(usize, Vec<u8>, &crate::query_image::RelationIndexImage)> = None;
     for index in source.indexes() {
         if !atom
             .fields
@@ -260,53 +345,86 @@ fn build_durable_lftj_sorted_trie(
                 NormTerm::Var(_) | NormTerm::Wildcard => break,
             }
         }
-        let prefix_field_count = cursor;
-        let mut fields = Vec::new();
-        let mut eligible = true;
-        for variable in variables {
-            let Some(atom_field) = atom.fields.iter().find(
-                |field| matches!(field.term, NormTerm::Var(id) if id.0 as usize == *variable),
-            ) else {
-                eligible = false;
-                break;
-            };
-            if index.fields.get(cursor) != Some(&atom_field.field) {
-                eligible = false;
-                break;
-            }
-            fields.push(atom_field.field);
-            cursor += 1;
+        if best
+            .as_ref()
+            .is_none_or(|(best_prefix_fields, _, _)| cursor > *best_prefix_fields)
+        {
+            best = Some((cursor, prefix, index));
         }
-        if !eligible {
-            continue;
-        }
-        if atom.fields.iter().any(|field| match &field.term {
-            NormTerm::Input(_) | NormTerm::Literal(_) => {
-                !index.fields[..prefix_field_count].contains(&field.field)
-            }
-            NormTerm::Var(variable) => !variables.contains(&(variable.0 as usize)),
-            NormTerm::Wildcard => false,
-        }) {
-            continue;
-        }
-        return build_sorted_trie_from_relation_index(source.id, index, &prefix, &fields).map(Some);
     }
-    Ok(None)
+    let Some((_, prefix, index)) = best else {
+        return Ok(None);
+    };
+    build_sorted_trie_from_relation_index(DurableAtomTrieInput {
+        relation: source.id,
+        index,
+        prefix: &prefix,
+        fields: &fields,
+        inputs,
+        atom,
+        local_comparisons,
+        variable_count,
+    })
+    .map(Some)
 }
 
-fn build_sorted_trie_from_relation_index(
+struct DurableAtomTrieInput<'a, 'query> {
     relation: crate::RelationId,
-    index: &crate::query_image::RelationIndexImage,
-    prefix: &[u8],
-    fields: &[FieldId],
-) -> Result<SortedTrieBuild> {
+    index: &'a crate::query_image::RelationIndexImage,
+    prefix: &'a [u8],
+    fields: &'a [FieldId],
+    inputs: &'a EncodedInputs,
+    atom: &'a NormAtom,
+    local_comparisons: &'a [&'query NormPredicate],
+    variable_count: usize,
+}
+
+fn build_sorted_trie_from_relation_index(input: DurableAtomTrieInput<'_, '_>) -> Result<SortedTrieBuild> {
     let start = Instant::now();
-    let range = index.prefix_range(prefix);
-    let fact_count = range.end.saturating_sub(range.start);
-    let order = (0..fact_count)
-        .map(|fact| FactId(fact as u32))
+    let range = input.index.prefix_range(input.prefix);
+    let mut source_facts_scanned = 0u64;
+    let mut positions = Vec::new();
+    for position in range {
+        source_facts_scanned += 1;
+        let entry = input
+            .index
+            .entry_at(position)
+            .ok_or_else(|| Error::internal("missing durable index entry"))?;
+        if let Some(slots) = atom_index_entry_value_slots(
+            input.index,
+            input.inputs,
+            input.atom,
+            entry,
+            input.variable_count,
+        )? && atom_local_comparisons_pass_slots(
+            input.local_comparisons,
+            input.inputs,
+            &slots,
+        )?
+        {
+            positions.push(position);
+        }
+    }
+    let fact_count = positions.len();
+    positions.sort_by(|left, right| {
+        for field in input.fields {
+            let left_value = durable_index_component_owned(input.index, *left, *field);
+            let right_value = durable_index_component_owned(input.index, *right, *field);
+            match (left_value, right_value) {
+                (Ok(left_value), Ok(right_value)) => match left_value.cmp(&right_value) {
+                    std::cmp::Ordering::Equal => continue,
+                    ordering => return ordering,
+                },
+                _ => return left.cmp(right),
+            }
+        }
+        left.cmp(right)
+    });
+    let order = positions
+        .iter()
+        .map(|position| FactId(*position as u32))
         .collect::<Vec<_>>();
-    let levels = durable_sorted_trie_levels(index, range.start, fact_count, fields)?;
+    let levels = durable_sorted_trie_levels(input.index, &positions, input.fields)?;
     let distinct_by_depth = levels
         .iter()
         .map(|level| level.keys.len())
@@ -328,9 +446,9 @@ fn build_sorted_trie_from_relation_index(
         avg_fanout_by_depth.push(avg);
     }
     let trie = SortedTrieIndex {
-        relation,
-        name: format!("durable_{}_lftj", index.access.0),
-        fields: fields.to_vec(),
+        relation: input.relation,
+        name: format!("durable_{}_lftj", input.index.access.0),
+        fields: input.fields.to_vec(),
         order,
         levels,
         stats: crate::TrieStats {
@@ -343,7 +461,7 @@ fn build_sorted_trie_from_relation_index(
     };
     Ok(SortedTrieBuild {
         index: trie,
-        source_facts_scanned: fact_count as u64,
+        source_facts_scanned,
         facts_retained: fact_count as u64,
         bytes_copied: 0,
         scan_micros: 0,
@@ -354,12 +472,11 @@ fn build_sorted_trie_from_relation_index(
 
 fn durable_sorted_trie_levels(
     index: &crate::query_image::RelationIndexImage,
-    base: usize,
-    fact_count: usize,
+    positions: &[usize],
     fields: &[FieldId],
 ) -> Result<Vec<crate::TrieLevel>> {
     let mut levels = Vec::new();
-    let mut parents = vec![(0usize, fact_count, u32::MAX)];
+    let mut parents = vec![(0usize, positions.len(), u32::MAX)];
     for field in fields {
         let mut level = crate::TrieLevel {
             field: *field,
@@ -371,10 +488,10 @@ fn durable_sorted_trie_levels(
         for (parent_start, parent_end, parent_index) in parents {
             let mut start = parent_start;
             while start < parent_end {
-                let key = durable_index_component_owned(index, base + start, *field)?;
+                let key = durable_index_component_owned(index, positions[start], *field)?;
                 let mut end = start + 1;
                 while end < parent_end {
-                    let next = durable_index_component_owned(index, base + end, *field)?;
+                    let next = durable_index_component_owned(index, positions[end], *field)?;
                     if next != key {
                         break;
                     }
@@ -411,209 +528,7 @@ fn durable_index_component_owned(
     encoded_owned_for_width(bytes.len(), bytes)
 }
 
-fn build_lftj_sorted_trie(
-    source: &RelationImage,
-    query: &NormalizedQuery,
-    inputs: &EncodedInputs,
-    atom: &NormAtom,
-    variables: &[usize],
-    local_comparisons: &[&NormPredicate],
-) -> Result<SortedTrieBuild> {
-    let fields = variables
-        .iter()
-        .enumerate()
-        .map(|(id, variable)| crate::FieldImage {
-            id: FieldId(id as u16),
-            name: query.vars[*variable].name.clone(),
-            value_type: query.vars[*variable].value_type.clone(),
-            width: query.vars[*variable].value_type.encoded_width(),
-        })
-        .collect::<Vec<_>>();
-    let mut builders = encoded_column_builders(&fields, 0)?;
-    let mut included_facts = 0usize;
-    let source_facts_scanned;
-
-    let mut bytes_copied = 0u64;
-    let scan_start = Instant::now();
-    {
-        let _span = tracing::debug_span!("bumbledb.query.lftj.build.scan_filter_copy").entered();
-        if let Some(indexed) = append_indexed_lftj_atom_values(
-            &mut builders,
-            source,
-            query,
-            inputs,
-            atom,
-            variables,
-            local_comparisons,
-        )? {
-            source_facts_scanned = indexed.source_facts_scanned;
-            included_facts = indexed.facts_retained as usize;
-            bytes_copied = bytes_copied.saturating_add(indexed.bytes_appended);
-        } else {
-            source_facts_scanned = source.fact_count as u64;
-            for fact in 0..source.fact_count {
-                let fact = FactId(fact as u32);
-                let Some(slots) =
-                    atom_fact_value_slots(source, inputs, atom, fact, query.vars.len())?
-                else {
-                    continue;
-                };
-                if !atom_local_comparisons_pass_slots(local_comparisons, inputs, &slots)? {
-                    continue;
-                }
-                included_facts += 1;
-                bytes_copied = bytes_copied.saturating_add(append_atom_slots(
-                    &mut builders,
-                    &slots,
-                    variables,
-                )?);
-            }
-        }
-    }
-    let scan_micros = elapsed_micros(scan_start).min(u128::from(u64::MAX)) as u64;
-
-    let fact_count = if variables.is_empty() {
-        included_facts
-    } else {
-        builders[0].len()
-    };
-    let encoded_column_bytes = builders
-        .iter()
-        .map(EncodedColumnBuilder::byte_len)
-        .sum::<usize>();
-    let column_start = Instant::now();
-    let columns = {
-        let _span = tracing::debug_span!("bumbledb.query.lftj.build.column_image").entered();
-        finish_column_builders(builders)
-    };
-    let column_micros = elapsed_micros(column_start).min(u128::from(u64::MAX)) as u64;
-    let relation = RelationImage {
-        id: source.id,
-        name: atom.relation_name.clone(),
-        fact_count,
-        fields,
-        columns,
-        indexes: Vec::new(),
-        stats: RelationStats {
-            fact_count,
-            field_count: variables.len(),
-            encoded_column_bytes,
-        },
-    };
-    let sort_start = Instant::now();
-    let trie = {
-        let _span = tracing::debug_span!("bumbledb.query.lftj.build.sorted_trie").entered();
-        crate::query_image::build_sorted_trie_index(
-            &relation,
-            IndexSpec::new(
-                format!("{}_lftj", atom.relation_name),
-                (0..variables.len()).map(|id| FieldId(id as u16)),
-            ),
-        )?
-    };
-    let sort_micros = elapsed_micros(sort_start).min(u128::from(u64::MAX)) as u64;
-    Ok(SortedTrieBuild {
-        index: trie,
-        source_facts_scanned,
-        facts_retained: fact_count as u64,
-        bytes_copied,
-        scan_micros,
-        column_micros,
-        sort_micros,
-    })
-}
-
-struct IndexedPrefixAppendStats {
-    source_facts_scanned: u64,
-    facts_retained: u64,
-    bytes_appended: u64,
-}
-
 type AtomValueSlots = SmallVec<[Option<EncodedOwned>; 8]>;
-
-fn append_indexed_lftj_atom_values(
-    builders: &mut [EncodedColumnBuilder],
-    source: &RelationImage,
-    query: &NormalizedQuery,
-    inputs: &EncodedInputs,
-    atom: &NormAtom,
-    variables: &[usize],
-    local_comparisons: &[&NormPredicate],
-) -> Result<Option<IndexedPrefixAppendStats>> {
-    let mut best = None;
-    for index in source.indexes() {
-        if !atom
-            .fields
-            .iter()
-            .all(|field| index.contains_field(field.field))
-        {
-            continue;
-        }
-        let mut prefix = Vec::new();
-        let mut prefix_fields = 0usize;
-        for field in &index.fields {
-            let Some(atom_field) = atom
-                .fields
-                .iter()
-                .find(|atom_field| atom_field.field == *field)
-            else {
-                break;
-            };
-            let expected = match &atom_field.term {
-                NormTerm::Input(input) => inputs.get(*input),
-                NormTerm::Literal(literal) => Some(literal),
-                NormTerm::Var(_) | NormTerm::Wildcard => None,
-            };
-            let Some(expected) = expected else {
-                break;
-            };
-            prefix.extend_from_slice(expected.as_bytes());
-            prefix_fields += 1;
-        }
-        if prefix_fields == 0 {
-            continue;
-        }
-        if best
-            .as_ref()
-            .is_none_or(|(fields, _, _): &(usize, Vec<u8>, usize)| prefix_fields > *fields)
-        {
-            best = Some((prefix_fields, prefix, index.access.0 as usize));
-        }
-    }
-    let Some((_, prefix, access)) = best else {
-        return Ok(None);
-    };
-    let index = source
-        .indexes()
-        .iter()
-        .find(|index| index.access.0 as usize == access)
-        .ok_or_else(|| Error::internal("missing selected LFTJ atom index"))?;
-    let mut source_facts_scanned = 0u64;
-    let mut facts_retained = 0u64;
-    let mut bytes_appended = 0u64;
-    let _span = tracing::trace_span!(
-        "bumbledb.query.lftj_atom.indexed_prefix",
-        relation = %source.name,
-        prefix_bytes = prefix.len()
-    )
-    .entered();
-    for entry in index.entries_with_prefix(&prefix) {
-        source_facts_scanned += 1;
-        if let Some(slots) =
-            atom_index_entry_value_slots(index, inputs, atom, entry, query.vars.len())?
-            && atom_local_comparisons_pass_slots(local_comparisons, inputs, &slots)?
-        {
-            facts_retained += 1;
-            bytes_appended =
-                bytes_appended.saturating_add(append_atom_slots(builders, &slots, variables)?);
-        }
-    }
-    Ok(Some(IndexedPrefixAppendStats {
-        source_facts_scanned,
-        facts_retained,
-        bytes_appended,
-    }))
-}
 
 fn atom_index_entry_value_slots(
     index: &crate::query_image::RelationIndexImage,
@@ -673,26 +588,6 @@ fn bind_atom_slot(
     }
     *slot = Some(encoded_owned_for_width(value_type.encoded_width(), bytes)?);
     Ok(true)
-}
-
-fn append_atom_slots(
-    builders: &mut [EncodedColumnBuilder],
-    slots: &AtomValueSlots,
-    variables: &[usize],
-) -> Result<u64> {
-    let mut bytes_appended = 0u64;
-    for (column, variable) in variables.iter().enumerate() {
-        let value = slots
-            .get(*variable)
-            .and_then(Option::as_ref)
-            .ok_or_else(|| Error::internal("missing LFTJ variable value"))?;
-        builders
-            .get_mut(column)
-            .ok_or_else(|| Error::internal("missing LFTJ column builder"))?
-            .append_encoded_owned(value)?;
-        bytes_appended = bytes_appended.saturating_add(value.as_bytes().len() as u64);
-    }
-    Ok(bytes_appended)
 }
 
 fn atom_local_comparisons_pass_slots(
@@ -874,42 +769,3 @@ fn atom_variables_in_plan_order(atom: &NormAtom, variable_order_ids: &[usize]) -
         .filter(|variable| atom_contains_variable(atom, *variable))
         .collect()
 }
-
-fn atom_fact_value_slots(
-    relation: &RelationImage,
-    inputs: &EncodedInputs,
-    atom: &NormAtom,
-    fact: FactId,
-    variable_count: usize,
-) -> Result<Option<AtomValueSlots>> {
-    let mut slots = empty_atom_slots(variable_count);
-    for field in &atom.fields {
-        let bytes = relation
-            .encoded_bytes(fact, field.field)
-            .ok_or_else(|| Error::internal("missing atom field in relation image"))?;
-        match &field.term {
-            NormTerm::Var(variable) => {
-                let variable = variable.0 as usize;
-                if !bind_atom_slot(&mut slots, variable, &field.value_type, bytes)? {
-                    return Ok(None);
-                }
-            }
-            NormTerm::Input(input) => {
-                let input = inputs
-                    .get(*input)
-                    .ok_or_else(|| Error::internal("missing normalized input"))?;
-                if input.as_bytes() != bytes {
-                    return Ok(None);
-                }
-            }
-            NormTerm::Literal(literal) => {
-                if literal.as_bytes() != bytes {
-                    return Ok(None);
-                }
-            }
-            NormTerm::Wildcard => {}
-        }
-    }
-    Ok(Some(slots))
-}
-

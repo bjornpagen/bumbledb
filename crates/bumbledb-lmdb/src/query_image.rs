@@ -6,11 +6,11 @@ use std::time::Instant;
 
 use bumbledb_core::schema::{RelationDescriptor, SchemaFingerprint, ValueType};
 
+#[cfg(test)]
+use crate::EncodedOwned;
 use crate::planner_stats::{PlannerStatsCache, PlannerStatsCacheDiagnostics};
 use crate::storage_schema::FACT_SET_ACCESS_NAME;
-use crate::{
-    AccessId, EncodedOwned, Error, IndexSpec, ReadTxn, Result, SortedTrieIndex, StorageSchema,
-};
+use crate::{AccessId, Error, ReadTxn, Result, SortedTrieIndex, StorageSchema};
 
 /// Cache key for an immutable query image.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -385,13 +385,6 @@ pub(crate) struct SortedTrieBuild {
     pub sort_micros: u64,
 }
 
-pub(crate) fn build_sorted_trie_index(
-    relation: &RelationImage,
-    spec: IndexSpec,
-) -> Result<SortedTrieIndex> {
-    SortedTrieIndex::build(relation, spec)
-}
-
 /// Query image build/cache statistics.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QueryImageStats {
@@ -478,6 +471,7 @@ impl RelationIndexImage {
     }
 
     /// Returns encoded entries matching a leading component prefix.
+    #[cfg(test)]
     pub fn entries_with_prefix<'a>(&'a self, prefix: &'a [u8]) -> RelationIndexPrefixIter<'a> {
         let range = self.prefix_range(prefix);
         RelationIndexPrefixIter {
@@ -561,6 +555,7 @@ impl RelationIndexImage {
 }
 
 /// Iterator over durable index entries matching an encoded prefix.
+#[cfg(test)]
 pub struct RelationIndexPrefixIter<'a> {
     index: &'a RelationIndexImage,
     prefix: &'a [u8],
@@ -568,6 +563,7 @@ pub struct RelationIndexPrefixIter<'a> {
     end: usize,
 }
 
+#[cfg(test)]
 impl<'a> Iterator for RelationIndexPrefixIter<'a> {
     type Item = &'a [u8];
 
@@ -593,6 +589,7 @@ impl RelationImage {
     }
 
     /// Returns the encoded bytes for `fact` and `field`.
+    #[cfg(test)]
     pub(crate) fn encoded_bytes(&self, fact: FactId, field: FieldId) -> Option<&[u8]> {
         self.encoded(fact, field).map(EncodedRef::as_bytes)
     }
@@ -761,6 +758,7 @@ impl EncodedColumnBuilder {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn append_encoded_owned(&mut self, value: &EncodedOwned) -> Result<()> {
         self.append_bytes(value.as_bytes())
     }
@@ -785,10 +783,7 @@ impl EncodedColumnBuilder {
         }
     }
 
-    pub(crate) fn byte_len(&self) -> usize {
-        self.len() * self.width()
-    }
-
+    #[cfg(test)]
     pub(crate) fn width(&self) -> usize {
         match self {
             Self::Bool { .. } => 1,

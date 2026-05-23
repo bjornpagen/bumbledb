@@ -15,18 +15,15 @@ use bumbledb_core::schema::{IndexKind, ValueType};
 
 use crate::query_image::{FactId, FactRange};
 use crate::{
-    AtomId, EncodedOwned, Error, FieldId, FreeJoinPlan, IndexSpec, LinearIter, NodeId, OutputPlan,
-    PlanNode, ProjectPlan, ReadTxn, RelationImage, RelationStats, Result, SortedTrieIndex,
-    StorageSchema, TrieIter, Value, VarId,
+    AtomId, EncodedOwned, Error, FieldId, FreeJoinPlan, LinearIter, NodeId, OutputPlan, PlanNode,
+    ProjectPlan, ReadTxn, RelationImage, Result, SortedTrieIndex, StorageSchema, TrieIter, Value,
+    VarId,
 };
 
 use crate::QueryImageCacheDiagnostics;
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
 use crate::planner_stats::{PlannerIndexStats, PlannerRelationStats, PlannerStatsCacheDiagnostics};
-use crate::query_image::{
-    EncodedColumnBuilder, LftjAtomKey, QueryImageScope, SortedTrieBuild, encoded_column_builders,
-    finish_column_builders,
-};
+use crate::query_image::{LftjAtomKey, QueryImageScope, SortedTrieBuild};
 
 /// Query input bindings keyed by input name without `$`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
