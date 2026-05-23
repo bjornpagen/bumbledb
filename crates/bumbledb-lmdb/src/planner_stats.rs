@@ -26,7 +26,7 @@ struct PlannerStatsCacheInner {
     build_micros: AtomicU64,
     field_stats_built: AtomicU64,
     index_stats_built: AtomicU64,
-    stats_from_segments: AtomicU64,
+    stats_from_access_images: AtomicU64,
     stats_exact_scans: AtomicU64,
 }
 
@@ -83,7 +83,7 @@ impl PlannerStatsCache {
             .index_stats_built
             .fetch_add(built.indexes.len() as u64, Ordering::Relaxed);
         self.inner
-            .stats_from_segments
+            .stats_from_access_images
             .fetch_add(built.indexes.len() as u64, Ordering::Relaxed);
         Ok(built)
     }
@@ -102,7 +102,7 @@ impl PlannerStatsCache {
             build_micros: self.inner.build_micros.load(Ordering::Relaxed),
             field_stats_built: self.inner.field_stats_built.load(Ordering::Relaxed),
             index_stats_built: self.inner.index_stats_built.load(Ordering::Relaxed),
-            stats_from_segments: self.inner.stats_from_segments.load(Ordering::Relaxed),
+            stats_from_access_images: self.inner.stats_from_access_images.load(Ordering::Relaxed),
             stats_exact_scans: self.inner.stats_exact_scans.load(Ordering::Relaxed),
         }
     }
@@ -126,7 +126,7 @@ pub struct PlannerStatsCacheDiagnostics {
     /// Access-path/index-stat descriptors built without exact trie construction.
     pub index_stats_built: u64,
     /// Access-path stats derived from relation/access metadata.
-    pub stats_from_segments: u64,
+    pub stats_from_access_images: u64,
     /// Exact field/index scans performed during planning.
     pub stats_exact_scans: u64,
 }

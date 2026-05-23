@@ -23,8 +23,6 @@ fn query_observability_defaults_are_zero() {
     assert_eq!(timings.total_micros, 0);
     assert_eq!(timings.execute_micros, 0);
     assert_eq!(timings.unaccounted_micros, 0);
-    assert_eq!(QueryRuntimeKind::default(), QueryRuntimeKind::Lftj);
-
     let allocations = QueryAllocationStats::default();
     assert!(!allocations.enabled);
     assert_eq!(allocations.alloc_calls, 0);
@@ -103,8 +101,6 @@ fn executes_single_relation_query() -> TestResult {
         output.result.facts,
         vec![vec![Value::Serial(1)], vec![Value::Serial(2)]]
     );
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert!(output.plan.timings.total_micros > 0);
     assert!(output.plan.timings.execute_micros <= output.plan.timings.total_micros);
     assert!(!output.plan.allocations.enabled);
@@ -173,9 +169,6 @@ fn static_lookup_uses_planned_lftj_after_storage_bypass_deletion() -> TestResult
             &InputBindings::from_values([("kind", Value::Enum(1))]),
         )
     })?;
-
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert_eq!(output.plan.optimizer.chosen, "free_join_sorted_leapfrog");
     assert_eq!(output.plan.query_image_cache.builds, 1);
     assert_same_facts(
@@ -215,7 +208,6 @@ fn lftj_empty_checks_static_existence_atoms() -> TestResult {
     })?;
 
     assert!(output.result.facts.is_empty());
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
 }
@@ -246,9 +238,6 @@ fn partial_probe_shape_falls_back_to_lftj() -> TestResult {
     })?;
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert!(
         output
             .plan
@@ -308,9 +297,6 @@ fn prefix_range_filter_uses_lftj() -> TestResult {
             ]),
         )
     })?;
-
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert_same_facts(
         &output.result.facts,
         &[vec![Value::U64(10), Value::Timestamp(TimestampMicros(5))]],
@@ -362,9 +348,6 @@ fn no_prefix_range_filter_uses_lftj() -> TestResult {
             ]),
         )
     })?;
-
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert_eq!(output.plan.query_image_cache.builds, 1);
     assert_same_facts(
         &output.result.facts,
@@ -417,8 +400,6 @@ fn prefix_range_empty_prefix_returns_zero_facts() -> TestResult {
             ]),
         )
     })?;
-
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(output.result.facts.is_empty());
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
@@ -452,9 +433,6 @@ fn chain_query_uses_lftj_and_returns_path() -> TestResult {
             &InputBindings::from_values([("a", Value::U64(1))]),
         )
     })?;
-
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert_eq!(output.result.facts, vec![vec![Value::U64(30)]]);
     assert_eq!(output.plan.counters.materialized_output_values, 1);
     assert_eq!(output.plan.counters.dictionary_reverse_lookups, 0);
@@ -529,9 +507,6 @@ fn chain_existence_filter_after_binding_returns_survivor() -> TestResult {
             &InputBindings::from_values([("a", Value::U64(1))]),
         )
     })?;
-
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert_eq!(output.result.facts, vec![vec![Value::U64(10)]]);
     assert!(output.plan.counters.trie_open > 0);
     Ok(())
@@ -557,8 +532,6 @@ fn chain_existence_filter_can_remove_all_bindings() -> TestResult {
             &InputBindings::from_values([("a", Value::U64(1))]),
         )
     })?;
-
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(output.result.facts.is_empty());
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
@@ -598,9 +571,6 @@ fn tag_lookup_like_projection_uses_lftj_after_literal_filter() -> TestResult {
             &InputBindings::from_values([("a", Value::U64(1))]),
         )
     })?;
-
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert_same_facts(
         &output.result.facts,
         &[vec![Value::U64(10), Value::U64(20)]],
@@ -634,10 +604,6 @@ fn cardinality_matches_materialized_projection_without_decoding_output() -> Test
     let cardinality = env.read(|txn| txn.execute_result_cardinality(&schema, &query, &inputs))?;
 
     assert_eq!(cardinality.cardinality, materialized.result.facts.len());
-    assert_eq!(
-        cardinality.plan.runtime_kind,
-        materialized.plan.runtime_kind
-    );
     assert_eq!(cardinality.plan.counters.materialized_output_values, 0);
     Ok(())
 }
@@ -667,8 +633,6 @@ fn chain_broken_path_returns_zero_facts() -> TestResult {
             &InputBindings::from_values([("a", Value::U64(1))]),
         )
     })?;
-
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(output.result.facts.is_empty());
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
@@ -699,7 +663,6 @@ fn optimizer_keeps_cyclic_triangle_on_lftj() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(
         output
             .plan
@@ -737,8 +700,6 @@ fn lftj_atom_cache_reuses_equivalent_relation_aliases() -> TestResult {
     })?;
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(output.plan.counters.sorted_trie_builds <= 1);
     assert_eq!(output.result.facts.len(), 4);
     Ok(())
@@ -760,8 +721,6 @@ fn lftj_atom_cache_separates_literal_local_comparison_filters() -> TestResult {
 
         assert_eq!(first.result.facts, vec![vec![Value::U64(2)]]);
         assert_eq!(second.result.facts, vec![vec![Value::U64(3)]]);
-        assert_eq!(first.plan.runtime_kind, QueryRuntimeKind::Lftj);
-        assert_eq!(second.plan.runtime_kind, QueryRuntimeKind::Lftj);
         assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
         assert!(second.plan.counters.sorted_trie_cache_misses >= 1);
         Ok::<_, Error>(())
@@ -785,8 +744,6 @@ fn lftj_atom_cache_reuses_identical_local_comparison_filters() -> TestResult {
 
         assert_eq!(first.result.facts, vec![vec![Value::U64(2)]]);
         assert_eq!(second.result.facts, vec![vec![Value::U64(2)]]);
-        assert_eq!(first.plan.runtime_kind, QueryRuntimeKind::Lftj);
-        assert_eq!(second.plan.runtime_kind, QueryRuntimeKind::Lftj);
         assert!(second.plan.counters.sorted_trie_cache_hits >= 2);
         assert_eq!(second.plan.counters.sorted_trie_cache_misses, 0);
         Ok::<_, Error>(())
@@ -813,8 +770,6 @@ fn lftj_atom_cache_separates_prepared_input_local_comparison_filters() -> TestRe
 
         assert_eq!(first.result.facts, vec![vec![Value::U64(2)]]);
         assert_eq!(second.result.facts, vec![vec![Value::U64(3)]]);
-        assert_eq!(first.plan.runtime_kind, QueryRuntimeKind::Lftj);
-        assert_eq!(second.plan.runtime_kind, QueryRuntimeKind::Lftj);
         assert!(second.plan.prepared_plan_cache.hits >= 1);
         assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
         assert!(second.plan.counters.sorted_trie_cache_misses >= 1);
@@ -844,8 +799,6 @@ fn lftj_reuses_lazy_access_across_cross_atom_comparison_filters() -> TestResult 
 
         assert_same_facts(&first.result.facts, &[vec![Value::U64(10)]]);
         assert_same_facts(&second.result.facts, &[vec![Value::U64(30)]]);
-        assert_eq!(first.plan.runtime_kind, QueryRuntimeKind::Lftj);
-        assert_eq!(second.plan.runtime_kind, QueryRuntimeKind::Lftj);
         assert!(
             second.plan.counters.sorted_trie_cache_hits
                 + second.plan.counters.lftj_eager_builds_avoided
@@ -876,7 +829,6 @@ fn lftj_empty_variable_atom_short_circuits_execution() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert!(output.result.facts.is_empty());
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(output.plan.optimizer.chosen, "free_join_sorted_leapfrog");
     assert_eq!(output.plan.counters.trie_open, 0);
     assert_eq!(output.plan.counters.variable_candidates, 0);
@@ -913,8 +865,6 @@ fn domain_count_falls_back_to_lftj_until_fast_paths_are_rebuilt() -> TestResult 
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     Ok(())
 }
 
@@ -949,7 +899,6 @@ fn domain_count_serial_literal_filter_uses_lftj() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(2)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -984,7 +933,6 @@ fn domain_count_enum_literal_filter_uses_lftj() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(2)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -1068,7 +1016,6 @@ fn domain_count_range_filter_uses_lftj() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(2)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -1175,7 +1122,6 @@ fn domain_count_literal_and_range_filters_use_lftj() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -1232,7 +1178,6 @@ fn optimizer_trace_and_cost_tiebreak_are_stable() -> TestResult {
     let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(first.plan.optimizer, second.plan.optimizer);
-    assert!(first.explain().contains("plan_family"));
     assert!(first.explain().contains("setup_micros"));
     assert!(first.explain().contains("candidate_plan"));
     assert!(first.explain().contains("free_join_estimates"));
@@ -1266,7 +1211,6 @@ fn prepared_plan_cache_reuses_parameterized_shape() -> TestResult {
     assert_eq!(first.plan.prepared_plan_cache.misses, 1);
     assert_eq!(first.plan.prepared_plan_cache.builds, 1);
     assert_eq!(second.plan.prepared_plan_cache.hits, 1);
-    assert_eq!(first.plan.plan_family, PlanFamily::FreeJoin);
     Ok(())
 }
 
@@ -2138,7 +2082,6 @@ fn lftj_empty_global_count_returns_zero_fact() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -2170,7 +2113,6 @@ fn lftj_dimension_fact_exists_but_fact_is_empty() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -2214,7 +2156,6 @@ fn lftj_disjoint_central_candidates_prove_empty() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -2244,8 +2185,7 @@ fn lftj_enum_literal_proves_empty() -> TestResult {
     })?;
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
     Ok(())
 }
 
@@ -2275,8 +2215,7 @@ fn lftj_serial_literal_proves_empty() -> TestResult {
     })?;
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+    assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
     Ok(())
 }
 
@@ -2314,7 +2253,6 @@ fn lftj_compound_relation_proves_empty() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -2348,7 +2286,6 @@ fn lftj_large_empty_join_returns_no_facts() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert!(output.result.facts.is_empty());
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -2380,7 +2317,6 @@ fn lftj_non_empty_query_is_not_proven_empty() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -2487,11 +2423,8 @@ fn lftj_cache_is_input_scoped_and_reuses_proven_empty() -> TestResult {
     let empty_cached = env.read(|txn| txn.execute_query(&schema, &query, &kind_two))?;
 
     assert_eq!(non_empty.result.facts, vec![vec![Value::U64(1)]]);
-    assert_eq!(non_empty.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(empty_first.result.facts, vec![vec![Value::U64(0)]]);
-    assert_eq!(empty_first.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(empty_cached.result.facts, vec![vec![Value::U64(0)]]);
-    assert_eq!(empty_cached.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -2528,7 +2461,6 @@ fn lftj_red_boat_like_wide_projection_skips_and_preserves_facts() -> TestResult 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_same_facts(&output.result.facts, &[vec![Value::U64(1), Value::U64(10)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -2615,7 +2547,6 @@ fn lftj_tpch_like_non_empty_materialized_projection_skips() -> TestResult {
         &output.result.facts,
         &[vec![Value::U64(10), Value::Enum(2)]],
     );
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -2766,7 +2697,6 @@ fn lftj_q24_like_empty_shape_proves_empty() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert!(output.result.facts.is_empty());
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -2901,7 +2831,6 @@ fn lftj_range_index_q16_like_count_proves_empty() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -3203,7 +3132,6 @@ fn explain_and_storage_diagnostics_are_available() -> TestResult {
     })?;
     let explain = output.explain();
     assert!(explain.contains("variable_order"));
-    assert!(explain.contains("runtime_kind"));
     assert!(explain.contains("timings:"));
     assert!(explain.contains("query_timing"));
     assert!(explain.contains("allocations:"));
@@ -3321,1095 +3249,4 @@ fn differential_reference_evaluator_matches_lmdb() -> TestResult {
     Ok(())
 }
 
-fn seeded_db() -> Result<(Environment, StorageSchema)> {
-    let dir = tempfile::tempdir().map_err(|error| Error::io("tempdir", error))?;
-    let path = dir.keep();
-    let env = Environment::open(&path)?;
-    let schema = StorageSchema::new(ledger_schema(), env.max_key_size())?;
-    let facts = seeded_facts();
-    env.write(|txn| {
-        for fact in &facts {
-            txn.insert(&schema, fact.clone())?;
-        }
-        Ok::<(), Error>(())
-    })?;
-    Ok((env, schema))
-}
-
-fn join_filter_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "JoinFilterDb",
-        vec![
-            RelationDescriptor::new(
-                "Dim",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new(
-                        "kind",
-                        ValueType::Enum {
-                            name: "Kind".to_owned(),
-                        },
-                    ),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"])),
-            RelationDescriptor::new(
-                "OtherDim",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new(
-                        "kind",
-                        ValueType::Enum {
-                            name: "Kind".to_owned(),
-                        },
-                    ),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"])),
-            RelationDescriptor::new(
-                "Fact",
-                vec![
-                    FieldDescriptor::new("dim", ValueType::U64),
-                    FieldDescriptor::new("item", ValueType::U64),
-                ],
-            )
-            .with_unique("dim_item", ["dim", "item"])
-            .with_index(IndexDescriptor::equality("by_item", ["item", "dim"])),
-            RelationDescriptor::new(
-                "OwnerGroup",
-                vec![
-                    FieldDescriptor::new(
-                        "owner",
-                        ValueType::Serial {
-                            type_name: "OwnerId".to_owned(),
-                            owning_relation: "OwnerGroup".to_owned(),
-                        },
-                    ),
-                    FieldDescriptor::new("group", ValueType::U64),
-                ],
-            )
-            .with_unique("owner_group", ["owner", "group"])
-            .with_index(IndexDescriptor::equality("by_group", ["group", "owner"])),
-            RelationDescriptor::new(
-                "OwnedFact",
-                vec![
-                    FieldDescriptor::new(
-                        "owner",
-                        ValueType::Serial {
-                            type_name: "OwnerId".to_owned(),
-                            owning_relation: "OwnerGroup".to_owned(),
-                        },
-                    ),
-                    FieldDescriptor::new("group", ValueType::U64),
-                    FieldDescriptor::new("item", ValueType::U64),
-                ],
-            )
-            .with_unique("owner_group_item", ["owner", "group", "item"])
-            .with_index(IndexDescriptor::equality(
-                "by_group",
-                ["group", "owner", "item"],
-            )),
-            RelationDescriptor::new(
-                "Pair",
-                vec![
-                    FieldDescriptor::new("left", ValueType::U64),
-                    FieldDescriptor::new("right", ValueType::U64),
-                ],
-            )
-            .with_unique("left_right", ["left", "right"])
-            .with_index(IndexDescriptor::equality("by_right", ["right", "left"])),
-        ],
-    )
-    .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
-        "Kind",
-        [1, 2, 3],
-    ))
-}
-
-fn join_budget_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "JoinBudgetDb",
-        vec![
-            RelationDescriptor::new(
-                "Big",
-                vec![
-                    FieldDescriptor::new("pad", ValueType::U64),
-                    FieldDescriptor::new("id", ValueType::U64),
-                ],
-            )
-            .with_unique("pad_id", ["pad", "id"]),
-            RelationDescriptor::new("Link", vec![FieldDescriptor::new("id", ValueType::U64)])
-                .with_unique("id", ["id"]),
-        ],
-    )
-}
-
-fn q24_like_join_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "Q24LikeJoinDb",
-        vec![
-            RelationDescriptor::new(
-                "Alias",
-                vec![FieldDescriptor::new("person", ValueType::U64)],
-            )
-            .with_unique("person", ["person"]),
-            RelationDescriptor::new(
-                "Character",
-                vec![FieldDescriptor::new("id", ValueType::U64)],
-            )
-            .with_unique("id", ["id"]),
-            RelationDescriptor::new(
-                "Appearance",
-                vec![
-                    FieldDescriptor::new("person", ValueType::U64),
-                    FieldDescriptor::new("work", ValueType::U64),
-                    FieldDescriptor::new("character", ValueType::U64),
-                    FieldDescriptor::new("role", ValueType::U64),
-                ],
-            )
-            .with_unique("person_work_role", ["person", "work", "role", "character"])
-            .with_index(IndexDescriptor::equality(
-                "by_role_work",
-                ["role", "work", "person", "character"],
-            )),
-            RelationDescriptor::new(
-                "Company",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("country", ValueType::String),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_country", ["country", "id"])),
-            RelationDescriptor::new(
-                "Keyword",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("word", ValueType::String),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_word", ["word", "id"])),
-            RelationDescriptor::new(
-                "WorkCompany",
-                vec![
-                    FieldDescriptor::new("work", ValueType::U64),
-                    FieldDescriptor::new("company", ValueType::U64),
-                ],
-            )
-            .with_unique("work_company", ["work", "company"])
-            .with_index(IndexDescriptor::equality("by_company", ["company", "work"])),
-            RelationDescriptor::new(
-                "WorkKeyword",
-                vec![
-                    FieldDescriptor::new("work", ValueType::U64),
-                    FieldDescriptor::new("keyword", ValueType::U64),
-                ],
-            )
-            .with_unique("work_keyword", ["work", "keyword"])
-            .with_index(IndexDescriptor::equality("by_keyword", ["keyword", "work"])),
-            RelationDescriptor::new(
-                "Person",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("gender", ValueType::String),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_gender", ["gender", "id"])),
-            RelationDescriptor::new(
-                "Role",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("name", ValueType::String),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_name", ["name", "id"])),
-            RelationDescriptor::new(
-                "Title",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("year", ValueType::I64),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_year", ["year", "id"])),
-        ],
-    )
-}
-
-fn q16_like_join_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "Q16LikeJoinDb",
-        vec![
-            RelationDescriptor::new(
-                "Alias",
-                vec![FieldDescriptor::new("person", ValueType::U64)],
-            )
-            .with_unique("person", ["person"]),
-            RelationDescriptor::new(
-                "Cast",
-                vec![
-                    FieldDescriptor::new("person", ValueType::U64),
-                    FieldDescriptor::new("work", ValueType::U64),
-                ],
-            )
-            .with_unique("person_work", ["person", "work"])
-            .with_index(IndexDescriptor::equality(
-                "by_work_person",
-                ["work", "person"],
-            )),
-            RelationDescriptor::new(
-                "Company",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("country", ValueType::String),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_country", ["country", "id"])),
-            RelationDescriptor::new(
-                "Keyword",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("word", ValueType::String),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_word", ["word", "id"])),
-            RelationDescriptor::new(
-                "WorkCompany",
-                vec![
-                    FieldDescriptor::new("work", ValueType::U64),
-                    FieldDescriptor::new("company", ValueType::U64),
-                ],
-            )
-            .with_unique("work_company", ["work", "company"])
-            .with_index(IndexDescriptor::equality("by_company", ["company", "work"])),
-            RelationDescriptor::new(
-                "WorkKeyword",
-                vec![
-                    FieldDescriptor::new("work", ValueType::U64),
-                    FieldDescriptor::new("keyword", ValueType::U64),
-                ],
-            )
-            .with_unique("work_keyword", ["work", "keyword"])
-            .with_index(IndexDescriptor::equality("by_keyword", ["keyword", "work"])),
-            RelationDescriptor::new("Person", vec![FieldDescriptor::new("id", ValueType::U64)])
-                .with_unique("id", ["id"]),
-            RelationDescriptor::new(
-                "Title",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("episode", ValueType::I64),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_episode", ["episode", "id"])),
-        ],
-    )
-}
-
-fn dim_fact(id: u64, kind: u8) -> Fact {
-    Fact::new("Dim", [("id", Value::U64(id)), ("kind", Value::Enum(kind))])
-}
-
-fn other_dim_fact(id: u64, kind: u8) -> Fact {
-    Fact::new(
-        "OtherDim",
-        [("id", Value::U64(id)), ("kind", Value::Enum(kind))],
-    )
-}
-
-fn fact_fact(dim: u64, item: u64) -> Fact {
-    Fact::new(
-        "Fact",
-        [("dim", Value::U64(dim)), ("item", Value::U64(item))],
-    )
-}
-
-fn owner_group_fact(owner: u64, group: u64) -> Fact {
-    Fact::new(
-        "OwnerGroup",
-        [
-            ("owner", Value::Serial(owner)),
-            ("group", Value::U64(group)),
-        ],
-    )
-}
-
-fn owned_fact_fact(owner: u64, group: u64, item: u64) -> Fact {
-    Fact::new(
-        "OwnedFact",
-        [
-            ("owner", Value::Serial(owner)),
-            ("group", Value::U64(group)),
-            ("item", Value::U64(item)),
-        ],
-    )
-}
-
-fn pair_fact(left: u64, right: u64) -> Fact {
-    Fact::new(
-        "Pair",
-        [("left", Value::U64(left)), ("right", Value::U64(right))],
-    )
-}
-
-fn seeded_facts() -> Vec<Fact> {
-    vec![
-        holder_fact(1, "Alice"),
-        holder_fact(2, "Bob"),
-        account_fact(1, 1, 1),
-        account_fact(2, 1, 2),
-        account_fact(3, 2, 1),
-        posting_fact(1, 1, 100, 10),
-        posting_fact(2, 1, 200, 20),
-        posting_fact(3, 2, 300, 30),
-    ]
-}
-
-fn ledger_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "LedgerDb",
-        vec![
-            RelationDescriptor::new(
-                "Holder",
-                vec![
-                    FieldDescriptor::new(
-                        "id",
-                        ValueType::Serial {
-                            type_name: "HolderId".to_owned(),
-                            owning_relation: "Holder".to_owned(),
-                        },
-                    ),
-                    FieldDescriptor::new("name", ValueType::String),
-                ],
-            )
-            .with_unique("id", ["id"]),
-            RelationDescriptor::new(
-                "Account",
-                vec![
-                    FieldDescriptor::new(
-                        "id",
-                        ValueType::Serial {
-                            type_name: "AccountId".to_owned(),
-                            owning_relation: "Account".to_owned(),
-                        },
-                    ),
-                    FieldDescriptor::new(
-                        "holder",
-                        ValueType::Serial {
-                            type_name: "HolderId".to_owned(),
-                            owning_relation: "Holder".to_owned(),
-                        },
-                    ),
-                    FieldDescriptor::new(
-                        "currency",
-                        ValueType::Enum {
-                            name: "Currency".to_owned(),
-                        },
-                    ),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_constraint(ConstraintDescriptor::foreign_key(
-                "holder",
-                ["holder"],
-                "Holder",
-                "id",
-            )),
-            RelationDescriptor::new(
-                "Posting",
-                vec![
-                    FieldDescriptor::new(
-                        "id",
-                        ValueType::Serial {
-                            type_name: "PostingId".to_owned(),
-                            owning_relation: "Posting".to_owned(),
-                        },
-                    ),
-                    FieldDescriptor::new(
-                        "account",
-                        ValueType::Serial {
-                            type_name: "AccountId".to_owned(),
-                            owning_relation: "Account".to_owned(),
-                        },
-                    ),
-                    FieldDescriptor::new("amount", ValueType::Decimal { scale: 4 }),
-                    FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_constraint(ConstraintDescriptor::foreign_key(
-                "account",
-                ["account"],
-                "Account",
-                "id",
-            )),
-        ],
-    )
-    .with_enum(bumbledb_core::schema::EnumDescriptor::codes(
-        "Currency",
-        [1, 2],
-    ))
-}
-
-fn overflow_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "OverflowDb",
-        vec![
-            RelationDescriptor::new(
-                "Number",
-                vec![
-                    FieldDescriptor::new(
-                        "id",
-                        ValueType::Serial {
-                            type_name: "NumberId".to_owned(),
-                            owning_relation: "Number".to_owned(),
-                        },
-                    ),
-                    FieldDescriptor::new("n", ValueType::I64),
-                    FieldDescriptor::new("d", ValueType::Decimal { scale: 0 }),
-                ],
-            )
-            .with_unique("id", ["id"]),
-        ],
-    )
-}
-
-fn optimizer_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "OptimizerDb",
-        vec![
-            RelationDescriptor::new(
-                "Item",
-                vec![
-                    FieldDescriptor::new(
-                        "id",
-                        ValueType::Serial {
-                            type_name: "ItemId".to_owned(),
-                            owning_relation: "Item".to_owned(),
-                        },
-                    ),
-                    FieldDescriptor::new(
-                        "kind",
-                        ValueType::Enum {
-                            name: "Kind".to_owned(),
-                        },
-                    ),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"])),
-        ],
-    )
-    .with_enum(bumbledb_core::schema::EnumDescriptor::codes("Kind", [1, 2]))
-}
-
-fn triangle_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "TriangleDb",
-        vec![
-            RelationDescriptor::new(
-                "EdgeAB",
-                vec![
-                    FieldDescriptor::new("a", ValueType::U64),
-                    FieldDescriptor::new("b", ValueType::U64),
-                ],
-            )
-            .with_unique("a_b", ["a", "b"]),
-            RelationDescriptor::new(
-                "EdgeAC",
-                vec![
-                    FieldDescriptor::new("a", ValueType::U64),
-                    FieldDescriptor::new("c", ValueType::U64),
-                ],
-            )
-            .with_unique("a_c", ["a", "c"]),
-            RelationDescriptor::new(
-                "EdgeBC",
-                vec![
-                    FieldDescriptor::new("b", ValueType::U64),
-                    FieldDescriptor::new("c", ValueType::U64),
-                ],
-            )
-            .with_unique("b_c", ["b", "c"]),
-        ],
-    )
-}
-
-fn chain_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "ChainDb",
-        vec![
-            RelationDescriptor::new("A", vec![FieldDescriptor::new("id", ValueType::U64)])
-                .with_unique("id", ["id"]),
-            RelationDescriptor::new(
-                "B",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("a", ValueType::U64),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_a", ["a", "id"])),
-        ],
-    )
-}
-
-fn reserve_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "ReserveDb",
-        vec![
-            RelationDescriptor::new(
-                "Reserve",
-                vec![
-                    FieldDescriptor::new("sailor", ValueType::U64),
-                    FieldDescriptor::new("boat", ValueType::U64),
-                    FieldDescriptor::new("day", ValueType::TimestampMicros).range_indexed(),
-                ],
-            )
-            .with_unique("sailor_boat_day", ["sailor", "boat", "day"]),
-        ],
-    )
-}
-
-fn chain4_schema() -> bumbledb_core::schema::SchemaDescriptor {
-    bumbledb_core::schema::SchemaDescriptor::new(
-        "Chain4Db",
-        vec![
-            RelationDescriptor::new("A", vec![FieldDescriptor::new("id", ValueType::U64)])
-                .with_unique("id", ["id"]),
-            RelationDescriptor::new(
-                "B",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("a", ValueType::U64),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_a", ["a", "id"])),
-            RelationDescriptor::new(
-                "C",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("b", ValueType::U64),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_b", ["b", "id"])),
-            RelationDescriptor::new(
-                "D",
-                vec![
-                    FieldDescriptor::new("id", ValueType::U64),
-                    FieldDescriptor::new("c", ValueType::U64),
-                ],
-            )
-            .with_unique("id", ["id"])
-            .with_index(IndexDescriptor::equality("by_c", ["c", "id"])),
-        ],
-    )
-}
-
-fn chain_existence_filter_query(schema: &StorageSchema) -> QueryBuildResult<TypedQuery> {
-    typed_query(schema, |query| {
-        query.rel("A")?.input("id", "a")?.done();
-        query.rel("B")?.var("id", "b")?.input("a", "a")?.done();
-        query.rel("C")?.var("id", "b")?.integer("b", 99)?.done();
-        query.find_var("b")?;
-        Ok(())
-    })
-}
-
-fn seed_title_company_range_facts(env: &Environment, schema: &StorageSchema) -> Result<()> {
-    env.write(|txn| {
-        for (id, year, company) in [(1, 2004, 10), (2, 2005, 20), (3, 2015, 30), (4, 2020, 40)] {
-            txn.insert(
-                schema,
-                Fact::new(
-                    "Title",
-                    [("id", Value::U64(id)), ("year", Value::I64(year))],
-                ),
-            )?;
-            txn.insert(
-                schema,
-                Fact::new(
-                    "WorkCompany",
-                    [("work", Value::U64(id)), ("company", Value::U64(company))],
-                ),
-            )?;
-        }
-        Ok::<_, Error>(())
-    })
-}
-
-fn title_company_count_query(
-    schema: &StorageSchema,
-    max_year: OperandRef,
-) -> QueryBuildResult<TypedQuery> {
-    typed_query(schema, |query| {
-        query
-            .rel("WorkCompany")?
-            .var("work", "work")?
-            .var("company", "company")?
-            .done();
-        query
-            .rel("Title")?
-            .var("id", "work")?
-            .var("year", "year")?
-            .done();
-        query.cmp(
-            OperandRef::var("year"),
-            ComparisonOperator::Gte,
-            OperandRef::integer(2005),
-        )?;
-        query.cmp(OperandRef::var("year"), ComparisonOperator::Lte, max_year)?;
-        query.find_count_domain(["company"])?;
-        Ok(())
-    })
-}
-
-fn edge_cross_comparison_query(
-    schema: &StorageSchema,
-    operator: ComparisonOperator,
-) -> QueryBuildResult<TypedQuery> {
-    typed_query(schema, |query| {
-        query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
-        query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
-        query.cmp(OperandRef::var("b"), operator, OperandRef::var("c"))?;
-        query.find_var("b")?;
-        Ok(())
-    })
-}
-
-fn holder_fact(id: u64, name: &str) -> Fact {
-    Fact::new(
-        "Holder",
-        [
-            ("id", Value::Serial(id)),
-            ("name", Value::String(name.to_owned())),
-        ],
-    )
-}
-
-fn account_fact(id: u64, holder: u64, currency: u8) -> Fact {
-    Fact::new(
-        "Account",
-        [
-            ("id", Value::Serial(id)),
-            ("holder", Value::Serial(holder)),
-            ("currency", Value::Enum(currency)),
-        ],
-    )
-}
-
-fn posting_fact(id: u64, account: u64, amount: i128, at: i64) -> Fact {
-    Fact::new(
-        "Posting",
-        [
-            ("id", Value::Serial(id)),
-            ("account", Value::Serial(account)),
-            ("amount", Value::Decimal(DecimalRaw(amount))),
-            ("at", Value::Timestamp(TimestampMicros(at))),
-        ],
-    )
-}
-
-fn number_fact(id: u64, n: i64, d: i128) -> Fact {
-    Fact::new(
-        "Number",
-        [
-            ("id", Value::Serial(id)),
-            ("n", Value::I64(n)),
-            ("d", Value::Decimal(DecimalRaw(d))),
-        ],
-    )
-}
-
-fn item_fact(id: u64, kind: u8) -> Fact {
-    Fact::new(
-        "Item",
-        [("id", Value::Serial(id)), ("kind", Value::Enum(kind))],
-    )
-}
-
-fn edge_ab_fact(a: u64, b: u64) -> Fact {
-    Fact::new("EdgeAB", [("a", Value::U64(a)), ("b", Value::U64(b))])
-}
-
-fn edge_ac_fact(a: u64, c: u64) -> Fact {
-    Fact::new("EdgeAC", [("a", Value::U64(a)), ("c", Value::U64(c))])
-}
-
-fn edge_bc_fact(b: u64, c: u64) -> Fact {
-    Fact::new("EdgeBC", [("b", Value::U64(b)), ("c", Value::U64(c))])
-}
-
-fn b_fact(id: u64, a: u64) -> Fact {
-    Fact::new("B", [("id", Value::U64(id)), ("a", Value::U64(a))])
-}
-
-fn reserve_fact(sailor: u64, boat: u64, day: i64) -> Fact {
-    Fact::new(
-        "Reserve",
-        [
-            ("sailor", Value::U64(sailor)),
-            ("boat", Value::U64(boat)),
-            ("day", Value::Timestamp(TimestampMicros(day))),
-        ],
-    )
-}
-
-fn chain_a_fact(id: u64) -> Fact {
-    Fact::new("A", [("id", Value::U64(id))])
-}
-
-fn chain_b_fact(id: u64, a: u64) -> Fact {
-    Fact::new("B", [("id", Value::U64(id)), ("a", Value::U64(a))])
-}
-
-fn chain_c_fact(id: u64, b: u64) -> Fact {
-    Fact::new("C", [("id", Value::U64(id)), ("b", Value::U64(b))])
-}
-
-fn chain_d_fact(id: u64, c: u64) -> Fact {
-    Fact::new("D", [("id", Value::U64(id)), ("c", Value::U64(c))])
-}
-
-fn assert_same_facts(actual: &[Vec<Value>], expected: &[Vec<Value>]) {
-    let mut actual = actual.to_vec();
-    let mut expected = expected.to_vec();
-    actual.sort();
-    expected.sort();
-    assert_eq!(actual, expected);
-}
-
-struct ReferenceDb {
-    facts: BTreeMap<String, Vec<Fact>>,
-}
-
-#[derive(Clone, Debug)]
-struct ReferenceBinding {
-    values: Vec<Option<Value>>,
-}
-
-impl ReferenceBinding {
-    fn new(variable_count: usize) -> Self {
-        Self {
-            values: vec![None; variable_count],
-        }
-    }
-
-    fn get(&self, variable: usize) -> Option<&Value> {
-        self.values[variable].as_ref()
-    }
-
-    fn bind(&mut self, variable: usize, value: Value) -> bool {
-        match &self.values[variable] {
-            Some(existing) => existing == &value,
-            None => {
-                self.values[variable] = Some(value);
-                true
-            }
-        }
-    }
-}
-
-impl ReferenceDb {
-    fn from_facts(facts: Vec<Fact>) -> Self {
-        let mut by_relation: BTreeMap<String, Vec<Fact>> = BTreeMap::new();
-        for fact in facts {
-            by_relation
-                .entry(fact.relation().to_owned())
-                .or_default()
-                .push(fact);
-        }
-        Self { facts: by_relation }
-    }
-
-    fn execute(&self, query: &TypedQuery, inputs: &InputBindings) -> Result<Vec<Vec<Value>>> {
-        let atoms = query
-            .clauses
-            .iter()
-            .filter_map(|clause| match clause {
-                TypedClause::Relation(atom) => Some(atom),
-                TypedClause::Comparison(_) => None,
-            })
-            .collect::<Vec<_>>();
-        let comparisons = query
-            .clauses
-            .iter()
-            .filter_map(|clause| match clause {
-                TypedClause::Comparison(comparison) => Some(comparison),
-                TypedClause::Relation(_) => None,
-            })
-            .collect::<Vec<_>>();
-        let mut output = Vec::new();
-        let mut counters = PlanCounters::default();
-        self.recurse(
-            query,
-            inputs,
-            &atoms,
-            &comparisons,
-            0,
-            ReferenceBinding::new(query.variables.len()),
-            &mut output,
-            &mut counters,
-        )?;
-        reference_project_results(query, &output)
-    }
-
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "test reference recursion carries explicit evaluator state"
-    )]
-    fn recurse(
-        &self,
-        query: &TypedQuery,
-        inputs: &InputBindings,
-        atoms: &[&TypedRelationAtom],
-        comparisons: &[&TypedComparison],
-        depth: usize,
-        binding: ReferenceBinding,
-        output: &mut Vec<ReferenceBinding>,
-        counters: &mut PlanCounters,
-    ) -> Result<()> {
-        if depth == atoms.len() {
-            if reference_comparisons_pass(comparisons, query, inputs, &binding, counters)? {
-                output.push(binding);
-            }
-            return Ok(());
-        }
-
-        let atom = atoms[depth];
-        for fact in self.facts.get(&atom.relation).into_iter().flatten() {
-            let Some(next) = reference_match_atom(atom, query, inputs, &binding, fact)? else {
-                continue;
-            };
-            if reference_comparisons_pass(comparisons, query, inputs, &next, counters)? {
-                self.recurse(
-                    query,
-                    inputs,
-                    atoms,
-                    comparisons,
-                    depth + 1,
-                    next,
-                    output,
-                    counters,
-                )?;
-            }
-        }
-        Ok(())
-    }
-}
-
-fn reference_match_atom(
-    atom: &TypedRelationAtom,
-    query: &TypedQuery,
-    inputs: &InputBindings,
-    binding: &ReferenceBinding,
-    fact: &Fact,
-) -> Result<Option<ReferenceBinding>> {
-    let mut next = binding.clone();
-    for field in &atom.fields {
-        let Some(fact_value) = fact.value(&field.field) else {
-            return Ok(None);
-        };
-        match &field.term {
-            TypedTerm::Variable(variable) => {
-                let normalized =
-                    reference_value_for_type(fact_value, &query.variables[*variable].value_type);
-                if !next.bind(*variable, normalized) {
-                    return Ok(None);
-                }
-            }
-            TypedTerm::Input(input) => {
-                let input_value = reference_input_value(query, inputs, *input)?;
-                let normalized =
-                    reference_value_for_type(fact_value, &query.inputs[*input].value_type);
-                if input_value != &normalized {
-                    return Ok(None);
-                }
-            }
-            TypedTerm::Literal(literal) => {
-                let normalized = reference_value_for_type(fact_value, &literal.value_type);
-                if literal_to_value(literal)? != normalized {
-                    return Ok(None);
-                }
-            }
-            TypedTerm::Wildcard => {}
-        }
-    }
-    Ok(Some(next))
-}
-
-fn reference_comparisons_pass(
-    comparisons: &[&TypedComparison],
-    query: &TypedQuery,
-    inputs: &InputBindings,
-    binding: &ReferenceBinding,
-    counters: &mut PlanCounters,
-) -> Result<bool> {
-    for comparison in comparisons {
-        let Some(left) = reference_operand_value(&comparison.left, query, inputs, binding)? else {
-            continue;
-        };
-        let Some(right) = reference_operand_value(&comparison.right, query, inputs, binding)?
-        else {
-            continue;
-        };
-        counters.comparisons_evaluated += 1;
-        let left = reference_value_for_type(&left, &comparison.value_type);
-        let right = reference_value_for_type(&right, &comparison.value_type);
-        if !compare_values(&left, comparison.operator, &right) {
-            counters.comparisons_failed += 1;
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-fn reference_input_value<'a>(
-    query: &'a TypedQuery,
-    inputs: &'a InputBindings,
-    input: usize,
-) -> Result<&'a Value> {
-    let input = &query.inputs[input];
-    inputs
-        .get(&input.name)
-        .ok_or_else(|| Error::missing_input(&input.name))
-}
-
-fn reference_operand_value(
-    operand: &TypedOperand,
-    query: &TypedQuery,
-    inputs: &InputBindings,
-    binding: &ReferenceBinding,
-) -> Result<Option<Value>> {
-    Ok(match operand {
-        TypedOperand::Variable(variable) => binding.get(*variable).cloned(),
-        TypedOperand::Input(input) => Some(reference_input_value(query, inputs, *input)?.clone()),
-        TypedOperand::Literal(literal) => Some(literal_to_value(literal)?),
-    })
-}
-
-fn reference_value_for_type(value: &Value, _value_type: &ValueType) -> Value {
-    value.clone()
-}
-
-fn reference_project_results(
-    query: &TypedQuery,
-    bindings: &[ReferenceBinding],
-) -> Result<Vec<Vec<Value>>> {
-    let has_aggregate = query
-        .find
-        .iter()
-        .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }));
-    if has_aggregate {
-        reference_project_aggregates(query, bindings)
-    } else {
-        let mut set = BTreeSet::new();
-        for binding in bindings {
-            let mut fact = Vec::new();
-            for term in &query.find {
-                let TypedFindTerm::Variable { variable } = term else {
-                    continue;
-                };
-                fact.push(reference_bound_variable(binding, *variable)?.clone());
-            }
-            set.insert(fact);
-        }
-        Ok(set.into_iter().collect())
-    }
-}
-
-fn reference_project_aggregates(
-    query: &TypedQuery,
-    bindings: &[ReferenceBinding],
-) -> Result<Vec<Vec<Value>>> {
-    let group_terms = query
-        .find
-        .iter()
-        .filter_map(|term| match term {
-            TypedFindTerm::Variable { variable } => Some(*variable),
-            TypedFindTerm::Aggregate { .. } => None,
-        })
-        .collect::<Vec<_>>();
-    let aggregate_terms = query
-        .find
-        .iter()
-        .filter_map(|term| match term {
-            TypedFindTerm::Aggregate {
-                function,
-                variable,
-                domain,
-                value_type,
-            } => Some((*function, *variable, domain.clone(), value_type.clone())),
-            TypedFindTerm::Variable { .. } => None,
-        })
-        .collect::<Vec<_>>();
-
-    let mut groups: BTreeMap<Vec<Value>, Vec<AggregateState>> = BTreeMap::new();
-    let mut seen_domains = BTreeSet::new();
-    for binding in bindings {
-        let key = group_terms
-            .iter()
-            .map(|variable| reference_bound_variable(binding, *variable).cloned())
-            .collect::<Result<Vec<_>>>()?;
-        let states = groups.entry(key.clone()).or_insert_with(|| {
-            aggregate_terms
-                .iter()
-                .map(|(function, _, _, value_type)| {
-                    AggregateState::new(*function, value_type.clone())
-                })
-                .collect()
-        });
-        for (ordinal, (state, (_, variable, domain, _))) in
-            states.iter_mut().zip(&aggregate_terms).enumerate()
-        {
-            let domain = domain
-                .iter()
-                .map(|variable| reference_bound_variable(binding, *variable).cloned())
-                .collect::<Result<Vec<_>>>()?;
-            if !seen_domains.insert((key.clone(), ordinal, domain)) {
-                continue;
-            }
-            state.apply(reference_bound_variable(binding, *variable)?)?;
-        }
-    }
-
-    let mut facts = Vec::new();
-    for (key, states) in groups {
-        let mut fact = Vec::new();
-        let mut key_iter = key.into_iter();
-        let mut state_iter = states.into_iter();
-        for term in &query.find {
-            match term {
-                TypedFindTerm::Variable { .. } => fact.push(
-                    key_iter
-                        .next()
-                        .ok_or_else(|| Error::internal("missing reference aggregate group key"))?,
-                ),
-                TypedFindTerm::Aggregate { .. } => {
-                    let state = state_iter
-                        .next()
-                        .ok_or_else(|| Error::internal("missing reference aggregate state"))?;
-                    fact.push(state.finish()?)
-                }
-            }
-        }
-        facts.push(fact);
-    }
-    facts.sort();
-    Ok(facts)
-}
-
-fn reference_bound_variable(binding: &ReferenceBinding, variable: usize) -> Result<&Value> {
-    binding
-        .get(variable)
-        .ok_or_else(|| Error::internal(format!("variable {variable} is unbound at projection")))
-}
+include!("query_test_helpers.rs");

@@ -338,8 +338,6 @@ pub struct QueryPlan {
     pub missing_indexes: Vec<MissingIndexRecommendation>,
     /// Optimizer candidates and chosen cost key.
     pub optimizer: OptimizerTrace,
-    /// Top-level physical runtime family selected by planning/classification.
-    pub plan_family: PlanFamily,
     /// Query image cache diagnostics after acquiring this query image.
     pub query_image_cache: QueryImageCacheDiagnostics,
     /// Planner statistics cache diagnostics after planning.
@@ -352,8 +350,6 @@ pub struct QueryPlan {
     pub node_timings: Vec<QueryNodeTiming>,
     /// Free Join physical plan IR.
     pub free_join: FreeJoinPlan,
-    /// Runtime implementation used for this execution.
-    pub runtime_kind: QueryRuntimeKind,
     /// Coarse query phase timings.
     pub timings: QueryTimings,
     /// Allocation summary for this query, disabled by default.
@@ -370,8 +366,6 @@ impl QueryPlan {
         let mut out = String::new();
         out.push_str("QueryPlan\n");
         out.push_str(&format!("variable_order: {:?}\n", self.variable_order));
-        out.push_str(&format!("runtime_kind: {:?}\n", self.runtime_kind));
-        out.push_str(&format!("plan_family: {:?}\n", self.plan_family));
         out.push_str(&format!(
             "uses_indexed_multiway_join: {}\n",
             self.uses_indexed_multiway_join
@@ -458,7 +452,7 @@ impl QueryPlan {
             self.query_image_cache.build_micros
         ));
         out.push_str(&format!(
-            "  planner_stats cached_relations={} hits={} misses={} builds={} build_micros={} field_stats_built={} index_stats_built={} stats_from_segments={} stats_exact_scans={}\n",
+            "  planner_stats cached_relations={} hits={} misses={} builds={} build_micros={} field_stats_built={} index_stats_built={} stats_from_access_images={} stats_exact_scans={}\n",
             self.planner_stats.cached_relations,
             self.planner_stats.hits,
             self.planner_stats.misses,
@@ -466,7 +460,7 @@ impl QueryPlan {
             self.planner_stats.build_micros,
             self.planner_stats.field_stats_built,
             self.planner_stats.index_stats_built,
-            self.planner_stats.stats_from_segments,
+            self.planner_stats.stats_from_access_images,
             self.planner_stats.stats_exact_scans
         ));
         out.push_str(&format!(
@@ -480,9 +474,8 @@ impl QueryPlan {
         out.push_str(&format!("  chosen_plan: {}\n", self.optimizer.chosen));
         for candidate in &self.optimizer.candidates {
             out.push_str(&format!(
-                "  candidate_plan name={} family={:?} selected={} estimated_micros={} setup_micros={} memory_bytes={} materialization_penalty={} candidate_rank={} implementation_mask={} rejected_reason={} impls={:?}\n",
+                "  candidate_plan name={} selected={} estimated_micros={} setup_micros={} memory_bytes={} materialization_penalty={} candidate_rank={} implementation_mask={} rejected_reason={} impls={:?}\n",
                 candidate.name,
-                candidate.family,
                 candidate.selected,
                 candidate.cost.estimated_micros,
                 candidate.cost.setup_micros,
@@ -676,22 +669,6 @@ impl QueryPlan {
             }
         }
     }
-}
-
-/// Runtime implementation used by one query execution.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum QueryRuntimeKind {
-    /// Sorted trie leapfrog executor.
-    #[default]
-    Lftj,
-}
-
-/// Top-level physical plan family.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum PlanFamily {
-    /// Free Join physical plan family.
-    #[default]
-    FreeJoin,
 }
 
 /// Coarse query phase timings in microseconds.
@@ -929,8 +906,6 @@ pub struct OptimizerTrace {
 pub struct PlanCandidate {
     /// Stable candidate name.
     pub name: String,
-    /// Runtime family for this candidate.
-    pub family: PlanFamily,
     /// Node implementations in plan order.
     pub implementations: Vec<NodeImpl>,
     /// Stable cost key used for ordering.
@@ -1132,7 +1107,6 @@ impl ExecutionPlan {
         plan.summary.query_image_cache = query_image_cache;
         plan.summary.planner_stats = planner_stats;
         plan.summary.prepared_plan_cache = prepared_plan_cache;
-        plan.summary.runtime_kind = QueryRuntimeKind::Lftj;
         plan.summary.timings = QueryTimings::default();
         plan.summary.allocations = QueryAllocationStats::default();
         plan.summary.counters = PlanCounters::default();
@@ -2196,7 +2170,6 @@ fn execute_free_join<'txn, 'query, S: FactSink>(
     if !plan.summary.free_join.is_free_join_sorted_leapfrog() {
         return Err(Error::internal("non-pure free join plan has no runtime"));
     }
-    plan.summary.runtime_kind = QueryRuntimeKind::Lftj;
     execute_lftj(image, txn, query, inputs, plan, sink)
 }
 
@@ -3773,14 +3746,12 @@ fn plan_query(
             variable_estimates,
             missing_indexes,
             optimizer,
-            plan_family: PlanFamily::FreeJoin,
             query_image_cache,
             planner_stats,
             prepared_plan_cache,
             node_facts,
             node_timings,
             free_join,
-            runtime_kind: QueryRuntimeKind::Lftj,
             timings: QueryTimings::default(),
             allocations: QueryAllocationStats::default(),
             counters: PlanCounters::default(),
@@ -4327,7 +4298,6 @@ fn optimize_free_join_plan(
                 "higher stable cost".to_owned()
             },
             name: candidate.name,
-            family: candidate.family,
             implementations: candidate.implementations,
             cost: candidate.cost,
         })
@@ -4346,7 +4316,6 @@ fn optimize_free_join_plan(
 struct OptimizerCandidate {
     name: String,
     implementations: Vec<NodeImpl>,
-    family: PlanFamily,
     cost: CostKey,
     estimates: PlanEstimates,
 }
@@ -4375,7 +4344,6 @@ fn build_plan_candidate(
     Ok(OptimizerCandidate {
         name: name.to_owned(),
         implementations,
-        family: PlanFamily::FreeJoin,
         cost,
         estimates,
     })

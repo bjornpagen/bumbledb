@@ -12,7 +12,7 @@ use crate::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, Value
 /// Query-builder result type.
 pub type QueryBuildResult<T> = std::result::Result<T, QueryBuildError>;
 
-/// Errors produced while constructing typed query IR directly.
+/// Errors produced while constructing typed query IR programmatically.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum QueryBuildError {
     /// Unknown relation name.
@@ -529,7 +529,7 @@ impl<'builder, 'schema> RelationAtomBuilder<'builder, 'schema> {
     }
 }
 
-/// Comparison operand reference for direct query construction.
+/// Comparison operand reference for programmatic query construction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperandRef {
     /// Query variable by name.
