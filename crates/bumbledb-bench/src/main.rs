@@ -688,14 +688,10 @@ struct BenchmarkRunResult {
     atom_temp_relation_builds: u64,
     hash_facts_returned: u64,
     hash_distinct_emits: u64,
-    direct_kernel_probes: u64,
-    direct_kernel_facts: u64,
-    direct_kernel_predicates: u64,
     query_image_relation_count: usize,
     query_image_fact_count: usize,
     query_image_encoded_column_bytes: usize,
     query_image_sorted_trie_bytes: usize,
-    query_image_hash_trie_bytes: usize,
     gate: GateOutcome,
 }
 
@@ -754,7 +750,6 @@ struct QueryImageBenchStats {
     fact_count: usize,
     encoded_column_bytes: usize,
     sorted_trie_bytes: usize,
-    hash_trie_bytes: usize,
     build_micros: u128,
 }
 
@@ -765,7 +760,6 @@ impl QueryImageBenchStats {
             fact_count: 0,
             encoded_column_bytes: 0,
             sorted_trie_bytes: 0,
-            hash_trie_bytes: 0,
             build_micros: 0,
         }
     }
@@ -861,7 +855,6 @@ fn run_dataset(
             fact_count: query_image.stats().fact_count,
             encoded_column_bytes: query_image.stats().encoded_column_bytes,
             sorted_trie_bytes: query_image.stats().sorted_trie_bytes,
-            hash_trie_bytes: query_image.stats().hash_trie_bytes,
             build_micros: query_image.stats().build_micros,
         }
     };
@@ -1111,14 +1104,13 @@ fn run_dataset(
         emit_profile_summary(dataset.name, query.name, &bumble_output);
         if format.includes_text() {
             println!(
-                "query={} facts={} cache_mode={} sink_emit_calls={} encoded_project_facts_seen={} lftj_next_calls={} direct_chain_step_facts={} static_empty_cache_hits={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
+                "query={} facts={} cache_mode={} sink_emit_calls={} encoded_project_facts_seen={} lftj_next_calls={} static_empty_cache_hits={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
                 query.name,
                 bumble_output.result.facts.len(),
                 result.cache_mode,
                 result.counters.sink_emit_calls,
                 result.counters.encoded_project_facts_seen,
                 result.counters.lftj_next_calls,
-                result.counters.direct_chain_step_facts,
                 result.static_empty_cache_hits,
                 bumble_cold_execution,
                 result.bumbledb_samples.samples,
@@ -1377,14 +1369,10 @@ fn benchmark_result(
         atom_temp_relation_builds: output.plan.counters.atom_temp_relation_builds,
         hash_facts_returned: output.plan.counters.hash_facts_returned,
         hash_distinct_emits: output.plan.counters.hash_distinct_emits,
-        direct_kernel_probes: output.plan.counters.direct_kernel_probes,
-        direct_kernel_facts: output.plan.counters.direct_kernel_facts,
-        direct_kernel_predicates: output.plan.counters.direct_kernel_predicates,
         query_image_relation_count: query_image_stats.relation_count,
         query_image_fact_count: query_image_stats.fact_count,
         query_image_encoded_column_bytes: query_image_stats.encoded_column_bytes,
         query_image_sorted_trie_bytes: query_image_stats.sorted_trie_bytes,
-        query_image_hash_trie_bytes: query_image_stats.hash_trie_bytes,
         gate,
     }
 }
@@ -1697,7 +1685,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: None,
             max_iterator_ops: None,
             max_materialized_values: None,
-            allowed_plan_families: &["Direct"],
+            allowed_plan_families: &["FreeJoinLftj"],
         },
         ("joinstress", "chain4_from_a") => BenchmarkGate {
             dataset,
@@ -1706,7 +1694,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: None,
             max_iterator_ops: None,
             max_materialized_values: None,
-            allowed_plan_families: &["IndexNestedLoop"],
+            allowed_plan_families: &["FreeJoinLftj"],
         },
         ("job", "job_q09_voice_us_actor") => BenchmarkGate {
             dataset,
@@ -1715,7 +1703,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: Some(1.0),
             max_iterator_ops: None,
             max_materialized_values: Some(1),
-            allowed_plan_families: &["Direct"],
+            allowed_plan_families: &["FreeJoinLftj"],
         },
         ("job", "job_q16_character_title_us") => BenchmarkGate {
             dataset,
@@ -1761,12 +1749,12 @@ fn job_cache_mode_avg_limit(
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | facts | compare mode | bumbledb materialized | sqlite materialized | cardinality | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash facts | hash emits | direct probes | direct facts | direct predicates | iterator ops | hash build est | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---|---|---|---|---:|---:|---:|---|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | facts | compare mode | bumbledb materialized | sqlite materialized | cardinality | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash facts | hash emits | iterator ops | hash build est | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---|---|---|---|---:|---:|---:|---|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.facts,
@@ -1798,9 +1786,6 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.atom_temp_relation_builds,
             result.hash_facts_returned,
             result.hash_distinct_emits,
-            result.direct_kernel_probes,
-            result.direct_kernel_facts,
-            result.direct_kernel_predicates,
             result.iterator_ops,
             result.hash_build_facts,
             result.materialized_values,
@@ -1809,13 +1794,13 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Mechanics Counters\n\n");
-    out.push_str("| dataset | query | runtime | sink emits | project seen | project inserted | lftj next | lftj seek | lftj keys | direct chain step facts | direct chain output facts |\n");
-    out.push_str("|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("| dataset | query | runtime | sink emits | project seen | project inserted | lftj next | lftj seek | lftj keys |\n");
+    out.push_str("|---|---|---|---:|---:|---:|---:|---:|---:|\n");
     for result in results {
         let counters = &result.counters;
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             markdown_escape(&result.runtime_kind),
@@ -1825,8 +1810,6 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             counters.lftj_next_calls,
             counters.lftj_seek_calls,
             counters.lftj_key_reads,
-            counters.direct_chain_step_facts,
-            counters.direct_chain_output_facts,
         );
     }
     out.push_str("\n## Cache Diagnostics\n\n");
@@ -2180,7 +2163,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "]}},\"counters\":{{\"cursor_seeks\":{},\"facts_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_facts_seen\":{},\"encoded_project_facts_inserted\":{},\"encoded_project_fact_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"direct_kernel_probes\":{},\"direct_kernel_facts\":{},\"direct_kernel_predicates\":{},\"direct_bind_attempts\":{},\"direct_bind_successes\":{},\"direct_chain_steps\":{},\"direct_chain_step_facts\":{},\"direct_chain_output_facts\":{},\"direct_chain_output_values\":{},\"direct_batch_facts\":{},\"direct_batch_fact_bytes\":{},\"direct_batch_fallback_facts\":{},\"direct_binding_reuses\":{},\"query_image_relations_loaded\":{},\"query_image_facts_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{},\"hash_trie_bytes\":{},\"static_empty_atoms_checked\":{},\"static_empty_facts_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            "]}},\"counters\":{{\"cursor_seeks\":{},\"facts_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_facts_seen\":{},\"encoded_project_facts_inserted\":{},\"encoded_project_fact_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"query_image_relations_loaded\":{},\"query_image_facts_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{},\"static_empty_atoms_checked\":{},\"static_empty_facts_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.counters.cursor_seeks,
             result.counters.facts_scanned,
             result.dictionary_reverse_lookups,
@@ -2202,24 +2185,10 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.counters.lftj_bind_successes,
             result.counters.lftj_bind_rejects,
             result.counters.lftj_completed_bindings,
-            result.direct_kernel_probes,
-            result.direct_kernel_facts,
-            result.direct_kernel_predicates,
-            result.counters.direct_bind_attempts,
-            result.counters.direct_bind_successes,
-            result.counters.direct_chain_steps,
-            result.counters.direct_chain_step_facts,
-            result.counters.direct_chain_output_facts,
-            result.counters.direct_chain_output_values,
-            result.counters.direct_batch_facts,
-            result.counters.direct_batch_fact_bytes,
-            result.counters.direct_batch_fallback_facts,
-            result.counters.direct_binding_reuses,
             result.query_image_relation_count,
             result.query_image_fact_count,
             result.query_image_encoded_column_bytes,
             result.query_image_sorted_trie_bytes,
-            result.query_image_hash_trie_bytes,
             result.counters.static_empty_atoms_checked,
             result.counters.static_empty_facts_scanned,
             result.counters.static_empty_cache_hits,
@@ -2348,7 +2317,6 @@ fn print_explain(explain: &str) {
             || line.contains("hash_index")
             || line.contains("hash_facts")
             || line.contains("hash_distinct")
-            || line.contains("direct_kernel")
             || line.contains("output_facts")
         {
             println!("  {line}");
@@ -3583,14 +3551,10 @@ mod tests {
             atom_temp_relation_builds: 1,
             hash_facts_returned: 1,
             hash_distinct_emits: 1,
-            direct_kernel_probes: 0,
-            direct_kernel_facts: 0,
-            direct_kernel_predicates: 0,
             query_image_relation_count: 1,
             query_image_fact_count: 3,
             query_image_encoded_column_bytes: 128,
             query_image_sorted_trie_bytes: 0,
-            query_image_hash_trie_bytes: 0,
             gate: GateOutcome {
                 passed: true,
                 notes: vec!["ok".to_owned()],
@@ -3684,14 +3648,10 @@ mod tests {
             atom_temp_relation_builds: 0,
             hash_facts_returned: 2,
             hash_distinct_emits: 2,
-            direct_kernel_probes: 0,
-            direct_kernel_facts: 0,
-            direct_kernel_predicates: 0,
             query_image_relation_count: 1,
             query_image_fact_count: 2,
             query_image_encoded_column_bytes: 1,
             query_image_sorted_trie_bytes: 0,
-            query_image_hash_trie_bytes: 0,
             gate: GateOutcome {
                 passed: true,
                 notes: vec!["ok".to_owned()],
@@ -3722,7 +3682,6 @@ mod tests {
         assert!(json.contains("\"sink_emit_calls\""));
         assert!(json.contains("\"encoded_project_facts_seen\""));
         assert!(json.contains("\"lftj_next_calls\""));
-        assert!(json.contains("\"direct_chain_step_facts\""));
         assert!(json.contains("\"allocations\""));
         assert!(json.contains("\"phases\""));
         assert!(json.contains("\"size_class_allocs\""));
@@ -3874,11 +3833,11 @@ mod tests {
         assert_eq!(
             benchmark_gate("sailors", "sailor_range_reserves")
                 .map(|gate| gate.allowed_plan_families),
-            Some(&["Direct"][..])
+            Some(&["FreeJoinLftj"][..])
         );
         assert_eq!(
             benchmark_gate("joinstress", "chain4_from_a").map(|gate| gate.allowed_plan_families),
-            Some(&["IndexNestedLoop"][..])
+            Some(&["FreeJoinLftj"][..])
         );
         assert_eq!(
             benchmark_gate("job", "job_q09_voice_us_actor").map(|gate| (
@@ -3886,7 +3845,7 @@ mod tests {
                 gate.max_sqlite_ratio,
                 gate.allowed_plan_families
             )),
-            Some((Some(3_000), Some(1.0), &["Direct"][..]))
+            Some((Some(3_000), Some(1.0), &["FreeJoinLftj"][..]))
         );
         assert_eq!(
             benchmark_gate("job", "job_q24_voice_keyword_actor").map(|gate| (

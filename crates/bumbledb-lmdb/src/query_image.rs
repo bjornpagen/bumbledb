@@ -9,8 +9,9 @@ use bumbledb_core::schema::{RelationDescriptor, SchemaFingerprint, ValueType};
 use crate::planner_stats::{PlannerStatsCache, PlannerStatsCacheDiagnostics};
 use crate::query::ExecutionPlan;
 use crate::storage_schema::FACT_SET_ACCESS_NAME;
-use crate::{AccessId, EncodedOwned, Error, ReadTxn, Result, SortedTrieIndex, StorageSchema};
-use crate::{HashTrieIndex, IndexSpec, LeafMode};
+use crate::{
+    AccessId, EncodedOwned, Error, IndexSpec, ReadTxn, Result, SortedTrieIndex, StorageSchema,
+};
 
 /// Cache key for an immutable query image.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -49,9 +50,6 @@ pub(crate) struct QueryShapeKey(pub(crate) [u8; 32]);
 pub(crate) struct LftjAtomKey(pub(crate) [u8; 32]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct HashTrieKey(pub(crate) [u8; 32]);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct StaticProofCacheKey(pub(crate) [u8; 32]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,41 +62,6 @@ pub(crate) enum StaticProofKind {
 pub(crate) enum StaticProofCacheValue {
     ProvenEmpty,
     ProvenNotEmptyOrInconclusive,
-}
-
-impl HashTrieKey {
-    pub(crate) fn new(
-        image: &QueryImageKey,
-        relation: RelationId,
-        access: Option<AccessId>,
-        fields: &[FieldId],
-        leaf_mode: LeafMode,
-    ) -> Self {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"bumbledb.hash_trie_key.v1");
-        hasher.update(&image.schema.0);
-        hasher.update(&image.tx_id.to_be_bytes());
-        hasher.update(&image.scope.0);
-        hasher.update(&relation.0.to_be_bytes());
-        match access {
-            Some(access) => {
-                hasher.update(&[1]);
-                hasher.update(&access.0.to_be_bytes());
-            }
-            None => {
-                hasher.update(&[0]);
-            }
-        }
-        hasher.update(&(fields.len() as u64).to_be_bytes());
-        for field in fields {
-            hasher.update(&field.0.to_be_bytes());
-        }
-        hasher.update(&[match leaf_mode {
-            LeafMode::Facts => 1,
-            LeafMode::CardinalityOnly => 2,
-        }]);
-        HashTrieKey(*hasher.finalize().as_bytes())
-    }
 }
 
 impl PartialOrd for QueryImageKey {
@@ -222,19 +185,6 @@ pub struct FactRange {
     pub end: FactId,
 }
 
-/// Borrowed fact-id set reference used by access structures and plan nodes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FactSetRef<'a> {
-    /// Empty fact set.
-    Empty,
-    /// Single fact id.
-    One(FactId),
-    /// Contiguous fact-id range.
-    Range(FactRange),
-    /// Borrowed fact-id slice.
-    Slice(&'a [FactId]),
-}
-
 /// Borrowed fixed-width encoded value reference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EncodedRef<'a> {
@@ -270,7 +220,6 @@ pub struct QueryImage {
     static_empty_queries: Arc<RwLock<BTreeSet<QueryShapeKey>>>,
     static_proof_cache: Arc<RwLock<BTreeMap<StaticProofCacheKey, StaticProofCacheValue>>>,
     sorted_trie_cache: Arc<RwLock<BTreeMap<LftjAtomKey, Arc<SortedTrieIndex>>>>,
-    hash_trie_cache: Arc<RwLock<BTreeMap<HashTrieKey, Arc<HashTrieIndex>>>>,
 }
 
 impl QueryImage {
@@ -309,7 +258,6 @@ impl QueryImage {
                 encoded_column_bytes,
                 access_key_bytes,
                 sorted_trie_bytes: 0,
-                hash_trie_bytes: 0,
                 build_micros,
             },
             planner_stats: PlannerStatsCache::default(),
@@ -317,7 +265,6 @@ impl QueryImage {
             static_empty_queries: Arc::default(),
             static_proof_cache: Arc::default(),
             sorted_trie_cache: Arc::default(),
-            hash_trie_cache: Arc::default(),
         }
     }
 
@@ -480,36 +427,6 @@ impl QueryImage {
         })
     }
 
-    pub(crate) fn cached_hash_trie(
-        &self,
-        key: HashTrieKey,
-        build: impl FnOnce() -> Result<HashTrieIndex>,
-    ) -> Result<CachedHashTrie> {
-        if let Some(index) = self
-            .hash_trie_cache
-            .read()
-            .map_err(|_| Error::internal("hash trie cache read lock poisoned"))?
-            .get(&key)
-            .cloned()
-        {
-            return Ok(CachedHashTrie { index, hit: true });
-        }
-
-        let index = Arc::new(build()?);
-        let mut cache = self
-            .hash_trie_cache
-            .write()
-            .map_err(|_| Error::internal("hash trie cache write lock poisoned"))?;
-        if let Some(existing) = cache.get(&key).cloned() {
-            return Ok(CachedHashTrie {
-                index: existing,
-                hit: true,
-            });
-        }
-        cache.insert(key, index.clone());
-        Ok(CachedHashTrie { index, hit: false })
-    }
-
     #[cfg(test)]
     fn content_fingerprint(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
@@ -640,23 +557,11 @@ pub(crate) struct SortedTrieBuild {
     pub sort_micros: u64,
 }
 
-pub(crate) struct CachedHashTrie {
-    pub index: Arc<HashTrieIndex>,
-    pub hit: bool,
-}
-
 pub(crate) fn build_sorted_trie_index(
     relation: &RelationImage,
     spec: IndexSpec,
 ) -> Result<SortedTrieIndex> {
     SortedTrieIndex::build(relation, spec)
-}
-
-pub(crate) fn build_hash_trie_index(
-    relation: &RelationImage,
-    spec: IndexSpec,
-) -> Result<HashTrieIndex> {
-    HashTrieIndex::build_with_mode(relation, spec, LeafMode::Facts)
 }
 
 /// Query image build/cache statistics.
@@ -672,8 +577,6 @@ pub struct QueryImageStats {
     pub access_key_bytes: usize,
     /// Bytes used by cached sorted trie indexes.
     pub sorted_trie_bytes: usize,
-    /// Bytes used by cached hash trie indexes.
-    pub hash_trie_bytes: usize,
     /// Build elapsed time in microseconds.
     pub build_micros: u128,
 }
@@ -1754,7 +1657,6 @@ mod tests {
         assert_eq!(image.stats().relation_count, 1);
         assert_eq!(image.stats().fact_count, 2);
         assert_eq!(image.stats().sorted_trie_bytes, 0);
-        assert_eq!(image.stats().hash_trie_bytes, 0);
         assert_eq!(diagnostics.relations[0].fact_count, 2);
 
         let account = account_relation(&image)?;

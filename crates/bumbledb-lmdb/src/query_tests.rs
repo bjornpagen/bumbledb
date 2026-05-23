@@ -34,7 +34,6 @@ fn query_observability_defaults_are_zero() {
     assert_eq!(counters.sink_emit_calls, 0);
     assert_eq!(counters.encoded_project_facts_seen, 0);
     assert_eq!(counters.lftj_next_calls, 0);
-    assert_eq!(counters.direct_chain_step_facts, 0);
 }
 
 #[test]
@@ -106,7 +105,6 @@ fn executes_single_relation_query() -> TestResult {
     );
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
-    assert!(output.plan.direct_kernel.is_none());
     assert!(output.plan.timings.total_micros > 0);
     assert!(output.plan.timings.execute_micros <= output.plan.timings.total_micros);
     assert!(!output.plan.allocations.enabled);
@@ -180,7 +178,6 @@ fn static_lookup_uses_planned_lftj_after_storage_bypass_deletion() -> TestResult
     assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
     assert_eq!(output.plan.optimizer.chosen, "pure_lftj");
     assert_eq!(output.plan.query_image_cache.builds, 1);
-    assert!(output.plan.direct_kernel.is_none());
     assert_same_facts(
         &output.result.facts,
         &[vec![Value::Serial(1)], vec![Value::Serial(2)]],
@@ -228,7 +225,7 @@ fn static_empty_checks_static_existence_atoms() -> TestResult {
 fn partial_probe_shape_falls_back_to_lftj() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, chain_a_fact(1))?;
         txn.insert(&schema, chain_b_fact(10, 1))?;
@@ -270,10 +267,10 @@ fn partial_probe_shape_falls_back_to_lftj() -> TestResult {
 }
 
 #[test]
-fn direct_prefix_range_kernel_selects_and_filters_facts() -> TestResult {
+fn prefix_range_filter_uses_lftj() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(direct_sailors_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(reserve_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, reserve_fact(1, 10, 5))?;
         txn.insert(&schema, reserve_fact(1, 11, 15))?;
@@ -313,33 +310,22 @@ fn direct_prefix_range_kernel_selects_and_filters_facts() -> TestResult {
         )
     })?;
 
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::DirectKernel);
-    assert_eq!(output.plan.plan_family, PlanFamily::Direct);
-    assert!(matches!(
-        output.plan.direct_kernel.as_ref().map(|direct| direct.kind),
-        Some(DirectKernelKind::PrefixRange)
-    ));
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
     assert_same_facts(
         &output.result.facts,
         &[vec![Value::U64(10), Value::Timestamp(TimestampMicros(5))]],
     );
-    assert!(output.plan.counters.direct_kernel_probes > 0);
-    assert!(output.plan.counters.direct_kernel_facts >= 1);
-    assert!(output.plan.counters.direct_kernel_predicates >= 1);
-    assert!(output.plan.counters.sink_emit_calls >= 1);
-    assert!(output.plan.timings.static_semijoin_proof_micros > 0);
     assert_eq!(output.plan.query_image_cache.builds, 1);
-    assert!(output.plan.counters.hash_index_builds >= 1);
-    assert_eq!(output.plan.counters.sorted_trie_builds, 0);
-    assert_eq!(output.plan.counters.trie_open, 0);
+    assert!(output.plan.counters.trie_open > 0);
     Ok(())
 }
 
 #[test]
-fn no_prefix_range_filter_uses_lftj_after_storage_bypass_deletion() -> TestResult {
+fn no_prefix_range_filter_uses_lftj() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(direct_sailors_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(reserve_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, reserve_fact(1, 10, 5))?;
         txn.insert(&schema, reserve_fact(1, 11, 15))?;
@@ -381,7 +367,6 @@ fn no_prefix_range_filter_uses_lftj_after_storage_bypass_deletion() -> TestResul
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
     assert_eq!(output.plan.query_image_cache.builds, 1);
-    assert!(output.plan.direct_kernel.is_none());
     assert_same_facts(
         &output.result.facts,
         &[
@@ -393,10 +378,10 @@ fn no_prefix_range_filter_uses_lftj_after_storage_bypass_deletion() -> TestResul
 }
 
 #[test]
-fn direct_prefix_range_empty_prefix_returns_zero_facts() -> TestResult {
+fn prefix_range_empty_prefix_returns_zero_facts() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(direct_sailors_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(reserve_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, reserve_fact(1, 10, 5))?;
         Ok::<_, Error>(())
@@ -441,10 +426,10 @@ fn direct_prefix_range_empty_prefix_returns_zero_facts() -> TestResult {
 }
 
 #[test]
-fn direct_chain_kernel_selects_and_follows_acyclic_path() -> TestResult {
+fn chain_query_uses_lftj_and_returns_path() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, chain_a_fact(1))?;
         txn.insert(&schema, chain_b_fact(10, 1))?;
@@ -469,34 +454,21 @@ fn direct_chain_kernel_selects_and_follows_acyclic_path() -> TestResult {
         )
     })?;
 
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::IndexNestedLoop);
-    assert_eq!(output.plan.plan_family, PlanFamily::IndexNestedLoop);
-    assert!(matches!(
-        output.plan.direct_kernel.as_ref().map(|direct| direct.kind),
-        Some(DirectKernelKind::ChainProbe)
-    ));
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
     assert_eq!(output.result.facts, vec![vec![Value::U64(30)]]);
-    assert_eq!(output.plan.counters.direct_kernel_facts, 4);
-    assert!(output.plan.counters.direct_chain_steps > 0);
-    assert_eq!(output.plan.counters.direct_chain_output_facts, 1);
-    assert_eq!(output.plan.counters.direct_chain_output_values, 1);
-    assert_eq!(output.plan.counters.sink_emit_calls, 0);
-    assert_eq!(output.plan.counters.direct_batch_facts, 1);
-    assert_eq!(output.plan.counters.direct_batch_fallback_facts, 0);
     assert!(output.plan.timings.static_semijoin_proof_micros > 0);
     assert_eq!(output.plan.counters.materialized_output_values, 1);
     assert_eq!(output.plan.counters.dictionary_reverse_lookups, 0);
-    assert_eq!(output.plan.counters.hash_index_builds, 0);
-    assert_eq!(output.plan.counters.hash_index_build_facts, 0);
-    assert_eq!(output.plan.counters.trie_open, 0);
+    assert!(output.plan.counters.trie_open > 0);
     Ok(())
 }
 
 #[test]
-fn direct_chain_post_step_existence_check_filters_after_binding() -> TestResult {
+fn chain_existence_filter_after_binding_returns_survivor() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, chain_a_fact(1))?;
         txn.insert(&schema, chain_b_fact(10, 1))?;
@@ -505,7 +477,7 @@ fn direct_chain_post_step_existence_check_filters_after_binding() -> TestResult 
         txn.insert(&schema, chain_c_fact(11, 100))?;
         Ok::<_, Error>(())
     })?;
-    let query = direct_chain_post_step_check_query(&schema)?;
+    let query = chain_existence_filter_query(&schema)?;
 
     let output = env.read(|txn| {
         txn.execute_query(
@@ -515,30 +487,25 @@ fn direct_chain_post_step_existence_check_filters_after_binding() -> TestResult 
         )
     })?;
 
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::IndexNestedLoop);
-    assert_eq!(output.plan.plan_family, PlanFamily::IndexNestedLoop);
-    assert!(matches!(
-        output.plan.direct_kernel.as_ref().map(|direct| direct.kind),
-        Some(DirectKernelKind::ChainProbe)
-    ));
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
     assert_eq!(output.result.facts, vec![vec![Value::U64(10)]]);
-    assert_eq!(output.plan.counters.direct_chain_output_facts, 1);
-    assert_eq!(output.plan.counters.trie_open, 0);
+    assert!(output.plan.counters.trie_open > 0);
     Ok(())
 }
 
 #[test]
-fn direct_chain_post_step_existence_check_can_filter_all_bindings() -> TestResult {
+fn chain_existence_filter_can_remove_all_bindings() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, chain_a_fact(1))?;
         txn.insert(&schema, chain_b_fact(10, 1))?;
         txn.insert(&schema, chain_c_fact(10, 100))?;
         Ok::<_, Error>(())
     })?;
-    let query = direct_chain_post_step_check_query(&schema)?;
+    let query = chain_existence_filter_query(&schema)?;
 
     let output = env.read(|txn| {
         txn.execute_query(
@@ -550,45 +517,15 @@ fn direct_chain_post_step_existence_check_can_filter_all_bindings() -> TestResul
 
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
     assert!(output.result.facts.is_empty());
-    assert_eq!(output.plan.counters.direct_chain_output_facts, 0);
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
 }
 
 #[test]
-fn direct_chain_plan_assigns_post_step_existence_check_depth() -> TestResult {
+fn tag_lookup_like_projection_uses_lftj_after_static_proof() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
-    let query = direct_chain_post_step_check_query(&schema)?;
-
-    env.read(|txn| {
-        let normalized = normalize_query(txn, &schema, &query)?;
-        let direct = try_direct_chain_kernel(&normalized)
-            .ok_or_else(|| Error::internal("missing direct chain plan"))?;
-        let DirectKernel::ChainProbe(plan) = direct.kind else {
-            return Err(Error::internal("expected direct chain plan"));
-        };
-        assert!(direct_chain_plan_is_valid(&plan));
-        assert_eq!(plan.steps.len(), 1);
-        assert_eq!(
-            plan.existence_checks
-                .iter()
-                .map(|check| check.depth)
-                .collect::<Vec<_>>(),
-            vec![0, 1]
-        );
-        Ok::<_, Error>(())
-    })?;
-
-    Ok(())
-}
-
-#[test]
-fn direct_chain_tag_lookup_like_projection_selects_chain_after_static_proof() -> TestResult {
-    let dir = tempfile::tempdir()?;
-    let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, chain_a_fact(1))?;
         txn.insert(&schema, chain_b_fact(10, 1))?;
@@ -619,8 +556,8 @@ fn direct_chain_tag_lookup_like_projection_selects_chain_after_static_proof() ->
         )
     })?;
 
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::IndexNestedLoop);
-    assert_eq!(output.plan.plan_family, PlanFamily::IndexNestedLoop);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
     assert!(output.plan.timings.static_semijoin_proof_micros > 0);
     assert_same_facts(
         &output.result.facts,
@@ -633,7 +570,7 @@ fn direct_chain_tag_lookup_like_projection_selects_chain_after_static_proof() ->
 fn cardinality_matches_materialized_projection_without_decoding_output() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, Fact::new("A", [("id", Value::U64(1))]))?;
         txn.insert(&schema, chain_b_fact(10, 1))?;
@@ -664,10 +601,10 @@ fn cardinality_matches_materialized_projection_without_decoding_output() -> Test
 }
 
 #[test]
-fn direct_chain_broken_path_returns_zero_facts() -> TestResult {
+fn chain_broken_path_returns_zero_facts() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, chain_b_fact(10, 1))?;
         Ok::<_, Error>(())
@@ -721,7 +658,6 @@ fn optimizer_keeps_cyclic_triangle_on_lftj() -> TestResult {
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert!(output.plan.direct_kernel.is_none());
     assert!(
         output
             .plan
@@ -965,7 +901,6 @@ fn domain_count_falls_back_to_lftj_until_fast_paths_are_rebuilt() -> TestResult 
     assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
-    assert!(output.plan.direct_kernel.is_none());
     Ok(())
 }
 
@@ -2025,7 +1960,7 @@ fn projection_deduplicates_results() -> TestResult {
 fn materialized_projection_is_recomputed_without_result_cache() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, chain_a_fact(1))?;
         txn.insert(&schema, chain_b_fact(10, 1))?;
@@ -2626,7 +2561,7 @@ fn static_semijoin_red_boat_like_wide_projection_skips_and_preserves_facts() -> 
 }
 
 #[test]
-fn static_semijoin_tag_lookup_like_direct_chain_projection_skips() -> TestResult {
+fn static_semijoin_tag_lookup_like_chain_projection_skips() -> TestResult {
     let (env, schema) = seeded_db()?;
     let query = typed_query(&schema, |query| {
         query
@@ -3969,9 +3904,9 @@ fn chain_schema() -> bumbledb_core::schema::SchemaDescriptor {
     )
 }
 
-fn direct_sailors_schema() -> bumbledb_core::schema::SchemaDescriptor {
+fn reserve_schema() -> bumbledb_core::schema::SchemaDescriptor {
     bumbledb_core::schema::SchemaDescriptor::new(
-        "DirectSailorsDb",
+        "ReserveDb",
         vec![
             RelationDescriptor::new(
                 "Reserve",
@@ -3986,9 +3921,9 @@ fn direct_sailors_schema() -> bumbledb_core::schema::SchemaDescriptor {
     )
 }
 
-fn direct_chain4_schema() -> bumbledb_core::schema::SchemaDescriptor {
+fn chain4_schema() -> bumbledb_core::schema::SchemaDescriptor {
     bumbledb_core::schema::SchemaDescriptor::new(
-        "DirectChain4Db",
+        "Chain4Db",
         vec![
             RelationDescriptor::new("A", vec![FieldDescriptor::new("id", ValueType::U64)])
                 .with_unique("id", ["id"]),
@@ -4023,7 +3958,7 @@ fn direct_chain4_schema() -> bumbledb_core::schema::SchemaDescriptor {
     )
 }
 
-fn direct_chain_post_step_check_query(schema: &StorageSchema) -> QueryBuildResult<TypedQuery> {
+fn chain_existence_filter_query(schema: &StorageSchema) -> QueryBuildResult<TypedQuery> {
     typed_query(schema, |query| {
         query.rel("A")?.input("id", "a")?.done();
         query.rel("B")?.var("id", "b")?.input("a", "a")?.done();
