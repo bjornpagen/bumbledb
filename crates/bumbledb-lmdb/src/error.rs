@@ -33,10 +33,6 @@ pub enum Error {
     #[error(transparent)]
     Query(#[from] QueryError),
 
-    /// Backup or compact-copy failure.
-    #[error(transparent)]
-    Backup(#[from] BackupError),
-
     /// Persisted state is malformed or inconsistent.
     #[error(transparent)]
     Corruption(#[from] CorruptionError),
@@ -441,20 +437,6 @@ pub enum ExecuteError {
     /// Public typed query IR is malformed.
     #[error("invalid typed query: {reason}")]
     InvalidQuery { reason: String },
-}
-
-/// Backup/compact-copy failures.
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum BackupError {
-    /// Failed to copy environment.
-    #[error("failed to copy LMDB environment to {path}")]
-    Copy {
-        path: PathBuf,
-        compact: bool,
-        #[source]
-        source: heed::Error,
-    },
 }
 
 /// Corruption/malformed persisted state failures.

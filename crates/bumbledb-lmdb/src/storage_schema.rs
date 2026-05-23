@@ -69,7 +69,7 @@ impl StorageSchema {
     }
 
     /// Returns planner-facing access paths for a relation.
-    pub fn access_paths(&self, relation_name: &str) -> Result<Vec<AccessPathDescriptor>> {
+    pub(crate) fn access_paths(&self, relation_name: &str) -> Result<Vec<AccessPathDescriptor>> {
         let (relation_id, _) = self.relation(relation_name)?;
         Ok(self
             .layouts_for_relation(relation_id)
@@ -121,7 +121,7 @@ impl StorageSchema {
 
 /// Planner-facing access path descriptor.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AccessPathDescriptor {
+pub(crate) struct AccessPathDescriptor {
     /// Relation name.
     pub relation_name: String,
     /// Index name.

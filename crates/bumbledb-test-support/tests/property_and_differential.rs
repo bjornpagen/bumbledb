@@ -1,6 +1,7 @@
 #![allow(clippy::result_large_err)]
 
 use bumbledb_core::encoding::TimestampMicros;
+use bumbledb_core::query_builder::QueryBuilder;
 use bumbledb_lmdb::{Environment, Fact, InputBindings, StorageSchema, Value};
 use bumbledb_test_support::assertions::{
     assert_invariants, assert_same_facts, execute_sorted_facts,
@@ -71,11 +72,17 @@ proptest! {
                 }
             }
             prop(assert_invariants(&env, &schema))?;
-            let actual = prop(env.read(|txn| {
-                txn.scan_relation(&schema, "Holder")?
-                    .map(|item| item.map(|item| item.fact))
-                    .collect::<bumbledb_lmdb::Result<BTreeSet<_>>>()
-            }))?;
+            let holder_query = prop(holder_projection_query(schema.descriptor()))?;
+            let actual = prop(execute_sorted_facts(
+                &env,
+                &schema,
+                &holder_query,
+                &InputBindings::new(),
+            ))?
+            .into_iter()
+            .map(|fact| holder_fact_from_projection(&fact))
+            .collect::<Result<BTreeSet<_>, _>>()
+            .map_err(TestCaseError::fail)?;
             assert_eq!(actual, expected);
             let count = prop(env.read(|txn| txn.relation_fact_count(&schema, "Holder")))?;
             assert_eq!(count as usize, expected.len());
@@ -146,4 +153,24 @@ fn default_inputs() -> InputBindings {
 
 fn holder_fact(id: u64) -> Fact {
     bumbledb_test_support::facts::holder(id, format!("holder-{id}"))
+}
+
+fn holder_projection_query(
+    schema: &bumbledb_core::schema::SchemaDescriptor,
+) -> Result<bumbledb_core::query_ir::TypedQuery, bumbledb_core::query_builder::QueryBuildError> {
+    QueryBuilder::new(schema)
+        .rel("Holder")?
+        .var("id", "id")?
+        .var("name", "name")?
+        .done()
+        .find_var("id")?
+        .find_var("name")?
+        .finish()
+}
+
+fn holder_fact_from_projection(fact: &[Value]) -> Result<Fact, String> {
+    let [Value::Serial(id), Value::String(name)] = fact else {
+        return Err(format!("unexpected Holder projection: {fact:?}"));
+    };
+    Ok(bumbledb_test_support::facts::holder(*id, name.clone()))
 }

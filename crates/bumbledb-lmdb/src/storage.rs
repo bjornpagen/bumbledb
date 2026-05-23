@@ -10,6 +10,7 @@ use bumbledb_core::schema::{
     SchemaDescriptor, ValueType,
 };
 
+#[cfg(test)]
 use crate::storage_schema::FACT_SET_ACCESS_NAME;
 use crate::{Error, ReadTxn, RelationId, Result, StorageSchema, WriteTxn};
 
@@ -65,15 +66,17 @@ impl Fact {
 }
 
 /// Field values used to build an index prefix.
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FieldValues {
+struct FieldValues {
     relation: String,
     values: BTreeMap<String, Value>,
 }
 
+#[cfg(test)]
 impl FieldValues {
     /// Creates index-prefix field values for `relation`.
-    pub fn new(
+    fn new(
         relation: impl Into<String>,
         values: impl IntoIterator<Item = (impl Into<String>, Value)>,
     ) -> Self {
@@ -127,8 +130,9 @@ impl Value {
 }
 
 /// Encoded component from an access key.
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EncodedComponent {
+pub(crate) struct EncodedComponent {
     /// Field name.
     pub field_name: String,
     /// Encoded bytes for this field in the index key.
@@ -136,8 +140,9 @@ pub struct EncodedComponent {
 }
 
 /// A fact yielded from an index scan.
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FactCursorRecord {
+pub(crate) struct FactCursorRecord {
     /// Decoded logical fact.
     pub fact: Fact,
     /// Encoded components in index-key order.
@@ -162,9 +167,10 @@ pub enum DeleteOutcome {
     Absent,
 }
 
+#[cfg(test)]
 impl FactCursorRecord {
     /// Returns an encoded component by field name.
-    pub fn encoded_component(&self, field: &str) -> Option<&[u8]> {
+    fn encoded_component(&self, field: &str) -> Option<&[u8]> {
         self.encoded_components
             .iter()
             .find(|component| component.field_name == field)
@@ -197,7 +203,8 @@ impl EncodedAccessItem {
 }
 
 /// Transaction-scoped scan over one current access path.
-pub struct FactCursor<'borrow, 'env, 'schema> {
+#[cfg(test)]
+pub(crate) struct FactCursor<'borrow, 'env, 'schema> {
     iter: heed::RoPrefix<'borrow, heed::types::Bytes, heed::types::Bytes>,
     txn: &'borrow heed::RoTxn<'env, heed::WithoutTls>,
     index_db: crate::RawDatabase,
@@ -215,6 +222,7 @@ pub(crate) struct EncodedFactCursor<'borrow, 'env, 'schema> {
     _env: std::marker::PhantomData<&'env ()>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug)]
 struct EncodedRange {
     offset: usize,
@@ -223,6 +231,7 @@ struct EncodedRange {
     end: Option<Vec<u8>>,
 }
 
+#[cfg(test)]
 impl Iterator for FactCursor<'_, '_, '_> {
     type Item = Result<FactCursorRecord>;
 
@@ -261,6 +270,7 @@ impl Iterator for EncodedFactCursor<'_, '_, '_> {
     }
 }
 
+#[cfg(test)]
 impl FactCursor<'_, '_, '_> {
     fn range_matches(&self, key: &[u8]) -> bool {
         let Some(range) = &self.range else {
@@ -333,21 +343,6 @@ impl WriteTxn<'_> {
             }
         }
         Ok(inserted)
-    }
-
-    /// Runs a streaming bulk load with relation access publication deferred.
-    pub fn bulk_load_streaming<T, E>(
-        &mut self,
-        load: impl FnOnce(&mut Self) -> std::result::Result<T, E>,
-    ) -> std::result::Result<T, E>
-    where
-        E: From<Error>,
-    {
-        let result = load(self);
-        match result {
-            Ok(value) => Ok(value),
-            Err(error) => Err(error),
-        }
     }
 
     /// Inserts a relation fact using set semantics.
@@ -776,7 +771,8 @@ fn relation_sort_key(schema: &StorageSchema, relation_name: &str) -> usize {
 
 impl<'env> ReadTxn<'env> {
     /// Scans a whole relation through the canonical fact-set access path.
-    pub fn scan_relation<'borrow, 'schema>(
+    #[cfg(test)]
+    pub(crate) fn scan_relation<'borrow, 'schema>(
         &'borrow self,
         schema: &'schema StorageSchema,
         relation_name: &str,
@@ -788,7 +784,8 @@ impl<'env> ReadTxn<'env> {
     }
 
     /// Scans an access path by a leading-field prefix.
-    pub fn scan_prefix<'borrow, 'schema>(
+    #[cfg(test)]
+    fn scan_prefix<'borrow, 'schema>(
         &'borrow self,
         schema: &'schema StorageSchema,
         relation_name: &str,
@@ -811,7 +808,8 @@ impl<'env> ReadTxn<'env> {
     }
 
     /// Scans a range index. Bounds are inclusive start and exclusive end.
-    pub fn scan_range<'borrow, 'schema>(
+    #[cfg(test)]
+    fn scan_range<'borrow, 'schema>(
         &'borrow self,
         schema: &'schema StorageSchema,
         relation_name: &str,
@@ -911,7 +909,7 @@ impl<'env> ReadTxn<'env> {
     }
 
     /// Returns the stored index-entry count for a current index.
-    pub fn access_entry_count(
+    pub(crate) fn access_entry_count(
         &self,
         schema: &StorageSchema,
         relation_name: &str,
@@ -929,7 +927,8 @@ impl<'env> ReadTxn<'env> {
     }
 
     /// Counts canonical fact entries for a relation by scanning the canonical namespace.
-    pub fn canonical_fact_count(
+    #[cfg(test)]
+    pub(crate) fn canonical_fact_count(
         &self,
         schema: &StorageSchema,
         relation_name: &str,
@@ -945,7 +944,8 @@ impl<'env> ReadTxn<'env> {
     }
 
     /// Checks whether a current access entry exists for a full fact.
-    pub fn access_entry_exists(
+    #[cfg(test)]
+    pub(crate) fn access_entry_exists(
         &self,
         schema: &StorageSchema,
         fact: &Fact,
@@ -961,7 +961,8 @@ impl<'env> ReadTxn<'env> {
     }
 
     /// Checks whether the exact fact exists in the canonical fact set.
-    pub fn exact_fact_exists(&self, schema: &StorageSchema, fact: &Fact) -> Result<bool> {
+    #[cfg(test)]
+    pub(crate) fn exact_fact_exists(&self, schema: &StorageSchema, fact: &Fact) -> Result<bool> {
         let (relation_id, relation) = schema.relation(&fact.relation)?;
         let encoded = self.encode_fact_existing(relation_id, relation, fact)?;
         let key = canonical_fact_key(relation_id, &encoded);
@@ -969,12 +970,13 @@ impl<'env> ReadTxn<'env> {
     }
 
     /// Looks up an interned string ID.
-    pub fn dictionary_string_id(&self, value: &str) -> Result<Option<u64>> {
+    #[cfg(test)]
+    pub(crate) fn dictionary_string_id(&self, value: &str) -> Result<Option<u64>> {
         lookup_intern_value(&self.dbs.dict, &self.txn, DICT_STRING, value.as_bytes())
     }
 
     /// Counts reverse dictionary entries across all dictionary kinds.
-    pub fn dictionary_entry_count(&self) -> Result<usize> {
+    pub(crate) fn dictionary_entry_count(&self) -> Result<usize> {
         let prefix = [DICT_REV];
         let mut iter = self.dbs.dict.prefix_iter(&self.txn, &prefix[..])?;
         let mut count = 0;
@@ -999,6 +1001,7 @@ impl<'env> ReadTxn<'env> {
         Ok(keys)
     }
 
+    #[cfg(test)]
     fn scan_access_with_prefix<'borrow, 'schema>(
         &'borrow self,
         schema: &'schema StorageSchema,
@@ -1033,6 +1036,7 @@ impl<'env> ReadTxn<'env> {
         })
     }
 
+    #[cfg(test)]
     fn encode_index_prefix(
         &self,
         relation: &RelationDescriptor,
@@ -1073,6 +1077,7 @@ impl<'env> ReadTxn<'env> {
         Ok(out)
     }
 
+    #[cfg(test)]
     fn encode_read_value(
         &self,
         relation: &RelationDescriptor,
@@ -1085,6 +1090,7 @@ impl<'env> ReadTxn<'env> {
         })
     }
 
+    #[cfg(test)]
     fn encode_fact_existing(
         &self,
         relation_id: u16,
@@ -1207,6 +1213,7 @@ fn storage_value_matches_type(value: &Value, value_type: &ValueType) -> bool {
     )
 }
 
+#[cfg(test)]
 fn decode_access_scan_entry(
     dict: crate::RawDatabase,
     index_db: crate::RawDatabase,
@@ -1223,6 +1230,7 @@ fn decode_access_scan_entry(
     })
 }
 
+#[cfg(test)]
 fn decode_access_key(
     index_db: crate::RawDatabase,
     txn: &heed::RoTxn,
@@ -1291,6 +1299,7 @@ fn encoded_access_item(
     })
 }
 
+#[cfg(test)]
 fn decode_encoded_fact(
     dict: crate::RawDatabase,
     txn: &heed::RoTxn,
@@ -1531,6 +1540,7 @@ fn fact_id_key(relation_id: u16, fact: &EncodedFact) -> Vec<u8> {
     key
 }
 
+#[cfg(test)]
 fn lookup_fact_by_id(
     db: crate::RawDatabase,
     txn: &heed::RoTxn,

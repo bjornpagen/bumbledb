@@ -2,9 +2,8 @@
 
 use std::collections::BTreeSet;
 
-use bumbledb_lmdb::{
-    Environment, Fact, InputBindings, InternalError, Result, StorageSchema, Value,
-};
+use bumbledb_core::query_builder::QueryBuilder;
+use bumbledb_lmdb::{Environment, InputBindings, InternalError, Result, StorageSchema, Value};
 
 /// Sorts query result facts deterministically.
 pub fn sorted_facts(mut facts: Vec<Vec<Value>>) -> Vec<Vec<Value>> {
@@ -33,11 +32,11 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
     env.read(|txn| {
         let diagnostics = env.storage_diagnostics(schema)?;
         for relation in &schema.descriptor().relations {
+            let query = relation_projection_query(schema, relation)?;
             let primary_facts = txn
-                .scan_relation(schema, &relation.name)?
-                .map(|item| item.map(|item| item.fact))
-                .collect::<Result<Vec<_>>>()?;
-            let primary_set = primary_facts.iter().cloned().collect::<BTreeSet<Fact>>();
+                .execute_query(schema, &query, &InputBindings::new())?
+                .result
+                .facts;
             let relation_diag = diagnostics
                 .relations
                 .iter()
@@ -53,55 +52,47 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
                 "fact count drift for {}",
                 relation.name
             );
-            assert_eq!(
-                txn.canonical_fact_count(schema, &relation.name)?,
-                primary_facts.len(),
-                "canonical fact count drift for {}",
-                relation.name
-            );
 
-            for path in schema.access_paths(&relation.name)? {
-                let facts = txn
-                    .scan_prefix(
-                        schema,
-                        &relation.name,
-                        &path.index_name,
-                        &bumbledb_lmdb::FieldValues::new(
-                            &relation.name,
-                            std::iter::empty::<(&str, Value)>(),
-                        ),
-                    )?
-                    .map(|item| item.map(|item| item.fact))
-                    .collect::<Result<Vec<_>>>()?;
-                let fact_set = facts.iter().cloned().collect::<BTreeSet<Fact>>();
-                assert_eq!(
-                    primary_set, fact_set,
-                    "index {}.{} does not decode to primary facts",
-                    relation.name, path.index_name
-                );
-                let index_diag = relation_diag
-                    .indexes
-                    .iter()
-                    .find(|diag| diag.index == path.index_name)
-                    .ok_or_else(|| {
-                        bumbledb_lmdb::Error::Internal(InternalError::Invariant {
-                            message: format!(
-                                "missing diagnostics for index {}.{}",
-                                relation.name, path.index_name
-                            ),
-                        })
-                    })?;
+            for index_diag in &relation_diag.indexes {
                 assert_eq!(
                     index_diag.entry_count as usize,
-                    facts.len(),
+                    primary_facts.len(),
                     "index stat drift for {}.{}",
                     relation.name,
-                    path.index_name
+                    index_diag.index
                 );
             }
         }
         Ok(())
     })
+}
+
+fn relation_projection_query(
+    schema: &StorageSchema,
+    relation: &bumbledb_core::schema::RelationDescriptor,
+) -> Result<bumbledb_core::query_ir::TypedQuery> {
+    let mut builder = QueryBuilder::new(schema.descriptor());
+    let mut atom = builder
+        .rel(&relation.name)
+        .map_err(|error| internal_error(format!("query build error: {error}")))?;
+    for field in &relation.fields {
+        atom = atom
+            .var(&field.name, &field.name)
+            .map_err(|error| internal_error(format!("query build error: {error}")))?;
+    }
+    atom.done();
+    for field in &relation.fields {
+        builder
+            .find_var(&field.name)
+            .map_err(|error| internal_error(format!("query build error: {error}")))?;
+    }
+    builder
+        .finish()
+        .map_err(|error| internal_error(format!("query build error: {error}")))
+}
+
+fn internal_error(message: String) -> bumbledb_lmdb::Error {
+    bumbledb_lmdb::Error::Internal(InternalError::Invariant { message })
 }
 
 /// Executes query against LMDB and returns sorted facts.

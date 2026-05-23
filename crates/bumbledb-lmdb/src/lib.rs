@@ -26,7 +26,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use heed::types::Bytes;
-use heed::{CompactionOption, Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
+use heed::{Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
 pub use error::*;
 pub use free_join::{
@@ -42,11 +42,8 @@ pub(crate) use query_image::{
     EncodedRef, FieldId, QueryImage, QueryImageCache, RelationId, RelationImage,
 };
 pub(crate) use sorted_trie::{EncodedOwned, LinearIter, TrieIter};
-pub use storage::{
-    DeleteOutcome, EncodedComponent, Fact, FactCursor, FactCursorRecord, FieldValues,
-    InsertOutcome, Value,
-};
-pub use storage_schema::{AccessPathDescriptor, BulkLoadReport, StorageSchema};
+pub use storage::{DeleteOutcome, Fact, InsertOutcome, Value};
+pub use storage_schema::{BulkLoadReport, StorageSchema};
 
 /// Current on-disk storage format version.
 pub const STORAGE_FORMAT_VERSION: u32 = 4;
@@ -250,18 +247,6 @@ impl Environment {
         })
     }
 
-    /// Copies this database into `target_dir` using LMDB's copy API.
-    #[tracing::instrument(name = "bumbledb.backup", skip_all, fields(target = %target_dir.as_ref().display(), compact = false))]
-    pub fn backup_to_path(&self, target_dir: impl AsRef<Path>) -> Result<()> {
-        self.copy_to_database_dir(target_dir.as_ref(), CompactionOption::Disabled)
-    }
-
-    /// Copies this database into `target_dir` with LMDB compaction enabled.
-    #[tracing::instrument(name = "bumbledb.compact_copy", skip_all, fields(target = %target_dir.as_ref().display(), compact = true))]
-    pub fn compact_copy_to_path(&self, target_dir: impl AsRef<Path>) -> Result<()> {
-        self.copy_to_database_dir(target_dir.as_ref(), CompactionOption::Enabled)
-    }
-
     /// Returns storage and LMDB diagnostics without exposing raw LMDB handles.
     pub fn storage_diagnostics(&self, schema: &StorageSchema) -> Result<StorageDiagnostics> {
         let info = self.env.info();
@@ -392,13 +377,6 @@ impl Environment {
 
         txn.commit()?;
         Ok(dbs)
-    }
-
-    fn copy_to_database_dir(&self, target_dir: &Path, compaction: CompactionOption) -> Result<()> {
-        fs::create_dir_all(target_dir)?;
-        self.env
-            .copy_to_path(target_dir.join(DATA_FILE), compaction)?;
-        Ok(())
     }
 }
 
@@ -654,55 +632,6 @@ mod tests {
                 .iter()
                 .any(|relation| relation.relation == "Posting" && relation.fact_count > 0)
         );
-        Ok(())
-    }
-
-    #[test]
-    fn backup_and_compact_copy_create_usable_databases() -> TestResult {
-        let schema = StorageSchema::new(benchmark_schema(), 511)?;
-        let dir = tempfile::tempdir()?;
-        let env = Environment::open_with_schema(dir.path(), &schema)?;
-        env.bulk_load(&schema, benchmark_facts(4))?;
-
-        let duplicate_report = env.bulk_load(&schema, vec![benchmark_facts(1)[0].clone()])?;
-        assert_eq!(duplicate_report.facts_inserted, 0);
-
-        let backup_dir = tempfile::tempdir()?;
-        env.backup_to_path(backup_dir.path())?;
-        let backup = Environment::open_with_schema(backup_dir.path(), &schema)?;
-
-        let compact_dir = tempfile::tempdir()?;
-        env.compact_copy_to_path(compact_dir.path())?;
-        let compact = Environment::open_with_schema(compact_dir.path(), &schema)?;
-
-        let typed = (benchmark_queries()[0].build)(schema.descriptor())?;
-        let inputs = InputBindings::from_values([
-            ("holder", Value::Serial(1)),
-            (
-                "start",
-                Value::Timestamp(bumbledb_core::encoding::TimestampMicros(0)),
-            ),
-            (
-                "end",
-                Value::Timestamp(bumbledb_core::encoding::TimestampMicros(1000)),
-            ),
-        ]);
-
-        let original = env
-            .read(|txn| txn.execute_query(&schema, &typed, &inputs))?
-            .result
-            .facts;
-        let backup_facts = backup
-            .read(|txn| txn.execute_query(&schema, &typed, &inputs))?
-            .result
-            .facts;
-        let compact_facts = compact
-            .read(|txn| txn.execute_query(&schema, &typed, &inputs))?
-            .result
-            .facts;
-
-        assert_eq!(sorted_facts(original.clone()), sorted_facts(backup_facts));
-        assert_eq!(sorted_facts(original), sorted_facts(compact_facts));
         Ok(())
     }
 

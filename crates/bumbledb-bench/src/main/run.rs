@@ -35,16 +35,14 @@ fn run_dataset(
     }
     let bumble_load = timed(|| match &dataset.fact_source {
         Some(source) => bumble_env.write(|txn| {
-            txn.bulk_load_streaming(|txn| {
-                let mut inserted = 0;
-                open::stream_facts(source, |fact| {
-                    if txn.insert(&bumble_schema, fact)? == bumbledb_lmdb::InsertOutcome::Inserted {
-                        inserted += 1;
-                    }
-                    Ok(())
-                })?;
-                Ok::<usize, Box<dyn std::error::Error>>(inserted)
-            })
+            let mut inserted = 0;
+            open::stream_facts(source, |fact| {
+                if txn.insert(&bumble_schema, fact)? == bumbledb_lmdb::InsertOutcome::Inserted {
+                    inserted += 1;
+                }
+                Ok(())
+            })?;
+            Ok::<usize, Box<dyn std::error::Error>>(inserted)
         }),
         None => bumble_env
             .bulk_load(&bumble_schema, dataset.facts.clone())
