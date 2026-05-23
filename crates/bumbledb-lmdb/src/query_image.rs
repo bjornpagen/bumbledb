@@ -222,7 +222,7 @@ pub struct FactRange {
     pub end: FactId,
 }
 
-/// Borrowed fact-id set reference used by future indexes and plan nodes.
+/// Borrowed fact-id set reference used by access structures and plan nodes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FactSetRef<'a> {
     /// Empty fact set.
@@ -258,7 +258,7 @@ impl<'a> EncodedRef<'a> {
     }
 }
 
-/// Immutable snapshot-local image used by the future query runtime.
+/// Immutable snapshot-local image used by the query runtime.
 #[derive(Clone, Debug)]
 pub struct QueryImage {
     key: QueryImageKey,
@@ -308,7 +308,6 @@ impl QueryImage {
                 fact_count,
                 encoded_column_bytes,
                 access_key_bytes,
-                access_payload_bytes: 0,
                 sorted_trie_bytes: 0,
                 hash_trie_bytes: 0,
                 build_micros,
@@ -671,11 +670,9 @@ pub struct QueryImageStats {
     pub encoded_column_bytes: usize,
     /// Encoded access-key bytes stored in relation images.
     pub access_key_bytes: usize,
-    /// Encoded access payload bytes stored in relation images.
-    pub access_payload_bytes: usize,
-    /// Bytes used by sorted trie indexes. Zero until the sorted-trie PRD lands.
+    /// Bytes used by cached sorted trie indexes.
     pub sorted_trie_bytes: usize,
-    /// Bytes used by hash trie indexes. Zero until the hash-trie PRD lands.
+    /// Bytes used by cached hash trie indexes.
     pub hash_trie_bytes: usize,
     /// Build elapsed time in microseconds.
     pub build_micros: u128,
@@ -696,10 +693,6 @@ pub struct RelationImage {
     pub columns: Vec<ColumnImage>,
     /// Durable sorted index images in access-path order when available.
     pub indexes: Vec<RelationIndexImage>,
-    /// Placeholder count for sorted indexes built in PRD 03.
-    pub sorted_index_count: usize,
-    /// Placeholder count for hash indexes built in PRD 06.
-    pub hash_index_count: usize,
     /// Relation image statistics.
     pub stats: RelationStats,
 }
@@ -711,7 +704,7 @@ pub struct RelationIndexImage {
     pub access: AccessId,
     /// Leading fields in access-path order.
     pub fields: Vec<FieldId>,
-    /// Full payload components in encoded key order.
+    /// Encoded key components in access order.
     pub components: Vec<RelationAccessComponent>,
     /// Bytes per encoded index entry.
     pub encoded_len: usize,
@@ -1540,9 +1533,7 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
                 fact_count,
                 fields,
                 columns,
-                sorted_index_count: indexes.len(),
                 indexes,
-                hash_index_count: 0,
                 stats: RelationStats {
                     fact_count,
                     field_count: self.relation.fields.len(),
@@ -1829,7 +1820,6 @@ mod tests {
         assert!(!account.access_prefix_exists(access, &id_three));
         assert_eq!(account.access_prefix_cardinality(access, &id_three), 0);
         assert!(image.stats().access_key_bytes > 0);
-        assert_eq!(image.stats().access_payload_bytes, 0);
         Ok(())
     }
 

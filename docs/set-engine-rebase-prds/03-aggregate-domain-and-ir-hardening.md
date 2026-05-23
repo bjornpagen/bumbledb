@@ -424,6 +424,6 @@ Update normative docs if the exact domain proof rules are not already spelled ou
 
 Keep invalid-domain tests permanent.
 
-Record any conservative rejection that future functional dependency descriptors could relax.
+Record any conservative rejection that later functional dependency descriptors could relax.
 
 This PRD is a prerequisite for set-native aggregate execution.

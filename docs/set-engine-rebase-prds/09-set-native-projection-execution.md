@@ -227,9 +227,9 @@ Increment `encoded_project_facts_seen` for every projected fact considered.
 
 Increment `encoded_project_facts_inserted` only for new projected facts.
 
-Increment `encoded_project_duplicate_facts` for duplicates, or remove the counter everywhere.
+Add a real duplicate-projection counter only if it is incremented by the set insertion path.
 
-Prefer incrementing the counter because it exposes set-work reduction.
+Do not reintroduce a dead duplicate counter that always reports zero.
 
 Avoid final dedup hiding sink errors.
 
@@ -239,7 +239,7 @@ Final `QueryResultSet::new` should not be the primary duplicate-defense for inte
 
 ## 16. Planner Changes
 
-Use `PayloadDemand.projected_vars` for projection queries.
+Add explicit projected-variable demand metadata for projection queries.
 
 Mark relations that are existence-only after projected vars are bound.
 
@@ -263,7 +263,7 @@ Assert completed bindings decrease compared with forced full-depth execution if 
 
 Assert early projection success counter increments.
 
-Assert duplicate projected fact counter increments for duplicate projected paths.
+Assert duplicate projected fact accounting works if a real duplicate counter is added.
 
 Add a case where existential proof fails and no result is emitted.
 
@@ -305,7 +305,7 @@ Keep `encoded_project_facts_seen`.
 
 Keep `encoded_project_facts_inserted`.
 
-Fix or remove `encoded_project_duplicate_facts`.
+Do not add duplicate counters unless execution increments them.
 
 ## 20. Benchmark Requirements
 

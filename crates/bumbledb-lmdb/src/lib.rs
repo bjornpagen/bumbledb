@@ -34,7 +34,7 @@ use bumbledb_core::query_ir::TypedQuery;
 pub use error::*;
 pub use free_join::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, FreeJoinPlan, NodeId, NodeImpl, OutputPlan,
-    PayloadDemand, PlanEstimates, PlanNode, ProjectPlan, SubAtom, VarId,
+    PlanEstimates, PlanNode, ProjectPlan, SubAtom, VarId,
 };
 pub use hash_trie::{HashTrieIndex, HashTrieStats, LeafMode, PrefixProbe};
 pub use planner_stats::PlannerStatsCacheDiagnostics;

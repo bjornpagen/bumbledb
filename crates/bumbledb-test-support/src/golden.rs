@@ -20,7 +20,7 @@ pub enum GoldenFamily {
 }
 
 /// Static golden family manifest. Every family listed here must have exact
-/// correctness tests before rewrite PRDs may complete.
+/// correctness tests before rewrite phases may complete.
 pub const GOLDEN_FAMILIES: &[GoldenFamily] = &[
     GoldenFamily::Ledger,
     GoldenFamily::Sailors,

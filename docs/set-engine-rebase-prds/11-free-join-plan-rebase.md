@@ -95,7 +95,7 @@ The executor does not execute node covers or probes from `FreeJoinPlan`.
 
 `SubAtom.access` is mostly descriptive.
 
-`PayloadDemand` is mostly descriptive.
+Node-level output demand metadata is absent until it is made executable.
 
 Direct paths build their own execution plans outside FreeJoinPlan.
 
@@ -115,7 +115,7 @@ Plan nodes can represent hash/GHT lookup.
 
 Plan nodes can represent durable access iteration.
 
-Plan nodes can represent future lazy GHT/COLT.
+Plan nodes can represent planned lazy GHT/COLT execution.
 
 Direct kernels become FreeJoin node implementations or are explicitly isolated for deletion.
 
@@ -211,7 +211,7 @@ Every implementation kind must have a validation rule.
 
 Every implementation kind must have either an executor or be rejected before execution.
 
-Do not add unused variants without tests unless marked future and never selected.
+Do not add unused variants without tests unless they are explicitly blocked from selection.
 
 ## 14. Validation Plan
 

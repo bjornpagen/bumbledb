@@ -59,8 +59,6 @@ pub struct PlanNode {
     pub subatoms: Vec<SubAtom>,
     /// Node implementation strategy.
     pub implementation: NodeImpl,
-    /// Payload carried by this node.
-    pub payload: PayloadDemand,
 }
 
 /// Node implementation strategy.
@@ -83,19 +81,6 @@ pub struct SubAtom {
     pub vars: Vec<VarId>,
     /// Physical access ID. This is index-layout ID for now.
     pub access: AccessId,
-}
-
-/// Payload required from a physical node.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct PayloadDemand {
-    /// Variables needed by final projection.
-    pub projected_vars: Vec<VarId>,
-    /// Variables needed by aggregate terms.
-    pub aggregate_vars: Vec<VarId>,
-    /// Relations used only for existence checks.
-    pub existence_only_relations: Vec<RelationId>,
-    /// Relations whose fact IDs are needed by later nodes/output.
-    pub fact_id_demands: Vec<RelationId>,
 }
 
 /// Output/projection/aggregation plan.
@@ -192,7 +177,6 @@ mod tests {
                     access: AccessId(0),
                 }],
                 implementation: NodeImpl::SortedLeapfrog,
-                payload: PayloadDemand::default(),
             }],
             output: OutputPlan::Project(ProjectPlan {
                 vars: vec![VarId(0)],
@@ -219,7 +203,6 @@ mod tests {
                     access: AccessId(0),
                 }],
                 implementation: NodeImpl::SortedLeapfrog,
-                payload: PayloadDemand::default(),
             }],
             output: OutputPlan::default(),
             estimates: PlanEstimates::default(),

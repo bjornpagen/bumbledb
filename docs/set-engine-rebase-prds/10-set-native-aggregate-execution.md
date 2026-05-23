@@ -236,7 +236,7 @@ Keep min/max ordering identical.
 
 ## 16. Pushdown Candidate Changes
 
-The current `aggregate_pushdown` candidate is nominal.
+The historical aggregate pushdown candidate was nominal and must not be reintroduced without a distinct implementation.
 
 It must become real or be removed.
 
@@ -320,7 +320,7 @@ Aggregate results remain exact.
 
 Aggregate event counters prove reduced witness work on focused fixture.
 
-Fake `aggregate_pushdown` candidate is removed or implemented for real.
+Fake aggregate pushdown candidates are absent or implemented for real.
 
 No aggregate domain validity rule from PRD 03 is weakened.
 

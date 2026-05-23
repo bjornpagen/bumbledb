@@ -17,9 +17,9 @@ use crate::query_image::{FactId, FactRange};
 use crate::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, Fact, FieldId,
     FieldValues, FreeJoinPlan, HashTrieIndex, IndexSpec, LeafMode, LinearIter, NodeId, NodeImpl,
-    OutputPlan, PayloadDemand, PlanEstimates, PlanNode, PrefixProbe, ProjectPlan, ReadTxn,
-    RelationImage, RelationIndexImage, RelationStats, Result, SortedTrieIndex, StorageSchema,
-    SubAtom, TrieIter, Value, VarId,
+    OutputPlan, PlanEstimates, PlanNode, PrefixProbe, ProjectPlan, ReadTxn, RelationImage,
+    RelationIndexImage, RelationStats, Result, SortedTrieIndex, StorageSchema, SubAtom, TrieIter,
+    Value, VarId,
 };
 
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
@@ -419,7 +419,7 @@ impl QueryPlan {
         ));
         out.push_str("timings:\n");
         out.push_str(&format!(
-            "  query_timing total_micros={} validate_inputs_micros={} normalize_micros={} encode_inputs_micros={} query_image_micros={} static_empty_lookup_micros={} static_literal_proof_micros={} static_semijoin_proof_micros={} direct_storage_micros={} plan_micros={} lftj_build_micros={} hash_index_micros={} execute_micros={} lftj_execute_micros={} hash_execute_micros={} sink_emit_micros={} sink_finish_micros={} decode_micros={} unaccounted_micros={}\n",
+            "  query_timing total_micros={} validate_inputs_micros={} normalize_micros={} encode_inputs_micros={} query_image_micros={} static_empty_lookup_micros={} static_literal_proof_micros={} static_semijoin_proof_micros={} plan_micros={} lftj_build_micros={} hash_index_micros={} execute_micros={} lftj_execute_micros={} hash_execute_micros={} sink_emit_micros={} sink_finish_micros={} decode_micros={} unaccounted_micros={}\n",
             self.timings.total_micros,
             self.timings.validate_inputs_micros,
             self.timings.normalize_micros,
@@ -428,7 +428,6 @@ impl QueryPlan {
             self.timings.static_empty_lookup_micros,
             self.timings.static_literal_proof_micros,
             self.timings.static_semijoin_proof_micros,
-            self.timings.direct_storage_micros,
             self.timings.plan_micros,
             self.timings.lftj_build_micros,
             self.timings.hash_index_micros,
@@ -853,8 +852,6 @@ pub struct QueryTimings {
     pub static_literal_proof_micros: u128,
     /// Static semijoin proof time.
     pub static_semijoin_proof_micros: u128,
-    /// Direct storage projection execution time.
-    pub direct_storage_micros: u128,
     /// Planning time.
     pub plan_micros: u128,
     /// LFTJ atom plan/index preparation time.
@@ -880,12 +877,6 @@ pub struct QueryTimings {
 impl QueryTimings {
     /// Returns the non-overlapping phase total used for unaccounted timing.
     pub fn accounted_micros(&self) -> u128 {
-        let direct_runtime = self.direct_storage_micros;
-        let runtime_micros = if direct_runtime > 0 {
-            direct_runtime
-        } else {
-            self.execute_micros
-        };
         self.validate_inputs_micros
             .saturating_add(self.normalize_micros)
             .saturating_add(self.encode_inputs_micros)
@@ -896,7 +887,7 @@ impl QueryTimings {
             .saturating_add(self.plan_micros)
             .saturating_add(self.lftj_build_micros)
             .saturating_add(self.hash_index_micros)
-            .saturating_add(runtime_micros)
+            .saturating_add(self.execute_micros)
             .saturating_add(self.sink_finish_micros)
             .saturating_add(self.decode_micros)
     }
@@ -1313,8 +1304,6 @@ pub struct PlanCounters {
     pub direct_chain_output_facts: u64,
     /// Number of direct chain output values emitted.
     pub direct_chain_output_values: u64,
-    /// Number of direct storage output facts emitted.
-    pub direct_storage_output_facts: u64,
     /// Number of direct facts appended through the direct batch projection path.
     pub direct_batch_facts: u64,
     /// Number of encoded bytes appended through the direct batch projection path.
@@ -1323,12 +1312,10 @@ pub struct PlanCounters {
     pub direct_batch_fallback_facts: u64,
     /// Number of times direct materialization reused an existing encoded binding.
     pub direct_binding_reuses: u64,
-    /// Number of encoded projection facts observed before dedup.
+    /// Number of encoded projection facts observed before set insertion.
     pub encoded_project_facts_seen: u64,
-    /// Number of encoded projection facts inserted after dedup.
+    /// Number of encoded projection facts inserted into the result set.
     pub encoded_project_facts_inserted: u64,
-    /// Number of duplicate encoded projection facts observed.
-    pub encoded_project_duplicate_facts: u64,
     /// Number of encoded fact bytes observed by projection sink.
     pub encoded_project_fact_bytes: u64,
     /// Number of projection values decoded at output boundary.
@@ -1628,6 +1615,7 @@ struct DirectChainProbePlan {
 struct DirectExistenceCheck {
     atom_id: usize,
     relation: crate::RelationId,
+    depth: usize,
     fields: SmallVec<[FieldId; 4]>,
     terms: SmallVec<[NormTerm; 4]>,
     index_name: String,
@@ -1660,19 +1648,6 @@ impl DirectImageFact {
 type SmallParticipants = SmallVec<[usize; 4]>;
 type SmallEncodedPrefix = SmallVec<[EncodedOwned; 8]>;
 type SmallEncodedFact = SmallVec<[EncodedOwned; 8]>;
-type DirectRangeBounds = (usize, Option<Value>, Option<Value>);
-enum DirectStorageAccess {
-    Prefix {
-        index_name: String,
-        values: Vec<(String, Value)>,
-    },
-    Range {
-        index_name: String,
-        start: Option<Value>,
-        end: Option<Value>,
-    },
-}
-
 impl<'env> ReadTxn<'env> {
     /// Executes a typed positive query IR against current indexes.
     #[tracing::instrument(name = "bumbledb.query.execute", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
@@ -1762,20 +1737,6 @@ impl<'env> ReadTxn<'env> {
         timings.encode_inputs_micros = elapsed_micros(phase_start);
         allocations.encode_inputs = allocation_delta_since(phase_alloc_start);
 
-        if let Some(output) = try_execute_direct_storage_project(
-            self,
-            schema,
-            &normalized,
-            &encoded_inputs,
-            inputs,
-            timings,
-            allocations,
-            total_start,
-            total_alloc_start,
-        )? {
-            return Ok(output);
-        }
-
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
         let image = {
@@ -1791,22 +1752,6 @@ impl<'env> ReadTxn<'env> {
 
         let query_image_cache = self.query_images.diagnostics();
         let prepared_cache_key = query_shape_key(schema, &normalized);
-        if let Some(output) = try_execute_direct_materialized_kernel(
-            image.as_ref(),
-            self,
-            schema,
-            &normalized,
-            &encoded_inputs,
-            query_image_cache,
-            image.planner_stats_diagnostics(),
-            image.prepared_plan_diagnostics(),
-            timings,
-            allocations,
-            total_start,
-            total_alloc_start,
-        )? {
-            return Ok(output);
-        }
         let lookup_start = Instant::now();
         let static_empty_cached = image.static_empty_cached(prepared_cache_key)?;
         timings.static_empty_lookup_micros = timings
@@ -2043,20 +1988,6 @@ impl<'env> ReadTxn<'env> {
         timings.encode_inputs_micros = elapsed_micros(phase_start);
         allocations.encode_inputs = allocation_delta_since(phase_alloc_start);
 
-        if let Some(output) = try_execute_direct_storage_project(
-            self,
-            schema,
-            normalized,
-            &encoded_inputs,
-            inputs,
-            timings,
-            allocations,
-            total_start,
-            total_alloc_start,
-        )? {
-            return Ok(output);
-        }
-
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
         let image = {
@@ -2071,22 +2002,6 @@ impl<'env> ReadTxn<'env> {
         allocations.query_image = allocation_delta_since(phase_alloc_start);
 
         let query_image_cache = self.query_images.diagnostics();
-        if let Some(output) = try_execute_direct_materialized_kernel(
-            image.as_ref(),
-            self,
-            schema,
-            normalized,
-            &encoded_inputs,
-            query_image_cache,
-            image.planner_stats_diagnostics(),
-            image.prepared_plan_diagnostics(),
-            timings,
-            allocations,
-            total_start,
-            total_alloc_start,
-        )? {
-            return Ok(output);
-        }
         let prepared_cache_key = query_shape_key(schema, normalized);
         let lookup_start = Instant::now();
         let static_empty_cached = image.static_empty_cached(prepared_cache_key)?;
@@ -3974,436 +3889,6 @@ fn typed_relation_clause_count(query: &TypedQuery) -> usize {
         .count()
 }
 
-// Direct kernels own simple materialized scans/chains/ranges before speculative proof.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "early direct materialized path needs current execution diagnostics"
-)]
-fn try_execute_direct_materialized_kernel(
-    image: &crate::QueryImage,
-    txn: &ReadTxn<'_>,
-    schema: &StorageSchema,
-    query: &NormalizedQuery,
-    encoded_inputs: &EncodedInputs,
-    query_image_cache: QueryImageCacheDiagnostics,
-    planner_stats: PlannerStatsCacheDiagnostics,
-    prepared_plan_cache: PreparedPlanCacheDiagnostics,
-    mut timings: QueryTimings,
-    mut allocations: QueryAllocationStats,
-    total_start: Instant,
-    total_alloc_start: allocation::AllocationSnapshot,
-) -> Result<Option<QueryOutput>> {
-    if !matches!(query.output, OutputPlan::Project(_)) {
-        return Ok(None);
-    }
-    let Some(direct_kernel) = try_direct_kernel(query) else {
-        return Ok(None);
-    };
-    let plan_family = match &direct_kernel.kind {
-        DirectKernel::ChainProbe(_) => PlanFamily::IndexNestedLoop,
-        DirectKernel::PrefixRange(_) => PlanFamily::Direct,
-    };
-    let direct_summary = direct_kernel.summary.clone();
-    let mut plan = ExecutionPlan {
-        variable_order_ids: (0..query.vars.len()).collect(),
-        relation_atoms: query.atoms.clone(),
-        comparisons: query.predicates.clone(),
-        direct_kernel: Some(direct_kernel),
-        summary: QueryPlan {
-            variable_order: query.vars.iter().map(|var| var.name.clone()).collect(),
-            variable_estimates: Vec::new(),
-            missing_indexes: Vec::new(),
-            optimizer: OptimizerTrace {
-                chosen: "direct_materialized".to_owned(),
-                candidates: vec![PlanCandidate {
-                    name: "direct_materialized".to_owned(),
-                    family: plan_family,
-                    implementations: Vec::new(),
-                    cost: CostKey {
-                        estimated_micros: 1,
-                        setup_micros: 0,
-                        memory_bytes: 0,
-                        materialization_penalty: 0,
-                        candidate_rank: 0,
-                        implementation_mask: 0,
-                    },
-                    selected: true,
-                    rejected_reason: "selected direct shape before static proof".to_owned(),
-                }],
-            },
-            plan_family,
-            query_image_cache,
-            planner_stats,
-            prepared_plan_cache,
-            node_facts: Vec::new(),
-            node_timings: Vec::new(),
-            free_join: FreeJoinPlan {
-                nodes: Vec::new(),
-                output: query.output.clone(),
-                estimates: PlanEstimates::default(),
-            },
-            direct_kernel: Some(direct_summary),
-            runtime_kind: QueryRuntimeKind::Unknown,
-            timings: QueryTimings::default(),
-            allocations: QueryAllocationStats::default(),
-            counters: PlanCounters::default(),
-            uses_indexed_multiway_join: query.atoms.len() > 1,
-        },
-    };
-    let mut sink = OutputSink::new(&plan.summary.free_join.output);
-    let execute_start = Instant::now();
-    let execute_alloc_start = allocation::snapshot();
-    execute_direct_kernel(
-        image,
-        txn,
-        schema,
-        query,
-        encoded_inputs,
-        &mut plan,
-        &mut sink,
-    )?;
-    timings.execute_micros = elapsed_micros(execute_start);
-    allocations.execute = allocation_delta_since(execute_alloc_start);
-
-    let columns = result_columns(query);
-    let sink_finish_start = Instant::now();
-    let sink_finish_alloc_start = allocation::snapshot();
-    let facts = sink.finish(txn, query, &mut plan.summary.counters)?;
-    timings.sink_finish_micros = elapsed_micros(sink_finish_start);
-    allocations.sink_finish = allocation_delta_since(sink_finish_alloc_start);
-    plan.summary.timings = timings;
-    plan.summary.allocations = allocations;
-    plan.summary.counters.output_facts = facts.len() as u64;
-    finish_timings(&mut plan.summary.timings, total_start);
-    plan.summary.allocations = plan
-        .summary
-        .allocations
-        .with_total(allocation_delta_since(total_alloc_start));
-    Ok(Some(QueryOutput {
-        result: QueryResultSet::new(columns, facts),
-        plan: plan.summary,
-    }))
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "direct storage path needs current execution diagnostics"
-)]
-fn try_execute_direct_storage_project(
-    txn: &ReadTxn<'_>,
-    schema: &StorageSchema,
-    query: &NormalizedQuery,
-    encoded_inputs: &EncodedInputs,
-    raw_inputs: &InputBindings,
-    mut timings: QueryTimings,
-    mut allocations: QueryAllocationStats,
-    total_start: Instant,
-    total_alloc_start: allocation::AllocationSnapshot,
-) -> Result<Option<QueryOutput>> {
-    if query.atoms.len() != 1 || !matches!(query.output, OutputPlan::Project(_)) {
-        return Ok(None);
-    }
-    let atom = &query.atoms[0];
-    let Some(access) = direct_storage_access(schema, query, atom, raw_inputs)? else {
-        return Ok(None);
-    };
-
-    let execute_start = Instant::now();
-    let execute_alloc_start = allocation::snapshot();
-    let mut counters = PlanCounters::default();
-    let mut sink = OutputSink::new(&query.output);
-    counters.direct_kernel_probes += 1;
-    let index_name = match &access {
-        DirectStorageAccess::Prefix { index_name, .. }
-        | DirectStorageAccess::Range { index_name, .. } => index_name.clone(),
-    };
-    let scan = match access {
-        DirectStorageAccess::Prefix { values, .. } => txn.scan_prefix(
-            schema,
-            &atom.relation_name,
-            &index_name,
-            &FieldValues::new(&atom.relation_name, values),
-        )?,
-        DirectStorageAccess::Range { start, end, .. } => {
-            txn.scan_range(schema, &atom.relation_name, &index_name, start, end)?
-        }
-    };
-    for item in scan {
-        let item = item?;
-        counters.direct_kernel_facts += 1;
-        let mut binding = EncodedBinding::new(query.vars.len());
-        counters.direct_bind_attempts += 1;
-        if !bind_direct_storage_fact(txn, query, encoded_inputs, atom, &item.fact, &mut binding)? {
-            continue;
-        }
-        counters.direct_bind_successes += 1;
-        let before = counters.comparisons_evaluated;
-        if !comparisons_ready_pass(
-            txn,
-            &query.predicates,
-            query,
-            encoded_inputs,
-            &binding,
-            &mut counters,
-        )? {
-            counters.direct_kernel_predicates = counters
-                .direct_kernel_predicates
-                .saturating_add(counters.comparisons_evaluated.saturating_sub(before));
-            continue;
-        }
-        counters.direct_kernel_predicates = counters
-            .direct_kernel_predicates
-            .saturating_add(counters.comparisons_evaluated.saturating_sub(before));
-        counters.bindings_yielded += 1;
-        counters.bindings_completed += 1;
-        counters.direct_storage_output_facts += 1;
-        if !sink.emit_direct_project(query, &binding, &mut counters)? {
-            sink.emit(txn, query, &binding, &mut counters)?;
-        }
-    }
-    timings.execute_micros = elapsed_micros(execute_start);
-    timings.direct_storage_micros = timings.execute_micros;
-    allocations.execute = allocation_delta_since(execute_alloc_start);
-
-    let finish_start = Instant::now();
-    let finish_alloc_start = allocation::snapshot();
-    let facts = sink.finish(txn, query, &mut counters)?;
-    timings.sink_finish_micros = elapsed_micros(finish_start);
-    allocations.sink_finish = allocation_delta_since(finish_alloc_start);
-    counters.output_facts = facts.len() as u64;
-    finish_timings(&mut timings, total_start);
-    allocations = allocations.with_total(allocation_delta_since(total_alloc_start));
-
-    Ok(Some(QueryOutput {
-        result: QueryResultSet::new(result_columns(query), facts),
-        plan: QueryPlan {
-            variable_order: query.vars.iter().map(|var| var.name.clone()).collect(),
-            variable_estimates: Vec::new(),
-            missing_indexes: Vec::new(),
-            optimizer: OptimizerTrace {
-                chosen: "direct_storage".to_owned(),
-                candidates: vec![PlanCandidate {
-                    name: "direct_storage".to_owned(),
-                    family: PlanFamily::Direct,
-                    implementations: Vec::new(),
-                    cost: CostKey {
-                        estimated_micros: counters.direct_kernel_facts.max(1),
-                        setup_micros: 0,
-                        memory_bytes: 0,
-                        materialization_penalty: counters.materialized_output_values,
-                        candidate_rank: 0,
-                        implementation_mask: 0,
-                    },
-                    selected: true,
-                    rejected_reason: "selected direct shape before query image".to_owned(),
-                }],
-            },
-            plan_family: PlanFamily::Direct,
-            query_image_cache: txn.query_images.diagnostics(),
-            planner_stats: PlannerStatsCacheDiagnostics::default(),
-            prepared_plan_cache: PreparedPlanCacheDiagnostics::default(),
-            node_facts: Vec::new(),
-            node_timings: Vec::new(),
-            free_join: FreeJoinPlan {
-                nodes: Vec::new(),
-                output: query.output.clone(),
-                estimates: PlanEstimates::default(),
-            },
-            direct_kernel: Some(DirectKernelSummary {
-                kind: DirectKernelKind::PrefixRange,
-                target: format!("{}.{}", atom.relation_name, index_name),
-                steps: 1,
-            }),
-            runtime_kind: QueryRuntimeKind::DirectKernel,
-            timings,
-            allocations,
-            counters,
-            uses_indexed_multiway_join: false,
-        },
-    }))
-}
-
-fn direct_storage_access(
-    schema: &StorageSchema,
-    query: &NormalizedQuery,
-    atom: &NormAtom,
-    raw_inputs: &InputBindings,
-) -> Result<Option<DirectStorageAccess>> {
-    if let Some(access) = direct_storage_prefix(schema, query, atom, raw_inputs)? {
-        return Ok(Some(access));
-    }
-    direct_storage_range(schema, query, atom, raw_inputs)
-}
-
-fn direct_storage_prefix(
-    schema: &StorageSchema,
-    query: &NormalizedQuery,
-    atom: &NormAtom,
-    raw_inputs: &InputBindings,
-) -> Result<Option<DirectStorageAccess>> {
-    let paths = schema.access_paths(&atom.relation_name)?;
-    let mut best = None;
-    for path in paths {
-        let mut values = Vec::new();
-        for field_name in &path.leading_fields {
-            let Some(field) = atom
-                .fields
-                .iter()
-                .find(|field| &field.field_name == field_name)
-            else {
-                break;
-            };
-            let NormTerm::Input(input) = field.term else {
-                break;
-            };
-            let input = &query.inputs[input.0 as usize];
-            let Some(value) = raw_inputs.value(&input.name) else {
-                return Err(Error::missing_input(&input.name));
-            };
-            values.push((field.field_name.clone(), value.clone()));
-        }
-        if values.is_empty() {
-            continue;
-        }
-        if best
-            .as_ref()
-            .is_none_or(|(_, existing): &(String, Vec<(String, Value)>)| {
-                values.len() > existing.len()
-            })
-        {
-            best = Some((path.index_name, values));
-        }
-    }
-    Ok(best.map(|(index_name, values)| DirectStorageAccess::Prefix { index_name, values }))
-}
-
-fn direct_storage_range(
-    schema: &StorageSchema,
-    query: &NormalizedQuery,
-    atom: &NormAtom,
-    raw_inputs: &InputBindings,
-) -> Result<Option<DirectStorageAccess>> {
-    let Some((variable, start, end)) = direct_storage_range_bounds(query, raw_inputs)? else {
-        return Ok(None);
-    };
-    let Some(field) = atom
-        .fields
-        .iter()
-        .find(|field| matches!(field.term, NormTerm::Var(var) if var.0 as usize == variable))
-    else {
-        return Ok(None);
-    };
-    let Some(path) = schema
-        .access_paths(&atom.relation_name)?
-        .into_iter()
-        .find(|path| {
-            path.kind == IndexKind::Range
-                && path
-                    .leading_fields
-                    .first()
-                    .is_some_and(|leading| leading == &field.field_name)
-        })
-    else {
-        return Ok(None);
-    };
-    Ok(Some(DirectStorageAccess::Range {
-        index_name: path.index_name,
-        start,
-        end,
-    }))
-}
-
-fn direct_storage_range_bounds(
-    query: &NormalizedQuery,
-    raw_inputs: &InputBindings,
-) -> Result<Option<DirectRangeBounds>> {
-    if query.predicates.is_empty() {
-        return Ok(None);
-    }
-    let mut variable = None;
-    let mut start = None;
-    let mut end = None;
-    for predicate in &query.predicates {
-        let (candidate, bound, var_is_left) = match (&predicate.operands[0], &predicate.operands[1])
-        {
-            (NormOperand::Var(var), NormOperand::Input(input)) => {
-                let input = &query.inputs[input.0 as usize];
-                let value = raw_inputs
-                    .value(&input.name)
-                    .ok_or_else(|| Error::missing_input(&input.name))?
-                    .clone();
-                (var.0 as usize, value, true)
-            }
-            (NormOperand::Input(input), NormOperand::Var(var)) => {
-                let input = &query.inputs[input.0 as usize];
-                let value = raw_inputs
-                    .value(&input.name)
-                    .ok_or_else(|| Error::missing_input(&input.name))?
-                    .clone();
-                (var.0 as usize, value, false)
-            }
-            _ => return Ok(None),
-        };
-        if variable.is_some_and(|existing| existing != candidate) {
-            return Ok(None);
-        }
-        variable = Some(candidate);
-        match (predicate.op, var_is_left) {
-            (ComparisonOperator::Gte, true) | (ComparisonOperator::Lte, false) => {
-                start = Some(bound)
-            }
-            (ComparisonOperator::Lt, true) | (ComparisonOperator::Gt, false) => end = Some(bound),
-            _ => return Ok(None),
-        }
-    }
-    Ok(variable.map(|variable| (variable, start, end)))
-}
-
-fn bind_direct_storage_fact(
-    txn: &ReadTxn<'_>,
-    query: &NormalizedQuery,
-    inputs: &EncodedInputs,
-    atom: &NormAtom,
-    fact: &crate::Fact,
-    binding: &mut EncodedBinding,
-) -> Result<bool> {
-    for field in &atom.fields {
-        let Some(value) = fact.value(&field.field_name) else {
-            return Ok(false);
-        };
-        match &field.term {
-            NormTerm::Var(variable) => {
-                let encoded =
-                    txn.encode_query_value(&query.vars[variable.0 as usize].value_type, value)?;
-                let encoded = encoded_owned_for_width(
-                    query.vars[variable.0 as usize].value_type.encoded_width(),
-                    &encoded,
-                )?;
-                if !binding.bind(variable.0 as usize, encoded) {
-                    return Ok(false);
-                }
-            }
-            NormTerm::Input(input) => {
-                let input = inputs
-                    .get(*input)
-                    .ok_or_else(|| Error::internal("missing direct storage input"))?;
-                let encoded = txn.encode_query_value(&field.value_type, value)?;
-                if encoded.as_slice() != input.as_bytes() {
-                    return Ok(false);
-                }
-            }
-            NormTerm::Literal(literal) => {
-                let encoded = txn.encode_query_value(&field.value_type, value)?;
-                if encoded.as_slice() != literal.as_bytes() {
-                    return Ok(false);
-                }
-            }
-            NormTerm::Wildcard => {}
-        }
-    }
-    Ok(true)
-}
-
 fn execute_free_join<'txn, 'query, S: FactSink>(
     image: &crate::QueryImage,
     txn: &ReadTxn<'txn>,
@@ -4498,7 +3983,7 @@ fn try_direct_chain_kernel(query: &NormalizedQuery) -> Option<DirectKernelPlan> 
     {
         return None;
     }
-    let mut bound = BTreeSet::new();
+    let mut variable_depth = BTreeMap::new();
     let mut existence_checks = Vec::new();
     let mut steps = Vec::new();
     for atom in &query.atoms {
@@ -4506,15 +3991,18 @@ fn try_direct_chain_kernel(query: &NormalizedQuery) -> Option<DirectKernelPlan> 
         let unbound = variables
             .iter()
             .copied()
-            .filter(|variable| !bound.contains(variable))
+            .filter(|variable| !variable_depth.contains_key(variable))
             .collect::<SmallParticipants>();
         if unbound.is_empty() {
             let mut fields = SmallVec::new();
             let mut terms = SmallVec::new();
+            let mut depth = 0usize;
             for field in &atom.fields {
-                if direct_term_is_bound(&field.term, &bound) {
+                if let Some(term_depth) = direct_term_available_depth(&field.term, &variable_depth)
+                {
                     fields.push(field.field);
                     terms.push(field.term.clone());
+                    depth = depth.max(term_depth);
                 }
             }
             if fields.is_empty() {
@@ -4523,6 +4011,7 @@ fn try_direct_chain_kernel(query: &NormalizedQuery) -> Option<DirectKernelPlan> 
             existence_checks.push(DirectExistenceCheck {
                 atom_id: atom.id.0 as usize,
                 relation: atom.relation,
+                depth,
                 index_name: direct_index_name(&atom.relation_name, "chain_exists"),
                 fields,
                 terms,
@@ -4541,7 +4030,7 @@ fn try_direct_chain_kernel(query: &NormalizedQuery) -> Option<DirectKernelPlan> 
         let mut prefix_fields = SmallVec::new();
         let mut prefix_terms = SmallVec::new();
         for field in &atom.fields {
-            if direct_term_is_bound(&field.term, &bound) {
+            if direct_term_available_depth(&field.term, &variable_depth).is_some() {
                 prefix_fields.push(field.field);
                 prefix_terms.push(field.term.clone());
             }
@@ -4558,16 +4047,20 @@ fn try_direct_chain_kernel(query: &NormalizedQuery) -> Option<DirectKernelPlan> 
             bind_var,
             bind_field,
         });
-        bound.insert(bind_var);
+        variable_depth.insert(bind_var, steps.len());
     }
     if steps.is_empty() {
         return None;
     }
+    let plan = DirectChainProbePlan {
+        existence_checks,
+        steps,
+    };
+    if !direct_chain_plan_is_valid(&plan) {
+        return None;
+    }
     Some(DirectKernelPlan {
-        kind: DirectKernel::ChainProbe(DirectChainProbePlan {
-            existence_checks,
-            steps,
-        }),
+        kind: DirectKernel::ChainProbe(plan),
         summary: DirectKernelSummary {
             kind: DirectKernelKind::ChainProbe,
             target: query
@@ -4581,12 +4074,47 @@ fn try_direct_chain_kernel(query: &NormalizedQuery) -> Option<DirectKernelPlan> 
     })
 }
 
-fn direct_term_is_bound(term: &NormTerm, bound: &BTreeSet<usize>) -> bool {
+fn direct_term_available_depth(
+    term: &NormTerm,
+    variable_depth: &BTreeMap<usize, usize>,
+) -> Option<usize> {
     match term {
-        NormTerm::Var(variable) => bound.contains(&(variable.0 as usize)),
-        NormTerm::Input(_) | NormTerm::Literal(_) => true,
-        NormTerm::Wildcard => false,
+        NormTerm::Var(variable) => variable_depth.get(&(variable.0 as usize)).copied(),
+        NormTerm::Input(_) | NormTerm::Literal(_) => Some(0),
+        NormTerm::Wildcard => None,
     }
+}
+
+fn direct_chain_plan_is_valid(plan: &DirectChainProbePlan) -> bool {
+    let mut variable_depth = BTreeMap::new();
+    for (depth, step) in plan.steps.iter().enumerate() {
+        if step.prefix_fields.len() != step.prefix_terms.len() {
+            return false;
+        }
+        for term in &step.prefix_terms {
+            let Some(term_depth) = direct_term_available_depth(term, &variable_depth) else {
+                return false;
+            };
+            if term_depth > depth {
+                return false;
+            }
+        }
+        variable_depth.insert(step.bind_var, depth + 1);
+    }
+    for check in &plan.existence_checks {
+        if check.depth > plan.steps.len() || check.fields.len() != check.terms.len() {
+            return false;
+        }
+        for term in &check.terms {
+            let Some(term_depth) = direct_term_available_depth(term, &variable_depth) else {
+                return false;
+            };
+            if term_depth > check.depth {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn direct_index_name(relation: &str, kind: &str) -> String {
@@ -4709,77 +4237,74 @@ struct DirectChainExecutor<'txn, 'input, 'query, 'plan, S: FactSink> {
 
 impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
     fn execute(&mut self) -> Result<()> {
-        for check in &self.kernel.existence_checks {
-            if let Some(facts) =
-                self.image_facts_for_terms(check.atom_id, &check.fields, &check.terms)?
-            {
-                if !facts.iter().try_fold(false, |found, fact| {
-                    if found {
-                        Ok(true)
-                    } else {
-                        self.image_fact_satisfies_atom(
-                            &self.plan.relation_atoms[check.atom_id],
-                            fact,
-                        )
-                    }
-                })? {
-                    return Ok(());
-                }
-                continue;
-            }
-            if let Some(facts) = self.storage_facts_for_terms(
-                check.relation,
-                check.atom_id,
-                &check.fields,
-                &check.terms,
-            )? {
-                if !facts.iter().try_fold(false, |found, fact| {
-                    if found {
-                        Ok(true)
-                    } else {
-                        self.storage_fact_satisfies_atom(
-                            &self.plan.relation_atoms[check.atom_id],
-                            fact,
-                        )
-                    }
-                })? {
-                    return Ok(());
-                }
-                continue;
-            }
-            let index = direct_hash_index(
-                self.image,
-                check.relation,
-                &check.fields,
-                None,
-                &check.index_name,
-                &mut self.plan.summary.counters,
-            )?;
-            let prefix = direct_prefix(&check.terms, self.inputs, &self.binding)?;
-            let refs = encoded_refs(&prefix);
-            self.plan.summary.counters.direct_kernel_probes += 1;
-            if !AccessSource::HashTrie(index.as_ref()).exists(&refs)? {
-                return Ok(());
-            }
-            let relation = direct_relation(self.image, check.relation)?;
-            let mut found = false;
-            for fact in index.facts_for_prefix(&refs) {
-                if direct_fact_satisfies_atom(
-                    relation,
-                    &self.plan.relation_atoms[check.atom_id],
-                    fact,
-                    self.inputs,
-                    &self.binding,
-                )? {
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                return Ok(());
-            }
+        if !self.run_existence_checks(0)? {
+            return Ok(());
         }
         self.execute_step(0)
+    }
+
+    fn run_existence_checks(&mut self, depth: usize) -> Result<bool> {
+        for check in &self.kernel.existence_checks {
+            if check.depth == depth && !self.existence_check_passes(check)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn existence_check_passes(&mut self, check: &DirectExistenceCheck) -> Result<bool> {
+        if let Some(facts) =
+            self.image_facts_for_terms(check.atom_id, &check.fields, &check.terms)?
+        {
+            return facts.iter().try_fold(false, |found, fact| {
+                if found {
+                    Ok(true)
+                } else {
+                    self.image_fact_satisfies_atom(&self.plan.relation_atoms[check.atom_id], fact)
+                }
+            });
+        }
+        if let Some(facts) = self.storage_facts_for_terms(
+            check.relation,
+            check.atom_id,
+            &check.fields,
+            &check.terms,
+        )? {
+            return facts.iter().try_fold(false, |found, fact| {
+                if found {
+                    Ok(true)
+                } else {
+                    self.storage_fact_satisfies_atom(&self.plan.relation_atoms[check.atom_id], fact)
+                }
+            });
+        }
+        let index = direct_hash_index(
+            self.image,
+            check.relation,
+            &check.fields,
+            None,
+            &check.index_name,
+            &mut self.plan.summary.counters,
+        )?;
+        let prefix = direct_prefix(&check.terms, self.inputs, &self.binding)?;
+        let refs = encoded_refs(&prefix);
+        self.plan.summary.counters.direct_kernel_probes += 1;
+        if !AccessSource::HashTrie(index.as_ref()).exists(&refs)? {
+            return Ok(false);
+        }
+        let relation = direct_relation(self.image, check.relation)?;
+        for fact in index.facts_for_prefix(&refs) {
+            if direct_fact_satisfies_atom(
+                relation,
+                &self.plan.relation_atoms[check.atom_id],
+                fact,
+                self.inputs,
+                &self.binding,
+            )? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn execute_step(&mut self, depth: usize) -> Result<()> {
@@ -4858,7 +4383,9 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 if let Some(facts) = self.plan.summary.node_facts.get_mut(depth) {
                     facts.actual_facts = facts.actual_facts.saturating_add(1);
                 }
-                self.execute_step(depth + 1)?;
+                if self.run_existence_checks(depth + 1)? {
+                    self.execute_step(depth + 1)?;
+                }
                 self.binding.unbind(step.bind_var);
             }
             return Ok(());
@@ -4901,7 +4428,9 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 if let Some(facts) = self.plan.summary.node_facts.get_mut(depth) {
                     facts.actual_facts = facts.actual_facts.saturating_add(1);
                 }
-                self.execute_step(depth + 1)?;
+                if self.run_existence_checks(depth + 1)? {
+                    self.execute_step(depth + 1)?;
+                }
                 self.binding.unbind(step.bind_var);
             }
             return Ok(());
@@ -4949,7 +4478,9 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             if let Some(facts) = self.plan.summary.node_facts.get_mut(depth) {
                 facts.actual_facts = facts.actual_facts.saturating_add(1);
             }
-            self.execute_step(depth + 1)?;
+            if self.run_existence_checks(depth + 1)? {
+                self.execute_step(depth + 1)?;
+            }
             self.binding.unbind(step.bind_var);
         }
         Ok(())
@@ -4963,7 +4494,7 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
         terms: &[NormTerm],
     ) -> Result<Option<Vec<Fact>>> {
         let atom = &self.plan.relation_atoms[atom_id];
-        let Some(index_name) = direct_storage_index_for_fields(self.schema, atom, fields)? else {
+        let Some(index_name) = storage_index_for_direct_fields(self.schema, atom, fields)? else {
             return Ok(None);
         };
         let mut values = Vec::new();
@@ -5126,7 +4657,7 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
     }
 }
 
-fn direct_storage_index_for_fields(
+fn storage_index_for_direct_fields(
     schema: &StorageSchema,
     atom: &NormAtom,
     fields: &[FieldId],
@@ -6223,8 +5754,6 @@ fn build_lftj_sorted_trie(
         fields,
         columns,
         indexes: Vec::new(),
-        sorted_index_count: 0,
-        hash_index_count: 0,
         stats: RelationStats {
             fact_count,
             field_count: variables.len(),
@@ -6786,8 +6315,7 @@ fn query_node_timings(
 fn plan_family_for_chosen(chosen: &str) -> PlanFamily {
     match chosen {
         "index_nested_loop" => PlanFamily::IndexNestedLoop,
-        "pure_lftj" | "aggregate_pushdown" => PlanFamily::FreeJoinLftj,
-        "direct_storage" => PlanFamily::Direct,
+        "pure_lftj" => PlanFamily::FreeJoinLftj,
         "static_empty" => PlanFamily::StaticEmpty,
         _ => PlanFamily::Unknown,
     }
@@ -7281,19 +6809,6 @@ fn optimize_free_join_plan(
         cyclic,
     )?);
 
-    if has_aggregate(query) {
-        candidates.push(build_plan_candidate(
-            "aggregate_pushdown",
-            schema,
-            query,
-            atoms,
-            variable_costs,
-            stats,
-            vec![NodeImpl::SortedLeapfrog; variable_order_ids.len()],
-            cyclic,
-        )?);
-    }
-
     candidates.sort_by_key(|candidate| candidate.cost.clone());
     let chosen = candidates
         .first()
@@ -7385,7 +6900,6 @@ fn build_plan_candidate(
 fn candidate_rank(name: &str) -> u8 {
     match name {
         "pure_lftj" => 0,
-        "aggregate_pushdown" => 1,
         _ => u8::MAX,
     }
 }
@@ -7406,7 +6920,7 @@ fn implementation_mask(implementations: &[NodeImpl]) -> u64 {
 fn estimated_setup_micros(name: &str, estimates: &PlanEstimates) -> u64 {
     let query_image_cost = estimates.output_facts.clamp(1, 1_000);
     let hash_cost = estimates.hash_build_facts / HASH_BUILD_ROWS_PER_MICRO;
-    let sorted_cost = if name == "pure_lftj" || name == "aggregate_pushdown" {
+    let sorted_cost = if name == "pure_lftj" {
         estimates.iterator_ops / 10
     } else {
         0
@@ -7466,7 +6980,6 @@ fn build_free_join_plan(
                 .get(node_id)
                 .copied()
                 .unwrap_or(NodeImpl::SortedLeapfrog),
-            payload: payload_demand(query),
         });
         bound.insert(*variable);
     }
@@ -7502,7 +7015,7 @@ fn estimate_free_join_plan(
         }
     }
 
-    if cyclic && name != "pure_lftj" && name != "aggregate_pushdown" {
+    if cyclic && name != "pure_lftj" {
         iterator_ops = iterator_ops.saturating_mul(8);
     }
 
@@ -7570,28 +7083,6 @@ fn atom_variables(atom: &NormAtom) -> BTreeSet<usize> {
             NormTerm::Input(_) | NormTerm::Literal(_) | NormTerm::Wildcard => None,
         })
         .collect()
-}
-
-fn payload_demand(query: &NormalizedQuery) -> PayloadDemand {
-    let mut projected_vars = Vec::new();
-    let mut aggregate_vars = Vec::new();
-    for term in &query.find {
-        match term {
-            NormFindTerm::Variable { variable } => projected_vars.push(*variable),
-            NormFindTerm::Aggregate {
-                variable, domain, ..
-            } => {
-                aggregate_vars.push(*variable);
-                aggregate_vars.extend(domain.iter().copied());
-            }
-        }
-    }
-    PayloadDemand {
-        projected_vars,
-        aggregate_vars,
-        existence_only_relations: Vec::new(),
-        fact_id_demands: Vec::new(),
-    }
 }
 
 fn output_plan(query: &NormalizedQuery) -> OutputPlan {
@@ -8201,23 +7692,6 @@ impl OutputSink {
             ));
         };
         Ok(sink.finish_count())
-    }
-
-    fn emit_direct_project(
-        &mut self,
-        query: &NormalizedQuery,
-        binding: &EncodedBinding,
-        counters: &mut PlanCounters,
-    ) -> Result<bool> {
-        let OutputSink::Project(sink) = self else {
-            counters.direct_batch_fallback_facts += 1;
-            return Ok(false);
-        };
-        let fact_width = sink.push_binding(query, binding, counters)?;
-        counters.direct_batch_facts += 1;
-        counters.direct_batch_fact_bytes =
-            counters.direct_batch_fact_bytes.saturating_add(fact_width);
-        Ok(true)
     }
 }
 

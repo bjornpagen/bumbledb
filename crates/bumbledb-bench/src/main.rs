@@ -1809,25 +1809,24 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Mechanics Counters\n\n");
-    out.push_str("| dataset | query | runtime | sink emits | project seen | project dupes | lftj next | lftj seek | lftj keys | direct chain step facts | direct chain output facts | direct storage output facts |\n");
-    out.push_str("|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("| dataset | query | runtime | sink emits | project seen | project inserted | lftj next | lftj seek | lftj keys | direct chain step facts | direct chain output facts |\n");
+    out.push_str("|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     for result in results {
         let counters = &result.counters;
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             markdown_escape(&result.runtime_kind),
             counters.sink_emit_calls,
             counters.encoded_project_facts_seen,
-            counters.encoded_project_duplicate_facts,
+            counters.encoded_project_facts_inserted,
             counters.lftj_next_calls,
             counters.lftj_seek_calls,
             counters.lftj_key_reads,
             counters.direct_chain_step_facts,
             counters.direct_chain_output_facts,
-            counters.direct_storage_output_facts,
         );
     }
     out.push_str("\n## Cache Diagnostics\n\n");
@@ -1860,15 +1859,15 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Phase Timing\n\n");
-    out.push_str("| dataset | query | runtime | total us | validate us | normalize us | encode us | image us | static empty lookup us | static literal proof us | static semijoin proof us | direct storage us | plan us | lftj build us | hash index us | execute us | lftj exec us | hash exec us | sink emit us | sink finish us | decode us | unaccounted us |\n");
+    out.push_str("| dataset | query | runtime | total us | validate us | normalize us | encode us | image us | static empty lookup us | static literal proof us | static semijoin proof us | plan us | lftj build us | hash index us | execute us | lftj exec us | hash exec us | sink emit us | sink finish us | decode us | unaccounted us |\n");
     out.push_str(
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
     );
     for result in results {
         let timings = result.timings;
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             markdown_escape(&result.runtime_kind),
@@ -1880,7 +1879,6 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             timings.static_empty_lookup_micros,
             timings.static_literal_proof_micros,
             timings.static_semijoin_proof_micros,
-            timings.direct_storage_micros,
             timings.plan_micros,
             timings.lftj_build_micros,
             timings.hash_index_micros,
@@ -2124,7 +2122,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         let allocations = result.allocations;
         let _ = write!(
             out,
-            ",\"phase_timing\":{{\"scope\":\"{}\",\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"static_empty_lookup_us\":{},\"static_literal_proof_us\":{},\"static_semijoin_proof_us\":{},\"direct_storage_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"hash_index_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"hash_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{},\"unaccounted_us\":{}}},\"allocations\":{{\"scope\":\"{}\",\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
+            ",\"phase_timing\":{{\"scope\":\"{}\",\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"static_empty_lookup_us\":{},\"static_literal_proof_us\":{},\"static_semijoin_proof_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"hash_index_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"hash_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{},\"unaccounted_us\":{}}},\"allocations\":{{\"scope\":\"{}\",\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
             json_escape(&result.allocation_scope),
             timings.total_micros,
             timings.validate_inputs_micros,
@@ -2134,7 +2132,6 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             timings.static_empty_lookup_micros,
             timings.static_literal_proof_micros,
             timings.static_semijoin_proof_micros,
-            timings.direct_storage_micros,
             timings.plan_micros,
             timings.lftj_build_micros,
             timings.hash_index_micros,
@@ -2183,7 +2180,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "]}},\"counters\":{{\"cursor_seeks\":{},\"facts_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_facts_seen\":{},\"encoded_project_facts_inserted\":{},\"encoded_project_duplicate_facts\":{},\"encoded_project_fact_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"direct_kernel_probes\":{},\"direct_kernel_facts\":{},\"direct_kernel_predicates\":{},\"direct_bind_attempts\":{},\"direct_bind_successes\":{},\"direct_chain_steps\":{},\"direct_chain_step_facts\":{},\"direct_chain_output_facts\":{},\"direct_chain_output_values\":{},\"direct_storage_output_facts\":{},\"direct_batch_facts\":{},\"direct_batch_fact_bytes\":{},\"direct_batch_fallback_facts\":{},\"direct_binding_reuses\":{},\"query_image_relations_loaded\":{},\"query_image_facts_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{},\"hash_trie_bytes\":{},\"static_empty_atoms_checked\":{},\"static_empty_facts_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            "]}},\"counters\":{{\"cursor_seeks\":{},\"facts_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_facts_seen\":{},\"encoded_project_facts_inserted\":{},\"encoded_project_fact_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"direct_kernel_probes\":{},\"direct_kernel_facts\":{},\"direct_kernel_predicates\":{},\"direct_bind_attempts\":{},\"direct_bind_successes\":{},\"direct_chain_steps\":{},\"direct_chain_step_facts\":{},\"direct_chain_output_facts\":{},\"direct_chain_output_values\":{},\"direct_batch_facts\":{},\"direct_batch_fact_bytes\":{},\"direct_batch_fallback_facts\":{},\"direct_binding_reuses\":{},\"query_image_relations_loaded\":{},\"query_image_facts_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{},\"hash_trie_bytes\":{},\"static_empty_atoms_checked\":{},\"static_empty_facts_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.counters.cursor_seeks,
             result.counters.facts_scanned,
             result.dictionary_reverse_lookups,
@@ -2194,7 +2191,6 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.counters.aggregate_count_range_calls,
             result.counters.encoded_project_facts_seen,
             result.counters.encoded_project_facts_inserted,
-            result.counters.encoded_project_duplicate_facts,
             result.counters.encoded_project_fact_bytes,
             result.counters.project_decode_values,
             result.counters.lftj_open_calls,
@@ -2215,7 +2211,6 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.counters.direct_chain_step_facts,
             result.counters.direct_chain_output_facts,
             result.counters.direct_chain_output_values,
-            result.counters.direct_storage_output_facts,
             result.counters.direct_batch_facts,
             result.counters.direct_batch_fact_bytes,
             result.counters.direct_batch_fallback_facts,
@@ -3607,7 +3602,6 @@ mod tests {
         assert!(markdown.contains("| pure_lftj | Lftj | FreeJoinLftj |"));
         assert!(markdown.contains("## Phase Timing"));
         assert!(markdown.contains("static semijoin proof us"));
-        assert!(markdown.contains("direct storage us"));
         assert!(markdown.contains("unaccounted us"));
         assert!(markdown.contains("## Mechanics Counters"));
         assert!(markdown.contains("sink emits"));

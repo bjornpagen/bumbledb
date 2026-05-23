@@ -2,7 +2,7 @@
 
 ## 01. Status
 
-Not started.
+Completed.
 
 ## 02. Severity
 
@@ -368,7 +368,21 @@ Do not change storage layout.
 
 ## 22. Completion Notes
 
-Document whether the full depth-aware implementation or minimal safe alternative was chosen.
+Implemented the full depth-aware direct-chain check design.
+
+Each `DirectExistenceCheck` now records the earliest execution depth at which its terms are available.
+
+Depth-zero checks still execute before recursion.
+
+Post-step checks execute immediately after the step that binds their required variables.
+
+Direct-chain plan validation rejects checks or step prefixes that require unavailable variables.
+
+Regression coverage includes a post-step check that succeeds after binding.
+
+Regression coverage includes a post-step check that filters all bindings.
+
+Regression coverage includes direct plan depth assignment validation.
 
 If the minimal safe alternative was chosen, add an explicit follow-up note in PRD 11 or PRD 15.
 

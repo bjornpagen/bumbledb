@@ -1198,7 +1198,7 @@ pub struct AccessLayout {
     pub kind: IndexKind,
     /// Leading fields used for prefix access.
     pub leading_fields: Vec<String>,
-    /// Full payload components in encoded order.
+    /// Encoded key components in access order.
     pub components: Vec<AccessComponent>,
     /// Total encoded key length including namespace/relation/index overhead.
     pub encoded_len: usize,
