@@ -56,7 +56,7 @@ Primary files:
 
 - `crates/bumbledb-lmdb/src/query.rs`.
 - `crates/bumbledb-lmdb/src/free_join.rs`.
-- `crates/bumbledb-lmdb/src/query_access.rs` if semijoin helpers are extended.
+- Free Join access abstractions if semijoin helpers are extended.
 - `crates/bumbledb-test-support/src/reference.rs` for validation expectations.
 
 Relevant current regions:
@@ -242,7 +242,7 @@ It must become real or be removed.
 
 If implemented, it must use event-depth metadata.
 
-If implemented, it must have different cost estimates from pure LFTJ.
+If implemented, it must have different cost estimates from sorted-leapfrog Free Join.
 
 If not implemented in this PRD, remove the candidate from optimizer traces.
 

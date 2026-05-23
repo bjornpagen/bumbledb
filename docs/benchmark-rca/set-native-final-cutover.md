@@ -24,7 +24,7 @@ cargo check --manifest-path fuzz/Cargo.toml
 ## Cutover Summary
 
 - Storage format is bumped and old pre-v4 formats are rejected.
-- Query output is `QueryResultSet`, not a fact-bag carrier.
+- Query output is `QueryResultSet`, not a multiplicity carrier.
 - Query cardinality uses `QueryResultCardinality` and is not an aggregate count value.
 - Covering unique constraints are no longer the physical schema contract.
 - Canonical fact membership is stored separately from access entries.

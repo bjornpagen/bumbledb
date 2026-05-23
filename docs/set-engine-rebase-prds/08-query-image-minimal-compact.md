@@ -240,7 +240,7 @@ Projection sink must request projected fields.
 
 Aggregate sink must request group, domain, and measure fields.
 
-Static proof paths must request only proof fields and access paths.
+Proof-like paths, if reintroduced through Free Join, must request only required fields and access paths.
 
 Do not silently fall back to full images when a scoped field is missing.
 

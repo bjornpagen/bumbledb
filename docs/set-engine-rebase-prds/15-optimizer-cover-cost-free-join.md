@@ -1,4 +1,4 @@
-# PRD 15: Optimizer Cover Cost And Direct Kernel Consolidation
+# PRD 15: Optimizer Cover Cost And Free Join Consolidation
 
 ## 01. Status
 
@@ -14,7 +14,7 @@ This PRD is designed for one implementer.
 
 The implementer must complete PRDs 11 through 14 first.
 
-The implementer must not add uncosted direct paths.
+The implementer must not add uncosted side paths.
 
 The implementer must not leave fake optimizer candidates.
 
@@ -46,9 +46,9 @@ It does not cost lazy build work accurately.
 
 It does not cost result-set work separately from witness work.
 
-Direct kernels can bypass the optimizer.
+Older side paths could bypass the optimizer.
 
-The direct materialized path has fake cost.
+Materialized shortcuts with fake costs are not allowed.
 
 The aggregate pushdown candidate can be fake.
 
@@ -63,26 +63,25 @@ Primary files:
 - `crates/bumbledb-lmdb/src/query.rs`.
 - `crates/bumbledb-lmdb/src/free_join.rs`.
 - `crates/bumbledb-lmdb/src/planner_stats.rs`.
-- `crates/bumbledb-lmdb/src/query_access.rs`.
-- `crates/bumbledb-lmdb/src/hash_trie.rs`.
+- retired narrow access helper code, if any is reintroduced.
+- retired trie auxiliary code, if any is reintroduced.
 - `crates/bumbledb-lmdb/src/query_image.rs`.
 
 Relevant current regions:
 
-- `query.rs:3977-4031` for direct materialized preselection and fake cost.
+- `query.rs` optimizer candidate generation and estimates.
 - `query.rs:6719-7008` for variable cost estimation.
 - `query.rs:7207-7445` for candidate generation and estimates.
 - `planner_stats.rs:182-280` for field and access estimates.
-- `query_access.rs:7-32` for narrow access abstraction.
-- `hash_trie.rs:216-218` and `hash_trie.rs:343-349` for recursive count.
+- any newly added access abstraction must be selected through Free Join.
 
 ## 07. Current Behavior
 
-The optimizer generates candidates such as pure LFTJ.
+The optimizer generates Free Join candidates such as sorted-leapfrog execution.
 
-Direct materialized execution can be selected before normal proof and planning.
+Materialized shortcuts must not be selected before normal planning.
 
-Direct materialized candidate records estimated micros as one.
+Any materialized candidate must report a real cost.
 
 Aggregate pushdown candidate can appear without a distinct implementation.
 
@@ -90,7 +89,7 @@ Variable ordering uses sampled field stats and simple access stats.
 
 One-field non-unique access paths can be estimated as unique due to forced final depth distinct count.
 
-Hash trie prefix counts recursively sum subtrees.
+Lazy access prefix counts recursively sum subtrees.
 
 Plan costs do not distinguish result-set work from full binding work.
 
@@ -98,7 +97,7 @@ Plan costs do not distinguish result-set work from full binding work.
 
 All physical strategies compete as optimizer candidates.
 
-Direct paths are Free Join node implementations or removed.
+Side paths are Free Join node implementations or removed.
 
 Every selected candidate has a real implementation.
 
@@ -174,19 +173,19 @@ Choose cover by stable cost key.
 
 ## 12. Direct Kernel Consolidation Plan
 
-Inventory every direct kernel.
+Inventory every retired auxiliary path.
 
-Map each direct kernel to a Free Join node implementation if possible.
+Map each side path to a Free Join node implementation if possible.
 
-Delete direct kernels that duplicate Free Join behavior without unique value.
+Delete retired auxiliary paths that duplicate Free Join behavior without unique value.
 
-If a direct kernel remains, it must enter optimizer candidate generation normally.
+If a retired auxiliary path remains, it must enter optimizer candidate generation normally.
 
-No direct kernel may be selected before static proof and normal candidate costing unless explicitly proven safe and costed.
+No retired auxiliary path may be selected before normal planning and normal candidate costing unless explicitly proven safe and costed.
 
-Remove fake direct cost of one microsecond.
+Remove fake shortcut cost of one microsecond.
 
-Update tests that assert direct runtime kind.
+Update tests that assert removed runtime kinds.
 
 ## 13. Aggregate Candidate Plan
 
@@ -194,7 +193,7 @@ If PRD 10 implemented real aggregate-domain execution, add a real aggregate cand
 
 If not, remove aggregate pushdown candidate entirely.
 
-Do not leave a candidate that shares implementation with pure LFTJ and differs only by name.
+Do not leave a candidate that shares implementation with sorted-leapfrog Free Join and differs only by name.
 
 Aggregate candidate cost must include domain-event estimates.
 
@@ -212,7 +211,7 @@ Do not force final depth distinct count to fact count for non-unique one-field a
 
 Track heavy hitters if useful but do not overfit initial implementation.
 
-Add subtree counts to hash trie nodes to make prefix count cheap.
+Add subtree counts to lazy access nodes to make prefix count cheap.
 
 Expose stats provenance in diagnostics: exact, sampled, conservative.
 
@@ -284,7 +283,7 @@ Exact access prefix stats are used when compact access image exists.
 
 Conservative stats are used when exact stats are absent.
 
-Hash trie prefix count uses stored subtree counts after implementation.
+Lazy access prefix count uses stored subtree counts after implementation.
 
 Non-unique access path estimate reflects duplicates.
 
@@ -306,7 +305,7 @@ Exact correctness must pass before timing.
 
 ## 20. Passing Criteria
 
-No direct kernel bypasses optimizer costing.
+No retired auxiliary path bypasses optimizer costing.
 
 No fake aggregate pushdown candidate remains.
 
@@ -324,7 +323,7 @@ The query-focused validation gate passes.
 
 ## 21. Failure Modes
 
-Keeping fake cost for direct materialized path is a failure.
+Keeping fake cost for materialized shortcuts is a failure.
 
 Leaving aggregate pushdown as a name-only candidate is a failure.
 
@@ -354,7 +353,7 @@ Do not change public APIs.
 
 Document cost dimensions in planner docs.
 
-Document any remaining direct kernels and why they remain.
+Document any remaining retired auxiliary paths and why they remain.
 
 Keep optimizer trace tests permanent.
 

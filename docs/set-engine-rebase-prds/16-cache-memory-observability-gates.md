@@ -61,7 +61,7 @@ Primary files:
 - `crates/bumbledb-lmdb/src/query.rs`.
 - `crates/bumbledb-lmdb/src/query_image.rs`.
 - `crates/bumbledb-lmdb/src/sorted_trie.rs`.
-- `crates/bumbledb-lmdb/src/hash_trie.rs`.
+- Free Join lazy access code.
 - `crates/bumbledb-bench/src/main.rs`.
 - `crates/bumbledb-bench/src/open.rs`.
 - `crates/bumbledb-test-support` tests.
@@ -82,9 +82,9 @@ Prepared plan cache stores plans keyed by query shape.
 
 Prepared query stores normalized query cache by transaction ID.
 
-Static proof caches store proof outcomes.
+Planner caches store reusable planning outcomes.
 
-Sorted trie and hash trie caches exist under query image internals.
+Sorted trie and lazy access caches exist under query image internals.
 
 Caches expose hit and miss counters.
 
@@ -122,11 +122,11 @@ Prepared normalized query cache.
 
 Static empty fast cache.
 
-Static proof cache.
+Planner proof-like cache, if reintroduced through Free Join.
 
 Sorted trie cache.
 
-Hash trie cache.
+Lazy access cache.
 
 Planner stats cache.
 
@@ -272,11 +272,11 @@ Query image cache reports high-water bytes.
 
 Prepared plan cache reports current items and evictions if budgeted.
 
-Static proof cache reports items and evictions if budgeted.
+Planner proof-like cache reports items and evictions if reintroduced through Free Join.
 
 Sorted trie cache reports bytes.
 
-Hash trie cache reports bytes.
+Lazy access cache reports bytes.
 
 Small test budget forces eviction.
 
@@ -322,9 +322,9 @@ The generated PRD suite may mention historical context only through approved wor
 
 No removed public model terms may reappear in code.
 
-No old count-cache terminology may reappear.
+No removed scalar-count terminology may reappear.
 
-No old covering-access terminology may reappear.
+No removed all-field access terminology may reappear.
 
 If a legacy word appears in third-party paper quotes, do not put those quotes in normative docs.
 

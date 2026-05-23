@@ -59,7 +59,7 @@ Primary files:
 - `crates/bumbledb-lmdb/src/query.rs`.
 - `crates/bumbledb-lmdb/src/free_join.rs`.
 - `crates/bumbledb-lmdb/src/query_image.rs` if relation access helpers are needed.
-- `crates/bumbledb-lmdb/src/query_access.rs` if semijoin probe abstraction is extended.
+- Free Join access abstractions if semijoin probe behavior is extended.
 
 Relevant current regions:
 

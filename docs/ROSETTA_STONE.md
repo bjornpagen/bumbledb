@@ -60,7 +60,7 @@ pub struct RelationDescriptor {
 
 There is no primary-key descriptor, no generated-ID descriptor, and no relation-kind enum.
 
-Canonical fact membership is implicit for every relation. It is not modeled as a primary key or as a required covering unique constraint.
+Canonical fact membership is implicit for every relation. It is not modeled as a primary key or as a required all-field unique constraint.
 
 Unique constraints are named logical constraints:
 
@@ -127,7 +127,7 @@ reverse FK guard = R | target_relation_id | target_constraint | target_key_bytes
 
 The canonical fact namespace owns exact fact membership. Access entries support scans and query-image construction without carrying undeclared payload fields. Unique constraints and reverse foreign-key delete checks use dedicated guard namespaces rather than overloading scan access entries. Access layouts are generated from fact-set access, named unique constraints, foreign keys, range annotations, and explicit physical indexes.
 
-Query images are built from current access state under an LMDB read snapshot. Durable full-relation segment publication and history/audit records are not part of the v4 write path.
+Query images are built from current access state under an LMDB read snapshot. Durable historical relation snapshots and history/audit records are not part of the v4 write path.
 
 ## Write Semantics
 
@@ -163,7 +163,7 @@ Global domain count over an empty input returns one fact containing `0`. Grouped
 
 ## Query Execution
 
-The retained execution backbone is Free Join/LFTJ plus narrow direct projection/storage paths. Legacy product-of-fanout count kernels and scalar prepared count caches were deleted because they encoded bag-style witness multiplicity.
+The retained execution backbone is Free Join/LFTJ plus fact-native projection/storage paths. Legacy product-of-fanout count kernels and scalar prepared count caches were deleted because they encoded witness multiplicity instead of set semantics.
 
 Projection materialization uses a result-set sink. Duplicate projected facts are rejected before final output decoding.
 

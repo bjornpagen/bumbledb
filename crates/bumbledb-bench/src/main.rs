@@ -811,7 +811,7 @@ fn run_dataset(
     }
     let bumble_load = timed(|| match &dataset.fact_source {
         Some(source) => bumble_env.write(|txn| {
-            txn.bulk_load_streaming(&bumble_schema, |txn| {
+            txn.bulk_load_streaming(|txn| {
                 let mut inserted = 0;
                 open::stream_facts(source, |fact| {
                     if txn.insert(&bumble_schema, fact)? == bumbledb_lmdb::InsertOutcome::Inserted {
@@ -1815,7 +1815,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     out.push_str("\n## Interpretation Notes\n\n");
     out.push_str("| signal | interpretation |\n");
     out.push_str("|---|---|\n");
-    out.push_str("| high image us | QueryImage acquisition or segment build bottleneck |\n");
+    out.push_str("| high image us | QueryImage acquisition or access-image build bottleneck |\n");
     out.push_str(
         "| high plan us | stats, variable ordering, or Free Join optimization bottleneck |\n",
     );

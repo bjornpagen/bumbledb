@@ -16,7 +16,7 @@ These PRDs define the remaining process as ordered, strict, implementation-grade
 - Projection output is a set of result facts.
 - Aggregate domains are explicit sets and must be validated before execution.
 - Query execution should optimize for result-set work and explicit aggregate-domain work, not full witness completion.
-- Free Join remains the target execution framework, but the current code only implements a narrow pure-LFTJ slice.
+- Free Join remains the target execution framework, with the current code implementing a sorted-leapfrog slice plus lazy access slices for selected atom shapes.
 - LMDB remains the durable storage substrate.
 - No migrations, compatibility readers, legacy aliases, or dual old/new storage readers are allowed.
 - Breaking storage format bumps are required whenever on-disk layout changes.
@@ -77,8 +77,6 @@ After each PRD, run the repository's strict removed-concept grep gate over sourc
 
 ## Ordered PRDs
 
-1. `01-lftj-atom-cache-correctness.md`
-2. `02-direct-chain-correctness.md`
 3. `03-aggregate-domain-and-ir-hardening.md`
 4. `04-cardinality-reference-and-benchmark-correctness.md`
 5. `05-storage-transaction-and-schema-safety.md`
@@ -91,7 +89,7 @@ After each PRD, run the repository's strict removed-concept grep gate over sourc
 12. `12-free-join-factoring.md`
 13. `13-lazy-ght-colt.md`
 14. `14-vectorized-free-join.md`
-15. `15-optimizer-cover-cost-direct-kernels.md`
+15. `15-optimizer-cover-cost-free-join.md`
 16. `16-cache-memory-observability-gates.md`
 
 ## Final Definition Of Done
@@ -107,7 +105,7 @@ After each PRD, run the repository's strict removed-concept grep gate over sourc
 - Aggregate execution operates on explicit domains directly.
 - Free Join plans are executable physical plans, not explanatory metadata.
 - Free Join supports factoring, lazy GHT/COLT access, cover choice, and vectorized batches.
-- Direct kernels are either Free Join node implementations or deleted.
+- Deleted auxiliary execution paths do not return.
 - Optimizer cost distinguishes result-set work from witness work.
 - Benchmarks cannot report timings when exact value correctness or cardinality parity fails.
 - Caches have explicit budgets and diagnostics.

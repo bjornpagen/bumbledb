@@ -60,17 +60,17 @@ Primary files:
 
 - `crates/bumbledb-lmdb/src/query.rs`.
 - `crates/bumbledb-lmdb/src/free_join.rs`.
-- `crates/bumbledb-lmdb/src/query_access.rs`.
+- Free Join access abstraction code.
 - `crates/bumbledb-lmdb/src/query_image.rs`.
 - `crates/bumbledb-lmdb/src/sorted_trie.rs` if sorted trie gets batch seek.
-- `crates/bumbledb-lmdb/src/hash_trie.rs` if hash trie gets batch probe.
+- Free Join lazy access code if lazy access gets batch probe.
 
 Relevant current regions:
 
 - `query.rs:5585-5664` for scalar LFTJ recursion.
 - `query.rs:8068-8203` for sink batch hooks that are not full join vectorization.
-- `query_access.rs:7-32` for narrow access probe abstraction.
-- `hash_trie.rs:207-234` for prefix exists/count/facts.
+- current Free Join access abstraction regions.
+- current lazy access regions for prefix exists/count/facts.
 - `sorted_trie.rs` iterator methods for scalar seek/open/next.
 
 ## 07. Target Behavior

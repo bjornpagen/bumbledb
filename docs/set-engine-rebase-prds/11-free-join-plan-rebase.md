@@ -64,14 +64,14 @@ Primary files:
 
 - `crates/bumbledb-lmdb/src/free_join.rs`.
 - `crates/bumbledb-lmdb/src/query.rs`.
-- `crates/bumbledb-lmdb/src/query_access.rs`.
+- Free Join access abstraction code.
 - `crates/bumbledb-lmdb/src/sorted_trie.rs`.
-- `crates/bumbledb-lmdb/src/hash_trie.rs`.
+- Free Join lazy access code.
 
 Relevant current regions:
 
 - `free_join.rs:6-15` for plan shell.
-- `free_join.rs:43-48` for pure-LFTJ detection.
+- `free_join.rs:43-48` for sorted-leapfrog Free Join detection.
 - `free_join.rs:51-99` for node, subatom, and payload definitions.
 - `free_join.rs:66-71` for single implementation variant.
 - `query.rs:5333-5422` for LFTJ execution setup.
@@ -233,13 +233,13 @@ Validate relation IDs exist in schema.
 
 Validate output payload vars are bound by or before the node where emitted.
 
-Validate pure LFTJ specialization remains valid.
+Validate sorted-leapfrog Free Join specialization remains valid.
 
 ## 15. Execution Plan
 
 Introduce an executor that consumes `FreeJoinPlan.nodes`.
 
-For pure LFTJ, route to existing LFTJ mechanics through the plan representation.
+For sorted-leapfrog Free Join, route to existing LFTJ mechanics through the plan representation.
 
 For unsupported implementation kinds, return a clear internal error unless the planner never selects them.
 
@@ -257,19 +257,19 @@ Do not optimize in this PRD beyond plan authority cleanup.
 
 ## 16. Direct Kernel Position
 
-Do not fully rewrite direct kernels here unless it is small.
+Do not fully rewrite retired auxiliary paths here unless it is small.
 
-Add a documented bridge plan if direct kernels remain separate temporarily.
+Add a documented bridge plan if retired auxiliary paths remain separate temporarily.
 
-Mark direct-kernel separation as a PRD 15 target.
+Mark removed-path cleanup as a PRD 15 target.
 
-Do not let direct kernels bypass correctness fixes from PRD 02.
+Do not let retired auxiliary paths bypass correctness fixes from PRD 02.
 
-Do not broaden direct-kernel selection here.
+Do not broaden removed-path selection here.
 
 ## 17. Required Unit Tests
 
-Manual pure LFTJ plan validates.
+Manual sorted-leapfrog Free Join plan validates.
 
 Manual multi-variable cover plan validates.
 
@@ -321,7 +321,7 @@ If trace shape changes, update tests intentionally.
 
 Step one: extend data structures and validation.
 
-Step two: adapt existing pure LFTJ plan generation to new structures.
+Step two: adapt existing sorted-leapfrog Free Join plan generation to new structures.
 
 Step three: route existing LFTJ execution through new plan authority.
 
@@ -359,7 +359,7 @@ Adding implementation variants that can be selected but cannot execute is a fail
 
 Weakening plan validation is a failure.
 
-Moving direct kernels into FreeJoinPlan before fixing correctness is a failure.
+Moving retired auxiliary paths into FreeJoinPlan before fixing correctness is a failure.
 
 Changing query results is a failure.
 

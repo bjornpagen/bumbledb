@@ -24,7 +24,7 @@ The implementer must not rely on runtime witness order for aggregate values.
 
 PRD 01 should be complete before this PRD.
 
-PRD 02 should be complete before this PRD if direct kernels can execute aggregate-adjacent plans.
+PRD 02 should be complete before this PRD if retired auxiliary paths can execute aggregate-adjacent plans.
 
 PRD 04 depends on this PRD for final aggregate correctness expectations.
 

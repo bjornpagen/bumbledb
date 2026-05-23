@@ -81,7 +81,7 @@ It does not require abandoning binary optimizer intuition.
 
 It is one of the core paper contributions.
 
-Bumbledb needs factoring to avoid being pure LFTJ on one side and separate direct kernels on the other.
+Bumbledb needs factoring to avoid being sorted-leapfrog Free Join on one side and separate retired auxiliary paths on the other.
 
 ## 08. Example Shape
 

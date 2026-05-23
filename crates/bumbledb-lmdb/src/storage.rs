@@ -335,10 +335,9 @@ impl WriteTxn<'_> {
         Ok(inserted)
     }
 
-    /// Runs a streaming bulk load with relation segment publication deferred.
+    /// Runs a streaming bulk load with relation access publication deferred.
     pub fn bulk_load_streaming<T, E>(
         &mut self,
-        _schema: &StorageSchema,
         load: impl FnOnce(&mut Self) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E>
     where
@@ -782,10 +781,10 @@ impl<'env> ReadTxn<'env> {
         schema: &'schema StorageSchema,
         relation_name: &str,
     ) -> Result<FactCursor<'borrow, 'env, 'schema>> {
-        let covering = schema
+        let fact_set_access = schema
             .fact_set_index_name(relation_name)
             .ok_or_else(|| Error::unknown_index(relation_name, FACT_SET_ACCESS_NAME))?;
-        self.scan_access_with_prefix(schema, relation_name, covering, &[], None)
+        self.scan_access_with_prefix(schema, relation_name, fact_set_access, &[], None)
     }
 
     /// Scans an access path by a leading-field prefix.

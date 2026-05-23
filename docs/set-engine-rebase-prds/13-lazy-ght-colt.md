@@ -34,7 +34,7 @@ PRD 15 depends on this PRD for lazy build cost estimates.
 
 ## 05. Problem Statement
 
-The engine eagerly builds sorted or hash trie structures.
+The engine eagerly builds sorted or lazy access structures.
 
 Temporary LFTJ atom plans scan source relation images.
 
@@ -42,7 +42,7 @@ They copy selected values into new columns.
 
 They build sorted trie levels eagerly.
 
-Hash trie indexes build full hash structures eagerly.
+Lazy access indexes build full hash structures eagerly.
 
 This can dominate query time.
 
@@ -58,14 +58,14 @@ Primary files:
 
 - `crates/bumbledb-lmdb/src/query_image.rs`.
 - `crates/bumbledb-lmdb/src/sorted_trie.rs`.
-- `crates/bumbledb-lmdb/src/hash_trie.rs`.
+- Free Join lazy access code.
 - `crates/bumbledb-lmdb/src/query.rs`.
 - `crates/bumbledb-lmdb/src/free_join.rs`.
 
 Relevant current regions:
 
 - `sorted_trie.rs:84-112` for eager sorted trie build.
-- `hash_trie.rs:304-349` for eager hash trie insertion and recursive count.
+- current lazy access regions for eager insertion and recursive count.
 - `query.rs:6150-6254` for temporary atom relation and sorted trie build.
 - `query_image.rs:910-925` for encoded column access by fact ID.
 - `query_image.rs:707-721` for access image bytes.
@@ -148,7 +148,7 @@ COLT must preserve literal and input filters.
 
 COLT must preserve predicate behavior.
 
-COLT must produce the same result sets as eager sorted trie and hash trie paths.
+COLT must produce the same result sets as eager sorted trie and lazy access paths.
 
 ## 11. Implementation Plan
 

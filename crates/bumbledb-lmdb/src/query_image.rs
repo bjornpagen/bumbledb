@@ -922,7 +922,7 @@ impl EncodedColumnBuilder {
     pub(crate) fn extend_flat_bytes(&mut self, bytes: &[u8]) -> Result<()> {
         let width = self.width();
         if width == 0 || !bytes.len().is_multiple_of(width) {
-            return Err(Error::corrupt("segment column byte width mismatch"));
+            return Err(Error::corrupt("column byte width mismatch"));
         }
         for chunk in bytes.chunks_exact(width) {
             self.append_bytes(chunk)?;
@@ -1262,13 +1262,16 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
             .map(|(index, component)| (component.field_name.as_str(), index))
             .collect::<BTreeMap<_, _>>();
 
-        let covering = self
+        let fact_set_access = self
             .schema
             .fact_set_index_name(&self.relation.name)
             .ok_or_else(|| Error::unknown_index(&self.relation.name, FACT_SET_ACCESS_NAME))?;
-        let scan =
-            self.txn
-                .scan_encoded_access_prefix(self.schema, &self.relation.name, covering, &[])?;
+        let scan = self.txn.scan_encoded_access_prefix(
+            self.schema,
+            &self.relation.name,
+            fact_set_access,
+            &[],
+        )?;
         for item in scan {
             let item = item?;
             for (field_id, field) in self.relation.fields.iter().enumerate() {
@@ -1730,14 +1733,14 @@ mod tests {
         let account = account_relation(&image)?;
 
         assert!(!account.indexes().is_empty());
-        let covering = account
+        let fact_set_access = account
             .indexes()
             .iter()
             .find(|index| index.fields == vec![FieldId(0)])
             .ok_or_else(|| crate::Error::internal("missing fact-set index image"))?;
         assert_eq!(
-            covering.bytes.len(),
-            covering.encoded_len * account.fact_count
+            fact_set_access.bytes.len(),
+            fact_set_access.encoded_len * account.fact_count
         );
         Ok(())
     }
