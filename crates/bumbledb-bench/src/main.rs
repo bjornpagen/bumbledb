@@ -1502,7 +1502,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: None,
             max_iterator_ops: Some(1_000_000),
             max_materialized_values: Some(1),
-            allowed_plan_families: &["FreeJoinLftj"],
+            allowed_plan_families: &["FreeJoin"],
         },
         ("ledger", "tag_lookup_join") => BenchmarkGate {
             dataset,
@@ -1538,7 +1538,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: None,
             max_iterator_ops: None,
             max_materialized_values: None,
-            allowed_plan_families: &["FreeJoinLftj"],
+            allowed_plan_families: &["FreeJoin"],
         },
         ("joinstress", "chain4_from_a") => BenchmarkGate {
             dataset,
@@ -1547,7 +1547,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: None,
             max_iterator_ops: None,
             max_materialized_values: None,
-            allowed_plan_families: &["FreeJoinLftj"],
+            allowed_plan_families: &["FreeJoin"],
         },
         ("job", "job_q09_voice_us_actor") => BenchmarkGate {
             dataset,
@@ -1556,7 +1556,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: Some(1.0),
             max_iterator_ops: None,
             max_materialized_values: Some(1),
-            allowed_plan_families: &["FreeJoinLftj"],
+            allowed_plan_families: &["FreeJoin"],
         },
         ("job", "job_q16_character_title_us") => BenchmarkGate {
             dataset,
@@ -1565,7 +1565,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: Some(1.0),
             max_iterator_ops: None,
             max_materialized_values: Some(1),
-            allowed_plan_families: &["FreeJoinLftj"],
+            allowed_plan_families: &["FreeJoin"],
         },
         ("job", "job_q24_voice_keyword_actor") => BenchmarkGate {
             dataset,
@@ -1574,7 +1574,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: Some(1.0),
             max_iterator_ops: None,
             max_materialized_values: Some(0),
-            allowed_plan_families: &["FreeJoinLftj"],
+            allowed_plan_families: &["FreeJoin"],
         },
         _ => return None,
     };
@@ -3330,9 +3330,9 @@ mod tests {
             bumbledb_avg: Duration::from_micros(10),
             sqlite_avg: Duration::from_micros(5),
             sqlite_ratio: 2.0,
-            chosen_plan: "pure_lftj".to_owned(),
+            chosen_plan: "free_join_sorted_leapfrog".to_owned(),
             runtime_kind: "Lftj".to_owned(),
-            plan_family: "FreeJoinLftj".to_owned(),
+            plan_family: "FreeJoin".to_owned(),
             compare_mode: "materialized".to_owned(),
             cache_mode: "prepared-plan".to_owned(),
             query_image_sample_cache_hits: 1,
@@ -3389,7 +3389,7 @@ mod tests {
 
         let markdown = render_markdown_results(&[result]);
         assert!(markdown.contains("| joinstress | triangle_count |"));
-        assert!(markdown.contains("| pure_lftj | Lftj | FreeJoinLftj |"));
+        assert!(markdown.contains("| free_join_sorted_leapfrog | Lftj | FreeJoin |"));
         assert!(markdown.contains("## Phase Timing"));
         assert!(markdown.contains("unaccounted us"));
         assert!(markdown.contains("## Mechanics Counters"));
@@ -3429,9 +3429,9 @@ mod tests {
             bumbledb_avg: Duration::from_micros(9),
             sqlite_avg: Duration::from_micros(3),
             sqlite_ratio: 3.0,
-            chosen_plan: "pure_lftj".to_owned(),
+            chosen_plan: "free_join_sorted_leapfrog".to_owned(),
             runtime_kind: "Lftj".to_owned(),
-            plan_family: "FreeJoinLftj".to_owned(),
+            plan_family: "FreeJoin".to_owned(),
             compare_mode: "facts".to_owned(),
             cache_mode: "prepared-plan".to_owned(),
             query_image_sample_cache_hits: 1,
@@ -3483,7 +3483,7 @@ mod tests {
         let json = render_json_results(&[result]);
         assert!(json.contains("\"dataset\":\"ledger\""));
         assert!(json.contains("\"runtime\":\"Lftj\""));
-        assert!(json.contains("\"plan_family\":\"FreeJoinLftj\""));
+        assert!(json.contains("\"plan_family\":\"FreeJoin\""));
         assert!(json.contains("\"compare_mode\":\"facts\""));
         assert!(json.contains("\"correctness_mode\":\"result-set\""));
         assert!(json.contains("\"cache_mode\":\"prepared-plan\""));
@@ -3654,11 +3654,11 @@ mod tests {
         assert_eq!(
             benchmark_gate("sailors", "sailor_range_reserves")
                 .map(|gate| gate.allowed_plan_families),
-            Some(&["FreeJoinLftj"][..])
+            Some(&["FreeJoin"][..])
         );
         assert_eq!(
             benchmark_gate("joinstress", "chain4_from_a").map(|gate| gate.allowed_plan_families),
-            Some(&["FreeJoinLftj"][..])
+            Some(&["FreeJoin"][..])
         );
         assert_eq!(
             benchmark_gate("job", "job_q09_voice_us_actor").map(|gate| (
@@ -3666,7 +3666,7 @@ mod tests {
                 gate.max_sqlite_ratio,
                 gate.allowed_plan_families
             )),
-            Some((Some(3_000), Some(1.0), &["FreeJoinLftj"][..]))
+            Some((Some(3_000), Some(1.0), &["FreeJoin"][..]))
         );
         assert_eq!(
             benchmark_gate("job", "job_q24_voice_keyword_actor").map(|gate| (
@@ -3674,7 +3674,7 @@ mod tests {
                 gate.max_sqlite_ratio,
                 gate.allowed_plan_families
             )),
-            Some((Some(1_000), Some(1.0), &["FreeJoinLftj"][..]))
+            Some((Some(1_000), Some(1.0), &["FreeJoin"][..]))
         );
     }
 

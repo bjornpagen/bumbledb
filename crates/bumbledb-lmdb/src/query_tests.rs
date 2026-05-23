@@ -23,7 +23,7 @@ fn query_observability_defaults_are_zero() {
     assert_eq!(timings.total_micros, 0);
     assert_eq!(timings.execute_micros, 0);
     assert_eq!(timings.unaccounted_micros, 0);
-    assert_eq!(QueryRuntimeKind::default(), QueryRuntimeKind::Unknown);
+    assert_eq!(QueryRuntimeKind::default(), QueryRuntimeKind::Lftj);
 
     let allocations = QueryAllocationStats::default();
     assert!(!allocations.enabled);
@@ -104,7 +104,7 @@ fn executes_single_relation_query() -> TestResult {
         vec![vec![Value::Serial(1)], vec![Value::Serial(2)]]
     );
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert!(output.plan.timings.total_micros > 0);
     assert!(output.plan.timings.execute_micros <= output.plan.timings.total_micros);
     assert!(!output.plan.allocations.enabled);
@@ -175,8 +175,8 @@ fn static_lookup_uses_planned_lftj_after_storage_bypass_deletion() -> TestResult
     })?;
 
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
-    assert_eq!(output.plan.optimizer.chosen, "pure_lftj");
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
+    assert_eq!(output.plan.optimizer.chosen, "free_join_sorted_leapfrog");
     assert_eq!(output.plan.query_image_cache.builds, 1);
     assert_same_facts(
         &output.result.facts,
@@ -248,7 +248,7 @@ fn partial_probe_shape_falls_back_to_lftj() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert!(
         output
             .plan
@@ -310,7 +310,7 @@ fn prefix_range_filter_uses_lftj() -> TestResult {
     })?;
 
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert_same_facts(
         &output.result.facts,
         &[vec![Value::U64(10), Value::Timestamp(TimestampMicros(5))]],
@@ -364,7 +364,7 @@ fn no_prefix_range_filter_uses_lftj() -> TestResult {
     })?;
 
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert_eq!(output.plan.query_image_cache.builds, 1);
     assert_same_facts(
         &output.result.facts,
@@ -454,7 +454,7 @@ fn chain_query_uses_lftj_and_returns_path() -> TestResult {
     })?;
 
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert_eq!(output.result.facts, vec![vec![Value::U64(30)]]);
     assert_eq!(output.plan.counters.materialized_output_values, 1);
     assert_eq!(output.plan.counters.dictionary_reverse_lookups, 0);
@@ -531,7 +531,7 @@ fn chain_existence_filter_after_binding_returns_survivor() -> TestResult {
     })?;
 
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert_eq!(output.result.facts, vec![vec![Value::U64(10)]]);
     assert!(output.plan.counters.trie_open > 0);
     Ok(())
@@ -600,7 +600,7 @@ fn tag_lookup_like_projection_uses_lftj_after_literal_filter() -> TestResult {
     })?;
 
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     assert_same_facts(
         &output.result.facts,
         &[vec![Value::U64(10), Value::U64(20)]],
@@ -714,7 +714,7 @@ fn optimizer_keeps_cyclic_triangle_on_lftj() -> TestResult {
             .optimizer
             .candidates
             .iter()
-            .any(|candidate| candidate.name == "pure_lftj")
+            .any(|candidate| candidate.name == "free_join_sorted_leapfrog")
     );
     Ok(())
 }
@@ -877,7 +877,7 @@ fn lftj_empty_variable_atom_short_circuits_execution() -> TestResult {
 
     assert!(output.result.facts.is_empty());
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.optimizer.chosen, "pure_lftj");
+    assert_eq!(output.plan.optimizer.chosen, "free_join_sorted_leapfrog");
     assert_eq!(output.plan.counters.trie_open, 0);
     assert_eq!(output.plan.counters.variable_candidates, 0);
     Ok(())
@@ -914,7 +914,7 @@ fn domain_count_falls_back_to_lftj_until_fast_paths_are_rebuilt() -> TestResult 
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
-    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
+    assert_eq!(output.plan.plan_family, PlanFamily::FreeJoin);
     Ok(())
 }
 
@@ -1266,7 +1266,7 @@ fn prepared_plan_cache_reuses_parameterized_shape() -> TestResult {
     assert_eq!(first.plan.prepared_plan_cache.misses, 1);
     assert_eq!(first.plan.prepared_plan_cache.builds, 1);
     assert_eq!(second.plan.prepared_plan_cache.hits, 1);
-    assert_ne!(first.plan.plan_family, PlanFamily::Unknown);
+    assert_eq!(first.plan.plan_family, PlanFamily::FreeJoin);
     Ok(())
 }
 

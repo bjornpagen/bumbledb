@@ -681,21 +681,17 @@ impl QueryPlan {
 /// Runtime implementation used by one query execution.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum QueryRuntimeKind {
-    /// Runtime has not executed yet.
-    #[default]
-    Unknown,
     /// Sorted trie leapfrog executor.
+    #[default]
     Lftj,
 }
 
 /// Top-level physical plan family.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PlanFamily {
-    /// Runtime not selected yet.
+    /// Free Join physical plan family.
     #[default]
-    Unknown,
-    /// Free Join/LFTJ family.
-    FreeJoinLftj,
+    FreeJoin,
 }
 
 /// Coarse query phase timings in microseconds.
@@ -1136,7 +1132,7 @@ impl ExecutionPlan {
         plan.summary.query_image_cache = query_image_cache;
         plan.summary.planner_stats = planner_stats;
         plan.summary.prepared_plan_cache = prepared_plan_cache;
-        plan.summary.runtime_kind = QueryRuntimeKind::Unknown;
+        plan.summary.runtime_kind = QueryRuntimeKind::Lftj;
         plan.summary.timings = QueryTimings::default();
         plan.summary.allocations = QueryAllocationStats::default();
         plan.summary.counters = PlanCounters::default();
@@ -2197,7 +2193,7 @@ fn execute_free_join<'txn, 'query, S: FactSink>(
         nodes = plan.summary.free_join.nodes.len()
     )
     .entered();
-    if !plan.summary.free_join.is_pure_lftj() {
+    if !plan.summary.free_join.is_free_join_sorted_leapfrog() {
         return Err(Error::internal("non-pure free join plan has no runtime"));
     }
     plan.summary.runtime_kind = QueryRuntimeKind::Lftj;
@@ -3777,14 +3773,14 @@ fn plan_query(
             variable_estimates,
             missing_indexes,
             optimizer,
-            plan_family: PlanFamily::FreeJoinLftj,
+            plan_family: PlanFamily::FreeJoin,
             query_image_cache,
             planner_stats,
             prepared_plan_cache,
             node_facts,
             node_timings,
             free_join,
-            runtime_kind: QueryRuntimeKind::Unknown,
+            runtime_kind: QueryRuntimeKind::Lftj,
             timings: QueryTimings::default(),
             allocations: QueryAllocationStats::default(),
             counters: PlanCounters::default(),
@@ -3813,13 +3809,6 @@ fn query_node_timings(
             }
         })
         .collect()
-}
-
-fn plan_family_for_chosen(chosen: &str) -> PlanFamily {
-    match chosen {
-        "pure_lftj" => PlanFamily::FreeJoinLftj,
-        _ => PlanFamily::Unknown,
-    }
 }
 
 fn choose_variable_order(
@@ -4300,8 +4289,7 @@ fn optimize_free_join_plan(
 
     let lftj_impls = vec![NodeImpl::SortedLeapfrog; variable_order_ids.len()];
     candidates.push(build_plan_candidate(
-        "pure_lftj",
-        schema,
+        "free_join_sorted_leapfrog",
         query,
         atoms,
         variable_costs,
@@ -4363,13 +4351,8 @@ struct OptimizerCandidate {
     estimates: PlanEstimates,
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "optimizer candidate builder mirrors the full planning context"
-)]
 fn build_plan_candidate(
     name: &str,
-    _schema: &StorageSchema,
     query: &NormalizedQuery,
     atoms: &[&NormAtom],
     variable_costs: &[VariableCost],
@@ -4392,7 +4375,7 @@ fn build_plan_candidate(
     Ok(OptimizerCandidate {
         name: name.to_owned(),
         implementations,
-        family: plan_family_for_chosen(name),
+        family: PlanFamily::FreeJoin,
         cost,
         estimates,
     })
@@ -4400,7 +4383,7 @@ fn build_plan_candidate(
 
 fn candidate_rank(name: &str) -> u8 {
     match name {
-        "pure_lftj" => 0,
+        "free_join_sorted_leapfrog" => 0,
         _ => u8::MAX,
     }
 }
@@ -4421,7 +4404,7 @@ fn implementation_mask(implementations: &[NodeImpl]) -> u64 {
 fn estimated_setup_micros(name: &str, estimates: &PlanEstimates) -> u64 {
     let query_image_cost = estimates.output_facts.clamp(1, 1_000);
     let hash_cost = estimates.hash_build_facts / HASH_BUILD_ROWS_PER_MICRO;
-    let sorted_cost = if name == "pure_lftj" {
+    let sorted_cost = if name == "free_join_sorted_leapfrog" {
         estimates.iterator_ops / 10
     } else {
         0
@@ -4516,7 +4499,7 @@ fn estimate_free_join_plan(
         }
     }
 
-    if cyclic && name != "pure_lftj" {
+    if cyclic && name != "free_join_sorted_leapfrog" {
         iterator_ops = iterator_ops.saturating_mul(8);
     }
 

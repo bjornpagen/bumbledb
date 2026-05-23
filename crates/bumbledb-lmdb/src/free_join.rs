@@ -40,8 +40,8 @@ impl FreeJoinPlan {
         Ok(())
     }
 
-    /// Returns true when this plan is expressible as pure single-variable LFTJ nodes.
-    pub fn is_pure_lftj(&self) -> bool {
+    /// Returns true when this plan uses single-variable sorted-leapfrog Free Join nodes.
+    pub fn is_free_join_sorted_leapfrog(&self) -> bool {
         self.nodes.iter().all(|node| {
             node.implementation == NodeImpl::SortedLeapfrog && node.bind_vars.len() == 1
         })
@@ -185,7 +185,7 @@ mod tests {
         };
 
         plan.validate()?;
-        assert!(plan.is_pure_lftj());
+        assert!(plan.is_free_join_sorted_leapfrog());
         Ok(())
     }
 
