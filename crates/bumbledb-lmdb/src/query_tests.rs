@@ -160,9 +160,9 @@ fn optimizer_selects_direct_storage_for_static_lookup() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(optimizer_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, item_row(1, 1))?;
-        txn.insert(&schema, item_row(2, 1))?;
-        txn.insert(&schema, item_row(3, 2))?;
+        txn.insert(&schema, item_fact(1, 1))?;
+        txn.insert(&schema, item_fact(2, 1))?;
+        txn.insert(&schema, item_fact(3, 2))?;
         Ok::<(), Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -201,7 +201,7 @@ fn static_empty_checks_static_existence_atoms() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, b_row(1, 99))?;
+        txn.insert(&schema, b_fact(1, 99))?;
         Ok::<(), Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -237,10 +237,10 @@ fn partial_probe_shape_falls_back_to_lftj() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, chain_a_row(1))?;
-        txn.insert(&schema, chain_b_row(10, 1))?;
-        txn.insert(&schema, chain_c_row(20, 10))?;
-        txn.insert(&schema, chain_c_row(21, 10))?;
+        txn.insert(&schema, chain_a_fact(1))?;
+        txn.insert(&schema, chain_b_fact(10, 1))?;
+        txn.insert(&schema, chain_c_fact(20, 10))?;
+        txn.insert(&schema, chain_c_fact(21, 10))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -277,14 +277,14 @@ fn partial_probe_shape_falls_back_to_lftj() -> TestResult {
 }
 
 #[test]
-fn direct_prefix_range_kernel_selects_and_filters_rows() -> TestResult {
+fn direct_prefix_range_kernel_selects_and_filters_facts() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(direct_sailors_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, reserve_row(1, 10, 5))?;
-        txn.insert(&schema, reserve_row(1, 11, 15))?;
-        txn.insert(&schema, reserve_row(2, 12, 5))?;
+        txn.insert(&schema, reserve_fact(1, 10, 5))?;
+        txn.insert(&schema, reserve_fact(1, 11, 15))?;
+        txn.insert(&schema, reserve_fact(2, 12, 5))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -348,14 +348,14 @@ fn direct_prefix_range_kernel_selects_and_filters_rows() -> TestResult {
 }
 
 #[test]
-fn direct_storage_no_prefix_range_scan_selects_rows() -> TestResult {
+fn direct_storage_no_prefix_range_scan_selects_facts() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(direct_sailors_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, reserve_row(1, 10, 5))?;
-        txn.insert(&schema, reserve_row(1, 11, 15))?;
-        txn.insert(&schema, reserve_row(2, 12, 25))?;
+        txn.insert(&schema, reserve_fact(1, 10, 5))?;
+        txn.insert(&schema, reserve_fact(1, 11, 15))?;
+        txn.insert(&schema, reserve_fact(2, 12, 25))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -406,12 +406,12 @@ fn direct_storage_no_prefix_range_scan_selects_rows() -> TestResult {
 }
 
 #[test]
-fn direct_prefix_range_empty_prefix_returns_zero_rows() -> TestResult {
+fn direct_prefix_range_empty_prefix_returns_zero_facts() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(direct_sailors_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, reserve_row(1, 10, 5))?;
+        txn.insert(&schema, reserve_fact(1, 10, 5))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -459,10 +459,10 @@ fn direct_chain_kernel_selects_and_follows_acyclic_path() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, chain_a_row(1))?;
-        txn.insert(&schema, chain_b_row(10, 1))?;
-        txn.insert(&schema, chain_c_row(20, 10))?;
-        txn.insert(&schema, chain_d_row(30, 20))?;
+        txn.insert(&schema, chain_a_fact(1))?;
+        txn.insert(&schema, chain_b_fact(10, 1))?;
+        txn.insert(&schema, chain_c_fact(20, 10))?;
+        txn.insert(&schema, chain_d_fact(30, 20))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -511,9 +511,9 @@ fn direct_chain_tag_lookup_like_projection_runs_before_static_semijoin() -> Test
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, chain_a_row(1))?;
-        txn.insert(&schema, chain_b_row(10, 1))?;
-        txn.insert(&schema, chain_c_row(20, 10))?;
+        txn.insert(&schema, chain_a_fact(1))?;
+        txn.insert(&schema, chain_b_fact(10, 1))?;
+        txn.insert(&schema, chain_c_fact(20, 10))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -557,9 +557,9 @@ fn cardinality_matches_materialized_projection_without_decoding_output() -> Test
     let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, Fact::new("A", [("id", Value::U64(1))]))?;
-        txn.insert(&schema, chain_b_row(10, 1))?;
-        txn.insert(&schema, chain_c_row(20, 10))?;
-        txn.insert(&schema, chain_d_row(30, 20))?;
+        txn.insert(&schema, chain_b_fact(10, 1))?;
+        txn.insert(&schema, chain_c_fact(20, 10))?;
+        txn.insert(&schema, chain_d_fact(30, 20))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -585,12 +585,12 @@ fn cardinality_matches_materialized_projection_without_decoding_output() -> Test
 }
 
 #[test]
-fn direct_chain_broken_path_returns_zero_rows() -> TestResult {
+fn direct_chain_broken_path_returns_zero_facts() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, chain_b_row(10, 1))?;
+        txn.insert(&schema, chain_b_fact(10, 1))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -624,12 +624,12 @@ fn optimizer_keeps_cyclic_triangle_on_lftj() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, edge_ab_row(1, 10))?;
-        txn.insert(&schema, edge_ac_row(1, 20))?;
-        txn.insert(&schema, edge_bc_row(10, 20))?;
-        txn.insert(&schema, edge_ab_row(2, 10))?;
-        txn.insert(&schema, edge_ac_row(2, 30))?;
-        txn.insert(&schema, edge_bc_row(10, 40))?;
+        txn.insert(&schema, edge_ab_fact(1, 10))?;
+        txn.insert(&schema, edge_ac_fact(1, 20))?;
+        txn.insert(&schema, edge_bc_fact(10, 20))?;
+        txn.insert(&schema, edge_ab_fact(2, 10))?;
+        txn.insert(&schema, edge_ac_fact(2, 30))?;
+        txn.insert(&schema, edge_bc_fact(10, 40))?;
         Ok::<(), Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -753,8 +753,8 @@ fn domain_count_falls_back_to_lftj_until_fast_paths_are_rebuilt() -> TestResult 
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, edge_ab_row(1, 10))?;
-        txn.insert(&schema, edge_ab_row(1, 11))?;
+        txn.insert(&schema, edge_ab_fact(1, 10))?;
+        txn.insert(&schema, edge_ab_fact(1, 11))?;
         txn.insert(
             &schema,
             Fact::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(20))]),
@@ -790,11 +790,11 @@ fn domain_count_serial_literal_filter_uses_lftj() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, owner_group_row(1, 10))?;
-        txn.insert(&schema, owner_group_row(2, 20))?;
-        txn.insert(&schema, owned_fact_row(9, 10, 100))?;
-        txn.insert(&schema, owned_fact_row(9, 10, 101))?;
-        txn.insert(&schema, owned_fact_row(9, 20, 200))?;
+        txn.insert(&schema, owner_group_fact(1, 10))?;
+        txn.insert(&schema, owner_group_fact(2, 20))?;
+        txn.insert(&schema, owned_fact_fact(9, 10, 100))?;
+        txn.insert(&schema, owned_fact_fact(9, 10, 101))?;
+        txn.insert(&schema, owned_fact_fact(9, 20, 200))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -826,11 +826,11 @@ fn domain_count_enum_literal_filter_uses_lftj() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, dim_row(1, 1))?;
-        txn.insert(&schema, dim_row(2, 2))?;
-        txn.insert(&schema, fact_row(1, 10))?;
-        txn.insert(&schema, fact_row(1, 11))?;
-        txn.insert(&schema, fact_row(2, 20))?;
+        txn.insert(&schema, dim_fact(1, 1))?;
+        txn.insert(&schema, dim_fact(2, 2))?;
+        txn.insert(&schema, fact_fact(1, 10))?;
+        txn.insert(&schema, fact_fact(1, 11))?;
+        txn.insert(&schema, fact_fact(2, 20))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -1055,7 +1055,7 @@ fn domain_count_unsafe_cycle_uses_generic_lftj() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, edge_ab_row(1, 10))?;
+        txn.insert(&schema, edge_ab_fact(1, 10))?;
         txn.insert(
             &schema,
             Fact::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(20))]),
@@ -1188,7 +1188,7 @@ fn prepared_plan_cache_is_snapshot_scoped() -> TestResult {
 
     let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     env.write(|txn| {
-        txn.insert(&schema, account_row(4, 2, 2))?;
+        txn.insert(&schema, account_fact(4, 2, 2))?;
         Ok::<_, Error>(())
     })?;
     let after = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
@@ -1274,7 +1274,7 @@ fn execute_query_cache_misses_after_write_commit() -> TestResult {
 
     let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     env.write(|txn| {
-        txn.insert(&schema, account_row(4, 2, 2))?;
+        txn.insert(&schema, account_fact(4, 2, 2))?;
         Ok::<_, Error>(())
     })?;
     let after = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
@@ -1374,7 +1374,7 @@ fn planner_stats_cache_is_snapshot_scoped() -> TestResult {
 
     let before = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     env.write(|txn| {
-        txn.insert(&schema, account_row(4, 2, 2))?;
+        txn.insert(&schema, account_fact(4, 2, 2))?;
         Ok::<_, Error>(())
     })?;
     let after = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
@@ -1523,8 +1523,8 @@ fn cache_options_do_not_cache_aggregate_results() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, edge_ab_row(1, 10))?;
-        txn.insert(&schema, edge_ab_row(1, 11))?;
+        txn.insert(&schema, edge_ab_fact(1, 10))?;
+        txn.insert(&schema, edge_ab_fact(1, 11))?;
         txn.insert(
             &schema,
             Fact::new("EdgeAC", [("a", Value::U64(1)), ("c", Value::U64(20))]),
@@ -1639,8 +1639,8 @@ fn repeated_variable_atom_matches_equal_encoded_fields() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, edge_ab_row(1, 1))?;
-        txn.insert(&schema, edge_ab_row(1, 2))?;
+        txn.insert(&schema, edge_ab_fact(1, 1))?;
+        txn.insert(&schema, edge_ab_fact(1, 2))?;
         Ok::<(), Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -1848,10 +1848,10 @@ fn materialized_projection_is_recomputed_without_result_cache() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(direct_chain4_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, chain_a_row(1))?;
-        txn.insert(&schema, chain_b_row(10, 1))?;
-        txn.insert(&schema, chain_c_row(20, 10))?;
-        txn.insert(&schema, chain_c_row(21, 10))?;
+        txn.insert(&schema, chain_a_fact(1))?;
+        txn.insert(&schema, chain_b_fact(10, 1))?;
+        txn.insert(&schema, chain_c_fact(20, 10))?;
+        txn.insert(&schema, chain_c_fact(21, 10))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -1907,7 +1907,7 @@ fn count_sink_avoids_decoding_counted_variable() -> TestResult {
 }
 
 #[test]
-fn global_count_over_empty_input_returns_zero_row() -> TestResult {
+fn global_count_over_empty_input_returns_zero_fact() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
@@ -1928,7 +1928,7 @@ fn global_count_over_empty_input_returns_zero_row() -> TestResult {
 }
 
 #[test]
-fn grouped_count_over_empty_input_returns_no_rows() -> TestResult {
+fn grouped_count_over_empty_input_returns_no_facts() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
@@ -1950,9 +1950,9 @@ fn count_distinct_ignores_duplicate_existential_witnesses() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, edge_ab_row(1, 10))?;
-        txn.insert(&schema, edge_ab_row(1, 11))?;
-        txn.insert(&schema, edge_ac_row(1, 20))?;
+        txn.insert(&schema, edge_ab_fact(1, 10))?;
+        txn.insert(&schema, edge_ab_fact(1, 11))?;
+        txn.insert(&schema, edge_ac_fact(1, 20))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -1974,8 +1974,8 @@ fn sum_over_domain_counts_distinct_domain_facts_with_same_value() -> TestResult 
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(overflow_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, number_row(1, 5, 0))?;
-        txn.insert(&schema, number_row(2, 5, 0))?;
+        txn.insert(&schema, number_fact(1, 5, 0))?;
+        txn.insert(&schema, number_fact(2, 5, 0))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -1991,7 +1991,7 @@ fn sum_over_domain_counts_distinct_domain_facts_with_same_value() -> TestResult 
 }
 
 #[test]
-fn static_empty_global_count_returns_zero_row() -> TestResult {
+fn static_empty_global_count_returns_zero_fact() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
@@ -2020,13 +2020,13 @@ fn static_empty_global_count_returns_zero_row() -> TestResult {
 }
 
 #[test]
-fn static_semijoin_dimension_row_exists_but_fact_is_empty() -> TestResult {
+fn static_semijoin_dimension_fact_exists_but_fact_is_empty() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, dim_row(1, 1))?;
-        txn.insert(&schema, fact_row(2, 10))?;
+        txn.insert(&schema, dim_fact(1, 1))?;
+        txn.insert(&schema, fact_fact(2, 10))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -2059,10 +2059,10 @@ fn static_semijoin_disjoint_central_candidates_prove_empty() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, dim_row(1, 1))?;
-        txn.insert(&schema, other_dim_row(2, 2))?;
-        txn.insert(&schema, fact_row(1, 10))?;
-        txn.insert(&schema, fact_row(2, 20))?;
+        txn.insert(&schema, dim_fact(1, 1))?;
+        txn.insert(&schema, other_dim_fact(2, 2))?;
+        txn.insert(&schema, fact_fact(1, 10))?;
+        txn.insert(&schema, fact_fact(2, 20))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -2104,8 +2104,8 @@ fn static_semijoin_enum_literal_proves_empty() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, dim_row(7, 1))?;
-        txn.insert(&schema, fact_row(8, 99))?;
+        txn.insert(&schema, dim_fact(7, 1))?;
+        txn.insert(&schema, fact_fact(8, 99))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -2136,8 +2136,8 @@ fn static_semijoin_serial_literal_proves_empty() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, owner_group_row(1, 10))?;
-        txn.insert(&schema, owned_fact_row(2, 11, 99))?;
+        txn.insert(&schema, owner_group_fact(1, 10))?;
+        txn.insert(&schema, owned_fact_fact(2, 11, 99))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -2168,9 +2168,9 @@ fn static_semijoin_compound_relation_proves_empty() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, dim_row(1, 1))?;
-        txn.insert(&schema, other_dim_row(2, 2))?;
-        txn.insert(&schema, pair_row(1, 3))?;
+        txn.insert(&schema, dim_fact(1, 1))?;
+        txn.insert(&schema, other_dim_fact(2, 2))?;
+        txn.insert(&schema, pair_fact(1, 3))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -2249,8 +2249,8 @@ fn static_semijoin_non_empty_query_is_not_proven_empty() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, dim_row(1, 1))?;
-        txn.insert(&schema, fact_row(1, 10))?;
+        txn.insert(&schema, dim_fact(1, 1))?;
+        txn.insert(&schema, fact_fact(1, 10))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -2281,8 +2281,8 @@ fn static_semijoin_negative_cache_skips_second_failed_proof() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, dim_row(1, 1))?;
-        txn.insert(&schema, fact_row(1, 10))?;
+        txn.insert(&schema, dim_fact(1, 1))?;
+        txn.insert(&schema, fact_fact(1, 10))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -2322,8 +2322,8 @@ fn static_semijoin_negative_cache_is_tx_id_scoped() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, dim_row(1, 1))?;
-        txn.insert(&schema, fact_row(1, 10))?;
+        txn.insert(&schema, dim_fact(1, 1))?;
+        txn.insert(&schema, fact_fact(1, 10))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -2344,7 +2344,7 @@ fn static_semijoin_negative_cache_is_tx_id_scoped() -> TestResult {
     let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     let cached = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     env.write(|txn| {
-        txn.insert(&schema, fact_row(1, 11))?;
+        txn.insert(&schema, fact_fact(1, 11))?;
         Ok::<_, Error>(())
     })?;
     let after_write = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
@@ -2363,9 +2363,9 @@ fn static_semijoin_cache_is_input_scoped_and_reuses_proven_empty() -> TestResult
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, dim_row(1, 1))?;
-        txn.insert(&schema, dim_row(2, 2))?;
-        txn.insert(&schema, fact_row(1, 10))?;
+        txn.insert(&schema, dim_fact(1, 1))?;
+        txn.insert(&schema, dim_fact(2, 2))?;
+        txn.insert(&schema, fact_fact(1, 10))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -2404,13 +2404,13 @@ fn static_semijoin_cache_is_input_scoped_and_reuses_proven_empty() -> TestResult
 }
 
 #[test]
-fn static_semijoin_red_boat_like_wide_projection_skips_and_preserves_rows() -> TestResult {
+fn static_semijoin_red_boat_like_wide_projection_skips_and_preserves_facts() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, dim_row(1, 1))?;
-        txn.insert(&schema, fact_row(1, 10))?;
+        txn.insert(&schema, dim_fact(1, 1))?;
+        txn.insert(&schema, fact_fact(1, 10))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -2498,9 +2498,9 @@ fn static_semijoin_tpch_like_non_empty_materialized_projection_skips() -> TestRe
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, dim_row(1, 1))?;
-        txn.insert(&schema, fact_row(1, 10))?;
-        txn.insert(&schema, other_dim_row(10, 2))?;
+        txn.insert(&schema, dim_fact(1, 1))?;
+        txn.insert(&schema, fact_fact(1, 10))?;
+        txn.insert(&schema, other_dim_fact(10, 2))?;
         Ok::<_, Error>(())
     })?;
     let query = typed_query(&schema, |query| {
@@ -2947,8 +2947,8 @@ fn detects_integer_and_decimal_aggregation_overflow() -> TestResult {
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(overflow_schema(), env.max_key_size())?;
     env.write(|txn| {
-        txn.insert(&schema, number_row(1, i64::MAX, i128::MAX))?;
-        txn.insert(&schema, number_row(2, 1, 1))?;
+        txn.insert(&schema, number_fact(1, i64::MAX, i128::MAX))?;
+        txn.insert(&schema, number_fact(2, 1, 1))?;
         Ok::<(), Error>(())
     })?;
 
@@ -3176,7 +3176,7 @@ fn explain_and_storage_diagnostics_are_available() -> TestResult {
 #[test]
 fn differential_reference_evaluator_matches_lmdb() -> TestResult {
     let (env, schema) = seeded_db()?;
-    let reference = ReferenceDb::from_rows(seeded_rows());
+    let reference = ReferenceDb::from_facts(seeded_facts());
     let cases = [
         (
             typed_query(&schema, |query| {
@@ -3240,12 +3240,12 @@ fn differential_reference_evaluator_matches_lmdb() -> TestResult {
     ];
 
     for (query, inputs) in cases {
-        let lmdb_rows = env
+        let lmdb_facts = env
             .read(|txn| txn.execute_query(&schema, &query, &inputs))?
             .result
             .facts;
-        let reference_rows = reference.execute(&query, &inputs)?;
-        assert_same_facts(&lmdb_rows, &reference_rows);
+        let reference_facts = reference.execute(&query, &inputs)?;
+        assert_same_facts(&lmdb_facts, &reference_facts);
     }
     Ok(())
 }
@@ -3255,7 +3255,7 @@ fn seeded_db() -> Result<(Environment, StorageSchema)> {
     let path = dir.keep();
     let env = Environment::open(&path)?;
     let schema = StorageSchema::new(ledger_schema(), env.max_key_size())?;
-    let facts = seeded_rows();
+    let facts = seeded_facts();
     env.write(|txn| {
         for fact in &facts {
             txn.insert(&schema, fact.clone())?;
@@ -3542,25 +3542,25 @@ fn q16_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
     )
 }
 
-fn dim_row(id: u64, kind: u8) -> Fact {
+fn dim_fact(id: u64, kind: u8) -> Fact {
     Fact::new("Dim", [("id", Value::U64(id)), ("kind", Value::Enum(kind))])
 }
 
-fn other_dim_row(id: u64, kind: u8) -> Fact {
+fn other_dim_fact(id: u64, kind: u8) -> Fact {
     Fact::new(
         "OtherDim",
         [("id", Value::U64(id)), ("kind", Value::Enum(kind))],
     )
 }
 
-fn fact_row(dim: u64, item: u64) -> Fact {
+fn fact_fact(dim: u64, item: u64) -> Fact {
     Fact::new(
         "Fact",
         [("dim", Value::U64(dim)), ("item", Value::U64(item))],
     )
 }
 
-fn owner_group_row(owner: u64, group: u64) -> Fact {
+fn owner_group_fact(owner: u64, group: u64) -> Fact {
     Fact::new(
         "OwnerGroup",
         [
@@ -3570,7 +3570,7 @@ fn owner_group_row(owner: u64, group: u64) -> Fact {
     )
 }
 
-fn owned_fact_row(owner: u64, group: u64, item: u64) -> Fact {
+fn owned_fact_fact(owner: u64, group: u64, item: u64) -> Fact {
     Fact::new(
         "OwnedFact",
         [
@@ -3581,23 +3581,23 @@ fn owned_fact_row(owner: u64, group: u64, item: u64) -> Fact {
     )
 }
 
-fn pair_row(left: u64, right: u64) -> Fact {
+fn pair_fact(left: u64, right: u64) -> Fact {
     Fact::new(
         "Pair",
         [("left", Value::U64(left)), ("right", Value::U64(right))],
     )
 }
 
-fn seeded_rows() -> Vec<Fact> {
+fn seeded_facts() -> Vec<Fact> {
     vec![
-        holder_row(1, "Alice"),
-        holder_row(2, "Bob"),
-        account_row(1, 1, 1),
-        account_row(2, 1, 2),
-        account_row(3, 2, 1),
-        posting_row(1, 1, 100, 10),
-        posting_row(2, 1, 200, 20),
-        posting_row(3, 2, 300, 30),
+        holder_fact(1, "Alice"),
+        holder_fact(2, "Bob"),
+        account_fact(1, 1, 1),
+        account_fact(2, 1, 2),
+        account_fact(3, 2, 1),
+        posting_fact(1, 1, 100, 10),
+        posting_fact(2, 1, 200, 20),
+        posting_fact(3, 2, 300, 30),
     ]
 }
 
@@ -3844,7 +3844,7 @@ fn direct_chain4_schema() -> bumbledb_core::schema::SchemaDescriptor {
     )
 }
 
-fn holder_row(id: u64, name: &str) -> Fact {
+fn holder_fact(id: u64, name: &str) -> Fact {
     Fact::new(
         "Holder",
         [
@@ -3854,7 +3854,7 @@ fn holder_row(id: u64, name: &str) -> Fact {
     )
 }
 
-fn account_row(id: u64, holder: u64, currency: u8) -> Fact {
+fn account_fact(id: u64, holder: u64, currency: u8) -> Fact {
     Fact::new(
         "Account",
         [
@@ -3865,7 +3865,7 @@ fn account_row(id: u64, holder: u64, currency: u8) -> Fact {
     )
 }
 
-fn posting_row(id: u64, account: u64, amount: i128, at: i64) -> Fact {
+fn posting_fact(id: u64, account: u64, amount: i128, at: i64) -> Fact {
     Fact::new(
         "Posting",
         [
@@ -3877,7 +3877,7 @@ fn posting_row(id: u64, account: u64, amount: i128, at: i64) -> Fact {
     )
 }
 
-fn number_row(id: u64, n: i64, d: i128) -> Fact {
+fn number_fact(id: u64, n: i64, d: i128) -> Fact {
     Fact::new(
         "Number",
         [
@@ -3888,30 +3888,30 @@ fn number_row(id: u64, n: i64, d: i128) -> Fact {
     )
 }
 
-fn item_row(id: u64, kind: u8) -> Fact {
+fn item_fact(id: u64, kind: u8) -> Fact {
     Fact::new(
         "Item",
         [("id", Value::Serial(id)), ("kind", Value::Enum(kind))],
     )
 }
 
-fn edge_ab_row(a: u64, b: u64) -> Fact {
+fn edge_ab_fact(a: u64, b: u64) -> Fact {
     Fact::new("EdgeAB", [("a", Value::U64(a)), ("b", Value::U64(b))])
 }
 
-fn edge_ac_row(a: u64, c: u64) -> Fact {
+fn edge_ac_fact(a: u64, c: u64) -> Fact {
     Fact::new("EdgeAC", [("a", Value::U64(a)), ("c", Value::U64(c))])
 }
 
-fn edge_bc_row(b: u64, c: u64) -> Fact {
+fn edge_bc_fact(b: u64, c: u64) -> Fact {
     Fact::new("EdgeBC", [("b", Value::U64(b)), ("c", Value::U64(c))])
 }
 
-fn b_row(id: u64, a: u64) -> Fact {
+fn b_fact(id: u64, a: u64) -> Fact {
     Fact::new("B", [("id", Value::U64(id)), ("a", Value::U64(a))])
 }
 
-fn reserve_row(sailor: u64, boat: u64, day: i64) -> Fact {
+fn reserve_fact(sailor: u64, boat: u64, day: i64) -> Fact {
     Fact::new(
         "Reserve",
         [
@@ -3922,19 +3922,19 @@ fn reserve_row(sailor: u64, boat: u64, day: i64) -> Fact {
     )
 }
 
-fn chain_a_row(id: u64) -> Fact {
+fn chain_a_fact(id: u64) -> Fact {
     Fact::new("A", [("id", Value::U64(id))])
 }
 
-fn chain_b_row(id: u64, a: u64) -> Fact {
+fn chain_b_fact(id: u64, a: u64) -> Fact {
     Fact::new("B", [("id", Value::U64(id)), ("a", Value::U64(a))])
 }
 
-fn chain_c_row(id: u64, b: u64) -> Fact {
+fn chain_c_fact(id: u64, b: u64) -> Fact {
     Fact::new("C", [("id", Value::U64(id)), ("b", Value::U64(b))])
 }
 
-fn chain_d_row(id: u64, c: u64) -> Fact {
+fn chain_d_fact(id: u64, c: u64) -> Fact {
     Fact::new("D", [("id", Value::U64(id)), ("c", Value::U64(c))])
 }
 
@@ -3978,7 +3978,7 @@ impl ReferenceBinding {
 }
 
 impl ReferenceDb {
-    fn from_rows(facts: Vec<Fact>) -> Self {
+    fn from_facts(facts: Vec<Fact>) -> Self {
         let mut by_relation: BTreeMap<String, Vec<Fact>> = BTreeMap::new();
         for fact in facts {
             by_relation
@@ -4074,13 +4074,13 @@ fn reference_match_atom(
 ) -> Result<Option<ReferenceBinding>> {
     let mut next = binding.clone();
     for field in &atom.fields {
-        let Some(row_value) = fact.value(&field.field) else {
+        let Some(fact_value) = fact.value(&field.field) else {
             return Ok(None);
         };
         match &field.term {
             TypedTerm::Variable(variable) => {
                 let normalized =
-                    reference_value_for_type(row_value, &query.variables[*variable].value_type);
+                    reference_value_for_type(fact_value, &query.variables[*variable].value_type);
                 if !next.bind(*variable, normalized) {
                     return Ok(None);
                 }
@@ -4088,13 +4088,13 @@ fn reference_match_atom(
             TypedTerm::Input(input) => {
                 let input_value = reference_input_value(query, inputs, *input)?;
                 let normalized =
-                    reference_value_for_type(row_value, &query.inputs[*input].value_type);
+                    reference_value_for_type(fact_value, &query.inputs[*input].value_type);
                 if input_value != &normalized {
                     return Ok(None);
                 }
             }
             TypedTerm::Literal(literal) => {
-                let normalized = reference_value_for_type(row_value, &literal.value_type);
+                let normalized = reference_value_for_type(fact_value, &literal.value_type);
                 if literal_to_value(literal)? != normalized {
                     return Ok(None);
                 }

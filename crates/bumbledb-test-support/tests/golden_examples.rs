@@ -34,7 +34,7 @@ fn golden_manifest_lists_all_required_families() {
 #[test]
 fn ledger_golden_preserves_set_projection_aggregate_and_restrict() -> TestResult {
     let schema = bumbledb_lmdb::benchmark::benchmark_schema();
-    let facts = bumbledb_lmdb::benchmark::benchmark_rows(2);
+    let facts = bumbledb_lmdb::benchmark::benchmark_facts(2);
     let (env, storage) = load(schema, facts)?;
 
     let duplicate = env.write(|txn| {

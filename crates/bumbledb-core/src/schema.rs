@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 const INDEX_KEY_OVERHEAD_BYTES: usize = 1 + 2 + 2;
+const FACT_ID_BYTES: usize = 16;
 
 /// Schema-layer result type.
 pub type Result<T> = std::result::Result<T, SchemaError>;
@@ -230,21 +231,22 @@ impl SchemaDescriptor {
     }
 
     /// Computes all current-state index layouts and validates key lengths.
-    pub fn current_index_layouts(&self, max_key_size: usize) -> Result<Vec<CurrentIndexLayout>> {
+    pub fn access_layouts(&self, max_key_size: usize) -> Result<Vec<AccessLayout>> {
         let mut layouts = Vec::new();
 
         for (relation_id, relation) in self.relations.iter().enumerate() {
             let relation_id = relation_id as u16;
-            let candidates = relation.index_candidates();
+            let candidates = relation.access_candidates();
 
             for (index_id, candidate) in candidates.into_iter().enumerate() {
                 let index_id = index_id as u16;
-                let components = relation.index_components(&candidate.name, &candidate.fields)?;
+                let components = relation.access_components(&candidate.name, &candidate.fields)?;
                 let encoded_len = INDEX_KEY_OVERHEAD_BYTES
                     + components
                         .iter()
                         .map(|component| component.encoded_width)
-                        .sum::<usize>();
+                        .sum::<usize>()
+                    + FACT_ID_BYTES;
 
                 if encoded_len > max_key_size {
                     return Err(SchemaError::KeyLayoutTooLarge {
@@ -255,7 +257,7 @@ impl SchemaDescriptor {
                     });
                 }
 
-                layouts.push(CurrentIndexLayout {
+                layouts.push(AccessLayout {
                     relation_name: relation.name.clone(),
                     relation_id,
                     index_name: candidate.name,
@@ -767,7 +769,7 @@ impl RelationDescriptor {
         self.fields.iter().find(|field| field.name == name)
     }
 
-    fn index_candidates(&self) -> Vec<IndexCandidate> {
+    fn access_candidates(&self) -> Vec<IndexCandidate> {
         let mut candidates = Vec::new();
 
         candidates.push(IndexCandidate {
@@ -817,12 +819,12 @@ impl RelationDescriptor {
         candidates
     }
 
-    fn index_components(
+    fn access_components(
         &self,
         index_name: &str,
         leading_fields: &[String],
-    ) -> Result<Vec<IndexComponent>> {
-        let mut components = Vec::with_capacity(self.fields.len());
+    ) -> Result<Vec<AccessComponent>> {
+        let mut components = Vec::with_capacity(leading_fields.len());
         let mut seen = BTreeSet::new();
 
         for field_name in leading_fields {
@@ -840,13 +842,7 @@ impl RelationDescriptor {
                     field: field.name.clone(),
                 });
             }
-            components.push(IndexComponent::new(field, ComponentRole::Leading));
-        }
-
-        for field in &self.fields {
-            if seen.insert(field.name.clone()) {
-                components.push(IndexComponent::new(field, ComponentRole::Payload));
-            }
+            components.push(AccessComponent::new(field, AccessComponentRole::Leading));
         }
 
         Ok(components)
@@ -1189,7 +1185,7 @@ impl IndexKind {
 
 /// Generated current-state index layout.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CurrentIndexLayout {
+pub struct AccessLayout {
     /// Relation name.
     pub relation_name: String,
     /// Stable declaration-order relation ID placeholder.
@@ -1203,12 +1199,12 @@ pub struct CurrentIndexLayout {
     /// Leading fields used for prefix access.
     pub leading_fields: Vec<String>,
     /// Full payload components in encoded order.
-    pub components: Vec<IndexComponent>,
+    pub components: Vec<AccessComponent>,
     /// Total encoded key length including namespace/relation/index overhead.
     pub encoded_len: usize,
 }
 
-impl CurrentIndexLayout {
+impl AccessLayout {
     /// Typed relation indexes do not need runtime type tags in hot keys.
     pub fn needs_runtime_type_tags(&self) -> bool {
         false
@@ -1217,16 +1213,14 @@ impl CurrentIndexLayout {
 
 /// Index component role.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ComponentRole {
+pub enum AccessComponentRole {
     /// Leading prefix component.
     Leading,
-    /// Payload payload component inside the key.
-    Payload,
 }
 
 /// A field component inside an index key.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IndexComponent {
+pub struct AccessComponent {
     /// Field name.
     pub field_name: String,
     /// Logical field type.
@@ -1234,11 +1228,11 @@ pub struct IndexComponent {
     /// Fixed encoded width.
     pub encoded_width: usize,
     /// Component role.
-    pub role: ComponentRole,
+    pub role: AccessComponentRole,
 }
 
-impl IndexComponent {
-    fn new(field: &FieldDescriptor, role: ComponentRole) -> Self {
+impl AccessComponent {
+    fn new(field: &FieldDescriptor, role: AccessComponentRole) -> Self {
         Self {
             field_name: field.name.clone(),
             value_type: field.value_type.clone(),
@@ -1344,8 +1338,8 @@ mod tests {
     }
 
     #[test]
-    fn computes_current_index_layouts() -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let layouts = ledger_schema().current_index_layouts(511)?;
+    fn computes_access_layouts() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let layouts = ledger_schema().access_layouts(511)?;
 
         let account_fact_set = find_layout(&layouts, "Account", "fact_set")?;
         assert_eq!(account_fact_set.kind, IndexKind::FactSet);
@@ -1362,33 +1356,30 @@ mod tests {
         let holder_unique = find_layout(&layouts, "Holder", "unique_name")?;
         assert_eq!(holder_unique.kind, IndexKind::Unique);
         assert_eq!(holder_unique.leading_fields, ["name"]);
-        assert_eq!(field_names(holder_unique), ["name", "id"]);
+        assert_eq!(field_names(holder_unique), ["name"]);
 
         let account_holder_fk = find_layout(&layouts, "Account", "by_fk_holder")?;
         assert_eq!(account_holder_fk.kind, IndexKind::ForeignKey);
         assert_eq!(account_holder_fk.leading_fields, ["holder"]);
-        assert_eq!(field_names(account_holder_fk), ["holder", "id", "currency"]);
+        assert_eq!(field_names(account_holder_fk), ["holder"]);
 
         let account_currency = find_layout(&layouts, "Account", "by_currency")?;
         assert_eq!(account_currency.kind, IndexKind::Equality);
         assert_eq!(account_currency.leading_fields, ["currency", "id"]);
-        assert_eq!(field_names(account_currency), ["currency", "id", "holder"]);
+        assert_eq!(field_names(account_currency), ["currency", "id"]);
 
         for layout in &layouts {
-            let relation = ledger_schema()
-                .relations
-                .into_iter()
-                .find(|relation| relation.name == layout.relation_name)
-                .ok_or_else(|| std::io::Error::other("missing layout relation"))?;
-            let mut names = field_names(layout);
-            names.sort_unstable();
-            let mut relation_fields = relation
-                .fields
-                .iter()
-                .map(|field| field.name.as_str())
-                .collect::<Vec<_>>();
-            relation_fields.sort_unstable();
-            assert_eq!(names, relation_fields);
+            assert_eq!(field_names(layout), layout.leading_fields);
+            assert_eq!(
+                layout.encoded_len,
+                INDEX_KEY_OVERHEAD_BYTES
+                    + layout
+                        .components
+                        .iter()
+                        .map(|component| component.encoded_width)
+                        .sum::<usize>()
+                    + FACT_ID_BYTES
+            );
         }
 
         assert!(
@@ -1417,7 +1408,7 @@ mod tests {
             ],
         );
 
-        let layouts = schema.current_index_layouts(511)?;
+        let layouts = schema.access_layouts(511)?;
         assert_eq!(layouts[0].index_name, "fact_set");
         assert_eq!(layouts[0].kind, IndexKind::FactSet);
         assert_eq!(layouts[1].index_name, "unique_code");
@@ -1428,7 +1419,7 @@ mod tests {
     fn string_and_bytes_fields_use_interned_placeholders()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let schema = ledger_schema();
-        let layouts = schema.current_index_layouts(511)?;
+        let layouts = schema.access_layouts(511)?;
         let holder_unique = find_layout(&layouts, "Holder", "unique_name")?;
         let name = holder_unique
             .components
@@ -1478,7 +1469,7 @@ mod tests {
         );
 
         assert!(matches!(
-            schema.current_index_layouts(511),
+            schema.access_layouts(511),
             Err(SchemaError::KeyLayoutTooLarge { .. })
         ));
     }
@@ -1509,7 +1500,7 @@ mod tests {
         );
 
         assert!(matches!(
-            schema.current_index_layouts(511),
+            schema.access_layouts(511),
             Err(SchemaError::DuplicateIndexField { field, .. }) if field == "currency"
         ));
     }
@@ -2113,10 +2104,10 @@ mod tests {
     }
 
     fn find_layout<'a>(
-        layouts: &'a [CurrentIndexLayout],
+        layouts: &'a [AccessLayout],
         relation: &str,
         index: &str,
-    ) -> std::result::Result<&'a CurrentIndexLayout, Box<dyn std::error::Error>> {
+    ) -> std::result::Result<&'a AccessLayout, Box<dyn std::error::Error>> {
         layouts
             .iter()
             .find(|layout| layout.relation_name == relation && layout.index_name == index)
@@ -2124,7 +2115,7 @@ mod tests {
             .map_err(Into::into)
     }
 
-    fn field_names(layout: &CurrentIndexLayout) -> Vec<&str> {
+    fn field_names(layout: &AccessLayout) -> Vec<&str> {
         layout
             .components
             .iter()

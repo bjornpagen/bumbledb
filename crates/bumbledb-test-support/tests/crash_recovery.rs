@@ -9,16 +9,22 @@ use bumbledb_test_support::schemas::ledger_schema;
 
 #[test]
 #[ignore]
-fn subprocess_crash_before_commit_leaves_no_rows() {
-    assert!(crash_parent("subprocess_crash_before_commit_leaves_no_rows", "precommit").is_ok());
+fn subprocess_crash_before_commit_leaves_no_facts() {
+    assert!(
+        crash_parent(
+            "subprocess_crash_before_commit_leaves_no_facts",
+            "precommit"
+        )
+        .is_ok()
+    );
 }
 
 #[test]
 #[ignore]
-fn subprocess_crash_after_commit_leaves_committed_rows() {
+fn subprocess_crash_after_commit_leaves_committed_facts() {
     assert!(
         crash_parent(
-            "subprocess_crash_after_commit_leaves_committed_rows",
+            "subprocess_crash_after_commit_leaves_committed_facts",
             "postcommit",
         )
         .is_ok()

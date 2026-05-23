@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 use bumbledb_lmdb::failpoints::{self, Failpoint};
 use bumbledb_lmdb::{Environment, Error, StorageSchema, TestError};
 use bumbledb_test_support::assertions::assert_invariants;
-use bumbledb_test_support::facts::{account, holder, posting, seeded_ledger_rows};
+use bumbledb_test_support::facts::{account, holder, posting, seeded_ledger_facts};
 use bumbledb_test_support::schemas::ledger_schema;
 
 #[test]
@@ -54,7 +54,7 @@ fn failpoint_delete_and_bulk_are_atomic() -> Result<(), Box<dyn std::error::Erro
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(ledger_schema(), env.max_key_size())?;
-    env.bulk_load(&schema, seeded_ledger_rows())?;
+    env.bulk_load(&schema, seeded_ledger_facts())?;
     assert_invariants(&env, &schema)?;
 
     failpoints::set(Failpoint::BeforeCommit);

@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use bumbledb_core::schema::{
-    CurrentIndexLayout, IndexComponent, IndexKind, RelationDescriptor, SchemaDescriptor,
+    AccessComponent, AccessLayout, IndexKind, RelationDescriptor, SchemaDescriptor,
 };
 
 use crate::{AccessId, Error, RelationId, Result};
@@ -12,7 +12,7 @@ use crate::{AccessId, Error, RelationId, Result};
 #[derive(Clone, Debug)]
 pub struct StorageSchema {
     pub(crate) descriptor: SchemaDescriptor,
-    pub(crate) layouts: Vec<CurrentIndexLayout>,
+    pub(crate) layouts: Vec<AccessLayout>,
     relation_by_name: BTreeMap<String, RelationId>,
     layout_by_relation_name: BTreeMap<(String, String), AccessId>,
 }
@@ -34,7 +34,7 @@ impl StorageSchema {
     /// Builds storage metadata and validates generated index key lengths.
     pub fn new(descriptor: SchemaDescriptor, max_key_size: usize) -> Result<Self> {
         descriptor.validate()?;
-        let layouts = descriptor.current_index_layouts(max_key_size)?;
+        let layouts = descriptor.access_layouts(max_key_size)?;
         let relation_by_name = descriptor
             .relations
             .iter()
@@ -64,7 +64,7 @@ impl StorageSchema {
     }
 
     /// Returns generated current index layouts.
-    pub fn layouts(&self) -> &[CurrentIndexLayout] {
+    pub fn layouts(&self) -> &[AccessLayout] {
         &self.layouts
     }
 
@@ -93,13 +93,13 @@ impl StorageSchema {
     pub(crate) fn layouts_for_relation(
         &self,
         relation_id: u16,
-    ) -> impl Iterator<Item = &CurrentIndexLayout> {
+    ) -> impl Iterator<Item = &AccessLayout> {
         self.layouts
             .iter()
             .filter(move |layout| layout.relation_id == relation_id)
     }
 
-    pub(crate) fn layout(&self, relation: &str, index: &str) -> Option<&CurrentIndexLayout> {
+    pub(crate) fn layout(&self, relation: &str, index: &str) -> Option<&AccessLayout> {
         self.layout_by_relation_name
             .get(&(relation.to_owned(), index.to_owned()))
             .and_then(|access| {
@@ -109,7 +109,7 @@ impl StorageSchema {
             })
     }
 
-    pub(crate) fn fact_set_layout(&self, relation: &str) -> Option<&CurrentIndexLayout> {
+    pub(crate) fn fact_set_layout(&self, relation: &str) -> Option<&AccessLayout> {
         self.layout(relation, FACT_SET_ACCESS_NAME)
     }
 
@@ -131,11 +131,11 @@ pub struct AccessPathDescriptor {
     /// Leading fields usable as an index prefix.
     pub leading_fields: Vec<String>,
     /// Full encoded components in index-key order.
-    pub components: Vec<IndexComponent>,
+    pub components: Vec<AccessComponent>,
 }
 
 impl AccessPathDescriptor {
-    fn from_layout(layout: &CurrentIndexLayout) -> Self {
+    fn from_layout(layout: &AccessLayout) -> Self {
         Self {
             relation_name: layout.relation_name.clone(),
             index_name: layout.index_name.clone(),

@@ -63,7 +63,7 @@ pub fn number(id: u64, n: i64, d: i128) -> Fact {
 }
 
 /// Seeded valid ledger facts.
-pub fn seeded_ledger_rows() -> Vec<Fact> {
+pub fn seeded_ledger_facts() -> Vec<Fact> {
     vec![
         holder(1, "Alice"),
         holder(2, "Bob"),
@@ -79,7 +79,7 @@ pub fn seeded_ledger_rows() -> Vec<Fact> {
 }
 
 /// Larger deterministic ledger facts.
-pub fn generated_ledger_rows(scale: u64) -> Vec<Fact> {
+pub fn generated_ledger_facts(scale: u64) -> Vec<Fact> {
     let scale = scale.max(1);
     let mut facts = Vec::new();
     for id in 1..=scale {

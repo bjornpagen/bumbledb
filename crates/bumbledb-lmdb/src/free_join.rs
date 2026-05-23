@@ -95,7 +95,7 @@ pub struct PayloadDemand {
     /// Relations used only for existence checks.
     pub existence_only_relations: Vec<RelationId>,
     /// Relations whose fact IDs are needed by later nodes/output.
-    pub row_id_demands: Vec<RelationId>,
+    pub fact_id_demands: Vec<RelationId>,
 }
 
 /// Output/projection/aggregation plan.
@@ -151,7 +151,7 @@ pub struct PlanEstimates {
     /// Estimated iterator operations.
     pub iterator_ops: u64,
     /// Estimated hash build facts.
-    pub hash_build_rows: u64,
+    pub hash_build_facts: u64,
     /// Estimated materialized logical values.
     pub materialized_values: u64,
     /// Estimated memory bytes.

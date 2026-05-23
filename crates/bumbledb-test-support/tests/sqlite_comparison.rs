@@ -5,13 +5,13 @@ use bumbledb_core::query_builder::{OperandRef, QueryBuilder};
 use bumbledb_core::query_ir::ComparisonOperator;
 use bumbledb_lmdb::{Environment, InputBindings, StorageSchema, Value};
 use bumbledb_test_support::assertions::{assert_same_facts, execute_sorted_facts};
-use bumbledb_test_support::facts::seeded_ledger_rows;
+use bumbledb_test_support::facts::seeded_ledger_facts;
 use bumbledb_test_support::schemas::ledger_schema;
-use bumbledb_test_support::sqlite::{load_ledger, query_i64_rows};
+use bumbledb_test_support::sqlite::{load_ledger, query_i64_facts};
 
 #[test]
 fn sqlite_comparison_queries_match_bumbledb() -> Result<(), Box<dyn std::error::Error>> {
-    let facts = seeded_ledger_rows();
+    let facts = seeded_ledger_facts();
     let sqlite = load_ledger(&facts)?;
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
@@ -42,8 +42,8 @@ fn sqlite_comparison_queries_match_bumbledb() -> Result<(), Box<dyn std::error::
         .find_var("posting")?
         .find_var("amount")?
         .finish()?;
-    let bumbledb_rows = execute_sorted_facts(&env, &schema, &query, &inputs())?;
-    let sqlite_rows = query_i64_rows(
+    let bumbledb_facts = execute_sorted_facts(&env, &schema, &query, &inputs())?;
+    let sqlite_facts = query_i64_facts(
         &sqlite,
         r#"
         SELECT DISTINCT p.id, p.amount
@@ -52,7 +52,7 @@ fn sqlite_comparison_queries_match_bumbledb() -> Result<(), Box<dyn std::error::
         "#,
         &[1, 0, 1_000_000],
     )?;
-    let sqlite_rows = sqlite_rows
+    let sqlite_facts = sqlite_facts
         .into_iter()
         .map(|fact| {
             vec![
@@ -62,7 +62,7 @@ fn sqlite_comparison_queries_match_bumbledb() -> Result<(), Box<dyn std::error::
         })
         .collect();
 
-    assert_same_facts(bumbledb_rows, sqlite_rows);
+    assert_same_facts(bumbledb_facts, sqlite_facts);
     Ok(())
 }
 

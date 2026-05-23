@@ -6,7 +6,7 @@ use proptest::prelude::*;
 use crate::facts::{account, holder, posting};
 
 /// Small valid fact batches with FK order preserved.
-pub fn valid_ledger_rows_strategy() -> impl Strategy<Value = Vec<Fact>> {
+pub fn valid_ledger_facts_strategy() -> impl Strategy<Value = Vec<Fact>> {
     (1u64..8).prop_map(|count| {
         let mut facts = Vec::new();
         for id in 1..=count {
@@ -23,12 +23,12 @@ pub fn valid_ledger_rows_strategy() -> impl Strategy<Value = Vec<Fact>> {
 }
 
 /// Invalid duplicate fact batch.
-pub fn duplicate_holder_rows() -> Vec<Fact> {
+pub fn duplicate_holder_facts() -> Vec<Fact> {
     vec![holder(1, "same"), holder(1, "other")]
 }
 
 /// Wrong-type fact for negative tests.
-pub fn wrong_type_holder_row() -> Fact {
+pub fn wrong_type_holder_fact() -> Fact {
     Fact::new(
         "Holder",
         [

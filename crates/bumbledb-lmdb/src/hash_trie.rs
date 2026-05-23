@@ -56,7 +56,7 @@ impl HashTrieIndex {
                         .ok_or_else(|| crate::Error::internal("missing hash trie field value"))
                 })
                 .collect::<Result<KeyStack>>()?;
-            insert_row(&mut root, &keys, fact, leaf_mode);
+            insert_fact(&mut root, &keys, fact, leaf_mode);
         }
         let stats = HashTrieStats::from_root(&root, spec.fields.len());
         Ok(Self {
@@ -184,23 +184,23 @@ pub trait PrefixProbe {
 }
 
 /// Streaming fact iterator interface over hash trie prefixes.
-pub trait PrefixRows {
+pub trait PrefixFacts {
     /// Borrowed fact iterator type tied to the borrowed index.
     type Facts<'a>: Iterator<Item = FactId> + 'a
     where
         Self: 'a;
 
     /// Returns fact IDs under a prefix without materializing a fact vector.
-    fn rows_for_prefix<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> Self::Facts<'a>;
+    fn facts_for_prefix<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> Self::Facts<'a>;
 }
 
 impl HashTrieIndex {
     /// Visits fact IDs under any prefix depth for fact-retaining tries.
-    pub fn for_each_row(&self, prefix: &[EncodedRef<'_>], mut visit: impl FnMut(FactId) -> bool) {
+    pub fn for_each_fact(&self, prefix: &[EncodedRef<'_>], mut visit: impl FnMut(FactId) -> bool) {
         let Some(node) = find_node(&self.root, prefix) else {
             return;
         };
-        visit_rows(node, &mut visit);
+        visit_facts(node, &mut visit);
     }
 }
 
@@ -225,21 +225,21 @@ impl PrefixProbe for HashTrieIndex {
     }
 }
 
-impl PrefixRows for HashTrieIndex {
-    type Facts<'a> = PrefixRowIter<'a>;
+impl PrefixFacts for HashTrieIndex {
+    type Facts<'a> = PrefixFactIter<'a>;
 
-    fn rows_for_prefix<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> Self::Facts<'a> {
-        PrefixRowIter::new(find_node(&self.root, prefix))
+    fn facts_for_prefix<'a>(&'a self, prefix: &[EncodedRef<'_>]) -> Self::Facts<'a> {
+        PrefixFactIter::new(find_node(&self.root, prefix))
     }
 }
 
 /// Concrete streaming fact iterator for hash prefix traversal.
-pub struct PrefixRowIter<'a> {
+pub struct PrefixFactIter<'a> {
     stack: NodeStack<'a>,
     current: FactSetIter<'a>,
 }
 
-impl<'a> PrefixRowIter<'a> {
+impl<'a> PrefixFactIter<'a> {
     fn new(node: Option<&'a HashNode>) -> Self {
         let mut stack = SmallVec::new();
         if let Some(node) = node {
@@ -252,7 +252,7 @@ impl<'a> PrefixRowIter<'a> {
     }
 }
 
-impl Iterator for PrefixRowIter<'_> {
+impl Iterator for PrefixFactIter<'_> {
     type Item = FactId;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -301,7 +301,7 @@ impl Iterator for FactSetIter<'_> {
     }
 }
 
-fn insert_row(node: &mut HashNode, keys: &[EncodedOwned], fact: FactId, leaf_mode: LeafMode) {
+fn insert_fact(node: &mut HashNode, keys: &[EncodedOwned], fact: FactId, leaf_mode: LeafMode) {
     if keys.is_empty() {
         match leaf_mode {
             LeafMode::Facts => match node {
@@ -320,11 +320,11 @@ fn insert_row(node: &mut HashNode, keys: &[EncodedOwned], fact: FactId, leaf_mod
             let child = map
                 .entry(keys[0].clone())
                 .or_insert_with(|| HashNode::Inner(HashMap::new()));
-            insert_row(child, &keys[1..], fact, leaf_mode);
+            insert_fact(child, &keys[1..], fact, leaf_mode);
         }
         HashNode::Leaf(_) | HashNode::CardinalityOnly(_) => {
             *node = HashNode::Inner(HashMap::new());
-            insert_row(node, keys, fact, leaf_mode);
+            insert_fact(node, keys, fact, leaf_mode);
         }
     }
 }
@@ -348,11 +348,11 @@ fn count_node(node: &HashNode) -> usize {
     }
 }
 
-fn visit_rows(node: &HashNode, visit: &mut impl FnMut(FactId) -> bool) -> bool {
+fn visit_facts(node: &HashNode, visit: &mut impl FnMut(FactId) -> bool) -> bool {
     match node {
         HashNode::Inner(map) => {
             for child in map.values() {
-                if !visit_rows(child, visit) {
+                if !visit_facts(child, visit) {
                     return false;
                 }
             }
@@ -438,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn cardinality_only_hash_trie_stores_counts_without_rows() -> Result<()> {
+    fn cardinality_only_hash_trie_stores_counts_without_facts() -> Result<()> {
         let image = account_image()?;
         let account = account_relation(&image)?;
         let index = HashTrieIndex::build_with_mode(
@@ -475,14 +475,14 @@ mod tests {
     }
 
     #[test]
-    fn prefix_rows_streams_empty_one_slice_and_nested_prefixes() -> Result<()> {
+    fn prefix_facts_stream_empty_one_slice_and_nested_prefixes() -> Result<()> {
         let image = account_image()?;
         let account = account_relation(&image)?;
         let covering = HashTrieIndex::build(account, IndexSpec::new("covering", [FieldId(0)]))?;
         let missing = EncodedOwned::Eight(99u64.to_be_bytes());
         assert_eq!(
             covering
-                .rows_for_prefix(&[missing.as_ref()])
+                .facts_for_prefix(&[missing.as_ref()])
                 .collect::<Vec<_>>(),
             []
         );
@@ -490,7 +490,7 @@ mod tests {
         let one = EncodedOwned::Eight(2u64.to_be_bytes());
         assert_eq!(
             covering
-                .rows_for_prefix(&[one.as_ref()])
+                .facts_for_prefix(&[one.as_ref()])
                 .collect::<Vec<_>>(),
             [FactId(1)]
         );
@@ -500,7 +500,7 @@ mod tests {
         let currency = EncodedOwned::One([1]);
         assert_eq!(
             by_currency
-                .rows_for_prefix(&[currency.as_ref()])
+                .facts_for_prefix(&[currency.as_ref()])
                 .collect::<Vec<_>>(),
             [FactId(0), FactId(2)]
         );
@@ -512,13 +512,13 @@ mod tests {
         let active = EncodedOwned::One([1]);
         assert_eq!(
             nested
-                .rows_for_prefix(&[currency.as_ref()])
+                .facts_for_prefix(&[currency.as_ref()])
                 .collect::<Vec<_>>(),
             [FactId(0), FactId(2)]
         );
         assert_eq!(
             nested
-                .rows_for_prefix(&[currency.as_ref(), active.as_ref()])
+                .facts_for_prefix(&[currency.as_ref(), active.as_ref()])
                 .collect::<Vec<_>>(),
             [FactId(0), FactId(2)]
         );
@@ -537,7 +537,7 @@ mod tests {
         let env = Environment::open(path)?;
         let schema = StorageSchema::new(account_schema(), env.max_key_size())?;
         env.write(|txn| {
-            for fact in account_rows() {
+            for fact in account_facts() {
                 txn.insert(&schema, fact)?;
             }
             Ok::<_, crate::Error>(())
@@ -577,7 +577,7 @@ mod tests {
         ))
     }
 
-    fn account_rows() -> Vec<Fact> {
+    fn account_facts() -> Vec<Fact> {
         vec![
             Fact::new(
                 "Account",

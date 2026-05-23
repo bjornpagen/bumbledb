@@ -14,10 +14,10 @@ pub fn sorted_facts(mut facts: Vec<Vec<Value>>) -> Vec<Vec<Value>> {
 
 /// Asserts two query outputs are equal under set semantics.
 pub fn assert_same_facts(actual: Vec<Vec<Value>>, expected: Vec<Vec<Value>>) {
-    assert_eq!(row_set("actual", actual), row_set("expected", expected));
+    assert_eq!(fact_set("actual", actual), fact_set("expected", expected));
 }
 
-fn row_set(label: &str, facts: Vec<Vec<Value>>) -> BTreeSet<Vec<Value>> {
+fn fact_set(label: &str, facts: Vec<Vec<Value>>) -> BTreeSet<Vec<Value>> {
     let fact_count = facts.len();
     let set = facts.into_iter().collect::<BTreeSet<_>>();
     assert_eq!(
@@ -33,11 +33,11 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
     env.read(|txn| {
         let diagnostics = env.storage_diagnostics(schema)?;
         for relation in &schema.descriptor().relations {
-            let primary_rows = txn
+            let primary_facts = txn
                 .scan_relation(schema, &relation.name)?
                 .map(|item| item.map(|item| item.fact))
                 .collect::<Result<Vec<_>>>()?;
-            let primary_set = primary_rows.iter().cloned().collect::<BTreeSet<Fact>>();
+            let primary_set = primary_facts.iter().cloned().collect::<BTreeSet<Fact>>();
             let relation_diag = diagnostics
                 .relations
                 .iter()
@@ -49,13 +49,13 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
                 })?;
             assert_eq!(
                 relation_diag.fact_count as usize,
-                primary_rows.len(),
+                primary_facts.len(),
                 "fact count drift for {}",
                 relation.name
             );
             assert_eq!(
                 txn.canonical_fact_count(schema, &relation.name)?,
-                primary_rows.len(),
+                primary_facts.len(),
                 "canonical fact count drift for {}",
                 relation.name
             );
@@ -73,9 +73,9 @@ pub fn assert_invariants(env: &Environment, schema: &StorageSchema) -> Result<()
                     )?
                     .map(|item| item.map(|item| item.fact))
                     .collect::<Result<Vec<_>>>()?;
-                let row_set = facts.iter().cloned().collect::<BTreeSet<Fact>>();
+                let fact_set = facts.iter().cloned().collect::<BTreeSet<Fact>>();
                 assert_eq!(
-                    primary_set, row_set,
+                    primary_set, fact_set,
                     "index {}.{} does not decode to primary facts",
                     relation.name, path.index_name
                 );
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "actual contains duplicate facts under set semantics")]
-    fn assert_same_facts_rejects_duplicate_actual_rows() {
+    fn assert_same_facts_rejects_duplicate_actual_facts() {
         assert_same_facts(
             vec![vec![Value::U64(1)], vec![Value::U64(1)]],
             vec![vec![Value::U64(1)]],

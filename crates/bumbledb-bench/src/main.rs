@@ -657,14 +657,14 @@ struct BenchmarkRunResult {
     cache_mode: String,
     static_empty_cache_hits: u64,
     query_image_sample_cache_hits: u64,
-    bumbledb_materialized_rows: bool,
-    sqlite_materialized_rows: bool,
+    bumbledb_materialized_facts: bool,
+    sqlite_materialized_facts: bool,
     cardinality_supported: bool,
     cardinality_fallback_reason: String,
     timings: QueryTimings,
     allocations: QueryAllocationStats,
     iterator_ops: u64,
-    hash_build_rows: u64,
+    hash_build_facts: u64,
     materialized_values: u64,
     dictionary_reverse_lookups: u64,
     counters: PlanCounters,
@@ -829,7 +829,7 @@ fn run_dataset(
         Some(source) => bumble_env.write(|txn| {
             txn.bulk_load_streaming(&bumble_schema, |txn| {
                 let mut inserted = 0;
-                open::stream_rows(source, |fact| {
+                open::stream_facts(source, |fact| {
                     if txn.insert(&bumble_schema, fact)? == bumbledb_lmdb::InsertOutcome::Inserted {
                         inserted += 1;
                     }
@@ -956,10 +956,10 @@ fn run_dataset(
             }
         };
         let correctness_mode = correctness_mode(&typed);
-        let sqlite_correctness = timed(|| sqlite_result_rows(&mut sqlite, query.sqlite, &params))?;
+        let sqlite_correctness = timed(|| sqlite_result_facts(&mut sqlite, query.sqlite, &params))?;
         let sqlite_correctness_execution = sqlite_correctness.elapsed;
-        let sqlite_expected = sorted_sql_rows(sqlite_correctness.value);
-        let bumbledb_actual = sorted_sql_rows(bumbledb_sql_rows(&materialized_output)?);
+        let sqlite_expected = sorted_sql_facts(sqlite_correctness.value);
+        let bumbledb_actual = sorted_sql_facts(bumbledb_sql_facts(&materialized_output)?);
         if bumbledb_actual != sqlite_expected {
             return Err(format!(
                 "{}:{} result mismatch bumbledb={:?} sqlite={:?}",
@@ -1208,7 +1208,7 @@ fn sqlite_count(
     Ok(facts)
 }
 
-fn sqlite_result_rows(
+fn sqlite_result_facts(
     conn: &mut Connection,
     sql: &str,
     params: &[SqlParam],
@@ -1239,7 +1239,7 @@ fn sqlite_result_rows(
     Ok(out)
 }
 
-fn bumbledb_sql_rows(
+fn bumbledb_sql_facts(
     output: &QueryOutput,
 ) -> Result<Vec<Vec<SqlValue>>, Box<dyn std::error::Error>> {
     output
@@ -1263,7 +1263,7 @@ fn sql_value(value: &Value) -> Result<SqlValue, Box<dyn std::error::Error>> {
     })
 }
 
-fn sorted_sql_rows(mut facts: Vec<Vec<SqlValue>>) -> Vec<Vec<SqlValue>> {
+fn sorted_sql_facts(mut facts: Vec<Vec<SqlValue>>) -> Vec<Vec<SqlValue>> {
     facts.sort();
     facts
 }
@@ -1346,14 +1346,14 @@ fn benchmark_result(
         cache_mode: cache_mode.as_str().to_owned(),
         static_empty_cache_hits: cache_hits.static_empty_cache_hits,
         query_image_sample_cache_hits: cache_hits.query_image_cache_hits,
-        bumbledb_materialized_rows: compare_mode == CompareMode::Materialized,
-        sqlite_materialized_rows: true,
+        bumbledb_materialized_facts: compare_mode == CompareMode::Materialized,
+        sqlite_materialized_facts: true,
         cardinality_supported: compare_mode == CompareMode::Facts,
         cardinality_fallback_reason: String::new(),
         timings: output.plan.timings,
         allocations: output.plan.allocations,
         iterator_ops: output.plan.free_join.estimates.iterator_ops,
-        hash_build_rows: output.plan.free_join.estimates.hash_build_rows,
+        hash_build_facts: output.plan.free_join.estimates.hash_build_facts,
         materialized_values: output.plan.counters.materialized_output_values,
         dictionary_reverse_lookups: output.plan.counters.dictionary_reverse_lookups,
         counters: output.plan.counters.clone(),
@@ -1434,8 +1434,8 @@ fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
             query,
             node = node.node.0,
             implementation = ?node.implementation,
-            estimated_rows = node.estimated_rows,
-            actual_rows = node.actual_rows,
+            estimated_facts = node.estimated_facts,
+            actual_facts = node.actual_facts,
             execute_micros = node.execute_micros,
             "benchmark node profile"
         );
@@ -1771,8 +1771,8 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             markdown_escape(result.query),
             result.facts,
             markdown_escape(&result.compare_mode),
-            result.bumbledb_materialized_rows,
-            result.sqlite_materialized_rows,
+            result.bumbledb_materialized_facts,
+            result.sqlite_materialized_facts,
             result.cardinality_supported,
             duration_micros(result.bumbledb_avg),
             duration_micros(result.sqlite_avg),
@@ -1802,7 +1802,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.direct_kernel_facts,
             result.direct_kernel_predicates,
             result.iterator_ops,
-            result.hash_build_rows,
+            result.hash_build_facts,
             result.materialized_values,
             result.dictionary_reverse_lookups,
             if result.gate.passed { "pass" } else { "fail" },
@@ -1918,41 +1918,41 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     out.push_str("| dataset | query | phase | enabled | alloc calls | bytes allocated | net bytes | current live bytes | peak live bytes |\n");
     out.push_str("|---|---|---|---|---:|---:|---:|---:|---:|\n");
     for result in results {
-        write_allocation_phase_row(&mut out, result, "total", result.allocations.total);
-        write_allocation_phase_row(
+        write_allocation_phase_fact(&mut out, result, "total", result.allocations.total);
+        write_allocation_phase_fact(
             &mut out,
             result,
             "validate_inputs",
             result.allocations.validate_inputs,
         );
-        write_allocation_phase_row(&mut out, result, "normalize", result.allocations.normalize);
-        write_allocation_phase_row(
+        write_allocation_phase_fact(&mut out, result, "normalize", result.allocations.normalize);
+        write_allocation_phase_fact(
             &mut out,
             result,
             "encode_inputs",
             result.allocations.encode_inputs,
         );
-        write_allocation_phase_row(
+        write_allocation_phase_fact(
             &mut out,
             result,
             "query_image",
             result.allocations.query_image,
         );
-        write_allocation_phase_row(&mut out, result, "plan", result.allocations.plan);
-        write_allocation_phase_row(
+        write_allocation_phase_fact(&mut out, result, "plan", result.allocations.plan);
+        write_allocation_phase_fact(
             &mut out,
             result,
             "lftj_build",
             result.allocations.lftj_build,
         );
-        write_allocation_phase_row(
+        write_allocation_phase_fact(
             &mut out,
             result,
             "hash_index",
             result.allocations.hash_index,
         );
-        write_allocation_phase_row(&mut out, result, "execute", result.allocations.execute);
-        write_allocation_phase_row(
+        write_allocation_phase_fact(&mut out, result, "execute", result.allocations.execute);
+        write_allocation_phase_fact(
             &mut out,
             result,
             "sink_finish",
@@ -2026,7 +2026,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     out
 }
 
-fn write_allocation_phase_row(
+fn write_allocation_phase_fact(
     out: &mut String,
     result: &BenchmarkRunResult,
     phase: &str,
@@ -2056,13 +2056,13 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"facts\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_rows\":{},\"materialized_rows\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"cache_mode\":\"{}\",\"static_empty_cache_hit\":{},\"static_empty_cache_hits\":{},\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"bumbledb_materialized_rows\":{},\"sqlite_materialized_rows\":{},\"cardinality_supported\":{},\"cardinality_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
+            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"facts\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_facts\":{},\"materialized_facts\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"cache_mode\":\"{}\",\"static_empty_cache_hit\":{},\"static_empty_cache_hits\":{},\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"bumbledb_materialized_facts\":{},\"sqlite_materialized_facts\":{},\"cardinality_supported\":{},\"cardinality_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
             json_escape(result.dataset),
             json_escape(result.query),
             result.facts,
             json_escape(&result.correctness_mode),
             result.facts,
-            if result.bumbledb_materialized_rows {
+            if result.bumbledb_materialized_facts {
                 result.facts
             } else {
                 0
@@ -2078,8 +2078,8 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.static_empty_cache_hits,
             result.query_image_sample_cache_hits > 0,
             result.query_image_sample_cache_hits,
-            result.bumbledb_materialized_rows,
-            result.sqlite_materialized_rows,
+            result.bumbledb_materialized_facts,
+            result.sqlite_materialized_facts,
             result.cardinality_supported,
             json_escape(&result.cardinality_fallback_reason),
             result.query_image_built_during_query,
@@ -2091,14 +2091,14 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         out.push_str("\"bumbledb\":{");
         let _ = write!(
             out,
-            "\"correctness_execution\":{{\"elapsed_us\":{},\"output_mode\":\"materialized\"}},\"cold_execution\":{{\"elapsed_us\":{},\"plan_family\":\"{}\",\"runtime\":\"{}\",\"query_image_built\":{},\"query_image_scope\":\"{}\",\"materialized_rows\":{},\"logical_rows\":{},\"output_values\":{}}},\"warmup\":{{\"samples\":{},\"avg_us\":{}}},\"samples\":",
+            "\"correctness_execution\":{{\"elapsed_us\":{},\"output_mode\":\"materialized\"}},\"cold_execution\":{{\"elapsed_us\":{},\"plan_family\":\"{}\",\"runtime\":\"{}\",\"query_image_built\":{},\"query_image_scope\":\"{}\",\"materialized_facts\":{},\"logical_facts\":{},\"output_values\":{}}},\"warmup\":{{\"samples\":{},\"avg_us\":{}}},\"samples\":",
             duration_micros(result.bumbledb_correctness_execution),
             duration_micros(result.bumbledb_cold_execution),
             json_escape(&result.plan_family),
             json_escape(&result.runtime_kind),
             result.query_image_built_during_query,
             json_escape(&result.query_image_scope),
-            if result.bumbledb_materialized_rows {
+            if result.bumbledb_materialized_facts {
                 result.facts
             } else {
                 0
@@ -2351,7 +2351,7 @@ fn print_explain(explain: &str) {
             || line.contains("sorted_trie_build")
             || line.contains("atom_temp_relation")
             || line.contains("hash_index")
-            || line.contains("hash_rows")
+            || line.contains("hash_facts")
             || line.contains("hash_distinct")
             || line.contains("direct_kernel")
             || line.contains("output_facts")
@@ -2374,7 +2374,7 @@ fn ledger_dataset(scale: u64) -> Dataset {
     Dataset {
         name: "ledger",
         schema: bumbledb_lmdb::benchmark::benchmark_schema(),
-        facts: bumbledb_lmdb::benchmark::benchmark_rows(scale),
+        facts: bumbledb_lmdb::benchmark::benchmark_facts(scale),
         fact_source: None,
         sqlite_schema: r#"
             CREATE TABLE holder (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
@@ -2496,7 +2496,7 @@ fn sailors_dataset(scale: u64) -> Dataset {
             ],
         )
         .with_enum(EnumDescriptor::codes("Color", [1, 2, 3])),
-        facts: sailors_rows(sailors),
+        facts: sailors_facts(sailors),
         fact_source: None,
         sqlite_schema: r#"
             CREATE TABLE sailor (id INTEGER PRIMARY KEY, name TEXT NOT NULL, rating INTEGER NOT NULL, age INTEGER NOT NULL);
@@ -2642,7 +2642,7 @@ fn join_stress_dataset(scale: u64) -> Dataset {
             ],
         )
         .with_enum(EnumDescriptor::codes("K", 0..10)),
-        facts: join_stress_rows(n),
+        facts: join_stress_facts(n),
         fact_source: None,
         sqlite_schema: r#"
             CREATE TABLE a (id INTEGER PRIMARY KEY, k INTEGER NOT NULL);
@@ -2762,7 +2762,7 @@ fn tpch_dataset(scale: u64) -> Dataset {
                 )),
             ],
         ),
-        facts: tpch_rows(n),
+        facts: tpch_facts(n),
         fact_source: None,
         sqlite_schema: r#"
             CREATE TABLE customer (id INTEGER PRIMARY KEY, nation INTEGER NOT NULL);
@@ -3042,7 +3042,7 @@ fn build_tpch_supplier_nation_orders(schema: &SchemaDescriptor) -> QueryBuildRes
         .finish()
 }
 
-fn sailors_rows(sailors: u64) -> Vec<Fact> {
+fn sailors_facts(sailors: u64) -> Vec<Fact> {
     let mut facts = Vec::new();
     for sid in 1..=sailors {
         facts.push(Fact::new(
@@ -3086,7 +3086,7 @@ fn sailors_rows(sailors: u64) -> Vec<Fact> {
     facts
 }
 
-fn join_stress_rows(n: u64) -> Vec<Fact> {
+fn join_stress_facts(n: u64) -> Vec<Fact> {
     let mut facts = Vec::new();
     for id in 1..=n {
         facts.push(Fact::new(
@@ -3151,7 +3151,7 @@ fn join_stress_rows(n: u64) -> Vec<Fact> {
     facts
 }
 
-fn tpch_rows(n: u64) -> Vec<Fact> {
+fn tpch_facts(n: u64) -> Vec<Fact> {
     let mut facts = Vec::new();
     for id in 1..=n {
         facts.push(Fact::new(
@@ -3499,16 +3499,16 @@ mod tests {
 
     #[test]
     fn exact_correctness_helpers_catch_count_value_mismatch() {
-        let bumbledb = sorted_sql_rows(vec![vec![SqlValue::Integer(2)]]);
-        let sqlite = sorted_sql_rows(vec![vec![SqlValue::Integer(3)]]);
+        let bumbledb = sorted_sql_facts(vec![vec![SqlValue::Integer(2)]]);
+        let sqlite = sorted_sql_facts(vec![vec![SqlValue::Integer(3)]]);
 
         assert_ne!(bumbledb, sqlite);
     }
 
     #[test]
     fn exact_correctness_helpers_catch_projection_duplicates() {
-        let bumbledb = sorted_sql_rows(vec![vec![SqlValue::Integer(1)]]);
-        let sqlite = sorted_sql_rows(vec![vec![SqlValue::Integer(1)], vec![SqlValue::Integer(1)]]);
+        let bumbledb = sorted_sql_facts(vec![vec![SqlValue::Integer(1)]]);
+        let sqlite = sorted_sql_facts(vec![vec![SqlValue::Integer(1)], vec![SqlValue::Integer(1)]]);
 
         assert_ne!(bumbledb, sqlite);
     }
@@ -3547,8 +3547,8 @@ mod tests {
             cache_mode: "prepared-plan".to_owned(),
             static_empty_cache_hits: 0,
             query_image_sample_cache_hits: 1,
-            bumbledb_materialized_rows: true,
-            sqlite_materialized_rows: false,
+            bumbledb_materialized_facts: true,
+            sqlite_materialized_facts: false,
             cardinality_supported: false,
             cardinality_fallback_reason: String::new(),
             timings: QueryTimings {
@@ -3560,7 +3560,7 @@ mod tests {
             },
             allocations: QueryAllocationStats::default(),
             iterator_ops: 7,
-            hash_build_rows: 0,
+            hash_build_facts: 0,
             materialized_values: 1,
             dictionary_reverse_lookups: 0,
             counters: PlanCounters {
@@ -3653,8 +3653,8 @@ mod tests {
             cache_mode: "prepared-plan".to_owned(),
             static_empty_cache_hits: 0,
             query_image_sample_cache_hits: 1,
-            bumbledb_materialized_rows: false,
-            sqlite_materialized_rows: false,
+            bumbledb_materialized_facts: false,
+            sqlite_materialized_facts: false,
             cardinality_supported: true,
             cardinality_fallback_reason: String::new(),
             timings: QueryTimings {
@@ -3666,7 +3666,7 @@ mod tests {
             },
             allocations: QueryAllocationStats::default(),
             iterator_ops: 1,
-            hash_build_rows: 1,
+            hash_build_facts: 1,
             materialized_values: 2,
             dictionary_reverse_lookups: 0,
             counters: PlanCounters::default(),

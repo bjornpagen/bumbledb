@@ -30,9 +30,9 @@ pub struct BenchmarkComparison {
     /// Query name.
     pub query: String,
     /// Number of Bumbledb output facts.
-    pub bumbledb_rows: usize,
+    pub bumbledb_facts: usize,
     /// Number of SQLite output facts.
-    pub sqlite_rows: usize,
+    pub sqlite_facts: usize,
     /// Bumbledb explain plan text.
     pub explain: String,
 }
@@ -236,7 +236,7 @@ pub fn benchmark_schema() -> SchemaDescriptor {
 }
 
 /// Generates deterministic benchmark facts.
-pub fn benchmark_rows(scale: u64) -> Vec<Fact> {
+pub fn benchmark_facts(scale: u64) -> Vec<Fact> {
     let mut facts = Vec::new();
     let scale = scale.max(1);
 
@@ -437,7 +437,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let env = Environment::open(dir.path())?;
         let schema = StorageSchema::new(benchmark_schema(), env.max_key_size())?;
-        let facts = benchmark_rows(4);
+        let facts = benchmark_facts(4);
 
         env.write(|txn| {
             for fact in &facts {
@@ -461,16 +461,16 @@ mod tests {
             )
         })?;
 
-        let sqlite_rows = run_sqlite_query(&facts, query.sqlite, 1, 0, 1000)?;
+        let sqlite_facts = run_sqlite_query(&facts, query.sqlite, 1, 0, 1000)?;
         let comparison = BenchmarkComparison {
             query: query.name.to_owned(),
-            bumbledb_rows: bumbledb.result.facts.len(),
-            sqlite_rows,
+            bumbledb_facts: bumbledb.result.facts.len(),
+            sqlite_facts,
             explain: bumbledb.explain(),
         };
 
-        assert_eq!(comparison.bumbledb_rows, comparison.sqlite_rows);
-        assert!(comparison.bumbledb_rows > 0);
+        assert_eq!(comparison.bumbledb_facts, comparison.sqlite_facts);
+        assert!(comparison.bumbledb_facts > 0);
         assert!(comparison.explain.contains("facts_scanned"));
         assert!(comparison.explain.contains("candidate_plan"));
         Ok(())

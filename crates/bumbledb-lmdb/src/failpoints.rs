@@ -33,7 +33,7 @@ impl Failpoint {
         match self {
             Failpoint::BeforeDictionaryPut => "before_dictionary_put",
             Failpoint::AfterDictionaryPut => "after_dictionary_put",
-            Failpoint::AfterCurrentIndexPut => "after_current_index_put",
+            Failpoint::AfterCurrentIndexPut => "after_current_access_put",
             Failpoint::AfterCanonicalFactPut => "after_canonical_fact_put",
             Failpoint::BeforeStatsUpdate => "before_stats_update",
             Failpoint::AfterStatsUpdate => "after_stats_update",

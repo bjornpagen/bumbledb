@@ -6,7 +6,7 @@ use std::thread;
 use bumbledb_core::query_builder::QueryBuilder;
 use bumbledb_lmdb::{Environment, InputBindings, StorageSchema};
 use bumbledb_test_support::assertions::assert_invariants;
-use bumbledb_test_support::facts::{account, holder, seeded_ledger_rows};
+use bumbledb_test_support::facts::{account, holder, seeded_ledger_facts};
 use bumbledb_test_support::schemas::ledger_schema;
 
 #[test]
@@ -14,7 +14,7 @@ fn readers_see_stable_snapshots_while_writer_commits() -> Result<(), Box<dyn std
     let dir = tempfile::tempdir()?;
     let env = Arc::new(Environment::open(dir.path())?);
     let schema = Arc::new(StorageSchema::new(ledger_schema(), env.max_key_size())?);
-    env.bulk_load(&schema, seeded_ledger_rows())?;
+    env.bulk_load(&schema, seeded_ledger_facts())?;
     let barrier = Arc::new(Barrier::new(2));
     let query = Arc::new(
         QueryBuilder::new(schema.descriptor())

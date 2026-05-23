@@ -6,7 +6,7 @@ use bumbledb_core::encoding::{
     encode_i64, encode_intern_id, encode_timestamp, encode_u64,
 };
 use bumbledb_core::schema::{
-    ConstraintDescriptor, CurrentIndexLayout, FieldDescriptor, IndexComponent, RelationDescriptor,
+    AccessComponent, AccessLayout, ConstraintDescriptor, FieldDescriptor, RelationDescriptor,
     SchemaDescriptor, ValueType,
 };
 
@@ -14,7 +14,11 @@ use crate::storage_schema::FACT_SET_ACCESS_NAME;
 use crate::{Error, ReadTxn, RelationId, Result, StorageSchema, WriteTxn};
 
 const NS_CANONICAL_FACT: u8 = 0x10;
+const NS_FACT_ID: u8 = 0x12;
 const NS_ACCESS_ENTRY: u8 = 0x11;
+const NS_UNIQUE_ENTRY: u8 = 0x13;
+const NS_REVERSE_FK_ENTRY: u8 = 0x14;
+const FACT_ID_BYTES: usize = 16;
 const DICT_FWD: u8 = 0x01;
 const DICT_REV: u8 = 0x02;
 const DICT_STRING: u8 = 0x01;
@@ -133,7 +137,7 @@ pub struct EncodedComponent {
 
 /// A fact yielded from an index scan.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FactScanEntry {
+pub struct FactCursorRecord {
     /// Decoded logical fact.
     pub fact: Fact,
     /// Encoded components in index-key order.
@@ -158,7 +162,7 @@ pub enum DeleteOutcome {
     Absent,
 }
 
-impl FactScanEntry {
+impl FactCursorRecord {
     /// Returns an encoded component by field name.
     pub fn encoded_component(&self, field: &str) -> Option<&[u8]> {
         self.encoded_components
@@ -182,7 +186,7 @@ impl EncodedAccessItem {
     }
 
     /// Returns an encoded component by ordinal.
-    pub fn component(&self, components: &[IndexComponent], index: usize) -> Option<&[u8]> {
+    pub fn component(&self, components: &[AccessComponent], index: usize) -> Option<&[u8]> {
         let mut offset = self.prefix_len;
         for component in components.get(..index)? {
             offset += component.encoded_width;
@@ -193,20 +197,20 @@ impl EncodedAccessItem {
 }
 
 /// Transaction-scoped scan over one current access path.
-pub struct FactScan<'borrow, 'env, 'schema> {
+pub struct FactCursor<'borrow, 'env, 'schema> {
     iter: heed::RoPrefix<'borrow, heed::types::Bytes, heed::types::Bytes>,
     txn: &'borrow heed::RoTxn<'env, heed::WithoutTls>,
     index_db: crate::RawDatabase,
     dict: crate::RawDatabase,
     relation: &'schema RelationDescriptor,
-    layout: &'schema CurrentIndexLayout,
+    layout: &'schema AccessLayout,
     range: Option<EncodedRange>,
 }
 
 /// Transaction-scoped encoded scan over one current access path.
-pub(crate) struct EncodedFactScan<'borrow, 'env, 'schema> {
+pub(crate) struct EncodedFactCursor<'borrow, 'env, 'schema> {
     iter: heed::RoPrefix<'borrow, heed::types::Bytes, heed::types::Bytes>,
-    layout: &'schema CurrentIndexLayout,
+    layout: &'schema AccessLayout,
     index_prefix: Vec<u8>,
     _env: std::marker::PhantomData<&'env ()>,
 }
@@ -219,8 +223,8 @@ struct EncodedRange {
     end: Option<Vec<u8>>,
 }
 
-impl Iterator for FactScan<'_, '_, '_> {
-    type Item = Result<FactScanEntry>;
+impl Iterator for FactCursor<'_, '_, '_> {
+    type Item = Result<FactCursorRecord>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -233,7 +237,7 @@ impl Iterator for FactScan<'_, '_, '_> {
                 continue;
             }
 
-            return Some(decode_index_scan_item(
+            return Some(decode_access_scan_entry(
                 self.dict,
                 self.index_db,
                 self.txn,
@@ -245,7 +249,7 @@ impl Iterator for FactScan<'_, '_, '_> {
     }
 }
 
-impl Iterator for EncodedFactScan<'_, '_, '_> {
+impl Iterator for EncodedFactCursor<'_, '_, '_> {
     type Item = Result<EncodedAccessItem>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -253,11 +257,11 @@ impl Iterator for EncodedFactScan<'_, '_, '_> {
             Ok(item) => item,
             Err(error) => return Some(Err(error.into())),
         };
-        Some(encoded_index_item(self.layout, &self.index_prefix, key))
+        Some(encoded_access_item(self.layout, &self.index_prefix, key))
     }
 }
 
-impl FactScan<'_, '_, '_> {
+impl FactCursor<'_, '_, '_> {
     fn range_matches(&self, key: &[u8]) -> bool {
         let Some(range) = &self.range else {
             return true;
@@ -351,8 +355,8 @@ impl WriteTxn<'_> {
     #[tracing::instrument(name = "bumbledb.insert", skip_all, fields(relation = fact.relation()))]
     pub fn insert(&mut self, schema: &StorageSchema, fact: Fact) -> Result<InsertOutcome> {
         let (relation_id, relation) = schema.relation(&fact.relation)?;
-        validate_row_values(schema.descriptor(), relation, &fact)?;
-        let encoded = self.encode_row(relation_id, relation, &fact, InternMode::Create)?;
+        validate_fact_values(schema.descriptor(), relation, &fact)?;
+        let encoded = self.encode_fact(relation_id, relation, &fact, InternMode::Create)?;
 
         if self.exact_current_fact_exists(relation_id, &encoded)? {
             return Ok(InsertOutcome::AlreadyPresent);
@@ -361,8 +365,10 @@ impl WriteTxn<'_> {
         self.check_foreign_keys(schema, relation, &encoded)?;
         self.check_unique_constraints(schema, relation, &encoded)?;
 
-        self.insert_current_indexes(schema, relation_id, relation, &encoded)?;
         self.insert_canonical_fact(relation_id, &encoded)?;
+        self.insert_unique_entries(schema, relation_id, relation, &encoded)?;
+        self.insert_reverse_fk_entries(schema, relation_id, relation, &encoded)?;
+        self.insert_access_entries(schema, relation_id, relation, &encoded)?;
         adjust_relation_fact_count(self, relation_id, 1)?;
         self.ensure_tx_id()?;
         Ok(InsertOutcome::Inserted)
@@ -372,8 +378,8 @@ impl WriteTxn<'_> {
     #[tracing::instrument(name = "bumbledb.delete", skip_all)]
     pub fn delete(&mut self, schema: &StorageSchema, fact: Fact) -> Result<DeleteOutcome> {
         let (relation_id, relation) = schema.relation(&fact.relation)?;
-        validate_row_values(schema.descriptor(), relation, &fact)?;
-        let old_encoded = match self.encode_row(relation_id, relation, &fact, InternMode::Existing)
+        validate_fact_values(schema.descriptor(), relation, &fact)?;
+        let old_encoded = match self.encode_fact(relation_id, relation, &fact, InternMode::Existing)
         {
             Ok(encoded) => encoded,
             Err(Error::Storage(crate::StorageError::DictionaryValueNotFound { .. })) => {
@@ -386,7 +392,9 @@ impl WriteTxn<'_> {
         };
 
         self.check_delete_restrictions(schema, relation, &old_encoded)?;
-        self.delete_current_indexes(schema, relation_id, relation, &old_encoded)?;
+        self.delete_access_entries(schema, relation_id, relation, &old_encoded)?;
+        self.delete_reverse_fk_entries(schema, relation_id, relation, &old_encoded)?;
+        self.delete_unique_entries(schema, relation_id, relation, &old_encoded)?;
         self.delete_canonical_fact(relation_id, &old_encoded)?;
         adjust_relation_fact_count(self, relation_id, -1)?;
         self.ensure_tx_id()?;
@@ -401,6 +409,15 @@ impl WriteTxn<'_> {
     fn insert_canonical_fact(&mut self, relation_id: u16, fact: &EncodedFact) -> Result<()> {
         let key = canonical_fact_key(relation_id, fact);
         self.dbs.index.put(&mut self.txn, key.as_slice(), &[])?;
+        let id_key = fact_id_key(relation_id, fact);
+        if let Some(existing) = self.dbs.index.get(&self.txn, id_key.as_slice())?
+            && existing != fact.bytes()
+        {
+            return Err(Error::hash_collision("fact id"));
+        }
+        self.dbs
+            .index
+            .put(&mut self.txn, id_key.as_slice(), fact.bytes())?;
         crate::failpoints::check(crate::failpoints::Failpoint::AfterCanonicalFactPut)?;
         Ok(())
     }
@@ -408,10 +425,13 @@ impl WriteTxn<'_> {
     fn delete_canonical_fact(&mut self, relation_id: u16, fact: &EncodedFact) -> Result<()> {
         let key = canonical_fact_key(relation_id, fact);
         self.dbs.index.delete(&mut self.txn, key.as_slice())?;
+        self.dbs
+            .index
+            .delete(&mut self.txn, fact_id_key(relation_id, fact).as_slice())?;
         Ok(())
     }
 
-    fn encode_row(
+    fn encode_fact(
         &mut self,
         relation_id: u16,
         relation: &RelationDescriptor,
@@ -475,16 +495,15 @@ impl WriteTxn<'_> {
             else {
                 continue;
             };
-            let (_, target) = schema.relation(target_relation)?;
-            let target_layout = unique_constraint_layout(schema, target, target_constraint)?;
-            let prefix = access_path_prefix_from_fields(
-                target_layout,
+            let (target_relation_id, target) = schema.relation(target_relation)?;
+            let key = unique_entry_key_from_source(
+                target_relation_id,
+                target_constraint,
                 relation,
                 fact,
-                fields.iter().map(String::as_str),
+                fields,
             )?;
-            let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
-            if iter.next().transpose()?.is_none() {
+            if self.dbs.index.get(&self.txn, key.as_slice())?.is_none() {
                 return Err(Error::foreign_key_violation(
                     &relation.name,
                     name,
@@ -497,24 +516,20 @@ impl WriteTxn<'_> {
 
     fn check_unique_constraints(
         &self,
-        schema: &StorageSchema,
+        _schema: &StorageSchema,
         relation: &RelationDescriptor,
         fact: &EncodedFact,
     ) -> Result<()> {
         for constraint in &relation.constraints {
-            let ConstraintDescriptor::Unique { name, .. } = constraint else {
+            let ConstraintDescriptor::Unique { name, fields } = constraint else {
                 continue;
             };
-            let layout = unique_constraint_layout(schema, relation, name)?;
-            let prefix = access_path_prefix_from_fields(
-                layout,
-                relation,
-                fact,
-                layout.leading_fields.iter().map(String::as_str),
-            )?;
-            let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
-            if iter.next().transpose()?.is_some() {
-                return Err(Error::unique_violation(&relation.name, name));
+            let key = unique_entry_key_from_fact(fact.relation.0, name, relation, fact, fields)?;
+            if let Some(existing) = self.dbs.index.get(&self.txn, key.as_slice())? {
+                let id = fact_id(fact);
+                if existing != id.as_slice() {
+                    return Err(Error::unique_violation(&relation.name, name));
+                }
             }
         }
         Ok(())
@@ -526,13 +541,8 @@ impl WriteTxn<'_> {
         relation: &RelationDescriptor,
         fact: &EncodedFact,
     ) -> Result<()> {
-        for (source_relation_id, source_relation) in schema
-            .descriptor
-            .relations
-            .iter()
-            .enumerate()
-            .map(|(id, relation)| (id as u16, relation))
-        {
+        let target_relation_id = fact.relation.0;
+        for source_relation in schema.descriptor.relations.iter() {
             for constraint in &source_relation.constraints {
                 let ConstraintDescriptor::ForeignKey {
                     name,
@@ -550,19 +560,12 @@ impl WriteTxn<'_> {
                 else {
                     continue;
                 };
-                let target_primary = target_fields
+                let target_key = target_fields
                     .iter()
                     .map(|field| fact.field(relation, field))
                     .collect::<Result<Vec<_>>>()?
                     .concat();
-
-                let layout = schema
-                    .layout(&source_relation.name, &format!("by_fk_{name}"))
-                    .ok_or_else(|| {
-                        Error::unknown_index(&source_relation.name, format!("by_fk_{name}"))
-                    })?;
-                let mut prefix = current_index_prefix(source_relation_id, layout.index_id);
-                prefix.extend_from_slice(&target_primary);
+                let prefix = reverse_fk_prefix(target_relation_id, target_constraint, &target_key);
                 let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
                 if iter.next().transpose()?.is_some() {
                     return Err(Error::restrict_violation(
@@ -576,7 +579,112 @@ impl WriteTxn<'_> {
         Ok(())
     }
 
-    fn insert_current_indexes(
+    fn insert_unique_entries(
+        &mut self,
+        _schema: &StorageSchema,
+        relation_id: u16,
+        relation: &RelationDescriptor,
+        fact: &EncodedFact,
+    ) -> Result<()> {
+        let id = fact_id(fact);
+        for constraint in &relation.constraints {
+            let ConstraintDescriptor::Unique { name, fields } = constraint else {
+                continue;
+            };
+            let key = unique_entry_key_from_fact(relation_id, name, relation, fact, fields)?;
+            self.dbs.index.put(&mut self.txn, key.as_slice(), &id)?;
+        }
+        Ok(())
+    }
+
+    fn delete_unique_entries(
+        &mut self,
+        _schema: &StorageSchema,
+        relation_id: u16,
+        relation: &RelationDescriptor,
+        fact: &EncodedFact,
+    ) -> Result<()> {
+        for constraint in &relation.constraints {
+            let ConstraintDescriptor::Unique { name, fields } = constraint else {
+                continue;
+            };
+            let key = unique_entry_key_from_fact(relation_id, name, relation, fact, fields)?;
+            self.dbs.index.delete(&mut self.txn, key.as_slice())?;
+        }
+        Ok(())
+    }
+
+    fn insert_reverse_fk_entries(
+        &mut self,
+        schema: &StorageSchema,
+        source_relation_id: u16,
+        relation: &RelationDescriptor,
+        fact: &EncodedFact,
+    ) -> Result<()> {
+        let source_id = fact_id(fact);
+        for constraint in &relation.constraints {
+            let ConstraintDescriptor::ForeignKey {
+                name,
+                fields,
+                target_relation,
+                target_constraint,
+                ..
+            } = constraint
+            else {
+                continue;
+            };
+            let (target_relation_id, _) = schema.relation(target_relation)?;
+            let target_key =
+                encoded_key_from_fields(relation, fact, fields.iter().map(String::as_str))?;
+            let key = reverse_fk_entry_key(
+                target_relation_id,
+                target_constraint,
+                &target_key,
+                source_relation_id,
+                name,
+                &source_id,
+            );
+            self.dbs.index.put(&mut self.txn, key.as_slice(), &[])?;
+        }
+        Ok(())
+    }
+
+    fn delete_reverse_fk_entries(
+        &mut self,
+        schema: &StorageSchema,
+        source_relation_id: u16,
+        relation: &RelationDescriptor,
+        fact: &EncodedFact,
+    ) -> Result<()> {
+        let source_id = fact_id(fact);
+        for constraint in &relation.constraints {
+            let ConstraintDescriptor::ForeignKey {
+                name,
+                fields,
+                target_relation,
+                target_constraint,
+                ..
+            } = constraint
+            else {
+                continue;
+            };
+            let (target_relation_id, _) = schema.relation(target_relation)?;
+            let target_key =
+                encoded_key_from_fields(relation, fact, fields.iter().map(String::as_str))?;
+            let key = reverse_fk_entry_key(
+                target_relation_id,
+                target_constraint,
+                &target_key,
+                source_relation_id,
+                name,
+                &source_id,
+            );
+            self.dbs.index.delete(&mut self.txn, key.as_slice())?;
+        }
+        Ok(())
+    }
+
+    fn insert_access_entries(
         &mut self,
         schema: &StorageSchema,
         relation_id: u16,
@@ -585,15 +693,15 @@ impl WriteTxn<'_> {
     ) -> Result<()> {
         for layout in schema.layouts_for_relation(relation_id) {
             tracing::trace!(relation = %relation.name, index = %layout.index_name, "put current index entry");
-            let key = current_index_key(layout, relation, fact)?;
+            let key = access_key(layout, relation, fact)?;
             self.dbs.index.put(&mut self.txn, key.as_slice(), &[])?;
             crate::failpoints::check(crate::failpoints::Failpoint::AfterCurrentIndexPut)?;
-            adjust_index_entry_count(self, relation_id, layout.index_id, 1)?;
+            adjust_access_entry_count(self, relation_id, layout.index_id, 1)?;
         }
         Ok(())
     }
 
-    fn delete_current_indexes(
+    fn delete_access_entries(
         &mut self,
         schema: &StorageSchema,
         relation_id: u16,
@@ -602,9 +710,9 @@ impl WriteTxn<'_> {
     ) -> Result<()> {
         for layout in schema.layouts_for_relation(relation_id) {
             tracing::trace!(relation = %relation.name, index = %layout.index_name, "delete current index entry");
-            let key = current_index_key(layout, relation, fact)?;
+            let key = access_key(layout, relation, fact)?;
             self.dbs.index.delete(&mut self.txn, key.as_slice())?;
-            adjust_index_entry_count(self, relation_id, layout.index_id, -1)?;
+            adjust_access_entry_count(self, relation_id, layout.index_id, -1)?;
         }
         Ok(())
     }
@@ -673,11 +781,11 @@ impl<'env> ReadTxn<'env> {
         &'borrow self,
         schema: &'schema StorageSchema,
         relation_name: &str,
-    ) -> Result<FactScan<'borrow, 'env, 'schema>> {
+    ) -> Result<FactCursor<'borrow, 'env, 'schema>> {
         let covering = schema
             .fact_set_index_name(relation_name)
             .ok_or_else(|| Error::unknown_index(relation_name, FACT_SET_ACCESS_NAME))?;
-        self.scan_index_with_prefix(schema, relation_name, covering, &[], None)
+        self.scan_access_with_prefix(schema, relation_name, covering, &[], None)
     }
 
     /// Scans an access path by a leading-field prefix.
@@ -687,7 +795,7 @@ impl<'env> ReadTxn<'env> {
         relation_name: &str,
         index_name: &str,
         prefix: &FieldValues,
-    ) -> Result<FactScan<'borrow, 'env, 'schema>> {
+    ) -> Result<FactCursor<'borrow, 'env, 'schema>> {
         if prefix.relation != relation_name {
             return Err(Error::internal(format!(
                 "prefix relation {} does not match scan relation {relation_name}",
@@ -700,7 +808,7 @@ impl<'env> ReadTxn<'env> {
             .ok_or_else(|| Error::unknown_index(relation_name, index_name))?;
 
         let encoded_prefix = self.encode_index_prefix(relation, layout, &prefix.values)?;
-        self.scan_index_with_prefix(schema, relation_name, index_name, &encoded_prefix, None)
+        self.scan_access_with_prefix(schema, relation_name, index_name, &encoded_prefix, None)
     }
 
     /// Scans a range index. Bounds are inclusive start and exclusive end.
@@ -711,7 +819,7 @@ impl<'env> ReadTxn<'env> {
         index_name: &str,
         start: Option<Value>,
         end: Option<Value>,
-    ) -> Result<FactScan<'borrow, 'env, 'schema>> {
+    ) -> Result<FactCursor<'borrow, 'env, 'schema>> {
         let (_, relation) = schema.relation(relation_name)?;
         let layout = schema
             .layout(relation_name, index_name)
@@ -734,35 +842,35 @@ impl<'env> ReadTxn<'env> {
             .map(|value| self.encode_read_value(relation, field, value))
             .transpose()?;
         let range = EncodedRange {
-            offset: current_index_prefix(layout.relation_id, layout.index_id).len(),
+            offset: access_prefix(layout.relation_id, layout.index_id).len(),
             width: field.value_type.encoded_width(),
             start,
             end,
         };
 
-        self.scan_index_with_prefix(schema, relation_name, index_name, &[], Some(range))
+        self.scan_access_with_prefix(schema, relation_name, index_name, &[], Some(range))
     }
 
     /// Scans an access path by encoded key prefix without decoding logical facts.
-    pub(crate) fn scan_encoded_index_prefix<'borrow, 'schema>(
+    pub(crate) fn scan_encoded_access_prefix<'borrow, 'schema>(
         &'borrow self,
         schema: &'schema StorageSchema,
         relation_name: &str,
         index_name: &str,
         encoded_prefix: &[u8],
-    ) -> Result<EncodedFactScan<'borrow, 'env, 'schema>> {
+    ) -> Result<EncodedFactCursor<'borrow, 'env, 'schema>> {
         let (relation_id, _) = schema.relation(relation_name)?;
         let layout = schema
             .layout(relation_name, index_name)
             .ok_or_else(|| Error::unknown_index(relation_name, index_name))?;
-        let index_prefix = current_index_prefix(relation_id, layout.index_id);
+        let index_prefix = access_prefix(relation_id, layout.index_id);
         let mut scan_prefix = index_prefix.clone();
         scan_prefix.extend_from_slice(encoded_prefix);
         let iter = self
             .dbs
             .index
             .prefix_iter(&self.txn, scan_prefix.as_slice())?;
-        Ok(EncodedFactScan {
+        Ok(EncodedFactCursor {
             iter,
             layout,
             index_prefix,
@@ -804,7 +912,7 @@ impl<'env> ReadTxn<'env> {
     }
 
     /// Returns the stored index-entry count for a current index.
-    pub fn index_entry_count(
+    pub fn access_entry_count(
         &self,
         schema: &StorageSchema,
         relation_name: &str,
@@ -816,7 +924,7 @@ impl<'env> ReadTxn<'env> {
         Ok(read_u64(
             &self.dbs.meta,
             &self.txn,
-            &index_entry_count_key(layout.relation_id, layout.index_id),
+            &access_entry_count_key(layout.relation_id, layout.index_id),
         )?
         .unwrap_or(0))
     }
@@ -838,7 +946,7 @@ impl<'env> ReadTxn<'env> {
     }
 
     /// Checks whether a current access entry exists for a full fact.
-    pub fn current_index_entry_exists(
+    pub fn access_entry_exists(
         &self,
         schema: &StorageSchema,
         fact: &Fact,
@@ -848,15 +956,15 @@ impl<'env> ReadTxn<'env> {
         let layout = schema.layout(&fact.relation, index_name).ok_or_else(|| {
             Error::internal(format!("missing index {}.{index_name}", fact.relation))
         })?;
-        let encoded = self.encode_row_existing(relation_id, relation, fact)?;
-        let key = current_index_key(layout, relation, &encoded)?;
+        let encoded = self.encode_fact_existing(relation_id, relation, fact)?;
+        let key = access_key(layout, relation, &encoded)?;
         Ok(self.dbs.index.get(&self.txn, key.as_slice())?.is_some())
     }
 
     /// Checks whether the exact fact exists in the canonical fact set.
-    pub fn exact_row_exists(&self, schema: &StorageSchema, fact: &Fact) -> Result<bool> {
+    pub fn exact_fact_exists(&self, schema: &StorageSchema, fact: &Fact) -> Result<bool> {
         let (relation_id, relation) = schema.relation(&fact.relation)?;
-        let encoded = self.encode_row_existing(relation_id, relation, fact)?;
+        let encoded = self.encode_fact_existing(relation_id, relation, fact)?;
         let key = canonical_fact_key(relation_id, &encoded);
         Ok(self.dbs.index.get(&self.txn, key.as_slice())?.is_some())
     }
@@ -877,14 +985,29 @@ impl<'env> ReadTxn<'env> {
         Ok(count)
     }
 
-    fn scan_index_with_prefix<'borrow, 'schema>(
+    #[cfg(test)]
+    fn raw_index_value(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        Ok(self.dbs.index.get(&self.txn, key)?.map(ToOwned::to_owned))
+    }
+
+    #[cfg(test)]
+    fn raw_index_keys_with_prefix(&self, prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
+        let mut iter = self.dbs.index.prefix_iter(&self.txn, prefix)?;
+        let mut keys = Vec::new();
+        while let Some((key, _)) = iter.next().transpose()? {
+            keys.push(key.to_vec());
+        }
+        Ok(keys)
+    }
+
+    fn scan_access_with_prefix<'borrow, 'schema>(
         &'borrow self,
         schema: &'schema StorageSchema,
         relation_name: &str,
         index_name: &str,
         encoded_prefix: &[u8],
         range: Option<EncodedRange>,
-    ) -> Result<FactScan<'borrow, 'env, 'schema>> {
+    ) -> Result<FactCursor<'borrow, 'env, 'schema>> {
         let _span = tracing::trace_span!(
             "bumbledb.query.scan",
             relation = relation_name,
@@ -897,10 +1020,10 @@ impl<'env> ReadTxn<'env> {
         let layout = schema
             .layout(relation_name, index_name)
             .ok_or_else(|| Error::unknown_index(relation_name, index_name))?;
-        let mut prefix = current_index_prefix(relation_id, layout.index_id);
+        let mut prefix = access_prefix(relation_id, layout.index_id);
         prefix.extend_from_slice(encoded_prefix);
         let iter = self.dbs.index.prefix_iter(&self.txn, prefix.as_slice())?;
-        Ok(FactScan {
+        Ok(FactCursor {
             iter,
             txn: &self.txn,
             index_db: self.dbs.index,
@@ -914,7 +1037,7 @@ impl<'env> ReadTxn<'env> {
     fn encode_index_prefix(
         &self,
         relation: &RelationDescriptor,
-        layout: &CurrentIndexLayout,
+        layout: &AccessLayout,
         values: &BTreeMap<String, Value>,
     ) -> Result<Vec<u8>> {
         let mut out = Vec::new();
@@ -963,7 +1086,7 @@ impl<'env> ReadTxn<'env> {
         })
     }
 
-    fn encode_row_existing(
+    fn encode_fact_existing(
         &self,
         relation_id: u16,
         relation: &RelationDescriptor,
@@ -1035,7 +1158,7 @@ fn encode_value_for_type(
     Ok(bytes)
 }
 
-fn validate_row_values(
+fn validate_fact_values(
     schema: &SchemaDescriptor,
     relation: &RelationDescriptor,
     fact: &Fact,
@@ -1085,39 +1208,38 @@ fn storage_value_matches_type(value: &Value, value_type: &ValueType) -> bool {
     )
 }
 
-fn decode_index_scan_item(
+fn decode_access_scan_entry(
     dict: crate::RawDatabase,
-    _index_db: crate::RawDatabase,
+    index_db: crate::RawDatabase,
     txn: &heed::RoTxn,
     relation: &RelationDescriptor,
-    layout: &CurrentIndexLayout,
+    layout: &AccessLayout,
     key: &[u8],
-) -> Result<FactScanEntry> {
-    let (encoded, encoded_components) = decode_index_key(relation, layout, key)?;
-    let fact = decode_encoded_row(dict, txn, relation, &encoded)?;
-    Ok(FactScanEntry {
+) -> Result<FactCursorRecord> {
+    let (encoded, encoded_components) = decode_access_key(index_db, txn, relation, layout, key)?;
+    let fact = decode_encoded_fact(dict, txn, relation, &encoded)?;
+    Ok(FactCursorRecord {
         fact,
         encoded_components,
     })
 }
 
-fn decode_index_key(
+fn decode_access_key(
+    index_db: crate::RawDatabase,
+    txn: &heed::RoTxn,
     relation: &RelationDescriptor,
-    layout: &CurrentIndexLayout,
+    layout: &AccessLayout,
     key: &[u8],
 ) -> Result<(EncodedFact, Vec<EncodedComponent>)> {
-    let prefix_len = current_index_prefix(layout.relation_id, layout.index_id).len();
+    let prefix_len = access_prefix(layout.relation_id, layout.index_id).len();
     if key.len() != layout.encoded_len {
         return Err(Error::corrupt("index key width does not match layout"));
     }
-    if key.get(0..prefix_len)
-        != Some(current_index_prefix(layout.relation_id, layout.index_id).as_slice())
+    if key.get(0..prefix_len) != Some(access_prefix(layout.relation_id, layout.index_id).as_slice())
     {
         return Err(Error::corrupt("index key prefix does not match layout"));
     }
 
-    let mut fact = vec![0; fact_width(relation)];
-    let mut seen = vec![false; relation.fields.len()];
     let mut components = Vec::with_capacity(layout.components.len());
     let mut offset = prefix_len;
 
@@ -1127,15 +1249,12 @@ fn decode_index_key(
             .get(offset..end)
             .ok_or_else(|| Error::corrupt("index key component is truncated"))?
             .to_vec();
-        let (field_id, field_offset, width) =
-            field_layout_with_id(relation, &component.field_name)?;
+        let (_, _, width) = field_layout_with_id(relation, &component.field_name)?;
         if width != component.encoded_width {
             return Err(Error::corrupt(
                 "index key component width does not match field",
             ));
         }
-        fact[field_offset..field_offset + width].copy_from_slice(&bytes);
-        seen[field_id] = true;
         components.push(EncodedComponent {
             field_name: component.field_name.clone(),
             bytes,
@@ -1143,21 +1262,20 @@ fn decode_index_key(
         offset = end;
     }
 
-    if seen.iter().any(|seen| !seen) {
-        return Err(Error::corrupt("index key does not cover full fact"));
+    let id = key
+        .get(offset..offset + FACT_ID_BYTES)
+        .ok_or_else(|| Error::corrupt("access key fact id truncated"))?;
+    offset += FACT_ID_BYTES;
+    if offset != key.len() {
+        return Err(Error::corrupt("access key has trailing bytes"));
     }
+    let fact = lookup_fact_by_id(index_db, txn, layout.relation_id, id)?;
 
-    Ok((
-        EncodedFact {
-            relation: RelationId(layout.relation_id),
-            bytes: fact,
-        },
-        components,
-    ))
+    Ok((fact, components))
 }
 
-fn encoded_index_item(
-    layout: &CurrentIndexLayout,
+fn encoded_access_item(
+    layout: &AccessLayout,
     index_prefix: &[u8],
     key: &[u8],
 ) -> Result<EncodedAccessItem> {
@@ -1174,7 +1292,7 @@ fn encoded_index_item(
     })
 }
 
-fn decode_encoded_row(
+fn decode_encoded_fact(
     dict: crate::RawDatabase,
     txn: &heed::RoTxn,
     relation: &RelationDescriptor,
@@ -1308,47 +1426,72 @@ fn target_unique_constraint<'a>(
         })
 }
 
-fn unique_constraint_layout<'a>(
-    schema: &'a StorageSchema,
-    relation: &RelationDescriptor,
-    name: &str,
-) -> Result<&'a CurrentIndexLayout> {
-    let index_name = relation
-        .constraints
-        .iter()
-        .find_map(|constraint| match constraint {
-            ConstraintDescriptor::Unique {
-                name: constraint_name,
-                ..
-            } if constraint_name == name => Some(format!("unique_{name}")),
-            ConstraintDescriptor::Unique { .. } | ConstraintDescriptor::ForeignKey { .. } => None,
-        })
-        .ok_or_else(|| {
-            Error::internal(format!(
-                "relation {} has no unique constraint {name}",
-                relation.name
-            ))
-        })?;
-
-    schema
-        .layout(&relation.name, &index_name)
-        .ok_or_else(|| Error::unknown_index(&relation.name, index_name))
-}
-
-fn access_path_prefix_from_fields<'a>(
-    layout: &CurrentIndexLayout,
+fn encoded_key_from_fields<'a>(
     relation: &RelationDescriptor,
     fact: &EncodedFact,
     fields: impl IntoIterator<Item = &'a str>,
 ) -> Result<Vec<u8>> {
-    let mut prefix = current_index_prefix(layout.relation_id, layout.index_id);
+    let mut prefix = Vec::new();
     for field in fields {
         prefix.extend_from_slice(fact.field(relation, field)?);
     }
     Ok(prefix)
 }
 
-fn current_index_prefix(relation_id: u16, index_id: u16) -> Vec<u8> {
+fn unique_entry_key_from_fact(
+    relation_id: u16,
+    constraint: &str,
+    relation: &RelationDescriptor,
+    fact: &EncodedFact,
+    fields: &[String],
+) -> Result<Vec<u8>> {
+    let encoded_key = encoded_key_from_fields(relation, fact, fields.iter().map(String::as_str))?;
+    Ok(unique_entry_key(relation_id, constraint, &encoded_key))
+}
+
+fn unique_entry_key_from_source(
+    relation_id: u16,
+    constraint: &str,
+    relation: &RelationDescriptor,
+    fact: &EncodedFact,
+    fields: &[String],
+) -> Result<Vec<u8>> {
+    let encoded_key = encoded_key_from_fields(relation, fact, fields.iter().map(String::as_str))?;
+    Ok(unique_entry_key(relation_id, constraint, &encoded_key))
+}
+
+fn unique_entry_key(relation_id: u16, constraint: &str, encoded_key: &[u8]) -> Vec<u8> {
+    let mut key = vec![NS_UNIQUE_ENTRY];
+    push_u16(&mut key, relation_id);
+    push_name(&mut key, constraint);
+    key.extend_from_slice(encoded_key);
+    key
+}
+
+fn reverse_fk_prefix(relation_id: u16, constraint: &str, encoded_key: &[u8]) -> Vec<u8> {
+    let mut key = vec![NS_REVERSE_FK_ENTRY];
+    push_u16(&mut key, relation_id);
+    push_name(&mut key, constraint);
+    key.extend_from_slice(encoded_key);
+    key
+}
+
+fn reverse_fk_entry_key(
+    relation_id: u16,
+    constraint: &str,
+    encoded_key: &[u8],
+    source_relation_id: u16,
+    source_constraint: &str,
+    source_fact_id: &[u8; FACT_ID_BYTES],
+) -> Vec<u8> {
+    let mut key = reverse_fk_prefix(relation_id, constraint, encoded_key);
+    push_u16(&mut key, source_relation_id);
+    push_name(&mut key, source_constraint);
+    key.extend_from_slice(source_fact_id);
+    key
+}
+
+fn access_prefix(relation_id: u16, index_id: u16) -> Vec<u8> {
     let mut key = vec![NS_ACCESS_ENTRY];
     push_u16(&mut key, relation_id);
     push_u16(&mut key, index_id);
@@ -1367,8 +1510,51 @@ fn canonical_fact_prefix(relation_id: u16) -> Vec<u8> {
     key
 }
 
-fn current_index_key(
-    layout: &CurrentIndexLayout,
+fn fact_id(fact: &EncodedFact) -> [u8; FACT_ID_BYTES] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&fact.relation.0.to_be_bytes());
+    hasher.update(fact.bytes());
+    let hash = hasher.finalize();
+    let mut out = [0; FACT_ID_BYTES];
+    out.copy_from_slice(&hash.as_bytes()[..FACT_ID_BYTES]);
+    out
+}
+
+fn fact_id_prefix(relation_id: u16) -> Vec<u8> {
+    let mut key = vec![NS_FACT_ID];
+    push_u16(&mut key, relation_id);
+    key
+}
+
+fn fact_id_key(relation_id: u16, fact: &EncodedFact) -> Vec<u8> {
+    let mut key = fact_id_prefix(relation_id);
+    key.extend_from_slice(&fact_id(fact));
+    key
+}
+
+fn lookup_fact_by_id(
+    db: crate::RawDatabase,
+    txn: &heed::RoTxn,
+    relation_id: u16,
+    id: &[u8],
+) -> Result<EncodedFact> {
+    if id.len() != FACT_ID_BYTES {
+        return Err(Error::corrupt("fact id width invalid"));
+    }
+    let mut key = fact_id_prefix(relation_id);
+    key.extend_from_slice(id);
+    let bytes = db
+        .get(txn, key.as_slice())?
+        .ok_or_else(|| Error::corrupt("fact id target missing"))?
+        .to_vec();
+    Ok(EncodedFact {
+        relation: RelationId(relation_id),
+        bytes,
+    })
+}
+
+fn access_key(
+    layout: &AccessLayout,
     relation: &RelationDescriptor,
     fact: &EncodedFact,
 ) -> Result<Vec<u8>> {
@@ -1377,10 +1563,11 @@ fn current_index_key(
             "encoded fact relation does not match index layout",
         ));
     }
-    let mut key = current_index_prefix(layout.relation_id, layout.index_id);
+    let mut key = access_prefix(layout.relation_id, layout.index_id);
     for component in &layout.components {
         key.extend_from_slice(fact.field(relation, &component.field_name)?);
     }
+    key.extend_from_slice(&fact_id(fact));
     Ok(key)
 }
 
@@ -1411,13 +1598,13 @@ fn adjust_relation_fact_count(txn: &mut WriteTxn<'_>, relation_id: u16, delta: i
     adjust_u64_meta(txn, &relation_fact_count_key(relation_id), delta)
 }
 
-fn adjust_index_entry_count(
+fn adjust_access_entry_count(
     txn: &mut WriteTxn<'_>,
     relation_id: u16,
     index_id: u16,
     delta: i64,
 ) -> Result<()> {
-    adjust_u64_meta(txn, &index_entry_count_key(relation_id, index_id), delta)
+    adjust_u64_meta(txn, &access_entry_count_key(relation_id, index_id), delta)
 }
 
 fn adjust_u64_meta(txn: &mut WriteTxn<'_>, key: &[u8], delta: i64) -> Result<()> {
@@ -1443,7 +1630,7 @@ fn relation_fact_count_key(relation_id: u16) -> Vec<u8> {
     key
 }
 
-fn index_entry_count_key(relation_id: u16, index_id: u16) -> Vec<u8> {
+fn access_entry_count_key(relation_id: u16, index_id: u16) -> Vec<u8> {
     let mut key = b"stats:index:".to_vec();
     push_u16(&mut key, relation_id);
     push_u16(&mut key, index_id);
@@ -1514,8 +1701,17 @@ fn push_u16(out: &mut Vec<u8>, value: u16) {
     out.extend_from_slice(&value.to_be_bytes());
 }
 
+fn push_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_be_bytes());
+}
+
 fn push_u64(out: &mut Vec<u8>, value: u64) {
     out.extend_from_slice(&value.to_be_bytes());
+}
+
+fn push_name(out: &mut Vec<u8>, value: &str) {
+    push_u32(out, value.len() as u32);
+    out.extend_from_slice(value.as_bytes());
 }
 
 #[cfg(test)]
@@ -1527,14 +1723,14 @@ mod tests {
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     #[test]
-    fn inserts_rows_indexes_stats_and_reopens() -> TestResult {
+    fn inserts_facts_accesses_stats_and_reopens() -> TestResult {
         let dir = tempfile::tempdir()?;
         let env = Environment::open(dir.path())?;
         let schema = storage_schema(&env)?;
 
         env.write(|txn| {
-            txn.insert(&schema, holder_row(1, "Alice"))?;
-            txn.insert(&schema, account_row(1, 1, 1))?;
+            txn.insert(&schema, holder_fact(1, "Alice"))?;
+            txn.insert(&schema, account_fact(1, 1, 1))?;
             Ok::<(), Error>(())
         })?;
 
@@ -1545,25 +1741,25 @@ mod tests {
             assert_eq!(txn.relation_fact_count(&schema, "Account")?, 1);
             assert_eq!(txn.canonical_fact_count(&schema, "Account")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "Holder", FACT_SET_ACCESS_NAME)?,
+                txn.access_entry_count(&schema, "Holder", FACT_SET_ACCESS_NAME)?,
                 1
             );
-            assert_eq!(txn.index_entry_count(&schema, "Holder", "unique_name")?, 1);
+            assert_eq!(txn.access_entry_count(&schema, "Holder", "unique_name")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "Account", FACT_SET_ACCESS_NAME)?,
+                txn.access_entry_count(&schema, "Account", FACT_SET_ACCESS_NAME)?,
                 1
             );
-            assert_eq!(txn.index_entry_count(&schema, "Account", "by_holder")?, 1);
+            assert_eq!(txn.access_entry_count(&schema, "Account", "by_holder")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "Account", "unique_holder_currency")?,
+                txn.access_entry_count(&schema, "Account", "unique_holder_currency")?,
                 1
             );
-            assert!(txn.current_index_entry_exists(
+            assert!(txn.access_entry_exists(
                 &schema,
-                &holder_row(1, "Alice"),
+                &holder_fact(1, "Alice"),
                 FACT_SET_ACCESS_NAME
             )?);
-            assert!(txn.current_index_entry_exists(&schema, &account_row(1, 1, 1), "by_holder")?);
+            assert!(txn.access_entry_exists(&schema, &account_fact(1, 1, 1), "by_holder")?);
             assert!(txn.dictionary_string_id("Alice")?.is_some());
             Ok::<(), Error>(())
         })?;
@@ -1575,7 +1771,7 @@ mod tests {
             assert_eq!(txn.last_committed_tx_id()?, 1);
             assert_eq!(txn.relation_fact_count(&schema, "Holder")?, 1);
             assert_eq!(txn.canonical_fact_count(&schema, "Holder")?, 1);
-            assert!(txn.exact_row_exists(&schema, &holder_row(1, "Alice"))?);
+            assert!(txn.exact_fact_exists(&schema, &holder_fact(1, "Alice"))?);
             assert!(txn.dictionary_string_id("Alice")?.is_some());
             Ok::<(), Error>(())
         })?;
@@ -1590,36 +1786,36 @@ mod tests {
         let schema = storage_schema(&env)?;
 
         env.write(|txn| {
-            txn.insert(&schema, holder_row(1, "Alice"))?;
+            txn.insert(&schema, holder_fact(1, "Alice"))?;
             Ok::<(), Error>(())
         })?;
 
-        let duplicate = env.write(|txn| txn.insert(&schema, holder_row(1, "Alice")));
+        let duplicate = env.write(|txn| txn.insert(&schema, holder_fact(1, "Alice")));
         assert_eq!(duplicate?, InsertOutcome::AlreadyPresent);
 
         env.read(|txn| {
             assert_eq!(txn.last_committed_tx_id()?, 1);
             assert_eq!(txn.relation_fact_count(&schema, "Holder")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "Holder", FACT_SET_ACCESS_NAME)?,
+                txn.access_entry_count(&schema, "Holder", FACT_SET_ACCESS_NAME)?,
                 1
             );
             Ok::<(), Error>(())
         })?;
 
-        let duplicate_unique = env.write(|txn| txn.insert(&schema, holder_row(1, "Bob")));
+        let duplicate_unique = env.write(|txn| txn.insert(&schema, holder_fact(1, "Bob")));
         assert!(matches!(
             duplicate_unique,
             Err(Error::Constraint(ConstraintError::UniqueViolation { .. }))
         ));
 
-        let unique = env.write(|txn| txn.insert(&schema, holder_row(2, "Alice")));
+        let unique = env.write(|txn| txn.insert(&schema, holder_fact(2, "Alice")));
         assert!(matches!(
             unique,
             Err(Error::Constraint(ConstraintError::UniqueViolation { .. }))
         ));
 
-        let fk = env.write(|txn| txn.insert(&schema, account_row(1, 999, 1)));
+        let fk = env.write(|txn| txn.insert(&schema, account_fact(1, 999, 1)));
         assert!(matches!(
             fk,
             Err(Error::Constraint(
@@ -1644,11 +1840,11 @@ mod tests {
         let schema = storage_schema(&env)?;
 
         env.write(|txn| {
-            txn.insert(&schema, holder_row(1, "Alice"))?;
+            txn.insert(&schema, holder_fact(1, "Alice"))?;
             Ok::<(), Error>(())
         })?;
 
-        let invalid = env.write(|txn| txn.insert(&schema, account_row(1, 1, 123)));
+        let invalid = env.write(|txn| txn.insert(&schema, account_fact(1, 1, 123)));
         assert!(matches!(
             invalid,
             Err(Error::Constraint(ConstraintError::TypeMismatch { .. }))
@@ -1792,7 +1988,7 @@ mod tests {
         ));
 
         env.read(|txn| {
-            let account = collect_rows(txn.scan_relation(&schema, "Account")?)?;
+            let account = collect_facts(txn.scan_relation(&schema, "Account")?)?;
             assert_eq!(
                 account,
                 [Fact::new(
@@ -1996,18 +2192,18 @@ mod tests {
         let schema = storage_schema(&env)?;
 
         env.write(|txn| {
-            txn.insert(&schema, holder_row(1, "Alice"))?;
-            txn.insert(&schema, account_row(1, 1, 1))?;
+            txn.insert(&schema, holder_fact(1, "Alice"))?;
+            txn.insert(&schema, account_fact(1, 1, 1))?;
             Ok::<(), Error>(())
         })?;
 
         env.write(|txn| {
             assert_eq!(
-                txn.delete(&schema, account_row(1, 1, 1))?,
+                txn.delete(&schema, account_fact(1, 1, 1))?,
                 DeleteOutcome::Deleted
             );
             assert_eq!(
-                txn.insert(&schema, account_row(1, 1, 2))?,
+                txn.insert(&schema, account_fact(1, 1, 2))?,
                 InsertOutcome::Inserted
             );
             Ok::<(), Error>(())
@@ -2017,50 +2213,50 @@ mod tests {
             assert_eq!(txn.last_committed_tx_id()?, 2);
             assert_eq!(txn.relation_fact_count(&schema, "Account")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "Account", FACT_SET_ACCESS_NAME)?,
+                txn.access_entry_count(&schema, "Account", FACT_SET_ACCESS_NAME)?,
                 1
             );
-            assert!(!txn.current_index_entry_exists(
+            assert!(!txn.access_entry_exists(
                 &schema,
-                &account_row(1, 1, 1),
+                &account_fact(1, 1, 1),
                 FACT_SET_ACCESS_NAME
             )?);
-            assert!(txn.current_index_entry_exists(
+            assert!(txn.access_entry_exists(
                 &schema,
-                &account_row(1, 1, 2),
+                &account_fact(1, 1, 2),
                 FACT_SET_ACCESS_NAME
             )?);
             Ok::<(), Error>(())
         })?;
 
         env.write(|txn| {
-            txn.insert(&schema, account_row(2, 1, 1))?;
+            txn.insert(&schema, account_fact(2, 1, 1))?;
             Ok::<(), Error>(())
         })?;
         Ok(())
     }
 
     #[test]
-    fn deletes_restrict_then_remove_indexes_and_rows() -> TestResult {
+    fn deletes_restrict_then_remove_accesses_and_facts() -> TestResult {
         let dir = tempfile::tempdir()?;
         let env = Environment::open(dir.path())?;
         let schema = storage_schema(&env)?;
 
         env.write(|txn| {
-            txn.insert(&schema, holder_row(1, "Alice"))?;
-            txn.insert(&schema, account_row(1, 1, 1))?;
+            txn.insert(&schema, holder_fact(1, "Alice"))?;
+            txn.insert(&schema, account_fact(1, 1, 1))?;
             Ok::<(), Error>(())
         })?;
 
-        let restricted = env.write(|txn| txn.delete(&schema, holder_row(1, "Alice")));
+        let restricted = env.write(|txn| txn.delete(&schema, holder_fact(1, "Alice")));
         assert!(matches!(
             restricted,
             Err(Error::Constraint(ConstraintError::RestrictViolation { .. }))
         ));
 
         env.write(|txn| {
-            txn.delete(&schema, account_row(1, 1, 1))?;
-            txn.delete(&schema, holder_row(1, "Alice"))?;
+            txn.delete(&schema, account_fact(1, 1, 1))?;
+            txn.delete(&schema, holder_fact(1, "Alice"))?;
             Ok::<(), Error>(())
         })?;
 
@@ -2068,8 +2264,8 @@ mod tests {
             assert_eq!(txn.last_committed_tx_id()?, 2);
             assert_eq!(txn.relation_fact_count(&schema, "Holder")?, 0);
             assert_eq!(txn.relation_fact_count(&schema, "Account")?, 0);
-            assert!(!txn.exact_row_exists(&schema, &holder_row(1, "Alice"))?);
-            assert_eq!(txn.index_entry_count(&schema, "Account", "by_holder")?, 0);
+            assert!(!txn.exact_fact_exists(&schema, &holder_fact(1, "Alice"))?);
+            assert_eq!(txn.access_entry_count(&schema, "Account", "by_holder")?, 0);
             Ok::<(), Error>(())
         })?;
         Ok(())
@@ -2082,42 +2278,42 @@ mod tests {
         let schema = storage_schema(&env)?;
 
         env.write(|txn| {
-            txn.insert(&schema, holder_row(1, "Alice"))?;
-            txn.insert(&schema, account_row(1, 1, 1))?;
-            txn.insert(&schema, tag_row(1, 7))?;
+            txn.insert(&schema, holder_fact(1, "Alice"))?;
+            txn.insert(&schema, account_fact(1, 1, 1))?;
+            txn.insert(&schema, tag_fact(1, 7))?;
             Ok::<(), Error>(())
         })?;
 
-        let duplicate = env.write(|txn| txn.insert(&schema, tag_row(1, 7)));
+        let duplicate = env.write(|txn| txn.insert(&schema, tag_fact(1, 7)));
         assert_eq!(duplicate?, InsertOutcome::AlreadyPresent);
 
         env.read(|txn| {
             assert_eq!(txn.relation_fact_count(&schema, "AccountTag")?, 1);
             assert_eq!(
-                txn.index_entry_count(&schema, "AccountTag", FACT_SET_ACCESS_NAME)?,
+                txn.access_entry_count(&schema, "AccountTag", FACT_SET_ACCESS_NAME)?,
                 1
             );
             assert_eq!(
-                txn.index_entry_count(&schema, "AccountTag", "by_account")?,
+                txn.access_entry_count(&schema, "AccountTag", "by_account")?,
                 1
             );
             Ok::<(), Error>(())
         })?;
 
         env.write(|txn| {
-            assert_eq!(txn.delete(&schema, tag_row(1, 7))?, DeleteOutcome::Deleted);
-            assert_eq!(txn.delete(&schema, tag_row(1, 7))?, DeleteOutcome::Absent);
+            assert_eq!(txn.delete(&schema, tag_fact(1, 7))?, DeleteOutcome::Deleted);
+            assert_eq!(txn.delete(&schema, tag_fact(1, 7))?, DeleteOutcome::Absent);
             Ok::<(), Error>(())
         })?;
 
         env.read(|txn| {
             assert_eq!(txn.relation_fact_count(&schema, "AccountTag")?, 0);
             assert_eq!(
-                txn.index_entry_count(&schema, "AccountTag", FACT_SET_ACCESS_NAME)?,
+                txn.access_entry_count(&schema, "AccountTag", FACT_SET_ACCESS_NAME)?,
                 0
             );
             assert_eq!(
-                txn.index_entry_count(&schema, "AccountTag", "by_account")?,
+                txn.access_entry_count(&schema, "AccountTag", "by_account")?,
                 0
             );
             Ok::<(), Error>(())
@@ -2126,22 +2322,22 @@ mod tests {
     }
 
     #[test]
-    fn read_access_paths_decode_rows_and_preserve_snapshots() -> TestResult {
+    fn read_access_paths_decode_facts_and_preserve_snapshots() -> TestResult {
         let dir = tempfile::tempdir()?;
         let env = Environment::open(dir.path())?;
         let schema = storage_schema(&env)?;
 
         env.write(|txn| {
-            txn.insert(&schema, holder_row(1, "Alice"))?;
-            txn.insert(&schema, holder_row(2, "Bob"))?;
-            txn.insert(&schema, account_row(1, 1, 1))?;
-            txn.insert(&schema, account_row(2, 1, 2))?;
+            txn.insert(&schema, holder_fact(1, "Alice"))?;
+            txn.insert(&schema, holder_fact(2, "Bob"))?;
+            txn.insert(&schema, account_fact(1, 1, 1))?;
+            txn.insert(&schema, account_fact(2, 1, 2))?;
             Ok::<(), Error>(())
         })?;
 
         env.read(|txn| {
-            assert!(txn.exact_row_exists(&schema, &holder_row(1, "Alice"))?);
-            assert!(txn.exact_row_exists(&schema, &account_row(1, 1, 1))?);
+            assert!(txn.exact_fact_exists(&schema, &holder_fact(1, "Alice"))?);
+            assert!(txn.exact_fact_exists(&schema, &account_fact(1, 1, 1))?);
 
             let access_paths = schema.access_paths("Account")?;
             assert!(
@@ -2165,8 +2361,8 @@ mod tests {
                     .any(|path| path.index_name == "unique_holder_currency")
             );
 
-            let full = collect_rows(txn.scan_relation(&schema, "Account")?)?;
-            assert_same_facts(&full, &[account_row(1, 1, 1), account_row(2, 1, 2)])?;
+            let full = collect_facts(txn.scan_relation(&schema, "Account")?)?;
+            assert_same_facts(&full, &[account_fact(1, 1, 1), account_fact(2, 1, 2)])?;
 
             let by_holder_items = collect_items(txn.scan_prefix(
                 &schema,
@@ -2179,7 +2375,7 @@ mod tests {
                     .iter()
                     .map(|item| item.fact.clone())
                     .collect::<Vec<_>>(),
-                &[account_row(1, 1, 1), account_row(2, 1, 2)],
+                &[account_fact(1, 1, 1), account_fact(2, 1, 2)],
             )?;
             assert!(
                 by_holder_items
@@ -2187,55 +2383,194 @@ mod tests {
                     .all(|item| item.encoded_component("holder").is_some())
             );
 
-            let unique_holder = collect_rows(txn.scan_prefix(
+            let unique_holder = collect_facts(txn.scan_prefix(
                 &schema,
                 "Holder",
                 "unique_name",
                 &FieldValues::new("Holder", [("name", Value::String("Alice".to_owned()))]),
             )?)?;
-            assert_eq!(unique_holder, [holder_row(1, "Alice")]);
+            assert_eq!(unique_holder, [holder_fact(1, "Alice")]);
 
-            let ranged = collect_rows(txn.scan_range(
+            let ranged = collect_facts(txn.scan_range(
                 &schema,
                 "Account",
                 "by_opened",
                 Some(Value::Timestamp(TimestampMicros(15))),
                 Some(Value::Timestamp(TimestampMicros(31))),
             )?)?;
-            assert_same_facts(&ranged, &[account_row(2, 1, 2)])?;
+            assert_same_facts(&ranged, &[account_fact(2, 1, 2)])?;
 
             for path in access_paths {
-                let facts = collect_rows(txn.scan_prefix(
+                let facts = collect_facts(txn.scan_prefix(
                     &schema,
                     "Account",
                     &path.index_name,
                     &FieldValues::new("Account", std::iter::empty::<(&str, Value)>()),
                 )?)?;
-                assert_same_facts(&facts, &[account_row(1, 1, 1), account_row(2, 1, 2)])?;
+                assert_same_facts(&facts, &[account_fact(1, 1, 1), account_fact(2, 1, 2)])?;
             }
 
             env.write(|write| {
-                write.insert(&schema, account_row(3, 2, 1))?;
+                write.insert(&schema, account_fact(3, 2, 1))?;
                 Ok::<(), Error>(())
             })?;
 
-            let still_two = collect_rows(txn.scan_relation(&schema, "Account")?)?;
-            assert_same_facts(&still_two, &[account_row(1, 1, 1), account_row(2, 1, 2)])?;
+            let still_two = collect_facts(txn.scan_relation(&schema, "Account")?)?;
+            assert_same_facts(&still_two, &[account_fact(1, 1, 1), account_fact(2, 1, 2)])?;
             Ok::<(), Error>(())
         })?;
 
         env.read(|txn| {
-            let now_three = collect_rows(txn.scan_relation(&schema, "Account")?)?;
+            let now_three = collect_facts(txn.scan_relation(&schema, "Account")?)?;
             assert_same_facts(
                 &now_three,
                 &[
-                    account_row(1, 1, 1),
-                    account_row(2, 1, 2),
-                    account_row(3, 2, 1),
+                    account_fact(1, 1, 1),
+                    account_fact(2, 1, 2),
+                    account_fact(3, 2, 1),
                 ],
             )?;
             Ok::<(), Error>(())
         })?;
+        Ok(())
+    }
+
+    #[test]
+    fn access_keys_store_declared_fields_plus_fact_id() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = storage_schema(&env)?;
+
+        env.write(|txn| {
+            txn.insert(&schema, holder_fact(1, "Alice"))?;
+            txn.insert(&schema, account_fact(1, 1, 1))?;
+            Ok::<(), Error>(())
+        })?;
+
+        env.read(|txn| {
+            let (relation_id, relation) = schema.relation("Account")?;
+            let layout = schema
+                .layout("Account", "by_holder")
+                .ok_or_else(|| Error::internal("missing Account.by_holder access"))?;
+            assert_eq!(
+                layout
+                    .components
+                    .iter()
+                    .map(|component| component.field_name.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["holder"]
+            );
+
+            let encoded =
+                txn.encode_fact_existing(relation_id, relation, &account_fact(1, 1, 1))?;
+            let holder_bytes = encoded.field(relation, "holder")?;
+            let prefix = access_prefix(relation_id, layout.index_id);
+            let keys = txn.raw_index_keys_with_prefix(&prefix)?;
+            assert_eq!(keys.len(), 1);
+
+            let key = &keys[0];
+            let expected_len = prefix.len() + holder_bytes.len() + FACT_ID_BYTES;
+            assert_eq!(key.len(), expected_len);
+            assert_eq!(key.get(..prefix.len()), Some(prefix.as_slice()));
+            assert_eq!(
+                key.get(prefix.len()..prefix.len() + holder_bytes.len()),
+                Some(holder_bytes)
+            );
+            let encoded_id = fact_id(&encoded);
+            assert_eq!(
+                key.get(expected_len - FACT_ID_BYTES..),
+                Some(encoded_id.as_slice())
+            );
+
+            let stored_fact = txn
+                .raw_index_value(&fact_id_key(relation_id, &encoded))?
+                .ok_or_else(|| Error::corrupt("missing fact id lookup"))?;
+            assert_eq!(stored_fact.as_slice(), encoded.bytes());
+
+            let by_holder_items = collect_items(txn.scan_prefix(
+                &schema,
+                "Account",
+                "by_holder",
+                &FieldValues::new("Account", [("holder", Value::Serial(1))]),
+            )?)?;
+            assert_eq!(by_holder_items.len(), 1);
+            assert!(by_holder_items[0].encoded_component("holder").is_some());
+            assert!(by_holder_items[0].encoded_component("id").is_none());
+            assert!(by_holder_items[0].encoded_component("currency").is_none());
+            assert!(by_holder_items[0].encoded_component("opened").is_none());
+            Ok::<(), Error>(())
+        })?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn constraint_guards_use_dedicated_namespaces() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let env = Environment::open(dir.path())?;
+        let schema = storage_schema(&env)?;
+
+        env.write(|txn| {
+            txn.insert(&schema, holder_fact(1, "Alice"))?;
+            txn.insert(&schema, account_fact(1, 1, 1))?;
+            Ok::<(), Error>(())
+        })?;
+
+        env.read(|txn| {
+            let (holder_id, holder_relation) = schema.relation("Holder")?;
+            let holder_encoded =
+                txn.encode_fact_existing(holder_id, holder_relation, &holder_fact(1, "Alice"))?;
+            let (_, holder_id_fields) = target_unique_constraint(holder_relation, "id")?;
+            let holder_unique_key = unique_entry_key_from_fact(
+                holder_id,
+                "id",
+                holder_relation,
+                &holder_encoded,
+                holder_id_fields,
+            )?;
+            assert_eq!(holder_unique_key[0], NS_UNIQUE_ENTRY);
+            let holder_unique_value = txn
+                .raw_index_value(&holder_unique_key)?
+                .ok_or_else(|| Error::corrupt("missing unique guard"))?;
+            let holder_fact_id = fact_id(&holder_encoded);
+            assert_eq!(holder_unique_value.as_slice(), holder_fact_id.as_slice());
+
+            let (account_id, account_relation) = schema.relation("Account")?;
+            let account_encoded =
+                txn.encode_fact_existing(account_id, account_relation, &account_fact(1, 1, 1))?;
+            let reverse_prefix = reverse_fk_prefix(
+                holder_id,
+                "id",
+                account_encoded.field(account_relation, "holder")?,
+            );
+            let reverse_keys = txn.raw_index_keys_with_prefix(&reverse_prefix)?;
+            assert_eq!(reverse_keys.len(), 1);
+            assert_eq!(reverse_keys[0][0], NS_REVERSE_FK_ENTRY);
+
+            assert_eq!(txn.raw_index_keys_with_prefix(&[NS_UNIQUE_ENTRY])?.len(), 4);
+            assert_eq!(
+                txn.raw_index_keys_with_prefix(&[NS_REVERSE_FK_ENTRY])?
+                    .len(),
+                1
+            );
+            Ok::<(), Error>(())
+        })?;
+
+        env.write(|txn| {
+            txn.delete(&schema, account_fact(1, 1, 1))?;
+            Ok::<(), Error>(())
+        })?;
+
+        env.read(|txn| {
+            assert_eq!(txn.raw_index_keys_with_prefix(&[NS_UNIQUE_ENTRY])?.len(), 2);
+            assert_eq!(
+                txn.raw_index_keys_with_prefix(&[NS_REVERSE_FK_ENTRY])?
+                    .len(),
+                0
+            );
+            Ok::<(), Error>(())
+        })?;
+
         Ok(())
     }
 
@@ -2538,7 +2873,7 @@ mod tests {
         ))
     }
 
-    fn holder_row(id: u64, name: &str) -> Fact {
+    fn holder_fact(id: u64, name: &str) -> Fact {
         Fact::new(
             "Holder",
             [
@@ -2548,7 +2883,7 @@ mod tests {
         )
     }
 
-    fn account_row(id: u64, holder: u64, currency: u8) -> Fact {
+    fn account_fact(id: u64, holder: u64, currency: u8) -> Fact {
         Fact::new(
             "Account",
             [
@@ -2563,7 +2898,7 @@ mod tests {
         )
     }
 
-    fn tag_row(account: u64, tag: u8) -> Fact {
+    fn tag_fact(account: u64, tag: u8) -> Fact {
         Fact::new(
             "AccountTag",
             [
@@ -2573,24 +2908,24 @@ mod tests {
         )
     }
 
-    fn collect_items(scan: FactScan<'_, '_, '_>) -> Result<Vec<FactScanEntry>> {
+    fn collect_items(scan: FactCursor<'_, '_, '_>) -> Result<Vec<FactCursorRecord>> {
         scan.collect()
     }
 
-    fn collect_rows(scan: FactScan<'_, '_, '_>) -> Result<Vec<Fact>> {
+    fn collect_facts(scan: FactCursor<'_, '_, '_>) -> Result<Vec<Fact>> {
         scan.map(|item| item.map(|item| item.fact)).collect()
     }
 
     fn assert_same_facts(actual: &[Fact], expected: &[Fact]) -> Result<()> {
-        let mut actual = row_keys(actual)?;
-        let mut expected = row_keys(expected)?;
+        let mut actual = fact_keys(actual)?;
+        let mut expected = fact_keys(expected)?;
         actual.sort();
         expected.sort();
         assert_eq!(actual, expected);
         Ok(())
     }
 
-    fn row_keys(facts: &[Fact]) -> Result<Vec<(u64, u64, u8, i64)>> {
+    fn fact_keys(facts: &[Fact]) -> Result<Vec<(u64, u64, u8, i64)>> {
         facts
             .iter()
             .map(|fact| {

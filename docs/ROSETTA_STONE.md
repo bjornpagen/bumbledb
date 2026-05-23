@@ -115,14 +115,17 @@ Open numeric domains use `U64`. Closed domains use one-byte `Enum` values. Strin
 
 LMDB is the only storage backend.
 
-Current storage has a canonical fact namespace plus access namespaces:
+Current storage has canonical fact membership, fact-id lookup, scan access, and constraint guard namespaces:
 
 ```text
 canonical fact = T | relation_id | fact_bytes -> empty
-access entry = A | relation_id | access_id | access_key_bytes -> empty
+fact id lookup = F | relation_id | fact_id -> fact_bytes
+access entry = A | relation_id | access_id | declared_key_bytes | fact_id -> empty
+unique guard = U | relation_id | constraint_name | unique_key_bytes -> fact_id
+reverse FK guard = R | target_relation_id | target_constraint | target_key_bytes | source_relation_id | source_constraint | source_fact_id -> empty
 ```
 
-The canonical fact namespace owns exact fact membership. Access entries support scans, constraints, and query-image construction. Access layouts are generated from fact-set access, named unique constraints, foreign keys, range annotations, and explicit physical indexes.
+The canonical fact namespace owns exact fact membership. Access entries support scans and query-image construction without carrying undeclared payload fields. Unique constraints and reverse foreign-key delete checks use dedicated guard namespaces rather than overloading scan access entries. Access layouts are generated from fact-set access, named unique constraints, foreign keys, range annotations, and explicit physical indexes.
 
 Query images are built from current access state under an LMDB read snapshot. Durable full-relation segment publication and history/audit records are not part of the v4 write path.
 

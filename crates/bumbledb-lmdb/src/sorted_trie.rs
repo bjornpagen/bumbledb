@@ -230,7 +230,7 @@ pub trait TrieIter: LinearIter {
     /// Current trie depth.
     fn depth(&self) -> usize;
     /// Current fact range into sorted fact order.
-    fn current_range(&self) -> FactRange;
+    fn current_fact_range(&self) -> FactRange;
     /// Number of facts under the current key/range.
     fn count(&self) -> usize;
 }
@@ -256,8 +256,8 @@ pub struct TrieFrame {
 
 impl<'a> SortedTrieIter<'a> {
     /// Returns fact IDs under the current key.
-    pub fn current_rows(&self) -> &'a [FactId] {
-        let range = self.current_range();
+    pub fn current_facts(&self) -> &'a [FactId] {
+        let range = self.current_fact_range();
         &self.index.order[range.start.0 as usize..range.end.0 as usize]
     }
 
@@ -357,7 +357,7 @@ impl TrieIter for SortedTrieIter<'_> {
         self.current_frame().map_or(0, |frame| frame.depth)
     }
 
-    fn current_range(&self) -> FactRange {
+    fn current_fact_range(&self) -> FactRange {
         let Some(frame) = self.current_frame() else {
             return FactRange {
                 start: FactId(0),
@@ -374,7 +374,7 @@ impl TrieIter for SortedTrieIter<'_> {
     }
 
     fn count(&self) -> usize {
-        let range = self.current_range();
+        let range = self.current_fact_range();
         range.end.0.saturating_sub(range.start.0) as usize
     }
 }
@@ -453,11 +453,11 @@ mod tests {
         iter.open();
         assert_eq!(key_bytes(&iter)?, &[1]);
         assert_eq!(iter.count(), 2);
-        assert_eq!(iter.current_rows(), &[FactId(0), FactId(2)]);
+        assert_eq!(iter.current_facts(), &[FactId(0), FactId(2)]);
         iter.next();
         assert_eq!(key_bytes(&iter)?, &[2]);
         assert_eq!(iter.count(), 1);
-        assert_eq!(iter.current_rows(), &[FactId(1)]);
+        assert_eq!(iter.current_facts(), &[FactId(1)]);
         iter.next();
         assert!(iter.at_end());
         Ok(())
@@ -517,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn three_level_ranges_map_to_expected_rows() -> Result<()> {
+    fn three_level_ranges_map_to_expected_facts() -> Result<()> {
         let image = account_image()?;
         let account = image
             .relation("Account")
@@ -532,22 +532,22 @@ mod tests {
         iter.open();
         iter.open();
         assert_eq!(
-            iter.current_range(),
+            iter.current_fact_range(),
             FactRange {
                 start: FactId(0),
                 end: FactId(1)
             }
         );
-        assert_eq!(iter.current_rows(), &[FactId(0)]);
+        assert_eq!(iter.current_facts(), &[FactId(0)]);
         iter.next();
         assert_eq!(
-            iter.current_range(),
+            iter.current_fact_range(),
             FactRange {
                 start: FactId(1),
                 end: FactId(2)
             }
         );
-        assert_eq!(iter.current_rows(), &[FactId(2)]);
+        assert_eq!(iter.current_facts(), &[FactId(2)]);
         Ok(())
     }
 
@@ -563,7 +563,7 @@ mod tests {
         let env = Environment::open(path)?;
         let schema = StorageSchema::new(account_schema(), env.max_key_size())?;
         env.write(|txn| {
-            for fact in account_rows() {
+            for fact in account_facts() {
                 txn.insert(&schema, fact)?;
             }
             Ok::<_, crate::Error>(())
@@ -603,7 +603,7 @@ mod tests {
         ))
     }
 
-    fn account_rows() -> Vec<Fact> {
+    fn account_facts() -> Vec<Fact> {
         vec![
             Fact::new(
                 "Account",

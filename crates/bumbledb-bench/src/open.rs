@@ -22,12 +22,12 @@ pub(crate) enum FactSource {
     Job { dir: PathBuf, limit: Option<usize> },
 }
 
-pub(crate) fn stream_rows(
+pub(crate) fn stream_facts(
     source: &FactSource,
     emit: impl FnMut(Fact) -> Result<(), Box<dyn std::error::Error>>,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     match source {
-        FactSource::Job { dir, limit } => stream_job_rows(dir, *limit, emit),
+        FactSource::Job { dir, limit } => stream_job_facts(dir, *limit, emit),
     }
 }
 
@@ -38,8 +38,8 @@ pub(crate) fn insert_sqlite_streaming(
     match source {
         FactSource::Job { dir, limit } => {
             let tx = conn.unchecked_transaction()?;
-            let inserted = stream_job_rows(dir, *limit, |fact| {
-                insert_job_sqlite_row(&tx, &fact)?;
+            let inserted = stream_job_facts(dir, *limit, |fact| {
+                insert_job_sqlite_fact(&tx, &fact)?;
                 Ok(())
             })?;
             tx.commit()?;
@@ -83,7 +83,7 @@ fn job_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std:
     })
 }
 
-fn stream_job_rows(
+fn stream_job_facts(
     dir: &Path,
     limit: Option<usize>,
     mut emit: impl FnMut(Fact) -> Result<(), Box<dyn std::error::Error>>,
@@ -104,7 +104,7 @@ fn stream_job_rows(
     let mut characters = BTreeSet::new();
     let mut names = BTreeSet::new();
     let mut titles = BTreeSet::new();
-    macro_rules! emit_row {
+    macro_rules! emit_fact {
         ($fact:expr) => {{
             emit($fact)?;
             emitted += 1;
@@ -133,7 +133,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         company_types.insert(id);
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "CompanyType",
             [
                 ("id", Value::Serial(id)),
@@ -148,7 +148,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         info_types.insert(id);
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "InfoType",
             [
                 ("id", Value::Serial(id)),
@@ -163,7 +163,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         kind_types.insert(id);
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "KindType",
             [
                 ("id", Value::Serial(id)),
@@ -178,7 +178,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         link_types.insert(id);
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "LinkType",
             [
                 ("id", Value::Serial(id)),
@@ -193,7 +193,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         role_types.insert(id);
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "RoleType",
             [
                 ("id", Value::Serial(id)),
@@ -208,7 +208,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         keywords.insert(id);
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "Keyword",
             [
                 ("id", Value::Serial(id)),
@@ -224,7 +224,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         companies.insert(id);
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "CompanyName",
             [
                 ("id", Value::Serial(id)),
@@ -243,7 +243,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         characters.insert(id);
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "CharName",
             [
                 ("id", Value::Serial(id)),
@@ -262,7 +262,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         names.insert(id);
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "Name",
             [
                 ("id", Value::Serial(id)),
@@ -284,7 +284,7 @@ fn stream_job_rows(
             return Ok(false);
         }
         titles.insert(id);
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "Title",
             [
                 ("id", Value::Serial(id)),
@@ -318,7 +318,7 @@ fn stream_job_rows(
         if id == 0 || !names.contains(&person) {
             return Ok(false);
         }
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "AkaName",
             [
                 ("id", Value::Serial(id)),
@@ -339,7 +339,7 @@ fn stream_job_rows(
         if id == 0 || !(titles.contains(&movie) && kind_types.contains(&kind)) {
             return Ok(false);
         }
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "AkaTitle",
             [
                 ("id", Value::Serial(id)),
@@ -380,7 +380,7 @@ fn stream_job_rows(
         {
             return Ok(false);
         }
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "CastInfo",
             [
                 ("id", Value::Serial(id)),
@@ -406,7 +406,7 @@ fn stream_job_rows(
         {
             return Ok(false);
         }
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "CompleteCast",
             [
                 ("id", Value::Serial(id)),
@@ -429,7 +429,7 @@ fn stream_job_rows(
         {
             return Ok(false);
         }
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "MovieCompanies",
             [
                 ("id", Value::Serial(id)),
@@ -448,7 +448,7 @@ fn stream_job_rows(
         if id == 0 || !(titles.contains(&movie) && info_types.contains(&info_type)) {
             return Ok(false);
         }
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "MovieInfo",
             [
                 ("id", Value::Serial(id)),
@@ -467,7 +467,7 @@ fn stream_job_rows(
         if id == 0 || !(titles.contains(&movie) && info_types.contains(&info_type)) {
             return Ok(false);
         }
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "MovieInfoIdx",
             [
                 ("id", Value::Serial(id)),
@@ -486,7 +486,7 @@ fn stream_job_rows(
         if id == 0 || !(titles.contains(&movie) && keywords.contains(&keyword)) {
             return Ok(false);
         }
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "MovieKeyword",
             [
                 ("id", Value::Serial(id)),
@@ -508,7 +508,7 @@ fn stream_job_rows(
         {
             return Ok(false);
         }
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "MovieLink",
             [
                 ("id", Value::Serial(id)),
@@ -526,7 +526,7 @@ fn stream_job_rows(
         if id == 0 || !(names.contains(&person) && info_types.contains(&info_type)) {
             return Ok(false);
         }
-        emit_row!(Fact::new(
+        emit_fact!(Fact::new(
             "PersonInfo",
             [
                 ("id", Value::Serial(id)),
@@ -2042,7 +2042,7 @@ fn lahman_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn s
         },
     )?;
 
-    Ok(lahman_from_rows(facts))
+    Ok(lahman_from_facts(facts))
 }
 
 fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std::error::Error>> {
@@ -2156,10 +2156,10 @@ fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
         ));
         Ok(())
     })?;
-    Ok(ldbc_from_rows(facts))
+    Ok(ldbc_from_facts(facts))
 }
 
-fn lahman_from_rows(facts: Vec<Fact>) -> Dataset {
+fn lahman_from_facts(facts: Vec<Fact>) -> Dataset {
     Dataset {
         name: "lahman",
         schema: SchemaDescriptor::new(
@@ -2281,7 +2281,7 @@ fn build_lahman_salary_hits_by_year(schema: &SchemaDescriptor) -> QueryBuildResu
         .finish()
 }
 
-fn ldbc_from_rows(facts: Vec<Fact>) -> Dataset {
+fn ldbc_from_facts(facts: Vec<Fact>) -> Dataset {
     Dataset {
         name: "ldbc",
         schema: SchemaDescriptor::new(
@@ -2679,13 +2679,13 @@ impl Symbols {
 fn insert_job_sqlite(conn: &Connection, facts: &[Fact]) -> Result<(), Box<dyn std::error::Error>> {
     let tx = conn.unchecked_transaction()?;
     for fact in facts {
-        insert_job_sqlite_row(&tx, fact)?;
+        insert_job_sqlite_fact(&tx, fact)?;
     }
     tx.commit()?;
     Ok(())
 }
 
-fn insert_job_sqlite_row(
+fn insert_job_sqlite_fact(
     tx: &rusqlite::Transaction<'_>,
     fact: &Fact,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -2968,9 +2968,9 @@ mod tests {
         let Some(full_source) = dataset.fact_source.as_ref() else {
             return Err("full JOB dataset should be streaming".into());
         };
-        let limited_rows = stream_rows(limited_source, |_| Ok(()))?;
-        let full_rows = stream_rows(full_source, |_| Ok(()))?;
-        assert!(limited_rows < full_rows);
+        let limited_facts = stream_facts(limited_source, |_| Ok(()))?;
+        let full_facts = stream_facts(full_source, |_| Ok(()))?;
+        assert!(limited_facts < full_facts);
 
         let config = crate::Config {
             scale: 10,

@@ -12,7 +12,7 @@ use bumbledb_core::query_ir::{
 };
 use bumbledb_core::schema::{IndexKind, SchemaFingerprint, ValueType};
 
-use crate::hash_trie::PrefixRows;
+use crate::hash_trie::PrefixFacts;
 use crate::query_image::{FactId, FactRange};
 use crate::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, Fact, FieldId,
@@ -386,7 +386,7 @@ pub struct QueryPlan {
     /// Prepared physical plan cache diagnostics after planning.
     pub prepared_plan_cache: PreparedPlanCacheDiagnostics,
     /// Node-level estimated and observed fact/candidate counts.
-    pub node_facts: Vec<NodeRowEstimate>,
+    pub node_facts: Vec<NodeFactEstimate>,
     /// Node-level execution summaries.
     pub node_timings: Vec<QueryNodeTiming>,
     /// Free Join physical plan IR.
@@ -545,10 +545,10 @@ impl QueryPlan {
             ));
         }
         out.push_str(&format!(
-            "free_join_estimates: output_facts={} iterator_ops={} hash_build_rows={} materialized_values={} memory_bytes={} actual_output_facts={}\n",
+            "free_join_estimates: output_facts={} iterator_ops={} hash_build_facts={} materialized_values={} memory_bytes={} actual_output_facts={}\n",
             self.free_join.estimates.output_facts,
             self.free_join.estimates.iterator_ops,
-            self.free_join.estimates.hash_build_rows,
+            self.free_join.estimates.hash_build_facts,
             self.free_join.estimates.materialized_values,
             self.free_join.estimates.memory_bytes,
             self.counters.output_facts
@@ -582,17 +582,17 @@ impl QueryPlan {
             ));
             if let Some(facts) = self.node_facts.get(node.id.0 as usize) {
                 out.push_str(&format!(
-                    "    node_facts variable={} estimated_rows={} actual_rows={}\n",
-                    facts.variable, facts.estimated_rows, facts.actual_rows
+                    "    node_facts variable={} estimated_facts={} actual_facts={}\n",
+                    facts.variable, facts.estimated_facts, facts.actual_facts
                 ));
             }
             if let Some(timing) = self.node_timings.get(node.id.0 as usize) {
                 out.push_str(&format!(
-                    "    node_timing node={} impl={:?} estimated_rows={} actual_rows={} execute_micros={}\n",
+                    "    node_timing node={} impl={:?} estimated_facts={} actual_facts={} execute_micros={}\n",
                     timing.node.0,
                     timing.implementation,
-                    timing.estimated_rows,
-                    timing.actual_rows,
+                    timing.estimated_facts,
+                    timing.actual_facts,
                     timing.execute_micros
                 ));
             }
@@ -694,12 +694,12 @@ impl QueryPlan {
             self.counters.atom_temp_relation_builds
         ));
         out.push_str(&format!(
-            "  atom_temp_relation_source_rows: {}\n",
-            self.counters.atom_temp_relation_source_rows
+            "  atom_temp_relation_source_facts: {}\n",
+            self.counters.atom_temp_relation_source_facts
         ));
         out.push_str(&format!(
-            "  atom_temp_relation_rows: {}\n",
-            self.counters.atom_temp_relation_rows
+            "  atom_temp_relation_facts: {}\n",
+            self.counters.atom_temp_relation_facts
         ));
         out.push_str(&format!(
             "  lftj_atom_source_facts_scanned: {}\n",
@@ -796,7 +796,7 @@ impl QueryPlan {
     fn refresh_node_timings(&mut self) {
         for timing in &mut self.node_timings {
             if let Some(facts) = self.node_facts.get(timing.node.0 as usize) {
-                timing.actual_rows = facts.actual_rows;
+                timing.actual_facts = facts.actual_facts;
             }
         }
     }
@@ -1044,9 +1044,9 @@ pub struct QueryNodeTiming {
     /// Variables bound by this node.
     pub bind_vars: Vec<VarId>,
     /// Estimated facts/candidates for this node.
-    pub estimated_rows: u64,
+    pub estimated_facts: u64,
     /// Observed accepted candidates for this node.
-    pub actual_rows: u64,
+    pub actual_facts: u64,
     /// Coarse node execution time, zero until node-level timing is enabled.
     pub execute_micros: u128,
 }
@@ -1150,15 +1150,15 @@ pub struct CostKey {
 
 /// Estimated and observed facts/candidates for one Free Join node.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NodeRowEstimate {
+pub struct NodeFactEstimate {
     /// Dense node ID.
     pub node: NodeId,
     /// Variable bound by this node.
     pub variable: String,
     /// Estimated facts/candidates for this node.
-    pub estimated_rows: u64,
+    pub estimated_facts: u64,
     /// Observed accepted candidates for this node.
-    pub actual_rows: u64,
+    pub actual_facts: u64,
 }
 
 /// Reason static semijoin proof did not run after cheap preflight.
@@ -1272,9 +1272,9 @@ pub struct PlanCounters {
     /// Number of temporary atom relation images built on cache misses.
     pub atom_temp_relation_builds: u64,
     /// Number of source facts inspected while building temporary atom relations.
-    pub atom_temp_relation_source_rows: u64,
+    pub atom_temp_relation_source_facts: u64,
     /// Number of facts retained in temporary atom relations.
-    pub atom_temp_relation_rows: u64,
+    pub atom_temp_relation_facts: u64,
     /// Number of source facts inspected by LFTJ atom build subphase tracing.
     pub lftj_atom_source_facts_scanned: u64,
     /// Number of facts retained by LFTJ atom build subphase tracing.
@@ -1411,7 +1411,7 @@ impl ExecutionPlan {
         plan.summary.allocations = QueryAllocationStats::default();
         plan.summary.counters = PlanCounters::default();
         for facts in &mut plan.summary.node_facts {
-            facts.actual_rows = 0;
+            facts.actual_facts = 0;
         }
         plan.summary.node_timings =
             query_node_timings(&plan.summary.free_join, &plan.summary.node_facts);
@@ -1446,7 +1446,7 @@ impl PlannerStats {
         Ok(Self { relations })
     }
 
-    fn relation_rows(&self, relation: &str) -> u64 {
+    fn relation_facts(&self, relation: &str) -> u64 {
         self.relations
             .get(relation)
             .map(|stats| stats.facts as u64)
@@ -1480,7 +1480,7 @@ struct AccessEstimate {
     relation: String,
     index: String,
     access: AccessId,
-    estimated_rows: u64,
+    estimated_facts: u64,
     prefix_len: usize,
     current_is_next: bool,
     distinct: usize,
@@ -1579,9 +1579,9 @@ impl TrieIter for LftjTrieIter<'_> {
         }
     }
 
-    fn current_range(&self) -> FactRange {
+    fn current_fact_range(&self) -> FactRange {
         match self {
-            LftjTrieIter::Sorted(iter) => iter.current_range(),
+            LftjTrieIter::Sorted(iter) => iter.current_fact_range(),
         }
     }
 
@@ -1644,11 +1644,11 @@ struct DirectChainStep {
     index_name: String,
 }
 
-struct DirectImageRow {
+struct DirectImageFact {
     fields: SmallVec<[(FieldId, EncodedOwned); 8]>,
 }
 
-impl DirectImageRow {
+impl DirectImageFact {
     fn get(&self, field: FieldId) -> Option<&EncodedOwned> {
         self.fields
             .iter()
@@ -1659,7 +1659,7 @@ impl DirectImageRow {
 
 type SmallParticipants = SmallVec<[usize; 4]>;
 type SmallEncodedPrefix = SmallVec<[EncodedOwned; 8]>;
-type SmallEncodedRow = SmallVec<[EncodedOwned; 8]>;
+type SmallEncodedFact = SmallVec<[EncodedOwned; 8]>;
 type DirectRangeBounds = (usize, Option<Value>, Option<Value>);
 enum DirectStorageAccess {
     Prefix {
@@ -2439,7 +2439,7 @@ impl<'env> ReadTxn<'env> {
         plan.summary.timings = timings;
         plan.summary.allocations = allocations;
 
-        let mut sink = OutputSink::new_count_rows(&plan.summary.free_join.output);
+        let mut sink = OutputSink::new_count_facts(&plan.summary.free_join.output);
         let execute_start = Instant::now();
         let execute_alloc_start = allocation::snapshot();
         execute_free_join(
@@ -3129,7 +3129,7 @@ fn static_literal_atoms_prove_empty(
         let mut matched = false;
         for fact in 0..relation.fact_count {
             proof.facts_scanned += 1;
-            if static_atom_row_matches(relation, atom, FactId(fact as u32), inputs)? {
+            if static_atom_fact_matches(relation, atom, FactId(fact as u32), inputs)? {
                 matched = true;
                 break;
             }
@@ -3326,9 +3326,10 @@ fn enumerate_static_atom_candidates(
         }
         proof.facts_scanned += 1;
         let fact = FactId(fact as u32);
-        if static_atom_row_matches_with_candidates(relation, query, atom, fact, inputs, candidates)?
-        {
-            collect_atom_row_candidates(relation, atom, fact, &mut out)?;
+        if static_atom_fact_matches_with_candidates(
+            relation, query, atom, fact, inputs, candidates,
+        )? {
+            collect_atom_fact_candidates(relation, atom, fact, &mut out)?;
             if total_raw_candidate_values(&out) > max_candidates {
                 return Ok(None);
             }
@@ -3609,7 +3610,7 @@ fn static_atom_entry_matches(
     })
 }
 
-fn static_atom_row_matches_with_candidates(
+fn static_atom_fact_matches_with_candidates(
     relation: &RelationImage,
     query: &NormalizedQuery,
     atom: &NormAtom,
@@ -3708,7 +3709,7 @@ fn collect_atom_entry_candidates(
     Ok(())
 }
 
-fn collect_atom_row_candidates(
+fn collect_atom_fact_candidates(
     relation: &RelationImage,
     atom: &NormAtom,
     fact: FactId,
@@ -3769,7 +3770,7 @@ fn total_raw_candidate_values(candidates: &BTreeMap<VarId, BTreeSet<EncodedOwned
     candidates.values().map(BTreeSet::len).sum()
 }
 
-fn static_atom_row_matches(
+fn static_atom_fact_matches(
     relation: &RelationImage,
     atom: &NormAtom,
     fact: FactId,
@@ -4132,7 +4133,7 @@ fn try_execute_direct_storage_project(
         counters.direct_kernel_facts += 1;
         let mut binding = EncodedBinding::new(query.vars.len());
         counters.direct_bind_attempts += 1;
-        if !bind_direct_storage_row(txn, query, encoded_inputs, atom, &item.fact, &mut binding)? {
+        if !bind_direct_storage_fact(txn, query, encoded_inputs, atom, &item.fact, &mut binding)? {
             continue;
         }
         counters.direct_bind_successes += 1;
@@ -4358,7 +4359,7 @@ fn direct_storage_range_bounds(
     Ok(variable.map(|variable| (variable, start, end)))
 }
 
-fn bind_direct_storage_row(
+fn bind_direct_storage_fact(
     txn: &ReadTxn<'_>,
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
@@ -4658,10 +4659,10 @@ fn execute_direct_prefix_range<'txn, 'query, S: FactSink>(
     }
     let relation = direct_relation(image, kernel.relation)?;
     let mut binding = EncodedBinding::new(query.vars.len());
-    for fact in index.rows_for_prefix(&refs) {
+    for fact in index.facts_for_prefix(&refs) {
         plan.summary.counters.direct_kernel_facts += 1;
         let bound = bind_atom_variables(relation, atom, fact, &mut binding)?;
-        if !direct_row_satisfies_atom(relation, atom, fact, inputs, &binding)? {
+        if !direct_fact_satisfies_atom(relation, atom, fact, inputs, &binding)? {
             unbind_variables(&mut binding, &bound);
             continue;
         }
@@ -4710,13 +4711,13 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
     fn execute(&mut self) -> Result<()> {
         for check in &self.kernel.existence_checks {
             if let Some(facts) =
-                self.image_rows_for_terms(check.atom_id, &check.fields, &check.terms)?
+                self.image_facts_for_terms(check.atom_id, &check.fields, &check.terms)?
             {
                 if !facts.iter().try_fold(false, |found, fact| {
                     if found {
                         Ok(true)
                     } else {
-                        self.image_row_satisfies_atom(
+                        self.image_fact_satisfies_atom(
                             &self.plan.relation_atoms[check.atom_id],
                             fact,
                         )
@@ -4726,7 +4727,7 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 }
                 continue;
             }
-            if let Some(facts) = self.storage_rows_for_terms(
+            if let Some(facts) = self.storage_facts_for_terms(
                 check.relation,
                 check.atom_id,
                 &check.fields,
@@ -4736,7 +4737,7 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                     if found {
                         Ok(true)
                     } else {
-                        self.storage_row_satisfies_atom(
+                        self.storage_fact_satisfies_atom(
                             &self.plan.relation_atoms[check.atom_id],
                             fact,
                         )
@@ -4762,8 +4763,8 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             }
             let relation = direct_relation(self.image, check.relation)?;
             let mut found = false;
-            for fact in index.rows_for_prefix(&refs) {
-                if direct_row_satisfies_atom(
+            for fact in index.facts_for_prefix(&refs) {
+                if direct_fact_satisfies_atom(
                     relation,
                     &self.plan.relation_atoms[check.atom_id],
                     fact,
@@ -4834,12 +4835,12 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
         let step = &self.kernel.steps[depth];
         self.plan.summary.counters.direct_chain_steps += 1;
         if let Some(facts) =
-            self.image_rows_for_terms(step.atom_id, &step.prefix_fields, &step.prefix_terms)?
+            self.image_facts_for_terms(step.atom_id, &step.prefix_fields, &step.prefix_terms)?
         {
             for fact in facts {
                 self.plan.summary.counters.direct_chain_step_facts += 1;
                 let atom = &self.plan.relation_atoms[step.atom_id];
-                if !self.image_row_satisfies_atom(atom, &fact)? {
+                if !self.image_fact_satisfies_atom(atom, &fact)? {
                     continue;
                 }
                 let Some(value) = fact.get(step.bind_field) else {
@@ -4855,14 +4856,14 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 }
                 self.plan.summary.counters.direct_bind_successes += 1;
                 if let Some(facts) = self.plan.summary.node_facts.get_mut(depth) {
-                    facts.actual_rows = facts.actual_rows.saturating_add(1);
+                    facts.actual_facts = facts.actual_facts.saturating_add(1);
                 }
                 self.execute_step(depth + 1)?;
                 self.binding.unbind(step.bind_var);
             }
             return Ok(());
         }
-        if let Some(facts) = self.storage_rows_for_terms(
+        if let Some(facts) = self.storage_facts_for_terms(
             step.relation,
             step.atom_id,
             &step.prefix_fields,
@@ -4871,7 +4872,7 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             for fact in facts {
                 self.plan.summary.counters.direct_chain_step_facts += 1;
                 let atom = &self.plan.relation_atoms[step.atom_id];
-                if !self.storage_row_satisfies_atom(atom, &fact)? {
+                if !self.storage_fact_satisfies_atom(atom, &fact)? {
                     continue;
                 }
                 let Some(field_name) = atom
@@ -4898,7 +4899,7 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
                 }
                 self.plan.summary.counters.direct_bind_successes += 1;
                 if let Some(facts) = self.plan.summary.node_facts.get_mut(depth) {
-                    facts.actual_rows = facts.actual_rows.saturating_add(1);
+                    facts.actual_facts = facts.actual_facts.saturating_add(1);
                 }
                 self.execute_step(depth + 1)?;
                 self.binding.unbind(step.bind_var);
@@ -4921,10 +4922,10 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             return Ok(());
         }
         let relation = direct_relation(self.image, step.relation)?;
-        for fact in index.rows_for_prefix(&refs) {
+        for fact in index.facts_for_prefix(&refs) {
             self.plan.summary.counters.direct_kernel_facts += 1;
             self.plan.summary.counters.direct_chain_step_facts += 1;
-            if !direct_row_satisfies_atom(
+            if !direct_fact_satisfies_atom(
                 relation,
                 &self.plan.relation_atoms[step.atom_id],
                 fact,
@@ -4946,7 +4947,7 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             }
             self.plan.summary.counters.direct_bind_successes += 1;
             if let Some(facts) = self.plan.summary.node_facts.get_mut(depth) {
-                facts.actual_rows = facts.actual_rows.saturating_add(1);
+                facts.actual_facts = facts.actual_facts.saturating_add(1);
             }
             self.execute_step(depth + 1)?;
             self.binding.unbind(step.bind_var);
@@ -4954,7 +4955,7 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
         Ok(())
     }
 
-    fn storage_rows_for_terms(
+    fn storage_facts_for_terms(
         &mut self,
         relation_id: crate::RelationId,
         atom_id: usize,
@@ -4993,12 +4994,12 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
         Ok(Some(facts))
     }
 
-    fn image_rows_for_terms(
+    fn image_facts_for_terms(
         &mut self,
         atom_id: usize,
         fields: &[FieldId],
         terms: &[NormTerm],
-    ) -> Result<Option<Vec<DirectImageRow>>> {
+    ) -> Result<Option<Vec<DirectImageFact>>> {
         let atom = &self.plan.relation_atoms[atom_id];
         let relation = direct_relation(self.image, atom.relation)?;
         let Some(index) = direct_image_index_for_fields(relation, atom, fields) else {
@@ -5011,7 +5012,7 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
             .collect::<Vec<_>>();
         let mut facts = Vec::new();
         for entry in index.entries_with_prefix(&prefix) {
-            let mut fact = DirectImageRow {
+            let mut fact = DirectImageFact {
                 fields: SmallVec::new(),
             };
             for field in &atom.fields {
@@ -5035,7 +5036,7 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
         Ok(Some(facts))
     }
 
-    fn image_row_satisfies_atom(&self, atom: &NormAtom, fact: &DirectImageRow) -> Result<bool> {
+    fn image_fact_satisfies_atom(&self, atom: &NormAtom, fact: &DirectImageFact) -> Result<bool> {
         for field in &atom.fields {
             let Some(value) = fact.get(field.field) else {
                 return Ok(false);
@@ -5091,7 +5092,7 @@ impl<S: FactSink> DirectChainExecutor<'_, '_, '_, '_, S> {
         }
     }
 
-    fn storage_row_satisfies_atom(&self, atom: &NormAtom, fact: &Fact) -> Result<bool> {
+    fn storage_fact_satisfies_atom(&self, atom: &NormAtom, fact: &Fact) -> Result<bool> {
         for field in &atom.fields {
             let Some(value) = fact.value(&field.field_name) else {
                 return Ok(false);
@@ -5268,7 +5269,7 @@ fn unbind_variables(binding: &mut EncodedBinding, variables: &[usize]) {
     }
 }
 
-fn direct_row_satisfies_atom(
+fn direct_fact_satisfies_atom(
     relation: &RelationImage,
     atom: &NormAtom,
     fact: FactId,
@@ -5655,7 +5656,7 @@ impl<S: FactSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
                 )?;
                 if keep {
                     if let Some(facts) = self.plan.summary.node_facts.get_mut(depth) {
-                        facts.actual_rows = facts.actual_rows.saturating_add(1);
+                        facts.actual_facts = facts.actual_facts.saturating_add(1);
                     }
                     self.execute(depth + 1)?;
                 }
@@ -5912,11 +5913,11 @@ fn build_lftj_atom_plan(
             .sorted_trie_build_micros
             .saturating_add(cached.build_micros as u64);
         counters.atom_temp_relation_builds += 1;
-        counters.atom_temp_relation_source_rows = counters
-            .atom_temp_relation_source_rows
+        counters.atom_temp_relation_source_facts = counters
+            .atom_temp_relation_source_facts
             .saturating_add(cached.source_facts_scanned);
-        counters.atom_temp_relation_rows = counters
-            .atom_temp_relation_rows
+        counters.atom_temp_relation_facts = counters
+            .atom_temp_relation_facts
             .saturating_add(cached.index.stats.fact_count as u64);
         counters.lftj_atom_source_facts_scanned = counters
             .lftj_atom_source_facts_scanned
@@ -6164,7 +6165,7 @@ fn build_lftj_sorted_trie(
         })
         .collect::<Vec<_>>();
     let mut builders = encoded_column_builders(&fields, 0)?;
-    let mut included_rows = 0usize;
+    let mut included_facts = 0usize;
     let source_facts_scanned;
 
     let mut bytes_copied = 0u64;
@@ -6175,21 +6176,21 @@ fn build_lftj_sorted_trie(
             append_indexed_lftj_atom_values(&mut builders, source, query, inputs, atom, variables)?
         {
             source_facts_scanned = indexed.source_facts_scanned;
-            included_rows = indexed.facts_retained as usize;
+            included_facts = indexed.facts_retained as usize;
             bytes_copied = bytes_copied.saturating_add(indexed.bytes_appended);
         } else {
             source_facts_scanned = source.fact_count as u64;
             for fact in 0..source.fact_count {
                 let fact = FactId(fact as u32);
                 let Some(slots) =
-                    atom_row_value_slots(source, inputs, atom, fact, query.vars.len())?
+                    atom_fact_value_slots(source, inputs, atom, fact, query.vars.len())?
                 else {
                     continue;
                 };
                 if !atom_local_comparisons_pass_slots(query, inputs, &slots)? {
                     continue;
                 }
-                included_rows += 1;
+                included_facts += 1;
                 bytes_copied = bytes_copied.saturating_add(append_atom_slots(
                     &mut builders,
                     &slots,
@@ -6201,7 +6202,7 @@ fn build_lftj_sorted_trie(
     let scan_micros = elapsed_micros(scan_start).min(u128::from(u64::MAX)) as u64;
 
     let fact_count = if variables.is_empty() {
-        included_rows
+        included_facts
     } else {
         builders[0].len()
     };
@@ -6528,7 +6529,7 @@ fn atom_variables_in_plan_order(atom: &NormAtom, variable_order_ids: &[usize]) -
         .collect()
 }
 
-fn atom_row_value_slots(
+fn atom_fact_value_slots(
     relation: &RelationImage,
     inputs: &EncodedInputs,
     atom: &NormAtom,
@@ -6614,13 +6615,13 @@ fn plan_query(
     let node_facts = variable_order_ids
         .iter()
         .enumerate()
-        .map(|(node_id, variable)| NodeRowEstimate {
+        .map(|(node_id, variable)| NodeFactEstimate {
             node: NodeId(node_id as u16),
             variable: query.vars[*variable].name.clone(),
-            estimated_rows: variable_costs
+            estimated_facts: variable_costs
                 .get(node_id)
                 .map_or(1, |cost| cost.estimated_candidates),
-            actual_rows: 0,
+            actual_facts: 0,
         })
         .collect::<Vec<_>>();
     let missing_indexes = missing_index_recommendations(schema, query, &relation_atoms)?;
@@ -6686,7 +6687,7 @@ fn plan_query(
 
 fn query_node_timings(
     free_join: &FreeJoinPlan,
-    node_facts: &[NodeRowEstimate],
+    node_facts: &[NodeFactEstimate],
 ) -> Vec<QueryNodeTiming> {
     free_join
         .nodes
@@ -6697,8 +6698,8 @@ fn query_node_timings(
                 node: node.id,
                 implementation: node.implementation,
                 bind_vars: node.bind_vars.clone(),
-                estimated_rows: facts.map_or(0, |facts| facts.estimated_rows),
-                actual_rows: facts.map_or(0, |facts| facts.actual_rows),
+                estimated_facts: facts.map_or(0, |facts| facts.estimated_facts),
+                actual_facts: facts.map_or(0, |facts| facts.actual_facts),
                 execute_micros: 0,
             }
         })
@@ -6821,12 +6822,12 @@ fn estimate_variable_cost(
         let estimate = estimate_atom_variable_access(schema, stats, bound, atom, variable)?;
         if best_access.as_ref().is_none_or(|best| {
             (
-                estimate.estimated_rows,
+                estimate.estimated_facts,
                 std::cmp::Reverse(estimate.prefix_len),
                 std::cmp::Reverse(estimate.current_is_next),
                 estimate.access_label(),
             ) < (
-                best.estimated_rows,
+                best.estimated_facts,
                 std::cmp::Reverse(best.prefix_len),
                 std::cmp::Reverse(best.current_is_next),
                 best.access_label(),
@@ -6842,7 +6843,7 @@ fn estimate_variable_cost(
         .count();
     let mut estimated_candidates = best_access
         .as_ref()
-        .map(|estimate| estimate.estimated_rows)
+        .map(|estimate| estimate.estimated_facts)
         .unwrap_or(u64::MAX / 4)
         .max(1);
     if static_constraints == 0
@@ -6853,7 +6854,7 @@ fn estimate_variable_cost(
         estimated_candidates = estimated_candidates.max(
             best_access
                 .as_ref()
-                .map(|estimate| stats.relation_rows(&estimate.relation))
+                .map(|estimate| stats.relation_facts(&estimate.relation))
                 .unwrap_or(u64::MAX / 8),
         );
     }
@@ -6886,7 +6887,7 @@ fn estimate_atom_variable_access(
     variable: usize,
 ) -> Result<AccessEstimate> {
     let paths = schema.access_paths(&atom.relation_name)?;
-    let relation_rows = stats.relation_rows(&atom.relation_name);
+    let relation_facts = stats.relation_facts(&atom.relation_name);
     let mut best: Option<AccessEstimate> = None;
 
     for path in paths {
@@ -6926,7 +6927,7 @@ fn estimate_atom_variable_access(
         let mut estimate = if current_is_next {
             if prefix_len == 0 {
                 if path.kind == IndexKind::Range {
-                    relation_rows.max(1).div_ceil(4)
+                    relation_facts.max(1).div_ceil(4)
                 } else {
                     index_stats
                         .distinct_by_depth
@@ -6939,7 +6940,7 @@ fn estimate_atom_variable_access(
                 index_stats.fanout_after_prefix(prefix_len)
             }
         } else {
-            index_stats.estimated_rows_for_prefix(prefix_len)
+            index_stats.estimated_facts_for_prefix(prefix_len)
         };
         if matches!(path.kind, IndexKind::FactSet | IndexKind::Unique)
             && current_is_next
@@ -6961,7 +6962,7 @@ fn estimate_atom_variable_access(
             relation: atom.relation_name.clone(),
             index: path.index_name,
             access: index_stats.index,
-            estimated_rows: estimate.max(1),
+            estimated_facts: estimate.max(1),
             prefix_len,
             current_is_next,
             distinct,
@@ -6974,12 +6975,12 @@ fn estimate_atom_variable_access(
         };
         if best.as_ref().is_none_or(|best| {
             (
-                candidate.estimated_rows,
+                candidate.estimated_facts,
                 std::cmp::Reverse(candidate.prefix_len),
                 std::cmp::Reverse(candidate.current_is_next),
                 candidate.access_label(),
             ) < (
-                best.estimated_rows,
+                best.estimated_facts,
                 std::cmp::Reverse(best.prefix_len),
                 std::cmp::Reverse(best.current_is_next),
                 best.access_label(),
@@ -6993,12 +6994,12 @@ fn estimate_atom_variable_access(
         relation: atom.relation_name.clone(),
         index: "full_scan".to_owned(),
         access: AccessId(0),
-        estimated_rows: relation_rows.saturating_mul(4).max(1),
+        estimated_facts: relation_facts.saturating_mul(4).max(1),
         prefix_len: 0,
         current_is_next: false,
         distinct: 1,
-        avg_fanout: relation_rows.max(1),
-        max_fanout: relation_rows as usize,
+        avg_fanout: relation_facts.max(1),
+        max_fanout: relation_facts as usize,
         variable_distinct: 1,
         has_min: false,
         has_max: false,
@@ -7287,7 +7288,7 @@ fn build_plan_candidate(
     let cost = CostKey {
         estimated_micros: estimates
             .iterator_ops
-            .saturating_add(estimates.hash_build_rows / HASH_BUILD_ROWS_PER_MICRO)
+            .saturating_add(estimates.hash_build_facts / HASH_BUILD_ROWS_PER_MICRO)
             .saturating_add(estimates.materialized_values),
         setup_micros: estimated_setup_micros(name, &estimates),
         memory_bytes: estimates.memory_bytes,
@@ -7327,7 +7328,7 @@ fn implementation_mask(implementations: &[NodeImpl]) -> u64 {
 
 fn estimated_setup_micros(name: &str, estimates: &PlanEstimates) -> u64 {
     let query_image_cost = estimates.output_facts.clamp(1, 1_000);
-    let hash_cost = estimates.hash_build_rows / HASH_BUILD_ROWS_PER_MICRO;
+    let hash_cost = estimates.hash_build_facts / HASH_BUILD_ROWS_PER_MICRO;
     let sorted_cost = if name == "pure_lftj" || name == "aggregate_pushdown" {
         estimates.iterator_ops / 10
     } else {
@@ -7409,7 +7410,7 @@ fn estimate_free_join_plan(
     cyclic: bool,
 ) -> PlanEstimates {
     let mut iterator_ops = 0u64;
-    let mut hash_build_rows = 0u64;
+    let mut hash_build_facts = 0u64;
     for cost in variable_costs {
         let variable_ops =
             cost.estimated_candidates
@@ -7419,8 +7420,8 @@ fn estimate_free_join_plan(
     }
     for atom in atoms {
         if atom_variables(atom).is_empty() {
-            hash_build_rows =
-                hash_build_rows.saturating_add(stats.relation_rows(&atom.relation_name));
+            hash_build_facts =
+                hash_build_facts.saturating_add(stats.relation_facts(&atom.relation_name));
         }
     }
 
@@ -7430,14 +7431,14 @@ fn estimate_free_join_plan(
 
     let output_facts = estimate_output_facts(query, variable_costs);
     let materialized_values = estimate_materialized_values(query, output_facts);
-    let memory_bytes = (hash_build_rows as usize)
+    let memory_bytes = (hash_build_facts as usize)
         .saturating_mul(32)
         .saturating_add(materialized_values as usize * 16);
 
     PlanEstimates {
         output_facts,
         iterator_ops,
-        hash_build_rows,
+        hash_build_facts,
         materialized_values,
         memory_bytes,
     }
@@ -7512,7 +7513,7 @@ fn payload_demand(query: &NormalizedQuery) -> PayloadDemand {
         projected_vars,
         aggregate_vars,
         existence_only_relations: Vec::new(),
-        row_id_demands: Vec::new(),
+        fact_id_demands: Vec::new(),
     }
 }
 
@@ -8102,7 +8103,7 @@ impl OutputSink {
         Self::new_with_mode(output, SinkMode::Materialize)
     }
 
-    fn new_count_rows(output: &OutputPlan) -> Self {
+    fn new_count_facts(output: &OutputPlan) -> Self {
         Self::new_with_mode(output, SinkMode::CardinalityOnly)
     }
 
@@ -8135,10 +8136,10 @@ impl OutputSink {
             counters.direct_batch_fallback_facts += 1;
             return Ok(false);
         };
-        let row_width = sink.push_binding(query, binding, counters)?;
+        let fact_width = sink.push_binding(query, binding, counters)?;
         counters.direct_batch_facts += 1;
         counters.direct_batch_fact_bytes =
-            counters.direct_batch_fact_bytes.saturating_add(row_width);
+            counters.direct_batch_fact_bytes.saturating_add(fact_width);
         Ok(true)
     }
 }
@@ -8182,10 +8183,10 @@ impl FactSink for OutputSink {
             counters.direct_batch_fallback_facts += 1;
             return Ok(false);
         };
-        let row_width = sink.push_binding(query, binding, counters)?;
+        let fact_width = sink.push_binding(query, binding, counters)?;
         counters.direct_batch_facts += 1;
         counters.direct_batch_fact_bytes =
-            counters.direct_batch_fact_bytes.saturating_add(row_width);
+            counters.direct_batch_fact_bytes.saturating_add(fact_width);
         Ok(true)
     }
 
@@ -8215,7 +8216,7 @@ fn is_global_count_plan(plan: &AggregatePlan) -> bool {
 #[derive(Clone, Debug)]
 struct EncodedProjectSink {
     vars: Vec<VarId>,
-    facts: BTreeSet<SmallEncodedRow>,
+    facts: BTreeSet<SmallEncodedFact>,
 }
 
 impl EncodedProjectSink {
@@ -8232,11 +8233,11 @@ impl EncodedProjectSink {
         binding: &EncodedBinding,
         counters: &mut PlanCounters,
     ) -> Result<u64> {
-        let mut fact = SmallEncodedRow::new();
-        let mut row_width = 0u64;
+        let mut fact = SmallEncodedFact::new();
+        let mut fact_width = 0u64;
         for variable in &self.vars {
             let value = bound_encoded_variable(binding, variable.0 as usize)?;
-            row_width = row_width.saturating_add(value.as_bytes().len() as u64);
+            fact_width = fact_width.saturating_add(value.as_bytes().len() as u64);
             fact.push(value.clone());
         }
         counters.encoded_project_facts_seen += 1;
@@ -8245,8 +8246,8 @@ impl EncodedProjectSink {
                 counters.encoded_project_facts_inserted.saturating_add(1);
             counters.encoded_project_fact_bytes = counters
                 .encoded_project_fact_bytes
-                .saturating_add(row_width);
-            return Ok(row_width);
+                .saturating_add(fact_width);
+            return Ok(fact_width);
         }
         Ok(0)
     }
@@ -8298,8 +8299,8 @@ impl FactSink for EncodedProjectSink {
 struct CardinalitySink {
     output: OutputPlan,
     global_count: u64,
-    project_rows: BTreeSet<SmallEncodedRow>,
-    aggregate_groups: BTreeSet<SmallEncodedRow>,
+    project_facts: BTreeSet<SmallEncodedFact>,
+    aggregate_groups: BTreeSet<SmallEncodedFact>,
 }
 
 impl CardinalitySink {
@@ -8307,14 +8308,14 @@ impl CardinalitySink {
         Self {
             output: output.clone(),
             global_count: 0,
-            project_rows: BTreeSet::new(),
+            project_facts: BTreeSet::new(),
             aggregate_groups: BTreeSet::new(),
         }
     }
 
     fn finish_count(self) -> usize {
         match self.output {
-            OutputPlan::Project(_) => self.project_rows.len(),
+            OutputPlan::Project(_) => self.project_facts.len(),
             OutputPlan::Aggregate(plan) if is_global_count_plan(&plan) => 1,
             OutputPlan::Aggregate(_) => self.aggregate_groups.len(),
         }
@@ -8335,8 +8336,8 @@ impl FactSink for CardinalitySink {
                     .vars
                     .iter()
                     .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
-                    .collect::<Result<SmallEncodedRow>>()?;
-                self.project_rows.insert(fact);
+                    .collect::<Result<SmallEncodedFact>>()?;
+                self.project_facts.insert(fact);
             }
             OutputPlan::Aggregate(plan) => {
                 if is_global_count_plan(plan) {
@@ -8347,7 +8348,7 @@ impl FactSink for CardinalitySink {
                     .group_vars
                     .iter()
                     .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
-                    .collect::<Result<SmallEncodedRow>>()?;
+                    .collect::<Result<SmallEncodedFact>>()?;
                 self.aggregate_groups.insert(key);
             }
         }
@@ -8368,8 +8369,8 @@ impl FactSink for CardinalitySink {
 struct AggregateSink {
     group_vars: Vec<VarId>,
     terms: Vec<AggregateTerm>,
-    groups: BTreeMap<SmallEncodedRow, Vec<AggregateState>>,
-    seen_domains: BTreeMap<(SmallEncodedRow, usize), BTreeSet<SmallEncodedRow>>,
+    groups: BTreeMap<SmallEncodedFact, Vec<AggregateState>>,
+    seen_domains: BTreeMap<(SmallEncodedFact, usize), BTreeSet<SmallEncodedFact>>,
 }
 
 impl AggregateSink {
@@ -8382,14 +8383,14 @@ impl AggregateSink {
         }
     }
 
-    fn group_key(&self, binding: &EncodedBinding) -> Result<SmallEncodedRow> {
+    fn group_key(&self, binding: &EncodedBinding) -> Result<SmallEncodedFact> {
         self.group_vars
             .iter()
             .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
             .collect()
     }
 
-    fn domain_key(term: &AggregateTerm, binding: &EncodedBinding) -> Result<SmallEncodedRow> {
+    fn domain_key(term: &AggregateTerm, binding: &EncodedBinding) -> Result<SmallEncodedFact> {
         term.domain_vars
             .iter()
             .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
@@ -8438,7 +8439,7 @@ impl FactSink for AggregateSink {
             )
         {
             groups.insert(
-                SmallEncodedRow::new(),
+                SmallEncodedFact::new(),
                 initial_aggregate_states(&self.terms),
             );
         }
@@ -8483,9 +8484,9 @@ fn initial_aggregate_states(terms: &[AggregateTerm]) -> Vec<AggregateState> {
 }
 
 fn ensure_aggregate_group<'a>(
-    groups: &'a mut BTreeMap<SmallEncodedRow, Vec<AggregateState>>,
+    groups: &'a mut BTreeMap<SmallEncodedFact, Vec<AggregateState>>,
     terms: &[AggregateTerm],
-    key: SmallEncodedRow,
+    key: SmallEncodedFact,
 ) -> &'a mut Vec<AggregateState> {
     match groups.entry(key) {
         std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),

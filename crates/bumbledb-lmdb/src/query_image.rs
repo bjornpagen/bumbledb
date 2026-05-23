@@ -712,7 +712,7 @@ pub struct RelationIndexImage {
     /// Leading fields in access-path order.
     pub fields: Vec<FieldId>,
     /// Full payload components in encoded key order.
-    pub components: Vec<RelationIndexComponent>,
+    pub components: Vec<RelationAccessComponent>,
     /// Bytes per encoded index entry.
     pub encoded_len: usize,
     /// Namespace/relation/access prefix bytes before components.
@@ -723,7 +723,7 @@ pub struct RelationIndexImage {
 
 /// One field component inside a durable relation index image.
 #[derive(Clone, Debug)]
-pub struct RelationIndexComponent {
+pub struct RelationAccessComponent {
     /// Field ID in relation declaration order.
     pub field: FieldId,
     /// Offset of this component inside an encoded index entry.
@@ -1425,10 +1425,10 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
             relation = %self.relation.name,
         )
         .entered();
-        self.build_from_current_index()
+        self.build_from_current_access()
     }
 
-    fn build_from_current_index(self) -> Result<BuiltRelationImage> {
+    fn build_from_current_access(self) -> Result<BuiltRelationImage> {
         let fields = self.field_images();
         let mut builders = encoded_column_builders(&fields, 0)?;
         let layout = self
@@ -1448,7 +1448,7 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
             .ok_or_else(|| Error::unknown_index(&self.relation.name, FACT_SET_ACCESS_NAME))?;
         let scan =
             self.txn
-                .scan_encoded_index_prefix(self.schema, &self.relation.name, covering, &[])?;
+                .scan_encoded_access_prefix(self.schema, &self.relation.name, covering, &[])?;
         for item in scan {
             let item = item?;
             for (field_id, field) in self.relation.fields.iter().enumerate() {
@@ -1474,7 +1474,7 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
             })
             .map(|layout| {
                 let mut bytes = Vec::new();
-                let scan = self.txn.scan_encoded_index_prefix(
+                let scan = self.txn.scan_encoded_access_prefix(
                     self.schema,
                     &self.relation.name,
                     &layout.index_name,
@@ -1483,12 +1483,7 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
                 for item in scan {
                     bytes.extend_from_slice(item?.key());
                 }
-                let prefix_len = layout.encoded_len
-                    - layout
-                        .components
-                        .iter()
-                        .map(|component| component.encoded_width)
-                        .sum::<usize>();
+                let prefix_len = 1 + 2 + 2;
                 let mut offset = prefix_len;
                 let components = layout
                     .components
@@ -1503,7 +1498,7 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
                         else {
                             return Ok(None);
                         };
-                        let image_component = RelationIndexComponent {
+                        let image_component = RelationAccessComponent {
                             field,
                             offset,
                             width: component.encoded_width,
@@ -1747,7 +1742,7 @@ mod tests {
         RelationIndexImage {
             access: AccessId(0),
             fields: vec![FieldId(0)],
-            components: vec![RelationIndexComponent {
+            components: vec![RelationAccessComponent {
                 field: FieldId(0),
                 offset: 0,
                 width: 8,
@@ -1785,7 +1780,7 @@ mod tests {
     }
 
     #[test]
-    fn relation_image_columns_expose_widths_and_stable_row_ids() -> TestResult {
+    fn relation_image_columns_expose_widths_and_stable_fact_ids() -> TestResult {
         let (env, schema) = seeded_env()?;
         let image = env.query_image(&schema)?;
         let account = account_relation(&image)?;
@@ -1867,7 +1862,7 @@ mod tests {
     }
 
     #[test]
-    fn query_image_encoded_columns_decode_to_public_scan_rows() -> TestResult {
+    fn query_image_encoded_columns_decode_to_public_scan_facts() -> TestResult {
         let (env, schema) = seeded_env()?;
         let image = env.query_image(&schema)?;
 
@@ -1877,7 +1872,7 @@ mod tests {
                 .map(|item| item.map(|item| item.fact))
                 .collect::<Result<Vec<_>>>()?;
             let account = account_relation(&image)?;
-            let mut imaged = decode_relation_rows(txn, account)?;
+            let mut imaged = decode_relation_facts(txn, account)?;
             scanned.sort();
             imaged.sort();
             assert_eq!(imaged, scanned);
@@ -1910,8 +1905,8 @@ mod tests {
         env.bulk_load(
             &schema,
             vec![
-                account_row(1, 1, true, vec![1, 2, 3], "Cash USD"),
-                account_row(2, 2, false, vec![4, 5, 6], "Cash EUR"),
+                account_fact(1, 1, true, vec![1, 2, 3], "Cash USD"),
+                account_fact(2, 2, false, vec![4, 5, 6], "Cash EUR"),
             ],
         )?;
 
@@ -1972,8 +1967,8 @@ mod tests {
         env.bulk_load(
             &schema,
             [
-                account_row(1, 1, true, vec![1, 2, 3], "Cash USD"),
-                account_row(2, 2, false, vec![4, 5, 6], "Cash EUR"),
+                account_fact(1, 1, true, vec![1, 2, 3], "Cash USD"),
+                account_fact(2, 2, false, vec![4, 5, 6], "Cash EUR"),
             ],
         )?;
         drop(env);
@@ -1991,7 +1986,7 @@ mod tests {
 
         env.read(|read| {
             env.write(|write| {
-                write.insert(&schema, account_row(3, 3, true, vec![7, 8, 9], "Cash GBP"))?;
+                write.insert(&schema, account_fact(3, 3, true, vec![7, 8, 9], "Cash GBP"))?;
                 Ok::<_, crate::Error>(())
             })?;
 
@@ -2011,9 +2006,12 @@ mod tests {
         let (env, schema) = seeded_env()?;
 
         env.write(|txn| {
-            txn.delete(&schema, account_row(2, 2, false, vec![4, 5, 6], "Cash EUR"))?;
-            txn.insert(&schema, account_row(2, 3, true, vec![9, 9, 9], "Cash GBP"))?;
-            txn.delete(&schema, account_row(1, 1, true, vec![1, 2, 3], "Cash USD"))?;
+            txn.delete(
+                &schema,
+                account_fact(2, 2, false, vec![4, 5, 6], "Cash EUR"),
+            )?;
+            txn.insert(&schema, account_fact(2, 3, true, vec![9, 9, 9], "Cash GBP"))?;
+            txn.delete(&schema, account_fact(1, 1, true, vec![1, 2, 3], "Cash USD"))?;
             Ok::<_, crate::Error>(())
         })?;
 
@@ -2022,10 +2020,10 @@ mod tests {
         assert_eq!(account.fact_count, 1);
 
         env.read(|txn| {
-            let facts = decode_relation_rows(txn, account)?;
+            let facts = decode_relation_facts(txn, account)?;
             assert_eq!(
                 facts,
-                vec![account_row(2, 3, true, vec![9, 9, 9], "Cash GBP")]
+                vec![account_fact(2, 3, true, vec![9, 9, 9], "Cash GBP")]
             );
             Ok::<_, crate::Error>(())
         })?;
@@ -2054,8 +2052,11 @@ mod tests {
         let env = Environment::open(&path)?;
         let schema = StorageSchema::new(account_schema(true), env.max_key_size())?;
         env.write(|txn| {
-            txn.insert(&schema, account_row(1, 1, true, vec![1, 2, 3], "Cash USD"))?;
-            txn.insert(&schema, account_row(2, 2, false, vec![4, 5, 6], "Cash EUR"))?;
+            txn.insert(&schema, account_fact(1, 1, true, vec![1, 2, 3], "Cash USD"))?;
+            txn.insert(
+                &schema,
+                account_fact(2, 2, false, vec![4, 5, 6], "Cash EUR"),
+            )?;
             Ok::<_, crate::Error>(())
         })?;
         Ok((env, schema))
@@ -2148,7 +2149,7 @@ mod tests {
         )
     }
 
-    fn account_row(id: u64, currency: u8, active: bool, payload: Vec<u8>, name: &str) -> Fact {
+    fn account_fact(id: u64, currency: u8, active: bool, payload: Vec<u8>, name: &str) -> Fact {
         Fact::new(
             "Account",
             [
@@ -2161,7 +2162,7 @@ mod tests {
         )
     }
 
-    fn decode_relation_rows(txn: &ReadTxn<'_>, relation: &RelationImage) -> Result<Vec<Fact>> {
+    fn decode_relation_facts(txn: &ReadTxn<'_>, relation: &RelationImage) -> Result<Vec<Fact>> {
         let mut facts = Vec::new();
         for fact in 0..relation.fact_count {
             let fact = FactId(fact as u32);

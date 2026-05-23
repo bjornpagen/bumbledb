@@ -67,7 +67,7 @@ pub fn load_ledger(facts: &[Fact]) -> Result<Connection> {
 }
 
 /// Runs a SQLite statement and returns all integer fact facts.
-pub fn query_i64_rows(conn: &Connection, sql: &str, args: &[i64]) -> Result<Vec<Vec<i64>>> {
+pub fn query_i64_facts(conn: &Connection, sql: &str, args: &[i64]) -> Result<Vec<Vec<i64>>> {
     let mut stmt = conn.prepare(sql).map_err(sqlite_error)?;
     let column_count = stmt.column_count();
     let facts = stmt

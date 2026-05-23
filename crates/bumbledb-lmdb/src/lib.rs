@@ -40,7 +40,7 @@ pub use hash_trie::{HashTrieIndex, HashTrieStats, LeafMode, PrefixProbe};
 pub use planner_stats::PlannerStatsCacheDiagnostics;
 pub use query::{
     AllocationPhaseStats, CostKey, InputBindings, InputId, MissingIndexRecommendation,
-    NodeRowEstimate, NormAtom, NormAtomField, NormFindTerm, NormInput, NormOperand, NormPredicate,
+    NodeFactEstimate, NormAtom, NormAtomField, NormFindTerm, NormInput, NormOperand, NormPredicate,
     NormTerm, NormVar, NormalizedQuery, OptimizerTrace, PlanCandidate, PlanCounters, PlanFamily,
     PredicateId, PreparedQuery, QueryAllocationStats, QueryExecutionOptions, QueryNodeTiming,
     QueryOutput, QueryPlan, QueryResultCardinality, QueryResultSet, QueryRuntimeKind, QueryTimings,
@@ -56,13 +56,13 @@ pub use sorted_trie::{
     TrieLevel, TrieStats,
 };
 pub use storage::{
-    DeleteOutcome, EncodedComponent, Fact, FactScan, FactScanEntry, FieldValues, InsertOutcome,
-    Value,
+    DeleteOutcome, EncodedComponent, Fact, FactCursor, FactCursorRecord, FieldValues,
+    InsertOutcome, Value,
 };
 pub use storage_schema::{AccessPathDescriptor, BulkLoadReport, StorageSchema};
 
 /// Current on-disk storage format version.
-pub const STORAGE_FORMAT_VERSION: u32 = 3;
+pub const STORAGE_FORMAT_VERSION: u32 = 4;
 
 const DEFAULT_MAP_SIZE: usize = 64 * 1024 * 1024 * 1024;
 const DEFAULT_MAX_READERS: u32 = 1024;
@@ -286,7 +286,7 @@ impl Environment {
                     .into_iter()
                     .map(|path| {
                         Ok(IndexDiagnostics {
-                            entry_count: txn.index_entry_count(
+                            entry_count: txn.access_entry_count(
                                 schema,
                                 &relation.name,
                                 &path.index_name,
@@ -484,7 +484,7 @@ fn write_u32(db: &RawDatabase, txn: &mut RwTxn, key: &[u8], value: u32) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::benchmark::{benchmark_queries, benchmark_rows, benchmark_schema};
+    use crate::benchmark::{benchmark_facts, benchmark_queries, benchmark_schema};
     use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, ValueType};
 
     const MARKER_KEY: &[u8] = b"test_marker";
@@ -506,16 +506,16 @@ mod tests {
     }
 
     #[test]
-    fn rejects_v2_storage_format_after_set_native_break() -> TestResult {
+    fn rejects_v3_storage_format_after_fact_id_break() -> TestResult {
         let dir = tempfile::tempdir()?;
         let env = Environment::open(dir.path())?;
-        env.write(|txn| txn.put_meta_bytes(STORAGE_FORMAT_VERSION_KEY, &2u32.to_be_bytes()))?;
+        env.write(|txn| txn.put_meta_bytes(STORAGE_FORMAT_VERSION_KEY, &3u32.to_be_bytes()))?;
         drop(env);
 
         assert!(matches!(
             Environment::open(dir.path()),
             Err(Error::Open(OpenError::StorageFormatMismatch { expected, found }))
-                if expected == STORAGE_FORMAT_VERSION && found == 2
+                if expected == STORAGE_FORMAT_VERSION && found == 3
         ));
         Ok(())
     }
@@ -585,13 +585,13 @@ mod tests {
     }
 
     #[test]
-    fn bulk_load_new_matches_row_by_row_results() -> TestResult {
-        let facts = benchmark_rows(5);
+    fn bulk_load_new_matches_fact_by_fact_results() -> TestResult {
+        let facts = benchmark_facts(5);
         let schema = StorageSchema::new(benchmark_schema(), 511)?;
 
-        let row_dir = tempfile::tempdir()?;
-        let row_env = Environment::open_with_schema(row_dir.path(), &schema)?;
-        row_env.write(|txn| {
+        let fact_dir = tempfile::tempdir()?;
+        let fact_env = Environment::open_with_schema(fact_dir.path(), &schema)?;
+        fact_env.write(|txn| {
             for fact in &facts {
                 txn.insert(&schema, fact.clone())?;
             }
@@ -600,11 +600,11 @@ mod tests {
 
         let bulk_dir = tempfile::tempdir()?;
         let (bulk_env, report) = Environment::bulk_load_new(bulk_dir.path(), &schema, facts)?;
-        assert_eq!(report.facts_inserted, benchmark_rows(5).len());
+        assert_eq!(report.facts_inserted, benchmark_facts(5).len());
         assert!(report.dictionary_entries > 0);
 
         let typed = (benchmark_queries()[0].build)(schema.descriptor())?;
-        let query = row_env.prepare_query(&schema, &typed)?;
+        let query = fact_env.prepare_query(&schema, &typed)?;
         let inputs = InputBindings::from_values([
             ("holder", Value::Serial(1)),
             (
@@ -616,7 +616,7 @@ mod tests {
                 Value::Timestamp(bumbledb_core::encoding::TimestampMicros(1000)),
             ),
         ]);
-        let row_result = row_env
+        let fact_result = fact_env
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .result
             .facts;
@@ -624,16 +624,16 @@ mod tests {
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .result
             .facts;
-        assert_eq!(sorted_facts(row_result), sorted_facts(bulk_result));
+        assert_eq!(sorted_facts(fact_result), sorted_facts(bulk_result));
         Ok(())
     }
 
     #[test]
-    fn bulk_load_duplicate_rows_count_inserted_once() -> TestResult {
+    fn bulk_load_duplicate_facts_count_inserted_once() -> TestResult {
         let schema = StorageSchema::new(benchmark_schema(), 511)?;
         let dir = tempfile::tempdir()?;
         let env = Environment::open_with_schema(dir.path(), &schema)?;
-        let mut facts = benchmark_rows(2);
+        let mut facts = benchmark_facts(2);
         let distinct = facts.len();
         facts.push(facts[0].clone());
 
@@ -658,7 +658,7 @@ mod tests {
         let schema = StorageSchema::new(benchmark_schema(), 511)?;
         let dir = tempfile::tempdir()?;
         let env = Environment::open_with_schema(dir.path(), &schema)?;
-        env.bulk_load(&schema, benchmark_rows(2))?;
+        env.bulk_load(&schema, benchmark_facts(2))?;
         drop(env);
 
         let changed = StorageSchema::new(changed_schema(), 511)?;
@@ -683,9 +683,9 @@ mod tests {
         let schema = StorageSchema::new(benchmark_schema(), 511)?;
         let dir = tempfile::tempdir()?;
         let env = Environment::open_with_schema(dir.path(), &schema)?;
-        env.bulk_load(&schema, benchmark_rows(4))?;
+        env.bulk_load(&schema, benchmark_facts(4))?;
 
-        let duplicate_report = env.bulk_load(&schema, vec![benchmark_rows(1)[0].clone()])?;
+        let duplicate_report = env.bulk_load(&schema, vec![benchmark_facts(1)[0].clone()])?;
         assert_eq!(duplicate_report.facts_inserted, 0);
 
         let backup_dir = tempfile::tempdir()?;
@@ -714,17 +714,17 @@ mod tests {
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .result
             .facts;
-        let backup_rows = backup
+        let backup_facts = backup
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .result
             .facts;
-        let compact_rows = compact
+        let compact_facts = compact
             .read(|txn| txn.execute_prepared_query(&schema, &query, &inputs))?
             .result
             .facts;
 
-        assert_eq!(sorted_facts(original.clone()), sorted_facts(backup_rows));
-        assert_eq!(sorted_facts(original), sorted_facts(compact_rows));
+        assert_eq!(sorted_facts(original.clone()), sorted_facts(backup_facts));
+        assert_eq!(sorted_facts(original), sorted_facts(compact_facts));
         Ok(())
     }
 
@@ -732,13 +732,13 @@ mod tests {
     fn bulk_load_target_must_be_new_and_large_fixture_reopens() -> TestResult {
         let schema = StorageSchema::new(benchmark_schema(), 511)?;
         let dir = tempfile::tempdir()?;
-        let (env, report) = Environment::bulk_load_new(dir.path(), &schema, benchmark_rows(12))?;
+        let (env, report) = Environment::bulk_load_new(dir.path(), &schema, benchmark_facts(12))?;
         assert!(report.facts_inserted > 50);
         assert!(report.dictionary_entries >= 12);
         drop(env);
 
         assert!(matches!(
-            Environment::bulk_load_new(dir.path(), &schema, benchmark_rows(1)),
+            Environment::bulk_load_new(dir.path(), &schema, benchmark_facts(1)),
             Err(Error::Storage(StorageError::BulkLoadTargetExists { .. }))
         ));
 

@@ -191,9 +191,9 @@ pub(crate) struct OptimizerFieldStats {
 
 impl OptimizerFieldStats {
     fn sample(relation: &RelationImage, field: FieldId) -> Result<Self> {
-        let sample_rows = relation.fact_count.min(FIELD_STATS_SAMPLE_ROWS);
+        let sample_facts = relation.fact_count.min(FIELD_STATS_SAMPLE_ROWS);
         let mut frequencies = BTreeMap::<EncodedOwned, usize>::new();
-        for fact in 0..sample_rows {
+        for fact in 0..sample_facts {
             let value = relation
                 .encoded(FactId(fact as u32), field)
                 .map(EncodedOwned::from_ref)
@@ -201,18 +201,18 @@ impl OptimizerFieldStats {
             *frequencies.entry(value).or_insert(0) += 1;
         }
         let sample_distinct = frequencies.len().max(1);
-        let distinct = if sample_rows == relation.fact_count || sample_distinct <= sample_rows / 16
-        {
-            sample_distinct
-        } else {
-            sample_distinct
-                .saturating_mul(relation.fact_count.max(1))
-                .div_ceil(sample_rows.max(1))
-                .min(relation.fact_count.max(1))
-        };
+        let distinct =
+            if sample_facts == relation.fact_count || sample_distinct <= sample_facts / 16 {
+                sample_distinct
+            } else {
+                sample_distinct
+                    .saturating_mul(relation.fact_count.max(1))
+                    .div_ceil(sample_facts.max(1))
+                    .min(relation.fact_count.max(1))
+            };
         let min = frequencies.keys().next().cloned();
         let max = frequencies.keys().next_back().cloned();
-        let heavy_hitter_floor = (sample_rows / 10).max(2);
+        let heavy_hitter_floor = (sample_facts / 10).max(2);
         let mut heavy_hitters = frequencies
             .iter()
             .filter(|(_, count)| **count >= heavy_hitter_floor)
@@ -287,7 +287,7 @@ impl OptimizerIndexStats {
         }
     }
 
-    pub(crate) fn estimated_rows_for_prefix(&self, prefix_len: usize) -> u64 {
+    pub(crate) fn estimated_facts_for_prefix(&self, prefix_len: usize) -> u64 {
         if prefix_len == 0 {
             return self.facts.max(1) as u64;
         }

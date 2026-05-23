@@ -21,7 +21,7 @@ pub struct ReferenceDb {
 
 impl ReferenceDb {
     /// Builds a reference DB from logical facts.
-    pub fn from_rows(facts: impl IntoIterator<Item = Fact>) -> Self {
+    pub fn from_facts(facts: impl IntoIterator<Item = Fact>) -> Self {
         let mut by_relation: BTreeMap<String, BTreeSet<Fact>> = BTreeMap::new();
         for fact in facts {
             by_relation
@@ -140,23 +140,23 @@ fn match_atom(
 ) -> Result<Option<Binding>> {
     let mut next = binding.clone();
     for field in &atom.fields {
-        let Some(row_value) = fact.value(&field.field) else {
+        let Some(fact_value) = fact.value(&field.field) else {
             return Ok(None);
         };
         match &field.term {
             TypedTerm::Variable(variable) => {
-                if !next.bind(*variable, row_value.clone()) {
+                if !next.bind(*variable, fact_value.clone()) {
                     return Ok(None);
                 }
             }
             TypedTerm::Input(input) => {
                 let input_value = input_value(query, inputs, *input)?;
-                if input_value != row_value {
+                if input_value != fact_value {
                     return Ok(None);
                 }
             }
             TypedTerm::Literal(literal) => {
-                if literal_to_value(literal)? != *row_value {
+                if literal_to_value(literal)? != *fact_value {
                     return Ok(None);
                 }
             }
@@ -539,8 +539,8 @@ mod tests {
     }
 
     #[test]
-    fn from_rows_deduplicates_projection_input_rows() -> TestResult {
-        let db = ReferenceDb::from_rows([
+    fn from_facts_deduplicates_projection_input_facts() -> TestResult {
+        let db = ReferenceDb::from_facts([
             Fact::new("Item", [("id", Value::U64(1))]),
             Fact::new("Item", [("id", Value::U64(1))]),
         ]);
@@ -558,8 +558,8 @@ mod tests {
     }
 
     #[test]
-    fn from_rows_deduplicates_count_input_rows() -> TestResult {
-        let db = ReferenceDb::from_rows([
+    fn from_facts_deduplicates_count_input_facts() -> TestResult {
+        let db = ReferenceDb::from_facts([
             Fact::new("Item", [("id", Value::U64(1))]),
             Fact::new("Item", [("id", Value::U64(1))]),
         ]);
@@ -577,8 +577,8 @@ mod tests {
     }
 
     #[test]
-    fn global_count_over_empty_input_returns_zero_row() -> TestResult {
-        let db = ReferenceDb::from_rows([]);
+    fn global_count_over_empty_input_returns_zero_fact() -> TestResult {
+        let db = ReferenceDb::from_facts([]);
         let query = item_query(|query| {
             query.rel("Item")?.var("id", "id")?.done();
             query.find_count_domain(["id"])?;
