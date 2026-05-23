@@ -132,7 +132,81 @@ fn execute_query_cache_is_schema_fingerprint_scoped() -> TestResult {
 
     assert_eq!(item.plan.query_image_cache.builds, 1);
     assert_eq!(edge.plan.query_image_cache.builds, 2);
-    assert_eq!(edge.plan.query_image_cache.cached_images, 2);
+    assert_eq!(edge.plan.query_image_cache.cached_images, 1);
+    Ok(())
+}
+
+#[test]
+fn focused_query_image_scope_loads_fewer_fields_and_accesses() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(
+        bumbledb_core::schema::SchemaDescriptor::new(
+            "FocusedImageDb",
+            vec![
+                RelationDescriptor::new(
+                    "Item",
+                    vec![
+                        FieldDescriptor::new("id", ValueType::U64),
+                        FieldDescriptor::new("kind", ValueType::U64),
+                        FieldDescriptor::new("owner", ValueType::U64),
+                        FieldDescriptor::new("payload", ValueType::U64),
+                    ],
+                )
+                .with_unique("id", ["id"])
+                .with_index(IndexDescriptor::equality("by_kind", ["kind", "id"]))
+                .with_index(IndexDescriptor::equality("by_owner", ["owner", "id"])),
+            ],
+        ),
+        env.max_key_size(),
+    )?;
+    env.write(|txn| {
+        txn.insert(
+            &schema,
+            Fact::new(
+                "Item",
+                [
+                    ("id", Value::U64(1)),
+                    ("kind", Value::U64(7)),
+                    ("owner", Value::U64(9)),
+                    ("payload", Value::U64(11)),
+                ],
+            ),
+        )?;
+        Ok::<_, Error>(())
+    })?;
+    let query = typed_query(&schema, |query| {
+        query
+            .rel("Item")?
+            .var("id", "id")?
+            .input("kind", "kind")?
+            .done();
+        query.find_var("id")?;
+        Ok(())
+    })?;
+    let normalized = env.read(|txn| normalize_query(txn, &schema, &query))?;
+    let focused_scope = query_image_scope_for_query(&schema, &normalized);
+    let focused = env.read(|txn| {
+        crate::query_image::QueryImageBuilder::new(txn, &schema, focused_scope).build()
+    })?;
+    let full = env.query_image(&schema)?;
+    let focused_item = focused
+        .relation("Item")
+        .ok_or_else(|| Error::internal("missing focused Item image"))?;
+    let full_item = full
+        .relation("Item")
+        .ok_or_else(|| Error::internal("missing full Item image"))?;
+
+    assert!(focused_item.fields.len() < full_item.fields.len());
+    assert!(focused_item.indexes().len() < full_item.indexes().len());
+    assert!(focused_item.field(FieldId(0)).is_some());
+    assert!(focused_item.field(FieldId(3)).is_none());
+    assert!(focused_item
+        .encoded(crate::query_image::FactId(0), FieldId(0))
+        .is_some());
+    assert!(focused_item
+        .encoded(crate::query_image::FactId(0), FieldId(3))
+        .is_none());
     Ok(())
 }
 

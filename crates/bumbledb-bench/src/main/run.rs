@@ -60,28 +60,6 @@ fn run_dataset(
             dataset.name, bumble_load.value, bumble_load.elapsed
         );
     }
-    let query_image_stats = if dataset.fact_source.is_some() {
-        QueryImageBenchStats::empty()
-    } else {
-        let stats = bumble_env.query_image_stats(&bumble_schema)?;
-        QueryImageBenchStats {
-            relation_count: stats.relation_count,
-            fact_count: stats.fact_count,
-            encoded_column_bytes: stats.encoded_column_bytes,
-            build_micros: stats.build_micros,
-        }
-    };
-    if format.includes_text() {
-        if dataset.fact_source.is_some() {
-            println!("query_image eager_build=skipped_for_streaming_dataset");
-        } else {
-            println!(
-                "query_image build_micros={}",
-                query_image_stats.build_micros,
-            );
-        }
-    }
-
     let sqlite_dir = tempfile::tempdir()?;
     let mut sqlite = if dataset.fact_source.is_some() {
         Connection::open(sqlite_dir.path().join("sqlite-bench.db"))?
@@ -184,7 +162,6 @@ fn run_dataset(
                 bumbledb_samples: bumble_samples,
                 sqlite_samples,
             },
-            query_image_stats,
         );
         emit_profile_summary(dataset.name, query.name, &bumble_output);
         if format.includes_text() {

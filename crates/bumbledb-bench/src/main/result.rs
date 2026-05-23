@@ -5,7 +5,6 @@ fn benchmark_result(
     cache_hits: CacheHitStats,
     correctness_mode: CorrectnessMode,
     timing: QueryTimingSamples,
-    query_image_stats: QueryImageBenchStats,
 ) -> BenchmarkRunResult {
     let final_output_values = (output.result.facts.len() * output.result.columns.len()) as u64;
     let output_contains_dictionary_values = output
@@ -53,7 +52,6 @@ fn benchmark_result(
         counters: output.plan.counters.clone(),
         final_output_values,
         output_contains_dictionary_values,
-        query_image_build_micros: query_image_stats.build_micros,
         query_image_built_during_query: output.plan.timings.query_image_micros > 0,
         query_image_cache_cached_images: output.plan.query_image_cache.cached_images,
         query_image_cache_hits: output.plan.query_image_cache.hits,
@@ -66,9 +64,6 @@ fn benchmark_result(
         planner_stats_builds: output.plan.planner_stats.builds,
         planner_stats_build_micros: output.plan.planner_stats.build_micros,
         lftj_lazy_access_slices: output.plan.counters.lftj_lazy_access_slices,
-        query_image_relation_count: query_image_stats.relation_count,
-        query_image_fact_count: query_image_stats.fact_count,
-        query_image_encoded_column_bytes: query_image_stats.encoded_column_bytes,
         gate,
     }
 }

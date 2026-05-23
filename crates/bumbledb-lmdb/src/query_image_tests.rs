@@ -497,7 +497,7 @@ fn field(relation: &RelationImage, field: FieldId) -> Result<&FieldImage> {
 fn column(relation: &RelationImage, field: FieldId) -> Result<&ColumnImage> {
     relation
         .columns
-        .get(field.0 as usize)
+        .get(&field)
         .ok_or_else(|| crate::Error::internal(format!("missing column {}", field.0)))
 }
 

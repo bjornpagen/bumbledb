@@ -101,7 +101,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "]}},\"counters\":{{\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"encoded_project_facts_seen\":{},\"encoded_project_facts_inserted\":{},\"encoded_project_fact_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"lftj_lazy_access_slices\":{},\"query_image_relations_loaded\":{},\"query_image_facts_loaded\":{},\"query_image_encoded_bytes\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            "]}},\"counters\":{{\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"encoded_project_facts_seen\":{},\"encoded_project_facts_inserted\":{},\"encoded_project_fact_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"lftj_lazy_access_slices\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.dictionary_reverse_lookups,
             result.materialized_values,
             result.counters.bindings_completed,
@@ -120,9 +120,6 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.counters.lftj_bind_rejects,
             result.counters.lftj_completed_bindings,
             result.counters.lftj_lazy_access_slices,
-            result.query_image_relation_count,
-            result.query_image_fact_count,
-            result.query_image_encoded_column_bytes,
             result.gate.passed,
         );
         for (note_index, note) in result.gate.notes.iter().enumerate() {

@@ -114,10 +114,10 @@ Completed and deleted PRDs:
 11. `11-replace-eager-sorted-trie-fallback.md`
 12. `12-delete-sorted-trie-cache-and-temp-builds.md`
 13. `13-delete-stale-diagnostics-and-bench-mechanics.md`
+14. `14-minimize-query-image-and-cache.md`
 
 Remaining ordered PRDs:
 
-14. `14-minimize-query-image-and-cache.md`
 15. `15-seal-typed-ir-and-public-query-surface.md`
 16. `16-minimize-storage-api.md`
 17. `17-hard-module-split-gate.md`

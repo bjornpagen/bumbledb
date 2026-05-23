@@ -36,7 +36,6 @@ struct BenchmarkRunResult {
     counters: PlanCounters,
     final_output_values: u64,
     output_contains_dictionary_values: bool,
-    query_image_build_micros: u128,
     query_image_built_during_query: bool,
     query_image_cache_cached_images: usize,
     query_image_cache_hits: u64,
@@ -49,9 +48,6 @@ struct BenchmarkRunResult {
     planner_stats_builds: u64,
     planner_stats_build_micros: u64,
     lftj_lazy_access_slices: u64,
-    query_image_relation_count: usize,
-    query_image_fact_count: usize,
-    query_image_encoded_column_bytes: usize,
     gate: GateOutcome,
 }
 
@@ -99,25 +95,6 @@ impl TimingStats {
             p50: percentile(&samples, 50),
             p95: percentile(&samples, 95),
             max: samples[samples.len() - 1],
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct QueryImageBenchStats {
-    relation_count: usize,
-    fact_count: usize,
-    encoded_column_bytes: usize,
-    build_micros: u128,
-}
-
-impl QueryImageBenchStats {
-    fn empty() -> Self {
-        Self {
-            relation_count: 0,
-            fact_count: 0,
-            encoded_column_bytes: 0,
-            build_micros: 0,
         }
     }
 }

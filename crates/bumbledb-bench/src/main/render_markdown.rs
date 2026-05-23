@@ -1,12 +1,12 @@
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | facts | sqlite materialized | bumbledb avg us | sqlite avg us | sqlite ratio | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | lazy access slices | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | facts | sqlite materialized | bumbledb avg us | sqlite avg us | sqlite ratio | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | lazy access slices | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.facts,
@@ -14,7 +14,6 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             duration_micros(result.bumbledb_avg),
             duration_micros(result.sqlite_avg),
             result.sqlite_ratio,
-            result.query_image_build_micros,
             result.query_image_built_during_query,
             result.query_image_cache_cached_images,
             result.query_image_cache_hits,
@@ -192,7 +191,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     out.push_str("\n## Interpretation Notes\n\n");
     out.push_str("| signal | interpretation |\n");
     out.push_str("|---|---|\n");
-    out.push_str("| high image us | QueryImage acquisition or access-image build bottleneck |\n");
+    out.push_str("| high image us | Snapshot image acquisition or access-image build bottleneck |\n");
     out.push_str(
         "| high plan us | stats, variable ordering, or Free Join optimization bottleneck |\n",
     );

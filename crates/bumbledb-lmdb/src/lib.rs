@@ -22,6 +22,7 @@ mod storage_schema;
 
 use std::fs;
 use std::path::Path;
+#[cfg(test)]
 use std::sync::Arc;
 
 use heed::types::Bytes;
@@ -36,8 +37,10 @@ pub use query::{
     AllocationPhaseStats, InputBindings, PlanCounters, QueryAllocationStats, QueryOutput,
     QueryPlan, QueryResultSet, QueryTimings, ResultColumn, ResultFact,
 };
-pub(crate) use query_image::{EncodedRef, QueryImage, QueryImageCache, RelationImage};
-pub use query_image::{FieldId, QueryImageCacheDiagnostics, QueryImageStats, RelationId};
+pub use query_image::QueryImageCacheDiagnostics;
+pub(crate) use query_image::{
+    EncodedRef, FieldId, QueryImage, QueryImageCache, RelationId, RelationImage,
+};
 pub(crate) use sorted_trie::{EncodedOwned, LinearIter, TrieIter};
 pub use storage::{
     DeleteOutcome, EncodedComponent, Fact, FactCursor, FactCursorRecord, FieldValues,
@@ -299,12 +302,8 @@ impl Environment {
         })
     }
 
-    /// Returns query image statistics for the latest committed snapshot.
-    pub fn query_image_stats(&self, schema: &StorageSchema) -> Result<QueryImageStats> {
-        self.query_image(schema).map(|image| image.stats().clone())
-    }
-
     /// Returns the immutable query image for the latest committed snapshot.
+    #[cfg(test)]
     pub(crate) fn query_image(&self, schema: &StorageSchema) -> Result<Arc<QueryImage>> {
         self.read(|txn| self.query_images.get_or_build(txn, schema))
     }

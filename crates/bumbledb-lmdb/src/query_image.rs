@@ -12,6 +12,8 @@ use crate::planner_stats::{PlannerStatsCache, PlannerStatsCacheDiagnostics};
 use crate::storage_schema::FACT_SET_ACCESS_NAME;
 use crate::{AccessId, Error, ReadTxn, Result, StorageSchema};
 
+const QUERY_IMAGE_CACHE_MAX_IMAGES: usize = 32;
+
 /// Cache key for an immutable query image.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct QueryImageKey {
@@ -56,6 +58,7 @@ impl Ord for QueryImageKey {
 
 impl QueryImageScope {
     /// Full-schema image scope.
+    #[cfg(test)]
     pub fn full(schema: &StorageSchema) -> Self {
         let relations = schema
             .descriptor()
@@ -85,6 +88,7 @@ impl QueryImageScope {
     }
 
     /// Scope containing all fields and indexes for selected relations.
+    #[cfg(test)]
     pub fn relations_all(
         schema: &StorageSchema,
         relation_ids: impl IntoIterator<Item = RelationId>,
@@ -107,6 +111,40 @@ impl QueryImageScope {
                     indexes,
                     include_all_columns: true,
                     include_all_indexes: true,
+                },
+            );
+        }
+        Self { relations }
+    }
+
+    pub(crate) fn relations_scoped(
+        schema: &StorageSchema,
+        scopes: BTreeMap<RelationId, (BTreeSet<FieldId>, BTreeSet<AccessId>)>,
+    ) -> Self {
+        let mut relations = BTreeMap::new();
+        for (relation_id, (columns, indexes)) in scopes {
+            let Some(relation) = schema.descriptor().relations.get(relation_id.0 as usize) else {
+                continue;
+            };
+            let columns = columns
+                .into_iter()
+                .filter(|field| (field.0 as usize) < relation.fields.len())
+                .collect();
+            let valid_indexes = schema
+                .layouts_for_relation(relation_id.0)
+                .map(|layout| AccessId(layout.index_id))
+                .collect::<BTreeSet<_>>();
+            let indexes = indexes
+                .into_iter()
+                .filter(|index| valid_indexes.contains(index))
+                .collect();
+            relations.insert(
+                relation_id,
+                RelationScope {
+                    columns,
+                    indexes,
+                    include_all_columns: false,
+                    include_all_indexes: false,
                 },
             );
         }
@@ -188,6 +226,10 @@ pub struct QueryImage {
         expect(dead_code, reason = "name lookup is used by tests/diagnostics")
     )]
     relation_by_name: BTreeMap<String, RelationId>,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "query image stats are retained for tests")
+    )]
     stats: QueryImageStats,
     planner_stats: PlannerStatsCache,
 }
@@ -252,6 +294,7 @@ impl QueryImage {
     }
 
     /// Returns memory/build statistics for this image.
+    #[cfg(test)]
     pub fn stats(&self) -> &QueryImageStats {
         &self.stats
     }
@@ -280,7 +323,7 @@ impl QueryImage {
                 hasher.update(field.name.as_bytes());
                 hasher.update(&(field.width as u64).to_be_bytes());
             }
-            for column in &relation.columns {
+            for column in relation.columns.values() {
                 column.hash_into(&mut hasher);
             }
         }
@@ -290,7 +333,7 @@ impl QueryImage {
 
 /// Query image build/cache statistics.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct QueryImageStats {
+pub(crate) struct QueryImageStats {
     /// Number of relation images.
     pub relation_count: usize,
     /// Total fact count across all relations.
@@ -315,7 +358,7 @@ pub struct RelationImage {
     /// Field metadata in declaration order.
     pub fields: Vec<FieldImage>,
     /// Encoded columns in declaration order.
-    pub columns: Vec<ColumnImage>,
+    pub columns: BTreeMap<FieldId, ColumnImage>,
     /// Durable sorted index images in access-path order when available.
     pub indexes: Vec<RelationIndexImage>,
     /// Relation image statistics.
@@ -487,7 +530,7 @@ impl<'a> Iterator for RelationIndexPrefixIter<'a> {
 impl RelationImage {
     /// Returns the encoded value for `fact` and `field`.
     pub(crate) fn encoded(&self, fact: FactId, field: FieldId) -> Option<EncodedRef<'_>> {
-        self.columns.get(field.0 as usize)?.encoded(fact)
+        self.columns.get(&field)?.encoded(fact)
     }
 
     /// Returns the encoded bytes for `fact` and `field`.
@@ -499,7 +542,7 @@ impl RelationImage {
     /// Returns field metadata by ID.
     #[cfg(test)]
     pub fn field(&self, field: FieldId) -> Option<&FieldImage> {
-        self.fields.get(field.0 as usize)
+        self.fields.iter().find(|candidate| candidate.id == field)
     }
 
     /// Returns durable sorted index images for this relation.
@@ -509,7 +552,7 @@ impl RelationImage {
 
     /// Encoded column byte footprint.
     pub fn encoded_column_bytes(&self) -> usize {
-        self.columns.iter().map(ColumnImage::byte_len).sum()
+        self.columns.values().map(ColumnImage::byte_len).sum()
     }
 
     /// Number of facts in this relation image.
@@ -708,17 +751,24 @@ impl EncodedColumnBuilder {
 pub(crate) fn encoded_column_builders(
     fields: &[FieldImage],
     capacity: usize,
-) -> Result<Vec<EncodedColumnBuilder>> {
+) -> Result<BTreeMap<FieldId, EncodedColumnBuilder>> {
     fields
         .iter()
-        .map(|field| EncodedColumnBuilder::with_capacity(field.id, field.width, capacity))
+        .map(|field| {
+            Ok((
+                field.id,
+                EncodedColumnBuilder::with_capacity(field.id, field.width, capacity)?,
+            ))
+        })
         .collect()
 }
 
-pub(crate) fn finish_column_builders(builders: Vec<EncodedColumnBuilder>) -> Vec<ColumnImage> {
+pub(crate) fn finish_column_builders(
+    builders: BTreeMap<FieldId, EncodedColumnBuilder>,
+) -> BTreeMap<FieldId, ColumnImage> {
     builders
         .into_iter()
-        .map(EncodedColumnBuilder::finish)
+        .map(|(field, builder)| (field, builder.finish()))
         .collect()
 }
 
@@ -848,6 +898,7 @@ pub struct QueryImageCacheDiagnostics {
 
 impl QueryImageCache {
     /// Returns an existing image for the read snapshot, or builds and caches one.
+    #[cfg(test)]
     pub fn get_or_build(
         &self,
         txn: &ReadTxn<'_>,
@@ -890,6 +941,7 @@ impl QueryImageCache {
             self.hits.fetch_add(1, Ordering::Relaxed);
             return Ok(existing);
         }
+        prune_query_image_cache_for_insert(&mut images, &key);
         images.insert(key, image.clone());
         self.builds.fetch_add(1, Ordering::Relaxed);
         self.build_micros.fetch_add(elapsed, Ordering::Relaxed);
@@ -905,6 +957,19 @@ impl QueryImageCache {
             builds: self.builds.load(Ordering::Relaxed),
             build_micros: self.build_micros.load(Ordering::Relaxed),
         }
+    }
+}
+
+fn prune_query_image_cache_for_insert(
+    images: &mut BTreeMap<QueryImageKey, Arc<QueryImage>>,
+    incoming: &QueryImageKey,
+) {
+    images.retain(|key, _| key.schema == incoming.schema && key.tx_id == incoming.tx_id);
+    while images.len() >= QUERY_IMAGE_CACHE_MAX_IMAGES {
+        let Some(oldest) = images.keys().next().cloned() else {
+            break;
+        };
+        images.remove(&oldest);
     }
 }
 
@@ -1020,22 +1085,43 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
             fact_set_access,
             &[],
         )?;
+        let mut fact_count = 0usize;
         for item in scan {
             let item = item?;
-            for (field_id, field) in self.relation.fields.iter().enumerate() {
+            fact_count = fact_count
+                .checked_add(1)
+                .ok_or_else(|| Error::internal("query image fact count overflow"))?;
+            for field_image in &fields {
+                let field = self
+                    .relation
+                    .fields
+                    .get(field_image.id.0 as usize)
+                    .ok_or_else(|| Error::corrupt("query image field id out of bounds"))?;
                 let component_index = *component_by_field
                     .get(field.name.as_str())
                     .ok_or_else(|| Error::corrupt("query image missing access component"))?;
                 let bytes = item
                     .component(&layout.components, component_index)
                     .ok_or_else(|| Error::corrupt("query image access component missing"))?;
-                builders[field_id].append_bytes(bytes)?;
+                builders
+                    .get_mut(&field_image.id)
+                    .ok_or_else(|| Error::corrupt("query image column builder missing"))?
+                    .append_bytes(bytes)?;
             }
         }
 
-        let fact_count = builders.first().map_or(0, EncodedColumnBuilder::len);
+        if fact_count > u32::MAX as usize {
+            return Err(Error::internal(
+                "query image fact count exceeds FactId width",
+            ));
+        }
+        for builder in builders.values() {
+            if builder.len() != fact_count {
+                return Err(Error::corrupt("query image column length mismatch"));
+            }
+        }
         let columns = finish_column_builders(builders);
-        let encoded_column_bytes = columns.iter().map(ColumnImage::byte_len).sum();
+        let encoded_column_bytes = columns.values().map(ColumnImage::byte_len).sum();
         let indexes = self
             .schema
             .layouts_for_relation(self.relation_id.0)
@@ -1104,6 +1190,7 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
+        let loaded_field_count = fields.len();
         Ok(BuiltRelationImage {
             relation: RelationImage {
                 id: self.relation_id,
@@ -1114,7 +1201,7 @@ impl<'a, 'env, 'schema> RelationImageBuilder<'a, 'env, 'schema> {
                 indexes,
                 stats: RelationStats {
                     fact_count,
-                    field_count: self.relation.fields.len(),
+                    field_count: loaded_field_count,
                     encoded_column_bytes,
                 },
             },
