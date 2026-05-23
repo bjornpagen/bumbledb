@@ -36,21 +36,20 @@ pub use free_join::{
 };
 pub use planner_stats::PlannerStatsCacheDiagnostics;
 pub use query::{
-    AllocationPhaseStats, CostKey, InputBindings, InputId, MissingIndexRecommendation,
-    NodeFactEstimate, NormAtom, NormAtomField, NormFindTerm, NormInput, NormOperand, NormPredicate,
-    NormTerm, NormVar, NormalizedQuery, OptimizerTrace, PlanCandidate, PlanCounters, PredicateId,
-    PreparedQuery, QueryAllocationStats, QueryNodeTiming, QueryOutput, QueryPlan,
-    QueryResultCardinality, QueryResultSet, QueryTimings, ResultColumn, ResultFact,
-    VariableEstimate,
+    AllocationPhaseStats, CostKey, InputBindings, MissingIndexRecommendation, NodeFactEstimate,
+    OptimizerTrace, PlanCandidate, PlanCounters, PreparedQuery, QueryAllocationStats,
+    QueryNodeTiming, QueryOutput, QueryPlan, QueryResultCardinality, QueryResultSet, QueryTimings,
+    ResultColumn, ResultFact, VariableEstimate,
+};
+pub(crate) use query_image::{
+    EncodedRef, FieldImage, QueryImage, QueryImageCache, RelationImage, RelationStats,
 };
 pub use query_image::{
-    ColumnImage, EncodedRef, FieldId, FieldImage, FixedColumn, PreparedPlanCacheDiagnostics,
-    QueryImage, QueryImageCache, QueryImageCacheDiagnostics, QueryImageKey, QueryImageStats,
-    RelationId, RelationImage, RelationIndexImage, RelationStats,
+    FieldId, PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics, QueryImageStats, RelationId,
 };
-pub use sorted_trie::{
-    EncodedOwned, IndexSpec, LinearIter, SortedTrieIndex, SortedTrieIter, TrieFrame, TrieIter,
-    TrieLevel, TrieStats,
+pub(crate) use sorted_trie::{
+    EncodedOwned, IndexSpec, LinearIter, SortedTrieIndex, SortedTrieIter, TrieIter, TrieLevel,
+    TrieStats,
 };
 pub use storage::{
     DeleteOutcome, EncodedComponent, Fact, FactCursor, FactCursorRecord, FieldValues,
@@ -312,8 +311,13 @@ impl Environment {
         })
     }
 
+    /// Returns query image statistics for the latest committed snapshot.
+    pub fn query_image_stats(&self, schema: &StorageSchema) -> Result<QueryImageStats> {
+        self.query_image(schema).map(|image| image.stats().clone())
+    }
+
     /// Returns the immutable query image for the latest committed snapshot.
-    pub fn query_image(&self, schema: &StorageSchema) -> Result<Arc<QueryImage>> {
+    pub(crate) fn query_image(&self, schema: &StorageSchema) -> Result<Arc<QueryImage>> {
         self.read(|txn| self.query_images.get_or_build(txn, schema))
     }
 
@@ -327,7 +331,8 @@ impl Environment {
     }
 
     /// Returns current query image cache diagnostics.
-    pub fn query_image_cache_diagnostics(&self) -> QueryImageCacheDiagnostics {
+    #[cfg(test)]
+    pub(crate) fn query_image_cache_diagnostics(&self) -> QueryImageCacheDiagnostics {
         self.query_images.diagnostics()
     }
 

@@ -68,12 +68,19 @@ impl IndexSpec {
 #[derive(Clone, Debug)]
 pub struct SortedTrieIndex {
     /// Relation this index belongs to.
+    #[expect(dead_code, reason = "sorted trie metadata is diagnostic")]
     pub relation: RelationId,
     /// Index name.
+    #[expect(dead_code, reason = "sorted trie metadata is diagnostic")]
     pub name: String,
     /// Field order for trie levels.
+    #[expect(dead_code, reason = "sorted trie metadata is diagnostic")]
     pub fields: Vec<FieldId>,
     /// Fact IDs sorted by this index's field order.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "fact order is currently test diagnostic")
+    )]
     pub order: Vec<FactId>,
     /// Distinct-value levels.
     pub levels: Vec<TrieLevel>,
@@ -228,10 +235,22 @@ pub trait TrieIter: LinearIter {
     /// Returns to the parent trie depth.
     fn up(&mut self);
     /// Current trie depth.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "depth is a diagnostic/test hook")
+    )]
     fn depth(&self) -> usize;
     /// Current fact range into sorted fact order.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "fact range is a diagnostic/test hook")
+    )]
     fn current_fact_range(&self) -> FactRange;
     /// Number of facts under the current key/range.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "count is a diagnostic/test hook")
+    )]
     fn count(&self) -> usize;
 }
 
@@ -256,6 +275,7 @@ pub struct TrieFrame {
 
 impl<'a> SortedTrieIter<'a> {
     /// Returns fact IDs under the current key.
+    #[cfg_attr(not(test), expect(dead_code, reason = "current facts are a test hook"))]
     pub fn current_facts(&self) -> &'a [FactId] {
         let range = self.current_fact_range();
         &self.index.order[range.start.0 as usize..range.end.0 as usize]

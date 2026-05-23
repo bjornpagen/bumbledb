@@ -196,8 +196,13 @@ impl<'a> EncodedRef<'a> {
 /// Immutable snapshot-local image used by the query runtime.
 #[derive(Clone, Debug)]
 pub struct QueryImage {
+    #[cfg_attr(not(test), expect(dead_code, reason = "query image key is diagnostic"))]
     key: QueryImageKey,
     relations: BTreeMap<RelationId, RelationImage>,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "name lookup is used by tests/diagnostics")
+    )]
     relation_by_name: BTreeMap<String, RelationId>,
     stats: QueryImageStats,
     planner_stats: PlannerStatsCache,
@@ -217,7 +222,7 @@ impl QueryImage {
             .values()
             .map(|relation| (relation.name.clone(), relation.id))
             .collect::<BTreeMap<_, _>>();
-        let relation_count = relation_by_name.len();
+        let relation_count = relations.len();
         let fact_count = relations.values().map(|relation| relation.fact_count).sum();
         let encoded_column_bytes = relations
             .values()
@@ -250,13 +255,9 @@ impl QueryImage {
     }
 
     /// Returns this image's cache key.
+    #[cfg(test)]
     pub fn key(&self) -> QueryImageKey {
         self.key.clone()
-    }
-
-    /// Returns all loaded relation images in relation-id order.
-    pub fn relations(&self) -> impl Iterator<Item = &RelationImage> {
-        self.relations.values()
     }
 
     /// Looks up a loaded relation image by ID.
@@ -265,6 +266,7 @@ impl QueryImage {
     }
 
     /// Looks up a relation image by name.
+    #[cfg(test)]
     pub fn relation(&self, name: &str) -> Option<&RelationImage> {
         let id = self.relation_by_name.get(name)?;
         self.relations.get(id)
@@ -538,6 +540,10 @@ pub struct RelationImage {
     /// Durable sorted index images in access-path order when available.
     pub indexes: Vec<RelationIndexImage>,
     /// Relation image statistics.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "relation stats are retained for diagnostics")
+    )]
     pub stats: RelationStats,
 }
 
@@ -570,11 +576,6 @@ pub struct RelationAccessComponent {
 }
 
 impl RelationIndexImage {
-    /// Number of encoded components in one index entry.
-    pub fn component_count(&self) -> usize {
-        self.components.len()
-    }
-
     /// Returns true when this encoded index entry layout contains `field`.
     pub fn contains_field(&self, field: FieldId) -> bool {
         self.components
@@ -602,30 +603,6 @@ impl RelationIndexImage {
         }
     }
 
-    /// Returns encoded entries whose leading component bytes are within a bounded range.
-    pub fn entries_with_prefix_bounds<'a>(
-        &'a self,
-        lower: &'a [u8],
-        upper: Option<&'a [u8]>,
-        upper_inclusive: bool,
-    ) -> RelationIndexRangeIter<'a> {
-        let end = upper.map_or_else(
-            || self.bytes.len() / self.encoded_len,
-            |upper| {
-                if upper_inclusive {
-                    self.upper_bound_prefix(upper)
-                } else {
-                    self.lower_bound_prefix(upper)
-                }
-            },
-        );
-        RelationIndexRangeIter {
-            index: self,
-            position: self.lower_bound_prefix(lower),
-            end,
-        }
-    }
-
     /// Returns the half-open entry-position range matching a leading component prefix.
     pub fn prefix_range(&self, prefix: &[u8]) -> Range<usize> {
         debug_assert!(prefix.len() <= self.encoded_len.saturating_sub(self.prefix_len));
@@ -635,6 +612,7 @@ impl RelationIndexImage {
     }
 
     /// Returns the number of encoded index entries matching a leading component prefix.
+    #[cfg(test)]
     pub fn prefix_count(&self, prefix: &[u8]) -> usize {
         debug_assert!(prefix.len() <= self.encoded_len.saturating_sub(self.prefix_len));
         let range = self.prefix_range(prefix);
@@ -642,6 +620,7 @@ impl RelationIndexImage {
     }
 
     /// Returns true when any encoded index entry matches a leading component prefix.
+    #[cfg(test)]
     pub fn prefix_exists(&self, prefix: &[u8]) -> bool {
         let range = self.prefix_range(prefix);
         range.start < range.end
@@ -722,26 +701,6 @@ impl<'a> Iterator for RelationIndexPrefixIter<'a> {
     }
 }
 
-/// Iterator over durable index entries in encoded leading-component order.
-pub struct RelationIndexRangeIter<'a> {
-    index: &'a RelationIndexImage,
-    position: usize,
-    end: usize,
-}
-
-impl<'a> Iterator for RelationIndexRangeIter<'a> {
-    type Item = &'a [u8];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.position >= self.end {
-            return None;
-        }
-        let entry = self.index.entry(self.position)?;
-        self.position += 1;
-        Some(entry)
-    }
-}
-
 impl RelationImage {
     /// Returns the encoded value for `fact` and `field`.
     pub(crate) fn encoded(&self, fact: FactId, field: FieldId) -> Option<EncodedRef<'_>> {
@@ -754,6 +713,7 @@ impl RelationImage {
     }
 
     /// Returns field metadata by ID.
+    #[cfg(test)]
     pub fn field(&self, field: FieldId) -> Option<&FieldImage> {
         self.fields.get(field.0 as usize)
     }
@@ -769,22 +729,26 @@ impl RelationImage {
     }
 
     /// Number of facts in this relation image.
+    #[cfg(test)]
     pub fn relation_cardinality(&self) -> usize {
         self.fact_count
     }
 
     /// Looks up an access image by ID.
+    #[cfg(test)]
     pub fn access(&self, access: AccessId) -> Option<&RelationIndexImage> {
         self.indexes.iter().find(|index| index.access == access)
     }
 
     /// Returns true if an access prefix exists.
+    #[cfg(test)]
     pub fn access_prefix_exists(&self, access: AccessId, prefix: &[u8]) -> bool {
         self.access(access)
             .is_some_and(|index| index.prefix_exists(prefix))
     }
 
     /// Returns the fact cardinality under an access prefix.
+    #[cfg(test)]
     pub fn access_prefix_cardinality(&self, access: AccessId, prefix: &[u8]) -> usize {
         self.access(access)
             .map_or(0, |index| index.prefix_count(prefix))
@@ -822,6 +786,7 @@ pub struct FieldImage {
 
 impl FieldImage {
     /// Fixed encoded width for this field.
+    #[cfg(test)]
     pub fn encoded_width(&self) -> usize {
         self.width
     }
@@ -840,6 +805,7 @@ impl<T> FixedColumn<T> {
     }
 
     /// Field ID stored by this column.
+    #[cfg(test)]
     pub fn field(&self) -> FieldId {
         self.field
     }
@@ -848,15 +814,11 @@ impl<T> FixedColumn<T> {
     pub fn len(&self) -> usize {
         self.values.len()
     }
-
-    /// True when this column has no values.
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
 }
 
 impl<T: Copy> FixedColumn<T> {
     /// Returns a copied value by fact ID.
+    #[cfg(test)]
     #[inline]
     pub fn get(&self, fact: FactId) -> Option<T> {
         self.values.get(fact.0 as usize).copied()
@@ -1006,6 +968,7 @@ impl ColumnImage {
     }
 
     /// Field ID stored by this column.
+    #[cfg(test)]
     pub fn field(&self) -> FieldId {
         match self {
             ColumnImage::Bool(column) => column.field(),
@@ -1015,6 +978,7 @@ impl ColumnImage {
     }
 
     /// Number of values in this column.
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         match self {
             ColumnImage::Bool(column) => column.len(),
@@ -1024,11 +988,13 @@ impl ColumnImage {
     }
 
     /// True when this column has no values.
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Fixed encoded width of values in this column.
+    #[cfg(test)]
     pub fn width(&self) -> usize {
         match self {
             ColumnImage::Bool(_) => 1,

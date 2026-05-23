@@ -63,13 +63,13 @@ fn run_dataset(
     let query_image_stats = if dataset.fact_source.is_some() {
         QueryImageBenchStats::empty()
     } else {
-        let query_image = bumble_env.query_image(&bumble_schema)?;
+        let stats = bumble_env.query_image_stats(&bumble_schema)?;
         QueryImageBenchStats {
-            relation_count: query_image.stats().relation_count,
-            fact_count: query_image.stats().fact_count,
-            encoded_column_bytes: query_image.stats().encoded_column_bytes,
-            sorted_trie_bytes: query_image.stats().sorted_trie_bytes,
-            build_micros: query_image.stats().build_micros,
+            relation_count: stats.relation_count,
+            fact_count: stats.fact_count,
+            encoded_column_bytes: stats.encoded_column_bytes,
+            sorted_trie_bytes: stats.sorted_trie_bytes,
+            build_micros: stats.build_micros,
         }
     };
     if format.includes_text() {
@@ -292,4 +292,3 @@ fn run_dataset(
 
     Ok(results)
 }
-
