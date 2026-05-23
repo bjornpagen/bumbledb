@@ -463,6 +463,51 @@ fn chain_query_uses_lftj_and_returns_path() -> TestResult {
 }
 
 #[test]
+fn lazy_access_slice_avoids_temp_trie_builds_and_matches_eager_fallback() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, Fact::new("A", [("id", Value::U64(1))]))?;
+        txn.insert(&schema, Fact::new("A", [("id", Value::U64(2))]))?;
+        txn.insert(&schema, b_fact(10, 1))?;
+        txn.insert(&schema, b_fact(11, 1))?;
+        txn.insert(&schema, b_fact(20, 2))?;
+        Ok::<_, Error>(())
+    })?;
+    let lazy_query = typed_query(&schema, |query| {
+        query.rel("A")?.var("id", "a")?.done();
+        query.rel("B")?.var("id", "b")?.var("a", "a")?.done();
+        query.find_var("a")?.find_var("b")?;
+        Ok(())
+    })?;
+    let eager_equivalent = typed_query(&schema, |query| {
+        query.rel("A")?.var("id", "a")?.done();
+        query.rel("B")?.var("id", "b")?.var("a", "a")?.done();
+        query.cmp(
+            OperandRef::var("a"),
+            ComparisonOperator::NotEq,
+            OperandRef::integer(999),
+        )?;
+        query.find_var("a")?.find_var("b")?;
+        Ok(())
+    })?;
+
+    let lazy = env.read(|txn| txn.execute_query(&schema, &lazy_query, &InputBindings::new()))?;
+    let eager =
+        env.read(|txn| txn.execute_query(&schema, &eager_equivalent, &InputBindings::new()))?;
+
+    assert_same_facts(&lazy.result.facts, &eager.result.facts);
+    assert_eq!(lazy.plan.counters.sorted_trie_builds, 0);
+    assert_eq!(lazy.plan.counters.atom_temp_relation_builds, 0);
+    assert_eq!(lazy.plan.counters.lftj_atom_bytes_copied, 0);
+    assert!(lazy.plan.counters.lftj_eager_builds_avoided >= 2);
+    assert!(eager.plan.counters.sorted_trie_builds > lazy.plan.counters.sorted_trie_builds);
+    assert!(eager.plan.counters.lftj_atom_bytes_copied > lazy.plan.counters.lftj_atom_bytes_copied);
+    Ok(())
+}
+
+#[test]
 fn chain_existence_filter_after_binding_returns_survivor() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
@@ -780,7 +825,7 @@ fn lftj_atom_cache_separates_prepared_input_local_comparison_filters() -> TestRe
 }
 
 #[test]
-fn lftj_atom_cache_reuses_tries_across_cross_atom_comparison_filters() -> TestResult {
+fn lftj_reuses_lazy_access_across_cross_atom_comparison_filters() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
@@ -801,7 +846,11 @@ fn lftj_atom_cache_reuses_tries_across_cross_atom_comparison_filters() -> TestRe
         assert_same_facts(&second.result.facts, &[vec![Value::U64(30)]]);
         assert_eq!(first.plan.runtime_kind, QueryRuntimeKind::Lftj);
         assert_eq!(second.plan.runtime_kind, QueryRuntimeKind::Lftj);
-        assert!(second.plan.counters.sorted_trie_cache_hits >= 2);
+        assert!(
+            second.plan.counters.sorted_trie_cache_hits
+                + second.plan.counters.lftj_eager_builds_avoided
+                >= 2
+        );
         Ok::<_, Error>(())
     })?;
 
@@ -1306,7 +1355,11 @@ fn planner_stats_are_cached_per_query_image() -> TestResult {
     assert!(second.plan.planner_stats.hits >= 1 || second.plan.prepared_plan_cache.hits >= 1);
     assert_eq!(second.plan.counters.sorted_trie_builds, 0);
     assert_eq!(second.plan.counters.atom_temp_relation_builds, 0);
-    assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
+    assert!(
+        second.plan.counters.sorted_trie_cache_hits
+            + second.plan.counters.lftj_eager_builds_avoided
+            >= 1
+    );
     Ok(())
 }
 

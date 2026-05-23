@@ -676,6 +676,8 @@ struct BenchmarkRunResult {
     sorted_trie_cache_hits: u64,
     sorted_trie_cache_misses: u64,
     sorted_trie_builds: u64,
+    lftj_lazy_access_slices: u64,
+    lftj_eager_builds_avoided: u64,
     atom_temp_relation_builds: u64,
     query_image_relation_count: usize,
     query_image_fact_count: usize,
@@ -1297,6 +1299,8 @@ fn benchmark_result(
         sorted_trie_cache_hits: output.plan.counters.sorted_trie_cache_hits,
         sorted_trie_cache_misses: output.plan.counters.sorted_trie_cache_misses,
         sorted_trie_builds: output.plan.counters.sorted_trie_builds,
+        lftj_lazy_access_slices: output.plan.counters.lftj_lazy_access_slices,
+        lftj_eager_builds_avoided: output.plan.counters.lftj_eager_builds_avoided,
         atom_temp_relation_builds: output.plan.counters.atom_temp_relation_builds,
         query_image_relation_count: query_image_stats.relation_count,
         query_image_fact_count: query_image_stats.fact_count,
@@ -1598,12 +1602,12 @@ fn job_cache_mode_avg_limit(
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | facts | compare mode | bumbledb materialized | sqlite materialized | cardinality | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | iterator ops | hash build est | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---|---|---|---|---:|---:|---:|---|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | facts | compare mode | bumbledb materialized | sqlite materialized | cardinality | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | lazy access slices | eager builds avoided | atom temp builds | iterator ops | hash build est | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---|---|---|---|---:|---:|---:|---|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.facts,
@@ -1632,6 +1636,8 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.sorted_trie_cache_hits,
             result.sorted_trie_cache_misses,
             result.sorted_trie_builds,
+            result.lftj_lazy_access_slices,
+            result.lftj_eager_builds_avoided,
             result.atom_temp_relation_builds,
             result.iterator_ops,
             result.hash_build_facts,
@@ -1989,7 +1995,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "]}},\"counters\":{{\"cursor_seeks\":{},\"facts_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_facts_seen\":{},\"encoded_project_facts_inserted\":{},\"encoded_project_fact_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"query_image_relations_loaded\":{},\"query_image_facts_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            "]}},\"counters\":{{\"cursor_seeks\":{},\"facts_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_facts_seen\":{},\"encoded_project_facts_inserted\":{},\"encoded_project_fact_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"lftj_lazy_access_slices\":{},\"lftj_eager_builds_avoided\":{},\"query_image_relations_loaded\":{},\"query_image_facts_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.counters.cursor_seeks,
             result.counters.facts_scanned,
             result.dictionary_reverse_lookups,
@@ -2011,6 +2017,8 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.counters.lftj_bind_successes,
             result.counters.lftj_bind_rejects,
             result.counters.lftj_completed_bindings,
+            result.counters.lftj_lazy_access_slices,
+            result.counters.lftj_eager_builds_avoided,
             result.query_image_relation_count,
             result.query_image_fact_count,
             result.query_image_encoded_column_bytes,
@@ -3366,6 +3374,8 @@ mod tests {
             sorted_trie_cache_hits: 1,
             sorted_trie_cache_misses: 1,
             sorted_trie_builds: 1,
+            lftj_lazy_access_slices: 0,
+            lftj_eager_builds_avoided: 0,
             atom_temp_relation_builds: 1,
             query_image_relation_count: 1,
             query_image_fact_count: 3,
@@ -3457,6 +3467,8 @@ mod tests {
             sorted_trie_cache_hits: 0,
             sorted_trie_cache_misses: 0,
             sorted_trie_builds: 0,
+            lftj_lazy_access_slices: 0,
+            lftj_eager_builds_avoided: 0,
             atom_temp_relation_builds: 0,
             query_image_relation_count: 1,
             query_image_fact_count: 2,
@@ -3490,6 +3502,7 @@ mod tests {
         assert!(json.contains("\"sink_emit_calls\""));
         assert!(json.contains("\"encoded_project_facts_seen\""));
         assert!(json.contains("\"lftj_next_calls\""));
+        assert!(json.contains("\"lftj_eager_builds_avoided\""));
         assert!(json.contains("\"allocations\""));
         assert!(json.contains("\"phases\""));
         assert!(json.contains("\"size_class_allocs\""));

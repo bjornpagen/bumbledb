@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
+use std::ops::Range;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -621,6 +622,14 @@ impl QueryPlan {
             self.counters.sorted_trie_build_micros
         ));
         out.push_str(&format!(
+            "  lftj_lazy_access_slices: {}\n",
+            self.counters.lftj_lazy_access_slices
+        ));
+        out.push_str(&format!(
+            "  lftj_eager_builds_avoided: {}\n",
+            self.counters.lftj_eager_builds_avoided
+        ));
+        out.push_str(&format!(
             "  atom_temp_relation_builds: {}\n",
             self.counters.atom_temp_relation_builds
         ));
@@ -1043,6 +1052,10 @@ pub struct PlanCounters {
     pub sorted_trie_builds: u64,
     /// Total sorted trie build time while preparing query atom indexes.
     pub sorted_trie_build_micros: u64,
+    /// Number of LFTJ atom sources backed directly by durable access slices.
+    pub lftj_lazy_access_slices: u64,
+    /// Number of eager sorted trie atom builds avoided by lazy access slices.
+    pub lftj_eager_builds_avoided: u64,
     /// Number of temporary atom relation images built on cache misses.
     pub atom_temp_relation_builds: u64,
     /// Number of source facts inspected while building temporary atom relations.
@@ -1229,50 +1242,57 @@ impl AccessEstimate {
     }
 }
 
-struct LftjAtomPlan {
+struct LftjAtomPlan<'a> {
     variables: Vec<usize>,
-    source: LftjAtomSource,
+    source: LftjAtomSource<'a>,
     fact_count: usize,
 }
 
-enum LftjAtomSource {
+enum LftjAtomSource<'a> {
     SortedTrie(Arc<SortedTrieIndex>),
+    LazyAccess(LazyAccessSlice<'a>),
 }
 
-impl LftjAtomSource {
-    fn iter(&self) -> LftjTrieIter<'_> {
+impl<'a> LftjAtomSource<'a> {
+    fn iter(&'a self) -> LftjTrieIter<'a> {
         match self {
             LftjAtomSource::SortedTrie(index) => LftjTrieIter::Sorted(index.iter()),
+            LftjAtomSource::LazyAccess(slice) => LftjTrieIter::Lazy(slice.iter()),
         }
     }
 }
 
 enum LftjTrieIter<'a> {
     Sorted(crate::SortedTrieIter<'a>),
+    Lazy(LazyAccessIter<'a>),
 }
 
 impl LinearIter for LftjTrieIter<'_> {
     fn key(&self) -> Option<crate::EncodedRef<'_>> {
         match self {
             LftjTrieIter::Sorted(iter) => iter.key(),
+            LftjTrieIter::Lazy(iter) => iter.key(),
         }
     }
 
     fn next(&mut self) {
         match self {
             LftjTrieIter::Sorted(iter) => iter.next(),
+            LftjTrieIter::Lazy(iter) => iter.next(),
         }
     }
 
     fn seek(&mut self, target: crate::EncodedRef<'_>) {
         match self {
             LftjTrieIter::Sorted(iter) => iter.seek(target),
+            LftjTrieIter::Lazy(iter) => iter.seek(target),
         }
     }
 
     fn at_end(&self) -> bool {
         match self {
             LftjTrieIter::Sorted(iter) => iter.at_end(),
+            LftjTrieIter::Lazy(iter) => iter.at_end(),
         }
     }
 }
@@ -1281,31 +1301,244 @@ impl TrieIter for LftjTrieIter<'_> {
     fn open(&mut self) {
         match self {
             LftjTrieIter::Sorted(iter) => iter.open(),
+            LftjTrieIter::Lazy(iter) => iter.open(),
         }
     }
 
     fn up(&mut self) {
         match self {
             LftjTrieIter::Sorted(iter) => iter.up(),
+            LftjTrieIter::Lazy(iter) => iter.up(),
         }
     }
 
     fn depth(&self) -> usize {
         match self {
             LftjTrieIter::Sorted(iter) => iter.depth(),
+            LftjTrieIter::Lazy(iter) => iter.depth(),
         }
     }
 
     fn current_fact_range(&self) -> FactRange {
         match self {
             LftjTrieIter::Sorted(iter) => iter.current_fact_range(),
+            LftjTrieIter::Lazy(iter) => iter.current_fact_range(),
         }
     }
 
     fn count(&self) -> usize {
         match self {
             LftjTrieIter::Sorted(iter) => iter.count(),
+            LftjTrieIter::Lazy(iter) => iter.count(),
         }
+    }
+}
+
+struct LazyAccessSlice<'a> {
+    index: &'a crate::query_image::RelationIndexImage,
+    fields: Vec<FieldId>,
+    range: Range<usize>,
+    fact_count: usize,
+}
+
+impl<'a> LazyAccessSlice<'a> {
+    fn iter(&'a self) -> LazyAccessIter<'a> {
+        LazyAccessIter {
+            index: self.index,
+            fields: &self.fields,
+            root: self.range.clone(),
+            stack: SmallVec::new(),
+        }
+    }
+}
+
+struct LazyAccessIter<'a> {
+    index: &'a crate::query_image::RelationIndexImage,
+    fields: &'a [FieldId],
+    root: Range<usize>,
+    stack: SmallVec<[LazyAccessFrame; 4]>,
+}
+
+#[derive(Clone, Copy)]
+struct LazyAccessFrame {
+    depth: usize,
+    begin: usize,
+    end: usize,
+    pos: usize,
+}
+
+impl LazyAccessIter<'_> {
+    fn current_frame(&self) -> Option<&LazyAccessFrame> {
+        self.stack.last()
+    }
+
+    fn current_frame_mut(&mut self) -> Option<&mut LazyAccessFrame> {
+        self.stack.last_mut()
+    }
+
+    fn component_at(&self, position: usize, field: FieldId) -> Option<crate::EncodedRef<'_>> {
+        let entry = self.index.entry_at(position)?;
+        let bytes = self.index.component_bytes(entry, field)?;
+        encoded_ref_for_width(bytes)
+    }
+
+    fn group_bounds(&self, frame: LazyAccessFrame) -> Range<usize> {
+        if frame.pos >= frame.end {
+            return frame.end..frame.end;
+        }
+        let field = self.fields[frame.depth];
+        let Some(key) = self
+            .component_at(frame.pos, field)
+            .map(|value| EncodedOwned::from_ref(value))
+        else {
+            return frame.end..frame.end;
+        };
+        let mut end = frame.pos + 1;
+        while end < frame.end {
+            let Some(next) = self.component_at(end, field) else {
+                break;
+            };
+            if compare_encoded_ref_owned(next, &key) != std::cmp::Ordering::Equal {
+                break;
+            }
+            end += 1;
+        }
+        frame.pos..end
+    }
+
+    fn group_start(&self, frame: LazyAccessFrame, position: usize) -> usize {
+        if position >= frame.end {
+            return frame.end;
+        }
+        let field = self.fields[frame.depth];
+        let Some(key) = self
+            .component_at(position, field)
+            .map(|value| EncodedOwned::from_ref(value))
+        else {
+            return position;
+        };
+        let mut start = position;
+        while start > frame.begin {
+            let Some(prev) = self.component_at(start - 1, field) else {
+                break;
+            };
+            if compare_encoded_ref_owned(prev, &key) != std::cmp::Ordering::Equal {
+                break;
+            }
+            start -= 1;
+        }
+        start
+    }
+}
+
+impl LinearIter for LazyAccessIter<'_> {
+    fn key(&self) -> Option<crate::EncodedRef<'_>> {
+        let frame = self.current_frame()?;
+        if frame.pos >= frame.end || frame.depth >= self.fields.len() {
+            return None;
+        }
+        self.component_at(frame.pos, self.fields[frame.depth])
+    }
+
+    fn next(&mut self) {
+        let Some(frame) = self.current_frame().copied() else {
+            return;
+        };
+        let end = self.group_bounds(frame).end;
+        if let Some(frame) = self.current_frame_mut() {
+            frame.pos = end;
+        }
+    }
+
+    fn seek(&mut self, target: crate::EncodedRef<'_>) {
+        let Some(frame) = self.current_frame().copied() else {
+            return;
+        };
+        if frame.depth >= self.fields.len() {
+            return;
+        }
+        let field = self.fields[frame.depth];
+        let mut low = frame.pos;
+        let mut high = frame.end;
+        while low < high {
+            let mid = low + (high - low) / 2;
+            let Some(value) = self.component_at(mid, field) else {
+                high = mid;
+                continue;
+            };
+            if compare_encoded_ref(value, target) == std::cmp::Ordering::Less {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        let pos = self.group_start(frame, low);
+        if let Some(frame) = self.current_frame_mut() {
+            frame.pos = pos;
+        }
+    }
+
+    fn at_end(&self) -> bool {
+        self.current_frame()
+            .is_none_or(|frame| frame.pos >= frame.end)
+    }
+}
+
+impl TrieIter for LazyAccessIter<'_> {
+    fn open(&mut self) {
+        let depth = self.stack.len();
+        if depth >= self.fields.len() {
+            self.stack.push(LazyAccessFrame {
+                depth,
+                begin: 0,
+                end: 0,
+                pos: 0,
+            });
+            return;
+        }
+        let range = if depth == 0 {
+            self.root.clone()
+        } else if let Some(parent) = self.current_frame().copied() {
+            self.group_bounds(parent)
+        } else {
+            0..0
+        };
+        self.stack.push(LazyAccessFrame {
+            depth,
+            begin: range.start,
+            end: range.end,
+            pos: range.start,
+        });
+    }
+
+    fn up(&mut self) {
+        self.stack.pop();
+    }
+
+    fn depth(&self) -> usize {
+        self.current_frame().map_or(0, |frame| frame.depth)
+    }
+
+    fn current_fact_range(&self) -> FactRange {
+        let Some(frame) = self.current_frame().copied() else {
+            return FactRange {
+                start: FactId(0),
+                end: FactId(0),
+            };
+        };
+        let range = self.group_bounds(frame);
+        FactRange {
+            start: FactId(range.start as u32),
+            end: FactId(range.end as u32),
+        }
+    }
+
+    fn count(&self) -> usize {
+        let Some(frame) = self.current_frame().copied() else {
+            return 0;
+        };
+        let range = self.group_bounds(frame);
+        range.end.saturating_sub(range.start)
     }
 }
 
@@ -1316,6 +1549,7 @@ struct LftjRuntime<'a> {
 
 type SmallParticipants = SmallVec<[usize; 4]>;
 type SmallEncodedFact = SmallVec<[EncodedOwned; 8]>;
+type LazyAccessShape = (Vec<u8>, usize, Vec<FieldId>);
 impl<'env> ReadTxn<'env> {
     /// Executes a typed positive query IR against current indexes.
     #[tracing::instrument(name = "bumbledb.query.execute", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
@@ -1993,6 +2227,15 @@ fn encoded_owned_for_width(width: usize, bytes: &[u8]) -> Result<EncodedOwned> {
     }
 }
 
+fn encoded_ref_for_width(bytes: &[u8]) -> Option<crate::EncodedRef<'_>> {
+    match bytes.len() {
+        1 => Some(crate::EncodedRef::One(bytes.try_into().ok()?)),
+        8 => Some(crate::EncodedRef::Eight(bytes.try_into().ok()?)),
+        16 => Some(crate::EncodedRef::Sixteen(bytes.try_into().ok()?)),
+        _ => None,
+    }
+}
+
 fn execute_lftj<'txn, 'query, S: FactSink>(
     image: &crate::QueryImage,
     txn: &ReadTxn<'txn>,
@@ -2086,7 +2329,7 @@ fn execute_lftj<'txn, 'query, S: FactSink>(
 
 fn lftj_participants_by_variable(
     variable_count: usize,
-    atom_plans: &[LftjAtomPlan],
+    atom_plans: &[LftjAtomPlan<'_>],
 ) -> Vec<SmallParticipants> {
     let mut participants = vec![SmallParticipants::new(); variable_count];
     for (atom_id, atom) in atom_plans.iter().enumerate() {
@@ -2165,7 +2408,7 @@ fn lftj_prefix_has_binding(
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
     variable_order_ids: &[usize],
-    atom_plans: &[LftjAtomPlan],
+    atom_plans: &[LftjAtomPlan<'_>],
     max_depth: usize,
 ) -> Result<bool> {
     let participants_by_variable = lftj_participants_by_variable(query.vars.len(), atom_plans);
@@ -2531,33 +2774,44 @@ fn missing_trie_key_error() -> Error {
     Error::internal("trie key requested for exhausted iterator")
 }
 
-fn build_lftj_atom_plans(
-    image: &crate::QueryImage,
+fn build_lftj_atom_plans<'image>(
+    image: &'image crate::QueryImage,
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
     atoms: &[NormAtom],
     variable_order_ids: &[usize],
     counters: &mut PlanCounters,
-) -> Result<Vec<LftjAtomPlan>> {
+) -> Result<Vec<LftjAtomPlan<'image>>> {
     atoms
         .iter()
         .map(|atom| build_lftj_atom_plan(image, query, inputs, atom, variable_order_ids, counters))
         .collect()
 }
 
-fn build_lftj_atom_plan(
-    image: &crate::QueryImage,
+fn build_lftj_atom_plan<'image>(
+    image: &'image crate::QueryImage,
     query: &NormalizedQuery,
     inputs: &EncodedInputs,
     atom: &NormAtom,
     variable_order_ids: &[usize],
     counters: &mut PlanCounters,
-) -> Result<LftjAtomPlan> {
+) -> Result<LftjAtomPlan<'image>> {
     let source = image
         .relation_by_id(atom.relation)
         .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
     let variables = atom_variables_in_plan_order(atom, variable_order_ids);
     let local_comparisons = atom_local_comparison_predicates(query, atom);
+    if let Some(slice) =
+        lazy_lftj_access_slice(source, inputs, atom, &variables, &local_comparisons)?
+    {
+        counters.lftj_lazy_access_slices += 1;
+        counters.lftj_eager_builds_avoided += 1;
+        return Ok(LftjAtomPlan {
+            variables,
+            fact_count: slice.fact_count,
+            source: LftjAtomSource::LazyAccess(slice),
+        });
+    }
     let cache_key = lftj_atom_cache_key(atom, &variables, inputs, &local_comparisons);
     let cached = image.cached_sorted_trie(cache_key, || {
         if let Some(build) =
@@ -2607,6 +2861,136 @@ fn build_lftj_atom_plan(
         fact_count: cached.index.stats.fact_count,
         source: LftjAtomSource::SortedTrie(cached.index.clone()),
     })
+}
+
+fn lazy_lftj_access_slice<'a>(
+    source: &'a RelationImage,
+    inputs: &EncodedInputs,
+    atom: &NormAtom,
+    variables: &[usize],
+    local_comparisons: &[&NormPredicate],
+) -> Result<Option<LazyAccessSlice<'a>>> {
+    if variables.is_empty()
+        || variables.len() > 2
+        || !local_comparisons.is_empty()
+        || atom_repeats_variable(atom)
+    {
+        return Ok(None);
+    }
+
+    let mut best: Option<(usize, LazyAccessSlice<'a>)> = None;
+    for index in source.indexes() {
+        let Some((prefix, prefix_field_count, fields)) =
+            lazy_access_shape(index, inputs, atom, variables)?
+        else {
+            continue;
+        };
+        if !lazy_access_covers_atom(index, atom, variables, prefix_field_count, &fields) {
+            continue;
+        }
+        let range = index.prefix_range(&prefix);
+        let fact_count = range.end.saturating_sub(range.start);
+        let slice = LazyAccessSlice {
+            index,
+            fields,
+            range,
+            fact_count,
+        };
+        if best
+            .as_ref()
+            .is_none_or(|(existing, _)| fact_count < *existing)
+        {
+            best = Some((fact_count, slice));
+        }
+    }
+    Ok(best.map(|(_, slice)| slice))
+}
+
+fn lazy_access_shape(
+    index: &crate::query_image::RelationIndexImage,
+    inputs: &EncodedInputs,
+    atom: &NormAtom,
+    variables: &[usize],
+) -> Result<Option<LazyAccessShape>> {
+    let mut prefix = Vec::new();
+    let mut prefix_field_count = 0usize;
+    let mut fields = Vec::with_capacity(variables.len());
+    let mut variable_cursor = 0usize;
+    let mut saw_variable = false;
+
+    for field in &index.fields {
+        let Some(atom_field) = atom
+            .fields
+            .iter()
+            .find(|atom_field| atom_field.field == *field)
+        else {
+            break;
+        };
+        match &atom_field.term {
+            NormTerm::Input(input) if !saw_variable => {
+                let input = inputs
+                    .get(*input)
+                    .ok_or_else(|| Error::internal("missing normalized input"))?;
+                prefix.extend_from_slice(input.as_bytes());
+                prefix_field_count += 1;
+            }
+            NormTerm::Literal(literal) if !saw_variable => {
+                prefix.extend_from_slice(literal.as_bytes());
+                prefix_field_count += 1;
+            }
+            NormTerm::Var(variable)
+                if variable_cursor < variables.len()
+                    && variable.0 as usize == variables[variable_cursor] =>
+            {
+                saw_variable = true;
+                fields.push(atom_field.field);
+                variable_cursor += 1;
+                if variable_cursor == variables.len() {
+                    break;
+                }
+            }
+            NormTerm::Input(_) | NormTerm::Literal(_) | NormTerm::Var(_) | NormTerm::Wildcard => {
+                return Ok(None);
+            }
+        }
+    }
+
+    if variable_cursor == variables.len() {
+        Ok(Some((prefix, prefix_field_count, fields)))
+    } else {
+        Ok(None)
+    }
+}
+
+fn lazy_access_covers_atom(
+    index: &crate::query_image::RelationIndexImage,
+    atom: &NormAtom,
+    variables: &[usize],
+    prefix_field_count: usize,
+    fields: &[FieldId],
+) -> bool {
+    atom.fields.iter().all(|field| match &field.term {
+        NormTerm::Input(_) | NormTerm::Literal(_) => index.fields[..prefix_field_count]
+            .iter()
+            .any(|candidate| candidate == &field.field),
+        NormTerm::Var(variable) => {
+            variables.contains(&(variable.0 as usize))
+                && fields.iter().any(|candidate| candidate == &field.field)
+        }
+        NormTerm::Wildcard => true,
+    })
+}
+
+fn atom_repeats_variable(atom: &NormAtom) -> bool {
+    let mut seen = BTreeSet::new();
+    for field in &atom.fields {
+        if let NormTerm::Var(variable) = field.term
+            && !seen.insert(variable)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn build_durable_lftj_sorted_trie(
