@@ -2,33 +2,38 @@
 
 ## Status
 
-In progress. PRDs 01 through 15 have been completed, cancelled, or removed. The remaining suite starts from the current minimal Free Join state: one execution path, no public plan-cost optimizer, scoped query images, but still a broad storage API and oversized modules.
+Completed. The ordered final-collapse suite has been applied. Completed and cancelled PRD files were removed according to project policy.
 
-## Purpose
+## Result
 
-This suite is the final ordered contract for reducing Bumbledb to the smallest useful embedded set database whose only query execution architecture is Free Join.
+Bumbledb is reduced to a minimal embedded set database with one query execution architecture: Free Join with lazy durable access.
 
-The previous work removed the obvious direct/hash/static sidecars, aggregate/cardinality/prepared query APIs, fake optimizer/cost surface, single-variant node implementation indirection, explanatory plan structures, eager atom materialization, sorted-trie caches, stale counters, and broad query-image loading. The remaining work is not feature expansion. It is culling: narrow storage API exposure and split the large modules only after behavior is smaller.
+The final state keeps:
 
-## Non-Negotiable Rules
+- LMDB-backed embedded environment and transactions.
+- typed schema descriptors and schema validation.
+- fact insert, exact fact delete, and bulk ETL loading.
+- set query execution returning duplicate-free result facts.
+- tracing, benchmarks, allocation telemetry, fuzz checks, and correctness fixtures.
+- private scoped query images and private planner/runtime internals.
+
+The final state removes the obsolete alternate query paths, stale benchmark mechanics, broad query-image loading, broad public storage scans, and oversized source layout that motivated this suite.
+
+## Current Contract
 
 - Relations are sets of full facts.
 - Query results are sets of result facts.
-- The only query execution algorithm is Free Join.
-- LFTJ/sorted-leapfrog is an implementation technique inside Free Join, not a separate plan family.
-- Lazy access/COLT-style iteration is the target access abstraction.
-- No direct kernels, hash trie sidecars, static proof sidecars, alternate runtimes, or compatibility options may return.
-- No prepared-query cache, cardinality-only API, aggregate API, or public diagnostics survives unless a PRD explicitly keeps it.
-- No public plan-cost optimizer/candidate surface may return without a later feature PRD and a second real executable choice.
-- No plan field may exist only for explain output. If runtime does not consume it, delete it.
-- No benchmark field may preserve a deleted mechanic. Use actual surviving counters only.
-- Benchmarking and tracing stay.
-- Storage, schema validation, fact insert/delete, and set scans required by tests/benchmarks stay.
-- Completed PRD files are deleted after implementation.
+- Free Join is the only query execution algorithm.
+- LFTJ is an internal Free Join implementation technique.
+- Lazy durable access is the retained access abstraction.
+- Typed IR and the Rust public query interface remain unstable; execution-boundary validation rejects malformed IR.
+- Query images are private, scoped, bounded, and compact enough for the current embedded engine.
+- Raw storage cursors and encoded access components are not exported as public API.
+- Large source files are split by responsibility and checked by `scripts/check-line-counts.sh`.
 
 ## Validation Gate
 
-Every PRD that changes Rust must pass:
+The completed suite was validated with:
 
 ```text
 cargo fmt --all --check
@@ -36,9 +41,11 @@ cargo check --workspace --all-targets --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo check --manifest-path fuzz/Cargo.toml
+bash scripts/check-line-counts.sh
+git diff --check
 ```
 
-Every PRD that changes query behavior must additionally pass:
+Query-focused validation remains:
 
 ```text
 cargo test -p bumbledb-test-support --test golden_examples --all-features
@@ -46,98 +53,8 @@ cargo test -p bumbledb-test-support --test property_and_differential --all-featu
 cargo test -p bumbledb-test-support --test sqlite_comparison --all-features
 ```
 
-Benchmark renderer changes must also pass focused renderer tests:
+Benchmark renderer validation remains:
 
 ```text
-cargo test -p bumbledb-bench --bin bumbledb-bench renderer
+cargo test -p bumbledb-bench --bin bumbledb-bench renderer --all-features
 ```
-
-## Global Source Hygiene Gate
-
-After each PRD, Rust source and normative docs must have zero matches for concepts removed by that PRD and all prior completed PRDs. Future PRDs may name their own deletion targets until their PRD file is deleted.
-
-```text
-DirectKernel
-DirectChain
-IndexNestedLoop
-HashTrie
-hash_trie
-query_access
-StaticProof
-static_empty
-static_semijoin
-QueryExecutionOptions
-QueryRuntimeKind
-PlanFamily
-runtime_kind
-plan_family
-CostKey
-PlanCandidate
-OptimizerTrace
-PlanEstimates
-VariableEstimate
-NodeFactEstimate
-chosen_plan
-candidate_plan
-free_join_estimates
-iterator_ops
-build_facts
-SubAtom
-free_join_subatom
-FreeJoinLftj
-pure_lftj
-count-cache
-count_cache
-covering
-segment
-bag
-tuple
-row
-```
-
-The words `borrow` and Rust lifetime names are not part of this gate.
-
-## Ordered PRDs
-
-Completed and deleted PRDs:
-
-1. `01-delete-public-facade-crate.md`
-2. `02-minimize-public-lmdb-api.md`
-3. `03-seal-typed-ir-builder-boundary.md` as execution-boundary validation only; it is not a public API stability or field-privacy commitment.
-4. `04-delete-aggregate-query-surface.md`
-5. `05-delete-cardinality-only-query-api.md`
-6. `06-delete-prepared-query-and-plan-cache.md`
-7. `07-collapse-query-plan-diagnostics.md`
-8. `08-free-join-plan-execution-authority.md` partially; variable order now comes from `FreeJoinPlan`, but explanatory `SubAtom` plan data remains and must be deleted next.
-9. `09-delete-node-implementation-indirection.md`
-10. `10-delete-explanatory-free-join-plan-surface.md`
-11. `11-replace-eager-sorted-trie-fallback.md`
-12. `12-delete-sorted-trie-cache-and-temp-builds.md`
-13. `13-delete-stale-diagnostics-and-bench-mechanics.md`
-14. `14-minimize-query-image-and-cache.md`
-16. `16-minimize-storage-api.md`
-17. `17-hard-module-split-gate.md`
-
-Cancelled and deleted PRDs:
-
-15. `15-seal-typed-ir-and-public-query-surface.md`; the typed IR and public query interface are intentionally unstable right now, so freezing or sealing that boundary is not a final-collapse requirement.
-
-Remaining ordered PRDs:
-
-18. `18-final-collapse-gate.md`
-
-## Final Done Definition
-
-- Workspace has no placeholder public facade.
-- Public API exposes only embedded environment, schema, facts, values, set query execution, insert, delete, and required diagnostics.
-- Typed IR and the Rust public query interface remain unstable; execution-boundary validation must reject malformed IR.
-- Aggregate query surface is gone unless reintroduced by a later explicit feature PRD.
-- Cardinality-only and prepared-query APIs are gone.
-- FreeJoinPlan contains only data consumed by execution.
-- Lazy access replaces eager sorted-trie atom construction.
-- Sorted trie cache and temporary atom relation builds are gone.
-- No public plan-cost optimizer/candidate surface remains; variable-order scoring stays private.
-- Query image is scoped, bounded, compact, and private where possible.
-- Stale zero counters and benchmark columns for removed mechanics are gone.
-- Large source files are split below the suite limit.
-- Full validation and hygiene gates pass.

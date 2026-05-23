@@ -210,7 +210,7 @@ pub struct QueryPlan {
     /// Planner statistics cache diagnostics after planning.
     pub planner_stats: PlannerStatsCacheDiagnostics,
     /// Free Join physical plan IR.
-    pub free_join: FreeJoinPlan,
+    pub(crate) free_join: FreeJoinPlan,
     /// Coarse query phase timings.
     pub timings: QueryTimings,
     /// Allocation summary for this query, disabled by default.

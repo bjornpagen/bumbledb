@@ -26,7 +26,7 @@ pub use environment::{
     Environment, IndexDiagnostics, ReadTxn, RelationDiagnostics, StorageDiagnostics, WriteTxn,
 };
 pub use error::*;
-pub use free_join::{
+pub(crate) use free_join::{
     AccessId, AtomId, FreeJoinPlan, NodeId, OutputPlan, PlanNode, ProjectPlan, VarId,
 };
 pub use planner_stats::PlannerStatsCacheDiagnostics;

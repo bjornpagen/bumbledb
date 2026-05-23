@@ -151,7 +151,7 @@ The logical solution of a query is a set of variable bindings. Projection return
 
 ## Query Execution
 
-The retained execution backbone is Free Join/LFTJ plus fact-native projection/storage paths. Legacy product-of-fanout count kernels, aggregate surfaces, cardinality-only APIs, and scalar prepared caches were deleted because they encoded witness multiplicity or preserved mechanics outside the minimal set engine.
+The retained execution backbone is Free Join/LFTJ plus fact-native projection/storage paths. Legacy non-result-set query APIs and scalar caches were deleted because they encoded witness multiplicity or preserved mechanics outside the minimal set engine.
 
 Projection materialization uses a result-set sink. Duplicate projected facts are rejected before final output decoding.
 
@@ -168,7 +168,7 @@ pub struct QueryResultSet {
 }
 ```
 
-`QueryResultSet` is duplicate-free and canonicalized. There is no separate cardinality-only query API in the current minimal engine.
+`QueryResultSet` is duplicate-free and canonicalized. Result-set execution is the current query output contract.
 
 ## Benchmark Contract
 
@@ -233,4 +233,4 @@ Posting(id, nullable_field)
 GenericFact(entity, attribute, value)
 ```
 
-Historical, temporal, validity, status, ordering, hierarchy, soft delete, and derived aggregates should be represented as immutable event facts or derived query predicates, not nullable mutable columns.
+Historical, temporal, validity, status, ordering, hierarchy, soft delete, and derived summaries should be represented as immutable event facts or derived query predicates, not nullable mutable columns.

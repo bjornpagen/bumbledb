@@ -10,7 +10,7 @@ du -h "$trace_path"
 
 if [[ -n "$result_path" && -f "$result_path" ]]; then
   printf '\n== Query summary ==\n'
-  jq -r '.results[] | [.dataset,.query,.runtime,.plan_family,.bumbledb.avg_us,.sqlite.avg_us,.query_image_built_during_query,.counters.direct_kernel_rows,.counters.hash_index_build_rows,.counters.sorted_trie_builds,.counters.materialized_output_values,.gate.passed] | @tsv' "$result_path"
+  jq -r '.results[] | [.dataset,.query,.facts,.bumbledb.samples.avg_us,.sqlite.samples.avg_us,.query_image_built_during_query,.counters.lftj_next_calls,.counters.lftj_seek_calls,.counters.lftj_lazy_access_slices,.counters.materialized_output_values,.gate.passed] | @tsv' "$result_path"
 fi
 
 printf '\n== Span busy time by name ==\n'
