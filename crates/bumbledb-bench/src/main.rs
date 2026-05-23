@@ -686,8 +686,6 @@ struct BenchmarkRunResult {
     sorted_trie_cache_misses: u64,
     sorted_trie_builds: u64,
     atom_temp_relation_builds: u64,
-    hash_facts_returned: u64,
-    hash_distinct_emits: u64,
     query_image_relation_count: usize,
     query_image_fact_count: usize,
     query_image_encoded_column_bytes: usize,
@@ -1367,8 +1365,6 @@ fn benchmark_result(
         sorted_trie_cache_misses: output.plan.counters.sorted_trie_cache_misses,
         sorted_trie_builds: output.plan.counters.sorted_trie_builds,
         atom_temp_relation_builds: output.plan.counters.atom_temp_relation_builds,
-        hash_facts_returned: output.plan.counters.hash_facts_returned,
-        hash_distinct_emits: output.plan.counters.hash_distinct_emits,
         query_image_relation_count: query_image_stats.relation_count,
         query_image_fact_count: query_image_stats.fact_count,
         query_image_encoded_column_bytes: query_image_stats.encoded_column_bytes,
@@ -1708,12 +1704,12 @@ fn job_cache_mode_avg_limit(
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | facts | compare mode | bumbledb materialized | sqlite materialized | cardinality | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | hash facts | hash emits | iterator ops | hash build est | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---|---|---|---|---:|---:|---:|---|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | facts | compare mode | bumbledb materialized | sqlite materialized | cardinality | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | runtime | family | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | atom temp builds | iterator ops | hash build est | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---|---|---|---|---:|---:|---:|---|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.facts,
@@ -1743,8 +1739,6 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result.sorted_trie_cache_misses,
             result.sorted_trie_builds,
             result.atom_temp_relation_builds,
-            result.hash_facts_returned,
-            result.hash_distinct_emits,
             result.iterator_ops,
             result.hash_build_facts,
             result.materialized_values,
@@ -1801,15 +1795,15 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Phase Timing\n\n");
-    out.push_str("| dataset | query | runtime | total us | validate us | normalize us | encode us | image us | static empty lookup us | static literal proof us | static semijoin proof us | plan us | lftj build us | hash index us | execute us | lftj exec us | hash exec us | sink emit us | sink finish us | decode us | unaccounted us |\n");
+    out.push_str("| dataset | query | runtime | total us | validate us | normalize us | encode us | image us | static empty lookup us | static literal proof us | static semijoin proof us | plan us | lftj build us | execute us | lftj exec us | sink emit us | sink finish us | decode us | unaccounted us |\n");
     out.push_str(
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
     );
     for result in results {
         let timings = result.timings;
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             markdown_escape(&result.runtime_kind),
@@ -1823,10 +1817,8 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             timings.static_semijoin_proof_micros,
             timings.plan_micros,
             timings.lftj_build_micros,
-            timings.hash_index_micros,
             timings.execute_micros,
             timings.lftj_execute_micros,
-            timings.hash_execute_micros,
             timings.sink_emit_micros,
             timings.sink_finish_micros,
             timings.decode_micros,
@@ -1884,12 +1876,6 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             result,
             "lftj_build",
             result.allocations.lftj_build,
-        );
-        write_allocation_phase_fact(
-            &mut out,
-            result,
-            "hash_index",
-            result.allocations.hash_index,
         );
         write_allocation_phase_fact(&mut out, result, "execute", result.allocations.execute);
         write_allocation_phase_fact(
@@ -2064,7 +2050,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         let allocations = result.allocations;
         let _ = write!(
             out,
-            ",\"phase_timing\":{{\"scope\":\"{}\",\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"static_empty_lookup_us\":{},\"static_literal_proof_us\":{},\"static_semijoin_proof_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"hash_index_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"hash_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{},\"unaccounted_us\":{}}},\"allocations\":{{\"scope\":\"{}\",\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
+            ",\"phase_timing\":{{\"scope\":\"{}\",\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"static_empty_lookup_us\":{},\"static_literal_proof_us\":{},\"static_semijoin_proof_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{},\"unaccounted_us\":{}}},\"allocations\":{{\"scope\":\"{}\",\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
             json_escape(&result.allocation_scope),
             timings.total_micros,
             timings.validate_inputs_micros,
@@ -2076,10 +2062,8 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             timings.static_semijoin_proof_micros,
             timings.plan_micros,
             timings.lftj_build_micros,
-            timings.hash_index_micros,
             timings.execute_micros,
             timings.lftj_execute_micros,
-            timings.hash_execute_micros,
             timings.sink_emit_micros,
             timings.sink_finish_micros,
             timings.decode_micros,
@@ -2108,10 +2092,8 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         write_allocation_phase_json(&mut out, "query_image", allocations.query_image, false);
         write_allocation_phase_json(&mut out, "plan", allocations.plan, false);
         write_allocation_phase_json(&mut out, "lftj_build", allocations.lftj_build, false);
-        write_allocation_phase_json(&mut out, "hash_index", allocations.hash_index, false);
         write_allocation_phase_json(&mut out, "execute", allocations.execute, false);
         write_allocation_phase_json(&mut out, "lftj_execute", allocations.lftj_execute, false);
-        write_allocation_phase_json(&mut out, "hash_execute", allocations.hash_execute, false);
         write_allocation_phase_json(&mut out, "sink_finish", allocations.sink_finish, false);
         out.push_str("},\"size_class_allocs\":[");
         for (index, count) in allocations.size_class_allocs.iter().enumerate() {
@@ -2273,9 +2255,6 @@ fn print_explain(explain: &str) {
             || line.contains("sorted_trie_cache")
             || line.contains("sorted_trie_build")
             || line.contains("atom_temp_relation")
-            || line.contains("hash_index")
-            || line.contains("hash_facts")
-            || line.contains("hash_distinct")
             || line.contains("output_facts")
         {
             println!("  {line}");
@@ -3508,8 +3487,6 @@ mod tests {
             sorted_trie_cache_misses: 1,
             sorted_trie_builds: 1,
             atom_temp_relation_builds: 1,
-            hash_facts_returned: 1,
-            hash_distinct_emits: 1,
             query_image_relation_count: 1,
             query_image_fact_count: 3,
             query_image_encoded_column_bytes: 128,
@@ -3577,7 +3554,6 @@ mod tests {
             timings: QueryTimings {
                 total_micros: 20,
                 static_semijoin_proof_micros: 12,
-                hash_execute_micros: 4,
                 unaccounted_micros: 7,
                 ..QueryTimings::default()
             },
@@ -3605,8 +3581,6 @@ mod tests {
             sorted_trie_cache_misses: 0,
             sorted_trie_builds: 0,
             atom_temp_relation_builds: 0,
-            hash_facts_returned: 2,
-            hash_distinct_emits: 2,
             query_image_relation_count: 1,
             query_image_fact_count: 2,
             query_image_encoded_column_bytes: 1,
@@ -3636,7 +3610,6 @@ mod tests {
         assert!(json.contains("\"query_image_built_during_query\":true"));
         assert!(json.contains("\"phase_timing\""));
         assert!(json.contains("\"static_semijoin_proof_us\":12"));
-        assert!(json.contains("\"hash_execute_us\":4"));
         assert!(json.contains("\"unaccounted_us\":7"));
         assert!(json.contains("\"sink_emit_calls\""));
         assert!(json.contains("\"encoded_project_facts_seen\""));

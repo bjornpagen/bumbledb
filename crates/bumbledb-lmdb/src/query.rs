@@ -414,7 +414,7 @@ impl QueryPlan {
         ));
         out.push_str("timings:\n");
         out.push_str(&format!(
-            "  query_timing total_micros={} validate_inputs_micros={} normalize_micros={} encode_inputs_micros={} query_image_micros={} static_empty_lookup_micros={} static_literal_proof_micros={} static_semijoin_proof_micros={} plan_micros={} lftj_build_micros={} hash_index_micros={} execute_micros={} lftj_execute_micros={} hash_execute_micros={} sink_emit_micros={} sink_finish_micros={} decode_micros={} unaccounted_micros={}\n",
+            "  query_timing total_micros={} validate_inputs_micros={} normalize_micros={} encode_inputs_micros={} query_image_micros={} static_empty_lookup_micros={} static_literal_proof_micros={} static_semijoin_proof_micros={} plan_micros={} lftj_build_micros={} execute_micros={} lftj_execute_micros={} sink_emit_micros={} sink_finish_micros={} decode_micros={} unaccounted_micros={}\n",
             self.timings.total_micros,
             self.timings.validate_inputs_micros,
             self.timings.normalize_micros,
@@ -425,10 +425,8 @@ impl QueryPlan {
             self.timings.static_semijoin_proof_micros,
             self.timings.plan_micros,
             self.timings.lftj_build_micros,
-            self.timings.hash_index_micros,
             self.timings.execute_micros,
             self.timings.lftj_execute_micros,
-            self.timings.hash_execute_micros,
             self.timings.sink_emit_micros,
             self.timings.sink_finish_micros,
             self.timings.decode_micros,
@@ -463,9 +461,6 @@ impl QueryPlan {
         self.allocations
             .lftj_build
             .write_explain(&mut out, "lftj_build");
-        self.allocations
-            .hash_index
-            .write_explain(&mut out, "hash_index");
         self.allocations.execute.write_explain(&mut out, "execute");
         self.allocations
             .sink_finish
@@ -714,22 +709,6 @@ impl QueryPlan {
             self.counters.lftj_atom_sort_micros
         ));
         out.push_str(&format!(
-            "  hash_index_builds: {}\n",
-            self.counters.hash_index_builds
-        ));
-        out.push_str(&format!(
-            "  hash_index_build_facts: {}\n",
-            self.counters.hash_index_build_facts
-        ));
-        out.push_str(&format!(
-            "  hash_facts_returned: {}\n",
-            self.counters.hash_facts_returned
-        ));
-        out.push_str(&format!(
-            "  hash_distinct_emits: {}\n",
-            self.counters.hash_distinct_emits
-        ));
-        out.push_str(&format!(
             "  static_empty_atoms_checked: {}\n",
             self.counters.static_empty_atoms_checked
         ));
@@ -825,14 +804,10 @@ pub struct QueryTimings {
     pub plan_micros: u128,
     /// LFTJ atom plan/index preparation time.
     pub lftj_build_micros: u128,
-    /// Hash index lookup/build preparation time.
-    pub hash_index_micros: u128,
     /// Runtime execution time before sink finish.
     pub execute_micros: u128,
     /// LFTJ recursive execution time.
     pub lftj_execute_micros: u128,
-    /// Hash probe execution time.
-    pub hash_execute_micros: u128,
     /// Sink emit timing, zero until per-sink emit timing is enabled.
     pub sink_emit_micros: u128,
     /// Sink finalization/materialization time.
@@ -855,7 +830,6 @@ impl QueryTimings {
             .saturating_add(self.static_semijoin_proof_micros)
             .saturating_add(self.plan_micros)
             .saturating_add(self.lftj_build_micros)
-            .saturating_add(self.hash_index_micros)
             .saturating_add(self.execute_micros)
             .saturating_add(self.sink_finish_micros)
             .saturating_add(self.decode_micros)
@@ -965,14 +939,10 @@ pub struct QueryAllocationStats {
     pub plan: AllocationPhaseStats,
     /// LFTJ build allocation delta.
     pub lftj_build: AllocationPhaseStats,
-    /// Hash index allocation delta.
-    pub hash_index: AllocationPhaseStats,
     /// Runtime execution allocation delta.
     pub execute: AllocationPhaseStats,
     /// LFTJ execution allocation delta.
     pub lftj_execute: AllocationPhaseStats,
-    /// Hash execution allocation delta.
-    pub hash_execute: AllocationPhaseStats,
     /// Sink finalization allocation delta.
     pub sink_finish: AllocationPhaseStats,
 }
@@ -1223,14 +1193,6 @@ pub struct PlanCounters {
     pub lftj_atom_column_micros: u64,
     /// LFTJ atom sorted trie construction microseconds.
     pub lftj_atom_sort_micros: u64,
-    /// Number of hash trie indexes built for direct execution.
-    pub hash_index_builds: u64,
-    /// Number of source facts used to build hash indexes.
-    pub hash_index_build_facts: u64,
-    /// Number of fact IDs returned from hash prefix probes.
-    pub hash_facts_returned: u64,
-    /// Number of bindings emitted from hash-backed direct nodes.
-    pub hash_distinct_emits: u64,
     /// Number of encoded projection facts observed before set insertion.
     pub encoded_project_facts_seen: u64,
     /// Number of encoded projection facts inserted into the result set.
@@ -3964,7 +3926,7 @@ fn lftj_prefix_has_binding(
 ) -> Result<bool> {
     let participants_by_variable = lftj_participants_by_variable(query.vars.len(), atom_plans);
     let iters = atom_plans.iter().map(|atom| atom.source.iter()).collect();
-    let mut probe = LftjPrefixProbe {
+    let mut probe = LftjPrefixFilter {
         txn,
         query,
         inputs,
@@ -3978,7 +3940,7 @@ fn lftj_prefix_has_binding(
     probe.execute(0)
 }
 
-struct LftjPrefixProbe<'txn, 'input, 'query, 'image> {
+struct LftjPrefixFilter<'txn, 'input, 'query, 'image> {
     txn: &'input ReadTxn<'txn>,
     query: &'query NormalizedQuery,
     inputs: &'input EncodedInputs,
@@ -3990,7 +3952,7 @@ struct LftjPrefixProbe<'txn, 'input, 'query, 'image> {
     counters: PlanCounters,
 }
 
-impl LftjPrefixProbe<'_, '_, '_, '_> {
+impl LftjPrefixFilter<'_, '_, '_, '_> {
     fn execute(&mut self, depth: usize) -> Result<bool> {
         if depth > self.max_depth {
             return Ok(true);
