@@ -915,8 +915,6 @@ impl EncodedBinding {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ExecutionPlan {
-    variable_order_ids: Vec<usize>,
-    relation_atoms: Vec<NormAtom>,
     comparisons: Vec<NormPredicate>,
     summary: QueryPlan,
 }

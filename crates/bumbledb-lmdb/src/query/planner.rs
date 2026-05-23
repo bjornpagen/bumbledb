@@ -74,8 +74,6 @@ fn plan_query(
     let planner_stats = image.planner_stats_diagnostics();
 
     let execution_plan = ExecutionPlan {
-        variable_order_ids,
-        relation_atoms: query.atoms.clone(),
         comparisons: query.predicates.clone(),
         summary: QueryPlan {
             variable_order,

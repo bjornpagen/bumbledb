@@ -57,24 +57,13 @@ fn execute_lftj<'txn, 'query, S: FactSink>(
     plan: &mut ExecutionPlan,
     sink: &mut S,
 ) -> Result<()> {
-    let free_join_order = plan
-        .summary
-        .free_join
-        .nodes
-        .iter()
-        .flat_map(|node| node.bind_vars.iter().map(|var| var.0 as usize))
-        .collect::<Vec<_>>();
-    if free_join_order != plan.variable_order_ids {
-        return Err(Error::internal(
-            "free join node order does not match variable order",
-        ));
-    }
+    let variable_order_ids = free_join_variable_order_ids(&plan.summary.free_join)?;
     let build_start = Instant::now();
     let build_alloc_start = allocation::snapshot();
     let atom_plans = {
         let _span = tracing::debug_span!(
             "bumbledb.query.lftj.build",
-            atoms = plan.relation_atoms.len()
+            atoms = query.atoms.len()
         )
         .entered();
         if lftj_prefix_proves_empty(
@@ -82,8 +71,8 @@ fn execute_lftj<'txn, 'query, S: FactSink>(
             txn,
             query,
             inputs,
-            &plan.relation_atoms,
-            &plan.variable_order_ids,
+            &query.atoms,
+            &variable_order_ids,
             &mut plan.summary.counters,
         )? {
             None
@@ -92,8 +81,8 @@ fn execute_lftj<'txn, 'query, S: FactSink>(
                 image,
                 query,
                 inputs,
-                &plan.relation_atoms,
-                &plan.variable_order_ids,
+                &query.atoms,
+                &variable_order_ids,
                 &mut plan.summary.counters,
             )?)
         }
@@ -126,6 +115,7 @@ fn execute_lftj<'txn, 'query, S: FactSink>(
             inputs,
             plan,
             runtime,
+            variable_order_ids,
             binding: EncodedBinding::new(query.vars.len()),
             sink,
         };
@@ -138,6 +128,18 @@ fn execute_lftj<'txn, 'query, S: FactSink>(
         .saturating_add(elapsed_micros(execute_start));
     plan.summary.allocations.lftj_execute = allocation_delta_since(execute_alloc_start);
     result
+}
+
+fn free_join_variable_order_ids(plan: &FreeJoinPlan) -> Result<Vec<usize>> {
+    plan.nodes
+        .iter()
+        .map(|node| {
+            let [variable] = node.bind_vars.as_slice() else {
+                return Err(Error::internal("Free Join node must bind one variable"));
+            };
+            Ok(variable.0 as usize)
+        })
+        .collect()
 }
 
 fn lftj_participants_by_variable(
@@ -307,13 +309,14 @@ struct LftjExecutor<'txn, 'input, 'query, 'plan, 'image, S: FactSink> {
     inputs: &'input EncodedInputs,
     plan: &'plan mut ExecutionPlan,
     runtime: LftjRuntime<'image>,
+    variable_order_ids: Vec<usize>,
     binding: EncodedBinding,
     sink: &'plan mut S,
 }
 
 impl<S: FactSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
     fn execute(&mut self, depth: usize) -> Result<()> {
-        if depth == self.plan.variable_order_ids.len() {
+        if depth == self.variable_order_ids.len() {
             if comparisons_ready_pass(
                 self.txn,
                 &self.plan.comparisons,
@@ -342,7 +345,7 @@ impl<S: FactSink> LftjExecutor<'_, '_, '_, '_, '_, S> {
             return Ok(());
         }
 
-        let variable = self.plan.variable_order_ids[depth];
+        let variable = self.variable_order_ids[depth];
         let participants = self.participants(variable);
         if participants.is_empty() {
             return Err(Error::internal(format!(
@@ -586,4 +589,3 @@ fn compare_encoded_bytes(left: &[u8], right: &[u8]) -> std::cmp::Ordering {
 fn missing_trie_key_error() -> Error {
     Error::internal("trie key requested for exhausted iterator")
 }
-
