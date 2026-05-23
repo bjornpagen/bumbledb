@@ -17,7 +17,7 @@ use crate::query_image::{FactId, FactRange};
 use crate::{
     AtomId, EncodedOwned, Error, FieldId, FreeJoinPlan, IndexSpec, LinearIter, NodeId, OutputPlan,
     PlanNode, ProjectPlan, ReadTxn, RelationImage, RelationStats, Result, SortedTrieIndex,
-    StorageSchema, SubAtom, TrieIter, Value, VarId,
+    StorageSchema, TrieIter, Value, VarId,
 };
 
 use crate::QueryImageCacheDiagnostics;
@@ -338,24 +338,10 @@ impl QueryPlan {
         out.push_str("free_join_plan:\n");
         for node in &self.free_join.nodes {
             out.push_str(&format!(
-                "  free_join_node id={} bind_vars={:?} subatoms={}\n",
+                "  free_join_node id={} bind_vars={:?}\n",
                 node.id.0,
-                node.bind_vars.iter().map(|var| var.0).collect::<Vec<_>>(),
-                node.subatoms.len()
+                node.bind_vars.iter().map(|var| var.0).collect::<Vec<_>>()
             ));
-            for subatom in &node.subatoms {
-                out.push_str(&format!(
-                    "    free_join_subatom atom={} relation={} fields={:?} vars={:?}\n",
-                    subatom.atom_id.0,
-                    subatom.relation.0,
-                    subatom
-                        .fields
-                        .iter()
-                        .map(|field| field.0)
-                        .collect::<Vec<_>>(),
-                    subatom.vars.iter().map(|var| var.0).collect::<Vec<_>>()
-                ));
-            }
         }
         out.push_str("counters:\n");
         out.push_str(&format!("  cursor_seeks: {}\n", self.counters.cursor_seeks));

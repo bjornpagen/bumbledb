@@ -224,7 +224,6 @@ fn print_explain(explain: &str) {
             || line.contains("query_image_cache")
             || line.contains("planner_stats")
             || line.contains("free_join_node")
-            || line.contains("free_join_subatom")
             || line.contains("facts_scanned")
             || line.contains("cursor_seeks")
             || line.contains("trie_intersections")

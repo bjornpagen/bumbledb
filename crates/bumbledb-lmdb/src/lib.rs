@@ -29,7 +29,7 @@ use heed::{CompactionOption, Database, Env, EnvOpenOptions, RoTxn, RwTxn, Withou
 
 pub use error::*;
 pub use free_join::{
-    AccessId, AtomId, FreeJoinPlan, NodeId, OutputPlan, PlanNode, ProjectPlan, SubAtom, VarId,
+    AccessId, AtomId, FreeJoinPlan, NodeId, OutputPlan, PlanNode, ProjectPlan, VarId,
 };
 pub use planner_stats::PlannerStatsCacheDiagnostics;
 pub use query::{

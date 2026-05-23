@@ -24,7 +24,6 @@ fn plan_query(
         }
     };
     attach_predicate_depths(query, &variable_order_ids);
-    let relation_atoms = query.atoms.iter().collect::<Vec<_>>();
     let variable_order = variable_order_ids
         .iter()
         .map(|id| query.vars[*id].name.clone())
@@ -32,11 +31,11 @@ fn plan_query(
     let free_join = {
         let _span = tracing::debug_span!(
             "bumbledb.query.plan.free_join",
-            atoms = relation_atoms.len(),
+            atoms = query.atoms.len(),
             variables = variable_order_ids.len()
         )
         .entered();
-        build_free_join_plan(query, &relation_atoms, &variable_order_ids)?
+        build_free_join_plan(query, &variable_order_ids)
     };
     free_join.validate()?;
     let planner_stats = image.planner_stats_diagnostics();
@@ -398,51 +397,20 @@ fn operand_constrains_for_estimate(
     }
 }
 
-fn build_free_join_plan(
-    query: &NormalizedQuery,
-    atoms: &[&NormAtom],
-    variable_order_ids: &[usize],
-) -> Result<FreeJoinPlan> {
+fn build_free_join_plan(query: &NormalizedQuery, variable_order_ids: &[usize]) -> FreeJoinPlan {
     let mut nodes = Vec::new();
     for (node_id, variable) in variable_order_ids.iter().enumerate() {
         let var_id = VarId(*variable as u16);
-        let subatoms = atoms
-            .iter()
-            .enumerate()
-            .map(|(atom_id, atom)| {
-                let fields = atom
-                    .fields
-                    .iter()
-                    .filter(
-                        |field| matches!(field.term, NormTerm::Var(id) if id.0 as usize == *variable),
-                    )
-                    .map(|field| field.field)
-                    .collect::<Vec<_>>();
-                if fields.is_empty() {
-                    return Ok(None);
-                }
-                Ok(Some(SubAtom {
-                    atom_id: AtomId(atom_id as u16),
-                    relation: atom.relation,
-                    vars: vec![var_id; fields.len()],
-                    fields,
-                }))
-            })
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
         nodes.push(PlanNode {
             id: NodeId(node_id as u16),
             bind_vars: vec![var_id],
-            subatoms,
         });
     }
 
-    Ok(FreeJoinPlan {
+    FreeJoinPlan {
         nodes,
         output: output_plan(query),
-    })
+    }
 }
 
 fn output_plan(query: &NormalizedQuery) -> OutputPlan {

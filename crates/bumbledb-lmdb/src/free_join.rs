@@ -1,4 +1,4 @@
-use crate::{Error, FieldId, RelationId, Result};
+use crate::{Error, Result};
 
 /// Free Join physical plan.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -23,19 +23,6 @@ impl FreeJoinPlan {
                     "free join nodes must bind exactly one variable",
                 ));
             }
-            for subatom in &node.subatoms {
-                for variable in &subatom.vars {
-                    if !node.bind_vars.iter().any(|bound| bound == variable) {
-                        return Err(Error::internal(format!(
-                            "subatom variable {} is not bound by node {}",
-                            variable.0, node.id.0
-                        )));
-                    }
-                }
-                if subatom.fields.len() != subatom.vars.len() {
-                    return Err(Error::internal("subatom fields and vars length mismatch"));
-                }
-            }
         }
         Ok(())
     }
@@ -48,21 +35,6 @@ pub struct PlanNode {
     pub id: NodeId,
     /// Variables bound by this node.
     pub bind_vars: Vec<VarId>,
-    /// Subatoms consumed by this node.
-    pub subatoms: Vec<SubAtom>,
-}
-
-/// Subatom partition inside a Free Join node.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SubAtom {
-    /// Original atom ID in query clause order among relation atoms.
-    pub atom_id: AtomId,
-    /// Relation ID.
-    pub relation: RelationId,
-    /// Fields used by this subatom.
-    pub fields: Vec<FieldId>,
-    /// Variables corresponding to `fields`.
-    pub vars: Vec<VarId>,
 }
 
 /// Output/projection/aggregation plan.
@@ -111,12 +83,6 @@ mod tests {
             nodes: vec![PlanNode {
                 id: NodeId(0),
                 bind_vars: vec![VarId(0)],
-                subatoms: vec![SubAtom {
-                    atom_id: AtomId(0),
-                    relation: RelationId(0),
-                    fields: vec![FieldId(0)],
-                    vars: vec![VarId(0)],
-                }],
             }],
             output: OutputPlan::Project(ProjectPlan {
                 vars: vec![VarId(0)],
@@ -128,31 +94,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_subatom_vars_not_bound_by_node() {
-        let plan = FreeJoinPlan {
-            nodes: vec![PlanNode {
-                id: NodeId(0),
-                bind_vars: vec![VarId(0)],
-                subatoms: vec![SubAtom {
-                    atom_id: AtomId(0),
-                    relation: RelationId(0),
-                    fields: vec![FieldId(0)],
-                    vars: vec![VarId(1)],
-                }],
-            }],
-            output: OutputPlan::default(),
-        };
-
-        assert!(plan.validate().is_err());
-    }
-
-    #[test]
     fn rejects_multi_variable_nodes() {
         let plan = FreeJoinPlan {
             nodes: vec![PlanNode {
                 id: NodeId(0),
                 bind_vars: vec![VarId(0), VarId(1)],
-                subatoms: Vec::new(),
             }],
             output: OutputPlan::default(),
         };
