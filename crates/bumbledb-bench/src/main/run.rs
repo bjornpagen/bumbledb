@@ -125,26 +125,8 @@ fn run_dataset(
                 .read(|txn| txn.execute_prepared_query(&bumble_schema, &prepared, &inputs)),
         })?;
         let materialized_output = materialized_once.value;
-        let (bumble_cold_execution, bumble_output) = match config.compare_mode {
-            CompareMode::Materialized => (materialized_once.elapsed, materialized_output.clone()),
-            CompareMode::Facts => {
-                let count_once = timed(|| match config.cache_mode {
-                    CacheMode::Recompute => bumble_env.read(|txn| {
-                        txn.execute_result_cardinality(&bumble_schema, &typed, &inputs)
-                    }),
-                    CacheMode::PreparedPlan => bumble_env.read(|txn| {
-                        txn.execute_prepared_query_cardinality(&bumble_schema, &prepared, &inputs)
-                    }),
-                })?;
-                (
-                    count_once.elapsed,
-                    cardinality_plan_as_query_output(
-                        materialized_output.result.clone(),
-                        count_once.value.plan,
-                    ),
-                )
-            }
-        };
+        let bumble_cold_execution = materialized_once.elapsed;
+        let bumble_output = materialized_output.clone();
         let correctness_mode = correctness_mode(&typed);
         let sqlite_correctness = timed(|| sqlite_result_facts(&mut sqlite, query.sqlite, &params))?;
         let sqlite_correctness_execution = sqlite_correctness.elapsed;
@@ -171,72 +153,34 @@ fn run_dataset(
             .into());
         }
 
-        let (bumble_warmup, _) =
-            timed_bumbledb_samples(config.warmup, || match config.compare_mode {
-                CompareMode::Materialized => {
-                    let output = match config.cache_mode {
-                        CacheMode::Recompute => bumble_env
-                            .read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?,
-                        CacheMode::PreparedPlan => bumble_env.read(|txn| {
-                            txn.execute_prepared_query(&bumble_schema, &prepared, &inputs)
-                        })?,
-                    };
-                    black_box(output.result.facts.len());
-                    Ok::<_, bumbledb_lmdb::Error>(output.plan)
+        let (bumble_warmup, _) = timed_bumbledb_samples(config.warmup, || {
+            let output = match config.cache_mode {
+                CacheMode::Recompute => {
+                    bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?
                 }
-                CompareMode::Facts => {
-                    let output = match config.cache_mode {
-                        CacheMode::Recompute => bumble_env.read(|txn| {
-                            txn.execute_result_cardinality(&bumble_schema, &typed, &inputs)
-                        })?,
-                        CacheMode::PreparedPlan => bumble_env.read(|txn| {
-                            txn.execute_prepared_query_cardinality(
-                                &bumble_schema,
-                                &prepared,
-                                &inputs,
-                            )
-                        })?,
-                    };
-                    black_box(output.cardinality);
-                    Ok::<_, bumbledb_lmdb::Error>(output.plan)
-                }
-            })?;
+                CacheMode::PreparedPlan => bumble_env
+                    .read(|txn| txn.execute_prepared_query(&bumble_schema, &prepared, &inputs))?,
+            };
+            black_box(output.result.facts.len());
+            Ok::<_, bumbledb_lmdb::Error>(output.plan)
+        })?;
         let sqlite_warmup = timed_samples(config.warmup, || {
             let facts = sqlite_count(&mut sqlite, query.sqlite, &params)?;
             black_box(facts);
             Ok::<_, Box<dyn std::error::Error>>(())
         })?;
 
-        let (bumble_samples, bumble_sample_cache_hits) =
-            timed_bumbledb_samples(config.repeats, || match config.compare_mode {
-                CompareMode::Materialized => {
-                    let output = match config.cache_mode {
-                        CacheMode::Recompute => bumble_env
-                            .read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?,
-                        CacheMode::PreparedPlan => bumble_env.read(|txn| {
-                            txn.execute_prepared_query(&bumble_schema, &prepared, &inputs)
-                        })?,
-                    };
-                    black_box(output.result.facts.len());
-                    Ok::<_, bumbledb_lmdb::Error>(output.plan)
+        let (bumble_samples, bumble_sample_cache_hits) = timed_bumbledb_samples(config.repeats, || {
+            let output = match config.cache_mode {
+                CacheMode::Recompute => {
+                    bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?
                 }
-                CompareMode::Facts => {
-                    let output = match config.cache_mode {
-                        CacheMode::Recompute => bumble_env.read(|txn| {
-                            txn.execute_result_cardinality(&bumble_schema, &typed, &inputs)
-                        })?,
-                        CacheMode::PreparedPlan => bumble_env.read(|txn| {
-                            txn.execute_prepared_query_cardinality(
-                                &bumble_schema,
-                                &prepared,
-                                &inputs,
-                            )
-                        })?,
-                    };
-                    black_box(output.cardinality);
-                    Ok::<_, bumbledb_lmdb::Error>(output.plan)
-                }
-            })?;
+                CacheMode::PreparedPlan => bumble_env
+                    .read(|txn| txn.execute_prepared_query(&bumble_schema, &prepared, &inputs))?,
+            };
+            black_box(output.result.facts.len());
+            Ok::<_, bumbledb_lmdb::Error>(output.plan)
+        })?;
         let sqlite_samples = timed_samples(config.repeats, || {
             let facts = sqlite_count(&mut sqlite, query.sqlite, &params)?;
             black_box(facts);
@@ -247,7 +191,6 @@ fn run_dataset(
             dataset.name,
             &query,
             &bumble_output,
-            config.compare_mode,
             config.cache_mode,
             bumble_sample_cache_hits,
             correctness_mode,

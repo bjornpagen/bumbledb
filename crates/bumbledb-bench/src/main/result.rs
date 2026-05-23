@@ -6,7 +6,6 @@ fn benchmark_result(
     dataset: &'static str,
     query: &BenchQuery,
     output: &QueryOutput,
-    compare_mode: CompareMode,
     cache_mode: CacheMode,
     cache_hits: CacheHitStats,
     correctness_mode: CorrectnessMode,
@@ -27,7 +26,6 @@ fn benchmark_result(
         dataset,
         query,
         output,
-        compare_mode,
         cache_mode,
         bumbledb_avg,
         sqlite_ratio,
@@ -43,9 +41,7 @@ fn benchmark_result(
         sqlite_correctness_execution: timing.sqlite_correctness_execution,
         bumbledb_cold_execution: timing.bumbledb_cold_execution,
         sqlite_cold_execution: timing.sqlite_cold_execution,
-        cold_execution_uses_correctness_output: compare_mode == CompareMode::Materialized,
-        count_cold_execution_warmed_by_correctness: compare_mode == CompareMode::Facts,
-        allocation_scope: allocation_scope(compare_mode).to_owned(),
+        allocation_scope: "bumbledb.correctness_execution".to_owned(),
         query_image_scope: query_image_scope(output).to_owned(),
         bumbledb_warmup: timing.bumbledb_warmup,
         sqlite_warmup: timing.sqlite_warmup,
@@ -55,13 +51,9 @@ fn benchmark_result(
         sqlite_avg,
         sqlite_ratio,
         chosen_plan: output.plan.optimizer.chosen.clone(),
-        compare_mode: compare_mode.as_str().to_owned(),
         cache_mode: cache_mode.as_str().to_owned(),
         query_image_sample_cache_hits: cache_hits.query_image_cache_hits,
-        bumbledb_materialized_facts: compare_mode == CompareMode::Materialized,
         sqlite_materialized_facts: true,
-        cardinality_supported: compare_mode == CompareMode::Facts,
-        cardinality_fallback_reason: String::new(),
         timings: output.plan.timings,
         allocations: output.plan.allocations,
         iterator_ops: output.plan.free_join.estimates.iterator_ops,
@@ -94,17 +86,6 @@ fn benchmark_result(
         query_image_encoded_column_bytes: query_image_stats.encoded_column_bytes,
         query_image_sorted_trie_bytes: query_image_stats.sorted_trie_bytes,
         gate,
-    }
-}
-
-fn cardinality_plan_as_query_output(result: QueryResultSet, plan: QueryPlan) -> QueryOutput {
-    QueryOutput { result, plan }
-}
-
-fn allocation_scope(compare_mode: CompareMode) -> &'static str {
-    match compare_mode {
-        CompareMode::Materialized => "bumbledb.correctness_execution",
-        CompareMode::Facts => "bumbledb.count_cold_execution",
     }
 }
 
@@ -156,7 +137,6 @@ fn evaluate_gate(
     dataset: &'static str,
     query: &BenchQuery,
     output: &QueryOutput,
-    compare_mode: CompareMode,
     cache_mode: CacheMode,
     bumbledb_avg: Duration,
     sqlite_ratio: f64,
@@ -219,9 +199,7 @@ fn evaluate_gate(
             counters.dictionary_reverse_lookups
         ));
     }
-    if compare_mode == CompareMode::Materialized
-        && counters.materialized_output_values != final_output_values
-    {
+    if counters.materialized_output_values != final_output_values {
         passed = false;
         notes.push(format!(
             "materialized_output_values {} != final output values {}",

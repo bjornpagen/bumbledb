@@ -7,33 +7,22 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"facts\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_facts\":{},\"materialized_facts\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"compare_mode\":\"{}\",\"cache_mode\":\"{}\",\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"bumbledb_materialized_facts\":{},\"sqlite_materialized_facts\":{},\"cardinality_supported\":{},\"cardinality_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
+            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"facts\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_facts\":{},\"materialized_facts\":{},\"materialized_values\":{},\"output_mode\":\"materialized\"}},\"chosen_plan\":\"{}\",\"cache_mode\":\"{}\",\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"sqlite_materialized_facts\":{},\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",",
             json_escape(result.dataset),
             json_escape(result.query),
             result.facts,
             json_escape(&result.correctness_mode),
             result.facts,
-            if result.bumbledb_materialized_facts {
-                result.facts
-            } else {
-                0
-            },
+            result.facts,
             result.final_output_values,
-            json_escape(&result.compare_mode),
             json_escape(&result.chosen_plan),
-            json_escape(&result.compare_mode),
             json_escape(&result.cache_mode),
             result.query_image_sample_cache_hits > 0,
             result.query_image_sample_cache_hits,
-            result.bumbledb_materialized_facts,
             result.sqlite_materialized_facts,
-            result.cardinality_supported,
-            json_escape(&result.cardinality_fallback_reason),
             result.query_image_built_during_query,
             json_escape(&result.allocation_scope),
             json_escape(&result.query_image_scope),
-            result.cold_execution_uses_correctness_output,
-            result.count_cold_execution_warmed_by_correctness,
         );
         out.push_str("\"bumbledb\":{");
         let _ = write!(
@@ -43,11 +32,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             duration_micros(result.bumbledb_cold_execution),
             result.query_image_built_during_query,
             json_escape(&result.query_image_scope),
-            if result.bumbledb_materialized_facts {
-                result.facts
-            } else {
-                0
-            },
+            result.facts,
             result.facts,
             result.final_output_values,
             result.bumbledb_warmup.samples,

@@ -38,8 +38,8 @@ pub use planner_stats::PlannerStatsCacheDiagnostics;
 pub use query::{
     AllocationPhaseStats, CostKey, InputBindings, MissingIndexRecommendation, NodeFactEstimate,
     OptimizerTrace, PlanCandidate, PlanCounters, PreparedQuery, QueryAllocationStats,
-    QueryNodeTiming, QueryOutput, QueryPlan, QueryResultCardinality, QueryResultSet, QueryTimings,
-    ResultColumn, ResultFact, VariableEstimate,
+    QueryNodeTiming, QueryOutput, QueryPlan, QueryResultSet, QueryTimings, ResultColumn,
+    ResultFact, VariableEstimate,
 };
 pub(crate) use query_image::{
     EncodedRef, FieldImage, QueryImage, QueryImageCache, RelationImage, RelationStats,

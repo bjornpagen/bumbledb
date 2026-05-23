@@ -32,8 +32,6 @@ fn markdown_renderer_emits_gate_tables() {
         sqlite_correctness_execution: Duration::from_micros(12),
         bumbledb_cold_execution: Duration::from_micros(20),
         sqlite_cold_execution: Duration::from_micros(12),
-        cold_execution_uses_correctness_output: true,
-        count_cold_execution_warmed_by_correctness: false,
         allocation_scope: "bumbledb.correctness_execution".to_owned(),
         query_image_scope: "full_schema".to_owned(),
         bumbledb_warmup: TimingStats::from_samples(vec![Duration::from_micros(13)]),
@@ -44,13 +42,9 @@ fn markdown_renderer_emits_gate_tables() {
         sqlite_avg: Duration::from_micros(5),
         sqlite_ratio: 2.0,
         chosen_plan: "free_join_sorted_leapfrog".to_owned(),
-        compare_mode: "materialized".to_owned(),
         cache_mode: "prepared-plan".to_owned(),
         query_image_sample_cache_hits: 1,
-        bumbledb_materialized_facts: true,
         sqlite_materialized_facts: false,
-        cardinality_supported: false,
-        cardinality_fallback_reason: String::new(),
         timings: QueryTimings {
             total_micros: 10,
             execute_micros: 4,
@@ -127,9 +121,7 @@ fn json_renderer_emits_structured_results() {
         sqlite_correctness_execution: Duration::from_micros(10),
         bumbledb_cold_execution: Duration::from_micros(20),
         sqlite_cold_execution: Duration::from_micros(10),
-        cold_execution_uses_correctness_output: false,
-        count_cold_execution_warmed_by_correctness: true,
-        allocation_scope: "bumbledb.count_cold_execution".to_owned(),
+        allocation_scope: "bumbledb.correctness_execution".to_owned(),
         query_image_scope: "full_schema".to_owned(),
         bumbledb_warmup: TimingStats::from_samples(vec![Duration::from_micros(11)]),
         sqlite_warmup: TimingStats::from_samples(vec![Duration::from_micros(7)]),
@@ -139,13 +131,9 @@ fn json_renderer_emits_structured_results() {
         sqlite_avg: Duration::from_micros(3),
         sqlite_ratio: 3.0,
         chosen_plan: "free_join_sorted_leapfrog".to_owned(),
-        compare_mode: "facts".to_owned(),
         cache_mode: "prepared-plan".to_owned(),
         query_image_sample_cache_hits: 1,
-        bumbledb_materialized_facts: false,
         sqlite_materialized_facts: false,
-        cardinality_supported: true,
-        cardinality_fallback_reason: String::new(),
         timings: QueryTimings {
             total_micros: 20,
             unaccounted_micros: 7,
@@ -189,15 +177,11 @@ fn json_renderer_emits_structured_results() {
 
     let json = render_json_results(&[result]);
     assert!(json.contains("\"dataset\":\"ledger\""));
-    assert!(json.contains("\"compare_mode\":\"facts\""));
     assert!(json.contains("\"correctness_mode\":\"result-set\""));
     assert!(json.contains("\"cache_mode\":\"prepared-plan\""));
     assert!(json.contains("\"query_image_cache_hit\":true"));
-    assert!(json.contains("\"cardinality_supported\":true"));
-    assert!(json.contains("\"allocation_scope\":\"bumbledb.count_cold_execution\""));
+    assert!(json.contains("\"allocation_scope\":\"bumbledb.correctness_execution\""));
     assert!(json.contains("\"query_image_scope\":\"full_schema\""));
-    assert!(json.contains("\"cold_execution_uses_correctness_output\":false"));
-    assert!(json.contains("\"count_cold_execution_warmed_by_correctness\":true"));
     assert!(json.contains("\"correctness_execution\""));
     assert!(json.contains("\"cold_execution\""));
     assert!(!json.contains("\"prepare\""));

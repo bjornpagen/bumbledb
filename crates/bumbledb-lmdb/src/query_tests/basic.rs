@@ -581,11 +581,9 @@ fn cardinality_matches_materialized_projection_without_decoding_output() -> Test
     })?;
     let inputs = InputBindings::from_values([("a", Value::U64(1))]);
 
-    let materialized = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
-    let cardinality = env.read(|txn| txn.execute_result_cardinality(&schema, &query, &inputs))?;
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &inputs))?;
 
-    assert_eq!(cardinality.cardinality, materialized.result.facts.len());
-    assert_eq!(cardinality.plan.counters.materialized_output_values, 0);
+    assert_eq!(output.result.cardinality(), output.result.facts.len());
     Ok(())
 }
 

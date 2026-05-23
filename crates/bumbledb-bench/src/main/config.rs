@@ -33,21 +33,6 @@ enum TraceFormat {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CompareMode {
-    Materialized,
-    Facts,
-}
-
-impl CompareMode {
-    fn as_str(self) -> &'static str {
-        match self {
-            CompareMode::Materialized => "materialized",
-            CompareMode::Facts => "facts",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CacheMode {
     Recompute,
     PreparedPlan,
@@ -80,7 +65,6 @@ struct Config {
     trace_output: Option<String>,
     trace_format: TraceFormat,
     format: OutputFormat,
-    compare_mode: CompareMode,
     cache_mode: CacheMode,
     fail_gates: bool,
 }
@@ -110,7 +94,6 @@ impl Config {
         let mut trace_format = TraceFormat::Fmt;
         let mut format = OutputFormat::Text;
         let mut format_explicit = false;
-        let mut compare_mode = CompareMode::Materialized;
         let mut cache_mode = CacheMode::PreparedPlan;
         let mut fail_gates = false;
         let mut args = args.into_iter();
@@ -176,15 +159,6 @@ impl Config {
                         other => return Err(bench_error(format!("unknown --format {other}"))),
                     }
                 }
-                "--compare-mode" => {
-                    compare_mode = match next_arg(&mut args, "--compare-mode")?.as_str() {
-                        "materialized" => CompareMode::Materialized,
-                        "facts" => CompareMode::Facts,
-                        other => {
-                            return Err(bench_error(format!("unknown --compare-mode {other}")));
-                        }
-                    }
-                }
                 "--cache-mode" => {
                     cache_mode = match next_arg(&mut args, "--cache-mode")?.as_str() {
                         "recompute" => CacheMode::Recompute,
@@ -203,7 +177,7 @@ impl Config {
                 "--fail-gates" => fail_gates = true,
                 "--help" | "-h" => {
                     println!(
-                        "usage: cargo run -p bumbledb-bench --release -- [--preset quick|nonjob|job|job-sample|job-full] [--scale N] [--open-limit N|--open-full] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--compare-mode materialized|facts] [--cache-mode recompute|prepared-plan] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
+                        "usage: cargo run -p bumbledb-bench --release -- [--preset quick|nonjob|job|job-sample|job-full] [--scale N] [--open-limit N|--open-full] [--repeats N] [--warmup N] [--query NAME] [--trace] [--trace-output PATH] [--trace-format fmt|json|chrome|flame] [--format text|markdown|json|both] [--cache-mode recompute|prepared-plan] [--markdown] [--json] [--fail-gates] [--dataset ledger|sailors|joinstress|tpch|imdb|job|tpch-open|lahman|ldbc] [--imdb-dir DIR] [--job-dir DIR] [--tpch-dir DIR] [--lahman-dir DIR] [--ldbc-dir DIR]"
                     );
                     return Ok(None);
                 }
@@ -227,7 +201,6 @@ impl Config {
             trace_output,
             trace_format,
             format,
-            compare_mode,
             cache_mode,
             fail_gates,
         };

@@ -229,15 +229,6 @@ pub struct QueryOutput {
     pub plan: QueryPlan,
 }
 
-/// Result-set cardinality output.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct QueryResultCardinality {
-    /// Number of logical output facts.
-    pub cardinality: usize,
-    /// Physical plan and counters.
-    pub plan: QueryPlan,
-}
-
 /// Reusable typed query shape with snapshot-local normalized query cache.
 #[derive(Debug)]
 pub struct PreparedQuery {

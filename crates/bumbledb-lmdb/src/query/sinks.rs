@@ -29,41 +29,14 @@ trait FactSink {
 // Output sinks own projection, cardinality, and result-set materialization.
 #[derive(Clone, Debug)]
 enum OutputSink {
-    Cardinality(CardinalitySink),
     Project(EncodedProjectSink),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SinkMode {
-    Materialize,
-    CardinalityOnly,
 }
 
 impl OutputSink {
     fn new(output: &OutputPlan) -> Self {
-        Self::new_with_mode(output, SinkMode::Materialize)
-    }
-
-    fn new_count_facts(output: &OutputPlan) -> Self {
-        Self::new_with_mode(output, SinkMode::CardinalityOnly)
-    }
-
-    fn new_with_mode(output: &OutputPlan, mode: SinkMode) -> Self {
-        if mode == SinkMode::CardinalityOnly {
-            return OutputSink::Cardinality(CardinalitySink::new(output));
-        }
         match output {
             OutputPlan::Project(plan) => OutputSink::Project(EncodedProjectSink::new(plan)),
         }
-    }
-
-    fn finish_count(self) -> Result<usize> {
-        let OutputSink::Cardinality(sink) = self else {
-            return Err(Error::internal(
-                "count facts requested from materializing sink",
-            ));
-        };
-        Ok(sink.finish_count())
     }
 }
 
@@ -77,7 +50,6 @@ impl FactSink for OutputSink {
     ) -> Result<()> {
         counters.sink_emit_calls += 1;
         match self {
-            OutputSink::Cardinality(sink) => sink.emit(txn, query, binding, counters),
             OutputSink::Project(sink) => sink.emit(txn, query, binding, counters),
         }
     }
@@ -89,7 +61,6 @@ impl FactSink for OutputSink {
         counters: &mut PlanCounters,
     ) -> Result<Vec<Vec<Value>>> {
         match self {
-            OutputSink::Cardinality(sink) => sink.finish(txn, query, counters),
             OutputSink::Project(sink) => sink.finish(txn, query, counters),
         }
     }
@@ -100,9 +71,7 @@ impl FactSink for OutputSink {
         binding: &EncodedBinding,
         counters: &mut PlanCounters,
     ) -> Result<bool> {
-        let OutputSink::Project(sink) = self else {
-            return Ok(false);
-        };
+        let OutputSink::Project(sink) = self;
         sink.push_binding(query, binding, counters)?;
         Ok(true)
     }
@@ -190,58 +159,6 @@ impl FactSink for EncodedProjectSink {
     }
 }
 
-#[derive(Clone, Debug)]
-struct CardinalitySink {
-    output: OutputPlan,
-    project_facts: BTreeSet<SmallEncodedFact>,
-}
-
-impl CardinalitySink {
-    fn new(output: &OutputPlan) -> Self {
-        Self {
-            output: output.clone(),
-            project_facts: BTreeSet::new(),
-        }
-    }
-
-    fn finish_count(self) -> usize {
-        match self.output {
-            OutputPlan::Project(_) => self.project_facts.len(),
-        }
-    }
-}
-
-impl FactSink for CardinalitySink {
-    fn emit(
-        &mut self,
-        _txn: &ReadTxn<'_>,
-        _query: &NormalizedQuery,
-        binding: &EncodedBinding,
-        _counters: &mut PlanCounters,
-    ) -> Result<()> {
-        match &self.output {
-            OutputPlan::Project(plan) => {
-                let fact = plan
-                    .vars
-                    .iter()
-                    .map(|variable| bound_encoded_variable(binding, variable.0 as usize).cloned())
-                    .collect::<Result<SmallEncodedFact>>()?;
-                self.project_facts.insert(fact);
-            }
-        }
-        Ok(())
-    }
-
-    fn finish(
-        self,
-        _txn: &ReadTxn<'_>,
-        _query: &NormalizedQuery,
-        _counters: &mut PlanCounters,
-    ) -> Result<Vec<Vec<Value>>> {
-        Ok(Vec::new())
-    }
-}
-
 fn bound_encoded_variable(binding: &EncodedBinding, variable: usize) -> Result<&EncodedOwned> {
     binding
         .get(variable)
@@ -258,4 +175,3 @@ fn decode_output_value(
     record_decode(value_type, counters);
     txn.decode_query_value(value_type, value.as_bytes())
 }
-

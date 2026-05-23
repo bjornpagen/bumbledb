@@ -78,7 +78,6 @@ fn job_dataset_runs_against_minimal_csv_export() -> Result<(), Box<dyn std::erro
         trace_output: None,
         trace_format: crate::TraceFormat::Fmt,
         format: crate::OutputFormat::Json,
-        compare_mode: crate::CompareMode::Materialized,
         cache_mode: crate::CacheMode::PreparedPlan,
         fail_gates: false,
     };

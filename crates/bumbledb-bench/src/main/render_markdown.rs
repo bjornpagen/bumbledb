@@ -1,19 +1,16 @@
 fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
-    out.push_str("| dataset | query | facts | compare mode | bumbledb materialized | sqlite materialized | cardinality | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | lazy access slices | eager builds avoided | atom temp builds | iterator ops | hash build est | materialized | dict lookups | gate |\n");
-    out.push_str("|---|---|---:|---|---|---|---|---:|---:|---:|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("| dataset | query | facts | sqlite materialized | bumbledb avg us | sqlite avg us | sqlite ratio | chosen plan | image build us | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | trie cache hits | trie cache misses | trie builds | lazy access slices | eager builds avoided | atom temp builds | iterator ops | hash build est | materialized | dict lookups | gate |\n");
+    out.push_str("|---|---|---:|---|---:|---:|---:|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             result.facts,
-            markdown_escape(&result.compare_mode),
-            result.bumbledb_materialized_facts,
             result.sqlite_materialized_facts,
-            result.cardinality_supported,
             duration_micros(result.bumbledb_avg),
             duration_micros(result.sqlite_avg),
             result.sqlite_ratio,
@@ -75,18 +72,16 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Measurement Contract\n\n");
-    out.push_str("| dataset | query | allocation scope | query image scope | cold execution uses correctness output | count cold warmed by correctness |\n");
-    out.push_str("|---|---|---|---|---|---|\n");
+    out.push_str("| dataset | query | allocation scope | query image scope |\n");
+    out.push_str("|---|---|---|---|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             markdown_escape(&result.allocation_scope),
             markdown_escape(&result.query_image_scope),
-            result.cold_execution_uses_correctness_output,
-            result.count_cold_execution_warmed_by_correctness,
         );
     }
     out.push_str("\n## Phase Timing\n\n");
@@ -261,4 +256,3 @@ fn write_allocation_phase_fact(
         stats.peak_live_bytes,
     );
 }
-

@@ -16,7 +16,7 @@ use bumbledb_core::schema::{
 };
 use bumbledb_lmdb::{
     AllocationPhaseStats, Environment, Fact, InputBindings, PlanCounters, QueryAllocationStats,
-    QueryOutput, QueryPlan, QueryResultSet, QueryTimings, StorageSchema, Value,
+    QueryOutput, QueryPlan, QueryTimings, StorageSchema, Value,
 };
 use rusqlite::{Connection, params_from_iter};
 use tracing_subscriber::fmt::format::FmtSpan;
