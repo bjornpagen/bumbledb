@@ -39,9 +39,9 @@ pub use query::{
     AllocationPhaseStats, CostKey, InputBindings, InputId, MissingIndexRecommendation,
     NodeFactEstimate, NormAtom, NormAtomField, NormFindTerm, NormInput, NormOperand, NormPredicate,
     NormTerm, NormVar, NormalizedQuery, OptimizerTrace, PlanCandidate, PlanCounters, PlanFamily,
-    PredicateId, PreparedQuery, QueryAllocationStats, QueryExecutionOptions, QueryNodeTiming,
-    QueryOutput, QueryPlan, QueryResultCardinality, QueryResultSet, QueryRuntimeKind, QueryTimings,
-    ResultColumn, ResultFact, VariableEstimate,
+    PredicateId, PreparedQuery, QueryAllocationStats, QueryNodeTiming, QueryOutput, QueryPlan,
+    QueryResultCardinality, QueryResultSet, QueryRuntimeKind, QueryTimings, ResultColumn,
+    ResultFact, VariableEstimate,
 };
 pub use query_image::{
     ColumnImage, EncodedRef, FieldId, FieldImage, FixedColumn, PreparedPlanCacheDiagnostics,

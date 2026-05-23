@@ -239,7 +239,7 @@ fn tpch_golden_preserves_lineitem_revenue_domain() -> TestResult {
 }
 
 #[test]
-fn imdb_job_golden_preserves_title_count_and_static_empty() -> TestResult {
+fn imdb_job_golden_preserves_title_count_and_empty_count() -> TestResult {
     let (env, schema) = load(
         imdb_schema(),
         vec![

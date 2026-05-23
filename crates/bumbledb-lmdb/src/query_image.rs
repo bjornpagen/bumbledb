@@ -49,21 +49,6 @@ pub(crate) struct QueryShapeKey(pub(crate) [u8; 32]);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct LftjAtomKey(pub(crate) [u8; 32]);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct StaticProofCacheKey(pub(crate) [u8; 32]);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StaticProofKind {
-    StaticLiteral,
-    StaticSemijoin,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StaticProofCacheValue {
-    ProvenEmpty,
-    ProvenNotEmptyOrInconclusive,
-}
-
 impl PartialOrd for QueryImageKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
@@ -217,8 +202,6 @@ pub struct QueryImage {
     stats: QueryImageStats,
     planner_stats: PlannerStatsCache,
     prepared_plans: PreparedPlanCache,
-    static_empty_queries: Arc<RwLock<BTreeSet<QueryShapeKey>>>,
-    static_proof_cache: Arc<RwLock<BTreeMap<StaticProofCacheKey, StaticProofCacheValue>>>,
     sorted_trie_cache: Arc<RwLock<BTreeMap<LftjAtomKey, Arc<SortedTrieIndex>>>>,
 }
 
@@ -262,8 +245,6 @@ impl QueryImage {
             },
             planner_stats: PlannerStatsCache::default(),
             prepared_plans: PreparedPlanCache::default(),
-            static_empty_queries: Arc::default(),
-            static_proof_cache: Arc::default(),
             sorted_trie_cache: Arc::default(),
         }
     }
@@ -325,46 +306,6 @@ impl QueryImage {
         build_micros: u64,
     ) -> Result<Arc<ExecutionPlan>> {
         self.prepared_plans.insert(key, plan, build_micros)
-    }
-
-    pub(crate) fn static_empty_cached(&self, key: QueryShapeKey) -> Result<bool> {
-        Ok(self
-            .static_empty_queries
-            .read()
-            .map_err(|_| Error::internal("static-empty cache read lock poisoned"))?
-            .contains(&key))
-    }
-
-    pub(crate) fn insert_static_empty(&self, key: QueryShapeKey) -> Result<()> {
-        self.static_empty_queries
-            .write()
-            .map_err(|_| Error::internal("static-empty cache write lock poisoned"))?
-            .insert(key);
-        Ok(())
-    }
-
-    pub(crate) fn cached_static_proof(
-        &self,
-        key: StaticProofCacheKey,
-    ) -> Result<Option<StaticProofCacheValue>> {
-        Ok(self
-            .static_proof_cache
-            .read()
-            .map_err(|_| Error::internal("static proof cache read lock poisoned"))?
-            .get(&key)
-            .copied())
-    }
-
-    pub(crate) fn insert_static_proof(
-        &self,
-        key: StaticProofCacheKey,
-        value: StaticProofCacheValue,
-    ) -> Result<()> {
-        self.static_proof_cache
-            .write()
-            .map_err(|_| Error::internal("static proof cache write lock poisoned"))?
-            .insert(key, value);
-        Ok(())
     }
 
     pub(crate) fn cached_sorted_trie(
@@ -1136,7 +1077,6 @@ fn exact_array<const N: usize>(bytes: &[u8]) -> Result<[u8; N]> {
 #[derive(Default)]
 pub struct QueryImageCache {
     images: RwLock<BTreeMap<QueryImageKey, Arc<QueryImage>>>,
-    static_empty_fast: RwLock<BTreeSet<QueryShapeKey>>,
     hits: AtomicU64,
     misses: AtomicU64,
     builds: AtomicU64,
@@ -1217,22 +1157,6 @@ impl QueryImageCache {
             builds: self.builds.load(Ordering::Relaxed),
             build_micros: self.build_micros.load(Ordering::Relaxed),
         }
-    }
-
-    pub(crate) fn static_empty_fast_cached(&self, key: QueryShapeKey) -> Result<bool> {
-        Ok(self
-            .static_empty_fast
-            .read()
-            .map_err(|_| Error::internal("static-empty fast cache read lock poisoned"))?
-            .contains(&key))
-    }
-
-    pub(crate) fn insert_static_empty_fast(&self, key: QueryShapeKey) -> Result<()> {
-        self.static_empty_fast
-            .write()
-            .map_err(|_| Error::internal("static-empty fast cache write lock poisoned"))?
-            .insert(key);
-        Ok(())
     }
 }
 

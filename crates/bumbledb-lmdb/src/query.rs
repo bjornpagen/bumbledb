@@ -16,8 +16,8 @@ use crate::query_image::{FactId, FactRange};
 use crate::{
     AccessId, AggregatePlan, AggregateTerm, AtomId, EncodedOwned, Error, FieldId, FreeJoinPlan,
     IndexSpec, LinearIter, NodeId, NodeImpl, OutputPlan, PlanEstimates, PlanNode, ProjectPlan,
-    ReadTxn, RelationImage, RelationIndexImage, RelationStats, Result, SortedTrieIndex,
-    StorageSchema, SubAtom, TrieIter, Value, VarId,
+    ReadTxn, RelationImage, RelationStats, Result, SortedTrieIndex, StorageSchema, SubAtom,
+    TrieIter, Value, VarId,
 };
 
 use crate::allocation::{self, ALLOCATION_SIZE_CLASS_COUNT, AllocationDelta};
@@ -25,20 +25,12 @@ use crate::planner_stats::{
     OptimizerFieldStats, OptimizerIndexStats, OptimizerRelationStats, PlannerStatsCacheDiagnostics,
 };
 use crate::query_image::{
-    EncodedColumnBuilder, LftjAtomKey, QueryImageKey, QueryImageScope, QueryShapeKey,
-    SortedTrieBuild, StaticProofCacheKey, StaticProofCacheValue, StaticProofKind,
+    EncodedColumnBuilder, LftjAtomKey, QueryImageScope, QueryShapeKey, SortedTrieBuild,
     encoded_column_builders, finish_column_builders,
 };
 use crate::{PreparedPlanCacheDiagnostics, QueryImageCacheDiagnostics};
 
 const HASH_BUILD_ROWS_PER_MICRO: u64 = 5;
-const STATIC_SEMIJOIN_MAX_PROBES: u64 = 2_048;
-const STATIC_SEMIJOIN_MAX_SCANNED_ROWS: u64 = 2_048;
-const STATIC_SEMIJOIN_MAX_SEED_CANDIDATES: usize = 1_024;
-const STATIC_SEMIJOIN_MAX_CANDIDATES: usize = 1_024;
-const STATIC_SEMIJOIN_MAX_OUTPUT_VARS: usize = 1;
-const STATIC_SEMIJOIN_MAX_ROUNDS: u64 = 4;
-const STATIC_SEMIJOIN_SCAN_THRESHOLD: usize = 256;
 
 /// Query input bindings keyed by input name without `$`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -248,35 +240,6 @@ pub struct QueryOutput {
     pub plan: QueryPlan,
 }
 
-/// Explicit per-query execution cache controls.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct QueryExecutionOptions {
-    /// Allows static-empty result cache hits and inserts.
-    pub allow_static_empty_fast_cache: bool,
-}
-
-impl QueryExecutionOptions {
-    /// Default cached execution behavior.
-    pub const fn cached() -> Self {
-        Self {
-            allow_static_empty_fast_cache: true,
-        }
-    }
-
-    /// Recompute static-empty result shortcuts while keeping normal plan/image caches available.
-    pub const fn without_static_empty_cache() -> Self {
-        Self {
-            allow_static_empty_fast_cache: false,
-        }
-    }
-}
-
-impl Default for QueryExecutionOptions {
-    fn default() -> Self {
-        Self::cached()
-    }
-}
-
 /// Result-set cardinality output.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryResultCardinality {
@@ -414,15 +377,12 @@ impl QueryPlan {
         ));
         out.push_str("timings:\n");
         out.push_str(&format!(
-            "  query_timing total_micros={} validate_inputs_micros={} normalize_micros={} encode_inputs_micros={} query_image_micros={} static_empty_lookup_micros={} static_literal_proof_micros={} static_semijoin_proof_micros={} plan_micros={} lftj_build_micros={} execute_micros={} lftj_execute_micros={} sink_emit_micros={} sink_finish_micros={} decode_micros={} unaccounted_micros={}\n",
+            "  query_timing total_micros={} validate_inputs_micros={} normalize_micros={} encode_inputs_micros={} query_image_micros={} plan_micros={} lftj_build_micros={} execute_micros={} lftj_execute_micros={} sink_emit_micros={} sink_finish_micros={} decode_micros={} unaccounted_micros={}\n",
             self.timings.total_micros,
             self.timings.validate_inputs_micros,
             self.timings.normalize_micros,
             self.timings.encode_inputs_micros,
             self.timings.query_image_micros,
-            self.timings.static_empty_lookup_micros,
-            self.timings.static_literal_proof_micros,
-            self.timings.static_semijoin_proof_micros,
             self.timings.plan_micros,
             self.timings.lftj_build_micros,
             self.timings.execute_micros,
@@ -542,18 +502,6 @@ impl QueryPlan {
             self.free_join.estimates.memory_bytes,
             self.counters.output_facts
         ));
-        if self.runtime_kind == QueryRuntimeKind::StaticEmpty {
-            out.push_str(&format!(
-                "static_empty cache_hits={} cache_misses={} atoms_checked={} facts_scanned={} semijoin_prefixes_probed={} semijoin_candidate_values={} semijoin_rounds={}\n",
-                self.counters.static_empty_cache_hits,
-                self.counters.static_empty_cache_misses,
-                self.counters.static_empty_atoms_checked,
-                self.counters.static_empty_facts_scanned,
-                self.counters.static_semijoin_prefixes_probed,
-                self.counters.static_semijoin_candidate_values,
-                self.counters.static_semijoin_rounds,
-            ));
-        }
         out.push_str("free_join_plan:\n");
         for node in &self.free_join.nodes {
             out.push_str(&format!(
@@ -708,42 +656,6 @@ impl QueryPlan {
             "  lftj_atom_sort_micros: {}\n",
             self.counters.lftj_atom_sort_micros
         ));
-        out.push_str(&format!(
-            "  static_empty_atoms_checked: {}\n",
-            self.counters.static_empty_atoms_checked
-        ));
-        out.push_str(&format!(
-            "  static_empty_facts_scanned: {}\n",
-            self.counters.static_empty_facts_scanned
-        ));
-        out.push_str(&format!(
-            "  static_empty_cache_hits: {}\n",
-            self.counters.static_empty_cache_hits
-        ));
-        out.push_str(&format!(
-            "  static_empty_cache_misses: {}\n",
-            self.counters.static_empty_cache_misses
-        ));
-        out.push_str(&format!(
-            "  static_semijoin_prefixes_probed: {}\n",
-            self.counters.static_semijoin_prefixes_probed
-        ));
-        out.push_str(&format!(
-            "  static_semijoin_candidate_values: {}\n",
-            self.counters.static_semijoin_candidate_values
-        ));
-        out.push_str(&format!(
-            "  static_semijoin_rounds: {}\n",
-            self.counters.static_semijoin_rounds
-        ));
-        out.push_str(&format!(
-            "  static_semijoin_skipped: {}\n",
-            self.counters.static_semijoin_skipped
-        ));
-        out.push_str(&format!(
-            "  static_semijoin_skipped_reason: {}\n",
-            self.counters.static_semijoin_skipped_reason.as_str()
-        ));
         out.push_str(&format!("  output_facts: {}\n", self.counters.output_facts));
         out
     }
@@ -765,8 +677,6 @@ pub enum QueryRuntimeKind {
     Unknown,
     /// Sorted trie leapfrog executor.
     Lftj,
-    /// Query was proven empty by static literal atom analysis before planning.
-    StaticEmpty,
 }
 
 /// Top-level physical plan family.
@@ -777,8 +687,6 @@ pub enum PlanFamily {
     Unknown,
     /// Free Join/LFTJ family.
     FreeJoinLftj,
-    /// Static empty proof family.
-    StaticEmpty,
 }
 
 /// Coarse query phase timings in microseconds.
@@ -794,12 +702,6 @@ pub struct QueryTimings {
     pub encode_inputs_micros: u128,
     /// QueryImage acquisition time.
     pub query_image_micros: u128,
-    /// Static-empty cache lookup time.
-    pub static_empty_lookup_micros: u128,
-    /// Static literal atom proof time.
-    pub static_literal_proof_micros: u128,
-    /// Static semijoin proof time.
-    pub static_semijoin_proof_micros: u128,
     /// Planning time.
     pub plan_micros: u128,
     /// LFTJ atom plan/index preparation time.
@@ -825,9 +727,6 @@ impl QueryTimings {
             .saturating_add(self.normalize_micros)
             .saturating_add(self.encode_inputs_micros)
             .saturating_add(self.query_image_micros)
-            .saturating_add(self.static_empty_lookup_micros)
-            .saturating_add(self.static_literal_proof_micros)
-            .saturating_add(self.static_semijoin_proof_micros)
             .saturating_add(self.plan_micros)
             .saturating_add(self.lftj_build_micros)
             .saturating_add(self.execute_micros)
@@ -1067,37 +966,6 @@ pub struct NodeFactEstimate {
     pub actual_facts: u64,
 }
 
-/// Reason static semijoin proof did not run after cheap preflight.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum StaticSemijoinSkipReason {
-    /// Proof was not skipped.
-    #[default]
-    NotSkipped,
-    /// Query has fewer than two relation atoms.
-    TooFewAtoms,
-    /// Query has no static literal/input/range seed.
-    NoStaticConstraint,
-    /// Query output shape is too broad for speculative empty proof.
-    OutputTooBroad,
-    /// No exact low-cardinality seed could be produced cheaply.
-    NoCheapExactSeed,
-    /// A previous proof on the same snapshot/query/input was inconclusive.
-    NegativeCache,
-}
-
-impl StaticSemijoinSkipReason {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::NotSkipped => "not_skipped",
-            Self::TooFewAtoms => "too_few_atoms",
-            Self::NoStaticConstraint => "no_static_constraint",
-            Self::OutputTooBroad => "output_too_broad",
-            Self::NoCheapExactSeed => "no_cheap_exact_seed",
-            Self::NegativeCache => "negative_cache",
-        }
-    }
-}
-
 /// Execution counters for the Free Join query executor.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PlanCounters {
@@ -1201,24 +1069,6 @@ pub struct PlanCounters {
     pub encoded_project_fact_bytes: u64,
     /// Number of projection values decoded at output boundary.
     pub project_decode_values: u64,
-    /// Number of static-empty proof atoms checked.
-    pub static_empty_atoms_checked: u64,
-    /// Number of relation/index facts inspected by static-empty proof.
-    pub static_empty_facts_scanned: u64,
-    /// Number of static-empty proof cache hits.
-    pub static_empty_cache_hits: u64,
-    /// Number of static-empty proof cache misses.
-    pub static_empty_cache_misses: u64,
-    /// Number of static semijoin index prefixes probed.
-    pub static_semijoin_prefixes_probed: u64,
-    /// Number of static semijoin candidate values retained.
-    pub static_semijoin_candidate_values: u64,
-    /// Number of static semijoin propagation rounds completed.
-    pub static_semijoin_rounds: u64,
-    /// Number of static semijoin proof attempts skipped by preflight.
-    pub static_semijoin_skipped: u64,
-    /// Last reason static semijoin proof was skipped.
-    pub static_semijoin_skipped_reason: StaticSemijoinSkipReason,
 }
 
 #[derive(Clone, Debug)]
@@ -1475,49 +1325,10 @@ impl<'env> ReadTxn<'env> {
         query: &TypedQuery,
         inputs: &InputBindings,
     ) -> Result<QueryOutput> {
-        self.execute_query_with_options(schema, query, inputs, QueryExecutionOptions::default())
-    }
-
-    /// Executes a typed positive query IR with explicit cache controls.
-    #[tracing::instrument(name = "bumbledb.query.execute_with_options", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
-    pub fn execute_query_with_options(
-        &self,
-        schema: &StorageSchema,
-        query: &TypedQuery,
-        inputs: &InputBindings,
-        options: QueryExecutionOptions,
-    ) -> Result<QueryOutput> {
         let total_start = Instant::now();
         let total_alloc_start = allocation::snapshot();
         let mut timings = QueryTimings::default();
         let mut allocations = QueryAllocationStats::default();
-        let static_empty_fast_key =
-            if options.allow_static_empty_fast_cache && query.inputs.is_empty() {
-                Some(typed_static_empty_fast_key(
-                    schema,
-                    self.last_committed_tx_id()?,
-                    query,
-                ))
-            } else {
-                None
-            };
-        if let Some(cache_key) = static_empty_fast_key {
-            let lookup_start = Instant::now();
-            let cache_hit = self.query_images.static_empty_fast_cached(cache_key)?;
-            timings.static_empty_lookup_micros = timings
-                .static_empty_lookup_micros
-                .saturating_add(elapsed_recorded_micros(lookup_start));
-            if cache_hit {
-                return Ok(static_empty_output_from_typed(
-                    query,
-                    self.query_images.diagnostics(),
-                    timings,
-                    total_start,
-                    total_alloc_start,
-                    true,
-                ));
-            }
-        }
 
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
@@ -1570,71 +1381,6 @@ impl<'env> ReadTxn<'env> {
 
         let query_image_cache = self.query_images.diagnostics();
         let prepared_cache_key = query_shape_key(schema, &normalized);
-        let lookup_start = Instant::now();
-        let static_empty_cached = image.static_empty_cached(prepared_cache_key)?;
-        timings.static_empty_lookup_micros = timings
-            .static_empty_lookup_micros
-            .saturating_add(elapsed_recorded_micros(lookup_start));
-        if options.allow_static_empty_fast_cache && static_empty_cached {
-            let mut plan = static_empty_plan(
-                &normalized,
-                query_image_cache,
-                image.planner_stats_diagnostics(),
-                image.prepared_plan_diagnostics(),
-            );
-            plan.timings = timings;
-            plan.allocations = allocations;
-            plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
-            plan.counters.static_empty_cache_hits = 1;
-            finish_timings(&mut plan.timings, total_start);
-            let total_alloc = allocation_delta_since(total_alloc_start);
-            plan.allocations = plan.allocations.with_total(total_alloc);
-            return Ok(QueryOutput {
-                result: QueryResultSet::new(
-                    result_columns(&normalized),
-                    empty_output_facts(&normalized.output),
-                ),
-                plan,
-            });
-        }
-        let static_empty_proof = static_query_proves_empty_timed(
-            image.as_ref(),
-            &normalized,
-            &encoded_inputs,
-            prepared_cache_key,
-            options.allow_static_empty_fast_cache,
-            &mut timings,
-        )?;
-        if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
-            if options.allow_static_empty_fast_cache && normalized.inputs.is_empty() {
-                image.insert_static_empty(prepared_cache_key)?;
-                if let Some(cache_key) = static_empty_fast_key {
-                    self.query_images.insert_static_empty_fast(cache_key)?;
-                }
-            }
-            let mut plan = static_empty_plan(
-                &normalized,
-                query_image_cache,
-                image.planner_stats_diagnostics(),
-                image.prepared_plan_diagnostics(),
-            );
-            plan.timings = timings;
-            plan.allocations = allocations;
-            plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
-            if let Some(proof) = &static_empty_proof {
-                record_static_proof_counters(&mut plan.counters, proof);
-            }
-            finish_timings(&mut plan.timings, total_start);
-            let total_alloc = allocation_delta_since(total_alloc_start);
-            plan.allocations = plan.allocations.with_total(total_alloc);
-            return Ok(QueryOutput {
-                result: QueryResultSet::new(
-                    result_columns(&normalized),
-                    empty_output_facts(&normalized.output),
-                ),
-                plan,
-            });
-        }
 
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
@@ -1673,7 +1419,6 @@ impl<'env> ReadTxn<'env> {
         execute_free_join(
             image.as_ref(),
             self,
-            schema,
             &normalized,
             &encoded_inputs,
             &mut plan,
@@ -1695,9 +1440,6 @@ impl<'env> ReadTxn<'env> {
         if has_aggregate(&normalized) {
             plan.summary.counters.aggregate_groups = facts.len() as u64;
         }
-        if let Some(proof) = &static_empty_proof {
-            record_static_proof_counters(&mut plan.summary.counters, proof);
-        }
         finish_timings(&mut plan.summary.timings, total_start);
         let total_alloc = allocation_delta_since(total_alloc_start);
         plan.summary.allocations = plan.summary.allocations.with_total(total_alloc);
@@ -1717,55 +1459,11 @@ impl<'env> ReadTxn<'env> {
         query: &PreparedQuery,
         inputs: &InputBindings,
     ) -> Result<QueryOutput> {
-        self.execute_prepared_query_with_options(
-            schema,
-            query,
-            inputs,
-            QueryExecutionOptions::default(),
-        )
-    }
-
-    /// Executes a prepared typed positive query IR with explicit cache controls.
-    #[tracing::instrument(name = "bumbledb.query.execute_prepared_with_options", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
-    pub fn execute_prepared_query_with_options(
-        &self,
-        schema: &StorageSchema,
-        query: &PreparedQuery,
-        inputs: &InputBindings,
-        options: QueryExecutionOptions,
-    ) -> Result<QueryOutput> {
         let typed = query.query();
         let total_start = Instant::now();
         let total_alloc_start = allocation::snapshot();
         let mut timings = QueryTimings::default();
         let mut allocations = QueryAllocationStats::default();
-        let static_empty_fast_key =
-            if options.allow_static_empty_fast_cache && typed.inputs.is_empty() {
-                Some(typed_static_empty_fast_key(
-                    schema,
-                    self.last_committed_tx_id()?,
-                    typed,
-                ))
-            } else {
-                None
-            };
-        if let Some(cache_key) = static_empty_fast_key {
-            let lookup_start = Instant::now();
-            let cache_hit = self.query_images.static_empty_fast_cached(cache_key)?;
-            timings.static_empty_lookup_micros = timings
-                .static_empty_lookup_micros
-                .saturating_add(elapsed_recorded_micros(lookup_start));
-            if cache_hit {
-                return Ok(static_empty_output_from_typed(
-                    typed,
-                    self.query_images.diagnostics(),
-                    timings,
-                    total_start,
-                    total_alloc_start,
-                    true,
-                ));
-            }
-        }
 
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
@@ -1821,71 +1519,6 @@ impl<'env> ReadTxn<'env> {
 
         let query_image_cache = self.query_images.diagnostics();
         let prepared_cache_key = query_shape_key(schema, normalized);
-        let lookup_start = Instant::now();
-        let static_empty_cached = image.static_empty_cached(prepared_cache_key)?;
-        timings.static_empty_lookup_micros = timings
-            .static_empty_lookup_micros
-            .saturating_add(elapsed_recorded_micros(lookup_start));
-        if options.allow_static_empty_fast_cache && static_empty_cached {
-            let mut plan = static_empty_plan(
-                normalized,
-                query_image_cache,
-                image.planner_stats_diagnostics(),
-                image.prepared_plan_diagnostics(),
-            );
-            plan.timings = timings;
-            plan.allocations = allocations;
-            plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
-            plan.counters.static_empty_cache_hits = 1;
-            finish_timings(&mut plan.timings, total_start);
-            let total_alloc = allocation_delta_since(total_alloc_start);
-            plan.allocations = plan.allocations.with_total(total_alloc);
-            return Ok(QueryOutput {
-                result: QueryResultSet::new(
-                    result_columns(normalized),
-                    empty_output_facts(&normalized.output),
-                ),
-                plan,
-            });
-        }
-        let static_empty_proof = static_query_proves_empty_timed(
-            image.as_ref(),
-            normalized,
-            &encoded_inputs,
-            prepared_cache_key,
-            options.allow_static_empty_fast_cache,
-            &mut timings,
-        )?;
-        if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
-            if options.allow_static_empty_fast_cache && normalized.inputs.is_empty() {
-                image.insert_static_empty(prepared_cache_key)?;
-                if let Some(cache_key) = static_empty_fast_key {
-                    self.query_images.insert_static_empty_fast(cache_key)?;
-                }
-            }
-            let mut plan = static_empty_plan(
-                normalized,
-                query_image_cache,
-                image.planner_stats_diagnostics(),
-                image.prepared_plan_diagnostics(),
-            );
-            plan.timings = timings;
-            plan.allocations = allocations;
-            plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
-            if let Some(proof) = &static_empty_proof {
-                record_static_proof_counters(&mut plan.counters, proof);
-            }
-            finish_timings(&mut plan.timings, total_start);
-            let total_alloc = allocation_delta_since(total_alloc_start);
-            plan.allocations = plan.allocations.with_total(total_alloc);
-            return Ok(QueryOutput {
-                result: QueryResultSet::new(
-                    result_columns(normalized),
-                    empty_output_facts(&normalized.output),
-                ),
-                plan,
-            });
-        }
 
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
@@ -1925,7 +1558,6 @@ impl<'env> ReadTxn<'env> {
         execute_free_join(
             image.as_ref(),
             self,
-            schema,
             normalized,
             &encoded_inputs,
             &mut plan,
@@ -1947,9 +1579,6 @@ impl<'env> ReadTxn<'env> {
         if has_aggregate(normalized) {
             plan.summary.counters.aggregate_groups = facts.len() as u64;
         }
-        if let Some(proof) = &static_empty_proof {
-            record_static_proof_counters(&mut plan.summary.counters, proof);
-        }
         finish_timings(&mut plan.summary.timings, total_start);
         let total_alloc = allocation_delta_since(total_alloc_start);
         plan.summary.allocations = plan.summary.allocations.with_total(total_alloc);
@@ -1969,24 +1598,7 @@ impl<'env> ReadTxn<'env> {
         query: &PreparedQuery,
         inputs: &InputBindings,
     ) -> Result<QueryResultCardinality> {
-        self.execute_prepared_query_cardinality_with_options(
-            schema,
-            query,
-            inputs,
-            QueryExecutionOptions::default(),
-        )
-    }
-
-    /// Executes a prepared typed query and returns only result-set cardinality with explicit cache controls.
-    #[tracing::instrument(name = "bumbledb.query.execute_prepared_cardinality_with_options", skip_all, fields(vars = query.query().variables.len(), clauses = query.query().clauses.len(), inputs = query.query().inputs.len()))]
-    pub fn execute_prepared_query_cardinality_with_options(
-        &self,
-        schema: &StorageSchema,
-        query: &PreparedQuery,
-        inputs: &InputBindings,
-        options: QueryExecutionOptions,
-    ) -> Result<QueryResultCardinality> {
-        self.execute_result_cardinality_with_options(schema, query.query(), inputs, options)
+        self.execute_result_cardinality(schema, query.query(), inputs)
     }
 
     /// Executes a typed query and returns only the output fact count.
@@ -1997,57 +1609,10 @@ impl<'env> ReadTxn<'env> {
         query: &TypedQuery,
         inputs: &InputBindings,
     ) -> Result<QueryResultCardinality> {
-        self.execute_result_cardinality_with_options(
-            schema,
-            query,
-            inputs,
-            QueryExecutionOptions::default(),
-        )
-    }
-
-    /// Executes a typed query and returns only result-set cardinality with explicit cache controls.
-    #[tracing::instrument(name = "bumbledb.query.execute_count_with_options", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
-    pub fn execute_result_cardinality_with_options(
-        &self,
-        schema: &StorageSchema,
-        query: &TypedQuery,
-        inputs: &InputBindings,
-        options: QueryExecutionOptions,
-    ) -> Result<QueryResultCardinality> {
         let total_start = Instant::now();
         let total_alloc_start = allocation::snapshot();
         let mut timings = QueryTimings::default();
         let mut allocations = QueryAllocationStats::default();
-        let static_empty_fast_key =
-            if options.allow_static_empty_fast_cache && query.inputs.is_empty() {
-                Some(typed_static_empty_fast_key(
-                    schema,
-                    self.last_committed_tx_id()?,
-                    query,
-                ))
-            } else {
-                None
-            };
-        if let Some(cache_key) = static_empty_fast_key {
-            let lookup_start = Instant::now();
-            let cache_hit = self.query_images.static_empty_fast_cached(cache_key)?;
-            timings.static_empty_lookup_micros = timings
-                .static_empty_lookup_micros
-                .saturating_add(elapsed_recorded_micros(lookup_start));
-            if cache_hit {
-                return Ok(QueryResultCardinality {
-                    cardinality: 0,
-                    plan: static_empty_plan_from_typed(
-                        query,
-                        self.query_images.diagnostics(),
-                        timings,
-                        total_start,
-                        total_alloc_start,
-                        true,
-                    ),
-                });
-            }
-        }
 
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
@@ -2079,68 +1644,6 @@ impl<'env> ReadTxn<'env> {
 
         let query_image_cache = self.query_images.diagnostics();
         let prepared_cache_key = query_shape_key(schema, &normalized);
-        let lookup_start = Instant::now();
-        let static_empty_cached = image.static_empty_cached(prepared_cache_key)?;
-        timings.static_empty_lookup_micros = timings
-            .static_empty_lookup_micros
-            .saturating_add(elapsed_recorded_micros(lookup_start));
-        if options.allow_static_empty_fast_cache && static_empty_cached {
-            let mut plan = static_empty_plan(
-                &normalized,
-                query_image_cache,
-                image.planner_stats_diagnostics(),
-                image.prepared_plan_diagnostics(),
-            );
-            plan.timings = timings;
-            plan.allocations = allocations;
-            plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
-            plan.counters.static_empty_cache_hits = 1;
-            finish_timings(&mut plan.timings, total_start);
-            plan.allocations = plan
-                .allocations
-                .with_total(allocation_delta_since(total_alloc_start));
-            return Ok(QueryResultCardinality {
-                cardinality: 0,
-                plan,
-            });
-        }
-
-        let static_empty_proof = static_query_proves_empty_timed(
-            image.as_ref(),
-            &normalized,
-            &encoded_inputs,
-            prepared_cache_key,
-            options.allow_static_empty_fast_cache,
-            &mut timings,
-        )?;
-        if static_empty_proof.as_ref().is_some_and(|proof| proof.empty) {
-            if options.allow_static_empty_fast_cache && normalized.inputs.is_empty() {
-                image.insert_static_empty(prepared_cache_key)?;
-                if let Some(cache_key) = static_empty_fast_key {
-                    self.query_images.insert_static_empty_fast(cache_key)?;
-                }
-            }
-            let mut plan = static_empty_plan(
-                &normalized,
-                query_image_cache,
-                image.planner_stats_diagnostics(),
-                image.prepared_plan_diagnostics(),
-            );
-            plan.timings = timings;
-            plan.allocations = allocations;
-            plan.runtime_kind = QueryRuntimeKind::StaticEmpty;
-            if let Some(proof) = &static_empty_proof {
-                record_static_proof_counters(&mut plan.counters, proof);
-            }
-            finish_timings(&mut plan.timings, total_start);
-            plan.allocations = plan
-                .allocations
-                .with_total(allocation_delta_since(total_alloc_start));
-            return Ok(QueryResultCardinality {
-                cardinality: 0,
-                plan,
-            });
-        }
 
         let phase_start = Instant::now();
         let phase_alloc_start = allocation::snapshot();
@@ -2178,7 +1681,6 @@ impl<'env> ReadTxn<'env> {
         execute_free_join(
             image.as_ref(),
             self,
-            schema,
             &normalized,
             &encoded_inputs,
             &mut plan,
@@ -2191,9 +1693,6 @@ impl<'env> ReadTxn<'env> {
         plan.summary.counters.output_facts = facts as u64;
         if has_aggregate(&normalized) {
             plan.summary.counters.aggregate_groups = facts as u64;
-        }
-        if let Some(proof) = &static_empty_proof {
-            record_static_proof_counters(&mut plan.summary.counters, proof);
         }
         finish_timings(&mut plan.summary.timings, total_start);
         plan.summary.allocations = plan
@@ -2212,26 +1711,9 @@ fn elapsed_micros(start: Instant) -> u128 {
     start.elapsed().as_micros()
 }
 
-fn elapsed_recorded_micros(start: Instant) -> u128 {
-    start.elapsed().as_micros().max(1)
-}
-
 fn finish_timings(timings: &mut QueryTimings, total_start: Instant) {
     timings.total_micros = elapsed_micros(total_start);
     timings.refresh_unaccounted();
-}
-
-fn record_static_proof_counters(counters: &mut PlanCounters, proof: &StaticEmptyProof) {
-    counters.static_empty_cache_misses = 1;
-    counters.static_empty_atoms_checked = proof.atoms_checked;
-    counters.static_empty_facts_scanned = proof.facts_scanned;
-    counters.static_semijoin_prefixes_probed = proof.prefixes_probed;
-    counters.static_semijoin_candidate_values = proof.candidate_values;
-    counters.static_semijoin_rounds = proof.rounds;
-    if proof.semijoin_skipped {
-        counters.static_semijoin_skipped = 1;
-        counters.static_semijoin_skipped_reason = proof.semijoin_skipped_reason;
-    }
 }
 
 fn allocation_delta_since(start: allocation::AllocationSnapshot) -> AllocationPhaseStats {
@@ -2284,166 +1766,8 @@ fn query_shape_key(schema: &StorageSchema, query: &NormalizedQuery) -> QueryShap
     QueryShapeKey(*hasher.finalize().as_bytes())
 }
 
-fn static_proof_cache_key(
-    image: &QueryImageKey,
-    query_shape: QueryShapeKey,
-    inputs: &EncodedInputs,
-    kind: StaticProofKind,
-) -> StaticProofCacheKey {
-    let mut hasher = blake3::Hasher::new();
-    hash_bytes_len_prefixed(&mut hasher, b"bumbledb.static_proof_cache.v1");
-    hasher.update(&image.schema.0);
-    hash_u64(&mut hasher, image.tx_id);
-    hasher.update(&query_shape.0);
-    hash_u8(
-        &mut hasher,
-        match kind {
-            StaticProofKind::StaticLiteral => 1,
-            StaticProofKind::StaticSemijoin => 2,
-        },
-    );
-    hash_u64(&mut hasher, inputs.values.len() as u64);
-    for value in &inputs.values {
-        hash_encoded_owned(&mut hasher, value);
-    }
-    StaticProofCacheKey(*hasher.finalize().as_bytes())
-}
-
 fn query_image_scope_for_query(schema: &StorageSchema, query: &NormalizedQuery) -> QueryImageScope {
     QueryImageScope::relations_all(schema, query.atoms.iter().map(|atom| atom.relation))
-}
-
-fn typed_static_empty_fast_key(
-    schema: &StorageSchema,
-    tx_id: u64,
-    query: &TypedQuery,
-) -> QueryShapeKey {
-    let mut hasher = blake3::Hasher::new();
-    hash_bytes_len_prefixed(&mut hasher, b"bumbledb.static_empty_typed.v1");
-    hasher.update(&schema.descriptor().fingerprint().0);
-    hash_u64(&mut hasher, tx_id);
-    hash_typed_query(&mut hasher, query);
-    QueryShapeKey(*hasher.finalize().as_bytes())
-}
-
-fn hash_typed_query(hasher: &mut blake3::Hasher, query: &TypedQuery) {
-    hash_u64(hasher, query.variables.len() as u64);
-    for variable in &query.variables {
-        hash_u64(hasher, variable.id as u64);
-        hash_bytes_len_prefixed(hasher, variable.name.as_bytes());
-        hash_value_type(hasher, &variable.value_type);
-    }
-    hash_u64(hasher, query.inputs.len() as u64);
-    for input in &query.inputs {
-        hash_u64(hasher, input.id as u64);
-        hash_bytes_len_prefixed(hasher, input.name.as_bytes());
-        hash_value_type(hasher, &input.value_type);
-    }
-    hash_u64(hasher, query.find.len() as u64);
-    for term in &query.find {
-        hash_typed_find_term(hasher, term);
-    }
-    hash_u64(hasher, query.clauses.len() as u64);
-    for clause in &query.clauses {
-        match clause {
-            TypedClause::Relation(atom) => {
-                hash_u8(hasher, 1);
-                hash_u64(hasher, atom.relation_id as u64);
-                hash_bytes_len_prefixed(hasher, atom.relation.as_bytes());
-                hash_u64(hasher, atom.fields.len() as u64);
-                for field in &atom.fields {
-                    hash_u64(hasher, field.field_id as u64);
-                    hash_bytes_len_prefixed(hasher, field.field.as_bytes());
-                    hash_value_type(hasher, &field.value_type);
-                    hash_typed_term(hasher, &field.term);
-                }
-            }
-            TypedClause::Comparison(comparison) => {
-                hash_u8(hasher, 2);
-                hash_typed_operand(hasher, &comparison.left);
-                hash_comparison_operator(hasher, comparison.operator);
-                hash_typed_operand(hasher, &comparison.right);
-                hash_value_type(hasher, &comparison.value_type);
-            }
-        }
-    }
-}
-
-fn hash_typed_find_term(hasher: &mut blake3::Hasher, term: &TypedFindTerm) {
-    match term {
-        TypedFindTerm::Variable { variable } => {
-            hash_u8(hasher, 1);
-            hash_u64(hasher, *variable as u64);
-        }
-        TypedFindTerm::Aggregate {
-            function,
-            variable,
-            domain,
-            value_type,
-        } => {
-            hash_u8(hasher, 2);
-            hash_aggregate_function(hasher, *function);
-            hash_u64(hasher, *variable as u64);
-            hash_u64(hasher, domain.len() as u64);
-            for variable in domain {
-                hash_u64(hasher, *variable as u64);
-            }
-            hash_value_type(hasher, value_type);
-        }
-    }
-}
-
-fn hash_typed_term(hasher: &mut blake3::Hasher, term: &TypedTerm) {
-    match term {
-        TypedTerm::Variable(variable) => {
-            hash_u8(hasher, 1);
-            hash_u64(hasher, *variable as u64);
-        }
-        TypedTerm::Input(input) => {
-            hash_u8(hasher, 2);
-            hash_u64(hasher, *input as u64);
-        }
-        TypedTerm::Wildcard => hash_u8(hasher, 3),
-        TypedTerm::Literal(literal) => {
-            hash_u8(hasher, 4);
-            hash_typed_literal(hasher, literal);
-        }
-    }
-}
-
-fn hash_typed_operand(hasher: &mut blake3::Hasher, operand: &TypedOperand) {
-    match operand {
-        TypedOperand::Variable(variable) => {
-            hash_u8(hasher, 1);
-            hash_u64(hasher, *variable as u64);
-        }
-        TypedOperand::Input(input) => {
-            hash_u8(hasher, 2);
-            hash_u64(hasher, *input as u64);
-        }
-        TypedOperand::Literal(literal) => {
-            hash_u8(hasher, 3);
-            hash_typed_literal(hasher, literal);
-        }
-    }
-}
-
-fn hash_typed_literal(hasher: &mut blake3::Hasher, literal: &TypedLiteral) {
-    hash_value_type(hasher, &literal.value_type);
-    match &literal.literal {
-        Literal::Bool(value) => {
-            hash_u8(hasher, 1);
-            hash_u8(hasher, u8::from(*value));
-        }
-        Literal::Integer(value) => {
-            hash_u8(hasher, 2);
-            hasher.update(&value.to_be_bytes());
-        }
-        Literal::String(value) => {
-            hash_u8(hasher, 3);
-            hash_bytes_len_prefixed(hasher, value.as_bytes());
-        }
-    }
 }
 
 fn hash_u8(hasher: &mut blake3::Hasher, value: u8) {
@@ -2626,1089 +1950,9 @@ fn hash_output_plan(hasher: &mut blake3::Hasher, output: &OutputPlan) {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct StaticEmptyProof {
-    empty: bool,
-    atoms_checked: u64,
-    facts_scanned: u64,
-    prefixes_probed: u64,
-    candidate_values: u64,
-    rounds: u64,
-    semijoin_skipped: bool,
-    semijoin_skipped_reason: StaticSemijoinSkipReason,
-}
-
-#[derive(Clone, Debug)]
-struct CandidateSet {
-    values: BTreeSet<EncodedOwned>,
-}
-
-impl CandidateSet {
-    fn new(values: BTreeSet<EncodedOwned>) -> Self {
-        Self { values }
-    }
-}
-
-#[derive(Clone, Debug)]
-enum FieldConstraint<'a> {
-    Single(&'a EncodedOwned),
-    Candidates(&'a BTreeSet<EncodedOwned>),
-}
-
-#[derive(Clone, Debug)]
-enum StaticSemijoinProbe {
-    Prefix(Vec<u8>),
-    Range {
-        lower: Vec<u8>,
-        upper: Option<Vec<u8>>,
-        upper_inclusive: bool,
-    },
-}
-
-#[derive(Clone, Debug)]
-struct StaticRangeConstraint {
-    lower: Option<(EncodedOwned, bool)>,
-    upper: Option<(EncodedOwned, bool)>,
-}
-
-type StaticSemijoinProbes<'a> = (&'a RelationIndexImage, Vec<StaticSemijoinProbe>);
-
-// Static proof owns emptiness detection only. It must not count facts or select plans.
-fn static_query_proves_empty_timed(
-    image: &crate::QueryImage,
-    query: &NormalizedQuery,
-    inputs: &EncodedInputs,
-    query_shape: QueryShapeKey,
-    allow_static_proof_cache: bool,
-    timings: &mut QueryTimings,
-) -> Result<Option<StaticEmptyProof>> {
-    let image_key = image.key();
-    let literal_cache_key = static_proof_cache_key(
-        &image_key,
-        query_shape,
-        inputs,
-        StaticProofKind::StaticLiteral,
-    );
-    let literal_start = Instant::now();
-    let mut proof = if allow_static_proof_cache
-        && let Some(cached) = image.cached_static_proof(literal_cache_key)?
-    {
-        match cached {
-            StaticProofCacheValue::ProvenEmpty => StaticEmptyProof {
-                empty: true,
-                ..StaticEmptyProof::default()
-            },
-            StaticProofCacheValue::ProvenNotEmptyOrInconclusive => StaticEmptyProof::default(),
-        }
-    } else {
-        let proof = static_literal_atoms_prove_empty(image, query, inputs)?;
-        if allow_static_proof_cache {
-            image.insert_static_proof(
-                literal_cache_key,
-                if proof.empty {
-                    StaticProofCacheValue::ProvenEmpty
-                } else {
-                    StaticProofCacheValue::ProvenNotEmptyOrInconclusive
-                },
-            )?;
-        }
-        proof
-    };
-    timings.static_literal_proof_micros = timings
-        .static_literal_proof_micros
-        .saturating_add(elapsed_recorded_micros(literal_start));
-    if proof.empty {
-        return Ok(Some(proof));
-    }
-    let semijoin_start = Instant::now();
-    let semijoin_cache_key = static_proof_cache_key(
-        &image_key,
-        query_shape,
-        inputs,
-        StaticProofKind::StaticSemijoin,
-    );
-    if allow_static_proof_cache
-        && let Some(cached) = image.cached_static_proof(semijoin_cache_key)?
-    {
-        timings.static_semijoin_proof_micros = timings
-            .static_semijoin_proof_micros
-            .saturating_add(elapsed_recorded_micros(semijoin_start));
-        match cached {
-            StaticProofCacheValue::ProvenEmpty => {
-                proof.empty = true;
-            }
-            StaticProofCacheValue::ProvenNotEmptyOrInconclusive => {
-                proof.semijoin_skipped = true;
-                proof.semijoin_skipped_reason = StaticSemijoinSkipReason::NegativeCache;
-            }
-        }
-        return Ok(Some(proof));
-    }
-    if let Some(reason) = static_semijoin_skip_reason(image, query, inputs)? {
-        timings.static_semijoin_proof_micros = timings
-            .static_semijoin_proof_micros
-            .saturating_add(elapsed_recorded_micros(semijoin_start));
-        proof.semijoin_skipped = true;
-        proof.semijoin_skipped_reason = reason;
-        if allow_static_proof_cache {
-            image.insert_static_proof(
-                semijoin_cache_key,
-                StaticProofCacheValue::ProvenNotEmptyOrInconclusive,
-            )?;
-        }
-        return Ok(Some(proof));
-    }
-    let semijoin = static_semijoin_proves_empty(image, query, inputs)?;
-    timings.static_semijoin_proof_micros = timings
-        .static_semijoin_proof_micros
-        .saturating_add(elapsed_recorded_micros(semijoin_start));
-    proof.atoms_checked = proof.atoms_checked.saturating_add(semijoin.atoms_checked);
-    proof.facts_scanned = proof.facts_scanned.saturating_add(semijoin.facts_scanned);
-    proof.prefixes_probed = semijoin.prefixes_probed;
-    proof.candidate_values = semijoin.candidate_values;
-    proof.rounds = semijoin.rounds;
-    proof.empty = semijoin.empty;
-    proof.semijoin_skipped = semijoin.semijoin_skipped;
-    proof.semijoin_skipped_reason = semijoin.semijoin_skipped_reason;
-    if allow_static_proof_cache {
-        image.insert_static_proof(
-            semijoin_cache_key,
-            if proof.empty {
-                StaticProofCacheValue::ProvenEmpty
-            } else {
-                StaticProofCacheValue::ProvenNotEmptyOrInconclusive
-            },
-        )?;
-    }
-    Ok(Some(proof))
-}
-
-fn static_semijoin_skip_reason(
-    image: &crate::QueryImage,
-    query: &NormalizedQuery,
-    inputs: &EncodedInputs,
-) -> Result<Option<StaticSemijoinSkipReason>> {
-    if query.atoms.len() < 2 {
-        return Ok(Some(StaticSemijoinSkipReason::TooFewAtoms));
-    }
-    if !static_semijoin_output_allowed(&query.output) {
-        return Ok(Some(StaticSemijoinSkipReason::OutputTooBroad));
-    }
-    if !query
-        .atoms
-        .iter()
-        .any(|atom| atom_has_static_constraint(query, atom))
-    {
-        return Ok(Some(StaticSemijoinSkipReason::NoStaticConstraint));
-    }
-
-    let empty_candidates = BTreeMap::new();
-    for atom in &query.atoms {
-        if !atom_has_static_constraint(query, atom) {
-            continue;
-        }
-        let relation = image
-            .relation_by_id(atom.relation)
-            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
-        let mut proof = StaticEmptyProof::default();
-        let Some(seed_candidates) = enumerate_static_atom_candidates(
-            relation,
-            query,
-            atom,
-            inputs,
-            &empty_candidates,
-            &mut proof,
-            false,
-            STATIC_SEMIJOIN_MAX_SEED_CANDIDATES,
-        )?
-        else {
-            continue;
-        };
-        if total_raw_candidate_values(&seed_candidates) <= STATIC_SEMIJOIN_MAX_SEED_CANDIDATES {
-            return Ok(None);
-        }
-    }
-
-    Ok(Some(StaticSemijoinSkipReason::NoCheapExactSeed))
-}
-
-fn static_semijoin_output_allowed(output: &OutputPlan) -> bool {
-    match output {
-        OutputPlan::Aggregate(plan) if is_global_count_plan(plan) => true,
-        OutputPlan::Project(plan) => plan.vars.len() <= STATIC_SEMIJOIN_MAX_OUTPUT_VARS,
-        OutputPlan::Aggregate(_) => false,
-    }
-}
-
-fn static_literal_atoms_prove_empty(
-    image: &crate::QueryImage,
-    query: &NormalizedQuery,
-    inputs: &EncodedInputs,
-) -> Result<StaticEmptyProof> {
-    let mut proof = StaticEmptyProof::default();
-    let _span = tracing::debug_span!("bumbledb.query.static_empty.prove").entered();
-    for atom in &query.atoms {
-        if !atom
-            .fields
-            .iter()
-            .any(|field| matches!(field.term, NormTerm::Input(_) | NormTerm::Literal(_)))
-        {
-            continue;
-        }
-        proof.atoms_checked += 1;
-        let relation = image
-            .relation_by_id(atom.relation)
-            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
-        let mut matched = false;
-        for fact in 0..relation.fact_count {
-            proof.facts_scanned += 1;
-            if static_atom_fact_matches(relation, atom, FactId(fact as u32), inputs)? {
-                matched = true;
-                break;
-            }
-        }
-        if !matched {
-            proof.empty = true;
-            return Ok(proof);
-        }
-    }
-    Ok(proof)
-}
-
-fn static_semijoin_proves_empty(
-    image: &crate::QueryImage,
-    query: &NormalizedQuery,
-    inputs: &EncodedInputs,
-) -> Result<StaticEmptyProof> {
-    let mut proof = StaticEmptyProof::default();
-    if query.atoms.len() < 2 {
-        return Ok(proof);
-    }
-    let _span = tracing::debug_span!("bumbledb.query.static_semijoin.prove").entered();
-    let mut candidates: BTreeMap<VarId, CandidateSet> = BTreeMap::new();
-
-    for atom in &query.atoms {
-        if !atom_has_static_constraint(query, atom) {
-            continue;
-        }
-        let relation = image
-            .relation_by_id(atom.relation)
-            .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
-        let Some(atom_candidates) = enumerate_static_atom_candidates(
-            relation,
-            query,
-            atom,
-            inputs,
-            &candidates,
-            &mut proof,
-            false,
-            STATIC_SEMIJOIN_MAX_CANDIDATES,
-        )?
-        else {
-            continue;
-        };
-        if atom_candidates.is_empty() && !atom_variables(atom).is_empty() {
-            proof.empty = true;
-            return Ok(proof);
-        }
-        if merge_atom_candidates(&mut candidates, atom_candidates) {
-            proof.candidate_values = total_candidate_values(&candidates);
-            if proof.candidate_values as usize > STATIC_SEMIJOIN_MAX_CANDIDATES {
-                return Ok(StaticEmptyProof {
-                    empty: false,
-                    ..proof
-                });
-            }
-        }
-        if has_empty_candidate(&candidates) {
-            proof.empty = true;
-            return Ok(proof);
-        }
-    }
-
-    if candidates.is_empty() {
-        return Ok(proof);
-    }
-
-    for _ in 0..STATIC_SEMIJOIN_MAX_ROUNDS {
-        proof.rounds += 1;
-        let mut changed = false;
-        for atom in &query.atoms {
-            if !atom_has_static_constraint(query, atom)
-                && !atom
-                    .fields
-                    .iter()
-                    .any(|field| matches!(field.term, NormTerm::Var(var) if candidates.contains_key(&var)))
-            {
-                continue;
-            }
-            let relation = image
-                .relation_by_id(atom.relation)
-                .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
-            let Some(atom_candidates) = enumerate_static_atom_candidates(
-                relation,
-                query,
-                atom,
-                inputs,
-                &candidates,
-                &mut proof,
-                true,
-                STATIC_SEMIJOIN_MAX_CANDIDATES,
-            )?
-            else {
-                continue;
-            };
-            proof.atoms_checked += 1;
-            if atom_candidates.is_empty() && !atom_variables(atom).is_empty() {
-                proof.empty = true;
-                return Ok(proof);
-            }
-            if merge_atom_candidates(&mut candidates, atom_candidates) {
-                changed = true;
-                proof.candidate_values = total_candidate_values(&candidates);
-                if proof.candidate_values as usize > STATIC_SEMIJOIN_MAX_CANDIDATES {
-                    return Ok(StaticEmptyProof {
-                        empty: false,
-                        ..proof
-                    });
-                }
-            }
-            if has_empty_candidate(&candidates) {
-                proof.empty = true;
-                return Ok(proof);
-            }
-        }
-        if !changed {
-            return Ok(proof);
-        }
-    }
-    Ok(StaticEmptyProof {
-        empty: false,
-        ..proof
-    })
-}
-
-fn atom_has_static_constraint(query: &NormalizedQuery, atom: &NormAtom) -> bool {
-    atom.fields
-        .iter()
-        .any(|field| matches!(field.term, NormTerm::Input(_) | NormTerm::Literal(_)))
-        || query.predicates.iter().any(|predicate| {
-            static_predicate_variable(predicate)
-                .is_some_and(|variable| atom_has_variable(atom, variable))
-        })
-}
-
-fn static_predicate_variable(predicate: &NormPredicate) -> Option<VarId> {
-    match (&predicate.operands[0], &predicate.operands[1]) {
-        (NormOperand::Var(variable), NormOperand::Literal(_))
-        | (NormOperand::Literal(_), NormOperand::Var(variable))
-        | (NormOperand::Var(variable), NormOperand::Input(_))
-        | (NormOperand::Input(_), NormOperand::Var(variable)) => Some(*variable),
-        _ => None,
-    }
-}
-
-fn atom_has_variable(atom: &NormAtom, variable: VarId) -> bool {
-    atom.fields
-        .iter()
-        .any(|field| matches!(field.term, NormTerm::Var(var) if var == variable))
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "static candidate enumeration shares proof and budget state"
-)]
-fn enumerate_static_atom_candidates(
-    relation: &RelationImage,
-    query: &NormalizedQuery,
-    atom: &NormAtom,
-    inputs: &EncodedInputs,
-    candidates: &BTreeMap<VarId, CandidateSet>,
-    proof: &mut StaticEmptyProof,
-    use_candidates: bool,
-    max_candidates: usize,
-) -> Result<Option<BTreeMap<VarId, BTreeSet<EncodedOwned>>>> {
-    if let Some((index, probes)) =
-        static_semijoin_prefixes(relation, query, atom, inputs, candidates, use_candidates)?
-    {
-        let mut out = empty_atom_candidate_map(atom);
-        for probe in probes {
-            if proof.prefixes_probed >= STATIC_SEMIJOIN_MAX_PROBES {
-                return Ok(None);
-            }
-            proof.prefixes_probed += 1;
-            for entry in static_semijoin_probe_entries(index, &probe) {
-                if static_atom_entry_matches(index, entry, query, atom, inputs, candidates)? {
-                    collect_atom_entry_candidates(index, entry, atom, &mut out)?;
-                    if total_raw_candidate_values(&out) > max_candidates {
-                        return Ok(None);
-                    }
-                }
-            }
-        }
-        return Ok(Some(out));
-    }
-
-    if relation.fact_count > STATIC_SEMIJOIN_SCAN_THRESHOLD {
-        return Ok(None);
-    }
-    let mut out = empty_atom_candidate_map(atom);
-    for fact in 0..relation.fact_count {
-        if proof.facts_scanned >= STATIC_SEMIJOIN_MAX_SCANNED_ROWS {
-            return Ok(None);
-        }
-        proof.facts_scanned += 1;
-        let fact = FactId(fact as u32);
-        if static_atom_fact_matches_with_candidates(
-            relation, query, atom, fact, inputs, candidates,
-        )? {
-            collect_atom_fact_candidates(relation, atom, fact, &mut out)?;
-            if total_raw_candidate_values(&out) > max_candidates {
-                return Ok(None);
-            }
-        }
-    }
-    Ok(Some(out))
-}
-
-fn static_semijoin_prefixes<'a>(
-    relation: &'a RelationImage,
-    query: &'a NormalizedQuery,
-    atom: &'a NormAtom,
-    inputs: &'a EncodedInputs,
-    candidates: &'a BTreeMap<VarId, CandidateSet>,
-    use_candidates: bool,
-) -> Result<Option<StaticSemijoinProbes<'a>>> {
-    let mut best: Option<(&RelationIndexImage, Vec<StaticSemijoinProbe>)> = None;
-    for index in relation.indexes() {
-        if atom
-            .fields
-            .iter()
-            .any(|field| !index.contains_field(field.field))
-        {
-            continue;
-        }
-        let mut prefix_values: Vec<Vec<&EncodedOwned>> = Vec::new();
-        let mut range_constraint = None;
-        for field in &index.fields {
-            let Some(atom_field) = atom
-                .fields
-                .iter()
-                .find(|atom_field| atom_field.field == *field)
-            else {
-                break;
-            };
-            match static_field_constraint(atom_field, inputs, candidates, use_candidates) {
-                Some(FieldConstraint::Single(value)) => prefix_values.push(vec![value]),
-                Some(FieldConstraint::Candidates(values)) => {
-                    if values.is_empty() {
-                        return Ok(Some((index, Vec::new())));
-                    }
-                    prefix_values.push(values.iter().collect());
-                }
-                None => {
-                    range_constraint = static_field_range_constraint(atom_field, query);
-                    break;
-                }
-            }
-        }
-        if prefix_values.is_empty() && range_constraint.is_none() {
-            continue;
-        }
-        let prefix_count = prefix_values
-            .iter()
-            .try_fold(1usize, |count, values| count.checked_mul(values.len()))
-            .unwrap_or(STATIC_SEMIJOIN_MAX_PROBES as usize + 1);
-        if prefix_count > STATIC_SEMIJOIN_MAX_PROBES as usize {
-            continue;
-        }
-        let mut prefixes = Vec::with_capacity(prefix_count);
-        build_static_prefixes(&prefix_values, 0, Vec::new(), &mut prefixes);
-        let probes = if let Some(range) = range_constraint {
-            static_range_probes(prefixes, range)
-        } else {
-            prefixes
-                .into_iter()
-                .map(StaticSemijoinProbe::Prefix)
-                .collect()
-        };
-        if best
-            .as_ref()
-            .is_none_or(|(_, existing)| probes.len() < existing.len())
-        {
-            best = Some((index, probes));
-        }
-    }
-    Ok(best)
-}
-
-fn static_semijoin_probe_entries<'a>(
-    index: &'a RelationIndexImage,
-    probe: &'a StaticSemijoinProbe,
-) -> Box<dyn Iterator<Item = &'a [u8]> + 'a> {
-    match probe {
-        StaticSemijoinProbe::Prefix(prefix) => Box::new(index.entries_with_prefix(prefix)),
-        StaticSemijoinProbe::Range {
-            lower,
-            upper,
-            upper_inclusive,
-        } => Box::new(index.entries_with_prefix_bounds(lower, upper.as_deref(), *upper_inclusive)),
-    }
-}
-
-fn static_range_probes(
-    mut prefixes: Vec<Vec<u8>>,
-    range: StaticRangeConstraint,
-) -> Vec<StaticSemijoinProbe> {
-    if prefixes.is_empty() {
-        prefixes.push(Vec::new());
-    }
-    prefixes
-        .into_iter()
-        .map(|prefix| {
-            let mut lower = prefix.clone();
-            if let Some((value, _)) = &range.lower {
-                lower.extend_from_slice(value.as_bytes());
-            }
-            let upper = range.upper.as_ref().map(|(value, _)| {
-                let mut upper = prefix;
-                upper.extend_from_slice(value.as_bytes());
-                upper
-            });
-            StaticSemijoinProbe::Range {
-                lower,
-                upper,
-                upper_inclusive: range
-                    .upper
-                    .as_ref()
-                    .is_some_and(|(_, inclusive)| *inclusive),
-            }
-        })
-        .collect()
-}
-
-fn static_field_range_constraint(
-    field: &NormAtomField,
-    query: &NormalizedQuery,
-) -> Option<StaticRangeConstraint> {
-    let NormTerm::Var(variable) = field.term else {
-        return None;
-    };
-    let mut range = StaticRangeConstraint {
-        lower: None,
-        upper: None,
-    };
-    for predicate in &query.predicates {
-        if !encoded_comparison_supported(predicate.op, &predicate.value_type) {
-            continue;
-        }
-        match (&predicate.operands[0], &predicate.operands[1]) {
-            (NormOperand::Var(left), NormOperand::Literal(right)) if *left == variable => {
-                apply_static_range_bound(&mut range, predicate.op, right);
-            }
-            (NormOperand::Literal(left), NormOperand::Var(right)) if *right == variable => {
-                apply_static_range_bound(&mut range, reverse_comparison(predicate.op), left);
-            }
-            _ => {}
-        }
-    }
-    (range.lower.is_some() || range.upper.is_some()).then_some(range)
-}
-
-fn apply_static_range_bound(
-    range: &mut StaticRangeConstraint,
-    operator: ComparisonOperator,
-    value: &EncodedOwned,
-) {
-    match operator {
-        ComparisonOperator::Eq => {
-            merge_static_lower_bound(range, value, true);
-            merge_static_upper_bound(range, value, true);
-        }
-        ComparisonOperator::Gt => merge_static_lower_bound(range, value, false),
-        ComparisonOperator::Gte => merge_static_lower_bound(range, value, true),
-        ComparisonOperator::Lt => merge_static_upper_bound(range, value, false),
-        ComparisonOperator::Lte => merge_static_upper_bound(range, value, true),
-        ComparisonOperator::NotEq => {}
-    }
-}
-
-fn merge_static_lower_bound(
-    range: &mut StaticRangeConstraint,
-    value: &EncodedOwned,
-    inclusive: bool,
-) {
-    let replace = range
-        .lower
-        .as_ref()
-        .is_none_or(|(existing, existing_inclusive)| {
-            value.as_bytes() > existing.as_bytes()
-                || (value.as_bytes() == existing.as_bytes() && *existing_inclusive && !inclusive)
-        });
-    if replace {
-        range.lower = Some((value.clone(), inclusive));
-    }
-}
-
-fn merge_static_upper_bound(
-    range: &mut StaticRangeConstraint,
-    value: &EncodedOwned,
-    inclusive: bool,
-) {
-    let replace = range
-        .upper
-        .as_ref()
-        .is_none_or(|(existing, existing_inclusive)| {
-            value.as_bytes() < existing.as_bytes()
-                || (value.as_bytes() == existing.as_bytes() && *existing_inclusive && !inclusive)
-        });
-    if replace {
-        range.upper = Some((value.clone(), inclusive));
-    }
-}
-
-fn reverse_comparison(operator: ComparisonOperator) -> ComparisonOperator {
-    match operator {
-        ComparisonOperator::Eq => ComparisonOperator::Eq,
-        ComparisonOperator::NotEq => ComparisonOperator::NotEq,
-        ComparisonOperator::Lt => ComparisonOperator::Gt,
-        ComparisonOperator::Lte => ComparisonOperator::Gte,
-        ComparisonOperator::Gt => ComparisonOperator::Lt,
-        ComparisonOperator::Gte => ComparisonOperator::Lte,
-    }
-}
-
-fn static_field_constraint<'a>(
-    field: &'a NormAtomField,
-    inputs: &'a EncodedInputs,
-    candidates: &'a BTreeMap<VarId, CandidateSet>,
-    use_candidates: bool,
-) -> Option<FieldConstraint<'a>> {
-    match &field.term {
-        NormTerm::Input(input) => inputs.get(*input).map(FieldConstraint::Single),
-        NormTerm::Literal(literal) => Some(FieldConstraint::Single(literal)),
-        NormTerm::Var(variable) if use_candidates => candidates
-            .get(variable)
-            .map(|set| FieldConstraint::Candidates(&set.values)),
-        NormTerm::Var(_) | NormTerm::Wildcard => None,
-    }
-}
-
-fn build_static_prefixes(
-    values: &[Vec<&EncodedOwned>],
-    depth: usize,
-    mut current: Vec<u8>,
-    out: &mut Vec<Vec<u8>>,
-) {
-    if depth == values.len() {
-        out.push(current);
-        return;
-    }
-    for value in &values[depth] {
-        let len = current.len();
-        current.extend_from_slice(value.as_bytes());
-        build_static_prefixes(values, depth + 1, current.clone(), out);
-        current.truncate(len);
-    }
-}
-
-fn empty_atom_candidate_map(atom: &NormAtom) -> BTreeMap<VarId, BTreeSet<EncodedOwned>> {
-    let mut out = BTreeMap::new();
-    for field in &atom.fields {
-        if let NormTerm::Var(variable) = field.term {
-            out.entry(variable).or_insert_with(BTreeSet::new);
-        }
-    }
-    out
-}
-
-fn static_atom_entry_matches(
-    index: &RelationIndexImage,
-    entry: &[u8],
-    query: &NormalizedQuery,
-    atom: &NormAtom,
-    inputs: &EncodedInputs,
-    candidates: &BTreeMap<VarId, CandidateSet>,
-) -> Result<bool> {
-    for field in &atom.fields {
-        let Some(bytes) = index.component_bytes(entry, field.field) else {
-            return Ok(false);
-        };
-        if !static_atom_field_bytes_match(field, bytes, inputs, candidates) {
-            return Ok(false);
-        }
-    }
-    static_atom_predicates_match(query, atom, inputs, |field| {
-        index.component_bytes(entry, field.field)
-    })
-}
-
-fn static_atom_fact_matches_with_candidates(
-    relation: &RelationImage,
-    query: &NormalizedQuery,
-    atom: &NormAtom,
-    fact: FactId,
-    inputs: &EncodedInputs,
-    candidates: &BTreeMap<VarId, CandidateSet>,
-) -> Result<bool> {
-    for field in &atom.fields {
-        let bytes = relation
-            .encoded_bytes(fact, field.field)
-            .ok_or_else(|| Error::internal("missing static semijoin atom field"))?;
-        if !static_atom_field_bytes_match(field, bytes, inputs, candidates) {
-            return Ok(false);
-        }
-    }
-    static_atom_predicates_match(query, atom, inputs, |field| {
-        relation.encoded_bytes(fact, field.field)
-    })
-}
-
-fn static_atom_field_bytes_match(
-    field: &NormAtomField,
-    bytes: &[u8],
-    inputs: &EncodedInputs,
-    candidates: &BTreeMap<VarId, CandidateSet>,
-) -> bool {
-    match &field.term {
-        NormTerm::Input(input) => inputs
-            .get(*input)
-            .is_some_and(|value| value.as_bytes() == bytes),
-        NormTerm::Literal(literal) => literal.as_bytes() == bytes,
-        NormTerm::Var(variable) => candidates
-            .get(variable)
-            .is_none_or(|set| set.values.iter().any(|value| value.as_bytes() == bytes)),
-        NormTerm::Wildcard => true,
-    }
-}
-
-fn static_atom_predicates_match<'a>(
-    query: &'a NormalizedQuery,
-    atom: &'a NormAtom,
-    inputs: &'a EncodedInputs,
-    encoded_field: impl Fn(&'a NormAtomField) -> Option<&'a [u8]>,
-) -> Result<bool> {
-    for predicate in &query.predicates {
-        let left = static_operand_bytes(&predicate.operands[0], atom, inputs, &encoded_field);
-        let right = static_operand_bytes(&predicate.operands[1], atom, inputs, &encoded_field);
-        let (Some(left), Some(right)) = (left, right) else {
-            continue;
-        };
-        if encoded_comparison_supported(predicate.op, &predicate.value_type)
-            && !compare_encoded_values(left, predicate.op, right)
-        {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-fn static_operand_bytes<'a>(
-    operand: &'a NormOperand,
-    atom: &'a NormAtom,
-    inputs: &'a EncodedInputs,
-    encoded_field: &impl Fn(&'a NormAtomField) -> Option<&'a [u8]>,
-) -> Option<&'a [u8]> {
-    match operand {
-        NormOperand::Var(variable) => atom.fields.iter().find_map(|field| {
-            matches!(field.term, NormTerm::Var(var) if var == *variable)
-                .then(|| encoded_field(field))
-                .flatten()
-        }),
-        NormOperand::Input(input) => inputs.get(*input).map(EncodedOwned::as_bytes),
-        NormOperand::Literal(literal) => Some(literal.as_bytes()),
-    }
-}
-
-fn collect_atom_entry_candidates(
-    index: &RelationIndexImage,
-    entry: &[u8],
-    atom: &NormAtom,
-    out: &mut BTreeMap<VarId, BTreeSet<EncodedOwned>>,
-) -> Result<()> {
-    for field in &atom.fields {
-        if let NormTerm::Var(variable) = field.term {
-            let bytes = index
-                .component_bytes(entry, field.field)
-                .ok_or_else(|| Error::internal("missing static semijoin index component"))?;
-            out.entry(variable)
-                .or_default()
-                .insert(encoded_owned_for_width(
-                    field.value_type.encoded_width(),
-                    bytes,
-                )?);
-        }
-    }
-    Ok(())
-}
-
-fn collect_atom_fact_candidates(
-    relation: &RelationImage,
-    atom: &NormAtom,
-    fact: FactId,
-    out: &mut BTreeMap<VarId, BTreeSet<EncodedOwned>>,
-) -> Result<()> {
-    for field in &atom.fields {
-        if let NormTerm::Var(variable) = field.term {
-            let bytes = relation
-                .encoded_bytes(fact, field.field)
-                .ok_or_else(|| Error::internal("missing static semijoin fact field"))?;
-            out.entry(variable)
-                .or_default()
-                .insert(encoded_owned_for_width(
-                    field.value_type.encoded_width(),
-                    bytes,
-                )?);
-        }
-    }
-    Ok(())
-}
-
-fn merge_atom_candidates(
-    candidates: &mut BTreeMap<VarId, CandidateSet>,
-    atom_candidates: BTreeMap<VarId, BTreeSet<EncodedOwned>>,
-) -> bool {
-    let mut changed = false;
-    for (variable, values) in atom_candidates {
-        match candidates.get_mut(&variable) {
-            Some(existing) => {
-                let intersection = existing
-                    .values
-                    .intersection(&values)
-                    .cloned()
-                    .collect::<BTreeSet<_>>();
-                if intersection.len() != existing.values.len() {
-                    existing.values = intersection;
-                    changed = true;
-                }
-            }
-            None => {
-                candidates.insert(variable, CandidateSet::new(values));
-                changed = true;
-            }
-        }
-    }
-    changed
-}
-
-fn has_empty_candidate(candidates: &BTreeMap<VarId, CandidateSet>) -> bool {
-    candidates.values().any(|set| set.values.is_empty())
-}
-
-fn total_candidate_values(candidates: &BTreeMap<VarId, CandidateSet>) -> u64 {
-    candidates.values().map(|set| set.values.len() as u64).sum()
-}
-
-fn total_raw_candidate_values(candidates: &BTreeMap<VarId, BTreeSet<EncodedOwned>>) -> usize {
-    candidates.values().map(BTreeSet::len).sum()
-}
-
-fn static_atom_fact_matches(
-    relation: &RelationImage,
-    atom: &NormAtom,
-    fact: FactId,
-    inputs: &EncodedInputs,
-) -> Result<bool> {
-    for field in &atom.fields {
-        let expected = match &field.term {
-            NormTerm::Input(input) => inputs.get(*input),
-            NormTerm::Literal(literal) => Some(literal),
-            NormTerm::Var(_) | NormTerm::Wildcard => None,
-        };
-        let Some(expected) = expected else {
-            continue;
-        };
-        let bytes = relation
-            .encoded_bytes(fact, field.field)
-            .ok_or_else(|| Error::internal("missing static atom field"))?;
-        if expected.as_bytes() != bytes {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-fn static_empty_plan(
-    query: &NormalizedQuery,
-    query_image_cache: QueryImageCacheDiagnostics,
-    planner_stats: PlannerStatsCacheDiagnostics,
-    prepared_plan_cache: PreparedPlanCacheDiagnostics,
-) -> QueryPlan {
-    QueryPlan {
-        variable_order: Vec::new(),
-        variable_estimates: Vec::new(),
-        missing_indexes: Vec::new(),
-        optimizer: OptimizerTrace {
-            chosen: "static_empty".to_owned(),
-            candidates: Vec::new(),
-        },
-        plan_family: PlanFamily::StaticEmpty,
-        query_image_cache,
-        planner_stats,
-        prepared_plan_cache,
-        node_facts: Vec::new(),
-        node_timings: Vec::new(),
-        free_join: FreeJoinPlan {
-            nodes: Vec::new(),
-            output: query.output.clone(),
-            estimates: PlanEstimates::default(),
-        },
-        runtime_kind: QueryRuntimeKind::StaticEmpty,
-        timings: QueryTimings::default(),
-        allocations: QueryAllocationStats::default(),
-        counters: PlanCounters::default(),
-        uses_indexed_multiway_join: query.atoms.len() > 1,
-    }
-}
-
-fn static_empty_output_from_typed(
-    query: &TypedQuery,
-    query_image_cache: QueryImageCacheDiagnostics,
-    timings: QueryTimings,
-    total_start: Instant,
-    total_alloc_start: allocation::AllocationSnapshot,
-    cache_hit: bool,
-) -> QueryOutput {
-    QueryOutput {
-        result: QueryResultSet::new(
-            result_columns_from_typed(query),
-            empty_output_facts(&output_plan_from_typed_find(query)),
-        ),
-        plan: static_empty_plan_from_typed(
-            query,
-            query_image_cache,
-            timings,
-            total_start,
-            total_alloc_start,
-            cache_hit,
-        ),
-    }
-}
-
-fn empty_output_facts(output: &OutputPlan) -> Vec<Vec<Value>> {
-    match output {
-        OutputPlan::Aggregate(plan) if is_global_count_plan(plan) => vec![vec![Value::U64(0)]],
-        OutputPlan::Project(_) | OutputPlan::Aggregate(_) => Vec::new(),
-    }
-}
-
-fn static_empty_plan_from_typed(
-    query: &TypedQuery,
-    query_image_cache: QueryImageCacheDiagnostics,
-    mut timings: QueryTimings,
-    total_start: Instant,
-    total_alloc_start: allocation::AllocationSnapshot,
-    cache_hit: bool,
-) -> QueryPlan {
-    let mut counters = PlanCounters::default();
-    if cache_hit {
-        counters.static_empty_cache_hits = 1;
-    }
-    finish_timings(&mut timings, total_start);
-    let allocations =
-        QueryAllocationStats::default().with_total(allocation_delta_since(total_alloc_start));
-    QueryPlan {
-        variable_order: Vec::new(),
-        variable_estimates: Vec::new(),
-        missing_indexes: Vec::new(),
-        optimizer: OptimizerTrace {
-            chosen: "static_empty".to_owned(),
-            candidates: Vec::new(),
-        },
-        plan_family: PlanFamily::StaticEmpty,
-        query_image_cache,
-        planner_stats: PlannerStatsCacheDiagnostics::default(),
-        prepared_plan_cache: PreparedPlanCacheDiagnostics::default(),
-        node_facts: Vec::new(),
-        node_timings: Vec::new(),
-        free_join: FreeJoinPlan {
-            nodes: Vec::new(),
-            output: output_plan_from_typed_find(query),
-            estimates: PlanEstimates::default(),
-        },
-        runtime_kind: QueryRuntimeKind::StaticEmpty,
-        timings,
-        allocations,
-        counters,
-        uses_indexed_multiway_join: typed_relation_clause_count(query) > 1,
-    }
-}
-
-fn result_columns_from_typed(query: &TypedQuery) -> Vec<ResultColumn> {
-    query
-        .find
-        .iter()
-        .map(|term| match term {
-            TypedFindTerm::Variable { variable } => {
-                ResultColumn::Variable(query.variables[*variable].name.clone())
-            }
-            TypedFindTerm::Aggregate {
-                function, variable, ..
-            } => ResultColumn::Aggregate {
-                function: *function,
-                variable: query.variables[*variable].name.clone(),
-            },
-        })
-        .collect()
-}
-
-fn output_plan_from_typed_find(query: &TypedQuery) -> OutputPlan {
-    if query
-        .find
-        .iter()
-        .any(|term| matches!(term, TypedFindTerm::Aggregate { .. }))
-    {
-        let mut group_vars = Vec::new();
-        let mut aggregates = Vec::new();
-        for term in &query.find {
-            match term {
-                TypedFindTerm::Variable { variable } => group_vars.push(VarId(*variable as u16)),
-                TypedFindTerm::Aggregate {
-                    function,
-                    variable,
-                    domain,
-                    value_type,
-                } => aggregates.push(AggregateTerm {
-                    function: *function,
-                    var: VarId(*variable as u16),
-                    domain_vars: domain
-                        .iter()
-                        .map(|variable| VarId(*variable as u16))
-                        .collect(),
-                    value_type: value_type.clone(),
-                }),
-            }
-        }
-        OutputPlan::Aggregate(AggregatePlan {
-            group_vars,
-            aggregates,
-        })
-    } else {
-        OutputPlan::Project(ProjectPlan {
-            vars: query
-                .find
-                .iter()
-                .filter_map(|term| match term {
-                    TypedFindTerm::Variable { variable } => Some(VarId(*variable as u16)),
-                    TypedFindTerm::Aggregate { .. } => None,
-                })
-                .collect(),
-        })
-    }
-}
-
-fn typed_relation_clause_count(query: &TypedQuery) -> usize {
-    query
-        .clauses
-        .iter()
-        .filter(|clause| matches!(clause, TypedClause::Relation(_)))
-        .count()
-}
-
 fn execute_free_join<'txn, 'query, S: FactSink>(
     image: &crate::QueryImage,
     txn: &ReadTxn<'txn>,
-    _schema: &StorageSchema,
     query: &'query NormalizedQuery,
     inputs: &EncodedInputs,
     plan: &mut ExecutionPlan,
@@ -5190,7 +3434,6 @@ fn query_node_timings(
 fn plan_family_for_chosen(chosen: &str) -> PlanFamily {
     match chosen {
         "pure_lftj" => PlanFamily::FreeJoinLftj,
-        "static_empty" => PlanFamily::StaticEmpty,
         _ => PlanFamily::Unknown,
     }
 }

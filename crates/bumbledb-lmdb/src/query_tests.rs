@@ -186,7 +186,7 @@ fn static_lookup_uses_planned_lftj_after_storage_bypass_deletion() -> TestResult
 }
 
 #[test]
-fn static_empty_checks_static_existence_atoms() -> TestResult {
+fn lftj_empty_checks_static_existence_atoms() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
@@ -215,9 +215,8 @@ fn static_empty_checks_static_existence_atoms() -> TestResult {
     })?;
 
     assert!(output.result.facts.is_empty());
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(output.plan.counters.trie_open, 0);
-    assert!(output.plan.counters.static_empty_atoms_checked > 0);
     Ok(())
 }
 
@@ -419,7 +418,7 @@ fn prefix_range_empty_prefix_returns_zero_facts() -> TestResult {
         )
     })?;
 
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(output.result.facts.is_empty());
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
@@ -457,7 +456,6 @@ fn chain_query_uses_lftj_and_returns_path() -> TestResult {
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
     assert_eq!(output.result.facts, vec![vec![Value::U64(30)]]);
-    assert!(output.plan.timings.static_semijoin_proof_micros > 0);
     assert_eq!(output.plan.counters.materialized_output_values, 1);
     assert_eq!(output.plan.counters.dictionary_reverse_lookups, 0);
     assert!(output.plan.counters.trie_open > 0);
@@ -515,14 +513,14 @@ fn chain_existence_filter_can_remove_all_bindings() -> TestResult {
         )
     })?;
 
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(output.result.facts.is_empty());
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
 }
 
 #[test]
-fn tag_lookup_like_projection_uses_lftj_after_static_proof() -> TestResult {
+fn tag_lookup_like_projection_uses_lftj_after_literal_filter() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(chain4_schema(), env.max_key_size())?;
@@ -558,7 +556,6 @@ fn tag_lookup_like_projection_uses_lftj_after_static_proof() -> TestResult {
 
     assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(output.plan.plan_family, PlanFamily::FreeJoinLftj);
-    assert!(output.plan.timings.static_semijoin_proof_micros > 0);
     assert_same_facts(
         &output.result.facts,
         &[vec![Value::U64(10), Value::U64(20)]],
@@ -626,7 +623,7 @@ fn chain_broken_path_returns_zero_facts() -> TestResult {
         )
     })?;
 
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert!(output.result.facts.is_empty());
     assert_eq!(output.plan.counters.trie_open, 0);
     Ok(())
@@ -706,7 +703,7 @@ fn lftj_atom_cache_reuses_equivalent_relation_aliases() -> TestResult {
 fn lftj_atom_cache_separates_literal_local_comparison_filters() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(q24_like_join_schema(), env.max_key_size())?;
     seed_title_company_range_facts(&env, &schema)?;
 
     let through_2015 = title_company_count_query(&schema, OperandRef::integer(2015))?;
@@ -732,7 +729,7 @@ fn lftj_atom_cache_separates_literal_local_comparison_filters() -> TestResult {
 fn lftj_atom_cache_reuses_identical_local_comparison_filters() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(q24_like_join_schema(), env.max_key_size())?;
     seed_title_company_range_facts(&env, &schema)?;
 
     let query = title_company_count_query(&schema, OperandRef::integer(2015))?;
@@ -757,7 +754,7 @@ fn lftj_atom_cache_reuses_identical_local_comparison_filters() -> TestResult {
 fn lftj_atom_cache_separates_prepared_input_local_comparison_filters() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(q24_like_join_schema(), env.max_key_size())?;
     seed_title_company_range_facts(&env, &schema)?;
 
     let query = title_company_count_query(&schema, OperandRef::input("max_year"))?;
@@ -830,42 +827,10 @@ fn lftj_empty_variable_atom_short_circuits_execution() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert!(output.result.facts.is_empty());
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-    assert_eq!(output.plan.optimizer.chosen, "static_empty");
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
+    assert_eq!(output.plan.optimizer.chosen, "pure_lftj");
     assert_eq!(output.plan.counters.trie_open, 0);
     assert_eq!(output.plan.counters.variable_candidates, 0);
-    Ok(())
-}
-
-#[test]
-fn static_empty_no_input_query_hits_fast_cache_before_normalize() -> TestResult {
-    let dir = tempfile::tempdir()?;
-    let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
-    env.write(|txn| {
-        txn.insert(&schema, Fact::new("A", [("id", Value::U64(1))]))?;
-        Ok::<_, Error>(())
-    })?;
-    let query = typed_query(&schema, |query| {
-        query.rel("A")?.var("id", "a")?.done();
-        query.rel("B")?.var("id", "b")?.integer("a", 99)?.done();
-        query.find_var("a")?.find_var("b")?;
-        Ok(())
-    })?;
-
-    let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-    let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-
-    assert!(first.result.facts.is_empty());
-    assert!(second.result.facts.is_empty());
-    assert_eq!(first.plan.counters.static_empty_cache_misses, 1);
-    assert_eq!(second.plan.counters.static_empty_cache_hits, 1);
-    assert!(second.plan.free_join.nodes.is_empty());
-    assert!(second.explain().contains("static_empty cache_hits=1"));
-    assert_eq!(second.plan.timings.validate_inputs_micros, 0);
-    assert_eq!(second.plan.timings.normalize_micros, 0);
-    assert_eq!(second.plan.timings.encode_inputs_micros, 0);
-    assert_eq!(second.plan.timings.query_image_micros, 0);
     Ok(())
 }
 
@@ -908,7 +873,7 @@ fn domain_count_falls_back_to_lftj_until_fast_paths_are_rebuilt() -> TestResult 
 fn domain_count_serial_literal_filter_uses_lftj() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(join_filter_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, owner_group_fact(1, 10))?;
         txn.insert(&schema, owner_group_fact(2, 20))?;
@@ -943,7 +908,7 @@ fn domain_count_serial_literal_filter_uses_lftj() -> TestResult {
 fn domain_count_enum_literal_filter_uses_lftj() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(join_filter_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, dim_fact(1, 1))?;
         txn.insert(&schema, dim_fact(2, 2))?;
@@ -978,7 +943,7 @@ fn domain_count_enum_literal_filter_uses_lftj() -> TestResult {
 fn domain_count_range_filter_uses_lftj() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(q24_like_join_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(
             &schema,
@@ -1062,7 +1027,7 @@ fn domain_count_range_filter_uses_lftj() -> TestResult {
 fn domain_count_literal_and_range_filters_use_lftj() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(q24_like_join_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(
             &schema,
@@ -1657,18 +1622,9 @@ fn cache_options_do_not_cache_aggregate_results() -> TestResult {
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
     let cached =
         env.read(|txn| txn.execute_prepared_query(&schema, &prepared, &InputBindings::new()))?;
-    let disabled = env.read(|txn| {
-        txn.execute_prepared_query_with_options(
-            &schema,
-            &prepared,
-            &InputBindings::new(),
-            QueryExecutionOptions::without_static_empty_cache(),
-        )
-    })?;
 
     assert_eq!(first.result.facts, vec![vec![Value::U64(1)]]);
     assert_eq!(cached.result.facts, first.result.facts);
-    assert_eq!(disabled.result.facts, first.result.facts);
 
     env.write(|txn| {
         txn.insert(
@@ -2105,7 +2061,7 @@ fn sum_over_domain_counts_distinct_domain_facts_with_same_value() -> TestResult 
 }
 
 #[test]
-fn static_empty_global_count_returns_zero_fact() -> TestResult {
+fn lftj_empty_global_count_returns_zero_fact() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
     let schema = StorageSchema::new(chain_schema(), env.max_key_size())?;
@@ -2129,15 +2085,15 @@ fn static_empty_global_count_returns_zero_fact() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
 #[test]
-fn static_semijoin_dimension_fact_exists_but_fact_is_empty() -> TestResult {
+fn lftj_dimension_fact_exists_but_fact_is_empty() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(join_filter_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, dim_fact(1, 1))?;
         txn.insert(&schema, fact_fact(2, 10))?;
@@ -2161,17 +2117,15 @@ fn static_semijoin_dimension_fact_exists_but_fact_is_empty() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-    assert!(output.plan.counters.static_semijoin_rounds > 0);
-    assert!(output.plan.timings.static_semijoin_proof_micros > 0);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
 #[test]
-fn static_semijoin_disjoint_central_candidates_prove_empty() -> TestResult {
+fn lftj_disjoint_central_candidates_prove_empty() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(join_filter_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, dim_fact(1, 1))?;
         txn.insert(&schema, other_dim_fact(2, 2))?;
@@ -2207,16 +2161,15 @@ fn static_semijoin_disjoint_central_candidates_prove_empty() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-    assert!(output.plan.counters.static_semijoin_candidate_values > 0);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
 #[test]
-fn static_semijoin_enum_literal_proves_empty() -> TestResult {
+fn lftj_enum_literal_proves_empty() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(join_filter_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, dim_fact(7, 1))?;
         txn.insert(&schema, fact_fact(8, 99))?;
@@ -2239,16 +2192,15 @@ fn static_semijoin_enum_literal_proves_empty() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-    assert!(output.plan.counters.static_semijoin_prefixes_probed > 0);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
 #[test]
-fn static_semijoin_serial_literal_proves_empty() -> TestResult {
+fn lftj_serial_literal_proves_empty() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(join_filter_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, owner_group_fact(1, 10))?;
         txn.insert(&schema, owned_fact_fact(2, 11, 99))?;
@@ -2271,16 +2223,15 @@ fn static_semijoin_serial_literal_proves_empty() -> TestResult {
 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-    assert!(output.plan.counters.static_semijoin_rounds > 0);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
 #[test]
-fn static_semijoin_compound_relation_proves_empty() -> TestResult {
+fn lftj_compound_relation_proves_empty() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(join_filter_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, dim_fact(1, 1))?;
         txn.insert(&schema, other_dim_fact(2, 2))?;
@@ -2310,15 +2261,15 @@ fn static_semijoin_compound_relation_proves_empty() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
 #[test]
-fn static_semijoin_budget_exhaustion_falls_back_safely() -> TestResult {
+fn lftj_large_empty_join_returns_no_facts() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(static_semijoin_budget_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(join_budget_schema(), env.max_key_size())?;
     env.write(|txn| {
         for id in 1..=1_001 {
             txn.insert(
@@ -2341,27 +2292,18 @@ fn static_semijoin_budget_exhaustion_falls_back_safely() -> TestResult {
         Ok(())
     })?;
 
-    let proof = env.read(|txn| {
-        let normalized = normalize_query(txn, &schema, &query)?;
-        let encoded_inputs = encode_inputs(txn, &schema, &normalized, &InputBindings::new())?;
-        let image = txn.query_images.get_or_build_scoped(
-            txn,
-            &schema,
-            query_image_scope_for_query(&schema, &normalized),
-        )?;
-        static_semijoin_proves_empty(image.as_ref(), &normalized, &encoded_inputs)
-    })?;
+    let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert!(!proof.empty);
-    assert!(proof.rounds > 0);
+    assert!(output.result.facts.is_empty());
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
 #[test]
-fn static_semijoin_non_empty_query_is_not_proven_empty() -> TestResult {
+fn lftj_non_empty_query_is_not_proven_empty() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(join_filter_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, dim_fact(1, 1))?;
         txn.insert(&schema, fact_fact(1, 10))?;
@@ -2385,15 +2327,15 @@ fn static_semijoin_non_empty_query_is_not_proven_empty() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(1)]]);
-    assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
 #[test]
-fn static_semijoin_negative_cache_skips_second_failed_proof() -> TestResult {
+fn lftj_negative_cache_skips_second_failed_proof() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(join_filter_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, dim_fact(1, 1))?;
         txn.insert(&schema, fact_fact(1, 10))?;
@@ -2418,23 +2360,15 @@ fn static_semijoin_negative_cache_skips_second_failed_proof() -> TestResult {
     let second = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(first.result.facts, vec![vec![Value::U64(1)]]);
-    assert!(first.plan.counters.static_semijoin_rounds > 0);
-    assert_eq!(first.plan.counters.static_semijoin_skipped, 0);
     assert_eq!(second.result.facts, vec![vec![Value::U64(1)]]);
-    assert_eq!(second.plan.counters.static_semijoin_rounds, 0);
-    assert_eq!(second.plan.counters.static_semijoin_skipped, 1);
-    assert_eq!(
-        second.plan.counters.static_semijoin_skipped_reason,
-        StaticSemijoinSkipReason::NegativeCache
-    );
     Ok(())
 }
 
 #[test]
-fn static_semijoin_negative_cache_is_tx_id_scoped() -> TestResult {
+fn lftj_replans_after_write() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(join_filter_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, dim_fact(1, 1))?;
         txn.insert(&schema, fact_fact(1, 10))?;
@@ -2456,26 +2390,22 @@ fn static_semijoin_negative_cache_is_tx_id_scoped() -> TestResult {
     })?;
 
     let first = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
-    let cached = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     env.write(|txn| {
         txn.insert(&schema, fact_fact(1, 11))?;
         Ok::<_, Error>(())
     })?;
     let after_write = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
-    assert!(first.plan.counters.static_semijoin_rounds > 0);
-    assert_eq!(cached.plan.counters.static_semijoin_skipped, 1);
+    assert_eq!(first.result.facts, vec![vec![Value::U64(1)]]);
     assert_eq!(after_write.result.facts, vec![vec![Value::U64(2)]]);
-    assert!(after_write.plan.counters.static_semijoin_rounds > 0);
-    assert_eq!(after_write.plan.counters.static_semijoin_skipped, 0);
     Ok(())
 }
 
 #[test]
-fn static_semijoin_cache_is_input_scoped_and_reuses_proven_empty() -> TestResult {
+fn lftj_cache_is_input_scoped_and_reuses_proven_empty() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(join_filter_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, dim_fact(1, 1))?;
         txn.insert(&schema, dim_fact(2, 2))?;
@@ -2504,24 +2434,19 @@ fn static_semijoin_cache_is_input_scoped_and_reuses_proven_empty() -> TestResult
     let empty_cached = env.read(|txn| txn.execute_query(&schema, &query, &kind_two))?;
 
     assert_eq!(non_empty.result.facts, vec![vec![Value::U64(1)]]);
-    assert_ne!(non_empty.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
+    assert_eq!(non_empty.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(empty_first.result.facts, vec![vec![Value::U64(0)]]);
-    assert_eq!(empty_first.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-    assert!(empty_first.plan.counters.static_semijoin_rounds > 0);
+    assert_eq!(empty_first.plan.runtime_kind, QueryRuntimeKind::Lftj);
     assert_eq!(empty_cached.result.facts, vec![vec![Value::U64(0)]]);
-    assert_eq!(
-        empty_cached.plan.runtime_kind,
-        QueryRuntimeKind::StaticEmpty
-    );
-    assert_eq!(empty_cached.plan.counters.static_semijoin_rounds, 0);
+    assert_eq!(empty_cached.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
 #[test]
-fn static_semijoin_red_boat_like_wide_projection_skips_and_preserves_facts() -> TestResult {
+fn lftj_red_boat_like_wide_projection_skips_and_preserves_facts() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(join_filter_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, dim_fact(1, 1))?;
         txn.insert(&schema, fact_fact(1, 10))?;
@@ -2550,18 +2475,12 @@ fn static_semijoin_red_boat_like_wide_projection_skips_and_preserves_facts() -> 
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_same_facts(&output.result.facts, &[vec![Value::U64(1), Value::U64(10)]]);
-    assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-    assert_eq!(output.plan.counters.static_semijoin_skipped, 1);
-    assert_eq!(
-        output.plan.counters.static_semijoin_skipped_reason,
-        StaticSemijoinSkipReason::OutputTooBroad
-    );
-    assert_eq!(output.plan.counters.static_semijoin_rounds, 0);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
 #[test]
-fn static_semijoin_tag_lookup_like_chain_projection_skips() -> TestResult {
+fn lftj_tag_lookup_like_chain_projection_skips() -> TestResult {
     let (env, schema) = seeded_db()?;
     let query = typed_query(&schema, |query| {
         query
@@ -2598,19 +2517,14 @@ fn static_semijoin_tag_lookup_like_chain_projection_skips() -> TestResult {
             vec![Value::Serial(2), Value::Serial(1)],
         ],
     );
-    assert_eq!(output.plan.counters.static_semijoin_skipped, 1);
-    assert_eq!(
-        output.plan.counters.static_semijoin_skipped_reason,
-        StaticSemijoinSkipReason::OutputTooBroad
-    );
     Ok(())
 }
 
 #[test]
-fn static_semijoin_tpch_like_non_empty_materialized_projection_skips() -> TestResult {
+fn lftj_tpch_like_non_empty_materialized_projection_skips() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(static_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(join_filter_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, dim_fact(1, 1))?;
         txn.insert(&schema, fact_fact(1, 10))?;
@@ -2648,20 +2562,15 @@ fn static_semijoin_tpch_like_non_empty_materialized_projection_skips() -> TestRe
         &output.result.facts,
         &[vec![Value::U64(10), Value::Enum(2)]],
     );
-    assert_ne!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-    assert_eq!(output.plan.counters.static_semijoin_skipped, 1);
-    assert_eq!(
-        output.plan.counters.static_semijoin_skipped_reason,
-        StaticSemijoinSkipReason::OutputTooBroad
-    );
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
 #[test]
-fn static_semijoin_q24_like_empty_shape_proves_empty() -> TestResult {
+fn lftj_q24_like_empty_shape_proves_empty() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(q24_like_join_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, Fact::new("Alias", [("person", Value::U64(1))]))?;
         txn.insert(&schema, Fact::new("Character", [("id", Value::U64(1))]))?;
@@ -2804,17 +2713,15 @@ fn static_semijoin_q24_like_empty_shape_proves_empty() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert!(output.result.facts.is_empty());
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-    assert!(output.plan.counters.static_semijoin_candidate_values > 0);
-    assert_eq!(output.plan.counters.static_semijoin_skipped, 0);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
 #[test]
-fn static_semijoin_range_index_q16_like_count_proves_empty() -> TestResult {
+fn lftj_range_index_q16_like_count_proves_empty() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
-    let schema = StorageSchema::new(q16_like_semijoin_schema(), env.max_key_size())?;
+    let schema = StorageSchema::new(q16_like_join_schema(), env.max_key_size())?;
     env.write(|txn| {
         txn.insert(&schema, Fact::new("Alias", [("person", Value::U64(1))]))?;
         txn.insert(&schema, Fact::new("Person", [("id", Value::U64(1))]))?;
@@ -2941,10 +2848,7 @@ fn static_semijoin_range_index_q16_like_count_proves_empty() -> TestResult {
     let output = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(output.result.facts, vec![vec![Value::U64(0)]]);
-    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::StaticEmpty);
-    assert!(output.plan.counters.static_semijoin_prefixes_probed > 0);
-    assert!(output.plan.counters.static_semijoin_candidate_values > 0);
-    assert_eq!(output.plan.counters.static_semijoin_skipped, 0);
+    assert_eq!(output.plan.runtime_kind, QueryRuntimeKind::Lftj);
     Ok(())
 }
 
@@ -3379,9 +3283,9 @@ fn seeded_db() -> Result<(Environment, StorageSchema)> {
     Ok((env, schema))
 }
 
-fn static_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
+fn join_filter_schema() -> bumbledb_core::schema::SchemaDescriptor {
     bumbledb_core::schema::SchemaDescriptor::new(
-        "StaticSemijoinDb",
+        "JoinFilterDb",
         vec![
             RelationDescriptor::new(
                 "Dim",
@@ -3471,9 +3375,9 @@ fn static_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
     ))
 }
 
-fn static_semijoin_budget_schema() -> bumbledb_core::schema::SchemaDescriptor {
+fn join_budget_schema() -> bumbledb_core::schema::SchemaDescriptor {
     bumbledb_core::schema::SchemaDescriptor::new(
-        "StaticSemijoinBudgetDb",
+        "JoinBudgetDb",
         vec![
             RelationDescriptor::new(
                 "Big",
@@ -3489,9 +3393,9 @@ fn static_semijoin_budget_schema() -> bumbledb_core::schema::SchemaDescriptor {
     )
 }
 
-fn q24_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
+fn q24_like_join_schema() -> bumbledb_core::schema::SchemaDescriptor {
     bumbledb_core::schema::SchemaDescriptor::new(
-        "StaticSemijoinQ24LikeDb",
+        "Q24LikeJoinDb",
         vec![
             RelationDescriptor::new(
                 "Alias",
@@ -3584,9 +3488,9 @@ fn q24_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
     )
 }
 
-fn q16_like_semijoin_schema() -> bumbledb_core::schema::SchemaDescriptor {
+fn q16_like_join_schema() -> bumbledb_core::schema::SchemaDescriptor {
     bumbledb_core::schema::SchemaDescriptor::new(
-        "StaticSemijoinQ16LikeDb",
+        "Q16LikeJoinDb",
         vec![
             RelationDescriptor::new(
                 "Alias",

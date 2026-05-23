@@ -16,8 +16,7 @@ use bumbledb_core::schema::{
 };
 use bumbledb_lmdb::{
     AllocationPhaseStats, Environment, Fact, InputBindings, PlanCounters, QueryAllocationStats,
-    QueryExecutionOptions, QueryOutput, QueryPlan, QueryResultSet, QueryTimings, ResultColumn,
-    StorageSchema, Value,
+    QueryOutput, QueryPlan, QueryResultSet, QueryTimings, ResultColumn, StorageSchema, Value,
 };
 use rusqlite::{Connection, params_from_iter};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -194,13 +193,6 @@ impl CacheMode {
         match self {
             CacheMode::Recompute => "recompute",
             CacheMode::PreparedPlan => "prepared-plan",
-        }
-    }
-
-    fn execution_options(self) -> QueryExecutionOptions {
-        match self {
-            CacheMode::PreparedPlan => QueryExecutionOptions::cached(),
-            CacheMode::Recompute => QueryExecutionOptions::without_static_empty_cache(),
         }
     }
 }
@@ -655,7 +647,6 @@ struct BenchmarkRunResult {
     plan_family: String,
     compare_mode: String,
     cache_mode: String,
-    static_empty_cache_hits: u64,
     query_image_sample_cache_hits: u64,
     bumbledb_materialized_facts: bool,
     sqlite_materialized_facts: bool,
@@ -718,7 +709,6 @@ struct QueryTimingSamples {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct CacheHitStats {
-    static_empty_cache_hits: u64,
     query_image_cache_hits: u64,
 }
 
@@ -900,20 +890,13 @@ fn run_dataset(
         let prepared = bumble_env.prepare_query(&bumble_schema, &typed)?;
         let inputs = InputBindings::from_values(query.inputs.clone());
         let params = query.sqlite_params.clone();
-        let execution_options = config.cache_mode.execution_options();
 
         let materialized_once = timed(|| match config.cache_mode {
-            CacheMode::Recompute => bumble_env.read(|txn| {
-                txn.execute_query_with_options(&bumble_schema, &typed, &inputs, execution_options)
-            }),
-            CacheMode::PreparedPlan => bumble_env.read(|txn| {
-                txn.execute_prepared_query_with_options(
-                    &bumble_schema,
-                    &prepared,
-                    &inputs,
-                    execution_options,
-                )
-            }),
+            CacheMode::Recompute => {
+                bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))
+            }
+            CacheMode::PreparedPlan => bumble_env
+                .read(|txn| txn.execute_prepared_query(&bumble_schema, &prepared, &inputs)),
         })?;
         let materialized_output = materialized_once.value;
         let (bumble_cold_execution, bumble_output) = match config.compare_mode {
@@ -921,20 +904,10 @@ fn run_dataset(
             CompareMode::Facts => {
                 let count_once = timed(|| match config.cache_mode {
                     CacheMode::Recompute => bumble_env.read(|txn| {
-                        txn.execute_result_cardinality_with_options(
-                            &bumble_schema,
-                            &typed,
-                            &inputs,
-                            execution_options,
-                        )
+                        txn.execute_result_cardinality(&bumble_schema, &typed, &inputs)
                     }),
                     CacheMode::PreparedPlan => bumble_env.read(|txn| {
-                        txn.execute_prepared_query_cardinality_with_options(
-                            &bumble_schema,
-                            &prepared,
-                            &inputs,
-                            execution_options,
-                        )
+                        txn.execute_prepared_query_cardinality(&bumble_schema, &prepared, &inputs)
                     }),
                 })?;
                 (
@@ -976,21 +949,10 @@ fn run_dataset(
             timed_bumbledb_samples(config.warmup, || match config.compare_mode {
                 CompareMode::Materialized => {
                     let output = match config.cache_mode {
-                        CacheMode::Recompute => bumble_env.read(|txn| {
-                            txn.execute_query_with_options(
-                                &bumble_schema,
-                                &typed,
-                                &inputs,
-                                execution_options,
-                            )
-                        })?,
+                        CacheMode::Recompute => bumble_env
+                            .read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?,
                         CacheMode::PreparedPlan => bumble_env.read(|txn| {
-                            txn.execute_prepared_query_with_options(
-                                &bumble_schema,
-                                &prepared,
-                                &inputs,
-                                execution_options,
-                            )
+                            txn.execute_prepared_query(&bumble_schema, &prepared, &inputs)
                         })?,
                     };
                     black_box(output.result.facts.len());
@@ -999,19 +961,13 @@ fn run_dataset(
                 CompareMode::Facts => {
                     let output = match config.cache_mode {
                         CacheMode::Recompute => bumble_env.read(|txn| {
-                            txn.execute_result_cardinality_with_options(
-                                &bumble_schema,
-                                &typed,
-                                &inputs,
-                                execution_options,
-                            )
+                            txn.execute_result_cardinality(&bumble_schema, &typed, &inputs)
                         })?,
                         CacheMode::PreparedPlan => bumble_env.read(|txn| {
-                            txn.execute_prepared_query_cardinality_with_options(
+                            txn.execute_prepared_query_cardinality(
                                 &bumble_schema,
                                 &prepared,
                                 &inputs,
-                                execution_options,
                             )
                         })?,
                     };
@@ -1029,21 +985,10 @@ fn run_dataset(
             timed_bumbledb_samples(config.repeats, || match config.compare_mode {
                 CompareMode::Materialized => {
                     let output = match config.cache_mode {
-                        CacheMode::Recompute => bumble_env.read(|txn| {
-                            txn.execute_query_with_options(
-                                &bumble_schema,
-                                &typed,
-                                &inputs,
-                                execution_options,
-                            )
-                        })?,
+                        CacheMode::Recompute => bumble_env
+                            .read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?,
                         CacheMode::PreparedPlan => bumble_env.read(|txn| {
-                            txn.execute_prepared_query_with_options(
-                                &bumble_schema,
-                                &prepared,
-                                &inputs,
-                                execution_options,
-                            )
+                            txn.execute_prepared_query(&bumble_schema, &prepared, &inputs)
                         })?,
                     };
                     black_box(output.result.facts.len());
@@ -1052,19 +997,13 @@ fn run_dataset(
                 CompareMode::Facts => {
                     let output = match config.cache_mode {
                         CacheMode::Recompute => bumble_env.read(|txn| {
-                            txn.execute_result_cardinality_with_options(
-                                &bumble_schema,
-                                &typed,
-                                &inputs,
-                                execution_options,
-                            )
+                            txn.execute_result_cardinality(&bumble_schema, &typed, &inputs)
                         })?,
                         CacheMode::PreparedPlan => bumble_env.read(|txn| {
-                            txn.execute_prepared_query_cardinality_with_options(
+                            txn.execute_prepared_query_cardinality(
                                 &bumble_schema,
                                 &prepared,
                                 &inputs,
-                                execution_options,
                             )
                         })?,
                     };
@@ -1102,14 +1041,13 @@ fn run_dataset(
         emit_profile_summary(dataset.name, query.name, &bumble_output);
         if format.includes_text() {
             println!(
-                "query={} facts={} cache_mode={} sink_emit_calls={} encoded_project_facts_seen={} lftj_next_calls={} static_empty_cache_hits={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
+                "query={} facts={} cache_mode={} sink_emit_calls={} encoded_project_facts_seen={} lftj_next_calls={} bumbledb_cold_execution={:?} bumbledb_samples={} bumbledb_avg={:?} sqlite_cold_execution={:?} sqlite_samples={} sqlite_avg={:?} gate={}",
                 query.name,
                 bumble_output.result.facts.len(),
                 result.cache_mode,
                 result.counters.sink_emit_calls,
                 result.counters.encoded_project_facts_seen,
                 result.counters.lftj_next_calls,
-                result.static_empty_cache_hits,
                 bumble_cold_execution,
                 result.bumbledb_samples.samples,
                 result.bumbledb_avg,
@@ -1163,9 +1101,6 @@ fn timed_bumbledb_samples<E>(
         let start = Instant::now();
         let plan = f()?;
         durations.push(start.elapsed());
-        if plan.counters.static_empty_cache_hits > 0 {
-            cache_hits.static_empty_cache_hits += 1;
-        }
         if plan.query_image_cache.hits > 0 {
             cache_hits.query_image_cache_hits += 1;
         }
@@ -1303,7 +1238,6 @@ fn benchmark_result(
         output,
         compare_mode,
         cache_mode,
-        cache_hits,
         bumbledb_avg,
         sqlite_ratio,
         final_output_values,
@@ -1334,7 +1268,6 @@ fn benchmark_result(
         plan_family: format!("{:?}", output.plan.plan_family),
         compare_mode: compare_mode.as_str().to_owned(),
         cache_mode: cache_mode.as_str().to_owned(),
-        static_empty_cache_hits: cache_hits.static_empty_cache_hits,
         query_image_sample_cache_hits: cache_hits.query_image_cache_hits,
         bumbledb_materialized_facts: compare_mode == CompareMode::Materialized,
         sqlite_materialized_facts: true,
@@ -1405,7 +1338,6 @@ fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
         runtime = ?plan.runtime_kind,
         total_micros = timings.total_micros,
         plan_micros = timings.plan_micros,
-        static_semijoin_proof_micros = timings.static_semijoin_proof_micros,
         execute_micros = timings.execute_micros,
         unaccounted_micros = timings.unaccounted_micros,
         sink_finish_micros = timings.sink_finish_micros,
@@ -1437,7 +1369,6 @@ fn evaluate_gate(
     output: &QueryOutput,
     compare_mode: CompareMode,
     cache_mode: CacheMode,
-    cache_hits: CacheHitStats,
     bumbledb_avg: Duration,
     sqlite_ratio: f64,
     final_output_values: u64,
@@ -1491,43 +1422,6 @@ fn evaluate_gate(
                 notes.push(format!(
                     "plan_family {family} not in {:?}",
                     gate.allowed_plan_families
-                ));
-            }
-        }
-        if dataset == "job"
-            && matches!(
-                query.name,
-                "job_q16_character_title_us" | "job_q24_voice_keyword_actor"
-            )
-        {
-            if format!("{:?}", output.plan.runtime_kind) != "StaticEmpty" {
-                passed = false;
-                notes.push(format!(
-                    "{} runtime_kind {:?} is not StaticEmpty",
-                    query.name, output.plan.runtime_kind
-                ));
-            }
-            if output.plan.timings.lftj_execute_micros != 0 {
-                passed = false;
-                notes.push(format!(
-                    "{} lftj_execute_micros {} should be 0",
-                    query.name, output.plan.timings.lftj_execute_micros
-                ));
-            }
-            if output.plan.timings.static_semijoin_proof_micros == 0 {
-                passed = false;
-                notes.push(format!(
-                    "{} did not report static semijoin proof time",
-                    query.name
-                ));
-            }
-            if cache_mode != CacheMode::PreparedPlan && cache_hits.static_empty_cache_hits != 0 {
-                passed = false;
-                notes.push(format!(
-                    "{} {} mode unexpectedly used {} static-empty cache hit(s)",
-                    query.name,
-                    cache_mode.as_str(),
-                    cache_hits.static_empty_cache_hits
                 ));
             }
         }
@@ -1667,7 +1561,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: Some(1.0),
             max_iterator_ops: None,
             max_materialized_values: Some(1),
-            allowed_plan_families: &["StaticEmpty"],
+            allowed_plan_families: &["FreeJoinLftj"],
         },
         ("job", "job_q24_voice_keyword_actor") => BenchmarkGate {
             dataset,
@@ -1676,7 +1570,7 @@ fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<Benchmar
             max_sqlite_ratio: Some(1.0),
             max_iterator_ops: None,
             max_materialized_values: Some(0),
-            allowed_plan_families: &["StaticEmpty"],
+            allowed_plan_families: &["FreeJoinLftj"],
         },
         _ => return None,
     };
@@ -1766,16 +1660,15 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Cache Diagnostics\n\n");
-    out.push_str("| dataset | query | cache mode | static empty cache hits | query image sample cache hits |\n");
-    out.push_str("|---|---|---|---:|---:|\n");
+    out.push_str("| dataset | query | cache mode | query image sample cache hits |\n");
+    out.push_str("|---|---|---|---:|\n");
     for result in results {
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             markdown_escape(&result.cache_mode),
-            result.static_empty_cache_hits,
             result.query_image_sample_cache_hits,
         );
     }
@@ -1795,15 +1688,15 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
         );
     }
     out.push_str("\n## Phase Timing\n\n");
-    out.push_str("| dataset | query | runtime | total us | validate us | normalize us | encode us | image us | static empty lookup us | static literal proof us | static semijoin proof us | plan us | lftj build us | execute us | lftj exec us | sink emit us | sink finish us | decode us | unaccounted us |\n");
+    out.push_str("| dataset | query | runtime | total us | validate us | normalize us | encode us | image us | plan us | lftj build us | execute us | lftj exec us | sink emit us | sink finish us | decode us | unaccounted us |\n");
     out.push_str(
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n",
     );
     for result in results {
         let timings = result.timings;
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             markdown_escape(result.dataset),
             markdown_escape(result.query),
             markdown_escape(&result.runtime_kind),
@@ -1812,9 +1705,6 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
             timings.normalize_micros,
             timings.encode_inputs_micros,
             timings.query_image_micros,
-            timings.static_empty_lookup_micros,
-            timings.static_literal_proof_micros,
-            timings.static_semijoin_proof_micros,
             timings.plan_micros,
             timings.lftj_build_micros,
             timings.execute_micros,
@@ -1982,7 +1872,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"facts\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_facts\":{},\"materialized_facts\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"cache_mode\":\"{}\",\"static_empty_cache_hit\":{},\"static_empty_cache_hits\":{},\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"bumbledb_materialized_facts\":{},\"sqlite_materialized_facts\":{},\"cardinality_supported\":{},\"cardinality_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
+            "{{\"dataset\":\"{}\",\"query\":\"{}\",\"facts\":{},\"correctness_mode\":\"{}\",\"result\":{{\"logical_facts\":{},\"materialized_facts\":{},\"materialized_values\":{},\"output_mode\":\"{}\"}},\"chosen_plan\":\"{}\",\"runtime\":\"{}\",\"plan_family\":\"{}\",\"compare_mode\":\"{}\",\"cache_mode\":\"{}\",\"query_image_cache_hit\":{},\"query_image_sample_cache_hits\":{},\"bumbledb_materialized_facts\":{},\"sqlite_materialized_facts\":{},\"cardinality_supported\":{},\"cardinality_fallback_reason\":\"{}\",\"query_image_built_during_query\":{},\"allocation_scope\":\"{}\",\"query_image_scope\":\"{}\",\"cold_execution_uses_correctness_output\":{},\"count_cold_execution_warmed_by_correctness\":{},",
             json_escape(result.dataset),
             json_escape(result.query),
             result.facts,
@@ -2000,8 +1890,6 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             json_escape(&result.plan_family),
             json_escape(&result.compare_mode),
             json_escape(&result.cache_mode),
-            result.static_empty_cache_hits > 0,
-            result.static_empty_cache_hits,
             result.query_image_sample_cache_hits > 0,
             result.query_image_sample_cache_hits,
             result.bumbledb_materialized_facts,
@@ -2050,16 +1938,13 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         let allocations = result.allocations;
         let _ = write!(
             out,
-            ",\"phase_timing\":{{\"scope\":\"{}\",\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"static_empty_lookup_us\":{},\"static_literal_proof_us\":{},\"static_semijoin_proof_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{},\"unaccounted_us\":{}}},\"allocations\":{{\"scope\":\"{}\",\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
+            ",\"phase_timing\":{{\"scope\":\"{}\",\"total_us\":{},\"validate_us\":{},\"normalize_us\":{},\"encode_us\":{},\"image_us\":{},\"plan_us\":{},\"lftj_build_us\":{},\"execute_us\":{},\"lftj_execute_us\":{},\"sink_emit_us\":{},\"sink_finish_us\":{},\"decode_us\":{},\"unaccounted_us\":{}}},\"allocations\":{{\"scope\":\"{}\",\"enabled\":{},\"alloc_calls\":{},\"dealloc_calls\":{},\"realloc_calls\":{},\"bytes_allocated\":{},\"bytes_deallocated\":{},\"net_bytes\":{},\"current_live_bytes\":{},\"peak_live_bytes\":{}",
             json_escape(&result.allocation_scope),
             timings.total_micros,
             timings.validate_inputs_micros,
             timings.normalize_micros,
             timings.encode_inputs_micros,
             timings.query_image_micros,
-            timings.static_empty_lookup_micros,
-            timings.static_literal_proof_micros,
-            timings.static_semijoin_proof_micros,
             timings.plan_micros,
             timings.lftj_build_micros,
             timings.execute_micros,
@@ -2104,7 +1989,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
         }
         let _ = write!(
             out,
-            "]}},\"counters\":{{\"cursor_seeks\":{},\"facts_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_facts_seen\":{},\"encoded_project_facts_inserted\":{},\"encoded_project_fact_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"query_image_relations_loaded\":{},\"query_image_facts_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{},\"static_empty_atoms_checked\":{},\"static_empty_facts_scanned\":{},\"static_empty_cache_hits\":{},\"static_empty_cache_misses\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
+            "]}},\"counters\":{{\"cursor_seeks\":{},\"facts_scanned\":{},\"dictionary_reverse_lookups\":{},\"materialized_output_values\":{},\"bindings_completed\":{},\"sink_emit_calls\":{},\"aggregate_emit_calls\":{},\"aggregate_count_range_calls\":{},\"encoded_project_facts_seen\":{},\"encoded_project_facts_inserted\":{},\"encoded_project_fact_bytes\":{},\"project_decode_values\":{},\"lftj_open_calls\":{},\"lftj_up_calls\":{},\"lftj_next_calls\":{},\"lftj_seek_calls\":{},\"lftj_key_reads\":{},\"lftj_candidate_values\":{},\"lftj_bind_successes\":{},\"lftj_bind_rejects\":{},\"lftj_completed_bindings\":{},\"query_image_relations_loaded\":{},\"query_image_facts_loaded\":{},\"query_image_encoded_bytes\":{},\"sorted_trie_bytes\":{}}},\"gate\":{{\"passed\":{},\"notes\":[",
             result.counters.cursor_seeks,
             result.counters.facts_scanned,
             result.dictionary_reverse_lookups,
@@ -2130,10 +2015,6 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
             result.query_image_fact_count,
             result.query_image_encoded_column_bytes,
             result.query_image_sorted_trie_bytes,
-            result.counters.static_empty_atoms_checked,
-            result.counters.static_empty_facts_scanned,
-            result.counters.static_empty_cache_hits,
-            result.counters.static_empty_cache_misses,
             result.gate.passed,
         );
         for (note_index, note) in result.gate.notes.iter().enumerate() {
@@ -3446,7 +3327,6 @@ mod tests {
             plan_family: "FreeJoinLftj".to_owned(),
             compare_mode: "materialized".to_owned(),
             cache_mode: "prepared-plan".to_owned(),
-            static_empty_cache_hits: 0,
             query_image_sample_cache_hits: 1,
             bumbledb_materialized_facts: true,
             sqlite_materialized_facts: false,
@@ -3501,12 +3381,11 @@ mod tests {
         assert!(markdown.contains("| joinstress | triangle_count |"));
         assert!(markdown.contains("| pure_lftj | Lftj | FreeJoinLftj |"));
         assert!(markdown.contains("## Phase Timing"));
-        assert!(markdown.contains("static semijoin proof us"));
         assert!(markdown.contains("unaccounted us"));
         assert!(markdown.contains("## Mechanics Counters"));
         assert!(markdown.contains("sink emits"));
         assert!(markdown.contains("## Cache Diagnostics"));
-        assert!(markdown.contains("| joinstress | triangle_count | prepared-plan | 0 | 1 |"));
+        assert!(markdown.contains("| joinstress | triangle_count | prepared-plan | 1 |"));
         assert!(markdown.contains("## Measurement Contract"));
         assert!(markdown.contains("bumbledb.correctness_execution"));
         assert!(markdown.contains("## Allocation Summary"));
@@ -3545,7 +3424,6 @@ mod tests {
             plan_family: "FreeJoinLftj".to_owned(),
             compare_mode: "facts".to_owned(),
             cache_mode: "prepared-plan".to_owned(),
-            static_empty_cache_hits: 0,
             query_image_sample_cache_hits: 1,
             bumbledb_materialized_facts: false,
             sqlite_materialized_facts: false,
@@ -3553,7 +3431,6 @@ mod tests {
             cardinality_fallback_reason: String::new(),
             timings: QueryTimings {
                 total_micros: 20,
-                static_semijoin_proof_micros: 12,
                 unaccounted_micros: 7,
                 ..QueryTimings::default()
             },
@@ -3609,7 +3486,6 @@ mod tests {
         assert!(!json.contains("\"prepare\""));
         assert!(json.contains("\"query_image_built_during_query\":true"));
         assert!(json.contains("\"phase_timing\""));
-        assert!(json.contains("\"static_semijoin_proof_us\":12"));
         assert!(json.contains("\"unaccounted_us\":7"));
         assert!(json.contains("\"sink_emit_calls\""));
         assert!(json.contains("\"encoded_project_facts_seen\""));
@@ -3785,7 +3661,7 @@ mod tests {
                 gate.max_sqlite_ratio,
                 gate.allowed_plan_families
             )),
-            Some((Some(1_000), Some(1.0), &["StaticEmpty"][..]))
+            Some((Some(1_000), Some(1.0), &["FreeJoinLftj"][..]))
         );
     }
 
