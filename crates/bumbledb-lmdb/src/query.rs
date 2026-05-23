@@ -5894,14 +5894,15 @@ fn build_lftj_atom_plan(
         .relation_by_id(atom.relation)
         .ok_or_else(|| Error::unknown_relation(&atom.relation_name))?;
     let variables = atom_variables_in_plan_order(atom, variable_order_ids);
-    let cache_key = lftj_atom_cache_key(atom, &variables, variable_order_ids, inputs);
+    let local_comparisons = atom_local_comparison_predicates(query, atom);
+    let cache_key = lftj_atom_cache_key(atom, &variables, inputs, &local_comparisons);
     let cached = image.cached_sorted_trie(cache_key, || {
         if let Some(build) =
-            build_durable_lftj_sorted_trie(source, query, inputs, atom, &variables)?
+            build_durable_lftj_sorted_trie(source, inputs, atom, &variables, &local_comparisons)?
         {
             Ok(build)
         } else {
-            build_lftj_sorted_trie(source, query, inputs, atom, &variables)
+            build_lftj_sorted_trie(source, query, inputs, atom, &variables, &local_comparisons)
         }
     })?;
     if cached.hit {
@@ -5945,22 +5946,14 @@ fn build_lftj_atom_plan(
     })
 }
 
-fn atom_has_local_comparison(query: &NormalizedQuery, variables: &[usize]) -> bool {
-    query.predicates.iter().any(|predicate| {
-        predicate.operands.iter().any(|operand| {
-            matches!(operand, NormOperand::Var(variable) if variables.contains(&(variable.0 as usize)))
-        })
-    })
-}
-
 fn build_durable_lftj_sorted_trie(
     source: &RelationImage,
-    query: &NormalizedQuery,
     inputs: &EncodedInputs,
     atom: &NormAtom,
     variables: &[usize],
+    local_comparisons: &[&NormPredicate],
 ) -> Result<Option<SortedTrieBuild>> {
-    if variables.is_empty() || atom_has_local_comparison(query, variables) {
+    if variables.is_empty() || !local_comparisons.is_empty() {
         return Ok(None);
     }
     for index in source.indexes() {
@@ -6153,6 +6146,7 @@ fn build_lftj_sorted_trie(
     inputs: &EncodedInputs,
     atom: &NormAtom,
     variables: &[usize],
+    local_comparisons: &[&NormPredicate],
 ) -> Result<SortedTrieBuild> {
     let fields = variables
         .iter()
@@ -6172,9 +6166,15 @@ fn build_lftj_sorted_trie(
     let scan_start = Instant::now();
     {
         let _span = tracing::debug_span!("bumbledb.query.lftj.build.scan_filter_copy").entered();
-        if let Some(indexed) =
-            append_indexed_lftj_atom_values(&mut builders, source, query, inputs, atom, variables)?
-        {
+        if let Some(indexed) = append_indexed_lftj_atom_values(
+            &mut builders,
+            source,
+            query,
+            inputs,
+            atom,
+            variables,
+            local_comparisons,
+        )? {
             source_facts_scanned = indexed.source_facts_scanned;
             included_facts = indexed.facts_retained as usize;
             bytes_copied = bytes_copied.saturating_add(indexed.bytes_appended);
@@ -6187,7 +6187,7 @@ fn build_lftj_sorted_trie(
                 else {
                     continue;
                 };
-                if !atom_local_comparisons_pass_slots(query, inputs, &slots)? {
+                if !atom_local_comparisons_pass_slots(local_comparisons, inputs, &slots)? {
                     continue;
                 }
                 included_facts += 1;
@@ -6269,6 +6269,7 @@ fn append_indexed_lftj_atom_values(
     inputs: &EncodedInputs,
     atom: &NormAtom,
     variables: &[usize],
+    local_comparisons: &[&NormPredicate],
 ) -> Result<Option<IndexedPrefixAppendStats>> {
     let mut best = None;
     for index in source.indexes() {
@@ -6331,7 +6332,7 @@ fn append_indexed_lftj_atom_values(
         source_facts_scanned += 1;
         if let Some(slots) =
             atom_index_entry_value_slots(index, inputs, atom, entry, query.vars.len())?
-            && atom_local_comparisons_pass_slots(query, inputs, &slots)?
+            && atom_local_comparisons_pass_slots(local_comparisons, inputs, &slots)?
         {
             facts_retained += 1;
             bytes_appended =
@@ -6426,11 +6427,11 @@ fn append_atom_slots(
 }
 
 fn atom_local_comparisons_pass_slots(
-    query: &NormalizedQuery,
+    local_comparisons: &[&NormPredicate],
     inputs: &EncodedInputs,
     slots: &AtomValueSlots,
 ) -> Result<bool> {
-    for predicate in &query.predicates {
+    for predicate in local_comparisons {
         let mut saw_local_variable = false;
         let mut encoded: [Option<&[u8]>; 2] = [None, None];
         for (index, operand) in predicate.operands.iter().enumerate() {
@@ -6473,11 +6474,11 @@ fn atom_local_comparisons_pass_slots(
 fn lftj_atom_cache_key(
     atom: &NormAtom,
     variables: &[usize],
-    _variable_order_ids: &[usize],
     inputs: &EncodedInputs,
+    local_comparisons: &[&NormPredicate],
 ) -> LftjAtomKey {
     let mut hasher = blake3::Hasher::new();
-    hash_bytes_len_prefixed(&mut hasher, b"bumbledb.lftj_atom.v1");
+    hash_bytes_len_prefixed(&mut hasher, b"bumbledb.lftj_atom.v2");
     hash_u16(&mut hasher, atom.relation.0);
     hash_u64(&mut hasher, variables.len() as u64);
     for variable in variables {
@@ -6518,7 +6519,83 @@ fn lftj_atom_cache_key(
             NormTerm::Wildcard => hash_u8(&mut hasher, 4),
         }
     }
+    hash_u64(&mut hasher, local_comparisons.len() as u64);
+    for predicate in local_comparisons {
+        hash_comparison_operator(&mut hasher, predicate.op);
+        hash_value_type(&mut hasher, &predicate.value_type);
+        for operand in &predicate.operands {
+            hash_lftj_atom_comparison_operand(&mut hasher, operand, variables, inputs);
+        }
+    }
     LftjAtomKey(*hasher.finalize().as_bytes())
+}
+
+fn atom_local_comparison_predicates<'a>(
+    query: &'a NormalizedQuery,
+    atom: &NormAtom,
+) -> Vec<&'a NormPredicate> {
+    let variables = atom
+        .fields
+        .iter()
+        .filter_map(|field| match field.term {
+            NormTerm::Var(variable) => Some(variable.0 as usize),
+            NormTerm::Input(_) | NormTerm::Literal(_) | NormTerm::Wildcard => None,
+        })
+        .collect::<BTreeSet<_>>();
+    query
+        .predicates
+        .iter()
+        .filter(|predicate| {
+            encoded_comparison_supported(predicate.op, &predicate.value_type)
+                && predicate_is_atom_local(predicate, &variables)
+        })
+        .collect()
+}
+
+fn predicate_is_atom_local(predicate: &NormPredicate, atom_variables: &BTreeSet<usize>) -> bool {
+    let mut saw_variable = false;
+    for operand in &predicate.operands {
+        let NormOperand::Var(variable) = operand else {
+            continue;
+        };
+        saw_variable = true;
+        if !atom_variables.contains(&(variable.0 as usize)) {
+            return false;
+        }
+    }
+    saw_variable
+}
+
+fn hash_lftj_atom_comparison_operand(
+    hasher: &mut blake3::Hasher,
+    operand: &NormOperand,
+    variables: &[usize],
+    inputs: &EncodedInputs,
+) {
+    match operand {
+        NormOperand::Var(variable) => {
+            hash_u8(hasher, 1);
+            let ordinal = variables
+                .iter()
+                .position(|candidate| *candidate == variable.0 as usize)
+                .unwrap_or(usize::MAX);
+            hash_u64(hasher, ordinal as u64);
+        }
+        NormOperand::Input(input) => {
+            hash_u8(hasher, 2);
+            hash_u16(hasher, input.0);
+            if let Some(value) = inputs.get(*input) {
+                hash_u8(hasher, 1);
+                hash_encoded_owned(hasher, value);
+            } else {
+                hash_u8(hasher, 0);
+            }
+        }
+        NormOperand::Literal(value) => {
+            hash_u8(hasher, 3);
+            hash_encoded_owned(hasher, value);
+        }
+    }
 }
 
 fn atom_variables_in_plan_order(atom: &NormAtom, variable_order_ids: &[usize]) -> Vec<usize> {

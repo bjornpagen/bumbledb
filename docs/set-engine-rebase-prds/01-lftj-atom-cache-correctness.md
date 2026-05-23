@@ -2,7 +2,7 @@
 
 ## 01. Status
 
-Not started.
+Completed.
 
 ## 02. Severity
 
@@ -428,7 +428,21 @@ Do not weaken cache diagnostics.
 
 ## 23. Completion Notes
 
-When complete, update this PRD status if the project process tracks completed PRDs.
+Implemented by making the LFTJ atom trie key include the local comparison predicates that can filter temporary atom trie contents.
+
+Implemented by hashing local predicate operator, value type, local variable ordinal, literal encoded values, input IDs, and encoded input values.
+
+Implemented by excluding cross-atom predicates from atom trie cache identity.
+
+Implemented by making durable trie selection skip only real local build-time filters, not every cross-atom predicate that happens to mention an atom variable.
+
+Regression coverage includes literal local comparison filters.
+
+Regression coverage includes prepared input local comparison filters.
+
+Regression coverage includes identical local filter cache reuse.
+
+Regression coverage includes cross-atom comparison filter cache reuse with correct final results.
 
 Record any new cache-key version tags in code comments.
 

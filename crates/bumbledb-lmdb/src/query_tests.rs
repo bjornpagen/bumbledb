@@ -690,6 +690,115 @@ fn lftj_atom_cache_reuses_equivalent_relation_aliases() -> TestResult {
 }
 
 #[test]
+fn lftj_atom_cache_separates_literal_local_comparison_filters() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
+    seed_title_company_range_facts(&env, &schema)?;
+
+    let through_2015 = title_company_count_query(&schema, OperandRef::integer(2015))?;
+    let through_2020 = title_company_count_query(&schema, OperandRef::integer(2020))?;
+
+    env.read(|txn| {
+        let first = txn.execute_query(&schema, &through_2015, &InputBindings::new())?;
+        let second = txn.execute_query(&schema, &through_2020, &InputBindings::new())?;
+
+        assert_eq!(first.result.facts, vec![vec![Value::U64(2)]]);
+        assert_eq!(second.result.facts, vec![vec![Value::U64(3)]]);
+        assert_eq!(first.plan.runtime_kind, QueryRuntimeKind::Lftj);
+        assert_eq!(second.plan.runtime_kind, QueryRuntimeKind::Lftj);
+        assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
+        assert!(second.plan.counters.sorted_trie_cache_misses >= 1);
+        Ok::<_, Error>(())
+    })?;
+
+    Ok(())
+}
+
+#[test]
+fn lftj_atom_cache_reuses_identical_local_comparison_filters() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
+    seed_title_company_range_facts(&env, &schema)?;
+
+    let query = title_company_count_query(&schema, OperandRef::integer(2015))?;
+
+    env.read(|txn| {
+        let first = txn.execute_query(&schema, &query, &InputBindings::new())?;
+        let second = txn.execute_query(&schema, &query, &InputBindings::new())?;
+
+        assert_eq!(first.result.facts, vec![vec![Value::U64(2)]]);
+        assert_eq!(second.result.facts, vec![vec![Value::U64(2)]]);
+        assert_eq!(first.plan.runtime_kind, QueryRuntimeKind::Lftj);
+        assert_eq!(second.plan.runtime_kind, QueryRuntimeKind::Lftj);
+        assert!(second.plan.counters.sorted_trie_cache_hits >= 2);
+        assert_eq!(second.plan.counters.sorted_trie_cache_misses, 0);
+        Ok::<_, Error>(())
+    })?;
+
+    Ok(())
+}
+
+#[test]
+fn lftj_atom_cache_separates_prepared_input_local_comparison_filters() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(q24_like_semijoin_schema(), env.max_key_size())?;
+    seed_title_company_range_facts(&env, &schema)?;
+
+    let query = title_company_count_query(&schema, OperandRef::input("max_year"))?;
+    let prepared = env.prepare_query(&schema, &query)?;
+    let through_2015 = InputBindings::from_values([("max_year", Value::I64(2015))]);
+    let through_2020 = InputBindings::from_values([("max_year", Value::I64(2020))]);
+
+    env.read(|txn| {
+        let first = txn.execute_prepared_query(&schema, &prepared, &through_2015)?;
+        let second = txn.execute_prepared_query(&schema, &prepared, &through_2020)?;
+
+        assert_eq!(first.result.facts, vec![vec![Value::U64(2)]]);
+        assert_eq!(second.result.facts, vec![vec![Value::U64(3)]]);
+        assert_eq!(first.plan.runtime_kind, QueryRuntimeKind::Lftj);
+        assert_eq!(second.plan.runtime_kind, QueryRuntimeKind::Lftj);
+        assert!(second.plan.prepared_plan_cache.hits >= 1);
+        assert!(second.plan.counters.sorted_trie_cache_hits >= 1);
+        assert!(second.plan.counters.sorted_trie_cache_misses >= 1);
+        Ok::<_, Error>(())
+    })?;
+
+    Ok(())
+}
+
+#[test]
+fn lftj_atom_cache_reuses_tries_across_cross_atom_comparison_filters() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let env = Environment::open(dir.path())?;
+    let schema = StorageSchema::new(triangle_schema(), env.max_key_size())?;
+    env.write(|txn| {
+        txn.insert(&schema, edge_ab_fact(1, 10))?;
+        txn.insert(&schema, edge_ab_fact(1, 30))?;
+        txn.insert(&schema, edge_ac_fact(1, 20))?;
+        Ok::<_, Error>(())
+    })?;
+    let less_than = edge_cross_comparison_query(&schema, ComparisonOperator::Lt)?;
+    let greater_than = edge_cross_comparison_query(&schema, ComparisonOperator::Gt)?;
+
+    env.read(|txn| {
+        let first = txn.execute_query(&schema, &less_than, &InputBindings::new())?;
+        let second = txn.execute_query(&schema, &greater_than, &InputBindings::new())?;
+
+        assert_same_facts(&first.result.facts, &[vec![Value::U64(10)]]);
+        assert_same_facts(&second.result.facts, &[vec![Value::U64(30)]]);
+        assert_eq!(first.plan.runtime_kind, QueryRuntimeKind::Lftj);
+        assert_eq!(second.plan.runtime_kind, QueryRuntimeKind::Lftj);
+        assert!(second.plan.counters.sorted_trie_cache_hits >= 2);
+        Ok::<_, Error>(())
+    })?;
+
+    Ok(())
+}
+
+#[test]
 fn lftj_empty_variable_atom_short_circuits_execution() -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;
@@ -1621,10 +1730,11 @@ fn lftj_atom_key_includes_encoded_inputs() -> TestResult {
         let second_inputs = encode_inputs(txn, &schema, &normalized, &second_inputs)?;
         let atom = &normalized.atoms[0];
         let variables = atom_variables_in_plan_order(atom, &[0]);
+        let local_comparisons = atom_local_comparison_predicates(&normalized, atom);
         Ok::<_, Error>((
-            lftj_atom_cache_key(atom, &variables, &[0], &first_inputs),
-            lftj_atom_cache_key(atom, &variables, &[0], &same_inputs),
-            lftj_atom_cache_key(atom, &variables, &[0], &second_inputs),
+            lftj_atom_cache_key(atom, &variables, &first_inputs, &local_comparisons),
+            lftj_atom_cache_key(atom, &variables, &same_inputs, &local_comparisons),
+            lftj_atom_cache_key(atom, &variables, &second_inputs, &local_comparisons),
         ))
     })?;
 
@@ -3842,6 +3952,67 @@ fn direct_chain4_schema() -> bumbledb_core::schema::SchemaDescriptor {
             .with_index(IndexDescriptor::equality("by_c", ["c", "id"])),
         ],
     )
+}
+
+fn seed_title_company_range_facts(env: &Environment, schema: &StorageSchema) -> Result<()> {
+    env.write(|txn| {
+        for (id, year, company) in [(1, 2004, 10), (2, 2005, 20), (3, 2015, 30), (4, 2020, 40)] {
+            txn.insert(
+                schema,
+                Fact::new(
+                    "Title",
+                    [("id", Value::U64(id)), ("year", Value::I64(year))],
+                ),
+            )?;
+            txn.insert(
+                schema,
+                Fact::new(
+                    "WorkCompany",
+                    [("work", Value::U64(id)), ("company", Value::U64(company))],
+                ),
+            )?;
+        }
+        Ok::<_, Error>(())
+    })
+}
+
+fn title_company_count_query(
+    schema: &StorageSchema,
+    max_year: OperandRef,
+) -> QueryBuildResult<TypedQuery> {
+    typed_query(schema, |query| {
+        query
+            .rel("WorkCompany")?
+            .var("work", "work")?
+            .var("company", "company")?
+            .done();
+        query
+            .rel("Title")?
+            .var("id", "work")?
+            .var("year", "year")?
+            .done();
+        query.cmp(
+            OperandRef::var("year"),
+            ComparisonOperator::Gte,
+            OperandRef::integer(2005),
+        )?;
+        query.cmp(OperandRef::var("year"), ComparisonOperator::Lte, max_year)?;
+        query.find_count_domain(["company"])?;
+        Ok(())
+    })
+}
+
+fn edge_cross_comparison_query(
+    schema: &StorageSchema,
+    operator: ComparisonOperator,
+) -> QueryBuildResult<TypedQuery> {
+    typed_query(schema, |query| {
+        query.rel("EdgeAB")?.var("a", "a")?.var("b", "b")?.done();
+        query.rel("EdgeAC")?.var("a", "a")?.var("c", "c")?.done();
+        query.cmp(OperandRef::var("b"), operator, OperandRef::var("c"))?;
+        query.find_var("b")?;
+        Ok(())
+    })
 }
 
 fn holder_fact(id: u64, name: &str) -> Fact {
