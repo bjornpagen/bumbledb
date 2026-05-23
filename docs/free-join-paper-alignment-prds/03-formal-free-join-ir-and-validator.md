@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Add the paper's Free Join plan representation and validator without changing execution yet. This PRD creates the hard boundary between real Free Join and the current LFTJ baseline.
+Add the paper's Free Join plan representation and validator without changing execution yet. This PRD creates the hard boundary for the rebuilt engine: only plans with subatoms, atom partitions, and covers are formal Free Join plans.
 
 ## Dependencies
 

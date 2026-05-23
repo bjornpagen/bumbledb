@@ -68,7 +68,7 @@ The exact type may differ, but it must provide:
 - Base image columns align exactly with live row handles.
 - Query/base image scope is derived from a validated plan's required fields.
 - Cache keys include storage tx ID and field/relation scope.
-- Existing query correctness can continue through LFTJ only if an explicit adapter exists; future Free Join sources must consume base images.
+- Future Free Join sources must consume base images; no legacy LFTJ adapter is retained.
 
 ## Required Tests
 
@@ -84,7 +84,7 @@ The exact type may differ, but it must provide:
 
 ```text
 cargo fmt --all --check
-cargo test -p bumbledb-lmdb query_image --all-features
+cargo test -p bumbledb-lmdb base_image --all-features
 cargo test -p bumbledb-lmdb storage --all-features
 cargo test --workspace --all-features
 ```

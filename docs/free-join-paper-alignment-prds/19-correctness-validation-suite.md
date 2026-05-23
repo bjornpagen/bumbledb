@@ -38,7 +38,7 @@ Build the comprehensive correctness suite required to trust the new paper-compli
 
 ## Required Differential Coverage
 
-- Random small schemas with integer, enum, serial, timestamp, and decimal fields.
+- Random small schemas with bool, integer, enum, serial, string, and bytes fields.
 - Random set-valued facts.
 - Positive conjunctive queries with projections.
 - Self-joins through atom occurrences.

@@ -19,7 +19,7 @@ Drafted. This suite is the ordered implementation map for breaking Bumbledb into
 - SQL bag semantics are forbidden.
 - SQL is allowed only inside benchmark reference oracles using `SELECT DISTINCT`.
 - LMDB remains the only durable backend.
-- Runtime DDL, server mode, network protocol, async API, nulls, floating-point persistence, generated database IDs, and public aggregation remain out of scope.
+- Runtime DDL, server mode, network protocol, async API, nulls, floating-point persistence, non-serial generated IDs, and public aggregation remain out of scope.
 - The paper's bag-semantics and DuckDB assumptions must be adapted, not copied.
 - Breaking storage and Rust API changes are allowed.
 - Compatibility readers and in-place migrations remain forbidden. ETL into a new database is the migration path.
@@ -32,7 +32,7 @@ Drafted. This suite is the ordered implementation map for breaking Bumbledb into
 | 01 | `01-paper-adaptation-and-public-language.md` | Removes misleading public language and adapts paper assumptions to Rosetta. |
 | 02 | `02-query-normalization-and-atom-occurrences.md` | Defines formal atom occurrences, self-join aliases, field binding validation, and repeated-variable policy. |
 | 03 | `03-formal-free-join-ir-and-validator.md` | Adds paper Free Join IR: subatoms, nodes, partitioning, covers, and validator. |
-| 04 | `04-lftj-baseline-and-generic-join-special-case.md` | Stops mislabeling the current singleton-variable LFTJ path as full Free Join. |
+| 04 | `04-legacy-lftj-purge-verification.md` | Verifies the old singleton-variable LFTJ path stays deleted. |
 | 05 | `05-binary-plan-ir-and-bushy-decomposition.md` | Adds internal binary plan IR and bushy-to-left-deep decomposition without SQL/DuckDB. |
 | 06 | `06-binary2fj-and-factorization.md` | Implements paper `binary2fj` and conservative factoring as pure plan rewrites. |
 | 07 | `07-storage-format-v5-columnar-set-layout.md` | Designs the new breaking durable layout for canonical set membership plus columnar base data. |

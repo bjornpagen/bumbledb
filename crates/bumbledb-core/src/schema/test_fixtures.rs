@@ -1,6 +1,6 @@
 use crate::schema::{
-    AccessLayout, ConstraintDescriptor, EnumDescriptor, FieldDescriptor, IndexDescriptor,
-    RelationDescriptor, SchemaDescriptor, ValueType,
+    ConstraintDescriptor, EnumDescriptor, FieldDescriptor, RelationDescriptor, SchemaDescriptor,
+    ValueType,
 };
 
 pub(super) fn ledger_schema() -> SchemaDescriptor {
@@ -10,7 +10,7 @@ pub(super) fn ledger_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Account",
                 vec![
-                    FieldDescriptor::new("id", serial_type("AccountId", "Account")),
+                    FieldDescriptor::generated_serial("id", "AccountId", "Account"),
                     FieldDescriptor::new("holder", serial_type("HolderId", "Holder")),
                     FieldDescriptor::new(
                         "currency",
@@ -30,17 +30,16 @@ pub(super) fn ledger_schema() -> SchemaDescriptor {
                 ["holder"],
                 "Holder",
                 "id",
-            ))
-            .with_index(IndexDescriptor::equality("by_currency", ["currency", "id"])),
+            )),
             RelationDescriptor::new(
                 "Posting",
                 vec![
-                    FieldDescriptor::new("id", serial_type("PostingId", "Posting")),
+                    FieldDescriptor::generated_serial("id", "PostingId", "Posting"),
                     FieldDescriptor::new("entry", serial_type("JournalEntryId", "JournalEntry")),
                     FieldDescriptor::new("account", serial_type("AccountId", "Account")),
                     FieldDescriptor::new("instrument", serial_type("InstrumentId", "Instrument")),
-                    FieldDescriptor::new("amount", ValueType::Decimal { scale: 4 }),
-                    FieldDescriptor::new("at", ValueType::TimestampMicros).range_indexed(),
+                    FieldDescriptor::new("amount", ValueType::I64),
+                    FieldDescriptor::new("at_micros", ValueType::I64),
                 ],
             )
             .with_unique("id", ["id"])
@@ -53,7 +52,7 @@ pub(super) fn ledger_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Holder",
                 vec![
-                    FieldDescriptor::new("id", serial_type("HolderId", "Holder")),
+                    FieldDescriptor::generated_serial("id", "HolderId", "Holder"),
                     FieldDescriptor::new("name", ValueType::String),
                 ],
             )
@@ -62,7 +61,7 @@ pub(super) fn ledger_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "SourceDocument",
                 vec![
-                    FieldDescriptor::new("id", serial_type("SourceDocumentId", "SourceDocument")),
+                    FieldDescriptor::generated_serial("id", "SourceDocumentId", "SourceDocument"),
                     FieldDescriptor::new("payload", ValueType::Bytes),
                 ],
             )
@@ -87,17 +86,16 @@ pub(super) fn valid_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Parent",
                 vec![
-                    FieldDescriptor::new("id", serial_type("ParentId", "Parent")),
+                    FieldDescriptor::generated_serial("id", "ParentId", "Parent"),
                     FieldDescriptor::new("code", ValueType::U64),
                 ],
             )
             .with_unique("id", ["id"])
-            .with_constraint(ConstraintDescriptor::unique("code", ["code"]))
-            .with_index(IndexDescriptor::equality("by_code_exact", ["code", "id"])),
+            .with_constraint(ConstraintDescriptor::unique("code", ["code"])),
             RelationDescriptor::new(
                 "Child",
                 vec![
-                    FieldDescriptor::new("id", serial_type("ChildId", "Child")),
+                    FieldDescriptor::generated_serial("id", "ChildId", "Child"),
                     FieldDescriptor::new("parent", serial_type("ParentId", "Parent")),
                 ],
             )
@@ -160,7 +158,7 @@ pub(super) fn enum_fk_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Account",
                 vec![
-                    FieldDescriptor::new("id", serial_type("AccountId", "Account")),
+                    FieldDescriptor::generated_serial("id", "AccountId", "Account"),
                     FieldDescriptor::new(
                         "currency",
                         ValueType::Enum {
@@ -207,7 +205,7 @@ pub(super) fn compound_enum_fk_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Account",
                 vec![
-                    FieldDescriptor::new("id", serial_type("AccountId", "Account")),
+                    FieldDescriptor::generated_serial("id", "AccountId", "Account"),
                     FieldDescriptor::new(
                         "country",
                         ValueType::Enum {
@@ -255,7 +253,7 @@ pub(super) fn compound_serial_enum_fk_schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Posting",
                 vec![
-                    FieldDescriptor::new("id", serial_type("PostingId", "Posting")),
+                    FieldDescriptor::generated_serial("id", "PostingId", "Posting"),
                     FieldDescriptor::new("account", serial_type("AccountId", "Account")),
                     FieldDescriptor::new(
                         "currency",
@@ -282,24 +280,4 @@ pub(super) fn serial_type(type_name: &str, owning_relation: &str) -> ValueType {
         type_name: type_name.to_owned(),
         owning_relation: owning_relation.to_owned(),
     }
-}
-
-pub(super) fn find_layout<'a>(
-    layouts: &'a [AccessLayout],
-    relation: &str,
-    index: &str,
-) -> std::result::Result<&'a AccessLayout, Box<dyn std::error::Error>> {
-    layouts
-        .iter()
-        .find(|layout| layout.relation_name == relation && layout.index_name == index)
-        .ok_or_else(|| std::io::Error::other(format!("missing layout {relation}.{index}")))
-        .map_err(Into::into)
-}
-
-pub(super) fn field_names(layout: &AccessLayout) -> Vec<&str> {
-    layout
-        .components
-        .iter()
-        .map(|component| component.field_name.as_str())
-        .collect()
 }

@@ -1,30 +1,5 @@
 #![allow(clippy::result_large_err)]
 
-use std::fmt::Write as _;
-use std::fs::File;
-use std::hint::black_box;
-use std::io::Write as IoWrite;
-use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
-
-use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
-use bumbledb_core::query_builder::QueryBuildResult;
-use bumbledb_core::query_ir::TypedQuery;
-use bumbledb_core::schema::{
-    ConstraintDescriptor, EnumDescriptor, FieldDescriptor, IndexDescriptor, RelationDescriptor,
-    SchemaDescriptor, ValueType,
-};
-use bumbledb_lmdb::{
-    AllocationPhaseStats, Environment, Fact, InputBindings, PlanCounters, QueryAllocationStats,
-    QueryOutput, QueryPlan, QueryTimings, StorageSchema, Value,
-};
-use rusqlite::{Connection, params_from_iter};
-use tracing_subscriber::fmt::format::FmtSpan;
-
-mod open;
-
-const DEFAULT_OPEN_LIMIT: usize = 100_000;
-
 #[cfg(feature = "alloc-profile")]
 mod alloc_profile {
     use std::alloc::{GlobalAlloc, Layout, System};
@@ -64,106 +39,14 @@ mod alloc_profile {
 #[global_allocator]
 static GLOBAL_ALLOCATOR: alloc_profile::CountingAllocator = alloc_profile::CountingAllocator;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let Some(config) = Config::from_env()? else {
-        return Ok(());
-    };
-    if config.trace {
-        init_tracing(&config)?;
-    }
-    if !config.format.is_json_only() {
-        println!("BumbleDB benchmark suite");
-        println!(
-            "scale={} open_limit={:?} repeats={} warmup={} datasets={:?} queries={:?} open_datasets={}",
-            config.scale,
-            config.open_limit,
-            config.repeats,
-            config.warmup,
-            config.datasets,
-            config.queries,
-            config.has_open_datasets()
-        );
-        println!();
-    }
-
-    let mut datasets = all_datasets(config.scale);
-    datasets.extend(open::open_datasets(&config)?);
-
-    let datasets = datasets
-        .into_iter()
-        .filter(|dataset| {
-            config.datasets.is_empty() || config.datasets.iter().any(|name| name == dataset.name)
-        })
-        .collect::<Vec<_>>();
-
-    if datasets.is_empty() {
-        return Err("no matching datasets".into());
-    }
-
-    let mut results = Vec::new();
-    for dataset in datasets {
-        results.extend(run_dataset(dataset, &config)?);
-        if !config.format.is_json_only() {
-            println!();
-        }
-    }
-
-    if results.is_empty() {
-        return Err(bench_error("no matching queries"));
-    }
-
-    if config.format.includes_markdown() {
-        println!("{}", render_markdown_results(&results));
-    }
-    if config.format.includes_json() {
-        println!("{}", render_json_results(&results));
-    }
-
-    if config.fail_gates {
-        let failures = results
-            .iter()
-            .filter(|result| !result.gate.passed)
-            .collect::<Vec<_>>();
-        if !failures.is_empty() {
-            return Err(format!("{} benchmark gate(s) failed", failures.len()).into());
-        }
-    }
-
-    Ok(())
+fn main() {
+    println!("Bumbledb benchmark harness was purged pending PRD 20.");
 }
 
-#[path = "main/tracing.rs"]
-mod bench_tracing;
-#[path = "main/config.rs"]
-mod config;
-#[path = "main/datasets.rs"]
-mod datasets;
-#[path = "main/render_json.rs"]
-mod render_json;
-#[path = "main/render_markdown.rs"]
-mod render_markdown;
-#[path = "main/result.rs"]
-mod result;
-#[path = "main/run.rs"]
-mod run;
-#[path = "main/sqlite.rs"]
-mod sqlite;
-#[path = "main/timing.rs"]
-mod timing;
-#[path = "main/types.rs"]
-mod types;
-
-use bench_tracing::*;
-use config::*;
-use datasets::*;
-use render_json::*;
-use render_markdown::*;
-use result::*;
-use run::*;
-use sqlite::*;
-use timing::*;
-use types::*;
-
 #[cfg(test)]
-#[path = "main_tests.rs"]
-mod tests;
+mod tests {
+    #[test]
+    fn bench_harness_is_placeholder_until_prd_20() {
+        assert_eq!(env!("CARGO_PKG_NAME"), "bumbledb-bench");
+    }
+}

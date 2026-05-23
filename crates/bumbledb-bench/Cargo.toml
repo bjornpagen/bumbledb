@@ -5,13 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bumbledb-core.workspace = true
 bumbledb-lmdb.workspace = true
-csv.workspace = true
-rusqlite.workspace = true
-tempfile.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
 
 [features]
 alloc-profile = ["bumbledb-lmdb/allocation-telemetry"]

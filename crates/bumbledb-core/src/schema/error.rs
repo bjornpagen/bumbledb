@@ -56,6 +56,14 @@ pub enum SchemaError {
         enum_name: String,
     },
 
+    /// A field generation policy was invalid.
+    #[error("invalid generation policy for {relation}.{field}: {reason}")]
+    InvalidFieldGeneration {
+        relation: String,
+        field: String,
+        reason: String,
+    },
+
     /// A constraint name was empty.
     #[error("constraint name must not be empty in relation {relation}")]
     EmptyConstraintName { relation: String },
@@ -108,42 +116,5 @@ pub enum SchemaError {
         target_field: String,
         source_type: String,
         target_type: String,
-    },
-
-    /// An explicit index name was empty.
-    #[error("index name must not be empty in relation {relation}")]
-    EmptyIndexName { relation: String },
-
-    /// An index name was declared more than once within a relation.
-    #[error("duplicate index {relation}.{index}")]
-    DuplicateIndex { relation: String, index: String },
-
-    /// An explicit index collided with a generated index name.
-    #[error("explicit index {relation}.{index} uses reserved generated index name")]
-    ReservedIndexName { relation: String, index: String },
-
-    /// An index declaration was invalid.
-    #[error("invalid index {relation}.{index}: {reason}")]
-    InvalidIndex {
-        relation: String,
-        index: String,
-        reason: String,
-    },
-
-    /// A generated index key would exceed LMDB's max key size.
-    #[error("index key too large for {relation}.{index}: {actual} bytes exceeds max {max} bytes")]
-    KeyLayoutTooLarge {
-        relation: String,
-        index: String,
-        actual: usize,
-        max: usize,
-    },
-
-    /// An index declared the same leading field more than once.
-    #[error("index {relation}.{index} declares duplicate leading field {field}")]
-    DuplicateIndexField {
-        relation: String,
-        index: String,
-        field: String,
     },
 }

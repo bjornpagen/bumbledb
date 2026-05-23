@@ -126,8 +126,6 @@ pub struct RelationDescriptor {
     pub fields: Vec<FieldDescriptor>,
     /// Explicit constraints.
     pub constraints: Vec<ConstraintDescriptor>,
-    /// Explicit physical indexes.
-    pub indexes: Vec<IndexDescriptor>,
 }
 
 impl RelationDescriptor {
@@ -137,7 +135,6 @@ impl RelationDescriptor {
             name: name.into(),
             fields,
             constraints: Vec::new(),
-            indexes: Vec::new(),
         }
     }
 
@@ -158,12 +155,6 @@ impl RelationDescriptor {
         self
     }
 
-    /// Adds an explicit physical index.
-    pub fn with_index(mut self, index: IndexDescriptor) -> Self {
-        self.indexes.push(index);
-        self
-    }
-
     /// Returns a field by name.
     pub fn field(&self, name: &str) -> Option<&FieldDescriptor> {
         self.fields.iter().find(|field| field.name == name)
@@ -177,8 +168,8 @@ pub struct FieldDescriptor {
     pub name: String,
     /// Logical field type.
     pub value_type: ValueType,
-    /// Field-level index annotations.
-    pub indexing: FieldIndexing,
+    /// DB-side generation policy.
+    pub generation: FieldGeneration,
 }
 
 impl FieldDescriptor {
@@ -187,22 +178,35 @@ impl FieldDescriptor {
         Self {
             name: name.into(),
             value_type,
-            indexing: FieldIndexing::default(),
+            generation: FieldGeneration::None,
         }
     }
 
-    /// Marks this field as range-indexed.
-    pub fn range_indexed(mut self) -> Self {
-        self.indexing.range = true;
-        self
+    /// Creates a DB-generated serial field.
+    pub fn generated_serial(
+        name: impl Into<String>,
+        type_name: impl Into<String>,
+        owning_relation: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            value_type: ValueType::Serial {
+                type_name: type_name.into(),
+                owning_relation: owning_relation.into(),
+            },
+            generation: FieldGeneration::SerialSequence,
+        }
     }
 }
 
-/// Field-level index annotations.
+/// DB-side field generation policy.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FieldIndexing {
-    /// Whether this field gets a scalar range index.
-    pub range: bool,
+pub enum FieldGeneration {
+    /// The application or ETL supplies the value.
+    #[default]
+    None,
+    /// LMDB-backed monotonic `u64` sequence for a serial field.
+    SerialSequence,
 }
 
 /// Logical value type.
@@ -214,17 +218,13 @@ pub enum ValueType {
     U64,
     /// Signed 64-bit integer.
     I64,
-    /// UTC timestamp in microseconds.
-    TimestampMicros,
-    /// Fixed-scale decimal.
-    Decimal { scale: u32 },
     /// Closed enum domain stored as a stable numeric code.
     Enum { name: String },
     /// Interned UTF-8 string.
     String,
     /// Interned bytes.
     Bytes,
-    /// Nominal database-allocated serial value.
+    /// Database-generated nominal `u64` sequence domain.
     Serial {
         type_name: String,
         owning_relation: String,
@@ -239,39 +239,15 @@ impl ValueType {
             ValueType::Enum { .. } => 1,
             ValueType::U64
             | ValueType::I64
-            | ValueType::TimestampMicros
             | ValueType::String
             | ValueType::Bytes
             | ValueType::Serial { .. } => 8,
-            ValueType::Decimal { .. } => 16,
         }
     }
 
     /// Returns true if values of this type are represented by dictionary IDs in hot keys.
     pub fn is_interned_placeholder(&self) -> bool {
         matches!(self, ValueType::String | ValueType::Bytes)
-    }
-
-    /// Returns true if this type can appear in primary/unique/index keys.
-    pub fn is_key_eligible(&self) -> bool {
-        true
-    }
-
-    /// Returns true if this type has meaningful ordered range semantics.
-    pub fn is_orderable(&self) -> bool {
-        matches!(
-            self,
-            ValueType::U64
-                | ValueType::I64
-                | ValueType::TimestampMicros
-                | ValueType::Decimal { .. }
-                | ValueType::Serial { .. }
-        )
-    }
-
-    /// Returns true if range indexes are allowed for this type.
-    pub fn supports_range_index(&self) -> bool {
-        self.is_orderable()
     }
 }
 
@@ -335,124 +311,6 @@ impl ConstraintDescriptor {
         match self {
             ConstraintDescriptor::Unique { name, .. }
             | ConstraintDescriptor::ForeignKey { name, .. } => name,
-        }
-    }
-}
-
-/// Explicit physical index descriptor.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IndexDescriptor {
-    /// Stable index name within the relation.
-    pub name: String,
-    /// Index access kind.
-    pub kind: IndexKind,
-    /// Leading fields in encoded key order.
-    pub fields: Vec<String>,
-}
-
-impl IndexDescriptor {
-    /// Creates an explicit physical index descriptor.
-    pub fn new(
-        name: impl Into<String>,
-        kind: IndexKind,
-        fields: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
-        Self {
-            name: name.into(),
-            kind,
-            fields: fields.into_iter().map(Into::into).collect(),
-        }
-    }
-
-    /// Creates an equality index over scalar leading fields.
-    pub fn equality(
-        name: impl Into<String>,
-        fields: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
-        Self::new(name, IndexKind::Equality, fields)
-    }
-
-    /// Creates a permutation index for alternate trie traversal order.
-    pub fn permutation(
-        name: impl Into<String>,
-        fields: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
-        Self::new(name, IndexKind::Permutation, fields)
-    }
-}
-
-/// Current index kind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IndexKind {
-    /// Canonical fact-set access path.
-    FactSet,
-    /// Unique leading index.
-    Unique,
-    /// Foreign-key leading index.
-    ForeignKey,
-    /// Range leading index.
-    Range,
-    /// Equality leading index.
-    Equality,
-    /// Explicit alternate component-order index.
-    Permutation,
-}
-
-/// Generated current-state index layout.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AccessLayout {
-    /// Relation name.
-    pub relation_name: String,
-    /// Stable declaration-order relation ID placeholder.
-    pub relation_id: u16,
-    /// Index name.
-    pub index_name: String,
-    /// Declaration-order index ID placeholder within relation.
-    pub index_id: u16,
-    /// Index kind.
-    pub kind: IndexKind,
-    /// Leading fields used for prefix access.
-    pub leading_fields: Vec<String>,
-    /// Encoded key components in access order.
-    pub components: Vec<AccessComponent>,
-    /// Total encoded key length including namespace/relation/index overhead.
-    pub encoded_len: usize,
-}
-
-impl AccessLayout {
-    /// Typed relation indexes do not need runtime type tags in hot keys.
-    pub fn needs_runtime_type_tags(&self) -> bool {
-        false
-    }
-}
-
-/// Index component role.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AccessComponentRole {
-    /// Leading prefix component.
-    Leading,
-}
-
-/// A field component inside an index key.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AccessComponent {
-    /// Field name.
-    pub field_name: String,
-    /// Logical field type.
-    pub value_type: ValueType,
-    /// Fixed encoded width.
-    pub encoded_width: usize,
-    /// Component role.
-    pub role: AccessComponentRole,
-}
-
-impl AccessComponent {
-    pub(crate) fn new(field: &FieldDescriptor, role: AccessComponentRole) -> Self {
-        Self {
-            field_name: field.name.clone(),
-            value_type: field.value_type.clone(),
-            encoded_width: field.value_type.encoded_width(),
-            role,
         }
     }
 }

@@ -17,7 +17,7 @@ Remove current public-language drift and document how Bumbledb adapts the Free J
 
 ## Required Changes
 
-- Change all public serial wording from database-allocated/generated language to externally supplied nominal serial values.
+- Change all public serial wording to database-generated monotonic nominal `u64` sequence values.
 - Remove aggregation wording from `OutputPlan`, counters, benchmark renderers, and test support unless it is clearly rejected as out of scope.
 - Make benchmark docs say exact value equality is required before timing, not count equality.
 - Replace or delete the legacy LMDB benchmark count-only correctness path.
@@ -43,7 +43,7 @@ Remove current public-language drift and document how Bumbledb adapts the Free J
 
 ## Acceptance Criteria
 
-- No public docs claim serial values are database-generated or database-allocated.
+- Public docs say `Serial` is generated only for explicitly declared serial fields and is never a UUID or application-supplied nominal-id convention.
 - No public API docs claim Bumbledb supports aggregation.
 - No benchmark correctness path validates only count equality when claiming correctness.
 - All retained SQLite references are explicitly reference-oracle-only and use set semantics.
@@ -62,7 +62,7 @@ Remove current public-language drift and document how Bumbledb adapts the Free J
 cargo fmt --all --check
 cargo check --workspace --all-targets --all-features
 cargo test --workspace --all-features
-rg "database-allocated|database generated|generated serial|bag semantics|multiset behavior|aggregation" crates docs/ROSETTA_STONE.md docs/free-join-paper-alignment-prds
+rg "database-allocated|bag semantics|multiset behavior|aggregation" crates docs/ROSETTA_STONE.md docs/free-join-paper-alignment-prds
 ```
 
 The final `rg` command may match explicit rejection language in this PRD suite only.

@@ -54,7 +54,7 @@ fn builds_comparison_query() -> QueryBuildResult<()> {
     let query = QueryBuilder::new(&schema)
         .rel("Posting")?
         .var("id", "posting")?
-        .var("at", "t")?
+        .var("at_micros", "t")?
         .done()
         .cmp(
             OperandRef::var("t"),
@@ -201,7 +201,7 @@ fn schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Holder",
                 vec![
-                    FieldDescriptor::new("id", serial_type("HolderId", "Holder")),
+                    FieldDescriptor::generated_serial("id", "HolderId", "Holder"),
                     FieldDescriptor::new("name", ValueType::String),
                 ],
             )
@@ -209,7 +209,7 @@ fn schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Account",
                 vec![
-                    FieldDescriptor::new("id", serial_type("AccountId", "Account")),
+                    FieldDescriptor::generated_serial("id", "AccountId", "Account"),
                     FieldDescriptor::new("holder", serial_type("HolderId", "Holder")),
                     FieldDescriptor::new(
                         "currency",
@@ -229,10 +229,10 @@ fn schema() -> SchemaDescriptor {
             RelationDescriptor::new(
                 "Posting",
                 vec![
-                    FieldDescriptor::new("id", serial_type("PostingId", "Posting")),
+                    FieldDescriptor::generated_serial("id", "PostingId", "Posting"),
                     FieldDescriptor::new("account", serial_type("AccountId", "Account")),
-                    FieldDescriptor::new("amount", ValueType::Decimal { scale: 2 }),
-                    FieldDescriptor::new("at", ValueType::TimestampMicros),
+                    FieldDescriptor::new("amount", ValueType::I64),
+                    FieldDescriptor::new("at_micros", ValueType::I64),
                 ],
             )
             .with_unique("id", ["id"])

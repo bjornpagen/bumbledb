@@ -24,7 +24,7 @@ Cut over to the paper-compliant architecture and delete stale compatibility path
 - Delete or quarantine old v4 storage write/read code after v5 passes.
 - Delete old access-entry-as-query-source assumptions unless retained as optional accelerators.
 - Delete `FreeJoinPlan` types that are not formal paper Free Join.
-- Rename LFTJ-only modules/types/counters so they do not claim Free Join.
+- Keep LFTJ-only modules/types/counters deleted unless rebuilt as formal singleton-plan internals.
 - Delete tests that require singleton Free Join nodes as a formal invariant.
 - Delete stale benchmark count-only correctness code.
 - Delete stale docs or comments mentioning aggregation, bag semantics, or public SQL support.
@@ -36,7 +36,7 @@ Cut over to the paper-compliant architecture and delete stale compatibility path
 - If a legacy adapter is necessary for a short transition, it must be crate-private and documented with a deletion PRD reference.
 - Public exports should be minimal and aligned with Rosetta.
 - Keep `QueryOutput` and `QueryResultSet` public unless deliberately changed by prior PRDs.
-- Keep LFTJ only as an explicitly labeled baseline/fast path if it still adds value.
+- Keep no legacy LFTJ compatibility path.
 
 ## Non-Goals
 

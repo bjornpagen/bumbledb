@@ -42,7 +42,7 @@ Make the physical plan and runtime behavior auditable. If Bumbledb claims paper 
 - Batch size, batch count, input tuples, survivor tuples, failed tuples.
 - Projection duplicate witnesses.
 - Factorized output logical facts, materialized facts, and expansions saved.
-- LFTJ counters only when LFTJ mode is actually used.
+- Scalar fast-path counters only when a formal singleton-plan fast path is actually used.
 
 ## Required Explain Output
 
@@ -54,7 +54,7 @@ Explain must include:
 - Available and new variables per node.
 - Cover candidates per node and chosen cover policy.
 - GHT schema per atom occurrence.
-- Source kind: COLT, optional accelerator, LFTJ fast path, or other.
+- Source kind: COLT, optional accelerator, formal singleton fast path, or other.
 - Vectorized batch size or scalar mode.
 - Output mode: materialized set or internal factorized.
 - Query-image/base-image cache diagnostics.
@@ -77,7 +77,7 @@ Explain must include:
 
 - Explain no longer contains misleading singleton `free_join_node bind_vars` output for formal Free Join mode.
 - Free Join explain shows subatoms, partitions, covers, and source schemas.
-- LFTJ mode explain is labeled as LFTJ or Generic Join special case.
+- Any future Generic Join-like mode is labeled as a formal singleton-subatom Free Join plan.
 - Benchmark JSON includes plan mode, batch size, cover mode, output mode, and new counters.
 - Markdown renderer includes core Free Join/COLT/vectorization counters without stale fields.
 - Trace summarization script uses only surviving JSON fields.

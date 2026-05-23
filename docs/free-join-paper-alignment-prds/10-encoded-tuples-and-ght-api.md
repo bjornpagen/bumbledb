@@ -39,7 +39,7 @@ Introduce tuple-key primitives and the paper's GHT interface. This is the execut
 - Reuse existing fixed-width encoding and `EncodedOwned` where possible, but do not force tuple keys through scalar-only APIs.
 - Avoid variable-length hot tuple keys. Strings/bytes are 8-byte intern IDs.
 - Keep tuple keys private to query execution modules unless a strong test-support need exists.
-- Leave sorted `TrieIter` in place for LFTJ baseline if still needed, but do not pretend it is the GHT API.
+- Do not revive the old sorted `TrieIter` LFTJ baseline as the GHT API.
 
 ## Non-Goals
 
@@ -53,14 +53,14 @@ Introduce tuple-key primitives and the paper's GHT interface. This is the execut
 - Multi-field tuple keys can be built from current variable bindings.
 - Tuple equality and hashing are byte-stable and type-width-safe.
 - Tuple schema rejects width/type mismatches.
-- GHT interface is separate from LFTJ scalar iterator traits.
+- GHT interface is tuple-key based and separate from any future scalar fast path.
 - Tests prove tuple keys for `(x)`, `(x, y)`, and mixed 1/8/16-byte values work.
 
 ## Required Tests
 
 - Tuple key single-field equality/hash.
 - Tuple key multi-field equality/hash.
-- Tuple key with enum, serial, decimal, string intern ID.
+- Tuple key with enum, serial, string intern ID, and bytes intern ID.
 - Schema width mismatch rejection.
 - Binding-to-tuple construction.
 - Offset-to-tuple construction from base image.

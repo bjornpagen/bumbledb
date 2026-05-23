@@ -6,19 +6,11 @@ rust-version.workspace = true
 
 [dependencies]
 bumbledb-core.workspace = true
-blake3.workspace = true
-heed.workspace = true
-smallvec.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 
 [features]
 allocation-telemetry = []
 test-failpoints = []
-
-[dev-dependencies]
-rusqlite.workspace = true
-tempfile.workspace = true
 
 [lints]
 workspace = true

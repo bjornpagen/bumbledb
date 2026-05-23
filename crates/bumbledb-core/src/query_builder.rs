@@ -438,10 +438,9 @@ fn literal_fits_type(schema: &SchemaDescriptor, literal: &Literal, expected: &Va
         (Literal::Integer(value), ValueType::Serial { .. }) => {
             *value >= 0 && *value <= u64::MAX as i128
         }
-        (Literal::Integer(value), ValueType::I64 | ValueType::TimestampMicros) => {
+        (Literal::Integer(value), ValueType::I64) => {
             *value >= i64::MIN as i128 && *value <= i64::MAX as i128
         }
-        (Literal::Integer(_), ValueType::Decimal { .. }) => true,
         _ => false,
     }
 }
@@ -449,11 +448,7 @@ fn literal_fits_type(schema: &SchemaDescriptor, literal: &Literal, expected: &Va
 fn is_orderable(value_type: &ValueType) -> bool {
     matches!(
         value_type,
-        ValueType::U64
-            | ValueType::I64
-            | ValueType::TimestampMicros
-            | ValueType::Decimal { .. }
-            | ValueType::Serial { .. }
+        ValueType::U64 | ValueType::I64 | ValueType::Serial { .. }
     )
 }
 
@@ -462,8 +457,6 @@ fn type_name(value_type: &ValueType) -> String {
         ValueType::Bool => "bool".to_owned(),
         ValueType::U64 => "u64".to_owned(),
         ValueType::I64 => "i64".to_owned(),
-        ValueType::TimestampMicros => "timestamp".to_owned(),
-        ValueType::Decimal { scale } => format!("decimal(scale={scale})"),
         ValueType::Enum { name } => name.clone(),
         ValueType::String => "string".to_owned(),
         ValueType::Bytes => "bytes".to_owned(),

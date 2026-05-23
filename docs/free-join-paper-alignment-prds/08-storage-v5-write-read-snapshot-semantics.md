@@ -21,6 +21,7 @@ Implement v5 storage operations over the new columnar set layout. This PRD resto
 
 - Resolve relation and validate field values.
 - Encode a full fact in schema field order.
+- Generate omitted declared `Serial` values from transactional per-field sequences.
 - Intern strings/bytes in create mode.
 - Compute content-derived fact handle.
 - Check canonical membership `T`.
@@ -29,6 +30,7 @@ Implement v5 storage operations over the new columnar set layout. This PRD resto
 - Check unique constraints through `U` guard entries.
 - Write `T`, `H`, one `C` entry per field, `L`, `U`, `R`, optional `A`, and `S` updates atomically.
 - Advance logical storage tx ID only for successful logical insert.
+- Explicit ETL-supplied serial values advance the sequence high-water mark on successful insert.
 
 ## Required Delete Semantics
 
@@ -76,6 +78,9 @@ Implement v5 storage operations over the new columnar set layout. This PRD resto
 ## Required Tests
 
 - Duplicate insert no-op.
+- Omitted serial field generates a new value.
+- Explicit serial insert advances high-water mark.
+- Aborted generated-serial insert does not advance the committed sequence.
 - Delete absent no-op.
 - Delete then reinsert.
 - Unique violation.

@@ -56,7 +56,7 @@ Adapt the paper's pushed-selection assumption to Bumbledb's typed IR. Literals, 
 - Runtime input equality filter.
 - Same-atom repeated variable accepted-as-equality or rejected, per policy.
 - Cross-atom comparison residual.
-- Range `<`, `<=`, `>`, `>=` over `U64`, `I64`, timestamp, decimal, and serial.
+- Range `<`, `<=`, `>`, `>=` over `U64`, `I64`, and serial.
 - Rejection for string/bytes range comparisons.
 - Pushdown versus residual equivalence.
 - Empty result after pushed selection.

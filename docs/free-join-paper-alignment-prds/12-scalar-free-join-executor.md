@@ -17,7 +17,7 @@ Implement the paper's recursive node/cover/probe Free Join executor in scalar fo
 - Binding state that can bind multiple variables from one cover tuple.
 - Probe key construction from current tuple plus prior bindings.
 - Projection sink integration preserving set semantics.
-- LFTJ baseline remains separate.
+- No legacy LFTJ baseline remains; execution starts from the formal Free Join plan.
 
 ## Required Execution Semantics
 
@@ -40,7 +40,7 @@ For each node:
 - Binding state must reject conflicting variable values.
 - Static zero-variable atoms must be checked exactly once through existence semantics.
 - Keep output materialization through the existing duplicate-free projection sink unless PRD 17 has already replaced internals.
-- Do not use leapfrog intersection inside this executor unless it is explicitly a fast path for singleton plans.
+- Do not use leapfrog intersection inside this executor unless it is rebuilt as a formal singleton-plan fast path over GHT/COLT sources.
 - Preserve exact product semantics internally but collapse projection to sets.
 
 ## Non-Goals
@@ -48,7 +48,7 @@ For each node:
 - Do not implement dynamic cover selection here.
 - Do not implement vectorized batches here.
 - Do not implement factorized output here.
-- Do not delete LFTJ baseline here.
+- Do not revive the deleted LFTJ baseline here.
 
 ## Acceptance Criteria
 

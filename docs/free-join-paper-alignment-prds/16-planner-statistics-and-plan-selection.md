@@ -23,7 +23,7 @@ Build a real internal optimizer for Bumbledb's typed set engine. It must choose 
 
 - Deterministic atom-order binary plan converted through `binary2fj`.
 - Factored binary-derived Free Join plan.
-- Singleton Generic Join/LFTJ-style Free Join plan.
+- Singleton Generic Join-like Free Join plan.
 - Optional manually injected binary plan for paper examples and robustness tests.
 - Optional static-cover and dynamic-cover variants.
 

@@ -49,7 +49,7 @@ Define the normalized query model required before formal Free Join planning. The
 - Self-join queries with repeated base relation names produce distinct atom occurrences.
 - Duplicate field bindings in one relation atom fail before planning.
 - Same-atom repeated variables either lower into explicit equality predicates or fail with a product-level invalid-query error.
-- No valid query fails later with an internal LFTJ access-path error because of malformed atom shape.
+- No valid query fails later with an internal access-path error because of malformed atom shape.
 - Existing typed query builder examples still compile and run.
 
 ## Required Tests

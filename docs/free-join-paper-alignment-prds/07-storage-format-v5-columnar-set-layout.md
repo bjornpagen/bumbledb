@@ -37,7 +37,7 @@ Use a new storage format version and a new schema canonicalization label. The ex
 - Use a content-derived fact handle, preferably the existing 16-byte BLAKE3 relation-plus-fact handle.
 - Continue collision checks against full encoded facts.
 - Do not expose fact handles as generated public IDs.
-- Do not introduce a DB-side generated ID allocator.
+- Do not introduce any DB-side generated ID allocator except declared `Serial` field sequences.
 
 ## Required Type Split
 
@@ -53,6 +53,7 @@ Use a new storage format version and a new schema canonicalization label. The ex
 - Change schema canonical bytes label from the current v4 label.
 - Add namespace constants and key builders in storage modules.
 - Keep old format tests only if they assert mismatch failure. Do not add compatibility readers.
+- Add per-serial-field sequence metadata for generated `Serial` values.
 - Document ETL-only migration.
 - Keep string/bytes interning behavior unless PRD implementation discovers a concrete reason to change it.
 
@@ -78,6 +79,7 @@ Use a new storage format version and a new schema canonicalization label. The ex
 - Schema fingerprint v5 label differs from v4 label.
 - Key namespace ordering tests for `T/H/L/C/U/R/A/S`.
 - Fact handle collision check remains possible.
+- Serial sequence metadata exists and is distinct from internal fact handles.
 
 ## Validation Commands
 

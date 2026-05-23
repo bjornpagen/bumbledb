@@ -1,8 +1,7 @@
 use std::collections::BTreeSet;
 
-use super::layout::generated_index_names;
 use super::{
-    ConstraintDescriptor, EnumDescriptor, FieldDescriptor, ForeignKeyAction, IndexKind,
+    ConstraintDescriptor, EnumDescriptor, FieldDescriptor, FieldGeneration, ForeignKeyAction,
     RelationDescriptor, Result, SchemaDescriptor, SchemaError, ValueType,
 };
 
@@ -64,18 +63,10 @@ impl SchemaDescriptor {
                     field: field.name.clone(),
                 });
             }
-            if field.indexing.range && !field.value_type.supports_range_index() {
-                return Err(SchemaError::InvalidIndex {
-                    relation: relation.name.clone(),
-                    index: format!("by_{}", field.name),
-                    reason: format!("field {} has non-range-indexable type", field.name),
-                });
-            }
             self.validate_field_type(relation, field)?;
         }
 
         self.validate_constraints(relation)?;
-        self.validate_indexes(relation)?;
 
         Ok(())
     }
@@ -93,6 +84,25 @@ impl SchemaDescriptor {
                 field: field.name.clone(),
                 enum_name: name.clone(),
             });
+        }
+        if field.generation == FieldGeneration::SerialSequence {
+            let ValueType::Serial {
+                owning_relation, ..
+            } = &field.value_type
+            else {
+                return Err(SchemaError::InvalidFieldGeneration {
+                    relation: relation.name.clone(),
+                    field: field.name.clone(),
+                    reason: "serial sequence generation requires a Serial field".to_owned(),
+                });
+            };
+            if owning_relation != &relation.name {
+                return Err(SchemaError::InvalidFieldGeneration {
+                    relation: relation.name.clone(),
+                    field: field.name.clone(),
+                    reason: "serial sequence owning_relation must match the relation".to_owned(),
+                });
+            }
         }
         Ok(())
     }
@@ -124,24 +134,17 @@ impl SchemaDescriptor {
                     }
                     let mut seen_fields = BTreeSet::new();
                     for field_name in fields {
-                        let field = relation.field(field_name).ok_or_else(|| {
-                            SchemaError::UnknownField {
+                        relation
+                            .field(field_name)
+                            .ok_or_else(|| SchemaError::UnknownField {
                                 relation: relation.name.clone(),
                                 field: field_name.clone(),
-                            }
-                        })?;
+                            })?;
                         if !seen_fields.insert(field_name.clone()) {
                             return Err(SchemaError::InvalidConstraint {
                                 relation: relation.name.clone(),
                                 constraint: name.clone(),
                                 reason: format!("duplicate field {field_name}"),
-                            });
-                        }
-                        if !field.value_type.is_key_eligible() {
-                            return Err(SchemaError::InvalidConstraint {
-                                relation: relation.name.clone(),
-                                constraint: name.clone(),
-                                reason: format!("field {field_name} is not key-eligible"),
                             });
                         }
                     }
@@ -273,75 +276,6 @@ impl SchemaDescriptor {
                     target_field: format!("{target_relation}.{target_field_name}"),
                     source_type: source_field.value_type.to_string(),
                     target_type: target_field.value_type.to_string(),
-                });
-            }
-        }
-        Ok(())
-    }
-
-    fn validate_indexes(&self, relation: &RelationDescriptor) -> Result<()> {
-        let generated_names = generated_index_names(relation);
-        let mut names = BTreeSet::new();
-        for index in &relation.indexes {
-            if index.name.is_empty() {
-                return Err(SchemaError::EmptyIndexName {
-                    relation: relation.name.clone(),
-                });
-            }
-            if !names.insert(index.name.clone()) {
-                return Err(SchemaError::DuplicateIndex {
-                    relation: relation.name.clone(),
-                    index: index.name.clone(),
-                });
-            }
-            if generated_names.contains(&index.name) {
-                return Err(SchemaError::ReservedIndexName {
-                    relation: relation.name.clone(),
-                    index: index.name.clone(),
-                });
-            }
-            if index.fields.is_empty() {
-                return Err(SchemaError::InvalidIndex {
-                    relation: relation.name.clone(),
-                    index: index.name.clone(),
-                    reason: "leading field list must not be empty".to_owned(),
-                });
-            }
-            let mut seen_fields = BTreeSet::new();
-            for field_name in &index.fields {
-                let field =
-                    relation
-                        .field(field_name)
-                        .ok_or_else(|| SchemaError::UnknownField {
-                            relation: relation.name.clone(),
-                            field: field_name.clone(),
-                        })?;
-                if !seen_fields.insert(field_name.clone()) {
-                    return Err(SchemaError::DuplicateIndexField {
-                        relation: relation.name.clone(),
-                        index: index.name.clone(),
-                        field: field_name.clone(),
-                    });
-                }
-                if !field.value_type.is_key_eligible() {
-                    return Err(SchemaError::InvalidIndex {
-                        relation: relation.name.clone(),
-                        index: index.name.clone(),
-                        reason: format!("field {field_name} is not key-eligible"),
-                    });
-                }
-            }
-            if index.kind == IndexKind::Range
-                && index.fields.first().is_none_or(|field_name| {
-                    relation
-                        .field(field_name)
-                        .is_none_or(|field| !field.value_type.supports_range_index())
-                })
-            {
-                return Err(SchemaError::InvalidIndex {
-                    relation: relation.name.clone(),
-                    index: index.name.clone(),
-                    reason: "range index leading field must be orderable".to_owned(),
                 });
             }
         }

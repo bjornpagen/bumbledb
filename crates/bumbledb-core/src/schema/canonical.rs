@@ -1,6 +1,6 @@
 use super::{
-    ConstraintDescriptor, EnumDescriptor, EnumVariantDescriptor, FieldDescriptor, ForeignKeyAction,
-    IndexDescriptor, IndexKind, RelationDescriptor, SchemaDescriptor, SchemaFingerprint, ValueType,
+    ConstraintDescriptor, EnumDescriptor, EnumVariantDescriptor, FieldDescriptor, FieldGeneration,
+    ForeignKeyAction, RelationDescriptor, SchemaDescriptor, SchemaFingerprint, ValueType,
 };
 
 impl SchemaDescriptor {
@@ -55,11 +55,6 @@ impl RelationDescriptor {
         for constraint in &self.constraints {
             constraint.push_canonical(out);
         }
-
-        push_u32(out, self.indexes.len() as u32);
-        for index in &self.indexes {
-            index.push_canonical(out);
-        }
     }
 }
 
@@ -67,7 +62,19 @@ impl FieldDescriptor {
     fn push_canonical(&self, out: &mut Vec<u8>) {
         push_str(out, &self.name);
         self.value_type.push_canonical(out);
-        push_u8(out, u8::from(self.indexing.range));
+        self.generation.push_canonical(out);
+    }
+}
+
+impl FieldGeneration {
+    fn push_canonical(self, out: &mut Vec<u8>) {
+        push_u8(
+            out,
+            match self {
+                FieldGeneration::None => 0,
+                FieldGeneration::SerialSequence => 1,
+            },
+        );
     }
 }
 
@@ -77,11 +84,6 @@ impl ValueType {
             ValueType::Bool => push_u8(out, 1),
             ValueType::U64 => push_u8(out, 2),
             ValueType::I64 => push_u8(out, 3),
-            ValueType::TimestampMicros => push_u8(out, 4),
-            ValueType::Decimal { scale } => {
-                push_u8(out, 5);
-                push_u32(out, *scale);
-            }
             ValueType::Enum { name } => {
                 push_u8(out, 7);
                 push_str(out, name);
@@ -131,30 +133,6 @@ impl ForeignKeyAction {
         match self {
             ForeignKeyAction::Restrict => push_u8(out, 1),
         }
-    }
-}
-
-impl IndexDescriptor {
-    fn push_canonical(&self, out: &mut Vec<u8>) {
-        push_str(out, &self.name);
-        self.kind.push_canonical(out);
-        push_string_list(out, &self.fields);
-    }
-}
-
-impl IndexKind {
-    fn push_canonical(self, out: &mut Vec<u8>) {
-        push_u8(
-            out,
-            match self {
-                IndexKind::FactSet => 1,
-                IndexKind::Unique => 2,
-                IndexKind::ForeignKey => 3,
-                IndexKind::Range => 4,
-                IndexKind::Equality => 5,
-                IndexKind::Permutation => 6,
-            },
-        );
     }
 }
 

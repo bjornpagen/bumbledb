@@ -35,7 +35,7 @@ Bumbledb must implement paper Free Join only after adapting it to Rosetta. The p
 - Cover: a subatom in a node containing every new variable for that node.
 - GHT: the paper Generalized Hash Trie interface with relation metadata, current tuple schema, `iter`, and `get(tuple)`.
 - COLT: an execution-local Column-Oriented Lazy Trie implementing GHT over immutable relation base images using offset vectors and lazily forced hash maps.
-- LFTJ: the current singleton-variable leapfrog triejoin-style executor. It is not the full paper Free Join model.
+- Legacy LFTJ: the deleted singleton-variable leapfrog triejoin-style executor. It must not be revived as the Free Join implementation.
 
 ## Hard Invariants
 
@@ -45,6 +45,7 @@ Bumbledb must implement paper Free Join only after adapting it to Rosetta. The p
 - No DuckDB dependency may be introduced.
 - SQLite may remain only as an external exact-value benchmark/test oracle using `SELECT DISTINCT`.
 - Projection is native set projection, not `SELECT DISTINCT` as a Bumbledb concept.
+- DB-generated identifiers are allowed only for declared `Serial` fields.
 - Aggregation remains out of scope unless Rosetta is explicitly updated in a future task.
 - LMDB remains the only durable backend.
 - Query images and COLT structures are private implementation details.
@@ -61,7 +62,7 @@ Bumbledb must implement paper Free Join only after adapting it to Rosetta. The p
 - This suite contains a README and numbered PRDs from 00 through 22.
 - Each PRD has dependencies, scope, technical direction, non-goals, acceptance criteria, and validation commands.
 - No PRD asks for SQL, bag output, DuckDB planning, public aggregation, or a non-LMDB storage backend.
-- The suite makes clear that current LFTJ is not paper Free Join unless lowered into and validated as a singleton-subatom special case.
+- The suite makes clear that any future Generic Join-like mode must be lowered into and validated as a singleton-subatom formal Free Join plan.
 
 ## Validation Commands
 

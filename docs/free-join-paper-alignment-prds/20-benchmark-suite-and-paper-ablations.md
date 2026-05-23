@@ -23,11 +23,11 @@ Build correctness-first benchmarks that can evaluate paper-compliant Free Join w
 - Count equality alone is never sufficient.
 - Benchmark SQL must not use `COUNT`, `GROUP BY`, outer joins, anti-joins, null-sensitive predicates, or bag semantics unless a future Rosetta update adds the feature.
 - Open-data ETL must not silently encode nulls as zero or empty string unless documented as a real domain value.
-- Decimal/rating parsing must avoid `f64` rounding for persisted exact values.
+- Fixed-point/rating source values must be modeled as scaled `I64` application conventions if retained in benchmarks.
 
 ## Required Benchmark Modes
 
-- Singleton/GJ/LFTJ baseline where retained.
+- Singleton/GJ-like baseline only if rebuilt as a formal singleton-subatom Free Join plan.
 - Binary-derived Free Join.
 - Factored Free Join.
 - Static cover.
