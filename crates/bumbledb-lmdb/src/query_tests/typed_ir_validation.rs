@@ -1,3 +1,5 @@
+use super::*;
+
 fn assert_invalid_typed_query(schema: &StorageSchema, query: &TypedQuery) -> TestResult {
     let dir = tempfile::tempdir()?;
     let env = Environment::open(dir.path())?;

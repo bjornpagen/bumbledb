@@ -1,20 +1,22 @@
-fn job_string_field(name: &str) -> FieldDescriptor {
+use super::*;
+
+pub(super) fn job_string_field(name: &str) -> FieldDescriptor {
     FieldDescriptor::new(name, ValueType::String)
 }
 
-fn job_i64_field(name: &str) -> FieldDescriptor {
+pub(super) fn job_i64_field(name: &str) -> FieldDescriptor {
     FieldDescriptor::new(name, ValueType::I64)
 }
 
-fn job_range_i64_field(name: &str) -> FieldDescriptor {
+pub(super) fn job_range_i64_field(name: &str) -> FieldDescriptor {
     FieldDescriptor::new(name, ValueType::I64).range_indexed()
 }
 
-fn job_u64_field(name: &str) -> FieldDescriptor {
+pub(super) fn job_u64_field(name: &str) -> FieldDescriptor {
     FieldDescriptor::new(name, ValueType::U64)
 }
 
-const JOB_SQLITE_SCHEMA: &str = r#"
+pub(super) const JOB_SQLITE_SCHEMA: &str = r#"
     CREATE TABLE aka_name (id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL, name TEXT NOT NULL, imdb_index TEXT NOT NULL, name_pcode_cf TEXT NOT NULL, name_pcode_nf TEXT NOT NULL, surname_pcode TEXT NOT NULL);
     CREATE TABLE aka_title (id INTEGER PRIMARY KEY, movie_id INTEGER NOT NULL, title TEXT NOT NULL, imdb_index TEXT NOT NULL, kind_id INTEGER NOT NULL, production_year INTEGER NOT NULL, phonetic_code TEXT NOT NULL, episode_of_id INTEGER NOT NULL, season_nr INTEGER NOT NULL, episode_nr INTEGER NOT NULL, note TEXT NOT NULL);
     CREATE TABLE cast_info (id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL, movie_id INTEGER NOT NULL, person_role_id INTEGER NOT NULL, note TEXT NOT NULL, nr_order INTEGER NOT NULL, role_id INTEGER NOT NULL);
@@ -75,4 +77,3 @@ const JOB_SQLITE_SCHEMA: &str = r#"
     CREATE INDEX title_year ON title(production_year, id);
     CREATE INDEX title_episode ON title(episode_nr, id);
 "#;
-

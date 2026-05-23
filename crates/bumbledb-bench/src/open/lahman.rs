@@ -1,4 +1,9 @@
-fn lahman_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std::error::Error>> {
+use super::*;
+
+pub(super) fn lahman_dataset(
+    dir: &Path,
+    limit: Option<usize>,
+) -> Result<Dataset, Box<dyn std::error::Error>> {
     let mut player_ids = BTreeMap::new();
     let mut team_ids = BTreeMap::new();
     let mut facts = Vec::new();
@@ -136,4 +141,3 @@ fn lahman_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn s
 
     Ok(lahman_from_facts(facts))
 }
-

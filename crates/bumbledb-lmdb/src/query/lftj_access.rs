@@ -1,4 +1,6 @@
-fn build_lftj_atom_plans<'image>(
+use super::*;
+
+pub(super) fn build_lftj_atom_plans<'image>(
     image: &'image crate::QueryImage,
     inputs: &EncodedInputs,
     atoms: &[NormAtom],
@@ -189,7 +191,9 @@ fn static_atom_lazy_access_slice<'a>(
         }
     }
     let Some((_, prefix, index)) = best else {
-        return Err(Error::internal("static LFTJ atom has no durable access path"));
+        return Err(Error::internal(
+            "static LFTJ atom has no durable access path",
+        ));
     };
     let range = index.prefix_range(&prefix);
     let mut fact_count = 0usize;

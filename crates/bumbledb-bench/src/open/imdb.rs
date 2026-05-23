@@ -1,4 +1,9 @@
-fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std::error::Error>> {
+use super::*;
+
+pub(super) fn imdb_dataset(
+    dir: &Path,
+    limit: Option<usize>,
+) -> Result<Dataset, Box<dyn std::error::Error>> {
     let mut title_ids = BTreeMap::new();
     let mut name_ids = BTreeMap::new();
     let mut symbols = Symbols::default();
@@ -147,7 +152,7 @@ fn imdb_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
     })
 }
 
-fn imdb_schema() -> SchemaDescriptor {
+pub(super) fn imdb_schema() -> SchemaDescriptor {
     SchemaDescriptor::new(
         "ImdbPublicDb",
         vec![
@@ -218,7 +223,9 @@ fn imdb_schema() -> SchemaDescriptor {
     )
 }
 
-fn build_imdb_person_high_rated_titles(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+pub(super) fn build_imdb_person_high_rated_titles(
+    schema: &SchemaDescriptor,
+) -> QueryBuildResult<TypedQuery> {
     let mut query = QueryBuilder::new(schema);
     query
         .rel("Principal")?
@@ -240,7 +247,9 @@ fn build_imdb_person_high_rated_titles(schema: &SchemaDescriptor) -> QueryBuildR
         .finish()
 }
 
-fn build_imdb_category_rating_join(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+pub(super) fn build_imdb_category_rating_join(
+    schema: &SchemaDescriptor,
+) -> QueryBuildResult<TypedQuery> {
     let mut query = QueryBuilder::new(schema);
     query
         .rel("Principal")?
@@ -261,4 +270,3 @@ fn build_imdb_category_rating_join(schema: &SchemaDescriptor) -> QueryBuildResul
         .find_var("name")?
         .finish()
 }
-

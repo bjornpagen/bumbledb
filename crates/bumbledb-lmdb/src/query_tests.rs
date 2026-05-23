@@ -16,16 +16,20 @@ fn typed_query(
     builder.finish()
 }
 
-include!("query_tests/basic.rs");
+#[path = "query_tests/atom_cache.rs"]
+mod atom_cache;
+#[path = "query_tests/basic.rs"]
+mod basic;
+#[path = "query_tests/cache_and_planner.rs"]
+mod cache_and_planner;
+#[path = "query_tests/differential.rs"]
+mod differential;
+#[path = "query_tests/sinks_and_projection.rs"]
+mod sinks_and_projection;
+#[path = "query_tests/typed_ir_validation.rs"]
+mod typed_ir_validation;
 
-include!("query_tests/atom_cache.rs");
+#[path = "query_test_helpers.rs"]
+mod query_test_helpers;
 
-include!("query_tests/cache_and_planner.rs");
-
-include!("query_tests/sinks_and_projection.rs");
-
-include!("query_tests/differential.rs");
-
-include!("query_tests/typed_ir_validation.rs");
-
-include!("query_test_helpers.rs");
+use query_test_helpers::*;

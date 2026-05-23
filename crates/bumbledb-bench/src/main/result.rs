@@ -1,4 +1,6 @@
-fn benchmark_result(
+use super::*;
+
+pub(super) fn benchmark_result(
     dataset: &'static str,
     query: &BenchQuery,
     output: &QueryOutput,
@@ -68,7 +70,7 @@ fn benchmark_result(
     }
 }
 
-fn query_image_scope(output: &QueryOutput) -> &'static str {
+pub(super) fn query_image_scope(output: &QueryOutput) -> &'static str {
     if output.plan.timings.query_image_micros == 0
         && output.plan.query_image_cache.cached_images == 0
         && output.plan.query_image_cache.builds == 0
@@ -79,7 +81,7 @@ fn query_image_scope(output: &QueryOutput) -> &'static str {
     }
 }
 
-fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
+pub(super) fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
     let plan = &output.plan;
     let timings = plan.timings;
     tracing::debug!(
@@ -96,7 +98,7 @@ fn emit_profile_summary(dataset: &str, query: &str, output: &QueryOutput) {
     );
 }
 
-fn evaluate_gate(
+pub(super) fn evaluate_gate(
     dataset: &'static str,
     query: &BenchQuery,
     output: &QueryOutput,
@@ -166,7 +168,7 @@ fn evaluate_gate(
     GateOutcome { passed, notes }
 }
 
-fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<BenchmarkGate> {
+pub(super) fn benchmark_gate(dataset: &'static str, query: &'static str) -> Option<BenchmarkGate> {
     let gate = match (dataset, query) {
         ("joinstress", "triangle_count") => BenchmarkGate {
             dataset,

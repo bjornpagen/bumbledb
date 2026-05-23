@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn differential_reference_evaluator_matches_lmdb() -> TestResult {
     let (env, schema) = seeded_db()?;

@@ -1,4 +1,9 @@
-fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std::error::Error>> {
+use super::*;
+
+pub(super) fn ldbc_dataset(
+    dir: &Path,
+    limit: Option<usize>,
+) -> Result<Dataset, Box<dyn std::error::Error>> {
     let person_file = find_prefixed(dir, "person")?;
     let post_file = find_prefixed(dir, "post")?;
     let knows_file = find_prefixed(dir, "person_knows_person")?;
@@ -112,7 +117,7 @@ fn ldbc_dataset(dir: &Path, limit: Option<usize>) -> Result<Dataset, Box<dyn std
     Ok(ldbc_from_facts(facts))
 }
 
-fn lahman_from_facts(facts: Vec<Fact>) -> Dataset {
+pub(super) fn lahman_from_facts(facts: Vec<Fact>) -> Dataset {
     Dataset {
         name: "lahman",
         schema: SchemaDescriptor::new(
@@ -215,7 +220,9 @@ fn lahman_from_facts(facts: Vec<Fact>) -> Dataset {
     }
 }
 
-fn build_lahman_salary_hits_by_year(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+pub(super) fn build_lahman_salary_hits_by_year(
+    schema: &SchemaDescriptor,
+) -> QueryBuildResult<TypedQuery> {
     let mut query = QueryBuilder::new(schema);
     query
         .rel("Salary")?
@@ -234,7 +241,7 @@ fn build_lahman_salary_hits_by_year(schema: &SchemaDescriptor) -> QueryBuildResu
         .finish()
 }
 
-fn ldbc_from_facts(facts: Vec<Fact>) -> Dataset {
+pub(super) fn ldbc_from_facts(facts: Vec<Fact>) -> Dataset {
     Dataset {
         name: "ldbc",
         schema: SchemaDescriptor::new(
@@ -349,7 +356,9 @@ fn ldbc_from_facts(facts: Vec<Fact>) -> Dataset {
     }
 }
 
-fn build_ldbc_person_likes_posts(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+pub(super) fn build_ldbc_person_likes_posts(
+    schema: &SchemaDescriptor,
+) -> QueryBuildResult<TypedQuery> {
     let mut query = QueryBuilder::new(schema);
     query
         .rel("Likes")?
@@ -364,7 +373,7 @@ fn build_ldbc_person_likes_posts(schema: &SchemaDescriptor) -> QueryBuildResult<
         .finish()
 }
 
-fn build_ldbc_two_hop_knows(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+pub(super) fn build_ldbc_two_hop_knows(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
     let mut query = QueryBuilder::new(schema);
     query
         .rel("Knows")?
@@ -379,15 +388,14 @@ fn build_ldbc_two_hop_knows(schema: &SchemaDescriptor) -> QueryBuildResult<Typed
         .finish()
 }
 
-fn super_tpch_dataset() -> Dataset {
+pub(super) fn super_tpch_dataset() -> Dataset {
     crate::tpch_dataset(1)
 }
 
-fn scaled_limit(limit: Option<usize>, multiplier: usize) -> Option<usize> {
+pub(super) fn scaled_limit(limit: Option<usize>, multiplier: usize) -> Option<usize> {
     limit.map(|limit| limit.saturating_mul(multiplier).max(limit))
 }
 
-fn reached_limit(count: usize, limit: Option<usize>) -> bool {
+pub(super) fn reached_limit(count: usize, limit: Option<usize>) -> bool {
     limit.is_some_and(|limit| count >= limit)
 }
-

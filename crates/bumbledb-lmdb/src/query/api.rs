@@ -1,3 +1,5 @@
+use super::*;
+
 impl<'env> ReadTxn<'env> {
     /// Executes a typed positive query IR against current indexes.
     #[tracing::instrument(name = "bumbledb.query.execute", skip_all, fields(vars = query.variables.len(), clauses = query.clauses.len(), inputs = query.inputs.len()))]
@@ -104,5 +106,4 @@ impl<'env> ReadTxn<'env> {
             plan: plan.summary,
         })
     }
-
 }

@@ -116,6 +116,7 @@ Completed and deleted PRDs:
 13. `13-delete-stale-diagnostics-and-bench-mechanics.md`
 14. `14-minimize-query-image-and-cache.md`
 16. `16-minimize-storage-api.md`
+17. `17-hard-module-split-gate.md`
 
 Cancelled and deleted PRDs:
 
@@ -123,7 +124,6 @@ Cancelled and deleted PRDs:
 
 Remaining ordered PRDs:
 
-17. `17-hard-module-split-gate.md`
 18. `18-final-collapse-gate.md`
 
 ## Final Done Definition

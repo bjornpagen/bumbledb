@@ -1,4 +1,6 @@
-fn job_schema() -> SchemaDescriptor {
+use super::*;
+
+pub(super) fn job_schema() -> SchemaDescriptor {
     let mut relations = vec![
         job_relation(
             "AkaName",
@@ -330,11 +332,14 @@ fn job_schema() -> SchemaDescriptor {
     add_serial_foreign_keys(SchemaDescriptor::new("JoinOrderBenchmarkDb", relations))
 }
 
-fn job_relation(name: impl Into<String>, fields: Vec<FieldDescriptor>) -> RelationDescriptor {
+pub(super) fn job_relation(
+    name: impl Into<String>,
+    fields: Vec<FieldDescriptor>,
+) -> RelationDescriptor {
     RelationDescriptor::new(name, fields).with_unique("id", ["id"])
 }
 
-fn add_serial_foreign_keys(mut schema: SchemaDescriptor) -> SchemaDescriptor {
+pub(super) fn add_serial_foreign_keys(mut schema: SchemaDescriptor) -> SchemaDescriptor {
     for relation in &mut schema.relations {
         for field in relation.fields.clone() {
             let ValueType::Serial {
@@ -357,7 +362,7 @@ fn add_serial_foreign_keys(mut schema: SchemaDescriptor) -> SchemaDescriptor {
     schema
 }
 
-fn job_relation_order(name: &str) -> usize {
+pub(super) fn job_relation_order(name: &str) -> usize {
     match name {
         "CompCastType" => 0,
         "CompanyName" => 1,
@@ -383,4 +388,3 @@ fn job_relation_order(name: &str) -> usize {
         _ => usize::MAX,
     }
 }
-

@@ -1,5 +1,7 @@
+use super::*;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OutputFormat {
+pub(super) enum OutputFormat {
     Text,
     Markdown,
     Json,
@@ -7,25 +9,25 @@ enum OutputFormat {
 }
 
 impl OutputFormat {
-    fn includes_text(self) -> bool {
+    pub(super) fn includes_text(self) -> bool {
         matches!(self, OutputFormat::Text | OutputFormat::Both)
     }
 
-    fn includes_markdown(self) -> bool {
+    pub(super) fn includes_markdown(self) -> bool {
         matches!(self, OutputFormat::Markdown | OutputFormat::Both)
     }
 
-    fn includes_json(self) -> bool {
+    pub(super) fn includes_json(self) -> bool {
         matches!(self, OutputFormat::Json | OutputFormat::Both)
     }
 
-    fn is_json_only(self) -> bool {
+    pub(super) fn is_json_only(self) -> bool {
         self == OutputFormat::Json
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TraceFormat {
+pub(super) enum TraceFormat {
     Fmt,
     Json,
     Chrome,
@@ -33,32 +35,32 @@ enum TraceFormat {
 }
 
 #[derive(Debug)]
-struct Config {
-    scale: u64,
-    open_limit: Option<usize>,
-    repeats: u64,
-    warmup: u64,
-    datasets: Vec<String>,
-    queries: Vec<String>,
-    imdb_dir: Option<String>,
-    job_dir: Option<String>,
-    tpch_dir: Option<String>,
-    lahman_dir: Option<String>,
-    ldbc_dir: Option<String>,
-    preset: Option<String>,
-    trace: bool,
-    trace_output: Option<String>,
-    trace_format: TraceFormat,
-    format: OutputFormat,
-    fail_gates: bool,
+pub(super) struct Config {
+    pub(super) scale: u64,
+    pub(super) open_limit: Option<usize>,
+    pub(super) repeats: u64,
+    pub(super) warmup: u64,
+    pub(super) datasets: Vec<String>,
+    pub(super) queries: Vec<String>,
+    pub(super) imdb_dir: Option<String>,
+    pub(super) job_dir: Option<String>,
+    pub(super) tpch_dir: Option<String>,
+    pub(super) lahman_dir: Option<String>,
+    pub(super) ldbc_dir: Option<String>,
+    pub(super) preset: Option<String>,
+    pub(super) trace: bool,
+    pub(super) trace_output: Option<String>,
+    pub(super) trace_format: TraceFormat,
+    pub(super) format: OutputFormat,
+    pub(super) fail_gates: bool,
 }
 
 impl Config {
-    fn from_env() -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    pub(super) fn from_env() -> Result<Option<Self>, Box<dyn std::error::Error>> {
         Self::from_args(std::env::args().skip(1))
     }
 
-    fn from_args(
+    pub(super) fn from_args(
         args: impl IntoIterator<Item = String>,
     ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         let mut scale = 200;
@@ -257,7 +259,7 @@ impl Config {
         Ok(())
     }
 
-    fn has_open_datasets(&self) -> bool {
+    pub(super) fn has_open_datasets(&self) -> bool {
         self.imdb_dir.is_some()
             || self.job_dir.is_some()
             || self.tpch_dir.is_some()

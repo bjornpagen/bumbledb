@@ -1,4 +1,6 @@
-fn compare_values(left: &Value, operator: ComparisonOperator, right: &Value) -> bool {
+use super::*;
+
+pub(super) fn compare_values(left: &Value, operator: ComparisonOperator, right: &Value) -> bool {
     match operator {
         ComparisonOperator::Eq => left == right,
         ComparisonOperator::NotEq => left != right,
@@ -9,7 +11,7 @@ fn compare_values(left: &Value, operator: ComparisonOperator, right: &Value) -> 
     }
 }
 
-fn operand_logical_value(
+pub(super) fn operand_logical_value(
     txn: &ReadTxn<'_>,
     operand: &NormOperand,
     value_type: &ValueType,
@@ -40,14 +42,14 @@ fn operand_logical_value(
     })
 }
 
-fn record_decode(value_type: &ValueType, counters: &mut PlanCounters) {
+pub(super) fn record_decode(value_type: &ValueType, counters: &mut PlanCounters) {
     counters.decoded_values += 1;
     if matches!(value_type, ValueType::String | ValueType::Bytes) {
         counters.dictionary_reverse_lookups += 1;
     }
 }
 
-fn input_value<'a>(
+pub(super) fn input_value<'a>(
     schema: &StorageSchema,
     query: &'a TypedQuery,
     inputs: &'a InputBindings,
@@ -67,7 +69,7 @@ fn input_value<'a>(
     Ok(value)
 }
 
-fn value_type_name(value_type: &ValueType) -> String {
+pub(super) fn value_type_name(value_type: &ValueType) -> String {
     match value_type {
         ValueType::Bool => "bool".to_owned(),
         ValueType::U64 => "u64".to_owned(),

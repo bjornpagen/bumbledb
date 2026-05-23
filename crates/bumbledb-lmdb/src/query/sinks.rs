@@ -1,4 +1,6 @@
-trait FactSink {
+use super::*;
+
+pub(super) trait FactSink {
     fn emit(
         &mut self,
         txn: &ReadTxn<'_>,
@@ -28,12 +30,12 @@ trait FactSink {
 
 // Output sinks own projection, cardinality, and result-set materialization.
 #[derive(Clone, Debug)]
-enum OutputSink {
+pub(super) enum OutputSink {
     Project(EncodedProjectSink),
 }
 
 impl OutputSink {
-    fn new(output: &OutputPlan) -> Self {
+    pub(super) fn new(output: &OutputPlan) -> Self {
         match output {
             OutputPlan::Project(plan) => OutputSink::Project(EncodedProjectSink::new(plan)),
         }
@@ -78,7 +80,7 @@ impl FactSink for OutputSink {
 }
 
 #[derive(Clone, Debug)]
-struct EncodedProjectSink {
+pub(in crate::query) struct EncodedProjectSink {
     vars: Vec<VarId>,
     facts: BTreeSet<SmallEncodedFact>,
 }

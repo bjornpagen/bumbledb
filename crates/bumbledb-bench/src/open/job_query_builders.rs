@@ -1,4 +1,8 @@
-fn build_job_broad_cast_keyword_company(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+use super::*;
+
+pub(super) fn build_job_broad_cast_keyword_company(
+    schema: &SchemaDescriptor,
+) -> QueryBuildResult<TypedQuery> {
     let mut query = QueryBuilder::new(schema);
     query
         .rel("Title")?
@@ -35,7 +39,9 @@ fn build_job_broad_cast_keyword_company(schema: &SchemaDescriptor) -> QueryBuild
         .finish()
 }
 
-fn build_job_broad_movie_info_star(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+pub(super) fn build_job_broad_movie_info_star(
+    schema: &SchemaDescriptor,
+) -> QueryBuildResult<TypedQuery> {
     let mut query = QueryBuilder::new(schema);
     query
         .rel("Title")?
@@ -80,7 +86,9 @@ fn build_job_broad_movie_info_star(schema: &SchemaDescriptor) -> QueryBuildResul
         .finish()
 }
 
-fn build_job_q01_top_production(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+pub(super) fn build_job_q01_top_production(
+    schema: &SchemaDescriptor,
+) -> QueryBuildResult<TypedQuery> {
     let mut query = QueryBuilder::new(schema);
     query
         .rel("CompanyType")?
@@ -106,7 +114,9 @@ fn build_job_q01_top_production(schema: &SchemaDescriptor) -> QueryBuildResult<T
         .finish()
 }
 
-fn build_job_q09_voice_us_actor(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+pub(super) fn build_job_q09_voice_us_actor(
+    schema: &SchemaDescriptor,
+) -> QueryBuildResult<TypedQuery> {
     let mut query = QueryBuilder::new(schema);
     query
         .rel("AkaName")?
@@ -155,7 +165,9 @@ fn build_job_q09_voice_us_actor(schema: &SchemaDescriptor) -> QueryBuildResult<T
         .finish()
 }
 
-fn build_job_q16_character_title_us(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+pub(super) fn build_job_q16_character_title_us(
+    schema: &SchemaDescriptor,
+) -> QueryBuildResult<TypedQuery> {
     let mut query = QueryBuilder::new(schema);
     query
         .rel("AkaName")?
@@ -202,7 +214,9 @@ fn build_job_q16_character_title_us(schema: &SchemaDescriptor) -> QueryBuildResu
         .finish()
 }
 
-fn build_job_q24_voice_keyword_actor(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+pub(super) fn build_job_q24_voice_keyword_actor(
+    schema: &SchemaDescriptor,
+) -> QueryBuildResult<TypedQuery> {
     let mut query = QueryBuilder::new(schema);
     query
         .rel("AkaName")?
@@ -254,7 +268,9 @@ fn build_job_q24_voice_keyword_actor(schema: &SchemaDescriptor) -> QueryBuildRes
         .finish()
 }
 
-fn build_job_movie_link_bridge(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+pub(super) fn build_job_movie_link_bridge(
+    schema: &SchemaDescriptor,
+) -> QueryBuildResult<TypedQuery> {
     let mut query = QueryBuilder::new(schema);
     query
         .rel("MovieLink")?
@@ -303,7 +319,7 @@ fn build_job_movie_link_bridge(schema: &SchemaDescriptor) -> QueryBuildResult<Ty
         .finish()
 }
 
-fn build_job_q33_linked_series_companies(
+pub(super) fn build_job_q33_linked_series_companies(
     schema: &SchemaDescriptor,
 ) -> QueryBuildResult<TypedQuery> {
     let mut query = QueryBuilder::new(schema);
@@ -362,4 +378,3 @@ fn build_job_q33_linked_series_companies(
         .find_var("movie1")?
         .finish()
 }
-

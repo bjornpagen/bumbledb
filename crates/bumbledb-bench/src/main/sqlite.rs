@@ -1,4 +1,6 @@
-fn sqlite_count(
+use super::*;
+
+pub(super) fn sqlite_count(
     conn: &mut Connection,
     sql: &str,
     params: &[SqlParam],
@@ -10,7 +12,7 @@ fn sqlite_count(
     Ok(facts)
 }
 
-fn sqlite_result_facts(
+pub(super) fn sqlite_result_facts(
     conn: &mut Connection,
     sql: &str,
     params: &[SqlParam],
@@ -41,7 +43,7 @@ fn sqlite_result_facts(
     Ok(out)
 }
 
-fn bumbledb_sql_facts(
+pub(super) fn bumbledb_sql_facts(
     output: &QueryOutput,
 ) -> Result<Vec<Vec<SqlValue>>, Box<dyn std::error::Error>> {
     output
@@ -52,7 +54,7 @@ fn bumbledb_sql_facts(
         .collect()
 }
 
-fn sql_value(value: &Value) -> Result<SqlValue, Box<dyn std::error::Error>> {
+pub(super) fn sql_value(value: &Value) -> Result<SqlValue, Box<dyn std::error::Error>> {
     Ok(match value {
         Value::Bool(value) => SqlValue::Integer(i64::from(*value)),
         Value::U64(value) | Value::Serial(value) => SqlValue::Integer((*value).try_into()?),
@@ -65,12 +67,12 @@ fn sql_value(value: &Value) -> Result<SqlValue, Box<dyn std::error::Error>> {
     })
 }
 
-fn sorted_sql_facts(mut facts: Vec<Vec<SqlValue>>) -> Vec<Vec<SqlValue>> {
+pub(super) fn sorted_sql_facts(mut facts: Vec<Vec<SqlValue>>) -> Vec<Vec<SqlValue>> {
     facts.sort();
     facts
 }
 
-fn correctness_mode(query: &TypedQuery) -> CorrectnessMode {
+pub(super) fn correctness_mode(query: &TypedQuery) -> CorrectnessMode {
     let _ = query;
     CorrectnessMode::ResultSet
 }

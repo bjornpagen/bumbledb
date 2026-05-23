@@ -1,4 +1,6 @@
-fn init_tracing(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+use super::*;
+
+pub(super) fn init_tracing(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "bumbledb_lmdb=debug".to_owned());
     match config.trace_format {
         TraceFormat::Fmt => {
@@ -59,19 +61,19 @@ fn init_tracing(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[derive(Clone)]
-struct SharedTraceWriter {
+pub(super) struct SharedTraceWriter {
     file: Arc<Mutex<File>>,
 }
 
 impl SharedTraceWriter {
-    fn create(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub(super) fn create(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             file: Arc::new(Mutex::new(File::create(path)?)),
         })
     }
 }
 
-struct SharedTraceWriterGuard<'a> {
+pub(super) struct SharedTraceWriterGuard<'a> {
     file: MutexGuard<'a, File>,
 }
 
@@ -98,7 +100,7 @@ impl IoWrite for SharedTraceWriterGuard<'_> {
     }
 }
 
-fn next_arg(
+pub(super) fn next_arg(
     args: &mut impl Iterator<Item = String>,
     flag: &'static str,
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -114,32 +116,32 @@ pub(crate) fn bench_error(message: impl Into<String>) -> Box<dyn std::error::Err
 }
 
 pub(crate) struct Dataset {
-    name: &'static str,
-    schema: SchemaDescriptor,
-    facts: Vec<Fact>,
-    fact_source: Option<open::FactSource>,
-    sqlite_schema: &'static str,
-    sqlite_insert: SqliteInsert,
-    queries: Vec<BenchQuery>,
+    pub(super) name: &'static str,
+    pub(super) schema: SchemaDescriptor,
+    pub(super) facts: Vec<Fact>,
+    pub(super) fact_source: Option<open::FactSource>,
+    pub(super) sqlite_schema: &'static str,
+    pub(super) sqlite_insert: SqliteInsert,
+    pub(super) queries: Vec<BenchQuery>,
 }
 
 pub(crate) type SqliteInsert = fn(&Connection, &[Fact]) -> Result<(), Box<dyn std::error::Error>>;
 
 pub(crate) struct BenchQuery {
-    name: &'static str,
-    build: fn(&SchemaDescriptor) -> QueryBuildResult<TypedQuery>,
-    inputs: Vec<(&'static str, Value)>,
-    sqlite: &'static str,
-    sqlite_params: Vec<SqlParam>,
+    pub(super) name: &'static str,
+    pub(super) build: fn(&SchemaDescriptor) -> QueryBuildResult<TypedQuery>,
+    pub(super) inputs: Vec<(&'static str, Value)>,
+    pub(super) sqlite: &'static str,
+    pub(super) sqlite_params: Vec<SqlParam>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CorrectnessMode {
+pub(super) enum CorrectnessMode {
     ResultSet,
 }
 
 impl CorrectnessMode {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::ResultSet => "result-set",
         }
@@ -147,7 +149,7 @@ impl CorrectnessMode {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum SqlValue {
+pub(super) enum SqlValue {
     Integer(i64),
     Text(String),
     Blob(Vec<u8>),

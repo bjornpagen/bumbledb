@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn query_observability_defaults_are_zero() {
     let timings = QueryTimings::default();

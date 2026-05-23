@@ -1,4 +1,6 @@
-fn run_dataset(
+use super::*;
+
+pub(super) fn run_dataset(
     dataset: Dataset,
     config: &Config,
 ) -> Result<Vec<BenchmarkRunResult>, Box<dyn std::error::Error>> {
@@ -123,7 +125,8 @@ fn run_dataset(
         }
 
         let (bumble_warmup, _) = timed_bumbledb_samples(config.warmup, || {
-            let output = bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?;
+            let output =
+                bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?;
             black_box(output.result.facts.len());
             Ok::<_, bumbledb_lmdb::Error>(output.plan)
         })?;
@@ -133,11 +136,13 @@ fn run_dataset(
             Ok::<_, Box<dyn std::error::Error>>(())
         })?;
 
-        let (bumble_samples, bumble_sample_cache_hits) = timed_bumbledb_samples(config.repeats, || {
-            let output = bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?;
-            black_box(output.result.facts.len());
-            Ok::<_, bumbledb_lmdb::Error>(output.plan)
-        })?;
+        let (bumble_samples, bumble_sample_cache_hits) =
+            timed_bumbledb_samples(config.repeats, || {
+                let output =
+                    bumble_env.read(|txn| txn.execute_query(&bumble_schema, &typed, &inputs))?;
+                black_box(output.result.facts.len());
+                Ok::<_, bumbledb_lmdb::Error>(output.plan)
+            })?;
         let sqlite_samples = timed_samples(config.repeats, || {
             let facts = sqlite_count(&mut sqlite, query.sqlite, &params)?;
             black_box(facts);

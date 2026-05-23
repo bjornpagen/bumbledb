@@ -1,4 +1,6 @@
-fn tpch_open_dataset(
+use super::*;
+
+pub(super) fn tpch_open_dataset(
     dir: &Path,
     limit: Option<usize>,
 ) -> Result<Dataset, Box<dyn std::error::Error>> {
@@ -97,4 +99,3 @@ fn tpch_open_dataset(
     dataset.fact_source = None;
     Ok(dataset)
 }
-

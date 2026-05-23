@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use bumbledb_core::encoding::{DecimalRaw, TimestampMicros};
-use bumbledb_core::query_builder::{OperandRef, QueryBuildResult, QueryBuilder};
-use bumbledb_core::query_ir::{ComparisonOperator, TypedQuery};
+use bumbledb_core::query_builder::QueryBuildResult;
+use bumbledb_core::query_ir::TypedQuery;
 use bumbledb_core::schema::{
     ConstraintDescriptor, EnumDescriptor, FieldDescriptor, IndexDescriptor, RelationDescriptor,
     SchemaDescriptor, ValueType,
@@ -132,25 +132,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-include!("main/config.rs");
+#[path = "main/tracing.rs"]
+mod bench_tracing;
+#[path = "main/config.rs"]
+mod config;
+#[path = "main/datasets.rs"]
+mod datasets;
+#[path = "main/render_json.rs"]
+mod render_json;
+#[path = "main/render_markdown.rs"]
+mod render_markdown;
+#[path = "main/result.rs"]
+mod result;
+#[path = "main/run.rs"]
+mod run;
+#[path = "main/sqlite.rs"]
+mod sqlite;
+#[path = "main/timing.rs"]
+mod timing;
+#[path = "main/types.rs"]
+mod types;
 
-include!("main/tracing.rs");
-
-include!("main/types.rs");
-
-include!("main/run.rs");
-
-include!("main/timing.rs");
-
-include!("main/sqlite.rs");
-
-include!("main/result.rs");
-
-include!("main/render_markdown.rs");
-
-include!("main/render_json.rs");
-
-include!("main/datasets.rs");
+use bench_tracing::*;
+use config::*;
+use datasets::*;
+use render_json::*;
+use render_markdown::*;
+use result::*;
+use run::*;
+use sqlite::*;
+use timing::*;
+use types::*;
 
 #[cfg(test)]
 #[path = "main_tests.rs"]

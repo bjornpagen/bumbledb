@@ -1,4 +1,6 @@
-fn validate_inputs(
+use super::*;
+
+pub(super) fn validate_inputs(
     schema: &StorageSchema,
     query: &TypedQuery,
     inputs: &InputBindings,
@@ -34,7 +36,10 @@ fn validate_typed_query(schema: &StorageSchema, query: &TypedQuery) -> Result<()
         match clause {
             TypedClause::Relation(atom) => {
                 let relation = descriptor.relations.get(atom.relation_id).ok_or_else(|| {
-                    Error::invalid_query(format!("relation id {} is out of range", atom.relation_id))
+                    Error::invalid_query(format!(
+                        "relation id {} is out of range",
+                        atom.relation_id
+                    ))
                 })?;
                 if relation.name != atom.relation {
                     return Err(Error::invalid_query(format!(
@@ -176,7 +181,11 @@ fn validate_input_id(query: &TypedQuery, input: usize) -> Result<()> {
     Ok(())
 }
 
-fn value_matches_type(schema: &StorageSchema, value: &Value, value_type: &ValueType) -> bool {
+pub(super) fn value_matches_type(
+    schema: &StorageSchema,
+    value: &Value,
+    value_type: &ValueType,
+) -> bool {
     if let (Value::Enum(code), ValueType::Enum { name }) = (value, value_type) {
         return schema.descriptor().enum_contains_code(name, *code);
     }
@@ -194,7 +203,7 @@ fn value_matches_type(schema: &StorageSchema, value: &Value, value_type: &ValueT
     )
 }
 
-fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
+pub(in crate::query) fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
     let value = match (&literal.literal, &literal.value_type) {
         (Literal::Bool(value), ValueType::Bool) => Value::Bool(*value),
         (Literal::String(value), ValueType::String) => Value::String(value.clone()),
@@ -215,7 +224,7 @@ fn literal_to_value(literal: &TypedLiteral) -> Result<Value> {
     Ok(value)
 }
 
-fn normalize_query(
+pub(super) fn normalize_query(
     txn: &ReadTxn<'_>,
     schema: &StorageSchema,
     query: &TypedQuery,
@@ -367,7 +376,7 @@ fn exact_encoded_array<const N: usize>(bytes: &[u8]) -> Result<[u8; N]> {
         .map_err(|_| Error::internal("normalized encoded value width mismatch"))
 }
 
-fn encode_inputs(
+pub(super) fn encode_inputs(
     txn: &ReadTxn<'_>,
     schema: &StorageSchema,
     query: &NormalizedQuery,
@@ -412,7 +421,7 @@ fn validate_normalized_query(schema: &StorageSchema, query: &NormalizedQuery) ->
     Ok(())
 }
 
-fn attach_predicate_depths(query: &mut NormalizedQuery, variable_order_ids: &[usize]) {
+pub(super) fn attach_predicate_depths(query: &mut NormalizedQuery, variable_order_ids: &[usize]) {
     let mut depth_by_var = BTreeMap::new();
     for (depth, variable) in variable_order_ids.iter().enumerate() {
         depth_by_var.insert(VarId(*variable as u16), depth);
@@ -429,7 +438,7 @@ fn attach_predicate_depths(query: &mut NormalizedQuery, variable_order_ids: &[us
     }
 }
 
-fn result_columns(query: &NormalizedQuery) -> Vec<ResultColumn> {
+pub(super) fn result_columns(query: &NormalizedQuery) -> Vec<ResultColumn> {
     query
         .find
         .iter()

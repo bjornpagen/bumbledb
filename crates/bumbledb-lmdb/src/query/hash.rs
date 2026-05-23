@@ -1,5 +1,11 @@
-fn query_image_scope_for_query(schema: &StorageSchema, query: &NormalizedQuery) -> QueryImageScope {
-    let mut scopes = BTreeMap::<crate::RelationId, (BTreeSet<FieldId>, BTreeSet<crate::AccessId>)>::new();
+use super::*;
+
+pub(super) fn query_image_scope_for_query(
+    schema: &StorageSchema,
+    query: &NormalizedQuery,
+) -> QueryImageScope {
+    let mut scopes =
+        BTreeMap::<crate::RelationId, (BTreeSet<FieldId>, BTreeSet<crate::AccessId>)>::new();
 
     for atom in &query.atoms {
         let entry = scopes.entry(atom.relation).or_default();
@@ -11,10 +17,7 @@ fn query_image_scope_for_query(schema: &StorageSchema, query: &NormalizedQuery) 
             .collect::<BTreeSet<_>>();
         entry.0.extend(required_fields.iter().copied());
 
-        let relation = schema
-            .descriptor()
-            .relations
-            .get(atom.relation.0 as usize);
+        let relation = schema.descriptor().relations.get(atom.relation.0 as usize);
         let Ok(paths) = schema.access_paths(&atom.relation_name) else {
             continue;
         };

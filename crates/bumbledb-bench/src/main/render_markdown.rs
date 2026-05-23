@@ -1,4 +1,6 @@
-fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
+use super::*;
+
+pub(super) fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("## Benchmark Results\n\n");
     out.push_str("| dataset | query | facts | sqlite materialized | bumbledb avg us | sqlite avg us | sqlite ratio | image built during query | image cache images | image cache hits | image cache misses | image cache builds | image cache build us | planner stats cached | planner stats hits | planner stats misses | planner stats builds | planner stats build us | lazy access slices | materialized | dict lookups | gate |\n");
@@ -191,7 +193,9 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     out.push_str("\n## Interpretation Notes\n\n");
     out.push_str("| signal | interpretation |\n");
     out.push_str("|---|---|\n");
-    out.push_str("| high image us | Snapshot image acquisition or access-image build bottleneck |\n");
+    out.push_str(
+        "| high image us | Snapshot image acquisition or access-image build bottleneck |\n",
+    );
     out.push_str(
         "| high plan us | stats, variable ordering, or Free Join optimization bottleneck |\n",
     );
@@ -222,7 +226,7 @@ fn render_markdown_results(results: &[BenchmarkRunResult]) -> String {
     out
 }
 
-fn write_allocation_phase_fact(
+pub(super) fn write_allocation_phase_fact(
     out: &mut String,
     result: &BenchmarkRunResult,
     phase: &str,

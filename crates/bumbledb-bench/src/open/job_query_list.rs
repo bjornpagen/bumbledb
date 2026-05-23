@@ -1,4 +1,7 @@
-fn job_queries() -> Vec<BenchQuery> {    vec![
+use super::*;
+
+pub(super) fn job_queries() -> Vec<BenchQuery> {
+    vec![
         BenchQuery {
             name: "job_broad_cast_keyword_company",
             build: build_job_broad_cast_keyword_company,
@@ -165,4 +168,3 @@ fn job_queries() -> Vec<BenchQuery> {    vec![
         },
     ]
 }
-

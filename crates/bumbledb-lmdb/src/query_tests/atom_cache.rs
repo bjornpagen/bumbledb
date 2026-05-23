@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn lftj_handles_equivalent_relation_aliases() -> TestResult {
     let dir = tempfile::tempdir()?;
@@ -34,10 +36,17 @@ fn lftj_literal_local_comparison_filters_results() -> TestResult {
         let first = txn.execute_query(&schema, &through_2015, &InputBindings::new())?;
         let second = txn.execute_query(&schema, &through_2020, &InputBindings::new())?;
 
-        assert_eq!(first.result.facts, vec![vec![Value::U64(20)], vec![Value::U64(30)]]);
+        assert_eq!(
+            first.result.facts,
+            vec![vec![Value::U64(20)], vec![Value::U64(30)]]
+        );
         assert_eq!(
             second.result.facts,
-            vec![vec![Value::U64(20)], vec![Value::U64(30)], vec![Value::U64(40)]]
+            vec![
+                vec![Value::U64(20)],
+                vec![Value::U64(30)],
+                vec![Value::U64(40)]
+            ]
         );
         Ok::<_, Error>(())
     })?;
@@ -58,8 +67,14 @@ fn lftj_identical_local_comparison_filters_results() -> TestResult {
         let first = txn.execute_query(&schema, &query, &InputBindings::new())?;
         let second = txn.execute_query(&schema, &query, &InputBindings::new())?;
 
-        assert_eq!(first.result.facts, vec![vec![Value::U64(20)], vec![Value::U64(30)]]);
-        assert_eq!(second.result.facts, vec![vec![Value::U64(20)], vec![Value::U64(30)]]);
+        assert_eq!(
+            first.result.facts,
+            vec![vec![Value::U64(20)], vec![Value::U64(30)]]
+        );
+        assert_eq!(
+            second.result.facts,
+            vec![vec![Value::U64(20)], vec![Value::U64(30)]]
+        );
         Ok::<_, Error>(())
     })?;
 
@@ -81,10 +96,17 @@ fn lftj_prepared_input_local_comparison_filters_results() -> TestResult {
         let first = txn.execute_query(&schema, &query, &through_2015)?;
         let second = txn.execute_query(&schema, &query, &through_2020)?;
 
-        assert_eq!(first.result.facts, vec![vec![Value::U64(20)], vec![Value::U64(30)]]);
+        assert_eq!(
+            first.result.facts,
+            vec![vec![Value::U64(20)], vec![Value::U64(30)]]
+        );
         assert_eq!(
             second.result.facts,
-            vec![vec![Value::U64(20)], vec![Value::U64(30)], vec![Value::U64(40)]]
+            vec![
+                vec![Value::U64(20)],
+                vec![Value::U64(30)],
+                vec![Value::U64(40)]
+            ]
         );
         Ok::<_, Error>(())
     })?;

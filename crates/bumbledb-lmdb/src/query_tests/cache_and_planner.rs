@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn variable_order_is_stable() -> TestResult {
     let (env, schema) = seeded_db()?;
@@ -201,12 +203,16 @@ fn focused_query_image_scope_loads_fewer_fields_and_accesses() -> TestResult {
     assert!(focused_item.indexes().len() < full_item.indexes().len());
     assert!(focused_item.field(FieldId(0)).is_some());
     assert!(focused_item.field(FieldId(3)).is_none());
-    assert!(focused_item
-        .encoded(crate::query_image::FactId(0), FieldId(0))
-        .is_some());
-    assert!(focused_item
-        .encoded(crate::query_image::FactId(0), FieldId(3))
-        .is_none());
+    assert!(
+        focused_item
+            .encoded(crate::query_image::FactId(0), FieldId(0))
+            .is_some()
+    );
+    assert!(
+        focused_item
+            .encoded(crate::query_image::FactId(0), FieldId(3))
+            .is_none()
+    );
     Ok(())
 }
 

@@ -1,4 +1,6 @@
-fn read_job_csv(
+use super::*;
+
+pub(super) fn read_job_csv(
     dir: &Path,
     file: &str,
     accepted_limit: Option<usize>,
@@ -37,7 +39,7 @@ fn read_job_csv(
     Ok(())
 }
 
-fn job_text(value: &str) -> String {
+pub(super) fn job_text(value: &str) -> String {
     if value.is_empty() || value == r"\N" {
         String::new()
     } else {
@@ -45,7 +47,7 @@ fn job_text(value: &str) -> String {
     }
 }
 
-fn read_csv(
+pub(super) fn read_csv(
     dir: &Path,
     file: &str,
     limit: Option<usize>,
@@ -63,7 +65,7 @@ fn read_csv(
     Ok(())
 }
 
-fn read_pipe(
+pub(super) fn read_pipe(
     dir: &Path,
     file: &str,
     limit: Option<usize>,
@@ -84,7 +86,7 @@ fn read_pipe(
     Ok(())
 }
 
-fn read_pipe_path(
+pub(super) fn read_pipe_path(
     path: &Path,
     limit: Option<usize>,
     mut f: impl FnMut(&StringRecord, &StringRecord) -> Result<(), Box<dyn std::error::Error>>,
@@ -103,14 +105,16 @@ fn read_pipe_path(
     Ok(())
 }
 
-fn tsv_reader(path: &Path) -> Result<csv::Reader<std::fs::File>, Box<dyn std::error::Error>> {
+pub(super) fn tsv_reader(
+    path: &Path,
+) -> Result<csv::Reader<std::fs::File>, Box<dyn std::error::Error>> {
     Ok(ReaderBuilder::new()
         .delimiter(b'\t')
         .flexible(true)
         .from_path(path)?)
 }
 
-fn require_file(dir: &Path, file: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub(super) fn require_file(dir: &Path, file: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let path = dir.join(file);
     if path.exists() {
         Ok(path)
@@ -119,7 +123,10 @@ fn require_file(dir: &Path, file: &str) -> Result<PathBuf, Box<dyn std::error::E
     }
 }
 
-fn find_prefixed(dir: &Path, prefix: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub(super) fn find_prefixed(
+    dir: &Path,
+    prefix: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let mut candidates = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
@@ -143,15 +150,15 @@ fn find_prefixed(dir: &Path, prefix: &str) -> Result<PathBuf, Box<dyn std::error
     .into())
 }
 
-fn get(record: &StringRecord, index: usize) -> &str {
+pub(super) fn get(record: &StringRecord, index: usize) -> &str {
     record.get(index).unwrap_or("")
 }
 
-fn col<'a>(headers: &StringRecord, record: &'a StringRecord, names: &[&str]) -> &'a str {
+pub(super) fn col<'a>(headers: &StringRecord, record: &'a StringRecord, names: &[&str]) -> &'a str {
     col_n(headers, record, names, 0)
 }
 
-fn col_n<'a>(
+pub(super) fn col_n<'a>(
     headers: &StringRecord,
     record: &'a StringRecord,
     names: &[&str],
@@ -170,4 +177,3 @@ fn col_n<'a>(
     }
     ""
 }
-

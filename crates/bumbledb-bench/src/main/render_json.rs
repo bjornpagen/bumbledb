@@ -1,4 +1,6 @@
-fn render_json_results(results: &[BenchmarkRunResult]) -> String {
+use super::*;
+
+pub(super) fn render_json_results(results: &[BenchmarkRunResult]) -> String {
     let mut out = String::new();
     out.push_str("{\"results\":[");
     for (index, result) in results.iter().enumerate() {
@@ -134,7 +136,7 @@ fn render_json_results(results: &[BenchmarkRunResult]) -> String {
     out
 }
 
-fn write_timing_stats_value(out: &mut String, stats: TimingStats) {
+pub(super) fn write_timing_stats_value(out: &mut String, stats: TimingStats) {
     let _ = write!(
         out,
         "{{\"samples\":{},\"total_us\":{},\"avg_us\":{},\"min_us\":{},\"p50_us\":{},\"p95_us\":{},\"max_us\":{}}}",
@@ -148,7 +150,7 @@ fn write_timing_stats_value(out: &mut String, stats: TimingStats) {
     );
 }
 
-fn write_allocation_phase_json(
+pub(super) fn write_allocation_phase_json(
     out: &mut String,
     name: &str,
     stats: AllocationPhaseStats,
@@ -173,7 +175,7 @@ fn write_allocation_phase_json(
     );
 }
 
-fn duration_ratio(left: Duration, right: Duration) -> f64 {
+pub(super) fn duration_ratio(left: Duration, right: Duration) -> f64 {
     let right = right.as_nanos();
     if right == 0 {
         return f64::INFINITY;
@@ -181,15 +183,15 @@ fn duration_ratio(left: Duration, right: Duration) -> f64 {
     left.as_nanos() as f64 / right as f64
 }
 
-fn duration_micros(duration: Duration) -> u128 {
+pub(super) fn duration_micros(duration: Duration) -> u128 {
     duration.as_micros()
 }
 
-fn markdown_escape(value: &str) -> String {
+pub(super) fn markdown_escape(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
 }
 
-fn json_escape(value: &str) -> String {
+pub(super) fn json_escape(value: &str) -> String {
     let mut out = String::new();
     for ch in value.chars() {
         match ch {
@@ -207,7 +209,7 @@ fn json_escape(value: &str) -> String {
     out
 }
 
-fn print_explain(explain: &str) {
+pub(super) fn print_explain(explain: &str) {
     for line in explain.lines() {
         if line.contains("relation=")
             || line.contains("query_timing")
