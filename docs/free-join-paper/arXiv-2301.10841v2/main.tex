@@ -1,0 +1,162 @@
+% \documentclass[acmsmall,screen,review,anonymous]{acmart}
+\documentclass[sigconf,screen,nonacm]{acmart}
+% \citestyle{acmauthoryear} 
+
+\author{Yisu Remy Wang}
+\affiliation{
+  \institution{University of Washington}
+  \country{USA}
+}
+\email{remywang@cs.washington.edu}
+
+\author{Max Willsey}
+\affiliation{
+  \institution{University of Washington}
+  \country{USA}
+}
+\email{mwillsey@cs.washington.edu}
+
+
+\author{Dan Suciu}
+\affiliation{
+  \institution{University of Washington}
+  \country{USA}
+}
+\email{suciu@cs.washington.edu}
+
+\keywords{Worst-case optimal join}
+
+\newcommand{\calH}{\mathcal H}
+\newcommand{\calD}{\mathcal D}
+\newcommand{\calP}{\mathcal P}
+\newcommand{\calV}{\mathcal V}
+\newcommand{\calX}{\mathcal X}
+\newcommand{\calY}{\mathcal Y}
+\newcommand{\calE}{\mathcal E}
+\newcommand{\calF}{\mathcal F}
+\newcommand{\calT}{\mathcal T}
+
+\newcommand{\mv}[1]{\mathbf{#1}}
+
+\usepackage{tikz}
+\usepackage[inline]{enumitem}
+% \usepackage{amssymb}
+\usepackage[font=small,labelfont=bf]{caption}
+\usepackage{subcaption}
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
+% \usepackage{stmaryrd}
+
+\usepackage{bm} % bold math fonts, e.g. $\bm \Sigma$ will give a bold-face $\Sigma$
+
+\usepackage{graphics}
+\graphicspath{{_build/}{fig/}}
+
+% \usepackage{syntax}
+
+\setlength {\marginparwidth }{2cm}
+\usepackage[colorinlistoftodos]{todonotes}
+
+% \usepackage{hyperref}
+% \def\algorithmautorefname{Algorithm}
+% \def\sectionautorefname{Section}
+% \def\subsectionautorefname{Section}
+% \def\subsubsectionautorefname{Section}
+
+\usepackage{listings} % requires pygment syntax highlighting
+
+\lstset{
+  columns=flexible,
+  keepspaces=true,
+  showstringspaces=false,
+  stringstyle=\slshape\color{green!40!black},
+  basicstyle=\ttfamily\small,
+  language=Python,
+  deletekeywords=[2]{map, iter, vars, tuple},
+  morekeywords={self, interface},
+  commentstyle=\slshape\color{black!60},
+  mathescape=true,
+  tabsize=2,
+}
+
+% \lstset{
+%   language=Python,
+%   columns=flexible,
+%   keepspaces=true,
+%   showstringspaces=false,
+%   stringstyle=\slshape\color{green!40!black},
+%   morekeywords={*, self},
+%   commentstyle=\slshape\color{black!60},
+%   tabsize=2,
+%   xleftmargin=6.5mm,
+% }
+
+\input{macros}
+
+% \usepackage[capitalize,nameinlink]{cleveref}
+% \def\drawplusplus#1#2#3{\hbox to 0pt{\hbox to #1{\hfill\vrule height #3 depth
+%       0pt width #2\hfill\vrule height #3 depth 0pt width #2\hfill
+%       }}\vbox to #3{\vfill\hrule height #2 depth 0pt width
+%       #1 \vfill}}
+%       %Poor man's typography
+% \def\concat{\mathrel{\drawplusplus {12pt}{0.4pt}{5pt}}}
+%       %It would be better to specify these in font-relative measures, but it
+%       %probably doesn't scale anyway.
+
+\newcommand{\rw}[1]{\todo[inline,color=yellow]{\textsf{#1} \hfill \textsc{--Remy}}}
+\newcommand{\ds}[1]{\todo[inline,color=orange]{\textsf{#1} \hfill \textsc{--Dan}}}
+% \newcommand{\ds}[1]{\todo[color=orange]{\textsf{#1} \hfill \textsc{--Dan}}}
+% \newtheorem{theorem}{Theorem}
+\newcommand{\yell}[1]{{\color{red} \textbf{#1}}}
+\newcommand{\dan}[1]{{\color{red} \textbf{#1}}}
+\newcommand{\remy}[1]{{\color{orange} \textbf{#1}}}
+
+\begin{document}
+
+% \title{Comparing and Unifying Worst-Case Optimal Join with Traditional Join Algorithms, Part I: Hash Joins}
+\title{\FJ: Unifying Worst-Case Optimal and Traditional Joins}
+
+\begin{abstract}
+  \input{tex/00-abstract}
+\end{abstract}
+
+\begin{CCSXML}
+  <ccs2012>
+  <concept>
+  <concept_id>10002951.10002952.10003190.10003192.10003426</concept_id>
+  <concept_desc>Information systems~Join algorithms</concept_desc>
+  <concept_significance>500</concept_significance>
+  </concept>
+  </ccs2012>
+\end{CCSXML}
+  
+\ccsdesc[500]{Information systems~Join algorithms}
+
+\maketitle
+
+\input{tex/01-intro}
+\input{tex/02-background}
+\input{tex/03-free-join}
+\input{tex/04-optimizations}
+\input{tex/05-eval}
+\input{tex/06-discussion}
+% \input{tex/07-relatedworks}
+% \input{tex/08-conclusion}
+
+% \clearpage
+
+% \begin{acks}
+% \end{acks}
+
+\balance
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+
+% \clearpage
+
+% \input{tex/025-tale}
+
+
+\end{document}
+\endinput

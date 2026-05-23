@@ -1,0 +1,486 @@
+%%% -*-BibTeX-*-
+%%% Do NOT edit. File created by BibTeX with style
+%%% ACM-Reference-Format-Journals [18-Jan-2012].
+
+\begin{thebibliography}{28}
+
+%%% ====================================================================
+%%% NOTE TO THE USER: you can override these defaults by providing
+%%% customized versions of any of these macros before the \bibliography
+%%% command.  Each of them MUST provide its own final punctuation,
+%%% except for \shownote{}, \showDOI{}, and \showURL{}.  The latter two
+%%% do not use final punctuation, in order to avoid confusing it with
+%%% the Web address.
+%%%
+%%% To suppress output of a particular field, define its macro to expand
+%%% to an empty string, or better, \unskip, like this:
+%%%
+%%% \newcommand{\showDOI}[1]{\unskip}   % LaTeX syntax
+%%%
+%%% \def \showDOI #1{\unskip}           % plain TeX syntax
+%%%
+%%% ====================================================================
+
+\ifx \showCODEN    \undefined \def \showCODEN     #1{\unskip}     \fi
+\ifx \showDOI      \undefined \def \showDOI       #1{#1}\fi
+\ifx \showISBNx    \undefined \def \showISBNx     #1{\unskip}     \fi
+\ifx \showISBNxiii \undefined \def \showISBNxiii  #1{\unskip}     \fi
+\ifx \showISSN     \undefined \def \showISSN      #1{\unskip}     \fi
+\ifx \showLCCN     \undefined \def \showLCCN      #1{\unskip}     \fi
+\ifx \shownote     \undefined \def \shownote      #1{#1}          \fi
+\ifx \showarticletitle \undefined \def \showarticletitle #1{#1}   \fi
+\ifx \showURL      \undefined \def \showURL       {\relax}        \fi
+% The following commands are used for tagged output and should be
+% invisible to TeX
+\providecommand\bibfield[2]{#2}
+\providecommand\bibinfo[2]{#2}
+\providecommand\natexlab[1]{#1}
+\providecommand\showeprint[2][]{arXiv:#2}
+
+\bibitem[Abadi et~al\mbox{.}(2013)]%
+        {DBLP:journals/ftdb/AbadiBHIM13}
+\bibfield{author}{\bibinfo{person}{Daniel Abadi}, \bibinfo{person}{Peter~A.
+  Boncz}, \bibinfo{person}{Stavros Harizopoulos}, \bibinfo{person}{Stratos
+  Idreos}, {and} \bibinfo{person}{Samuel Madden}.}
+  \bibinfo{year}{2013}\natexlab{}.
+\newblock \showarticletitle{The Design and Implementation of Modern
+  Column-Oriented Database Systems}.
+\newblock \bibinfo{journal}{\emph{Found. Trends Databases}}
+  \bibinfo{volume}{5}, \bibinfo{number}{3} (\bibinfo{year}{2013}),
+  \bibinfo{pages}{197--280}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1561/1900000024}
+\showDOI{\tempurl}
+
+
+\bibitem[Aberger et~al\mbox{.}(2017)]%
+        {DBLP:journals/tods/AbergerLTNOR17}
+\bibfield{author}{\bibinfo{person}{Christopher~R. Aberger},
+  \bibinfo{person}{Andrew Lamb}, \bibinfo{person}{Susan Tu},
+  \bibinfo{person}{Andres N{\"{o}}tzli}, \bibinfo{person}{Kunle Olukotun},
+  {and} \bibinfo{person}{Christopher R{\'{e}}}.}
+  \bibinfo{year}{2017}\natexlab{}.
+\newblock \showarticletitle{EmptyHeaded: {A} Relational Engine for Graph
+  Processing}.
+\newblock \bibinfo{journal}{\emph{{ACM} Trans. Database Syst.}}
+  \bibinfo{volume}{42}, \bibinfo{number}{4} (\bibinfo{year}{2017}),
+  \bibinfo{pages}{20:1--20:44}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/3129246}
+\showDOI{\tempurl}
+
+
+\bibitem[Atserias et~al\mbox{.}(2013)]%
+        {DBLP:journals/siamcomp/AtseriasGM13}
+\bibfield{author}{\bibinfo{person}{Albert Atserias}, \bibinfo{person}{Martin
+  Grohe}, {and} \bibinfo{person}{D{\'{a}}niel Marx}.}
+  \bibinfo{year}{2013}\natexlab{}.
+\newblock \showarticletitle{Size Bounds and Query Plans for Relational Joins}.
+\newblock \bibinfo{journal}{\emph{{SIAM} J. Comput.}} \bibinfo{volume}{42},
+  \bibinfo{number}{4} (\bibinfo{year}{2013}), \bibinfo{pages}{1737--1767}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1137/110859440}
+\showDOI{\tempurl}
+
+
+\bibitem[Avnur and Hellerstein(2000)]%
+        {DBLP:conf/sigmod/HellersteinA00}
+\bibfield{author}{\bibinfo{person}{Ron Avnur} {and} \bibinfo{person}{Joseph~M.
+  Hellerstein}.} \bibinfo{year}{2000}\natexlab{}.
+\newblock \showarticletitle{Eddies: Continuously Adaptive Query Processing}. In
+  \bibinfo{booktitle}{\emph{Proceedings of the 2000 {ACM} {SIGMOD}
+  International Conference on Management of Data, May 16-18, 2000, Dallas,
+  Texas, {USA}}}, \bibfield{editor}{\bibinfo{person}{Weidong Chen},
+  \bibinfo{person}{Jeffrey~F. Naughton}, {and} \bibinfo{person}{Philip~A.
+  Bernstein}} (Eds.). \bibinfo{publisher}{{ACM}}, \bibinfo{pages}{261--272}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/342009.335420}
+\showDOI{\tempurl}
+
+
+\bibitem[Fagin(1983)]%
+        {DBLP:journals/jacm/Fagin83}
+\bibfield{author}{\bibinfo{person}{Ronald Fagin}.}
+  \bibinfo{year}{1983}\natexlab{}.
+\newblock \showarticletitle{Degrees of Acyclicity for Hypergraphs and
+  Relational Database Schemes}.
+\newblock \bibinfo{journal}{\emph{J. {ACM}}} \bibinfo{volume}{30},
+  \bibinfo{number}{3} (\bibinfo{year}{1983}), \bibinfo{pages}{514--550}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/2402.322390}
+\showDOI{\tempurl}
+
+
+\bibitem[Feng et~al\mbox{.}(2023)]%
+        {kuzu:cidr}
+\bibfield{author}{\bibinfo{person}{Xiyang Feng}, \bibinfo{person}{Guodong Jin},
+  \bibinfo{person}{Ziyi Chen}, \bibinfo{person}{Chang Liu}, {and}
+  \bibinfo{person}{Semih Saliho\u{g}lu}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \showarticletitle{K\`uzu Graph Database Management System}. In
+  \bibinfo{booktitle}{\emph{CIDR}}.
+\newblock
+
+
+\bibitem[Freitag et~al\mbox{.}(2020)]%
+        {DBLP:journals/pvldb/FreitagBSKN20}
+\bibfield{author}{\bibinfo{person}{Michael~J. Freitag},
+  \bibinfo{person}{Maximilian Bandle}, \bibinfo{person}{Tobias Schmidt},
+  \bibinfo{person}{Alfons Kemper}, {and} \bibinfo{person}{Thomas Neumann}.}
+  \bibinfo{year}{2020}\natexlab{}.
+\newblock \showarticletitle{Adopting Worst-Case Optimal Joins in Relational
+  Database Systems}.
+\newblock \bibinfo{journal}{\emph{Proc. {VLDB} Endow.}} \bibinfo{volume}{13},
+  \bibinfo{number}{11} (\bibinfo{year}{2020}), \bibinfo{pages}{1891--1904}.
+\newblock
+\urldef\tempurl%
+\url{http://www.vldb.org/pvldb/vol13/p1891-freitag.pdf}
+\showURL{%
+\tempurl}
+
+
+\bibitem[Graefe(1993)]%
+        {DBLP:journals/csur/Graefe93}
+\bibfield{author}{\bibinfo{person}{Goetz Graefe}.}
+  \bibinfo{year}{1993}\natexlab{}.
+\newblock \showarticletitle{Query Evaluation Techniques for Large Databases}.
+\newblock \bibinfo{journal}{\emph{{ACM} Comput. Surv.}} \bibinfo{volume}{25},
+  \bibinfo{number}{2} (\bibinfo{year}{1993}), \bibinfo{pages}{73--170}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/152610.152611}
+\showDOI{\tempurl}
+
+
+\bibitem[Graefe et~al\mbox{.}(1998)]%
+        {DBLP:conf/vldb/GraefeBC98}
+\bibfield{author}{\bibinfo{person}{Goetz Graefe}, \bibinfo{person}{Ross
+  Bunker}, {and} \bibinfo{person}{Shaun Cooper}.}
+  \bibinfo{year}{1998}\natexlab{}.
+\newblock \showarticletitle{Hash Joins and Hash Teams in Microsoft {SQL}
+  Server}. In \bibinfo{booktitle}{\emph{VLDB'98, Proceedings of 24rd
+  International Conference on Very Large Data Bases, August 24-27, 1998, New
+  York City, New York, {USA}}}, \bibfield{editor}{\bibinfo{person}{Ashish
+  Gupta}, \bibinfo{person}{Oded Shmueli}, {and} \bibinfo{person}{Jennifer
+  Widom}} (Eds.). \bibinfo{publisher}{Morgan Kaufmann},
+  \bibinfo{pages}{86--97}.
+\newblock
+\urldef\tempurl%
+\url{http://www.vldb.org/conf/1998/p086.pdf}
+\showURL{%
+\tempurl}
+
+
+\bibitem[Idreos et~al\mbox{.}(2007a)]%
+        {DBLP:conf/cidr/IdreosKM07}
+\bibfield{author}{\bibinfo{person}{Stratos Idreos}, \bibinfo{person}{Martin~L.
+  Kersten}, {and} \bibinfo{person}{Stefan Manegold}.}
+  \bibinfo{year}{2007}\natexlab{a}.
+\newblock \showarticletitle{Database Cracking}. In
+  \bibinfo{booktitle}{\emph{Third Biennial Conference on Innovative Data
+  Systems Research, {CIDR} 2007, Asilomar, CA, USA, January 7-10, 2007, Online
+  Proceedings}}. \bibinfo{publisher}{www.cidrdb.org}, \bibinfo{pages}{68--78}.
+\newblock
+\urldef\tempurl%
+\url{http://cidrdb.org/cidr2007/papers/cidr07p07.pdf}
+\showURL{%
+\tempurl}
+
+
+\bibitem[Idreos et~al\mbox{.}(2007b)]%
+        {DBLP:conf/sigmod/IdreosKM07}
+\bibfield{author}{\bibinfo{person}{Stratos Idreos}, \bibinfo{person}{Martin~L.
+  Kersten}, {and} \bibinfo{person}{Stefan Manegold}.}
+  \bibinfo{year}{2007}\natexlab{b}.
+\newblock \showarticletitle{Updating a cracked database}. In
+  \bibinfo{booktitle}{\emph{Proceedings of the {ACM} {SIGMOD} International
+  Conference on Management of Data, Beijing, China, June 12-14, 2007}},
+  \bibfield{editor}{\bibinfo{person}{Chee~Yong Chan},
+  \bibinfo{person}{Beng~Chin Ooi}, {and} \bibinfo{person}{Aoying Zhou}} (Eds.).
+  \bibinfo{publisher}{{ACM}}, \bibinfo{pages}{413--424}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/1247480.1247527}
+\showDOI{\tempurl}
+
+
+\bibitem[Kemper et~al\mbox{.}(1999)]%
+        {DBLP:conf/vldb/KemperKW99}
+\bibfield{author}{\bibinfo{person}{Alfons Kemper}, \bibinfo{person}{Donald
+  Kossmann}, {and} \bibinfo{person}{Christian Wiesner}.}
+  \bibinfo{year}{1999}\natexlab{}.
+\newblock \showarticletitle{Generalised Hash Teams for Join and Group-by}. In
+  \bibinfo{booktitle}{\emph{VLDB'99, Proceedings of 25th International
+  Conference on Very Large Data Bases, September 7-10, 1999, Edinburgh,
+  Scotland, {UK}}}, \bibfield{editor}{\bibinfo{person}{Malcolm~P. Atkinson},
+  \bibinfo{person}{Maria~E. Orlowska}, \bibinfo{person}{Patrick Valduriez},
+  \bibinfo{person}{Stanley~B. Zdonik}, {and} \bibinfo{person}{Michael~L.
+  Brodie}} (Eds.). \bibinfo{publisher}{Morgan Kaufmann},
+  \bibinfo{pages}{30--41}.
+\newblock
+\urldef\tempurl%
+\url{http://www.vldb.org/conf/1999/P3.pdf}
+\showURL{%
+\tempurl}
+
+
+\bibitem[Kersten et~al\mbox{.}(2018)]%
+        {DBLP:journals/pvldb/KerstenLKNPB18}
+\bibfield{author}{\bibinfo{person}{Timo Kersten}, \bibinfo{person}{Viktor
+  Leis}, \bibinfo{person}{Alfons Kemper}, \bibinfo{person}{Thomas Neumann},
+  \bibinfo{person}{Andrew Pavlo}, {and} \bibinfo{person}{Peter~A. Boncz}.}
+  \bibinfo{year}{2018}\natexlab{}.
+\newblock \showarticletitle{Everything You Always Wanted to Know About Compiled
+  and Vectorized Queries But Were Afraid to Ask}.
+\newblock \bibinfo{journal}{\emph{Proc. {VLDB} Endow.}} \bibinfo{volume}{11},
+  \bibinfo{number}{13} (\bibinfo{year}{2018}), \bibinfo{pages}{2209--2222}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.14778/3275366.3275370}
+\showDOI{\tempurl}
+
+
+\bibitem[Khamis et~al\mbox{.}(2017)]%
+        {DBLP:conf/pods/Khamis0S17}
+\bibfield{author}{\bibinfo{person}{Mahmoud~Abo Khamis},
+  \bibinfo{person}{Hung~Q. Ngo}, {and} \bibinfo{person}{Dan Suciu}.}
+  \bibinfo{year}{2017}\natexlab{}.
+\newblock \showarticletitle{What Do Shannon-type Inequalities, Submodular
+  Width, and Disjunctive Datalog Have to Do with One Another?}. In
+  \bibinfo{booktitle}{\emph{Proceedings of the 36th {ACM} {SIGMOD-SIGACT-SIGAI}
+  Symposium on Principles of Database Systems, {PODS} 2017, Chicago, IL, USA,
+  May 14-19, 2017}}, \bibfield{editor}{\bibinfo{person}{Emanuel Sallinger},
+  \bibinfo{person}{Jan~Van den Bussche}, {and} \bibinfo{person}{Floris Geerts}}
+  (Eds.). \bibinfo{publisher}{{ACM}}, \bibinfo{pages}{429--444}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/3034786.3056105}
+\showDOI{\tempurl}
+
+
+\bibitem[Leis et~al\mbox{.}(2015)]%
+        {DBLP:journals/pvldb/LeisGMBK015}
+\bibfield{author}{\bibinfo{person}{Viktor Leis}, \bibinfo{person}{Andrey
+  Gubichev}, \bibinfo{person}{Atanas Mirchev}, \bibinfo{person}{Peter~A.
+  Boncz}, \bibinfo{person}{Alfons Kemper}, {and} \bibinfo{person}{Thomas
+  Neumann}.} \bibinfo{year}{2015}\natexlab{}.
+\newblock \showarticletitle{How Good Are Query Optimizers, Really?}
+\newblock \bibinfo{journal}{\emph{Proc. {VLDB} Endow.}} \bibinfo{volume}{9},
+  \bibinfo{number}{3} (\bibinfo{year}{2015}), \bibinfo{pages}{204--215}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.14778/2850583.2850594}
+\showDOI{\tempurl}
+
+
+\bibitem[Mhedhbi et~al\mbox{.}(2021)]%
+        {DBLP:conf/sigmod/MhedhbiLKWS21}
+\bibfield{author}{\bibinfo{person}{Amine Mhedhbi}, \bibinfo{person}{Matteo
+  Lissandrini}, \bibinfo{person}{Laurens Kuiper}, \bibinfo{person}{Jack
+  Waudby}, {and} \bibinfo{person}{G{\'{a}}bor Sz{\'{a}}rnyas}.}
+  \bibinfo{year}{2021}\natexlab{}.
+\newblock \showarticletitle{{LSQB:} a large-scale subgraph query benchmark}. In
+  \bibinfo{booktitle}{\emph{{GRADES-NDA} '21: Proceedings of the 4th {ACM}
+  {SIGMOD} Joint International Workshop on Graph Data Management Experiences
+  {\&} Systems {(GRADES)} and Network Data Analytics (NDA), Virtual Event,
+  China, 20 June 2021}}, \bibfield{editor}{\bibinfo{person}{Vasiliki Kalavri}
+  {and} \bibinfo{person}{Nikolay Yakovets}} (Eds.). \bibinfo{publisher}{{ACM}},
+  \bibinfo{pages}{8:1--8:11}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/3461837.3464516}
+\showDOI{\tempurl}
+
+
+\bibitem[Mhedhbi and Salihoglu(2019)]%
+        {DBLP:journals/pvldb/MhedhbiS19}
+\bibfield{author}{\bibinfo{person}{Amine Mhedhbi} {and} \bibinfo{person}{Semih
+  Salihoglu}.} \bibinfo{year}{2019}\natexlab{}.
+\newblock \showarticletitle{Optimizing Subgraph Queries by Combining Binary and
+  Worst-Case Optimal Joins}.
+\newblock \bibinfo{journal}{\emph{Proc. {VLDB} Endow.}} \bibinfo{volume}{12},
+  \bibinfo{number}{11} (\bibinfo{year}{2019}), \bibinfo{pages}{1692--1704}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.14778/3342263.3342643}
+\showDOI{\tempurl}
+
+
+\bibitem[Neumann(2011)]%
+        {DBLP:journals/pvldb/Neumann11}
+\bibfield{author}{\bibinfo{person}{Thomas Neumann}.}
+  \bibinfo{year}{2011}\natexlab{}.
+\newblock \showarticletitle{Efficiently Compiling Efficient Query Plans for
+  Modern Hardware}.
+\newblock \bibinfo{journal}{\emph{Proc. {VLDB} Endow.}} \bibinfo{volume}{4},
+  \bibinfo{number}{9} (\bibinfo{year}{2011}), \bibinfo{pages}{539--550}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.14778/2002938.2002940}
+\showDOI{\tempurl}
+
+
+\bibitem[Ngo(2018)]%
+        {DBLP:conf/pods/000118}
+\bibfield{author}{\bibinfo{person}{Hung~Q. Ngo}.}
+  \bibinfo{year}{2018}\natexlab{}.
+\newblock \showarticletitle{Worst-Case Optimal Join Algorithms: Techniques,
+  Results, and Open Problems}. In \bibinfo{booktitle}{\emph{Proceedings of the
+  37th {ACM} {SIGMOD-SIGACT-SIGAI} Symposium on Principles of Database Systems,
+  Houston, TX, USA, June 10-15, 2018}},
+  \bibfield{editor}{\bibinfo{person}{Jan~Van den Bussche} {and}
+  \bibinfo{person}{Marcelo Arenas}} (Eds.). \bibinfo{publisher}{{ACM}},
+  \bibinfo{address}{New York, NY, USA}, \bibinfo{pages}{111--124}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/3196959.3196990}
+\showDOI{\tempurl}
+
+
+\bibitem[Ngo et~al\mbox{.}(2012)]%
+        {DBLP:conf/pods/NgoPRR12}
+\bibfield{author}{\bibinfo{person}{Hung~Q. Ngo}, \bibinfo{person}{Ely Porat},
+  \bibinfo{person}{Christopher R{\'{e}}}, {and} \bibinfo{person}{Atri Rudra}.}
+  \bibinfo{year}{2012}\natexlab{}.
+\newblock \showarticletitle{Worst-case optimal join algorithms: [extended
+  abstract]}. In \bibinfo{booktitle}{\emph{Proceedings of the 31st {ACM}
+  {SIGMOD-SIGACT-SIGART} Symposium on Principles of Database Systems, {PODS}
+  2012, Scottsdale, AZ, USA, May 20-24, 2012}},
+  \bibfield{editor}{\bibinfo{person}{Michael Benedikt}, \bibinfo{person}{Markus
+  Kr{\"{o}}tzsch}, {and} \bibinfo{person}{Maurizio Lenzerini}} (Eds.).
+  \bibinfo{publisher}{{ACM}}, \bibinfo{address}{New York, NY, USA},
+  \bibinfo{pages}{37--48}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/2213556.2213565}
+\showDOI{\tempurl}
+
+
+\bibitem[Ngo et~al\mbox{.}(2013)]%
+        {DBLP:journals/sigmod/NgoRR13}
+\bibfield{author}{\bibinfo{person}{Hung~Q. Ngo}, \bibinfo{person}{Christopher
+  R{\'{e}}}, {and} \bibinfo{person}{Atri Rudra}.}
+  \bibinfo{year}{2013}\natexlab{}.
+\newblock \showarticletitle{Skew strikes back: new developments in the theory
+  of join algorithms}.
+\newblock \bibinfo{journal}{\emph{{SIGMOD} Rec.}} \bibinfo{volume}{42},
+  \bibinfo{number}{4} (\bibinfo{year}{2013}), \bibinfo{pages}{5--16}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/2590989.2590991}
+\showDOI{\tempurl}
+
+
+\bibitem[Olteanu and Schleich(2016)]%
+        {DBLP:journals/sigmod/OlteanuS16}
+\bibfield{author}{\bibinfo{person}{Dan Olteanu} {and}
+  \bibinfo{person}{Maximilian Schleich}.} \bibinfo{year}{2016}\natexlab{}.
+\newblock \showarticletitle{Factorized Databases}.
+\newblock \bibinfo{journal}{\emph{{SIGMOD} Rec.}} \bibinfo{volume}{45},
+  \bibinfo{number}{2} (\bibinfo{year}{2016}), \bibinfo{pages}{5--16}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/3003665.3003667}
+\showDOI{\tempurl}
+
+
+\bibitem[Padmanabhan et~al\mbox{.}(2001)]%
+        {DBLP:conf/icde/PadmanabhanAMJ01}
+\bibfield{author}{\bibinfo{person}{Sriram Padmanabhan},
+  \bibinfo{person}{Timothy Malkemus}, \bibinfo{person}{Ramesh~C. Agarwal},
+  {and} \bibinfo{person}{Anant Jhingran}.} \bibinfo{year}{2001}\natexlab{}.
+\newblock \showarticletitle{Block Oriented Processing of Relational Database
+  Operations in Modern Computer Architectures}. In
+  \bibinfo{booktitle}{\emph{Proceedings of the 17th International Conference on
+  Data Engineering, April 2-6, 2001, Heidelberg, Germany}},
+  \bibfield{editor}{\bibinfo{person}{Dimitrios Georgakopoulos} {and}
+  \bibinfo{person}{Alexander Buchmann}} (Eds.). \bibinfo{publisher}{{IEEE}
+  Computer Society}, \bibinfo{pages}{567--574}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1109/ICDE.2001.914871}
+\showDOI{\tempurl}
+
+
+\bibitem[Raasveldt(2022)]%
+        {DBLP:conf/vldb/Raasveldt22}
+\bibfield{author}{\bibinfo{person}{Mark Raasveldt}.}
+  \bibinfo{year}{2022}\natexlab{}.
+\newblock \showarticletitle{DuckDB - {A} Modern Modular and Extensible Database
+  System}. In \bibinfo{booktitle}{\emph{1st International Workshop on
+  Composable Data Management Systems, CDMS@VLDB 2022, Sydney, Australia,
+  September 9, 2022}}, \bibfield{editor}{\bibinfo{person}{Satyanarayana~R.
+  Valluri} {and} \bibinfo{person}{Mohamed Zait}} (Eds.).
+\newblock
+\urldef\tempurl%
+\url{https://cdmsworkshop.github.io/2022/Proceedings/Keynotes/Abstract\_MarkRaasveldt.pdf}
+\showURL{%
+\tempurl}
+
+
+\bibitem[Raasveldt and M{\"{u}}hleisen(2020)]%
+        {DBLP:conf/cidr/RaasveldtM20}
+\bibfield{author}{\bibinfo{person}{Mark Raasveldt} {and}
+  \bibinfo{person}{Hannes M{\"{u}}hleisen}.} \bibinfo{year}{2020}\natexlab{}.
+\newblock \showarticletitle{Data Management for Data Science - Towards Embedded
+  Analytics}. In \bibinfo{booktitle}{\emph{10th Conference on Innovative Data
+  Systems Research, {CIDR} 2020, Amsterdam, The Netherlands, January 12-15,
+  2020, Online Proceedings}}. \bibinfo{publisher}{www.cidrdb.org}.
+\newblock
+\urldef\tempurl%
+\url{http://cidrdb.org/cidr2020/papers/p23-raasveldt-cidr20.pdf}
+\showURL{%
+\tempurl}
+
+
+\bibitem[Selinger et~al\mbox{.}(1979)]%
+        {DBLP:conf/sigmod/SelingerACLP79}
+\bibfield{author}{\bibinfo{person}{Patricia~G. Selinger},
+  \bibinfo{person}{Morton~M. Astrahan}, \bibinfo{person}{Donald~D. Chamberlin},
+  \bibinfo{person}{Raymond~A. Lorie}, {and} \bibinfo{person}{Thomas~G. Price}.}
+  \bibinfo{year}{1979}\natexlab{}.
+\newblock \showarticletitle{Access Path Selection in a Relational Database
+  Management System}. In \bibinfo{booktitle}{\emph{Proceedings of the 1979
+  {ACM} {SIGMOD} International Conference on Management of Data, Boston,
+  Massachusetts, USA, May 30 - June 1}},
+  \bibfield{editor}{\bibinfo{person}{Philip~A. Bernstein}} (Ed.).
+  \bibinfo{publisher}{{ACM}}, \bibinfo{pages}{23--34}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/582095.582099}
+\showDOI{\tempurl}
+
+
+\bibitem[Veldhuizen(2014)]%
+        {DBLP:conf/icdt/Veldhuizen14}
+\bibfield{author}{\bibinfo{person}{Todd~L. Veldhuizen}.}
+  \bibinfo{year}{2014}\natexlab{}.
+\newblock \showarticletitle{Triejoin: {A} Simple, Worst-Case Optimal Join
+  Algorithm}. In \bibinfo{booktitle}{\emph{Proc. 17th International Conference
+  on Database Theory (ICDT), Athens, Greece, March 24-28, 2014}},
+  \bibfield{editor}{\bibinfo{person}{Nicole Schweikardt},
+  \bibinfo{person}{Vassilis Christophides}, {and} \bibinfo{person}{Vincent
+  Leroy}} (Eds.). \bibinfo{publisher}{OpenProceedings.org},
+  \bibinfo{address}{Athens, Greece}, \bibinfo{pages}{96--106}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.5441/002/icdt.2014.13}
+\showDOI{\tempurl}
+
+
+\bibitem[Yannakakis(1981)]%
+        {DBLP:conf/vldb/Yannakakis81}
+\bibfield{author}{\bibinfo{person}{Mihalis Yannakakis}.}
+  \bibinfo{year}{1981}\natexlab{}.
+\newblock \showarticletitle{Algorithms for Acyclic Database Schemes}. In
+  \bibinfo{booktitle}{\emph{Very Large Data Bases, 7th International
+  Conference, September 9-11, 1981, Cannes, France, Proceedings}}.
+  \bibinfo{publisher}{{IEEE} Computer Society}, \bibinfo{pages}{82--94}.
+\newblock
+
+
+\end{thebibliography}

@@ -1,0 +1,511 @@
+\section{Background}\label{sec:background}
+
+This section defines basic concepts and reviews background on binary
+join and \GJ.
+
+\subsection{Basic Concepts}\label{sec:basic-concepts}
+
+We consider a relational database where each relation has a fixed
+\emph{schema}, and may have duplicates, i.e. we use bag semantics.
+A \emph{full conjunctive query} has the following form:
+%
+\begin{align}
+  Q(\bm x) \cd & R_1(\bm x_1), \ldots, R_m(\bm x_m). \label{eq:cq}
+\end{align}
+%
+Each term $R_i(\bm x_i)$ is called an \emph{atom}, where $R_i$ is a
+relation name and $\bm x_i$ a tuple of variables.  The query is
+\emph{full}, meaning that the head variables $\bm x$ include all
+variables appearing in the atoms.  To reduce clutter in the following
+sections, we will assume that the query does not have self-joins.
+This is without loss of generality: if two atoms have the same
+relation name, then we simply rename one of them.  Our system also
+supports selections, projections, and aggregation.  We assume that the
+selections are pushed down to the base tables, thus the atom $R_i$
+in~\eqref{eq:cq} may include a selection over a base table; in
+particular, all variables in the atom $R_i(\bm x_i)$ are distinct.
+Similarly, projections and aggregates are performed after the full
+join, hence none of them is shown in~\eqref{eq:cq}.
+
+
+\begin{example} \label{ex:triangle} Consider the following SQL query:
+\begin{lstlisting}[
+    language=SQL,
+    showspaces=false,
+    basicstyle=\ttfamily\small,
+    % numbers=left,
+    % numberstyle=\tiny,
+    commentstyle=\color{gray}
+ ]
+SELECT r.x, s.u, t.u
+  FROM R as r, M as s, M as t -- schema: R(x,y), M(u,v,w)
+ WHERE s.w > 30 AND t.v = t.w
+   AND r.y = s.u AND s.v = t.u AND t.v = r.x
+\end{lstlisting}
+%
+Then we denote by $S = \Pi_{uv}(\sigma_{w>30}(M))$ and $T =
+\Pi_{uv}(\sigma_{v=w}(M))$, and write the query as:
+$$Q_{\triangle}(x,y,z) \cd R(x, y), S(y,z), T(z, x).$$
+%
+We call this query the \emph{triangle query} over the relations $R$, $S$,
+$T$.
+\end{example}
+
+It is often convenient to view the conjunctive query~\eqref{eq:cq} as
+a hypergraph.  The \emph{query hypergraph} of $Q$ consists of vertices
+$\mathcal{V}$ and edges $\mathcal{E}$, where the set of nodes
+$\mathcal{V}$ is the set of variables occurring in $Q$, and the set of
+hyperedges $\mathcal{E}$ is the set of atoms in $Q$.  The hyperedge
+associated to the atom $R(\bm x_i)$ is defined as the set consisting
+of the nodes associated to the variables $\bm x_i$.  As standard, we
+say that the query $Q$ is {\em acyclic} if its associated hypergraph
+is $\alpha$-acyclic~\cite{DBLP:journals/jacm/Fagin83}
+
+
+\subsection{Binary Join}\label{sec:binary-join}
+
+The standard approach to computing a conjunctive query~\eqref{eq:cq} is
+to compute one binary join at a time.  A {\em binary plan} is a binary
+tree, where each internal node is a join operator $\Join$, and each
+leaf node is one of the base tables (atoms) $R_i(\bm x_i)$ in the
+query~\eqref{eq:cq}.  The plan is a \emph{left-deep linear plan}, or
+simply left-deep plan, if the right child of every join is a leaf
+node.  If the plan is not left-deep, then we call it \emph{bushy}.
+For example, $(R \Join S) \Join (T \Join U)$ is a bushy plan, while
+$((R \Join S) \Join T) \Join U$ is a left-deep plan.  We do not treat
+specially right-deep or zig-zag plans, but simply consider them to be
+bushy.
+
+In this paper we consider only hash-joins, which are the most
+common types of joins in database systems. 
+The standard way to execute a bushy plan is to
+decompose it into a series of left-deep linear plans.  Every join node
+that is a right child becomes the root of a new subplan, which is
+first evaluated, and its result materialized, before the parent join
+can proceed.  As a consequence, every binary plan, bushy or not,
+becomes a collection of left-deep plans. We decompose bushy
+plans in exactly the same way, and we will focus on left-deep linear
+plans in the rest of this paper.  For example, the bushy plan
+$(R \Join S) \Join (T \Join U)$ is converted into two plans:
+$P_1 = T \Join U$ and $P_2 = (R \Join S) \Join P_1$; both are
+left-deep plans.
+
+To reduce clutter, we represent a left-deep plan
+$(\cdots ((R_1 \Join R_2) \Join R_3) \cdots \Join R_{m-1}) \Join R_m$
+as $[R_1, R_2, \ldots, R_m]$.  Evaluation of a left-deep plan is done
+using pipelining.  The engine iterates over each tuple in the
+left-most base table $R_1$; each tuple is probed in $R_2$; each of the
+matching tuple is further probed in $R_3$, etc.
+
+
+\begin{figure}
+  \begin{subfigure}[b]{0.45\linewidth}
+\begin{lstlisting}
+for (x, y) in R:
+  s = S[y]?
+  for (y, z) in s:
+    t = T[x,z]?
+    for (x, z) in t:
+      output(x, y, z)
+\end{lstlisting}
+    \caption{Binary join.}
+    \label{fig:background:binary-join}
+  \end{subfigure}
+  \begin{subfigure}[b]{0.45\linewidth}
+    \centering
+\begin{lstlisting}
+for a in R.x $\cap$ T.x:
+  r = R[a]; t = T[a]
+  for b in r.y $\cap$ S.y:
+    s = S[b]
+    for c in s.z $\cap$ t.z:
+      output(a, b, c)
+\end{lstlisting}
+    \caption{\GJ.}
+    \label{fig:background:gj}
+  \end{subfigure}
+%  \Description[TODO]{TODO}
+  \caption{Execution of binary join and \GJ for $Q_\triangle$.  The
+    notation \lstinline|S[y]?| performs a lookup on $S$ with the key
+    $y$, and continues to the enclosing loop if the lookup fails.
+    Binary join iterates over {\em tuples}, \GJ iterates over {\em
+      values}.}
+\end{figure}
+
+\begin{example}
+  A possible left-deep linear plan for $Q_\triangle$ is $[R, S, T]$,
+  which represents $(R(x,y) \Join S(y,z)) \Join T(z,x)$.  To execute
+  this plan, we first build a hash table for $S$ keyed on $y$, where
+  each $y$ maps to a vector of $(y,z)$ tuples, 
+  % \yell{Remy: this is not
+  %   correct.  The hash table contains tuples.  Think of a table that
+  %   has 30 attributes $S(x_1,\ldots, x_{30})$.  If you join on
+  %   $x_{12}$, you don't create a new tuple with 29 attributes, but
+  %   store the whole tuple in the hash table.  Some systems actually
+  %   store a pointer to the real tuple in the buffer pool.}
+  and a hash table for $T$ keyed on $x$ and $z$, each mapped to a
+  vector of $(x,z)$ tuples\footnote{When the relations are bags, then
+    the hash table may contain duplicate tuples, or store separately
+    the multiplicity.  We also note that the question what exactly to
+    store in the hash table (e.g. copies of the tuples, or pointers to
+    the tuple in the buffer pool) has been studied for a long time,
+    see~\cite{DBLP:journals/csur/Graefe93}.}.  Then the execution
+  proceeds as shown in Figure~\ref{fig:background:binary-join}.  For each
+  tuple $(x, y)$ in $R$, we first probe into the hash table for $S$
+  using $y$ to get a vector of $(y, z)$ tuples.  We then loop over
+  each $(y, z)$ and probe into the hash table for $T$ using $x$ and
+  $z$.  Each successful probe will return a vector of $(x, z)$ tuples,
+  and we output the tuple $(x, y, z)$ for each $(x, z)$.
+\end{example}
+
+\subsection{\GJ}\label{sec:background:gj}
+
+\GJ was introduced in~\cite{DBLP:journals/sigmod/NgoRR13} and is the
+simplest worst-case optimal join algorithm.  It is based on the
+earlier Leapfrog Triejoin algorithm~\cite{DBLP:conf/icdt/Veldhuizen14}.
+%
+\GJ computes the query $Q$ in~\eqref{eq:cq} through a series of nested
+loops, where each loop iterates over a variable (not a tuple).
+Concretely, \GJ chooses arbitrarily a variable $x$, computes the
+intersection of all $x$-columns of all relations containing $x$, and
+for each value $a$ in this intersection it computes the residual query
+$Q[a/x]$, where every relation $R$ that contains $x$ is replaced with
+$\sigma_{x=a}(R)$.  In pseudocode:
+%
+\begin{lstlisting}
+GJ: for a in $\bigcap \setof{\Pi_x(R_i)}{R_i \mbox{ contains } x}$
+      compute Q[a/x]  \\ run GJ on Q with one fewer variable
+\end{lstlisting}
+%
+If the query $Q$ has $k$ variables, then there are $k$ nested loops in
+\GJ.  In the inner most loop, \GJ outputs the tuple of constants, one
+from each iteration.\footnote{For bag semantics, it multiplies their
+  multiplicities.}  We notice that a plan for \GJ consists of a total
+order of the variables of the query, which we denote as
+$[x_1, x_2, \ldots, x_k]$.  Assuming that the intersection above is
+done optimally (see below), the algorithm is provably
+worst-case-optimal, for any choice of the variable order.
+
+\begin{example}
+  Fig.~\ref{fig:background:gj} illustrates the pseudocode for \GJ on the
+  query $Q_\triangle$, using the variable order $[x,y,z]$.  We denoted
+  $\Pi_x(R)$ by $R.x$, and denoted (with some abuse) $\sigma_{x=a}(R)$
+  by $R[a]$.
+\end{example}
+
+
+While binary joins use hash tables, an implementation of \GJ uses a
+\emph{hash trie}, one for each relation in the query.  The hash-trie
+is a tree, whose depth is equal to one plus the number of attributes
+of the relation, and where each node is either an empty leaf
+node,\footnote{For bag semantics, we store in the leaf the
+  multiplicity of the tuple.} or a hash map mapping each atomic value
+to another node.  We will call the \emph{level} of a node to be the
+distance from the root, i.e. the root has level 0, its children level
+1, etc.  The hash-trie completely represents the relation: every
+root-to-leaf path corresponds precisely to one tuple in the relation.
+\GJ uses the hash-trie as follows.  In order to compute
+$\sigma_{x=a}(R)$, it simply probes the current hash table for the
+value $x=a$, and returns the corresponding child.  To compute an
+intersection $\Pi_x(R_1) \cap \Pi_x(R_2) \cap \cdots$, it selects the
+trie with the fewest keys, say $R_1$, then iterates over every value
+$a$ in the keys for $R_1$ and probes it in each of the hash-maps for
+$R_2, R_3, \ldots$; this is a provably optimal algorithm for the
+intersection.
+
+\begin{example}
+  Consider the query $Q_\triangle$ and the \GJ plan $[x, y, z]$.  We
+  first build a hash trie each for $R$, $S$, and $T$.  Each trie has
+  three levels including the leaf.  Level 0 of $R$ is keyed on $x$,
+  level 1 is keyed on $y$, level 2 contains empty leaf nodes, and
+  similarly for $S$ and $T$.  Consider again the pseudocode in
+  Figure~\ref{fig:background:gj}.  The first loop intersects level 0
+  of the $R$-trie and the $T$-trie.  For each value $a$ in the
+  intersection, we retrieve the corresponding children $R[a]$ and
+  $T[a]$ respectively; these are at level 1.  The second loop
+  intersects the hash map $R[a]$ (at level 1) with the level 0
+  hash-map of $S$.  For each value $b$ in the intersection it
+  retrieves the corresponding children (levels 2 and 1 respectively),
+  and, finally, the innermost loop intersects the $S$- and $T$-hash
+  maps (both at level 2), and outputs $(a,b,c)$ for each $c$ in the
+  intersection.  So far we have assumed set semantics; if the
+  relations have bag semantics, then we simply multiply the tuple
+  multiplicities on the leaves (level 3).
+\end{example}
+
+%%% The original \GJ algorithm was specified for set semantics,
+%%% however~\cite{DBLP:journals/pvldb/FreitagBSKN20} showed the algorithm
+%%% can be easily extended to bag semantics.  We therefore ignore the
+%%% difference between the two semantics for the rest of this paper.
+
+\subsection{Binary Join v.s. \GJ}
+Binary join and \GJ each have their own advantages and disadvantages.
+\GJ became popular because of its asymptotic performance guarantee:
+\citet{DBLP:journals/sigmod/NgoRR13} proved the algorithm is
+\emph{worst-case optimal} for \emph{any variable order}, in the sense
+that its run time is bounded by the largest possible size of its
+output, called AGM bound~\cite{DBLP:journals/siamcomp/AtseriasGM13}.
+For example, \GJ executes $Q_\triangle$ in time
+$\sqrt{|R|\cdot |S| \cdot |T|}$, which is $n^{3/2}$ when all relations
+have size $n$; in contrast, a binary join plan can take $\Omega(n^2)$.
+We note, however, that this formula does not include the preprocessing
+time needed to construct the tries.  For example, if $T$ is
+significantly larger than $R, S$, then the run time of \GJ is
+$\ll |T|$, yet during preprocessing \GJ needs to read the entire
+relation $T$.  On the other hand, binary join has been a staple of
+database systems for decades.  The hash table data structure is
+simpler than hash tries and is cheaper to build.  Techniques like
+vectorized execution and column-oriented layout have also made binary
+join practically efficient, but these optimizations have not been
+adapted for \GJ.  Binary join plans are known to be very sensitive to
+the choice of the optimizer: poor plans perform catastrophically
+bad~\cite{DBLP:journals/pvldb/LeisGMBK015}.  In contrast, although the
+runtime performance of \GJ does depend on the variable order, some
+researchers believe that \GJ is less sensitive to poor variable
+orders, in part because it is always theoretically optimal.
+
+
+%%% \subsection{Basic Concepts}\label{sec:basic-concepts}
+%%% 
+%%% First, we define relations under bag semantics:
+%%% 
+%%% \begin{definition}
+%%%   A \emph{relation} is a bag (multiset) of tuples.
+%%%   The number of values in a tuple is its \emph{arity}.
+%%%   Every tuple in the same relation has the same arity 
+%%%     which is also the arity of the relation.
+%%%   Each relation has a \emph{schema}, which is a tuple of distinct variables.
+%%%   The size of the schema is the same as the arity of the relation.
+%%% \end{definition}
+%%% 
+%%% For convenience, we sometimes refer to the schema of a tuple, 
+%%%   which is the schema of the relation holding that tuple.
+%%% We also associate each value in a tuple with a variable in the tuple's schema.
+%%% 
+%%% To simplify presentation we focus on queries involving only 
+%%%   natural joins in this paper, although our implementation 
+%%%   also supports standard relational algebra operations 
+%%%   like selection, projection and aggregation.
+%%% In other words, every query is a \emph{full conjunctive query}:
+%%% \begin{definition}
+%%%   A \emph{full conjunctive query} is a set of \emph{atom}s,
+%%%   where each atom is a relation name paired with a tuple of variables.
+%%%   The number of variables in each tuple is the same as the arity of the relation.
+%%%   We assume no two atoms share the same relation name, 
+%%%   and each variable appears at most once in the same atom.
+%%% \end{definition}
+%%% 
+%%% We handle a self-join of a relation $R$
+%%%   by creating a copy of $R$ and renaming it to $R'$.
+%%% This is the standard approach in database systems 
+%%%   that require each query plan to be a tree.
+%%% Without loss of generality,
+%%%   we assume each relation's schema coincides with 
+%%%   the variables of its atom in the query.
+%%% 
+%%% \begin{example}
+%%%   Consider the \emph{triangle query} over relations $R$, $S$, $T$:
+%%% $$Q_{\triangle} \cd R(x, y), S(y,z), T(x, z).$$
+%%% It is the same as the following SQL query:
+%%% \begin{lstlisting}[
+%%%     language=SQL,
+%%%     showspaces=false,
+%%%     basicstyle=\ttfamily\small,
+%%%     numbers=left,
+%%%     numberstyle=\tiny,
+%%%     commentstyle=\color{gray}
+%%%  ]
+%%% SELECT * FROM R, S, T -- schema: R(x,y), S(y,z), T(x,z)
+%%%  WHERE R.y = S.y AND S.z = T.z AND T.x = R.x
+%%% \end{lstlisting}
+%%% \end{example}
+%%% 
+%%% The precise definition of cyclic and acyclic queries 
+%%%   is not important for this paper,
+%%%   so we discuss them informally and briefly here.
+%%% Fix a conjunctive query $Q$.
+%%% The \emph{query hypergraph} of $Q$ consists of vertices $\mathcal{V}$
+%%%   and edges $\mathcal{E}$, 
+%%%   where each $v \in \mathcal{V}$ is a variable
+%%%   and each hyperedge $(v_1, \ldots, v_k) \in \mathcal{E}$
+%%%   is the relation whose atom has the variables $(v_1, \ldots, v_k)$.
+%%% A sufficient condition for a query to be acyclic is that 
+%%%   the query hypergraph is a tree.
+%%% $Q_\triangle$ is a \emph{cyclic} query, 
+%%%   whereas any chain query is acyclic, e.g. $Q \cd R(x,y), S(y, z), T(z,w).$
+%%% 
+%%% \subsection{Binary Join}\label{sec:binary-join}
+%%% Now we review relevant concepts for binary join, 
+%%%   including its data structures, query plan.
+%%% 
+%%% Binary join works over \emph{hash tables}:
+%%% 
+%%% \begin{definition}
+%%%   A \emph{hash table} for $R$ is a hash map where each key is a tuple, 
+%%%     and every key is mapped to a vector of tuples.
+%%% \end{definition}
+%%% 
+%%% A \emph{binary plan} specifies how to execute a query with binary join:
+%%% 
+%%% \begin{definition}
+%%%   A \emph{binary plan} is a binary tree where each leaf is a distinct relation.
+%%%   A \emph{left-deep linear plan} is a binary plan where every right-child of an internal node is a leaf.
+%%%   Alternatively, we can write every left-deep linear plan as a sequence of relation names.
+%%%   There is a unique leaf that is a left-child, and the relation of that leaf is called the \emph{left relation}.
+%%%   A binary plan that is not a left-deep linear plan is called a \emph{bushy plan}.
+%%% \end{definition}
+%%% 
+%%% By this definition, we consider both ``right-deep'' plans and ``zig-zag'' plans as bushy plans,
+%%%   and do not distinguish between them.
+%%% A standard relational database executes a bushy plan by decomposing it into a series of left-deep linear plans.
+%%% That is, for each leaf on the left, it traverses the binary tree bottom-up by going only to the left parent,
+%%%   and all the nodes visited form a left-deep linear plan.
+%%% Then we execute these plans starting with the right-most one, materializing the intermediate results as we go.
+%%% We omit a formal description of this process for brevity.
+%%% Our system decomposes bushy plans in exactly the same way,
+%%%   and we will focus on left-deep linear plans in the rest of this paper.
+%%% 
+%%% \begin{example}
+%%%   A possible left-deep linear plan for $Q_\triangle$ is $[R, S, T]$.
+%%% \end{example}
+%%% 
+%%% We assume the reader is familiar with how a left-deep linear plan executes,
+%%%   and only provide an informal example here.
+%%%   of binary join for a different query.
+%%% 
+%%% \begin{figure}
+%%%   \begin{subfigure}[b]{0.45\linewidth}
+%%% \begin{lstlisting}
+%%% for (x, y) in R:
+%%%   S = S[y]?
+%%%   for z in S:
+%%%     T = T[x,z]?
+%%%     for () in T:
+%%%       output(x, y, z)
+%%% \end{lstlisting}
+%%%     \caption{Binary join.}
+%%%     \label{fig:back-binary-join}
+%%%   \end{subfigure}
+%%%   \begin{subfigure}[b]{0.45\linewidth}
+%%%     \centering
+%%% \begin{lstlisting}
+%%% for x in R.x $\cap$ T.x:
+%%%   R = R[x]; T = T[x]
+%%%   for y in R.y $\cap$ S.y:
+%%%     S = S[y]
+%%%     for z in S.z $\cap$ T.z:
+%%%       output(x, y, z)
+%%% \end{lstlisting}
+%%%     \caption{\GJ.}
+%%%     \label{fig:back-gj}
+%%%   \end{subfigure}
+%%%   \Description[TODO]{TODO}
+%%%   \caption{Execution of binary join and \GJ for $Q_\triangle$.
+%%%   The notation \lstinline|S[y]?| performs a lookup on $S$ with the key $y$,
+%%%    and continues to the enclosing loop if the lookup fails.  }
+%%% \end{figure}
+%%% 
+%%% \begin{example}
+%%%   Given the query $Q_\triangle$ and the plan $[R, S, T]$,
+%%%     we first build a hash table for $S$ keyed on $y$,
+%%%     where each $y$ maps to a vector of $z$ values.
+%%%     Then we build a hash table for $T$ keyed on $x$ and $z$,
+%%%     each mapped to a vector of empty tuples\footnote{
+%%%       We store the vectors of empty tuples to enforce bag semantics.
+%%%       An efficient implementation may simply store a count of duplicates.
+%%%     }.
+%%%   The nested loops in Figure~\ref{fig:back-binary-join} show the execution 
+%%%     of binary join.
+%%%   For each tuple $t = (x, y)$ in $R$, 
+%%%     we first probe into the hash table for $S$ using $y$
+%%%     to get a vector of $z$ values.
+%%%   We then loop over each $z$ 
+%%%     and probe into the hash table for $T$ using $x$ and $z$. 
+%%%   Each successful probe will return a vector of empty tuples, 
+%%%     and we output the tuple $(x, y, z)$ for each empty tuple.
+%%% \end{example}
+%%% 
+%%% \subsection{\GJ}
+%%% This section reviews basics of \GJ,
+%%%   including the hash trie data structure, 
+%%%   the \GJ plan, 
+%%%   and the execution of \GJ.
+%%% 
+%%% The data structure \GJ uses is called the \emph{hash trie}, 
+%%%   defined recursively as follows:
+%%% 
+%%% \begin{definition}
+%%%   A \emph{hash trie} is either a leaf, 
+%%%     or a hash map where each key is a single value 
+%%%       and every key is mapped to a hash trie.
+%%% \end{definition}
+%%% 
+%%% A hash trie can be seen as a tree, where 
+%%%   the concepts of \emph{parent}, and \emph{child}
+%%%   are defined in the usual way.
+%%% 
+%%% \begin{definition}
+%%%  A trie is a \emph{root} if it has no parents;
+%%%   any trie that is not a root is a \emph{subtrie}.
+%%% The \emph{level} of a subtrie is its distance from the root,
+%%%   i.e., the root is at level 0.
+%%% \end{definition}
+%%% 
+%%% A trie can represent a relation, 
+%%%   where the $i$-th level of the trie 
+%%%   stores values of the $i$-th attribute of the relation.
+%%% All the values along each path from the root to a leaf form 
+%%%   a tuple in the relation.
+%%% 
+%%% Now we define the \GJ plan that specify how to execute a query with \GJ.
+%%% 
+%%% \begin{definition}
+%%%   Fix a query $Q$.
+%%%   A \GJ plan for $Q$ is a total ordering of the variables in $Q$.
+%%% \end{definition}
+%%% 
+%%% A \GJ plan is executed by a series of nested loops, 
+%%%   where each loop level processes one variable 
+%%%   by \emph{intersecting} multiple tries on that variable.
+%%% We omit a formal definition for brevity, 
+%%%   and instead provide an informal example.
+%%% 
+%%% \begin{example}
+%%%   Consider the query $Q_\triangle$ and the \GJ plan $[x, y, z]$.
+%%%   We first build a hash trie each for $R$, $S$, and $T$.
+%%%   Each trie has three levels including the leaf.
+%%%   The first two levels for $R$, $S$, and $T$ are 
+%%%     keyed on $(x,y)$, $(y,z)$, and $(x,z)$, respectively.
+%%%   The execution of \GJ over these tries is shown in Figure~\ref{fig:back-gj}.
+%%%   The first loop intersects the tries for $R$ and $T$ on their keys.
+%%%   For each value $x$ in the intersection, 
+%%%     we retrieve the subtries mapped to $x$ from $R$ and $T$ respectively.
+%%%   The second loop intersects the subtrie for $R$ with the trie for $S$ on $y$,
+%%%     and retrieves the subtrie mapped to $y$ from $S$.
+%%%   Finally, the innermost loop intersects the subtries for $S$ and $T$ on $z$,
+%%%     and outputs the tuple $(x, y, z)$ for each value $z$ in the intersection.
+%%% \end{example}
+%%% 
+%%% The original \GJ algorithm was specified for set semantics, 
+%%%   however~\cite{DBLP:journals/pvldb/FreitagBSKN20} showed
+%%%   the algorithm can be easily extended to bag semantics.
+%%% We therefore ignore the difference between the two semantics 
+%%%   for the rest of this paper.
+%%% 
+%%% \subsection{Binary Join v.s. \GJ}
+%%% Binary join and \GJ each have their own advantages and disadvantages.
+%%% \GJ became popular because of its asymptotic performance guarantee:
+%%%   \citet{DBLP:journals/sigmod/NgoRR13} proved the algorithm is 
+%%%   \emph{worst-case optimal}, in the sense that 
+%%%   its run time is bounded by the worst-case output size.
+%%% For example, if each of the three relations in $Q_\triangle$ has $n$ tuples,
+%%%   there can be at most $n^{3/2}$ tuples in the output, 
+%%%   and \GJ runs in $O(n^{3/2})$ time.
+%%% In contrast, a binary join plan can take $\Omega(n^2)$ time 
+%%%   to compute the same query.
+%%% On the other hand, binary join has been a staple of database systems for decades. 
+%%% The hash table data structure is simpler than hash tries and is cheaper to build.
+%%% Techniques like vectorized execution and column-oriented layout have also 
+%%%   made binary join practically efficient,
+%%%   but these optimizations have not been adapted for \GJ.
+%%% 
