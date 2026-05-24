@@ -26,6 +26,10 @@ pub(crate) mod storage_v5;
 pub(crate) mod tuple;
 
 pub use error::{Error, Result};
+pub use query::trace::{
+    ExecutionModePublic, ProfiledQueryResult, QueryExecutionOptions, QueryTrace,
+    QueryTraceMetadata, TraceMode, TracePhase,
+};
 
 #[cfg(test)]
 #[global_allocator]
@@ -257,6 +261,17 @@ impl ReadTxn<'_> {
         inputs: &InputBindings,
     ) -> Result<QueryResultSet> {
         query::executor::execute_query(self, schema, query, inputs)
+    }
+
+    /// Executes a query and returns the result with profiling diagnostics.
+    pub fn execute_query_profiled(
+        &self,
+        schema: &StorageSchema,
+        query: &TypedQuery,
+        inputs: &InputBindings,
+        options: QueryExecutionOptions,
+    ) -> Result<ProfiledQueryResult> {
+        query::executor::execute_query_profiled(self, schema, query, inputs, options)
     }
 
     /// Relation counts are unavailable until PRD 08 rebuilds v5 reads.

@@ -7,7 +7,7 @@ use crate::diagnostics::{
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum TraceMode {
+pub enum TraceMode {
     #[default]
     Off,
     Summary,
@@ -15,34 +15,70 @@ pub(crate) enum TraceMode {
 }
 
 impl TraceMode {
-    pub(crate) fn is_enabled(self) -> bool {
+    pub fn is_enabled(self) -> bool {
         !matches!(self, TraceMode::Off)
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ExecutionModePublic {
+    #[default]
+    Scalar,
+    Vectorized {
+        batch_size: usize,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QueryExecutionOptions {
+    pub tracing: TraceMode,
+    pub allocation_tracking: bool,
+    pub execution_mode: ExecutionModePublic,
+}
+
+impl Default for QueryExecutionOptions {
+    fn default() -> Self {
+        Self {
+            tracing: TraceMode::Off,
+            allocation_tracking: false,
+            execution_mode: ExecutionModePublic::Scalar,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
-pub(crate) struct QueryTrace {
-    pub(crate) spans: Vec<TraceSpan>,
-    pub(crate) counters: TraceCounters,
+pub struct ProfiledQueryResult {
+    pub result: crate::QueryResultSet,
+    pub trace: QueryTrace,
+}
+
+#[derive(Clone, Debug)]
+pub struct QueryTrace {
+    pub spans: Vec<TraceSpan>,
+    pub counters: TraceCounters,
+    pub metadata: QueryTraceMetadata,
     mode: TraceMode,
+    #[allow(dead_code)]
     origin: Instant,
     next_id: u64,
+    #[allow(dead_code)]
     stack: Vec<ActiveSpan>,
 }
 
 impl QueryTrace {
-    pub(crate) fn disabled() -> Self {
+    pub fn disabled() -> Self {
         Self::new(TraceMode::Off)
     }
 
-    pub(crate) fn enabled() -> Self {
+    pub fn enabled() -> Self {
         Self::new(TraceMode::Full)
     }
 
-    pub(crate) fn new(mode: TraceMode) -> Self {
+    pub fn new(mode: TraceMode) -> Self {
         Self {
             spans: Vec::new(),
             counters: TraceCounters::default(),
+            metadata: QueryTraceMetadata::default(),
             mode,
             origin: Instant::now(),
             next_id: 0,
@@ -50,7 +86,7 @@ impl QueryTrace {
         }
     }
 
-    pub(crate) fn is_enabled(&self) -> bool {
+    pub fn is_enabled(&self) -> bool {
         self.mode.is_enabled()
     }
 
@@ -108,23 +144,32 @@ impl QueryTrace {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QueryTraceMetadata {
+    pub selected_plan_family: String,
+    pub node_count: usize,
+    pub cover_policy: String,
+    pub execution_mode: String,
+    pub output_mode: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TraceSpanId(u64);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TraceSpan {
-    pub(crate) id: u64,
-    pub(crate) parent_id: Option<u64>,
-    pub(crate) phase: TracePhase,
-    pub(crate) label: String,
-    pub(crate) start_nanos: u128,
-    pub(crate) elapsed_nanos: u128,
-    pub(crate) allocs: AllocationDelta,
-    pub(crate) counters: TraceCounters,
+pub struct TraceSpan {
+    pub id: u64,
+    pub parent_id: Option<u64>,
+    pub phase: TracePhase,
+    pub label: String,
+    pub start_nanos: u128,
+    pub elapsed_nanos: u128,
+    pub allocs: AllocationDelta,
+    pub counters: TraceCounters,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TracePhase {
+pub enum TracePhase {
     Normalize,
     PlanSelect,
     PlannerStats,
@@ -145,36 +190,36 @@ pub(crate) enum TracePhase {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct TraceCounters {
-    pub(crate) base_image_cache_hits: u64,
-    pub(crate) base_image_cache_misses: u64,
-    pub(crate) live_rows_scanned: u64,
-    pub(crate) column_values_loaded: u64,
-    pub(crate) loaded_bytes: u64,
-    pub(crate) source_filters_encoded: u64,
-    pub(crate) source_filter_false_decisions: u64,
-    pub(crate) source_filter_rows_tested: u64,
-    pub(crate) source_filter_survivors: u64,
-    pub(crate) colt_nodes_created: u64,
-    pub(crate) colt_nodes_forced: u64,
-    pub(crate) colt_offsets_scanned: u64,
-    pub(crate) colt_map_entries_built: u64,
-    pub(crate) tuples_yielded: u64,
-    pub(crate) batches_yielded: u64,
-    pub(crate) cover_choices: u64,
-    pub(crate) probe_calls: u64,
-    pub(crate) probe_misses: u64,
-    pub(crate) recursive_node_entries: u64,
-    pub(crate) max_recursion_depth: u64,
-    pub(crate) binding_copies: u64,
-    pub(crate) source_frame_changes: u64,
-    pub(crate) sink_consumes: u64,
-    pub(crate) projection_duplicates_suppressed: u64,
-    pub(crate) decoded_values: u64,
+pub struct TraceCounters {
+    pub base_image_cache_hits: u64,
+    pub base_image_cache_misses: u64,
+    pub live_rows_scanned: u64,
+    pub column_values_loaded: u64,
+    pub loaded_bytes: u64,
+    pub source_filters_encoded: u64,
+    pub source_filter_false_decisions: u64,
+    pub source_filter_rows_tested: u64,
+    pub source_filter_survivors: u64,
+    pub colt_nodes_created: u64,
+    pub colt_nodes_forced: u64,
+    pub colt_offsets_scanned: u64,
+    pub colt_map_entries_built: u64,
+    pub tuples_yielded: u64,
+    pub batches_yielded: u64,
+    pub cover_choices: u64,
+    pub probe_calls: u64,
+    pub probe_misses: u64,
+    pub recursive_node_entries: u64,
+    pub max_recursion_depth: u64,
+    pub binding_copies: u64,
+    pub source_frame_changes: u64,
+    pub sink_consumes: u64,
+    pub projection_duplicates_suppressed: u64,
+    pub decoded_values: u64,
 }
 
 impl TraceCounters {
-    pub(crate) fn merge(&mut self, other: &Self) {
+    pub fn merge(&mut self, other: &Self) {
         self.base_image_cache_hits += other.base_image_cache_hits;
         self.base_image_cache_misses += other.base_image_cache_misses;
         self.live_rows_scanned += other.live_rows_scanned;

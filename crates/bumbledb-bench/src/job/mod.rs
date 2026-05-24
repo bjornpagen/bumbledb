@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use bumbledb_lmdb::diagnostics::{allocation_delta, allocation_snapshot};
-use bumbledb_lmdb::{Environment, InputBindings, StorageSchema};
+use bumbledb_lmdb::{Environment, InputBindings, QueryExecutionOptions, StorageSchema};
 
 use crate::cli::Config;
 use crate::report::{BenchmarkReport, fingerprint_rows};
@@ -72,9 +72,18 @@ pub(crate) fn run_job(config: &Config) -> BenchResult<Vec<BenchmarkReport>> {
             let sqlite_elapsed_nanos = sqlite_start.elapsed().as_nanos();
             let start = Instant::now();
             let alloc_start = allocation_snapshot();
-            let result = env.read(|txn| {
-                txn.execute_query(&bench_schema, &query.query, &InputBindings::new())
+            let profiled = env.read(|txn| {
+                txn.execute_query_profiled(
+                    &bench_schema,
+                    &query.query,
+                    &InputBindings::new(),
+                    QueryExecutionOptions {
+                        allocation_tracking: config.alloc_tracking,
+                        ..QueryExecutionOptions::default()
+                    },
+                )
             })?;
+            let result = profiled.result;
             let alloc_delta = allocation_delta(alloc_start, allocation_snapshot());
             let elapsed_nanos = start.elapsed().as_nanos();
             if result.facts != expected {

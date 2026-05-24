@@ -1,5 +1,6 @@
 use bumbledb_core::query_ir::TypedQuery;
 
+use crate::diagnostics::set_allocation_tracking_enabled;
 use crate::query::cover::{CoverPolicy, ExecutionMode, ExecutionStats};
 use crate::query::free_join::{FjPlan, ValidatedFjPlan};
 use crate::query::model::NormalizedQuery;
@@ -12,6 +13,10 @@ use crate::query::sink::CountingSink;
 use crate::query::sink::ProjectionSink;
 #[cfg(test)]
 use crate::query::sink::{FactorizedProjectionSink, OutputMode, OutputStats};
+use crate::query::trace::{
+    ExecutionModePublic, ProfiledQueryResult, QueryExecutionOptions, QueryTrace,
+    QueryTraceMetadata, TraceCounters, TracePhase,
+};
 use crate::{Error, InputBindings, QueryResultSet, ReadTxn, Result, StorageSchema};
 
 pub(crate) fn execute_query(
@@ -20,11 +25,47 @@ pub(crate) fn execute_query(
     query: &TypedQuery,
     inputs: &InputBindings,
 ) -> Result<QueryResultSet> {
+    Ok(
+        execute_query_profiled(txn, schema, query, inputs, QueryExecutionOptions::default())?
+            .result,
+    )
+}
+
+pub(crate) fn execute_query_profiled(
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    query: &TypedQuery,
+    inputs: &InputBindings,
+    options: QueryExecutionOptions,
+) -> Result<ProfiledQueryResult> {
+    set_allocation_tracking_enabled(options.allocation_tracking);
+    let mut trace = QueryTrace::new(options.tracing);
+
+    let normalize_span = trace.start_span(TracePhase::Normalize, "normalize query");
     let normalized = normalize_query(schema.descriptor(), query)?;
     validate_supported(&normalized, inputs)?;
-    let plan = selected_plan(txn, schema, &normalized, PlanMode::Default)?;
+    if let Some(span) = normalize_span {
+        trace.finish_span(span, TraceCounters::default());
+    }
+
+    let plan_span = trace.start_span(TracePhase::PlanSelect, "select Free Join plan");
+    let selection = select_plan(txn, schema, &normalized, PlanMode::Default)?;
+    let family = selection.chosen.family;
+    let plan = validate_plan(&selection.chosen.plan, &normalized)?;
+    trace.metadata = QueryTraceMetadata {
+        selected_plan_family: format!("{family:?}"),
+        node_count: plan.nodes.len(),
+        cover_policy: "DynamicMinKeys".to_owned(),
+        execution_mode: execution_mode_label(options.execution_mode),
+        output_mode: "Materialized".to_owned(),
+    };
+    if let Some(span) = plan_span {
+        trace.finish_span(span, TraceCounters::default());
+    }
+
     let mut sink = ProjectionSink::new(txn);
     let mut stats = ExecutionStats::default();
+    let execution_span = trace.start_span(TracePhase::ExecuteNode, "execute Free Join plan");
     execute_validated_plan(
         txn,
         schema,
@@ -32,12 +73,21 @@ pub(crate) fn execute_query(
         &plan,
         inputs,
         PredicateMode::Pushdown,
-        ExecutionMode::Scalar,
+        execution_mode_from_public(options.execution_mode),
         CoverPolicy::DynamicMinKeys,
         &mut stats,
         &mut sink,
     )?;
-    sink.finish(&normalized)
+    if let Some(span) = execution_span {
+        trace.finish_span(span, TraceCounters::default());
+    }
+
+    let sink_span = trace.start_span(TracePhase::SinkFinish, "finish projection sink");
+    let result = sink.finish(&normalized)?;
+    if let Some(span) = sink_span {
+        trace.finish_span(span, TraceCounters::default());
+    }
+    Ok(ProfiledQueryResult { result, trace })
 }
 
 #[cfg(test)]
@@ -295,6 +345,7 @@ fn validate_plan(plan: &FjPlan, query: &NormalizedQuery) -> Result<ValidatedFjPl
         .map_err(|error| Error::invalid_query(error.to_string()))
 }
 
+#[cfg(test)]
 fn selected_plan(
     txn: &ReadTxn<'_>,
     schema: &StorageSchema,
@@ -303,6 +354,22 @@ fn selected_plan(
 ) -> Result<ValidatedFjPlan> {
     let plan = select_plan(txn, schema, query, mode)?.chosen.plan;
     validate_plan(&plan, query)
+}
+
+fn execution_mode_from_public(mode: ExecutionModePublic) -> ExecutionMode {
+    match mode {
+        ExecutionModePublic::Scalar => ExecutionMode::Scalar,
+        ExecutionModePublic::Vectorized { batch_size } => ExecutionMode::Vectorized { batch_size },
+    }
+}
+
+fn execution_mode_label(mode: ExecutionModePublic) -> String {
+    match mode {
+        ExecutionModePublic::Scalar => "Scalar".to_owned(),
+        ExecutionModePublic::Vectorized { batch_size } => {
+            format!("Vectorized(batch_size={batch_size})")
+        }
+    }
 }
 
 fn validate_supported(query: &NormalizedQuery, inputs: &InputBindings) -> Result<()> {
@@ -320,6 +387,10 @@ fn validate_supported(query: &NormalizedQuery, inputs: &InputBindings) -> Result
 #[cfg(test)]
 #[path = "executor_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "profiled_tests.rs"]
+mod profiled_tests;
 
 #[cfg(test)]
 #[path = "vectorized_tests.rs"]

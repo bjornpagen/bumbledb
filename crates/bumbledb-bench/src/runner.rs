@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use std::fmt;
 use std::time::Instant;
 
@@ -5,8 +7,8 @@ use bumbledb_core::query_ir::TypedQuery;
 use bumbledb_lmdb::diagnostics::{
     allocation_delta, allocation_snapshot, set_allocation_tracking_enabled,
 };
-use bumbledb_lmdb::{Fact, QueryResultSet, Value};
-use bumbledb_test_support::{clover_query, env_and_schema, execute, insert, pair, rows};
+use bumbledb_lmdb::{Fact, InputBindings, QueryExecutionOptions, QueryResultSet, Value};
+use bumbledb_test_support::{clover_query, env_and_schema, insert, pair, rows};
 
 use crate::cli::{Config, OutputFormat};
 use crate::lint::validate_select_distinct;
@@ -83,7 +85,18 @@ fn run_once(dataset: &Dataset, config: &Config) -> BenchResult<BenchmarkReport> 
     insert(&env, &schema, dataset.facts.clone())?;
     let start = Instant::now();
     let alloc_start = allocation_snapshot();
-    let result = execute(&env, &schema, &dataset.query)?;
+    let profiled = env.read(|txn| {
+        txn.execute_query_profiled(
+            &schema,
+            &dataset.query,
+            &InputBindings::new(),
+            QueryExecutionOptions {
+                allocation_tracking: config.alloc_tracking,
+                ..QueryExecutionOptions::default()
+            },
+        )
+    })?;
+    let result = profiled.result;
     let alloc_delta = allocation_delta(alloc_start, allocation_snapshot());
     let elapsed_nanos = start.elapsed().as_nanos();
     compare_exact(&result, &dataset.sqlite_distinct)?;
@@ -180,7 +193,8 @@ mod tests {
         let dataset = dataset_by_name("clover_skew")?;
         let (env, schema) = env_and_schema("bench-equal-count-different-value")?;
         insert(&env, &schema, dataset.facts)?;
-        let result = execute(&env, &schema, &dataset.query)?;
+        let result =
+            env.read(|txn| txn.execute_query(&schema, &dataset.query, &InputBindings::new()))?;
         let wrong_same_count = vec![vec![
             Value::U64(999),
             Value::U64(10),

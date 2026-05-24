@@ -125,7 +125,7 @@ impl QueryPlan {
             "base-image cache: snapshot-local keyed by storage tx and schema fingerprint"
                 .to_owned(),
         );
-        out.push("timings: not collected; allocations: not collected".to_owned());
+        out.push("timings and allocations: available through profiled execution traces".to_owned());
         out.push("formal Free Join plan after factorization/selection:".to_owned());
         for node in &self.validated.nodes {
             out.push(format!(
