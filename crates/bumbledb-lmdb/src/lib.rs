@@ -17,6 +17,7 @@ use heed::types::Bytes;
 use heed::{Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
 pub(crate) mod base_image;
+pub(crate) mod colt;
 mod error;
 pub(crate) mod query;
 pub(crate) mod storage_format;
