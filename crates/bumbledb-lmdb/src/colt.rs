@@ -16,6 +16,8 @@ use crate::tuple::{
     EncodedTuple, EncodedTupleRef, GhtSource, TupleBatch, TupleCursor, TupleSchema,
 };
 
+#[path = "colt/arena.rs"]
+mod arena;
 #[path = "colt/ght.rs"]
 mod ght;
 
