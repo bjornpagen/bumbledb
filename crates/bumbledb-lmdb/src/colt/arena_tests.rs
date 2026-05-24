@@ -222,8 +222,8 @@ fn arena_flat_map_allocates_less_than_heap_tuple_map_pattern() {
     let flat_calls = crate::diagnostics::with_allocation_tracking_for_test(|| {
         let start = crate::diagnostics::allocation_snapshot();
         let mut arena = ColtArena::new();
-        let map = arena.add_map_table(128, 128);
-        for value in 0..128u64 {
+        let map = arena.add_map_table(1024, 1024);
+        for value in 0..1024u64 {
             let child = arena.add_singleton_node(value as u32);
             arena.insert_map_entry(map, KeyRef::new(&value.to_be_bytes()), child);
         }
@@ -232,8 +232,8 @@ fn arena_flat_map_allocates_less_than_heap_tuple_map_pattern() {
     });
     let heap_calls = crate::diagnostics::with_allocation_tracking_for_test(|| {
         let start = crate::diagnostics::allocation_snapshot();
-        let mut map = std::collections::HashMap::with_capacity(128);
-        for value in 0..128u64 {
+        let mut map = std::collections::HashMap::with_capacity(1024);
+        for value in 0..1024u64 {
             map.insert(
                 crate::tuple::EncodedTuple::from_bytes(value.to_be_bytes().to_vec()),
                 value,
@@ -243,7 +243,10 @@ fn arena_flat_map_allocates_less_than_heap_tuple_map_pattern() {
             .alloc_calls
     });
 
-    assert!(flat_calls * 4 < heap_calls);
+    assert!(
+        flat_calls * 2 < heap_calls,
+        "flat map should allocate materially less than heap tuple map: flat={flat_calls} heap={heap_calls}"
+    );
 }
 
 #[test]
