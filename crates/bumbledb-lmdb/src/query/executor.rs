@@ -1,11 +1,10 @@
 use bumbledb_core::query_ir::TypedQuery;
 
-use crate::query::binary2fj::{binary2fj, factor_plan};
 use crate::query::cover::{CoverPolicy, ExecutionMode, ExecutionStats};
 use crate::query::free_join::{FjPlan, ValidatedFjPlan};
 use crate::query::model::NormalizedQuery;
 use crate::query::normalize::normalize_query;
-use crate::query::planner::deterministic_binary_plan;
+use crate::query::planner::{PlanMode, select_plan};
 use crate::query::predicate::PredicateMode;
 use crate::query::run::execute_validated_plan;
 #[cfg(test)]
@@ -21,7 +20,7 @@ pub(crate) fn execute_query(
 ) -> Result<QueryResultSet> {
     let normalized = normalize_query(schema.descriptor(), query)?;
     validate_supported(&normalized, inputs)?;
-    let plan = default_plan(&normalized)?;
+    let plan = selected_plan(txn, schema, &normalized, PlanMode::Default)?;
     let mut sink = ProjectionSink::new(txn);
     let mut stats = ExecutionStats::default();
     execute_validated_plan(
@@ -93,7 +92,7 @@ pub(crate) fn execute_query_with_mode_for_test(
 ) -> Result<(QueryResultSet, ExecutionStats)> {
     let normalized = normalize_query(schema.descriptor(), query)?;
     validate_supported(&normalized, &InputBindings::new())?;
-    let plan = default_plan(&normalized)?;
+    let plan = selected_plan(txn, schema, &normalized, PlanMode::Default)?;
     let mut sink = ProjectionSink::new(txn);
     let mut stats = ExecutionStats::default();
     execute_validated_plan(
@@ -141,7 +140,7 @@ pub(crate) fn execute_query_with_predicate_mode_for_test(
 ) -> Result<(QueryResultSet, ExecutionStats)> {
     let normalized = normalize_query(schema.descriptor(), query)?;
     validate_supported(&normalized, inputs)?;
-    let plan = default_plan(&normalized)?;
+    let plan = selected_plan(txn, schema, &normalized, PlanMode::Default)?;
     let mut sink = ProjectionSink::new(txn);
     let mut stats = ExecutionStats::default();
     execute_validated_plan(
@@ -197,7 +196,7 @@ pub(crate) fn count_bindings_for_test(
 ) -> Result<usize> {
     let normalized = normalize_query(schema.descriptor(), query)?;
     validate_supported(&normalized, &InputBindings::new())?;
-    let plan = default_plan(&normalized)?;
+    let plan = selected_plan(txn, schema, &normalized, PlanMode::Default)?;
     let mut sink = CountingSink::default();
     let mut stats = ExecutionStats::default();
     execute_validated_plan(
@@ -215,16 +214,46 @@ pub(crate) fn count_bindings_for_test(
     Ok(sink.count)
 }
 
-fn default_plan(query: &NormalizedQuery) -> Result<ValidatedFjPlan> {
-    let binary = deterministic_binary_plan(query).map_err(invalid_plan)?;
-    binary.validate(query).map_err(invalid_plan)?;
-    let fj = binary2fj(query, &binary).map_err(invalid_plan)?;
-    let (factored, _trace) = factor_plan(query, &fj).map_err(invalid_plan)?;
-    validate_plan(&factored, query)
+#[cfg(test)]
+pub(crate) fn execute_query_with_plan_mode_for_test(
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    query: &TypedQuery,
+    plan_mode: PlanMode,
+) -> Result<QueryResultSet> {
+    let normalized = normalize_query(schema.descriptor(), query)?;
+    validate_supported(&normalized, &InputBindings::new())?;
+    let plan = selected_plan(txn, schema, &normalized, plan_mode)?;
+    let mut sink = ProjectionSink::new(txn);
+    let mut stats = ExecutionStats::default();
+    execute_validated_plan(
+        txn,
+        schema,
+        &normalized,
+        &plan,
+        &InputBindings::new(),
+        PredicateMode::Pushdown,
+        ExecutionMode::Scalar,
+        CoverPolicy::DynamicMinKeys,
+        &mut stats,
+        &mut sink,
+    )?;
+    sink.finish(&normalized)
 }
 
 fn validate_plan(plan: &FjPlan, query: &NormalizedQuery) -> Result<ValidatedFjPlan> {
-    plan.validate(query).map_err(invalid_plan)
+    plan.validate(query)
+        .map_err(|error| Error::invalid_query(error.to_string()))
+}
+
+fn selected_plan(
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    query: &NormalizedQuery,
+    mode: PlanMode,
+) -> Result<ValidatedFjPlan> {
+    let plan = select_plan(txn, schema, query, mode)?.chosen.plan;
+    validate_plan(&plan, query)
 }
 
 fn validate_supported(query: &NormalizedQuery, inputs: &InputBindings) -> Result<()> {
@@ -237,10 +266,6 @@ fn validate_supported(query: &NormalizedQuery, inputs: &InputBindings) -> Result
         }
     }
     Ok(())
-}
-
-fn invalid_plan(error: impl std::fmt::Display) -> Error {
-    Error::invalid_query(error.to_string())
 }
 
 #[cfg(test)]

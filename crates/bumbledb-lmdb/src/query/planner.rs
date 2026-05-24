@@ -229,6 +229,10 @@ pub(crate) fn deterministic_binary_plan(
     Ok(plan)
 }
 
+#[path = "planner_select.rs"]
+mod planner_select;
+pub(crate) use planner_select::*;
+
 #[cfg(test)]
 #[path = "planner_tests.rs"]
 mod tests;
