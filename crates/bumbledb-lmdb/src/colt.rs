@@ -13,9 +13,11 @@ pub(crate) use crate::colt_schema::tuple_schemas_for_atom;
 use crate::query::model::AtomOccurrenceId;
 use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
 use crate::tuple::{
-    EncodedTuple, EncodedTupleRef, GhtSource, KeyCountEstimate, TupleBatch, TupleCursor,
-    TupleSchema,
+    EncodedTuple, EncodedTupleRef, GhtSource, TupleBatch, TupleCursor, TupleSchema,
 };
+
+#[path = "colt/ght.rs"]
+mod ght;
 
 #[derive(Clone)]
 pub(crate) struct ColtSource {
@@ -23,7 +25,7 @@ pub(crate) struct ColtSource {
     vars: Rc<Vec<usize>>,
 }
 
-struct ColtNode {
+pub(super) struct ColtNode {
     atom: AtomOccurrenceId,
     base: Arc<RelationBaseImage>,
     schemas: Rc<Vec<TupleSchema>>,
@@ -32,7 +34,8 @@ struct ColtNode {
     counters: Rc<RefCell<ColtCounters>>,
 }
 
-enum ColtData {
+pub(super) enum ColtData {
+    Range(usize),
     Offsets(Vec<usize>),
     Offset(usize),
     Map(HashMap<EncodedTuple, Rc<RefCell<ColtNode>>>),
@@ -98,13 +101,19 @@ impl ColtSource {
         let schemas = Rc::new(schemas);
         let vars = Rc::new(schemas.first().map_or_else(Vec::new, TupleSchema::vars));
         let source_filter_rows_tested = base.row_handles.len() as u64;
-        let offsets = (0..base.row_handles.len())
-            .filter(|offset| {
-                filters
-                    .iter()
-                    .all(|filter| source_filter_matches(&base, *offset, filter))
-            })
-            .collect();
+        let data = if filters.is_empty() {
+            ColtData::Range(base.row_handles.len())
+        } else {
+            ColtData::Offsets(
+                (0..base.row_handles.len())
+                    .filter(|offset| {
+                        filters
+                            .iter()
+                            .all(|filter| source_filter_matches(&base, *offset, filter))
+                    })
+                    .collect(),
+            )
+        };
         let source = Self {
             vars: Rc::clone(&vars),
             node: Rc::new(RefCell::new(ColtNode {
@@ -112,7 +121,7 @@ impl ColtSource {
                 base,
                 schemas,
                 vars,
-                data: ColtData::Offsets(offsets),
+                data,
                 counters,
             })),
         };
@@ -227,12 +236,13 @@ impl ColtSource {
     pub(crate) fn is_vector(&self) -> bool {
         matches!(
             self.node.borrow().data,
-            ColtData::Offsets(_) | ColtData::Offset(_)
+            ColtData::Range(_) | ColtData::Offsets(_) | ColtData::Offset(_)
         )
     }
 
     pub(crate) fn offset_len(&self) -> usize {
         match &self.node.borrow().data {
+            ColtData::Range(len) => *len,
             ColtData::Offsets(offsets) => offsets.len(),
             ColtData::Offset(_) => 1,
             ColtData::Map(map) => map.len(),
@@ -253,16 +263,23 @@ impl ColtSource {
         }
         let mut node = self.node.borrow_mut();
         let data = std::mem::replace(&mut node.data, ColtData::Offsets(Vec::new()));
-        let offsets = match data {
-            ColtData::Offsets(offsets) => offsets,
-            ColtData::Offset(offset) => vec![offset],
+        let offset_count = match &data {
+            ColtData::Range(len) => *len,
+            ColtData::Offsets(offsets) => offsets.len(),
+            ColtData::Offset(_) => 1,
+            ColtData::Map(_) => 0,
+        };
+        let offsets: Box<dyn Iterator<Item = usize>> = match data {
+            ColtData::Range(len) => Box::new(0..len),
+            ColtData::Offsets(offsets) => Box::new(offsets.into_iter()),
+            ColtData::Offset(offset) => Box::new(std::iter::once(offset)),
             ColtData::Map(map) => {
                 node.data = ColtData::Map(map);
                 return;
             }
         };
         let Some(schema) = node.schemas.first().cloned() else {
-            node.data = ColtData::Offsets(offsets);
+            node.data = ColtData::Offsets(Vec::new());
             return;
         };
         let child_schemas = Rc::new(node.schemas.iter().skip(1).cloned().collect::<Vec<_>>());
@@ -272,7 +289,7 @@ impl ColtSource {
                 .map_or_else(Vec::new, TupleSchema::vars),
         );
         let mut map: HashMap<EncodedTuple, Rc<RefCell<ColtNode>>> =
-            HashMap::with_capacity(offsets.len());
+            HashMap::with_capacity(offset_count);
         let mut key_bytes = Vec::with_capacity(schema.encoded_width());
         for offset in offsets {
             node.counters.borrow_mut().offsets_scanned += 1;
@@ -329,153 +346,6 @@ fn colt_counter_delta(before: ColtCounters, after: ColtCounters, tuples: usize) 
         probe_calls: after.get_calls.saturating_sub(before.get_calls) as u64,
         probe_misses: after.misses.saturating_sub(before.misses) as u64,
         ..TraceCounters::default()
-    }
-}
-
-impl GhtSource for ColtSource {
-    type Child<'a> = ColtSource;
-
-    fn atom(&self) -> Option<AtomOccurrenceId> {
-        Some(self.node.borrow().atom)
-    }
-
-    fn vars(&self) -> &[usize] {
-        self.vars.as_slice()
-    }
-
-    fn try_for_each_tuple<E, F>(&self, mut f: F) -> std::result::Result<(), E>
-    where
-        F: FnMut(EncodedTupleRef<'_>) -> std::result::Result<ControlFlow<()>, E>,
-    {
-        self.node.borrow().counters.borrow_mut().iter_calls += 1;
-        if let ColtData::Offsets(offsets) = &self.node.borrow().data
-            && self.node.borrow().schemas.len() == 1
-        {
-            let node = self.node.borrow();
-            let schema = &node.schemas[0];
-            let mut bytes = Vec::with_capacity(schema.encoded_width());
-            for offset in offsets {
-                if schema
-                    .write_tuple_from_base_offset(&node.base, *offset, &mut bytes)
-                    .is_ok()
-                    && f(EncodedTupleRef::new(&bytes))?.is_break()
-                {
-                    break;
-                }
-            }
-            return Ok(());
-        }
-        if let ColtData::Offset(offset) = &self.node.borrow().data
-            && self.node.borrow().schemas.len() == 1
-        {
-            let node = self.node.borrow();
-            let schema = &node.schemas[0];
-            let mut bytes = Vec::with_capacity(schema.encoded_width());
-            if schema
-                .write_tuple_from_base_offset(&node.base, *offset, &mut bytes)
-                .is_ok()
-            {
-                let _ = f(EncodedTupleRef::new(&bytes))?;
-            }
-            return Ok(());
-        }
-        self.force();
-        if let ColtData::Map(map) = &self.node.borrow().data {
-            for key in map.keys() {
-                if f(key.as_ref())?.is_break() {
-                    break;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn fill_batch(&self, cursor: &mut TupleCursor, batch_size: usize) -> TupleBatch {
-        let batch_size = batch_size.max(1);
-        self.node.borrow().counters.borrow_mut().iter_calls += 1;
-        if let ColtData::Offsets(offsets) = &self.node.borrow().data
-            && self.node.borrow().schemas.len() == 1
-        {
-            let node = self.node.borrow();
-            let schema = &node.schemas[0];
-            let mut tuples = Vec::with_capacity(batch_size.min(offsets.len()));
-            while cursor.position < offsets.len() && tuples.len() < batch_size {
-                let offset = offsets[cursor.position];
-                cursor.position += 1;
-                if let Ok(tuple) = schema.tuple_from_base_offset(&node.base, offset) {
-                    tuples.push(tuple);
-                }
-            }
-            return TupleBatch {
-                tuples,
-                exhausted: cursor.position >= offsets.len(),
-            };
-        }
-        if let ColtData::Offset(offset) = &self.node.borrow().data
-            && self.node.borrow().schemas.len() == 1
-        {
-            if cursor.position > 0 {
-                return TupleBatch {
-                    tuples: Vec::new(),
-                    exhausted: true,
-                };
-            }
-            let node = self.node.borrow();
-            let schema = &node.schemas[0];
-            let mut tuples = Vec::with_capacity(1);
-            if let Ok(tuple) = schema.tuple_from_base_offset(&node.base, *offset) {
-                tuples.push(tuple);
-            }
-            cursor.position = 1;
-            return TupleBatch {
-                tuples,
-                exhausted: true,
-            };
-        }
-        self.force();
-        if let ColtData::Map(map) = &self.node.borrow().data {
-            let mut tuples = Vec::with_capacity(batch_size.min(map.len()));
-            for key in map.keys().skip(cursor.position) {
-                if tuples.len() >= batch_size {
-                    break;
-                }
-                tuples.push(key.clone());
-            }
-            cursor.position += tuples.len();
-            return TupleBatch {
-                tuples,
-                exhausted: cursor.position >= map.len(),
-            };
-        }
-        TupleBatch {
-            tuples: Vec::new(),
-            exhausted: true,
-        }
-    }
-
-    fn get(&self, tuple: EncodedTupleRef<'_>) -> Option<Self::Child<'_>> {
-        self.node.borrow().counters.borrow_mut().get_calls += 1;
-        self.force();
-        let node = self.node.borrow();
-        let ColtData::Map(map) = &node.data else {
-            return None;
-        };
-        let child = map.get(tuple.bytes()).cloned();
-        if child.is_none() {
-            node.counters.borrow_mut().misses += 1;
-        }
-        child.map(|node| {
-            let vars = Rc::clone(&node.borrow().vars);
-            ColtSource { node, vars }
-        })
-    }
-
-    fn key_count(&self) -> KeyCountEstimate {
-        match &self.node.borrow().data {
-            ColtData::Map(map) => KeyCountEstimate::Exact(map.len()),
-            ColtData::Offsets(offsets) => KeyCountEstimate::Estimate(offsets.len()),
-            ColtData::Offset(_) => KeyCountEstimate::Estimate(1),
-        }
     }
 }
 
