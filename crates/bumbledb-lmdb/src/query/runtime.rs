@@ -175,7 +175,7 @@ pub(super) fn execute_node<S: BindingSink>(
         }
     };
     finish_node_span(trace, node_span, depth);
-    result
+    result.map(|_| ())
 }
 
 fn consume_terminal_binding<S: BindingSink>(
@@ -193,16 +193,17 @@ fn consume_terminal_binding<S: BindingSink>(
     let sink_span = trace.start_span(TracePhase::SinkConsume, "consume projection binding");
     let result = sink.consume(query, binding);
     if let Some(span) = sink_span {
+        let inserted = result.as_ref().is_ok_and(|stats| stats.inserted);
         trace.finish_span(
             span,
             TraceCounters {
                 sink_consumes: usize::from(result.is_ok()) as u64,
-                decoded_values: query.find.len() as u64,
+                projection_duplicates_suppressed: u64::from(result.is_ok() && !inserted),
                 ..TraceCounters::default()
             },
         );
     }
-    result
+    result.map(|_| ())
 }
 
 fn finish_node_span(

@@ -99,6 +99,45 @@ fn profiled_execution_rejects_malformed_query() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn profiled_projection_decodes_only_final_projected_cells() -> Result<()> {
+    let (env, schema) = env_and_schema("profiled-encoded-sink")?;
+    env.write(|txn| {
+        for fact in [
+            pair("R", 1, 10),
+            pair("R", 1, 11),
+            pair("S", 1, 20),
+            pair("S", 1, 21),
+        ] {
+            txn.insert(&schema, fact)?;
+        }
+        Ok::<_, crate::Error>(())
+    })?;
+    let query = typed_query(
+        &["x", "a", "b"],
+        &[0],
+        vec![
+            atom(0, "R", [(0, "left", 0), (1, "right", 1)]),
+            atom(1, "S", [(0, "left", 0), (1, "right", 2)]),
+        ],
+    );
+
+    let profiled = env.read(|txn| {
+        txn.execute_query_profiled(
+            &schema,
+            &query,
+            &InputBindings::new(),
+            QueryExecutionOptions::default(),
+        )
+    })?;
+
+    assert_eq!(profiled.result.facts, vec![vec![Value::U64(1)]]);
+    assert_eq!(profiled.trace.counters.sink_consumes, 4);
+    assert_eq!(profiled.trace.counters.projection_duplicates_suppressed, 3);
+    assert_eq!(profiled.trace.counters.decoded_values, 1);
+    Ok(())
+}
+
 fn env_and_schema(name: &str) -> Result<(Environment, StorageSchema)> {
     let id = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(

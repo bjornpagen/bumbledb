@@ -17,9 +17,11 @@ pub(crate) enum OutputMode {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct OutputStats {
     pub(crate) logical_facts_represented: usize,
+    pub(crate) encoded_facts_inserted: usize,
     pub(crate) materialized_facts: usize,
     pub(crate) duplicate_witnesses_suppressed: usize,
     pub(crate) expansions_avoided: usize,
+    pub(crate) decoded_values: usize,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -113,12 +115,17 @@ pub(super) struct BindingExtend {
 }
 
 pub(super) trait BindingSink {
-    fn consume(&mut self, query: &NormalizedQuery, binding: &Binding) -> Result<()>;
+    fn consume(&mut self, query: &NormalizedQuery, binding: &Binding) -> Result<SinkConsumeStats>;
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct SinkConsumeStats {
+    pub(super) inserted: bool,
 }
 
 pub(super) struct ProjectionSink<'txn, 'env> {
     txn: &'txn ReadTxn<'env>,
-    facts: BTreeSet<ResultFact>,
+    encoded_facts: BTreeSet<Vec<u8>>,
     stats: OutputStats,
 }
 
@@ -126,16 +133,13 @@ impl<'txn, 'env> ProjectionSink<'txn, 'env> {
     pub(super) fn new(txn: &'txn ReadTxn<'env>) -> Self {
         Self {
             txn,
-            facts: BTreeSet::new(),
+            encoded_facts: BTreeSet::new(),
             stats: OutputStats::default(),
         }
     }
 
     pub(super) fn finish(self, query: &NormalizedQuery) -> Result<QueryResultSet> {
-        Ok(QueryResultSet::new(
-            result_columns(query)?,
-            self.facts.into_iter().collect(),
-        ))
+        self.finish_with_stats(query).map(|(result, _stats)| result)
     }
 
     #[allow(dead_code)]
@@ -143,32 +147,29 @@ impl<'txn, 'env> ProjectionSink<'txn, 'env> {
         mut self,
         query: &NormalizedQuery,
     ) -> Result<(QueryResultSet, OutputStats)> {
-        self.stats.materialized_facts = self.facts.len();
+        self.stats.materialized_facts = self.encoded_facts.len();
         let columns = result_columns(query)?;
-        let facts = self.facts.into_iter().collect();
+        let facts = self
+            .encoded_facts
+            .iter()
+            .map(|fact| decode_encoded_projection(self.txn, query, fact))
+            .collect::<Result<Vec<_>>>()?;
+        self.stats.decoded_values = facts.len() * query.find.len();
         Ok((QueryResultSet::new(columns, facts), self.stats))
     }
 }
 
 impl BindingSink for ProjectionSink<'_, '_> {
-    fn consume(&mut self, query: &NormalizedQuery, binding: &Binding) -> Result<()> {
-        let mut fact = Vec::with_capacity(query.find.len());
-        for term in &query.find {
-            match term {
-                TypedFindTerm::Variable { variable } => {
-                    let value_type = &query.variables[*variable].value_type;
-                    let bytes = binding.value(*variable).ok_or_else(|| {
-                        Error::corrupt(format!("projection variable {variable} is unbound"))
-                    })?;
-                    fact.push(storage_v5::decode_value(self.txn, value_type, bytes)?);
-                }
-            }
-        }
+    fn consume(&mut self, query: &NormalizedQuery, binding: &Binding) -> Result<SinkConsumeStats> {
+        let encoded = encoded_projection(query, binding)?;
         self.stats.logical_facts_represented += 1;
-        if !self.facts.insert(fact) {
+        let inserted = self.encoded_facts.insert(encoded);
+        if inserted {
+            self.stats.encoded_facts_inserted += 1;
+        } else {
             self.stats.duplicate_witnesses_suppressed += 1;
         }
-        Ok(())
+        Ok(SinkConsumeStats { inserted })
     }
 }
 
@@ -199,20 +200,24 @@ impl<'txn, 'env> FactorizedProjectionSink<'txn, 'env> {
             .iter()
             .map(|fact| decode_encoded_projection(self.txn, query, fact))
             .collect::<Result<Vec<_>>>()?;
+        self.stats.decoded_values = facts.len() * query.find.len();
         let stats = self.stats;
         Ok((QueryResultSet::new(result_columns(query)?, facts), stats))
     }
 }
 
 impl BindingSink for FactorizedProjectionSink<'_, '_> {
-    fn consume(&mut self, query: &NormalizedQuery, binding: &Binding) -> Result<()> {
+    fn consume(&mut self, query: &NormalizedQuery, binding: &Binding) -> Result<SinkConsumeStats> {
         let encoded = encoded_projection(query, binding)?;
         self.stats.logical_facts_represented += 1;
-        if !self.encoded_facts.insert(encoded) {
+        let inserted = self.encoded_facts.insert(encoded);
+        if inserted {
+            self.stats.encoded_facts_inserted += 1;
+        } else {
             self.stats.duplicate_witnesses_suppressed += 1;
             self.stats.expansions_avoided += 1;
         }
-        Ok(())
+        Ok(SinkConsumeStats { inserted })
     }
 }
 
@@ -224,9 +229,13 @@ pub(super) struct CountingSink {
 
 #[cfg(test)]
 impl BindingSink for CountingSink {
-    fn consume(&mut self, _query: &NormalizedQuery, _binding: &Binding) -> Result<()> {
+    fn consume(
+        &mut self,
+        _query: &NormalizedQuery,
+        _binding: &Binding,
+    ) -> Result<SinkConsumeStats> {
         self.count += 1;
-        Ok(())
+        Ok(SinkConsumeStats { inserted: true })
     }
 }
 

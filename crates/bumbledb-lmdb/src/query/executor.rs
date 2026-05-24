@@ -91,7 +91,13 @@ pub(crate) fn execute_query_profiled(
     let sink_span = trace.start_span(TracePhase::SinkFinish, "finish projection sink");
     let result = sink.finish(&normalized)?;
     if let Some(span) = sink_span {
-        trace.finish_span(span, TraceCounters::default());
+        trace.finish_span(
+            span,
+            TraceCounters {
+                decoded_values: (result.facts.len() * result.columns.len()) as u64,
+                ..TraceCounters::default()
+            },
+        );
     }
     Ok(ProfiledQueryResult { result, trace })
 }

@@ -266,3 +266,21 @@ Trace evidence:
 - `frame_pushes`: 79.
 - `frame_pops`: 79.
 - `source_replacements`: 139.
+
+## PRD 13 Follow-Up
+
+Command:
+
+```bash
+cargo run --release -p bumbledb-bench --features query-tracing -- --preset job-sample --job-dir data/job --open-limit 100000 --query job_q09_voice_us_actor --format json --repeats 1 --warmup 1 --trace-output file --profile-query-label prd13_q09 --alloc on
+```
+
+Measured report after making the default projection sink deduplicate encoded projected facts before decoding:
+
+| query | bumbledb_ms | sqlite_ms | alloc_calls | allocated_bytes | result_rows |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `job_q09_voice_us_actor` | 38.069 | 4.956 | 352792 | 99901827 | 0 |
+
+Trace file: `data/traces/prd13_q09-38731-0.json`.
+
+Decode-count acceptance is covered by `profiled_projection_decodes_only_final_projected_cells`, because q09 returns zero rows and therefore has zero final projected cells to decode.
