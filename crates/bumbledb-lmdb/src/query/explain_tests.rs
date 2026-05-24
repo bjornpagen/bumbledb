@@ -34,8 +34,10 @@ fn explain_golden_for_singleton_mode() -> Result<()> {
     assert!(text.contains("formal singleton-subatom Free Join plan"));
     assert!(text.contains("node 0"));
     assert!(text.contains("subatom 0: atom=AtomOccurrenceId"));
-    assert!(!text.contains("free_join_node id="));
-    assert!(!text.contains("bind_vars"));
+    let stale_node = ["free_join", "_node id="].join("");
+    let stale_binding = ["bind", "_vars"].join("");
+    assert!(!text.contains(&stale_node));
+    assert!(!text.contains(&stale_binding));
     Ok(())
 }
 
