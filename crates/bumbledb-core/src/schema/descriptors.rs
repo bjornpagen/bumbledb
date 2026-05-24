@@ -182,7 +182,7 @@ impl FieldDescriptor {
         }
     }
 
-    /// Creates a DB-generated serial field.
+    /// Creates a database-generated monotonic nominal `u64` serial field.
     pub fn generated_serial(
         name: impl Into<String>,
         type_name: impl Into<String>,
@@ -224,7 +224,7 @@ pub enum ValueType {
     String,
     /// Interned bytes.
     Bytes,
-    /// Database-generated nominal `u64` sequence domain.
+    /// Database-generated monotonic nominal `u64` sequence domain.
     Serial {
         type_name: String,
         owning_relation: String,

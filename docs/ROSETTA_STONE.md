@@ -10,11 +10,31 @@ The target workload is BCNF/ledger-like data with many narrow relations and many
 
 Bumbledb competes on one battlefield: embedded, read-heavy, single-writer, multi-reader, typed relational query workloads over LMDB.
 
+## North Star
+
+The v5 rebuild north star is a small, exact, typed set engine whose execution model is strong enough to support a future Logica-like rule/query language without importing SQL, bag semantics, runtime DDL, nulls, floats, or graph-database product scope.
+
+Near-term, Bumbledb must execute positive typed conjunctive queries through formal Free Join over LMDB snapshots and return canonical duplicate-free result sets. Long-term, a textual rule language may lower into the same typed IR and execution substrate. That future language is a frontend, not a second engine, and it must adapt to Rosetta rather than redefine Bumbledb semantics.
+
+This means the Free Join rebuild should optimize for the correct internal seams now: typed normalized queries, formal plans, snapshot-local base images, GHT/COLT sources, and sink-based execution. Surface syntax, parser details, and public aggregate operators are intentionally later work.
+
+## Paper Adaptation Notes
+
+The Free Join paper is algorithmic authority for plan structure and execution mechanics, not product-scope authority for Bumbledb.
+
+- Paper SQL examples are illustrative only. They do not imply a Bumbledb SQL parser, SQL frontend, SQL null semantics, SQL bags, or SQL aggregation.
+- Paper bag-semantics references are rejected. Bumbledb base relations are sets, solution bindings are sets, and public projected outputs are sets.
+- DuckDB appears in the paper as a source of binary plans and as an evaluation baseline. Bumbledb must not depend on DuckDB or call DuckDB as planner/runtime infrastructure.
+- Paper aggregation references are deferred. Bumbledb may preserve private sink/fold seams for future aggregate consumers, but public aggregation is not part of the v5 Free Join PRD suite.
+- Paper main-memory assumptions are adapted to LMDB snapshots. Durable storage is LMDB-only; GHT, COLT, base images, and query images are private snapshot-local execution structures.
+- Upstream Logica syntax is a future frontend inspiration only. Bumbledb may later implement a Rosetta-compatible Logica-like lowering path, but it must not inherit upstream multiset, null, float, SQL dialect, or graph-database assumptions.
+
 ## Core Commitments
 
 - Language: Rust.
 - Storage backend: LMDB only.
 - Query surface: unstable Rust typed query IR and builder API.
+- Future language surface: optional Logica-like Rust/query frontend that lowers to typed IR; not SQL compatibility.
 - Runtime DDL: forbidden.
 - Server mode: forbidden.
 - Network protocol: forbidden.
@@ -158,11 +178,33 @@ Queries are built as typed IR with schema-aware builder support and execution-bo
 
 The logical solution of a query is a set of variable bindings. Projection returns the set of projected facts. Existential variables do not multiply projected output.
 
+Future Logica-like syntax must lower to this model. Upstream Logica concepts that rely on multiset predicate semantics, nulls, floats, dialect SQL expressions, arrays/lists as first-class persistent values, or graph-query product assumptions are not inherited automatically. They may be added only as Rosetta-compatible typed IR features.
+
+## Aggregation Readiness
+
+Public aggregation remains out of scope for the v5 Free Join PRD suite. No current public API, docs, benchmark claim, or query result contract may imply aggregate queries are supported.
+
+However, the Free Join executor must not be built as a black box whose only internal behavior is “materialize every full result row into a vector and post-process it.” That design would make a future Logica-like aggregate layer expensive to add. The executor must instead emit through a private typed sink/fold boundary. The first sink is the result-set projection sink; future sinks may implement aggregate folds after Rosetta explicitly admits public aggregation.
+
+The required internal seam is:
+
+- The executor can expose complete encoded variable bindings to a private consumer before final public materialization.
+- Projection is one consumer: it maps bindings to projected result facts and deduplicates them.
+- Factorized output is one consumer or consumer mode: it may avoid expanding Cartesian products when final `QueryResultSet` equality is preserved.
+- Future aggregation can be another consumer: it groups bindings and folds typed values without changing Free Join plan validity.
+- Sink/consumer hooks are private implementation details, not public query APIs.
+
+If aggregation is later added, its default semantics must be set-based over Bumbledb solution bindings, not SQL bags. Group keys are explicit non-aggregated output fields. Aggregate input is derived from the set of satisfying full bindings for that group. Duplicate base facts cannot exist, and duplicate projected facts do not define aggregation cardinality. Any aggregate that intentionally counts bindings, distinct values, or grouped facts must say which set it folds.
+
+Future aggregate operators must be typed and deterministic. Integer sums use checked or explicitly specified overflow behavior. `Min`, `Max`, `ArgMin`, and `ArgMax` require stable tie-breaking when multiple bindings compare equal. Null-skipping from upstream Logica does not apply because Bumbledb has no nulls. Floating-point aggregates remain forbidden unless Rosetta changes. List/array-producing aggregates remain out of scope until the persistent/runtime value model explicitly supports them.
+
 ## Query Execution
 
 The retained execution target is formal Free Join over GHT/COLT plus fact-native projection/storage paths. Legacy non-result-set query APIs and scalar caches were deleted because they encoded witness multiplicity or preserved mechanics outside the minimal set engine.
 
 Projection materialization uses a result-set sink. Duplicate projected facts are rejected before final output decoding.
+
+The result-set sink must stay private and replaceable. Free Join execution should be organized around binding production and sink consumption, not around a public tuple-stream abstraction. This preserves the future ability to add Rosetta-compatible aggregate sinks and factorized folds without rewriting plan validation, GHT/COLT, or the recursive node/cover/probe executor.
 
 Base images, GHTs, and COLTs are internal snapshot-local execution structures. They are scoped to required fields/accesses and are not a public API contract.
 

@@ -15,6 +15,7 @@ Add an internal factorized output path inspired by the paper and factorized data
 - Projection deduplication before final decoding.
 - Optional count/materialization shortcuts for benchmarks if kept internal.
 - Final materialization into `QueryResultSet`.
+- Reuse or extension of the PRD 12 private sink/fold boundary.
 
 ## Required Semantics
 
@@ -23,6 +24,7 @@ Add an internal factorized output path inspired by the paper and factorized data
 - Duplicate witnesses must not multiply public output.
 - Factorized mode and materialized mode must return identical final result sets.
 - Any count-like internal metric must not become a public scalar query API.
+- Factorized output internals may be shaped like future aggregate folds, but they must still materialize the exact current `QueryResultSet` contract.
 
 ## Technical Direction
 
@@ -31,6 +33,7 @@ Add an internal factorized output path inspired by the paper and factorized data
 - Keep encoded values until final materialization.
 - Add counters for logical facts represented, materialized facts, duplicate witnesses suppressed, and expansions avoided.
 - Ensure final decoding still uses dictionary reverse lookups correctly.
+- Keep the interface general enough that a future aggregate sink can fold over grouped binding sets without requiring a different executor.
 
 ## Non-Goals
 
@@ -45,6 +48,7 @@ Add an internal factorized output path inspired by the paper and factorized data
 - Output-heavy fixture shows fewer internal expansions or records a clear compression counter.
 - Empty outputs and single-row outputs work.
 - Explain/metrics can report output mode after PRD 18, or temporary tests can inspect counters before then.
+- The factorized path does not expose public count, sum, group-by, or aggregate APIs.
 
 ## Required Tests
 

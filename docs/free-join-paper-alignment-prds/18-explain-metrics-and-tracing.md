@@ -57,6 +57,7 @@ Explain must include:
 - Source kind: COLT, optional accelerator, formal singleton fast path, or other.
 - Vectorized batch size or scalar mode.
 - Output mode: materialized set or internal factorized.
+- Sink mode: projection result-set sink, internal factorized sink, or other private non-aggregate sink names that exist at that PRD.
 - Query-image/base-image cache diagnostics.
 - Timings and allocation stats.
 
@@ -72,6 +73,7 @@ Explain must include:
 
 - Do not make explain output a stable public API unless explicitly documented.
 - Do not expose query images, COLT nodes, or fact handles as public data structures.
+- Do not claim public aggregation support merely because an internal sink/fold seam exists.
 
 ## Acceptance Criteria
 
@@ -81,6 +83,7 @@ Explain must include:
 - Benchmark JSON includes plan mode, batch size, cover mode, output mode, and new counters.
 - Markdown renderer includes core Free Join/COLT/vectorization counters without stale fields.
 - Trace summarization script uses only surviving JSON fields.
+- Explain distinguishes public result-set semantics from private sink mechanics and contains no aggregate claims unless a later Rosetta update adds them.
 
 ## Required Tests
 

@@ -39,6 +39,7 @@ Add the paper's Free Join plan representation and validator without changing exe
 - Probe subatoms in a node may mention only variables available before the node or variables introduced by the cover tuple.
 - Empty-variable static atoms have an explicit representation and validation rule.
 - Projection/output handling is not part of formal Free Join validation.
+- Aggregation handling is not part of formal Free Join validation; future aggregate consumers must use validated plans rather than changing plan-validity rules.
 
 ## Technical Direction
 
@@ -61,6 +62,7 @@ Add the paper's Free Join plan representation and validator without changing exe
 - The previous invariant that every node binds exactly one variable is removed from formal Free Join validation.
 - Invalid partition, duplicate atom occurrence in one node, missing cover, unavailable probe variable, unknown variable, and duplicate subatom variable all fail with precise errors.
 - Formal `FreeJoinPlan` does not own projection or aggregation output.
+- Formal `FreeJoinPlan` exposes enough node/subatom/variable ordering metadata for private execution sinks and future aggregate folds, without owning those folds.
 
 ## Required Tests
 

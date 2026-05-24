@@ -37,6 +37,7 @@ Cut over to the paper-compliant architecture and delete stale compatibility path
 - Public exports should be minimal and aligned with Rosetta.
 - Keep `QueryResultSet` public unless deliberately changed by prior PRDs. Do not revive `QueryOutput` as a hollow wrapper.
 - Keep no legacy LFTJ compatibility path.
+- Keep private sink/fold internals out of the public API unless a later Rosetta update explicitly makes them product surface.
 
 ## Non-Goals
 
@@ -52,6 +53,7 @@ Cut over to the paper-compliant architecture and delete stale compatibility path
 - No production storage path writes old v4 access entries as required query structures.
 - Count-only benchmark correctness is gone.
 - All docs and scripts reference current counters/fields.
+- No public aggregate API, aggregate docs, or Logica compatibility claim was accidentally introduced by private sink/fold work.
 - Worktree passes full validation.
 
 ## Required Tests

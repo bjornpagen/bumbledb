@@ -27,6 +27,7 @@ Define the normalized query model required before formal Free Join planning. The
 - The preferred repeated-variable policy is lowering to same-fact equality predicates before planning. If this is too large, reject repeated variables as invalid IR in this PRD and add support later under PRD 15.
 - Omitted fields and wildcards must not accidentally introduce variables.
 - Literal and input fields must be represented as pushed selection constraints for planning purposes, even if execution initially evaluates them as residual filters.
+- Normalization must preserve complete typed variable metadata, not just projected fields, so future private consumers can distinguish group keys, aggregate arguments, and existential witness variables if aggregation is later admitted.
 
 ## Technical Direction
 
@@ -42,6 +43,7 @@ Define the normalized query model required before formal Free Join planning. The
 - Do not add formal Free Join plan nodes here.
 - Do not rewrite execution here.
 - Do not add SQL aliases. Alias identity is internal atom occurrence identity, not a SQL surface.
+- Do not add aggregation syntax or aggregate IR here. This PRD only avoids collapsing information a future aggregate layer would need.
 
 ## Acceptance Criteria
 
@@ -60,6 +62,7 @@ Define the normalized query model required before formal Free Join planning. The
 - Self-join projection remains duplicate-free.
 - Literal/input/wildcard/omitted field normalization has expected planner-visible terms.
 - Invalid public typed IR is rejected at execution boundaries even if manually constructed outside the builder.
+- Normalized query metadata retains all variables needed by a full-binding execution sink, including variables not projected by the current result-set sink.
 
 ## Validation Commands
 

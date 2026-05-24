@@ -30,6 +30,7 @@ Build the comprehensive correctness suite required to trust the new paper-compli
 - Scalar versus vectorized execution equivalence.
 - Static versus dynamic cover equivalence.
 - Materialized versus factorized output equivalence.
+- Scalar/vectorized/factorized sink-boundary equivalence for the current projection result-set sink.
 - Reference evaluator differential tests.
 - SQLite `SELECT DISTINCT` exact-value tests.
 - Storage operation sequence tests under v5.
@@ -49,6 +50,7 @@ Build the comprehensive correctness suite required to trust the new paper-compli
 - Queries with no useful optional accelerator.
 - Duplicate witnesses.
 - Empty result sets.
+- Fixtures where a test-only full-binding sink observes more bindings than the public projection cardinality, proving the executor seam preserves information needed by future aggregation while public output remains set-projected.
 
 ## Technical Direction
 
@@ -68,6 +70,7 @@ Build the comprehensive correctness suite required to trust the new paper-compli
 - Every new formal plan invariant has a positive and negative test.
 - Every execution mode returns identical result sets for shared query support.
 - Differential tests cover self-joins, duplicate witnesses, and empty sets.
+- Internal sink tests prove projection deduplication is a sink behavior, not a limitation of Free Join traversal.
 - Fuzz crate includes at least one query/executor differential fuzz target.
 - Failpoint tests cover v5 canonical, live row, column, guard, stats, and commit stages.
 - Existing golden families still pass.
@@ -84,6 +87,7 @@ Build the comprehensive correctness suite required to trust the new paper-compli
 - Empty-result fixture.
 - No-useful-index fixture.
 - Duplicate-witness projection fixture.
+- Full-binding sink versus projection-sink fixture.
 
 ## Validation Commands
 

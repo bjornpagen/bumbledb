@@ -21,6 +21,8 @@ Drafted. This suite is the ordered implementation map for breaking Bumbledb into
 - LMDB remains the only durable backend.
 - Runtime DDL, server mode, network protocol, async API, nulls, floating-point persistence, non-serial generated IDs, and public aggregation remain out of scope.
 - The paper's bag-semantics and DuckDB assumptions must be adapted, not copied.
+- A future Logica-like language may lower into typed IR, but it must adapt to Rosetta set semantics rather than importing upstream Logica multiset/null/SQL assumptions.
+- Public aggregation remains out of scope for this suite, but the Free Join executor must preserve a private sink/fold boundary so future Rosetta-compatible aggregate consumers can be added without rewriting the executor.
 - Breaking storage and Rust API changes are allowed.
 - Compatibility readers and in-place migrations remain forbidden. ETL into a new database is the migration path.
 
@@ -60,6 +62,7 @@ Each PRD is complete only when all of these are true:
 - No public API or documentation implies bag semantics, SQL support, or aggregation unless a later Rosetta update explicitly approves it.
 - New behavior is covered by focused unit tests and at least one integration or differential test when execution semantics change.
 - Public explain/diagnostics do not claim a paper feature unless that feature is represented and tested.
+- Free Join execution work must not hardwire tuple-vector materialization as the only internal output path; projection/factorized output must flow through a private sink-like boundary.
 - All acceptance commands listed in the PRD pass.
 - `cargo fmt --all --check` passes.
 - `cargo check --workspace --all-targets --all-features` passes.
@@ -74,4 +77,5 @@ Each PRD is complete only when all of these are true:
 - If a PRD exposes that a prior PRD was incomplete, stop and repair the prior PRD first.
 - If the current code cannot pass a PRD without a breaking change, make the breaking change. Do not add compatibility shims unless the PRD requires them.
 - Do not add SQL, bag output, aggregation, runtime DDL, server functionality, or alternate storage engines to satisfy a paper benchmark.
+- Do not add public aggregation while completing this suite; if an internal hook is needed, keep it private and prove it preserves current `QueryResultSet` semantics.
 - Do not retain misleading names. If a type is LFTJ, call it LFTJ. If a type is formal paper Free Join, it must carry subatoms, partitions, and covers.

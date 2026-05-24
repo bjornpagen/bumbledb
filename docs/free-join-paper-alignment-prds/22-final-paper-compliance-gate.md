@@ -32,6 +32,7 @@ Bumbledb may claim paper-aligned Free Join only if all are true:
 - Public result output remains duplicate-free and canonicalized.
 - Benchmarks validate exact projected values before timing.
 - Rosetta constraints remain intact.
+- Private sink/fold execution mechanics preserve future aggregation readiness without exposing public aggregation.
 
 ## Required Audit Checks
 
@@ -82,6 +83,7 @@ Run the strictest available quick benchmark command after PRD 20. It must includ
 - No stale public claims remain.
 - No old v4 compatibility path remains unless explicitly documented as a mismatch failure path.
 - No SQL, bag, aggregation, DuckDB, null, generated-ID, or non-LMDB feature was introduced.
+- Any Logica-like-language references remain framed as future lowering/adaptation work, not current product support.
 - The final architecture is documented in Rosetta or a Rosetta-linked architecture note.
 - Worktree is clean after the final commit if a commit is requested.
 

@@ -240,7 +240,7 @@ pub enum Value {
     U64(u64),
     /// Signed 64-bit integer.
     I64(i64),
-    /// Database-generated nominal `u64` sequence value.
+    /// Database-generated monotonic nominal `u64` sequence value.
     Serial(u64),
     /// Closed enum represented as a stable one-byte code.
     Enum(u8),

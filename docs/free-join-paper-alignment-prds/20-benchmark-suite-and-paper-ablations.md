@@ -23,6 +23,7 @@ Build correctness-first benchmarks that can evaluate paper-compliant Free Join w
 - Bumbledb result values must match SQLite `SELECT DISTINCT` projected values before timing matters.
 - Count equality alone is never sufficient.
 - Benchmark SQL must not use `COUNT`, `GROUP BY`, outer joins, anti-joins, null-sensitive predicates, or bag semantics unless a future Rosetta update adds the feature.
+- Benchmark fixtures must not use upstream Logica aggregation examples as correctness goals unless a later Rosetta update admits public aggregation.
 - Open-data ETL must not silently encode nulls as zero or empty string unless documented as a real domain value.
 - Fixed-point/rating source values must be modeled as scaled `I64` application conventions if retained in benchmarks.
 
@@ -67,6 +68,7 @@ Build correctness-first benchmarks that can evaluate paper-compliant Free Join w
 - Do not add DuckDB as a planner dependency.
 - Do not add SQL frontend support.
 - Do not implement LSQB features that violate Rosetta, such as nulls, anti-joins, or outer joins.
+- Do not add public aggregate benchmarks in this PRD unless Rosetta has been updated first.
 
 ## Acceptance Criteria
 

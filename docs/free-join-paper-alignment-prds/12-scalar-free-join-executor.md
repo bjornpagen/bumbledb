@@ -16,7 +16,8 @@ Implement the paper's recursive node/cover/probe Free Join executor in scalar fo
 - Formal Free Join execution over GHT/COLT sources.
 - Binding state that can bind multiple variables from one cover tuple.
 - Probe key construction from current tuple plus prior bindings.
-- Projection sink integration preserving set semantics.
+- Private result sink integration preserving set semantics.
+- A sink/fold execution boundary that can receive complete typed bindings before final public materialization.
 - No legacy LFTJ baseline remains; execution starts from the formal Free Join plan.
 
 ## Required Execution Semantics
@@ -32,6 +33,7 @@ For each node:
 - If all probes succeed, replace participating sources with returned child sources for the recursive call.
 - Recurse to the next node.
 - At the end, emit the binding to the set projection sink.
+- The projection sink deduplicates projected facts and builds `QueryResultSet`.
 
 ## Technical Direction
 
@@ -39,7 +41,9 @@ For each node:
 - Build one GHT/COLT source per atom occurrence using the atom's subatom partition sequence.
 - Binding state must reject conflicting variable values.
 - Static zero-variable atoms must be checked exactly once through existence semantics.
-- Keep output materialization through the existing duplicate-free projection sink unless PRD 17 has already replaced internals.
+- Keep public output materialization through a duplicate-free projection sink unless PRD 17 has already replaced internals.
+- Do not make `Vec<ResultFact>` construction the executor's only internal output path. The executor should recurse over bindings and call a private sink/consumer.
+- The sink API may be minimal in this PRD, but it must be capable of seeing complete encoded variable bindings so later aggregation can fold over binding sets without changing Free Join recursion.
 - Do not use leapfrog intersection inside this executor unless it is rebuilt as a formal singleton-plan fast path over GHT/COLT sources.
 - Preserve exact product semantics internally but collapse projection to sets.
 
@@ -49,6 +53,7 @@ For each node:
 - Do not implement vectorized batches here.
 - Do not implement factorized output here.
 - Do not revive the deleted LFTJ baseline here.
+- Do not implement public aggregation or Logica aggregation syntax here.
 
 ## Acceptance Criteria
 
@@ -61,6 +66,8 @@ For each node:
 - No valid query requires a predeclared physical index to execute.
 - Projection remains duplicate-free and canonicalized.
 - Invalid plan execution cannot bypass PRD 03 validation.
+- Executor internals are sink-based: a test-only sink can observe complete bindings without requiring public aggregate APIs.
+- The production sink remains `QueryResultSet` materialization.
 
 ## Required Tests
 
@@ -73,6 +80,7 @@ For each node:
 - Static atom existence success and failure.
 - Multi-variable cover conflict rejection.
 - Free Join executor output equals reference evaluator for small hand-written queries.
+- Test-only binding sink observes the expected full binding count for a duplicate-witness fixture while the public projection remains duplicate-free.
 
 ## Validation Commands
 

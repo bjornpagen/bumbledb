@@ -17,6 +17,7 @@ Implement the paper's vectorized Free Join algorithm: batch cover iteration, bat
 - Survivor compaction.
 - Batch-size configuration and counters.
 - Scalar batch size 1 equivalence.
+- Preservation of the private execution sink boundary introduced by PRD 12.
 
 ## Required Behavior
 
@@ -36,6 +37,7 @@ Implement the paper's vectorized Free Join algorithm: batch cover iteration, bat
 - Add a later optimization point for true batched hash lookup/seek.
 - Keep batch buffers reusable to avoid excessive allocation.
 - Do not change public `QueryResultSet` semantics.
+- Do not bypass the PRD 12 sink/fold boundary by materializing vectorized batches directly into public rows.
 
 ## Non-Goals
 
@@ -51,6 +53,7 @@ Implement the paper's vectorized Free Join algorithm: batch cover iteration, bat
 - Vectorized mode records batch input, survivor, failed, and probe counters.
 - Existing correctness suites pass in vectorized mode.
 - Benchmarks can select batch size for ablations.
+- Vectorized mode feeds the same sink interface as scalar mode, preserving future aggregate/factorized consumers.
 
 ## Required Tests
 
