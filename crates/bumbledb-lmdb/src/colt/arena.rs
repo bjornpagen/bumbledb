@@ -50,6 +50,13 @@ pub(super) struct ColtArena {
     offsets: Vec<u32>,
 }
 
+pub(super) enum OffsetIter<'arena> {
+    Range { next: u32, end: u32 },
+    Singleton(Option<u32>),
+    Slice(std::iter::Copied<std::slice::Iter<'arena, u32>>),
+    Empty,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ArenaSourceUndo {
     atom: usize,
@@ -80,6 +87,18 @@ impl ColtArena {
         self.push_node(NodeData::Offsets(range))
     }
 
+    pub(super) fn add_full_source_node(&mut self, len: u32) -> ColtNodeId {
+        self.push_node(NodeData::Range { start: 0, len })
+    }
+
+    pub(super) fn child_offsets_data(&mut self, offsets: &[u32]) -> NodeData {
+        match offsets {
+            [] => NodeData::Offsets(OffsetRange { start: 0, len: 0 }),
+            [offset] => NodeData::Singleton { offset: *offset },
+            offsets => NodeData::Offsets(self.append_offsets(offsets)),
+        }
+    }
+
     pub(super) fn add_map_placeholder_node(&mut self) -> ColtNodeId {
         let map = self.add_map(OffsetRange { start: 0, len: 0 });
         self.push_node(NodeData::Map(map))
@@ -104,6 +123,22 @@ impl ColtArena {
         &self.offsets[start..end]
     }
 
+    pub(super) fn iter_offsets(&self, data: NodeData) -> OffsetIter<'_> {
+        match data {
+            NodeData::Range { start, len } => OffsetIter::Range {
+                next: start,
+                end: start + len,
+            },
+            NodeData::Singleton { offset } => OffsetIter::Singleton(Some(offset)),
+            NodeData::Offsets(range) => OffsetIter::Slice(self.offsets(range).iter().copied()),
+            NodeData::Map(_) => OffsetIter::Empty,
+        }
+    }
+
+    pub(super) fn offset_pool_len(&self) -> usize {
+        self.offsets.len()
+    }
+
     fn push_node(&mut self, data: NodeData) -> ColtNodeId {
         let id = ColtNodeId(self.nodes.len() as u32);
         self.nodes.push(ColtNodeRecord { data });
@@ -114,6 +149,27 @@ impl ColtArena {
         let id = ColtMapId(self.maps.len() as u32);
         self.maps.push(ColtMapRecord { entries });
         id
+    }
+}
+
+impl Iterator for OffsetIter<'_> {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            OffsetIter::Range { next, end } => {
+                if *next >= *end {
+                    None
+                } else {
+                    let output = *next;
+                    *next += 1;
+                    Some(output)
+                }
+            }
+            OffsetIter::Singleton(offset) => offset.take(),
+            OffsetIter::Slice(iter) => iter.next(),
+            OffsetIter::Empty => None,
+        }
     }
 }
 
@@ -231,6 +287,65 @@ mod tests {
 
         assert_eq!(arena.offsets(first), &[1, 3, 5]);
         assert_eq!(arena.offsets(second), &[8, 13]);
+    }
+
+    #[test]
+    fn arena_iterates_range_singleton_and_pooled_offsets() {
+        let mut arena = ColtArena::new();
+        let range = NodeData::Range { start: 3, len: 4 };
+        let singleton = NodeData::Singleton { offset: 42 };
+        let pooled = arena.child_offsets_data(&[5, 8, 13]);
+
+        assert_eq!(
+            arena.iter_offsets(range).collect::<Vec<_>>(),
+            vec![3, 4, 5, 6]
+        );
+        assert_eq!(arena.iter_offsets(singleton).collect::<Vec<_>>(), vec![42]);
+        assert_eq!(
+            arena.iter_offsets(pooled).collect::<Vec<_>>(),
+            vec![5, 8, 13]
+        );
+    }
+
+    #[test]
+    fn arena_duplicate_heavy_children_use_singletons_without_pool_offsets() {
+        let mut arena = ColtArena::new();
+        let child = arena.child_offsets_data(&[17]);
+
+        assert_eq!(child, NodeData::Singleton { offset: 17 });
+        assert_eq!(arena.offset_pool_len(), 0);
+        assert_eq!(arena.iter_offsets(child).collect::<Vec<_>>(), vec![17]);
+    }
+
+    #[test]
+    fn arena_many_offset_child_uses_one_offset_pool_range() {
+        let mut arena = ColtArena::new();
+        let child = arena.child_offsets_data(&[1, 2, 3, 5, 8]);
+
+        assert_eq!(child, NodeData::Offsets(OffsetRange { start: 0, len: 5 }));
+        assert_eq!(arena.offset_pool_len(), 5);
+        assert_eq!(
+            arena.iter_offsets(child).collect::<Vec<_>>(),
+            vec![1, 2, 3, 5, 8]
+        );
+    }
+
+    #[test]
+    fn arena_full_unfiltered_source_uses_implicit_range() {
+        let mut arena = ColtArena::new();
+        let source = arena.add_full_source_node(4);
+
+        assert_eq!(arena.offset_pool_len(), 0);
+        assert_eq!(
+            arena.node(source).map(|node| node.data),
+            Some(NodeData::Range { start: 0, len: 4 })
+        );
+        assert_eq!(
+            arena
+                .node(source)
+                .map(|node| arena.iter_offsets(node.data).collect::<Vec<_>>()),
+            Some(vec![0, 1, 2, 3])
+        );
     }
 
     #[test]
