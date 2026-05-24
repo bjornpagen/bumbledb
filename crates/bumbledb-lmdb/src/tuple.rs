@@ -76,8 +76,7 @@ impl TupleSchema {
                 .get(&field_id)
                 .ok_or(TupleError::MissingColumn { field_id })?;
             let value = column
-                .values
-                .get(offset)
+                .value_at(offset)
                 .ok_or(TupleError::OffsetOutOfRange { offset })?;
             push_checked(&mut bytes, value, field.width)?;
         }

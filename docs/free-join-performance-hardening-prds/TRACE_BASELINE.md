@@ -192,3 +192,19 @@ Trace acceptance evidence:
 - `BaseImageCacheLookup` spans under `PlannerStats`: 0.
 - `BaseImageLoad` spans under `PlannerStats`: 0.
 - `select Free Join plan` elapsed: 0.212 ms.
+
+## PRD 09 Follow-Up
+
+Command:
+
+```bash
+cargo run --release -p bumbledb-bench --features query-tracing -- --preset job-sample --job-dir data/job --open-limit 100000 --query job_q09_voice_us_actor --format json --repeats 1 --warmup 1 --trace-output file --profile-query-label prd09_q09 --alloc on
+```
+
+Measured report after base-image columns moved from per-cell `Vec<u8>` allocation to contiguous fixed-width buffers:
+
+| query | bumbledb_ms | sqlite_ms | alloc_calls | allocated_bytes | result_rows |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `job_q09_voice_us_actor` | 44.131 | 6.073 | 567463 | 102294197 | 0 |
+
+Trace file: `data/traces/prd09_q09-19538-0.json`.

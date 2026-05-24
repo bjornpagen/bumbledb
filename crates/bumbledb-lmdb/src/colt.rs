@@ -305,7 +305,7 @@ fn source_filter_matches(base: &RelationBaseImage, offset: usize, filter: &Sourc
         } => base
             .columns
             .get(field_id)
-            .and_then(|column| column.values.get(offset))
+            .and_then(|column| column.value_at(offset))
             .is_some_and(|candidate| compare_encoded(candidate, *op, value)),
     }
 }

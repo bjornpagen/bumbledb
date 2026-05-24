@@ -193,24 +193,31 @@ fn base_image() -> RelationBaseImage {
         relation_id: 0,
         name: "R".to_owned(),
         row_handles: Vec::new(),
-        columns: BTreeMap::from([
-            (
-                0,
-                ColumnImage {
-                    field_id: 0,
-                    field: "x".to_owned(),
-                    values: vec![encode_u64(1).to_vec(), encode_u64(2).to_vec()],
-                },
-            ),
-            (
-                1,
-                ColumnImage {
-                    field_id: 1,
-                    field: "e".to_owned(),
-                    values: vec![encode_enum(7).to_vec(), encode_enum(8).to_vec()],
-                },
-            ),
-        ]),
+        columns: BTreeMap::from([(0, column_u64(0, [1, 2])), (1, column_enum(1, [7, 8]))]),
         stats: RelationStats { row_count: 2 },
+    }
+}
+
+fn column_u64<const N: usize>(field_id: usize, values: [u64; N]) -> ColumnImage {
+    let mut bytes = Vec::with_capacity(values.len() * 8);
+    for value in values {
+        bytes.extend_from_slice(&encode_u64(value));
+    }
+    ColumnImage {
+        field_id,
+        width: 8,
+        values: bytes,
+    }
+}
+
+fn column_enum<const N: usize>(field_id: usize, values: [u8; N]) -> ColumnImage {
+    let mut bytes = Vec::with_capacity(values.len());
+    for value in values {
+        bytes.extend_from_slice(&encode_enum(value));
+    }
+    ColumnImage {
+        field_id,
+        width: 1,
+        values: bytes,
     }
 }

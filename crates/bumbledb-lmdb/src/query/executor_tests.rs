@@ -646,11 +646,8 @@ fn manual_colt<const N: usize>(atom: usize, values: [u64; N]) -> Result<ColtSour
             0,
             ColumnImage {
                 field_id: 0,
-                field: "left".to_owned(),
-                values: values
-                    .into_iter()
-                    .map(|value| encode_u64(value).to_vec())
-                    .collect(),
+                width: 8,
+                values: values.into_iter().flat_map(encode_u64).collect(),
             },
         )]),
         stats: RelationStats { row_count: N },

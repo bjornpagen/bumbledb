@@ -169,7 +169,7 @@ fn empty_image() -> RelationBaseImage {
             0,
             ColumnImage {
                 field_id: 0,
-                field: "x".to_owned(),
+                width: 8,
                 values: Vec::new(),
             },
         )]),
@@ -178,13 +178,14 @@ fn empty_image() -> RelationBaseImage {
 }
 
 fn column<const N: usize>(field: &str, values: [u64; N]) -> ColumnImage {
+    let mut bytes = Vec::with_capacity(values.len() * 8);
+    for value in values {
+        bytes.extend_from_slice(&encode_u64(value));
+    }
     ColumnImage {
         field_id: if field == "x" { 0 } else { 1 },
-        field: field.to_owned(),
-        values: values
-            .into_iter()
-            .map(|value| encode_u64(value).to_vec())
-            .collect(),
+        width: 8,
+        values: bytes,
     }
 }
 

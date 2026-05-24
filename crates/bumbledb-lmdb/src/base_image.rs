@@ -31,10 +31,27 @@ pub(crate) struct RelationBaseImage {
 pub(crate) struct ColumnImage {
     /// Field descriptor ID.
     pub(crate) field_id: usize,
-    /// Field name.
-    pub(crate) field: String,
-    /// Encoded values aligned with `RelationBaseImage::row_handles`.
-    pub(crate) values: Vec<Vec<u8>>,
+    /// Fixed encoded width of one cell.
+    pub(crate) width: usize,
+    /// Contiguous encoded values aligned with `RelationBaseImage::row_handles`.
+    pub(crate) values: Vec<u8>,
+}
+
+impl ColumnImage {
+    /// Returns a zero-copy cell slice by row offset.
+    pub(crate) fn value_at(&self, offset: usize) -> Option<&[u8]> {
+        let start = offset.checked_mul(self.width)?;
+        let end = start.checked_add(self.width)?;
+        self.values.get(start..end)
+    }
+
+    /// Returns the number of loaded rows in this column.
+    pub(crate) fn row_count(&self) -> usize {
+        if self.width == 0 {
+            return 0;
+        }
+        self.values.len() / self.width
+    }
 }
 
 /// Relation statistics visible to planning/execution.
@@ -151,13 +168,12 @@ fn base_image_counters(image: &RelationBaseImage) -> TraceCounters {
     let column_values_loaded = image
         .columns
         .values()
-        .map(|column| column.values.len() as u64)
+        .map(|column| column.row_count() as u64)
         .sum();
     let loaded_bytes = image
         .columns
         .values()
-        .flat_map(|column| column.values.iter())
-        .map(|value| value.len() as u64)
+        .map(|column| column.values.len() as u64)
         .sum();
     TraceCounters {
         live_rows_scanned: image.row_handles.len() as u64,
@@ -193,7 +209,8 @@ fn load_relation_base_image(
     let mut columns = BTreeMap::new();
     for field_id in field_ids {
         let field = &relation.fields[*field_id];
-        let mut values = Vec::with_capacity(row_handles.len());
+        let width = field.value_type.encoded_width();
+        let mut values = Vec::with_capacity(row_handles.len() * width);
         for handle in &row_handles {
             let key = column_key(relation_id, *field_id as u32, *handle);
             let value = txn
@@ -201,13 +218,18 @@ fn load_relation_base_image(
                 .data
                 .get(&txn.txn, &key)?
                 .ok_or_else(|| Error::corrupt("column entry missing for live row"))?;
-            values.push(value.to_vec());
+            if value.len() != width {
+                return Err(Error::corrupt(format!(
+                    "column entry width mismatch for field {field_id}"
+                )));
+            }
+            values.extend_from_slice(value);
         }
         columns.insert(
             *field_id,
             ColumnImage {
                 field_id: *field_id,
-                field: field.name.clone(),
+                width,
                 values,
             },
         );

@@ -1,11 +1,16 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bumbledb_core::encoding::{InternId, encode_intern_id};
+use std::collections::BTreeSet;
+
+use bumbledb_core::encoding::{InternId, encode_intern_id, encode_u64};
 use bumbledb_core::query_ir::{TypedFindTerm, TypedVariable};
 use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
 
 use super::field_scope_for_plan;
+use crate::diagnostics::{
+    allocation_delta, allocation_snapshot, with_allocation_tracking_for_test,
+};
 use crate::query::free_join::{FjNode, FjPlan, FjSubatom};
 use crate::query::model::{
     AtomOccurrence, AtomOccurrenceId, NormalizedFieldBinding, NormalizedQuery, NormalizedTerm,
@@ -37,8 +42,34 @@ fn base_image_columns_align_with_row_handles() -> Result<()> {
     env.read(|txn| {
         let image = txn.relation_base_image(&schema, "Person", [0, 1, 2])?;
         for column in image.columns.values() {
-            assert_eq!(column.values.len(), image.row_handles.len());
+            assert_eq!(column.row_count(), image.row_handles.len());
         }
+        Ok(())
+    })
+}
+
+#[test]
+fn base_image_contiguous_columns_return_values_by_offset() -> Result<()> {
+    let (env, schema) = env_and_schema("contiguous-values")?;
+    insert_people(&env, &schema)?;
+
+    env.read(|txn| {
+        let image = txn.relation_base_image(&schema, "Person", [0])?;
+        let column = &image.columns[&0];
+        let observed = (0..column.row_count())
+            .filter_map(|offset| column.value_at(offset).map(<[u8]>::to_vec))
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(column.field_id, 0);
+        assert_eq!(column.width, 8);
+        assert_eq!(column.values.len(), column.row_count() * column.width);
+        assert_eq!(
+            observed,
+            [encode_u64(1).to_vec(), encode_u64(2).to_vec()]
+                .into_iter()
+                .collect()
+        );
+        assert_eq!(column.value_at(column.row_count()), None);
         Ok(())
     })
 }
@@ -50,23 +81,23 @@ fn base_image_string_and_bytes_columns_use_dictionary_ids() -> Result<()> {
 
     env.read(|txn| {
         let image = txn.relation_base_image(&schema, "Person", [1, 2])?;
+        let name_column = &image.columns[&1];
+        let blob_column = &image.columns[&2];
+        let first_intern = encode_intern_id(InternId(1));
+
+        assert!((0..name_column.row_count()).all(|offset| {
+            name_column
+                .value_at(offset)
+                .is_some_and(|value| value.len() == 8)
+        }));
+        assert!((0..blob_column.row_count()).all(|offset| {
+            blob_column
+                .value_at(offset)
+                .is_some_and(|value| value.len() == 8)
+        }));
         assert!(
-            image.columns[&1]
-                .values
-                .iter()
-                .all(|value| value.len() == 8)
-        );
-        assert!(
-            image.columns[&2]
-                .values
-                .iter()
-                .all(|value| value.len() == 8)
-        );
-        assert!(
-            image.columns[&1]
-                .values
-                .iter()
-                .any(|value| value == &encode_intern_id(InternId(1)).to_vec())
+            (0..name_column.row_count())
+                .any(|offset| name_column.value_at(offset) == Some(first_intern.as_slice()))
         );
         let facts = txn.debug_relation_facts(&schema, "Person")?;
         assert!(
@@ -76,6 +107,34 @@ fn base_image_string_and_bytes_columns_use_dictionary_ids() -> Result<()> {
         );
         Ok(())
     })
+}
+
+#[test]
+fn base_image_load_allocations_are_below_per_cell_value_allocation_pattern() -> Result<()> {
+    let (env, schema) = env_and_schema("allocation-profile")?;
+    env.write(|txn| {
+        for id in 0..256 {
+            txn.insert(&schema, person(id, &format!("person-{id}"), &[id as u8]))?;
+        }
+        Ok::<(), Error>(())
+    })?;
+
+    let cells = 256 * 3;
+    let alloc_calls = with_allocation_tracking_for_test(|| {
+        let start = allocation_snapshot();
+        env.read(|txn| {
+            let image = txn.relation_base_image(&schema, "Person", [0, 1, 2])?;
+            assert_eq!(image.row_handles.len(), 256);
+            Ok::<_, Error>(())
+        })?;
+        Ok::<_, Error>(allocation_delta(start, allocation_snapshot()).alloc_calls)
+    })?;
+
+    assert!(
+        alloc_calls < (cells * 2) as u64,
+        "base-image load still looks like key plus per-cell value allocations: {alloc_calls} calls"
+    );
+    Ok(())
 }
 
 #[test]
