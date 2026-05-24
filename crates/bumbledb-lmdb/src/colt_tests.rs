@@ -515,10 +515,13 @@ fn clover_query() -> NormalizedQuery {
     query_from_atoms([vec![0, 1], vec![0, 2], vec![0, 3]])
 }
 
-fn query_from_atoms<const N: usize>(atom_vars: [Vec<usize>; N]) -> NormalizedQuery {
+fn query_from_atoms<const N: usize, I>(atom_vars: [I; N]) -> NormalizedQuery
+where
+    I: Clone + IntoIterator<Item = usize>,
+{
     let query_variables = atom_vars
         .iter()
-        .flat_map(|vars| vars.iter().copied())
+        .flat_map(|vars| vars.clone().into_iter())
         .max()
         .map_or(0, |max| max + 1);
     NormalizedQuery {
@@ -540,7 +543,8 @@ fn query_from_atoms<const N: usize>(atom_vars: [Vec<usize>; N]) -> NormalizedQue
     }
 }
 
-fn atom(id: usize, vars: Vec<usize>) -> AtomOccurrence {
+fn atom(id: usize, vars: impl IntoIterator<Item = usize>) -> AtomOccurrence {
+    let vars = vars.into_iter().collect::<Vec<_>>();
     AtomOccurrence {
         id: AtomOccurrenceId(id),
         relation_id: id,

@@ -1,10 +1,9 @@
 #![allow(dead_code)]
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::ControlFlow;
-use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use crate::base_image::RelationBaseImage;
 use crate::colt_filter::source_filter_matches;
@@ -25,24 +24,30 @@ use key::KeyOwned;
 
 #[derive(Clone)]
 pub(crate) struct ColtSource {
-    node: Rc<RefCell<ColtNode>>,
-    vars: Rc<Vec<usize>>,
+    state: Arc<Mutex<ColtState>>,
+    node: usize,
+    vars: Arc<[usize]>,
+}
+
+pub(super) struct ColtState {
+    nodes: Vec<ColtNode>,
+    counters: ColtCounters,
 }
 
 pub(super) struct ColtNode {
     atom: AtomOccurrenceId,
     base: Arc<RelationBaseImage>,
-    schemas: Rc<Vec<TupleSchema>>,
-    vars: Rc<Vec<usize>>,
+    schemas: Arc<[TupleSchema]>,
+    vars: Arc<[usize]>,
     data: ColtData,
-    counters: Rc<RefCell<ColtCounters>>,
 }
 
+#[derive(Clone)]
 pub(super) enum ColtData {
     Range(usize),
-    Offsets(Vec<usize>),
+    Offsets(Vec<u32>),
     Offset(usize),
-    Map(HashMap<KeyOwned, Rc<RefCell<ColtNode>>>),
+    Map(HashMap<KeyOwned, usize>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -98,12 +103,15 @@ impl ColtSource {
                 format!("relation={} atom={:?}", base.name, atom),
             )
         });
-        let counters = Rc::new(RefCell::new(ColtCounters {
+        let counters = ColtCounters {
             nodes_created: 1,
             ..ColtCounters::default()
-        }));
-        let schemas = Rc::new(schemas);
-        let vars = Rc::new(schemas.first().map_or_else(Vec::new, TupleSchema::vars));
+        };
+        let schemas: Arc<[TupleSchema]> = schemas.into();
+        let vars: Arc<[usize]> = schemas
+            .first()
+            .map_or_else(Vec::new, TupleSchema::vars)
+            .into();
         let source_filter_rows_tested = base.row_handles.len() as u64;
         let data = if filters.is_empty() {
             ColtData::Range(base.row_handles.len())
@@ -115,19 +123,24 @@ impl ColtSource {
                             .iter()
                             .all(|filter| source_filter_matches(&base, *offset, filter))
                     })
+                    .map(|offset| offset as u32)
                     .collect(),
             )
         };
-        let source = Self {
-            vars: Rc::clone(&vars),
-            node: Rc::new(RefCell::new(ColtNode {
+        let state = Arc::new(Mutex::new(ColtState {
+            nodes: vec![ColtNode {
                 atom,
                 base,
                 schemas,
-                vars,
+                vars: Arc::clone(&vars),
                 data,
-                counters,
-            })),
+            }],
+            counters,
+        }));
+        let source = Self {
+            state,
+            node: 0,
+            vars,
         };
         if let (Some(trace), Some(span)) = (trace, span) {
             trace.finish_span(
@@ -144,7 +157,9 @@ impl ColtSource {
     }
 
     pub(crate) fn counters(&self) -> ColtCounters {
-        self.node.borrow().counters.borrow().clone()
+        self.state
+            .lock()
+            .map_or_else(|_| ColtCounters::default(), |state| state.counters.clone())
     }
 
     pub(crate) fn try_for_each_tuple_traced<E, F>(
@@ -213,9 +228,9 @@ impl ColtSource {
 
         let before_get = self.counters();
         let span = trace.start_span(TracePhase::ColtGet, label);
-        self.node.borrow().counters.borrow_mut().get_calls += 1;
-        let node = self.node.borrow();
-        let ColtData::Map(map) = &node.data else {
+        let mut state = self.lock_state();
+        state.counters.get_calls += 1;
+        let ColtData::Map(map) = &state.nodes[self.node].data else {
             if let Some(span) = span {
                 trace.finish_span(span, TraceCounters::default());
             }
@@ -223,13 +238,14 @@ impl ColtSource {
         };
         let child = map.get(tuple.bytes()).cloned();
         if child.is_none() {
-            node.counters.borrow_mut().misses += 1;
+            state.counters.misses += 1;
         }
-        drop(node);
-        let output = child.map(|node| {
-            let vars = Rc::clone(&node.borrow().vars);
-            ColtSource { node, vars }
+        let output = child.map(|node| ColtSource {
+            vars: Arc::clone(&state.nodes[node].vars),
+            state: Arc::clone(&self.state),
+            node,
         });
+        drop(state);
         let after_get = self.counters();
         if let Some(span) = span {
             trace.finish_span(span, colt_counter_delta(before_get, after_get, 0));
@@ -238,14 +254,16 @@ impl ColtSource {
     }
 
     pub(crate) fn is_vector(&self) -> bool {
+        let state = self.lock_state();
         matches!(
-            self.node.borrow().data,
+            state.nodes[self.node].data,
             ColtData::Range(_) | ColtData::Offsets(_) | ColtData::Offset(_)
         )
     }
 
     pub(crate) fn offset_len(&self) -> usize {
-        match &self.node.borrow().data {
+        let state = self.lock_state();
+        match &state.nodes[self.node].data {
             ColtData::Range(len) => *len,
             ColtData::Offsets(offsets) => offsets.len(),
             ColtData::Offset(_) => 1,
@@ -254,7 +272,7 @@ impl ColtSource {
     }
 
     pub(crate) fn has_child_level(&self) -> bool {
-        self.node.borrow().schemas.len() > 1
+        self.lock_state().nodes[self.node].schemas.len() > 1
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -265,8 +283,17 @@ impl ColtSource {
         if !self.is_vector() {
             return;
         }
-        let mut node = self.node.borrow_mut();
-        let data = std::mem::replace(&mut node.data, ColtData::Offsets(Vec::new()));
+        let mut state = self.lock_state();
+        if !matches!(
+            state.nodes[self.node].data,
+            ColtData::Range(_) | ColtData::Offsets(_) | ColtData::Offset(_)
+        ) {
+            return;
+        }
+        let data = std::mem::replace(
+            &mut state.nodes[self.node].data,
+            ColtData::Offsets(Vec::new()),
+        );
         let offset_count = match &data {
             ColtData::Range(len) => *len,
             ColtData::Offsets(offsets) => offsets.len(),
@@ -275,65 +302,77 @@ impl ColtSource {
         };
         let offsets: Box<dyn Iterator<Item = usize>> = match data {
             ColtData::Range(len) => Box::new(0..len),
-            ColtData::Offsets(offsets) => Box::new(offsets.into_iter()),
+            ColtData::Offsets(offsets) => {
+                Box::new(offsets.into_iter().map(|offset| offset as usize))
+            }
             ColtData::Offset(offset) => Box::new(std::iter::once(offset)),
             ColtData::Map(map) => {
-                node.data = ColtData::Map(map);
+                state.nodes[self.node].data = ColtData::Map(map);
                 return;
             }
         };
-        let Some(schema) = node.schemas.first().cloned() else {
-            node.data = ColtData::Offsets(Vec::new());
+        let Some(schema) = state.nodes[self.node].schemas.first().cloned() else {
+            state.nodes[self.node].data = ColtData::Offsets(Vec::new());
             return;
         };
-        let child_schemas = Rc::new(node.schemas.iter().skip(1).cloned().collect::<Vec<_>>());
-        let child_vars = Rc::new(
-            child_schemas
-                .first()
-                .map_or_else(Vec::new, TupleSchema::vars),
-        );
-        let mut map: HashMap<KeyOwned, Rc<RefCell<ColtNode>>> =
-            HashMap::with_capacity(offset_count);
+        let child_schemas: Arc<[TupleSchema]> = state.nodes[self.node]
+            .schemas
+            .iter()
+            .skip(1)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        let child_vars: Arc<[usize]> = child_schemas
+            .first()
+            .map_or_else(Vec::new, TupleSchema::vars)
+            .into();
+        let base = Arc::clone(&state.nodes[self.node].base);
+        let atom = state.nodes[self.node].atom;
+        let mut map: HashMap<KeyOwned, usize> = HashMap::with_capacity(offset_count);
         let mut key_bytes = Vec::with_capacity(schema.encoded_width());
         for offset in offsets {
-            node.counters.borrow_mut().offsets_scanned += 1;
+            state.counters.offsets_scanned += 1;
             if schema
-                .write_tuple_from_base_offset(&node.base, offset, &mut key_bytes)
+                .write_tuple_from_base_offset(&base, offset, &mut key_bytes)
                 .is_err()
             {
                 continue;
             }
-            if let Some(child) = map.get_mut(key_bytes.as_slice()) {
-                push_child_offset(child, offset);
+            if let Some(child) = map.get(key_bytes.as_slice()).copied() {
+                push_child_offset(&mut state, child, offset);
             } else {
-                node.counters.borrow_mut().nodes_created += 1;
-                map.insert(
-                    KeyOwned::from_slice(&key_bytes),
-                    Rc::new(RefCell::new(ColtNode {
-                        atom: node.atom,
-                        base: Arc::clone(&node.base),
-                        schemas: Rc::clone(&child_schemas),
-                        vars: Rc::clone(&child_vars),
-                        data: ColtData::Offset(offset),
-                        counters: Rc::clone(&node.counters),
-                    })),
-                );
+                state.counters.nodes_created += 1;
+                let child = state.nodes.len();
+                state.nodes.push(ColtNode {
+                    atom,
+                    base: Arc::clone(&base),
+                    schemas: Arc::clone(&child_schemas),
+                    vars: Arc::clone(&child_vars),
+                    data: ColtData::Offset(offset),
+                });
+                map.insert(KeyOwned::from_slice(&key_bytes), child);
             }
         }
-        node.counters.borrow_mut().map_entries_built += map.len();
-        node.counters.borrow_mut().nodes_forced += 1;
-        node.counters.borrow_mut().hash_maps_built += 1;
-        node.data = ColtData::Map(map);
+        state.counters.map_entries_built += map.len();
+        state.counters.nodes_forced += 1;
+        state.counters.hash_maps_built += 1;
+        state.nodes[self.node].data = ColtData::Map(map);
+    }
+
+    pub(super) fn lock_state(&self) -> std::sync::MutexGuard<'_, ColtState> {
+        match self.state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        }
     }
 }
 
-fn push_child_offset(child: &Rc<RefCell<ColtNode>>, offset: usize) {
-    let mut child = child.borrow_mut();
-    match &mut child.data {
+fn push_child_offset(state: &mut ColtState, child: usize, offset: usize) {
+    match &mut state.nodes[child].data {
         ColtData::Offset(first) if *first != offset => {
-            child.data = ColtData::Offsets(vec![*first, offset]);
+            state.nodes[child].data = ColtData::Offsets(vec![*first as u32, offset as u32]);
         }
-        ColtData::Offsets(child_offsets) => child_offsets.push(offset),
+        ColtData::Offsets(child_offsets) => child_offsets.push(offset as u32),
         _ => {}
     }
 }
