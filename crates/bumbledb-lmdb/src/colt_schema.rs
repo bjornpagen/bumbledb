@@ -10,12 +10,12 @@ pub(crate) fn tuple_schemas_for_atom(
     let occurrence = &query.atoms[atom.0];
     let mut schemas = Vec::new();
     for node in &plan.nodes {
-        for subatom in &node.subatoms {
+        for subatom in plan.node_subatoms(node) {
             if subatom.atom == atom {
-                let fields = subatom
-                    .vars
+                let fields = plan
+                    .subatom_vars(subatom)
                     .iter()
-                    .zip(&subatom.field_ids)
+                    .zip(plan.subatom_field_ids(subatom))
                     .filter_map(|(variable, field_id)| {
                         let Ok(field) = TupleField::new(
                             *variable,

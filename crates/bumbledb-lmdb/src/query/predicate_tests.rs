@@ -10,7 +10,10 @@ use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescripto
 use super::execute_query_with_predicate_mode_for_test;
 use crate::query::normalize::normalize_query;
 use crate::query::predicate::PredicateMode;
-use crate::{Environment, Error, Fact, InputBindings, Result, StorageSchema, Value};
+use crate::{
+    Environment, Error, Fact, InputBindings, QueryExecutionOptions, Result, StorageSchema,
+    TracePhase, Value,
+};
 
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -91,13 +94,13 @@ fn predicate_cross_atom_comparison_is_residual() -> Result<()> {
     let (env, schema) = env_and_schema("cross-residual")?;
     env.write(|txn| {
         for row in [row(1, 1, 0, "a", b"a", 0), row(2, 3, 0, "b", b"b", 0)] {
-            txn.insert(&schema, row)?;
+            txn.insert(&schema, &row)?;
         }
         for fact in [
             Fact::new("Other", [("u", Value::U64(2))]),
             Fact::new("Other", [("u", Value::U64(4))]),
         ] {
-            txn.insert(&schema, fact)?;
+            txn.insert(&schema, &fact)?;
         }
         Ok::<(), Error>(())
     })?;
@@ -293,6 +296,55 @@ fn predicate_empty_result_after_pushed_selection() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn predicate_missing_dictionary_literal_short_circuits_without_base_image_load() -> Result<()> {
+    let (env, schema) = env_and_schema("missing-dictionary")?;
+    insert_rows(&env, &schema)?;
+    let query = query(
+        vars([("id", serial())]),
+        Vec::new(),
+        &[0],
+        vec![atom([
+            field("id", 0, TypedTerm::Variable(0), serial()),
+            field(
+                "s",
+                3,
+                TypedTerm::Literal(str_lit("missing")),
+                ValueType::String,
+            ),
+        ])],
+        Vec::new(),
+    );
+
+    let profiled = env.read(|txn| {
+        txn.execute_query_profiled(
+            &schema,
+            &query,
+            &InputBindings::new(),
+            QueryExecutionOptions::default(),
+        )
+    })?;
+
+    assert!(profiled.result.facts.is_empty());
+    assert!(
+        profiled
+            .trace
+            .spans
+            .iter()
+            .any(|span| span.phase == TracePhase::EmptySourceShortCircuit
+                && span.label.contains("s = 'missing'")
+                && span.counters.empty_source_short_circuits == 1)
+    );
+    assert!(
+        profiled
+            .trace
+            .spans
+            .iter()
+            .all(|span| span.phase != TracePhase::BaseImageLoad)
+    );
+    Ok(())
+}
+
 fn range_query(
     env: &Environment,
     schema: &StorageSchema,
@@ -376,7 +428,7 @@ fn insert_rows(env: &Environment, schema: &StorageSchema) -> Result<()> {
             row(2, 2, 0, "b", b"b", 2),
             row(3, 3, 5, "c", b"c", 3),
         ] {
-            txn.insert(schema, row)?;
+            txn.insert(schema, &row)?;
         }
         Ok::<(), Error>(())
     })

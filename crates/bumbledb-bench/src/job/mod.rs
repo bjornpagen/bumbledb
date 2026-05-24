@@ -56,7 +56,7 @@ pub(crate) fn run_job(config: &Config) -> BenchResult<Vec<BenchmarkReport>> {
     let facts = load::load_job_facts(&job_dir, config.open_limit).map_err(BenchError::new)?;
     let load_start = Instant::now();
     env.write(|txn| {
-        for fact in facts.iter().cloned() {
+        for fact in &facts {
             txn.insert(&bench_schema, fact)?;
         }
         Ok::<(), bumbledb_lmdb::Error>(())

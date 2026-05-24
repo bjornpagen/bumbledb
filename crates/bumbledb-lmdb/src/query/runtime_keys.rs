@@ -1,16 +1,17 @@
-use crate::query::free_join::FjSubatom;
+use crate::colt::KeyScratch;
 use crate::query::model::NormalizedQuery;
 use crate::query::sink::Binding;
-use crate::tuple::EncodedTuple;
+use crate::tuple::EncodedTupleRef;
 use crate::{Error, Result};
 
-pub(super) fn key_from_binding(
+pub(super) fn key_from_binding_with_scratch<'scratch>(
     query: &NormalizedQuery,
     binding: &Binding,
-    subatom: &FjSubatom,
-) -> Result<EncodedTuple> {
-    let mut bytes = Vec::new();
-    for variable in &subatom.vars {
+    vars: &[usize],
+    scratch: &'scratch mut KeyScratch,
+) -> Result<EncodedTupleRef<'scratch>> {
+    scratch.clear();
+    for variable in vars {
         let value = binding
             .value(*variable)
             .ok_or_else(|| Error::corrupt(format!("missing variable {variable}")))?;
@@ -20,21 +21,22 @@ pub(super) fn key_from_binding(
                 "binding width mismatch for variable {variable}"
             )));
         }
-        bytes.extend_from_slice(value);
+        scratch.extend_from_slice(value);
     }
-    Ok(EncodedTuple::from_bytes(bytes))
+    Ok(EncodedTupleRef::new(scratch.bytes()))
 }
 
-pub(super) fn key_from_binding_by_bound_widths(
+pub(super) fn key_from_binding_by_bound_widths_with_scratch<'scratch>(
     binding: &Binding,
-    subatom: &FjSubatom,
-) -> Result<EncodedTuple> {
-    let mut bytes = Vec::new();
-    for variable in &subatom.vars {
+    vars: &[usize],
+    scratch: &'scratch mut KeyScratch,
+) -> Result<EncodedTupleRef<'scratch>> {
+    scratch.clear();
+    for variable in vars {
         let value = binding
             .value(*variable)
             .ok_or_else(|| Error::corrupt(format!("missing variable {variable}")))?;
-        bytes.extend_from_slice(value);
+        scratch.extend_from_slice(value);
     }
-    Ok(EncodedTuple::from_bytes(bytes))
+    Ok(EncodedTupleRef::new(scratch.bytes()))
 }

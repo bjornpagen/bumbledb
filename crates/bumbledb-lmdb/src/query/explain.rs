@@ -103,7 +103,7 @@ impl QueryPlan {
             self.validated
                 .nodes
                 .iter()
-                .map(|node| node.subatoms.len())
+                .map(|node| self.validated.node_subatoms(node).len())
                 .sum::<usize>()
         ));
         out.push(format!(
@@ -133,12 +133,17 @@ impl QueryPlan {
         for node in &self.validated.nodes {
             out.push(format!(
                 "node {} available={:?} new={:?} covers={:?}",
-                node.id, node.available_vars, node.new_vars, node.covers
+                node.id,
+                self.validated.node_available_vars(node),
+                self.validated.node_new_vars(node),
+                self.validated.node_covers(node)
             ));
-            for (index, subatom) in node.subatoms.iter().enumerate() {
+            for (index, subatom) in self.validated.node_subatoms(node).iter().enumerate() {
                 out.push(format!(
                     "  subatom {index}: atom={:?} vars={:?} fields={:?}",
-                    subatom.atom, subatom.vars, subatom.field_ids
+                    subatom.atom,
+                    self.validated.subatom_vars(subatom),
+                    self.validated.subatom_field_ids(subatom)
                 ));
             }
         }

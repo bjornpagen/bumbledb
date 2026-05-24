@@ -95,10 +95,10 @@ pub(crate) fn select_plan_with_trace(
     if let Some(span) = scoring_span {
         trace.finish_span(span, TraceCounters::default());
     }
-    let chosen = candidates
-        .first()
-        .cloned()
-        .ok_or_else(|| Error::invalid_query("planner produced no valid candidates"))?;
+    if candidates.is_empty() {
+        return Err(Error::invalid_query("planner produced no valid candidates"));
+    }
+    let chosen = candidates.remove(0);
     Ok(PlannerSelection {
         chosen,
         candidates,
@@ -118,7 +118,8 @@ pub(crate) fn generate_plan_candidates_with_trace(
     let binary = deterministic_binary_plan(query).map_err(invalid_plan)?;
     binary.validate(query).map_err(invalid_plan)?;
     let binary_fj = binary2fj(query, &binary).map_err(invalid_plan)?;
-    let (factored, rewrite_trace) = factor_plan(query, &binary_fj).map_err(invalid_plan)?;
+    let factored_input = binary2fj(query, &binary).map_err(invalid_plan)?;
+    let (factored, rewrite_trace) = factor_plan(query, factored_input).map_err(invalid_plan)?;
     for step in rewrite_trace.steps {
         let span = crate::query_trace_span!(
             trace,
@@ -193,11 +194,13 @@ fn singleton_plan(query: &NormalizedQuery) -> std::result::Result<FjPlan, FjPlan
         if atom.variable_tuple.is_empty() {
             nodes.push(FjNode {
                 id: nodes.len(),
-                subatoms: vec![FjSubatom {
+                subatoms: [FjSubatom {
                     atom: atom.id,
-                    vars: Vec::new(),
-                    field_ids: Vec::new(),
-                }],
+                    vars: Default::default(),
+                    field_ids: Default::default(),
+                }]
+                .into_iter()
+                .collect(),
             });
         }
     }
@@ -210,19 +213,19 @@ fn singleton_plan(query: &NormalizedQuery) -> std::result::Result<FjPlan, FjPlan
             })
             .map(|(atom, field_id)| FjSubatom {
                 atom,
-                vars: vec![variable],
-                field_ids: vec![field_id],
+                vars: [variable].into_iter().collect(),
+                field_ids: [field_id].into_iter().collect(),
             })
             .collect();
         if !subatoms.is_empty() {
             nodes.push(FjNode {
                 id: nodes.len(),
-                subatoms,
+                subatoms: subatoms.into_iter().collect(),
             });
         }
     }
     let plan = FjPlan {
-        nodes,
+        nodes: nodes.into_iter().collect(),
         query_variables: query.variables.len(),
     };
     plan.validate(query)?;

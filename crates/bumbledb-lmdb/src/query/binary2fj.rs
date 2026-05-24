@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use crate::query::free_join::{FjNode, FjPlan, FjPlanError, FjSubatom};
 use crate::query::model::{AtomOccurrence, AtomOccurrenceId, NormalizedQuery, NormalizedTerm};
 use crate::query::planner::{BinaryPlan, LeftDeepSource};
+use crate::query::trace::QUERY_TRACING_ENABLED;
 
 /// One conservative factorization attempt.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -16,7 +17,7 @@ pub(crate) struct PlanRewriteStep {
     /// Subatom index within the source node at attempt time.
     pub(crate) subatom_index: usize,
     /// Subatom being considered.
-    pub(crate) subatom: FjSubatom,
+    pub(crate) subatom: Option<FjSubatom>,
     /// Attempt outcome.
     pub(crate) outcome: PlanRewriteOutcome,
     /// Human-readable reason for tests and future explain output.
@@ -50,7 +51,7 @@ pub(crate) fn binary2fj_from_atoms(
 ) -> Result<FjPlan, FjPlanError> {
     let Some(first) = atoms.first().copied() else {
         return Ok(FjPlan {
-            nodes: Vec::new(),
+            nodes: Default::default(),
             query_variables: query.variables.len(),
         });
     };
@@ -70,7 +71,7 @@ pub(crate) fn binary2fj_from_atoms(
         current.push(subatom_for_vars(query, atom, &probe_vars)?);
         nodes.push(FjNode {
             id: nodes.len(),
-            subatoms: current,
+            subatoms: current.drain(..).collect(),
         });
         available = visible;
 
@@ -82,11 +83,11 @@ pub(crate) fn binary2fj_from_atoms(
     }
     nodes.push(FjNode {
         id: nodes.len(),
-        subatoms: current,
+        subatoms: current.into_iter().collect(),
     });
 
     let plan = FjPlan {
-        nodes,
+        nodes: nodes.into_iter().collect(),
         query_variables: query.variables.len(),
     };
     plan.validate(query)?;
@@ -112,10 +113,9 @@ pub(crate) fn binary2fj(
 /// Conservatively factors movable probe subatoms into previous nodes.
 pub(crate) fn factor_plan(
     query: &NormalizedQuery,
-    plan: &FjPlan,
+    mut rewritten: FjPlan,
 ) -> Result<(FjPlan, PlanRewriteTrace), FjPlanError> {
-    plan.validate(query)?;
-    let mut rewritten = plan.clone();
+    rewritten.validate(query)?;
     let mut trace = PlanRewriteTrace::default();
 
     for node_index in (1..rewritten.nodes.len()).rev() {
@@ -124,10 +124,9 @@ pub(crate) fn factor_plan(
             if subatom_index >= rewritten.nodes[node_index].subatoms.len() {
                 break;
             }
-            let subatom = rewritten.nodes[node_index].subatoms[subatom_index].clone();
-            let before = format!("{rewritten:?}");
+            let before = plan_snapshot(&rewritten);
             let available = available_before(&rewritten, node_index);
-            if !subatom
+            if !rewritten.nodes[node_index].subatoms[subatom_index]
                 .vars
                 .iter()
                 .all(|variable| available.contains(variable))
@@ -136,7 +135,7 @@ pub(crate) fn factor_plan(
                     &mut trace,
                     node_index,
                     subatom_index,
-                    subatom,
+                    trace_subatom(&rewritten.nodes[node_index].subatoms[subatom_index]),
                     "subatom has variables unavailable before node",
                     before,
                     &rewritten,
@@ -146,13 +145,15 @@ pub(crate) fn factor_plan(
             if rewritten.nodes[node_index - 1]
                 .subatoms
                 .iter()
-                .any(|existing| existing.atom == subatom.atom)
+                .any(|existing| {
+                    existing.atom == rewritten.nodes[node_index].subatoms[subatom_index].atom
+                })
             {
                 trace_rejected(
                     &mut trace,
                     node_index,
                     subatom_index,
-                    subatom,
+                    trace_subatom(&rewritten.nodes[node_index].subatoms[subatom_index]),
                     "previous node already contains atom occurrence",
                     before,
                     &rewritten,
@@ -161,17 +162,19 @@ pub(crate) fn factor_plan(
             }
 
             let moved = rewritten.nodes[node_index].subatoms.remove(subatom_index);
-            rewritten.nodes[node_index - 1].subatoms.push(moved.clone());
+            let moved_trace = trace_subatom(&moved);
+            rewritten.nodes[node_index - 1].subatoms.push(moved);
             if rewritten.validate(query).is_err() {
-                let _restored = rewritten.nodes[node_index - 1].subatoms.pop();
-                rewritten.nodes[node_index]
-                    .subatoms
-                    .insert(subatom_index, moved.clone());
+                if let Some(restored) = rewritten.nodes[node_index - 1].subatoms.pop() {
+                    rewritten.nodes[node_index]
+                        .subatoms
+                        .insert(subatom_index, restored);
+                }
                 trace_rejected(
                     &mut trace,
                     node_index,
                     subatom_index,
-                    moved,
+                    moved_trace,
                     "rewritten plan failed validation",
                     before,
                     &rewritten,
@@ -182,11 +185,11 @@ pub(crate) fn factor_plan(
                 from_node: node_index,
                 to_node: node_index - 1,
                 subatom_index,
-                subatom: moved,
+                subatom: moved_trace,
                 outcome: PlanRewriteOutcome::Moved,
                 reason: "moved".to_owned(),
                 before,
-                after: format!("{rewritten:?}"),
+                after: plan_snapshot(&rewritten),
             });
         }
     }
@@ -211,8 +214,8 @@ fn subatom_for_vars(
     }
     Ok(FjSubatom {
         atom,
-        vars: vars.to_vec(),
-        field_ids,
+        vars: vars.iter().copied().collect(),
+        field_ids: field_ids.into_iter().collect(),
     })
 }
 
@@ -264,7 +267,7 @@ fn trace_rejected(
     trace: &mut PlanRewriteTrace,
     from_node: usize,
     subatom_index: usize,
-    subatom: FjSubatom,
+    subatom: Option<FjSubatom>,
     reason: &str,
     before: String,
     plan: &FjPlan,
@@ -277,8 +280,20 @@ fn trace_rejected(
         outcome: PlanRewriteOutcome::Rejected,
         reason: reason.to_owned(),
         before,
-        after: format!("{plan:?}"),
+        after: plan_snapshot(plan),
     });
+}
+
+fn trace_subatom(subatom: &FjSubatom) -> Option<FjSubatom> {
+    QUERY_TRACING_ENABLED.then_some(*subatom)
+}
+
+fn plan_snapshot(plan: &FjPlan) -> String {
+    if QUERY_TRACING_ENABLED {
+        format!("{plan:?}")
+    } else {
+        String::new()
+    }
 }
 
 #[cfg(test)]

@@ -149,7 +149,7 @@ fn env_and_schema(name: &str) -> Result<(Environment, StorageSchema)> {
     let env = Environment::open_with_schema(path, &schema)?;
     env.write(|txn| {
         for fact in [pair("R", 1, 2), pair("S", 2, 3), pair("T", 3, 1)] {
-            txn.insert(&schema, fact)?;
+            txn.insert(&schema, &fact)?;
         }
         Ok::<(), crate::Error>(())
     })?;

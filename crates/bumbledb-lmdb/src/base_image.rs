@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use bumbledb_core::schema::RelationDescriptor;
 
@@ -25,6 +26,8 @@ pub(crate) struct RelationBaseImage {
     /// Lightweight relation stats.
     pub(crate) stats: RelationStats,
 }
+
+pub(crate) type RelationBaseImageRef = Rc<RelationBaseImage>;
 
 /// One fixed-width encoded field column.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,13 +69,65 @@ struct BaseImageCacheKey {
     schema: [u8; 32],
     storage_tx_id: u64,
     relation_id: u32,
-    field_ids: Vec<usize>,
+    field_ids: FieldScope,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct FieldScope {
+    words: [u64; 4],
+}
+
+impl FieldScope {
+    pub(crate) fn insert(&mut self, field_id: usize) {
+        let word = field_id / 64;
+        if let Some(slot) = self.words.get_mut(word) {
+            *slot |= 1u64 << (field_id % 64);
+        }
+    }
+
+    pub(crate) fn extend(&mut self, field_ids: impl IntoIterator<Item = usize>) {
+        for field_id in field_ids {
+            self.insert(field_id);
+        }
+    }
+
+    pub(crate) fn iter(self) -> FieldScopeIter {
+        FieldScopeIter {
+            scope: self,
+            next: 0,
+        }
+    }
+}
+
+pub(crate) struct FieldScopeIter {
+    scope: FieldScope,
+    next: usize,
+}
+
+impl Iterator for FieldScopeIter {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.next < self.scope.words.len() * 64 {
+            let field_id = self.next;
+            self.next += 1;
+            if self.scope.words[field_id / 64] & (1u64 << (field_id % 64)) != 0 {
+                return Some(field_id);
+            }
+        }
+        None
+    }
 }
 
 /// Process-local cache for immutable base images keyed by LMDB snapshot metadata.
 #[derive(Default)]
 pub(crate) struct BaseImageCache {
-    images: Mutex<BTreeMap<BaseImageCacheKey, Arc<RelationBaseImage>>>,
+    images: RefCell<Vec<BaseImageCacheEntry>>,
+}
+
+struct BaseImageCacheEntry {
+    key: BaseImageCacheKey,
+    image: Rc<RelationBaseImage>,
 }
 
 /// Builds or retrieves a relation base image for the current read snapshot.
@@ -81,7 +136,7 @@ pub(crate) fn relation_base_image(
     schema: &StorageSchema,
     relation_name: &str,
     field_ids: impl IntoIterator<Item = usize>,
-) -> Result<Arc<RelationBaseImage>> {
+) -> Result<RelationBaseImageRef> {
     relation_base_image_inner(txn, schema, relation_name, field_ids, None)
 }
 
@@ -91,7 +146,7 @@ pub(crate) fn relation_base_image_with_trace(
     relation_name: &str,
     field_ids: impl IntoIterator<Item = usize>,
     trace: &mut QueryTrace,
-) -> Result<Arc<RelationBaseImage>> {
+) -> Result<RelationBaseImageRef> {
     relation_base_image_inner(txn, schema, relation_name, field_ids, Some(trace))
 }
 
@@ -101,17 +156,16 @@ fn relation_base_image_inner(
     relation_name: &str,
     field_ids: impl IntoIterator<Item = usize>,
     mut trace: Option<&mut QueryTrace>,
-) -> Result<Arc<RelationBaseImage>> {
+) -> Result<RelationBaseImageRef> {
     let (relation_id, relation) = find_relation(schema, relation_name)?;
-    let mut field_ids: Vec<_> = field_ids.into_iter().collect();
-    field_ids.sort_unstable();
-    field_ids.dedup();
-    validate_fields(relation, &field_ids)?;
+    let mut field_scope = FieldScope::default();
+    field_scope.extend(field_ids);
+    validate_fields(relation, field_scope)?;
     let key = BaseImageCacheKey {
         schema: schema.descriptor().fingerprint().0,
         storage_tx_id: txn.storage_tx_id()?,
         relation_id,
-        field_ids,
+        field_ids: field_scope,
     };
     let lookup_span = trace.as_deref_mut().and_then(|trace| {
         crate::query_trace_span!(
@@ -122,7 +176,13 @@ fn relation_base_image_inner(
             key.field_ids
         )
     });
-    if let Some(image) = txn.base_images.images.lock().map_err(lock_error)?.get(&key) {
+    if let Some(image) = txn
+        .base_images
+        .images
+        .borrow()
+        .iter()
+        .find_map(|entry| (entry.key == key).then_some(&entry.image))
+    {
         if let (Some(trace), Some(span)) = (trace.as_deref_mut(), lookup_span) {
             trace.finish_span(
                 span,
@@ -132,7 +192,7 @@ fn relation_base_image_inner(
                 },
             );
         }
-        return Ok(Arc::clone(image));
+        return Ok(Rc::clone(image));
     }
     if let (Some(trace), Some(span)) = (trace.as_deref_mut(), lookup_span) {
         trace.finish_span(
@@ -153,20 +213,22 @@ fn relation_base_image_inner(
             key.field_ids
         )
     });
-    let image = Arc::new(load_relation_base_image(
+    let image = Rc::new(load_relation_base_image(
         txn,
         relation_id,
         relation,
-        &key.field_ids,
+        key.field_ids,
     )?);
     if let (Some(trace), Some(span)) = (trace, load_span) {
         trace.finish_span(span, base_image_counters(&image));
     }
     txn.base_images
         .images
-        .lock()
-        .map_err(lock_error)?
-        .insert(key, Arc::clone(&image));
+        .borrow_mut()
+        .push(BaseImageCacheEntry {
+            key,
+            image: Rc::clone(&image),
+        });
     Ok(image)
 }
 
@@ -192,14 +254,14 @@ fn base_image_counters(image: &RelationBaseImage) -> TraceCounters {
 /// Computes required field IDs per atom occurrence from a validated FJ plan.
 pub(crate) fn field_scope_for_plan(
     plan: &ValidatedFjPlan,
-) -> BTreeMap<AtomOccurrenceId, BTreeSet<usize>> {
+) -> BTreeMap<AtomOccurrenceId, FieldScope> {
     let mut scope = BTreeMap::new();
     for node in &plan.nodes {
-        for subatom in &node.subatoms {
+        for subatom in plan.node_subatoms(node) {
             scope
                 .entry(subatom.atom)
-                .or_insert_with(BTreeSet::new)
-                .extend(subatom.field_ids.iter().copied());
+                .or_insert_with(FieldScope::default)
+                .extend(plan.subatom_field_ids(subatom).iter().copied());
         }
     }
     scope
@@ -209,16 +271,16 @@ fn load_relation_base_image(
     txn: &ReadTxn<'_>,
     relation_id: u32,
     relation: &RelationDescriptor,
-    field_ids: &[usize],
+    field_ids: FieldScope,
 ) -> Result<RelationBaseImage> {
     let row_handles = live_row_handles(txn, relation_id)?;
     let mut columns = BTreeMap::new();
-    for field_id in field_ids {
-        let field = &relation.fields[*field_id];
+    for field_id in field_ids.iter() {
+        let field = &relation.fields[field_id];
         let width = field.value_type.encoded_width();
         let mut values = Vec::with_capacity(row_handles.len() * width);
         for handle in &row_handles {
-            let key = column_key(relation_id, *field_id as u32, *handle);
+            let key = column_key(relation_id, field_id as u32, *handle);
             let value = txn
                 .dbs
                 .data
@@ -232,9 +294,9 @@ fn load_relation_base_image(
             values.extend_from_slice(value);
         }
         columns.insert(
-            *field_id,
+            field_id,
             ColumnImage {
-                field_id: *field_id,
+                field_id,
                 width,
                 values,
             },
@@ -282,9 +344,9 @@ fn find_relation<'schema>(
         .ok_or_else(|| Error::invalid_fact(format!("unknown relation {name}")))
 }
 
-fn validate_fields(relation: &RelationDescriptor, field_ids: &[usize]) -> Result<()> {
-    for field_id in field_ids {
-        if *field_id >= relation.fields.len() {
+fn validate_fields(relation: &RelationDescriptor, field_ids: FieldScope) -> Result<()> {
+    for field_id in field_ids.iter() {
+        if field_id >= relation.fields.len() {
             return Err(Error::invalid_fact(format!(
                 "unknown field id {field_id} in relation {}",
                 relation.name
@@ -292,10 +354,6 @@ fn validate_fields(relation: &RelationDescriptor, field_ids: &[usize]) -> Result
         }
     }
     Ok(())
-}
-
-fn lock_error<T>(_: std::sync::PoisonError<T>) -> Error {
-    Error::corrupt("base image cache lock poisoned")
 }
 
 #[cfg(test)]

@@ -185,6 +185,7 @@ pub enum TracePhase {
     BaseImageCacheLookup,
     BaseImageLoad,
     SourceFilterEncode,
+    EmptySourceShortCircuit,
     ColtBuild,
     ColtIter,
     ColtForce,
@@ -207,6 +208,7 @@ pub struct TraceCounters {
     pub loaded_bytes: u64,
     pub source_filters_encoded: u64,
     pub source_filter_false_decisions: u64,
+    pub empty_source_short_circuits: u64,
     pub source_filter_rows_tested: u64,
     pub source_filter_survivors: u64,
     pub colt_nodes_created: u64,
@@ -242,6 +244,7 @@ impl TraceCounters {
         self.loaded_bytes += other.loaded_bytes;
         self.source_filters_encoded += other.source_filters_encoded;
         self.source_filter_false_decisions += other.source_filter_false_decisions;
+        self.empty_source_short_circuits += other.empty_source_short_circuits;
         self.source_filter_rows_tested += other.source_filter_rows_tested;
         self.source_filter_survivors += other.source_filter_survivors;
         self.colt_nodes_created += other.colt_nodes_created;

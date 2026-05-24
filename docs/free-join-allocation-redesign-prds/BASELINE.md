@@ -101,6 +101,33 @@ cargo run --release -p bumbledb-bench -- --preset job-sample --job-dir data/job 
 | `job_broad_movie_info_star` | 11185 | 10070 | 15910962 | 15852662 | 3 |
 | `job_q09_voice_us_actor` | 36730 | 4104 | 18184538 | 16040798 | 0 |
 
+## PRD 15 Source Filter Checkpoint
+
+Source-filter pruning now short-circuits impossible dictionary literals before base-image loading, represents one-row filtered sources as singleton node state, and emits `EmptySourceShortCircuit` diagnostics. The q09 traced diagnostic includes `country_code = '[us]'`, `gender = 'm'`, and `role = 'actor'` labels on pushed source-filter spans with survivor counters.
+
+No-trace JOB allocation gates still pass after a q33 allocated-byte budget refresh from `4329197` to `4345885` bytes. Exact SQLite comparison is unchanged.
+
+## Kill-List Hot-Path Checkpoint
+
+Production COLT now uses query-owned compact handles, arena flat maps, arena offset ranges, inline key storage, dense source slots, scratch probe keys, inline tuple batches, and compact projection dedup. Storage key builders no longer return heap `Vec<u8>`, encoded facts borrow schema descriptors and store field ranges into one fact buffer, and write APIs borrow facts.
+
+Command:
+
+```bash
+bash scripts/check-job-allocation-gates.sh
+```
+
+| query | alloc_calls | allocated_bytes | result_rows |
+| --- | ---: | ---: | ---: |
+| `job_broad_cast_keyword_company` | 854 | 7020472 | 3 |
+| `job_broad_movie_info_star` | 1104 | 10790345 | 3 |
+| `job_q01_top_production` | 484 | 2125740 | 0 |
+| `job_q09_voice_us_actor` | 912 | 10028565 | 0 |
+| `job_q16_character_title_us` | 919 | 6613883 | 0 |
+| `job_q24_voice_keyword_actor` | 1208 | 9487267 | 0 |
+| `job_movie_link_bridge` | 1144 | 7802283 | 0 |
+| `job_q33_linked_series_companies` | 1182 | 5658476 | 0 |
+
 ## Architecture Contract
 
 Allowed:

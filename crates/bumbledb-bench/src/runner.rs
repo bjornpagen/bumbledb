@@ -11,7 +11,7 @@ use bumbledb_lmdb::diagnostics::{
 use bumbledb_lmdb::{
     Fact, InputBindings, QueryExecutionOptions, QueryResultSet, QueryTrace, Value,
 };
-use bumbledb_test_support::{clover_query, env_and_schema, insert, pair, rows};
+use bumbledb_test_support::{clover_query, env_and_schema, pair, rows};
 
 use crate::cli::{Config, OutputFormat, TraceOutput};
 use crate::lint::validate_select_distinct;
@@ -87,7 +87,12 @@ pub(crate) fn run_cli(config: Config) -> BenchResult<String> {
 fn run_once(dataset: &Dataset, config: &Config) -> BenchResult<BenchmarkReport> {
     validate_select_distinct(&dataset.sql)?;
     let (env, schema) = env_and_schema(&format!("bench-{}", dataset.name))?;
-    insert(&env, &schema, dataset.facts.clone())?;
+    env.write(|txn| {
+        for fact in &dataset.facts {
+            txn.insert(&schema, fact)?;
+        }
+        Ok::<(), bumbledb_lmdb::Error>(())
+    })?;
     let start = Instant::now();
     let alloc_start = allocation_snapshot();
     let profiled = env.read(|txn| {
@@ -247,7 +252,12 @@ mod tests {
     fn end_to_end_equal_count_different_value_fails() -> BenchResult<()> {
         let dataset = dataset_by_name("clover_skew")?;
         let (env, schema) = env_and_schema("bench-equal-count-different-value")?;
-        insert(&env, &schema, dataset.facts)?;
+        env.write(|txn| {
+            for fact in &dataset.facts {
+                txn.insert(&schema, fact)?;
+            }
+            Ok::<(), bumbledb_lmdb::Error>(())
+        })?;
         let result =
             env.read(|txn| txn.execute_query(&schema, &dataset.query, &InputBindings::new()))?;
         let wrong_same_count = vec![vec![

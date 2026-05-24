@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 use std::ops::ControlFlow;
-use std::sync::Arc;
+use std::rc::Rc;
 
 use bumbledb_core::encoding::encode_u64;
 
-use super::{ColtSource, SourceFilter, SourceFilterOp};
+use super::{ColtSource, KeyOwned, OwnedColtSource, SourceFilter, SourceFilterOp};
 use crate::base_image::{ColumnImage, RelationBaseImage, RelationStats};
 use crate::diagnostics::{
     allocation_delta, allocation_snapshot, with_allocation_tracking_for_test,
@@ -134,7 +134,7 @@ fn batch_fill_report() -> Result<AllocationReport, Box<dyn std::error::Error>> {
     let delta = with_allocation_tracking_for_test(|| {
         let start = allocation_snapshot();
         let batch = colt.fill_batch(&mut cursor, 4);
-        assert_eq!(batch.tuples.len(), 4);
+        assert_eq!(batch.len(), 4);
         assert!(!batch.exhausted);
         allocation_delta(start, allocation_snapshot())
     });
@@ -191,7 +191,7 @@ fn grouped_colt(
     distinct_keys: usize,
     key_width: usize,
     filtered: bool,
-) -> Result<ColtSource, crate::tuple::TupleError> {
+) -> Result<OwnedColtSource, crate::tuple::TupleError> {
     let image = RelationBaseImage {
         relation_id: 0,
         name: "Grouped".to_owned(),
@@ -203,20 +203,20 @@ fn grouped_colt(
         vec![SourceFilter::Compare {
             field_id: 2,
             op: SourceFilterOp::Lte,
-            value: encode_u64((rows - 1) as u64).to_vec(),
+            value: KeyOwned::from_slice(&encode_u64((rows - 1) as u64)),
         }]
     } else {
         Vec::new()
     };
     Ok(ColtSource::new_filtered(
         AtomOccurrenceId(0),
-        Arc::new(image),
+        Rc::new(image),
         force_schemas(key_width)?,
         filters,
     ))
 }
 
-fn range_colt(rows: usize) -> Result<ColtSource, crate::tuple::TupleError> {
+fn range_colt(rows: usize) -> Result<OwnedColtSource, crate::tuple::TupleError> {
     let image = RelationBaseImage {
         relation_id: 0,
         name: "Range".to_owned(),
@@ -226,7 +226,7 @@ fn range_colt(rows: usize) -> Result<ColtSource, crate::tuple::TupleError> {
     };
     Ok(ColtSource::new(
         AtomOccurrenceId(0),
-        Arc::new(image),
+        Rc::new(image),
         vec![TupleSchema::new(vec![field(0, 0)?])],
     ))
 }

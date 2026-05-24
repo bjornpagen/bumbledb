@@ -116,7 +116,11 @@ fn ght_mock_iterates_and_gets_tuple_children() -> Result<(), TupleError> {
 
     assert_eq!(collect_tuples(&source), vec![key.clone()]);
     assert_eq!(
-        source.fill_batch(&mut TupleCursor::default(), 10).tuples,
+        source
+            .fill_batch(&mut TupleCursor::default(), 10)
+            .iter()
+            .map(EncodedTupleRef::to_owned_tuple)
+            .collect::<Vec<_>>(),
         vec![key.clone()]
     );
     assert!(source.get(key.as_ref()).is_some());
@@ -170,15 +174,13 @@ impl GhtSource for MockGht {
 
     fn fill_batch(&self, cursor: &mut TupleCursor, batch_size: usize) -> TupleBatch {
         let batch_size = batch_size.max(1);
-        let mut tuples = Vec::with_capacity(batch_size.min(self.keys.len()));
-        while cursor.position < self.keys.len() && tuples.len() < batch_size {
-            tuples.push(self.keys[cursor.position].clone());
+        let mut batch = TupleBatch::new();
+        while cursor.position < self.keys.len() && batch.len() < batch_size {
+            let _ = batch.push(self.keys[cursor.position].bytes());
             cursor.position += 1;
         }
-        TupleBatch {
-            tuples,
-            exhausted: cursor.position >= self.keys.len(),
-        }
+        batch.exhausted = cursor.position >= self.keys.len();
+        batch
     }
 
     fn get(&self, tuple: EncodedTupleRef<'_>) -> Option<Self::Child<'_>> {

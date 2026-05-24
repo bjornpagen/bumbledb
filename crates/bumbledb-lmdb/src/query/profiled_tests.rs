@@ -109,7 +109,7 @@ fn profiled_projection_decodes_only_final_projected_cells() -> Result<()> {
             pair("S", 1, 20),
             pair("S", 1, 21),
         ] {
-            txn.insert(&schema, fact)?;
+            txn.insert(&schema, &fact)?;
         }
         Ok::<_, crate::Error>(())
     })?;
@@ -183,7 +183,7 @@ fn insert_clover(env: &Environment, schema: &StorageSchema) -> Result<()> {
             pair("T", 3, 31),
             pair("T", 1, 32),
         ] {
-            txn.insert(schema, fact)?;
+            txn.insert(schema, &fact)?;
         }
         Ok::<(), crate::Error>(())
     })

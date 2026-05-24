@@ -161,7 +161,7 @@ fn vectorized_final_partial_batch_and_empty_relation_work() -> Result<()> {
     assert!(stats.vectorized.batches >= 2);
 
     let (empty_env, empty_schema) = env_and_schema("empty-relation")?;
-    empty_env.write(|txn| txn.insert(&empty_schema, pair("S", 1, 10)))?;
+    empty_env.write(|txn| txn.insert(&empty_schema, &pair("S", 1, 10)))?;
     let (empty, _) = run(
         &empty_env,
         &empty_schema,
@@ -242,7 +242,7 @@ fn insert_pairs(
 ) -> Result<()> {
     env.write(|txn| {
         for (relation, left, right) in facts {
-            txn.insert(schema, pair(relation, *left, *right))?;
+            txn.insert(schema, &pair(relation, *left, *right))?;
         }
         Ok::<(), crate::Error>(())
     })

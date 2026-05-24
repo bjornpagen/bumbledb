@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 use std::ops::ControlFlow;
-use std::sync::Arc;
+use std::rc::Rc;
 
 use bumbledb_core::encoding::encode_u64;
 use bumbledb_core::query_ir::{TypedFindTerm, TypedVariable};
 use bumbledb_core::schema::ValueType;
 
-use super::{ColtSource, SourceFilter, SourceFilterOp, tuple_schemas_for_atom};
+use super::{
+    ColtSource, KeyOwned, OwnedColtSource, SourceFilter, SourceFilterOp, tuple_schemas_for_atom,
+};
 use crate::base_image::{ColumnImage, RelationBaseImage, RelationStats};
 use crate::diagnostics::{
     allocation_delta, allocation_snapshot, with_allocation_tracking_for_test,
@@ -96,7 +98,7 @@ fn colt_second_level_lookup_forces_only_selected_child() -> TestResult {
 fn colt_empty_relation_iteration_and_lookup_work() -> TestResult {
     let colt = ColtSource::new(
         AtomOccurrenceId(0),
-        Arc::new(empty_image()),
+        Rc::new(empty_image()),
         vec![TupleSchema::new(vec![field(0, 0)?])],
     );
 
@@ -110,18 +112,20 @@ fn colt_paper_clover_shape_builds_from_plan() -> TestResult {
     let query = clover_query();
     let plan = FjPlan {
         query_variables: 4,
-        nodes: vec![
+        nodes: [
             node(
                 0,
                 [sub(0, [0, 1], [0, 1]), sub(1, [0], [0]), sub(2, [0], [0])],
             ),
             node(1, [sub(1, [2], [1])]),
             node(2, [sub(2, [3], [1])]),
-        ],
+        ]
+        .into_iter()
+        .collect(),
     };
     let validated = plan.validate(&query)?;
     let schemas = tuple_schemas_for_atom(&query, &validated, AtomOccurrenceId(1));
-    let colt = ColtSource::new(AtomOccurrenceId(1), Arc::new(clover_s_image()), schemas);
+    let colt = ColtSource::new(AtomOccurrenceId(1), Rc::new(clover_s_image()), schemas);
 
     assert_eq!(colt.vars(), &[0]);
     assert!(colt.get(tuple_x(1)?.as_ref()).is_some());
@@ -148,11 +152,11 @@ fn colt_fill_batch_respects_size_without_materializing_all_tuples() -> TestResul
     let second = colt.fill_batch(&mut cursor, 3);
     let third = colt.fill_batch(&mut cursor, 3);
 
-    assert_eq!(first.tuples.len(), 3);
+    assert_eq!(first.len(), 3);
     assert!(!first.exhausted);
-    assert_eq!(second.tuples.len(), 3);
+    assert_eq!(second.len(), 3);
     assert!(!second.exhausted);
-    assert_eq!(third.tuples.len(), 1);
+    assert_eq!(third.len(), 1);
     assert!(third.exhausted);
     assert_eq!(colt.counters().hash_maps_built, 0);
     Ok(())
@@ -166,7 +170,7 @@ fn colt_fill_batch_allocation_is_bounded_to_requested_batch() -> TestResult {
     let alloc_calls = with_allocation_tracking_for_test(|| {
         let start = allocation_snapshot();
         let batch = colt.fill_batch(&mut cursor, 4);
-        assert_eq!(batch.tuples.len(), 4);
+        assert_eq!(batch.len(), 4);
         allocation_delta(start, allocation_snapshot()).alloc_calls
     });
 
@@ -300,11 +304,11 @@ fn colt_source_filters_shrink_offsets_before_force() -> TestResult {
     let filter = SourceFilter::Compare {
         field_id: 0,
         op: SourceFilterOp::Eq,
-        value: encode_u64(1).to_vec(),
+        value: KeyOwned::from_slice(&encode_u64(1)),
     };
     let colt = ColtSource::new_filtered(
         AtomOccurrenceId(1),
-        Arc::new(clover_s_image()),
+        Rc::new(clover_s_image()),
         vec![
             TupleSchema::new(vec![field(0, 0)?]),
             TupleSchema::new(vec![field(2, 1)?]),
@@ -327,7 +331,7 @@ fn colt_trace_distinguishes_build_from_force() -> TestResult {
     let mut trace = QueryTrace::new();
     let colt = ColtSource::new_filtered_traced(
         AtomOccurrenceId(1),
-        Arc::new(clover_s_image()),
+        Rc::new(clover_s_image()),
         vec![
             TupleSchema::new(vec![field(0, 0)?]),
             TupleSchema::new(vec![field(2, 1)?]),
@@ -366,11 +370,11 @@ fn colt_trace_distinguishes_build_from_force() -> TestResult {
     Ok(())
 }
 
-fn clover_s_colt(schemas: Vec<TupleSchema>) -> ColtSource {
-    ColtSource::new(AtomOccurrenceId(1), Arc::new(clover_s_image()), schemas)
+fn clover_s_colt(schemas: Vec<TupleSchema>) -> OwnedColtSource {
+    ColtSource::new(AtomOccurrenceId(1), Rc::new(clover_s_image()), schemas)
 }
 
-fn range_colt(rows: usize) -> Result<ColtSource, TupleError> {
+fn range_colt(rows: usize) -> Result<OwnedColtSource, TupleError> {
     let image = RelationBaseImage {
         relation_id: 0,
         name: "Range".to_owned(),
@@ -382,12 +386,12 @@ fn range_colt(rows: usize) -> Result<ColtSource, TupleError> {
     };
     Ok(ColtSource::new(
         AtomOccurrenceId(0),
-        Arc::new(image),
+        Rc::new(image),
         vec![TupleSchema::new(vec![field(0, 0)?])],
     ))
 }
 
-fn grouped_colt(rows: usize, distinct_keys: usize) -> Result<ColtSource, TupleError> {
+fn grouped_colt(rows: usize, distinct_keys: usize) -> Result<OwnedColtSource, TupleError> {
     let image = RelationBaseImage {
         relation_id: 0,
         name: "Grouped".to_owned(),
@@ -405,7 +409,7 @@ fn grouped_colt(rows: usize, distinct_keys: usize) -> Result<ColtSource, TupleEr
     };
     Ok(ColtSource::new(
         AtomOccurrenceId(0),
-        Arc::new(image),
+        Rc::new(image),
         vec![
             TupleSchema::new(vec![field(0, 0)?]),
             TupleSchema::new(vec![field(1, 1)?]),
@@ -413,7 +417,7 @@ fn grouped_colt(rows: usize, distinct_keys: usize) -> Result<ColtSource, TupleEr
     ))
 }
 
-fn iteration_allocation(source: &ColtSource) -> (usize, u64, u64) {
+fn iteration_allocation(source: &OwnedColtSource) -> (usize, u64, u64) {
     with_allocation_tracking_for_test(|| {
         let start = allocation_snapshot();
         let mut count = 0usize;

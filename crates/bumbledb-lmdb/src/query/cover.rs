@@ -1,8 +1,6 @@
-use std::collections::BTreeMap;
-
-use crate::colt::ColtSource;
-use crate::query::free_join::{FjSubatom, ValidatedFjNode};
+use crate::query::free_join::{ValidatedFjNode, ValidatedFjPlan};
 use crate::query::model::AtomOccurrenceId;
+use crate::query::runtime_frame::{SourceStore, source_for as frame_source_for};
 use crate::tuple::{GhtSource, KeyCountEstimate};
 use crate::{Error, Result};
 
@@ -52,22 +50,25 @@ pub(crate) struct CoverCandidateObservation {
 }
 
 pub(crate) fn choose_cover(
+    plan: &ValidatedFjPlan,
     node: &ValidatedFjNode,
-    sources: &BTreeMap<AtomOccurrenceId, ColtSource>,
+    sources: &SourceStore,
     policy: CoverPolicy,
     stats: &mut ExecutionStats,
 ) -> Result<usize> {
-    if node.covers.is_empty() {
+    let covers = plan.node_covers(node);
+    let subatoms = plan.node_subatoms(node);
+    if covers.is_empty() {
         return Err(Error::invalid_query(format!(
             "node {} has no cover",
             node.id
         )));
     }
 
-    let mut observations = Vec::with_capacity(node.covers.len());
-    for cover in &node.covers {
-        let subatom = &node.subatoms[cover.subatom];
-        let source = source_for(sources, subatom)?;
+    let mut observations = Vec::with_capacity(covers.len());
+    for cover in covers {
+        let subatom = &subatoms[cover.subatom];
+        let source = frame_source_for(sources, plan, subatom)?;
         observations.push(CoverCandidateObservation {
             subatom: cover.subatom,
             atom: subatom.atom,
@@ -100,23 +101,6 @@ pub(crate) fn choose_cover(
         tie_break,
     });
     Ok(chosen_subatom)
-}
-
-fn source_for(
-    sources: &BTreeMap<AtomOccurrenceId, ColtSource>,
-    subatom: &FjSubatom,
-) -> Result<ColtSource> {
-    let source = sources
-        .get(&subatom.atom)
-        .cloned()
-        .ok_or_else(|| Error::corrupt(format!("missing source for atom {:?}", subatom.atom)))?;
-    if source.atom() != Some(subatom.atom) || source.vars() != subatom.vars.as_slice() {
-        return Err(Error::corrupt(format!(
-            "source schema mismatch for atom {:?}",
-            subatom.atom
-        )));
-    }
-    Ok(source)
 }
 
 fn key_count_value(count: KeyCountEstimate) -> usize {

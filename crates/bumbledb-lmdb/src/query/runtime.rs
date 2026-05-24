@@ -1,14 +1,14 @@
-use std::collections::BTreeMap;
 use std::ops::ControlFlow;
 
-use crate::colt::ColtSource;
+use crate::colt::{ColtSource, KeyScratch};
 use crate::query::cover::{CoverPolicy, ExecutionMode, ExecutionStats, choose_cover};
-use crate::query::free_join::{FjSubatom, ValidatedFjNode, ValidatedFjPlan};
-use crate::query::model::{AtomOccurrenceId, NormalizedQuery};
+use crate::query::free_join::{ValidatedFjNode, ValidatedFjPlan, ValidatedFjSubatom};
+use crate::query::model::NormalizedQuery;
 use crate::query::predicate::{self, PredicateMode};
 use crate::query::runtime_frame::{
-    SourceUndo, finish_binding_span, finish_node_span, finish_probe_span, finish_skipped_node_span,
-    lazy_atom_label, lazy_label, replace_source, restore_sources, source_for,
+    SourceStore, SourceUndo, finish_binding_span, finish_node_span, finish_probe_span,
+    finish_skipped_node_span, lazy_atom_label, lazy_label, replace_source, restore_sources,
+    source_for,
 };
 use crate::query::sink::{Binding, BindingSink, BindingUndo};
 use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
@@ -68,7 +68,7 @@ pub(super) fn execute_node<S: BindingSink>(
     depth: usize,
     query: &NormalizedQuery,
     plan: &ValidatedFjPlan,
-    sources: &mut BTreeMap<AtomOccurrenceId, ColtSource>,
+    sources: &mut SourceStore,
     binding: &mut Binding,
     binding_undo: &mut Vec<BindingUndo>,
     source_undo: &mut Vec<SourceUndo>,
@@ -94,7 +94,7 @@ pub(super) fn execute_node<S: BindingSink>(
     }
     let cover_span =
         crate::query_trace_span!(trace, TracePhase::CoverChoice, "node={}", node_index);
-    let cover_index = choose_cover(node, sources, cover_policy, stats)?;
+    let cover_index = choose_cover(plan, node, sources, cover_policy, stats)?;
     if let Some(span) = cover_span {
         trace.finish_span(
             span,
@@ -104,10 +104,12 @@ pub(super) fn execute_node<S: BindingSink>(
             },
         );
     }
-    let cover_subatom = &node.subatoms[cover_index];
-    let cover_source = source_for(sources, cover_subatom)?;
+    let cover_subatom = plan
+        .subatom_at(node, cover_index)
+        .ok_or_else(|| crate::Error::corrupt("missing cover subatom"))?;
+    let cover_source = source_for(sources, plan, cover_subatom)?;
 
-    let result = if node.new_vars.is_empty() {
+    let result = if plan.node_new_vars(node).is_empty() {
         execute_bound_cover(
             node_index,
             depth,
@@ -219,7 +221,7 @@ fn execute_bound_cover<S: BindingSink>(
     depth: usize,
     query: &NormalizedQuery,
     plan: &ValidatedFjPlan,
-    sources: &mut BTreeMap<AtomOccurrenceId, ColtSource>,
+    sources: &mut SourceStore,
     binding: &mut Binding,
     binding_undo: &mut Vec<BindingUndo>,
     source_undo: &mut Vec<SourceUndo>,
@@ -235,17 +237,25 @@ fn execute_bound_cover<S: BindingSink>(
     sink: &mut S,
     trace: &mut QueryTrace,
 ) -> Result<()> {
-    let cover_subatom = &node.subatoms[cover_index];
-    let cover_source = source_for(sources, cover_subatom)?;
+    let cover_subatom = plan
+        .subatom_at(node, cover_index)
+        .ok_or_else(|| crate::Error::corrupt("missing cover subatom"))?;
+    let cover_source = source_for(sources, plan, cover_subatom)?;
     let source_mark = source_undo.len();
-    if cover_subatom.vars.is_empty() && !cover_source.has_child_level() {
+    if plan.subatom_vars(cover_subatom).is_empty() && !cover_source.has_child_level() {
         if cover_source.is_empty() {
             return Ok(());
         }
     } else {
-        let key = super::runtime_keys::key_from_binding(query, binding, cover_subatom)?;
+        let mut key_scratch = KeyScratch::new();
+        let key = super::runtime_keys::key_from_binding_with_scratch(
+            query,
+            binding,
+            plan.subatom_vars(cover_subatom),
+            &mut key_scratch,
+        )?;
         let Some(child) = cover_source.get_traced(
-            key.as_ref(),
+            key,
             trace,
             lazy_label("cover get", node_index, cover_subatom.atom),
         ) else {
@@ -260,6 +270,7 @@ fn execute_bound_cover<S: BindingSink>(
     }
     let result = if probe_siblings(
         query,
+        plan,
         node,
         cover_index,
         binding,
@@ -299,7 +310,7 @@ fn execute_scalar_cover_loop<S: BindingSink>(
     depth: usize,
     query: &NormalizedQuery,
     plan: &ValidatedFjPlan,
-    sources: &mut BTreeMap<AtomOccurrenceId, ColtSource>,
+    sources: &mut SourceStore,
     binding: &mut Binding,
     binding_undo: &mut Vec<BindingUndo>,
     source_undo: &mut Vec<SourceUndo>,
@@ -310,7 +321,7 @@ fn execute_scalar_cover_loop<S: BindingSink>(
     node: &ValidatedFjNode,
     cover_index: usize,
     cover_source: &ColtSource,
-    cover_subatom: &FjSubatom,
+    cover_subatom: &ValidatedFjSubatom,
     cover_policy: CoverPolicy,
     stats: &mut ExecutionStats,
     sink: &mut S,
@@ -340,6 +351,7 @@ fn execute_scalar_cover_loop<S: BindingSink>(
             }
             let result = if probe_siblings(
                 query,
+                plan,
                 node,
                 cover_index,
                 binding,
@@ -380,12 +392,12 @@ fn execute_scalar_cover_loop<S: BindingSink>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn bind_cover_tuple(
     query: &NormalizedQuery,
-    sources: &mut BTreeMap<AtomOccurrenceId, ColtSource>,
+    sources: &mut SourceStore,
     binding: &mut Binding,
     binding_undo: &mut Vec<BindingUndo>,
     source_undo: &mut Vec<SourceUndo>,
     cover_source: &ColtSource,
-    cover_subatom: &FjSubatom,
+    cover_subatom: &ValidatedFjSubatom,
     tuple: EncodedTupleRef<'_>,
     trace: &mut QueryTrace,
 ) -> Result<bool> {
@@ -429,16 +441,18 @@ pub(super) fn bind_cover_tuple(
     Ok(true)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn probe_siblings(
     query: &NormalizedQuery,
+    plan: &ValidatedFjPlan,
     node: &ValidatedFjNode,
     cover_index: usize,
     binding: &Binding,
-    sources: &mut BTreeMap<AtomOccurrenceId, ColtSource>,
+    sources: &mut SourceStore,
     source_undo: &mut Vec<SourceUndo>,
     trace: &mut QueryTrace,
 ) -> Result<bool> {
-    for (index, subatom) in node.subatoms.iter().enumerate() {
+    for (index, subatom) in plan.node_subatoms(node).iter().enumerate() {
         if index == cover_index {
             continue;
         }
@@ -449,13 +463,17 @@ fn probe_siblings(
             node.id,
             subatom.atom
         );
-        let source = source_for(sources, subatom)?;
-        let key = super::runtime_keys::key_from_binding(query, binding, subatom)?;
-        let Some(child) = source.get_traced(
-            key.as_ref(),
-            trace,
-            lazy_label("sibling get", node.id, subatom.atom),
-        ) else {
+        let source = source_for(sources, plan, subatom)?;
+        let mut key_scratch = KeyScratch::new();
+        let key = super::runtime_keys::key_from_binding_with_scratch(
+            query,
+            binding,
+            plan.subatom_vars(subatom),
+            &mut key_scratch,
+        )?;
+        let Some(child) =
+            source.get_traced(key, trace, lazy_label("sibling get", node.id, subatom.atom))
+        else {
             finish_probe_span(trace, span, true);
             return Ok(false);
         };

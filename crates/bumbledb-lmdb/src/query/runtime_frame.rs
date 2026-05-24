@@ -1,11 +1,15 @@
-use std::collections::BTreeMap;
-
-use crate::colt::ColtSource;
-use crate::query::free_join::FjSubatom;
+use crate::base_image::RelationBaseImageRef;
+use crate::colt::{ColtSource, ColtSourceOwner, SourceFilter};
+use crate::query::free_join::{ValidatedFjPlan, ValidatedFjSubatom};
 use crate::query::model::AtomOccurrenceId;
 use crate::query::trace::{QUERY_TRACING_ENABLED, QueryTrace, TraceCounters, TraceSpanId};
-use crate::tuple::GhtSource;
+use crate::tuple::{GhtSource, TupleSchema};
 use crate::{Error, Result};
+
+pub(crate) struct SourceStore {
+    owner: ColtSourceOwner,
+    current: Vec<Option<ColtSource>>,
+}
 
 #[derive(Clone)]
 pub(super) struct SourceUndo {
@@ -13,39 +17,85 @@ pub(super) struct SourceUndo {
     previous: ColtSource,
 }
 
+impl SourceStore {
+    pub(super) fn with_atom_count(atom_count: usize) -> Self {
+        Self {
+            owner: ColtSourceOwner::with_capacity(atom_count),
+            current: vec![None; atom_count],
+        }
+    }
+
+    pub(super) fn insert_filtered_traced_labeled(
+        &mut self,
+        atom: AtomOccurrenceId,
+        base: RelationBaseImageRef,
+        schemas: Vec<TupleSchema>,
+        filters: Vec<SourceFilter>,
+        trace_label: String,
+        trace: &mut QueryTrace,
+    ) {
+        self.ensure_atom(atom);
+        let source = self.owner.add_filtered_traced_labeled(
+            atom,
+            base,
+            schemas,
+            filters,
+            trace_label,
+            trace,
+        );
+        self.current[atom.0] = Some(source);
+    }
+
+    pub(crate) fn source_for_atom(&self, atom: AtomOccurrenceId) -> Option<ColtSource> {
+        self.current.get(atom.0).copied().flatten()
+    }
+
+    fn replace(&mut self, atom: AtomOccurrenceId, next: ColtSource) -> Option<ColtSource> {
+        self.ensure_atom(atom);
+        self.current[atom.0].replace(next)
+    }
+
+    fn restore(&mut self, atom: AtomOccurrenceId, previous: ColtSource) {
+        self.ensure_atom(atom);
+        self.current[atom.0] = Some(previous);
+    }
+
+    fn ensure_atom(&mut self, atom: AtomOccurrenceId) {
+        if atom.0 >= self.current.len() {
+            self.current.resize(atom.0 + 1, None);
+        }
+    }
+}
+
 pub(super) fn replace_source(
-    sources: &mut BTreeMap<AtomOccurrenceId, ColtSource>,
+    sources: &mut SourceStore,
     atom: AtomOccurrenceId,
     next: ColtSource,
     undo: &mut Vec<SourceUndo>,
 ) -> Result<()> {
     let previous = sources
-        .insert(atom, next)
+        .replace(atom, next)
         .ok_or_else(|| Error::corrupt(format!("missing source for atom {atom:?}")))?;
     undo.push(SourceUndo { atom, previous });
     Ok(())
 }
 
-pub(super) fn restore_sources(
-    sources: &mut BTreeMap<AtomOccurrenceId, ColtSource>,
-    undo: &mut Vec<SourceUndo>,
-    mark: usize,
-) {
+pub(super) fn restore_sources(sources: &mut SourceStore, undo: &mut Vec<SourceUndo>, mark: usize) {
     while undo.len() > mark {
         let Some(entry) = undo.pop() else { break };
-        sources.insert(entry.atom, entry.previous);
+        sources.restore(entry.atom, entry.previous);
     }
 }
 
 pub(super) fn source_for(
-    sources: &BTreeMap<AtomOccurrenceId, ColtSource>,
-    subatom: &FjSubatom,
+    sources: &SourceStore,
+    plan: &ValidatedFjPlan,
+    subatom: &ValidatedFjSubatom,
 ) -> Result<ColtSource> {
     let source = sources
-        .get(&subatom.atom)
-        .cloned()
+        .source_for_atom(subatom.atom)
         .ok_or_else(|| Error::corrupt(format!("missing source for atom {:?}", subatom.atom)))?;
-    if source.atom() != Some(subatom.atom) || source.vars() != subatom.vars.as_slice() {
+    if source.atom() != Some(subatom.atom) || source.vars() != plan.subatom_vars(subatom) {
         return Err(Error::corrupt(format!(
             "source schema mismatch for atom {:?}",
             subatom.atom

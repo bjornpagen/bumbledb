@@ -1,8 +1,7 @@
-use std::collections::BTreeSet;
-
 use bumbledb_core::query_ir::TypedFindTerm;
 
 use crate::query::model::NormalizedQuery;
+use crate::query::projection_dedup::{ProjectionDedup, ProjectionScratch};
 use crate::storage_v5;
 use crate::tuple::EncodedTupleRef;
 use crate::{Error, QueryResultSet, ReadTxn, Result, ResultColumn, ResultFact};
@@ -161,7 +160,8 @@ pub(super) struct SinkConsumeStats {
 
 pub(super) struct ProjectionSink<'txn, 'env> {
     txn: &'txn ReadTxn<'env>,
-    encoded_facts: BTreeSet<Vec<u8>>,
+    encoded_facts: ProjectionDedup,
+    scratch: ProjectionScratch,
     stats: OutputStats,
 }
 
@@ -169,7 +169,8 @@ impl<'txn, 'env> ProjectionSink<'txn, 'env> {
     pub(super) fn new(txn: &'txn ReadTxn<'env>) -> Self {
         Self {
             txn,
-            encoded_facts: BTreeSet::new(),
+            encoded_facts: ProjectionDedup::default(),
+            scratch: ProjectionScratch::default(),
             stats: OutputStats::default(),
         }
     }
@@ -185,19 +186,23 @@ impl<'txn, 'env> ProjectionSink<'txn, 'env> {
     ) -> Result<(QueryResultSet, OutputStats)> {
         self.stats.materialized_facts = self.encoded_facts.len();
         let columns = result_columns(query)?;
-        let facts = self
+        let mut facts = self
             .encoded_facts
             .iter()
             .map(|fact| decode_encoded_projection(self.txn, query, fact))
             .collect::<Result<Vec<_>>>()?;
+        facts.sort();
         self.stats.decoded_values = facts.len() * query.find.len();
-        Ok((QueryResultSet::new(columns, facts), self.stats))
+        Ok((QueryResultSet::from_canonical(columns, facts), self.stats))
     }
 }
 
 impl BindingSink for ProjectionSink<'_, '_> {
     fn consume(&mut self, query: &NormalizedQuery, binding: &Binding) -> Result<SinkConsumeStats> {
-        let encoded = encoded_projection(query, binding)?;
+        let encoded = self
+            .scratch
+            .encoded_projection(query, binding)?
+            .ok_or_else(|| Error::corrupt("projection variable is unbound"))?;
         self.stats.logical_facts_represented += 1;
         let inserted = self.encoded_facts.insert(encoded);
         if inserted {
@@ -209,10 +214,10 @@ impl BindingSink for ProjectionSink<'_, '_> {
     }
 
     fn skip_seen_projection(&mut self, query: &NormalizedQuery, binding: &Binding) -> Result<bool> {
-        let Some(encoded) = encoded_projection_if_bound(query, binding)? else {
+        let Some(encoded) = self.scratch.encoded_projection(query, binding)? else {
             return Ok(false);
         };
-        if self.encoded_facts.contains(&encoded) {
+        if self.encoded_facts.contains(encoded) {
             self.stats.expansions_avoided += 1;
             return Ok(true);
         }
@@ -223,7 +228,8 @@ impl BindingSink for ProjectionSink<'_, '_> {
 #[allow(dead_code)]
 pub(super) struct FactorizedProjectionSink<'txn, 'env> {
     txn: &'txn ReadTxn<'env>,
-    encoded_facts: BTreeSet<Vec<u8>>,
+    encoded_facts: ProjectionDedup,
+    scratch: ProjectionScratch,
     stats: OutputStats,
 }
 
@@ -232,7 +238,8 @@ impl<'txn, 'env> FactorizedProjectionSink<'txn, 'env> {
     pub(super) fn new(txn: &'txn ReadTxn<'env>) -> Self {
         Self {
             txn,
-            encoded_facts: BTreeSet::new(),
+            encoded_facts: ProjectionDedup::default(),
+            scratch: ProjectionScratch::default(),
             stats: OutputStats::default(),
         }
     }
@@ -242,20 +249,27 @@ impl<'txn, 'env> FactorizedProjectionSink<'txn, 'env> {
         query: &NormalizedQuery,
     ) -> Result<(QueryResultSet, OutputStats)> {
         self.stats.materialized_facts = self.encoded_facts.len();
-        let facts = self
+        let mut facts = self
             .encoded_facts
             .iter()
             .map(|fact| decode_encoded_projection(self.txn, query, fact))
             .collect::<Result<Vec<_>>>()?;
+        facts.sort();
         self.stats.decoded_values = facts.len() * query.find.len();
         let stats = self.stats;
-        Ok((QueryResultSet::new(result_columns(query)?, facts), stats))
+        Ok((
+            QueryResultSet::from_canonical(result_columns(query)?, facts),
+            stats,
+        ))
     }
 }
 
 impl BindingSink for FactorizedProjectionSink<'_, '_> {
     fn consume(&mut self, query: &NormalizedQuery, binding: &Binding) -> Result<SinkConsumeStats> {
-        let encoded = encoded_projection(query, binding)?;
+        let encoded = self
+            .scratch
+            .encoded_projection(query, binding)?
+            .ok_or_else(|| Error::corrupt("projection variable is unbound"))?;
         self.stats.logical_facts_represented += 1;
         let inserted = self.encoded_facts.insert(encoded);
         if inserted {
@@ -268,10 +282,10 @@ impl BindingSink for FactorizedProjectionSink<'_, '_> {
     }
 
     fn skip_seen_projection(&mut self, query: &NormalizedQuery, binding: &Binding) -> Result<bool> {
-        let Some(encoded) = encoded_projection_if_bound(query, binding)? else {
+        let Some(encoded) = self.scratch.encoded_projection(query, binding)? else {
             return Ok(false);
         };
-        if self.encoded_facts.contains(&encoded) {
+        if self.encoded_facts.contains(encoded) {
             self.stats.expansions_avoided += 1;
             return Ok(true);
         }
@@ -311,31 +325,6 @@ fn result_columns(query: &NormalizedQuery) -> Result<Vec<ResultColumn>> {
         .collect()
 }
 
-#[allow(dead_code)]
-fn encoded_projection(query: &NormalizedQuery, binding: &Binding) -> Result<Vec<u8>> {
-    encoded_projection_if_bound(query, binding)?
-        .ok_or_else(|| Error::corrupt("projection variable is unbound"))
-}
-
-fn encoded_projection_if_bound(
-    query: &NormalizedQuery,
-    binding: &Binding,
-) -> Result<Option<Vec<u8>>> {
-    let mut out = Vec::new();
-    for term in &query.find {
-        match term {
-            TypedFindTerm::Variable { variable } => {
-                let Some(bytes) = binding.value(*variable) else {
-                    return Ok(None);
-                };
-                out.extend_from_slice(bytes);
-            }
-        }
-    }
-    Ok(Some(out))
-}
-
-#[allow(dead_code)]
 fn decode_encoded_projection(
     txn: &ReadTxn<'_>,
     query: &NormalizedQuery,

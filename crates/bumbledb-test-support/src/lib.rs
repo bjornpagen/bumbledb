@@ -78,7 +78,7 @@ pub fn insert(
 ) -> Result<()> {
     env.write(|txn| {
         for fact in facts {
-            txn.insert(schema, fact)?;
+            txn.insert(schema, &fact)?;
         }
         Ok::<(), bumbledb_lmdb::Error>(())
     })

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use std::collections::BTreeSet;
@@ -114,7 +114,7 @@ fn base_image_load_allocations_are_below_per_cell_value_allocation_pattern() -> 
     let (env, schema) = env_and_schema("allocation-profile")?;
     env.write(|txn| {
         for id in 0..256 {
-            txn.insert(&schema, person(id, &format!("person-{id}"), &[id as u8]))?;
+            txn.insert(&schema, &person(id, &format!("person-{id}"), &[id as u8]))?;
         }
         Ok::<(), Error>(())
     })?;
@@ -142,7 +142,7 @@ fn base_image_deleting_row_removes_it_from_new_images() -> Result<()> {
     let (env, schema) = env_and_schema("delete-row")?;
     insert_people(&env, &schema)?;
 
-    env.write(|txn| txn.delete(&schema, person(1, "alice", b"a")))?;
+    env.write(|txn| txn.delete(&schema, &person(1, "alice", b"a")))?;
 
     env.read(|txn| {
         let image = txn.relation_base_image(&schema, "Person", [0])?;
@@ -154,13 +154,13 @@ fn base_image_deleting_row_removes_it_from_new_images() -> Result<()> {
 #[test]
 fn base_image_read_snapshot_stays_stable_across_write() -> Result<()> {
     let (env, schema) = env_and_schema("snapshot")?;
-    env.write(|txn| txn.insert(&schema, person(1, "alice", b"a")))?;
+    env.write(|txn| txn.insert(&schema, &person(1, "alice", b"a")))?;
 
     env.read(|read| {
         let before = read.relation_base_image(&schema, "Person", [0])?;
-        env.write(|write| write.insert(&schema, person(2, "bob", b"b")))?;
+        env.write(|write| write.insert(&schema, &person(2, "bob", b"b")))?;
         let after = read.relation_base_image(&schema, "Person", [0])?;
-        assert!(Arc::ptr_eq(&before, &after));
+        assert!(Rc::ptr_eq(&before, &after));
         assert_eq!(after.row_handles.len(), 1);
         Ok::<(), Error>(())
     })?;
@@ -183,7 +183,7 @@ fn base_image_cache_hits_for_same_tx_and_scope() -> Result<()> {
     env.read(|txn| {
         let first = txn.relation_base_image(&schema, "Person", [0, 1])?;
         let second = txn.relation_base_image(&schema, "Person", [1, 0])?;
-        assert!(Arc::ptr_eq(&first, &second));
+        assert!(Rc::ptr_eq(&first, &second));
         Ok(())
     })
 }
@@ -191,14 +191,14 @@ fn base_image_cache_hits_for_same_tx_and_scope() -> Result<()> {
 #[test]
 fn base_image_cache_misses_for_changed_tx_or_scope() -> Result<()> {
     let (env, schema) = env_and_schema("cache-miss")?;
-    env.write(|txn| txn.insert(&schema, person(1, "alice", b"a")))?;
+    env.write(|txn| txn.insert(&schema, &person(1, "alice", b"a")))?;
     let first = env.read(|txn| txn.relation_base_image(&schema, "Person", [0]))?;
     let different_scope = env.read(|txn| txn.relation_base_image(&schema, "Person", [0, 1]))?;
-    env.write(|txn| txn.insert(&schema, person(2, "bob", b"b")))?;
+    env.write(|txn| txn.insert(&schema, &person(2, "bob", b"b")))?;
     let changed_tx = env.read(|txn| txn.relation_base_image(&schema, "Person", [0]))?;
 
-    assert!(!Arc::ptr_eq(&first, &different_scope));
-    assert!(!Arc::ptr_eq(&first, &changed_tx));
+    assert!(!Rc::ptr_eq(&first, &different_scope));
+    assert!(!Rc::ptr_eq(&first, &changed_tx));
     Ok(())
 }
 
@@ -206,21 +206,28 @@ fn base_image_cache_misses_for_changed_tx_or_scope() -> Result<()> {
 fn base_image_scope_can_be_derived_from_validated_plan() -> Result<()> {
     let plan = FjPlan {
         query_variables: 2,
-        nodes: vec![FjNode {
+        nodes: [FjNode {
             id: 0,
-            subatoms: vec![FjSubatom {
+            subatoms: [FjSubatom {
                 atom: AtomOccurrenceId(0),
-                vars: vec![0, 1],
-                field_ids: vec![0, 1],
-            }],
-        }],
+                vars: [0, 1].into_iter().collect(),
+                field_ids: [0, 1].into_iter().collect(),
+            }]
+            .into_iter()
+            .collect(),
+        }]
+        .into_iter()
+        .collect(),
     };
     let validated = plan
         .validate(&query_from_atoms([vec![0, 1]]))
         .map_err(|error| Error::invalid_query(error.to_string()))?;
     let scope = field_scope_for_plan(&validated);
 
-    assert_eq!(scope[&AtomOccurrenceId(0)], [0, 1].into_iter().collect());
+    assert_eq!(
+        scope[&AtomOccurrenceId(0)].iter().collect::<Vec<_>>(),
+        vec![0, 1]
+    );
     Ok(())
 }
 
@@ -253,11 +260,11 @@ fn schema() -> SchemaDescriptor {
 fn insert_people(env: &Environment, schema: &StorageSchema) -> Result<()> {
     env.write(|txn| {
         assert_eq!(
-            txn.insert(schema, person(1, "alice", b"a"))?,
+            txn.insert(schema, &person(1, "alice", b"a"))?,
             InsertOutcome::Inserted
         );
         assert_eq!(
-            txn.insert(schema, person(2, "bob", b"b"))?,
+            txn.insert(schema, &person(2, "bob", b"b"))?,
             InsertOutcome::Inserted
         );
         Ok(())

@@ -1,17 +1,16 @@
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::cell::UnsafeCell;
 use std::ops::ControlFlow;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::ptr::NonNull;
 
-use crate::base_image::RelationBaseImage;
+use crate::base_image::RelationBaseImageRef;
 use crate::colt_filter::source_filter_matches;
 pub(crate) use crate::colt_filter::{SourceFilter, SourceFilterOp};
 pub(crate) use crate::colt_schema::tuple_schemas_for_atom;
 use crate::query::model::AtomOccurrenceId;
 use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
-use crate::tuple::{EncodedTupleRef, GhtSource, TupleBatch, TupleCursor, TupleSchema};
+use crate::tuple::{EncodedTupleRef, GhtSource, InlineTuple, TupleBatch, TupleCursor, TupleSchema};
 
 #[path = "colt/arena.rs"]
 mod arena;
@@ -20,34 +19,37 @@ mod ght;
 #[path = "colt/key.rs"]
 mod key;
 
-use key::KeyOwned;
+use arena::{ColtArena, ColtMapId, ColtNodeId, NodeData};
+use key::KeyRef;
+pub(crate) use key::{KeyOwned, KeyScratch};
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub(crate) struct ColtSource {
-    state: Arc<Mutex<ColtState>>,
-    node: usize,
-    vars: Arc<[usize]>,
+    state: NonNull<UnsafeCell<ColtState>>,
+    node: ColtNodeId,
+}
+
+pub(crate) struct ColtSourceOwner {
+    states: Vec<UnsafeCell<ColtState>>,
+}
+
+pub(crate) struct OwnedColtSource {
+    _owner: ColtSourceOwner,
+    source: ColtSource,
 }
 
 pub(super) struct ColtState {
+    arena: ColtArena,
+    atom: AtomOccurrenceId,
+    base: RelationBaseImageRef,
+    schemas: Vec<TupleSchema>,
+    vars_by_level: Vec<Vec<usize>>,
     nodes: Vec<ColtNode>,
     counters: ColtCounters,
 }
 
 pub(super) struct ColtNode {
-    atom: AtomOccurrenceId,
-    base: Arc<RelationBaseImage>,
-    schemas: Arc<[TupleSchema]>,
-    vars: Arc<[usize]>,
-    data: ColtData,
-}
-
-#[derive(Clone)]
-pub(super) enum ColtData {
-    Range(usize),
-    Offsets(Vec<u32>),
-    Offset(usize),
-    Map(HashMap<KeyOwned, usize>),
+    level: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -63,106 +65,48 @@ pub(crate) struct ColtCounters {
 }
 
 impl ColtSource {
+    #[allow(clippy::new_ret_no_self)]
     pub(crate) fn new(
         atom: AtomOccurrenceId,
-        base: Arc<RelationBaseImage>,
+        base: RelationBaseImageRef,
         schemas: Vec<TupleSchema>,
-    ) -> Self {
+    ) -> OwnedColtSource {
         Self::new_filtered(atom, base, schemas, Vec::new())
     }
 
     pub(crate) fn new_filtered(
         atom: AtomOccurrenceId,
-        base: Arc<RelationBaseImage>,
+        base: RelationBaseImageRef,
         schemas: Vec<TupleSchema>,
         filters: Vec<SourceFilter>,
-    ) -> Self {
-        Self::new_filtered_with_trace(atom, base, schemas, filters, None)
+    ) -> OwnedColtSource {
+        let mut owner = ColtSourceOwner::new();
+        let source =
+            owner.add_filtered_with_trace(atom, base, schemas, filters, None, String::new());
+        OwnedColtSource {
+            _owner: owner,
+            source,
+        }
     }
 
     pub(crate) fn new_filtered_traced(
         atom: AtomOccurrenceId,
-        base: Arc<RelationBaseImage>,
+        base: RelationBaseImageRef,
         schemas: Vec<TupleSchema>,
         filters: Vec<SourceFilter>,
         trace: &mut QueryTrace,
-    ) -> Self {
-        Self::new_filtered_with_trace(atom, base, schemas, filters, Some(trace))
-    }
-
-    fn new_filtered_with_trace(
-        atom: AtomOccurrenceId,
-        base: Arc<RelationBaseImage>,
-        schemas: Vec<TupleSchema>,
-        filters: Vec<SourceFilter>,
-        mut trace: Option<&mut QueryTrace>,
-    ) -> Self {
-        let span = trace.as_deref_mut().and_then(|trace| {
-            crate::query_trace_span!(
-                trace,
-                TracePhase::ColtBuild,
-                "relation={} atom={:?}",
-                base.name,
-                atom
-            )
-        });
-        let counters = ColtCounters {
-            nodes_created: 1,
-            ..ColtCounters::default()
-        };
-        let schemas: Arc<[TupleSchema]> = schemas.into();
-        let vars: Arc<[usize]> = schemas
-            .first()
-            .map_or_else(Vec::new, TupleSchema::vars)
-            .into();
-        let source_filter_rows_tested = base.row_handles.len() as u64;
-        let data = if filters.is_empty() {
-            ColtData::Range(base.row_handles.len())
-        } else {
-            ColtData::Offsets(
-                (0..base.row_handles.len())
-                    .filter(|offset| {
-                        filters
-                            .iter()
-                            .all(|filter| source_filter_matches(&base, *offset, filter))
-                    })
-                    .map(|offset| offset as u32)
-                    .collect(),
-            )
-        };
-        let state = Arc::new(Mutex::new(ColtState {
-            nodes: vec![ColtNode {
-                atom,
-                base,
-                schemas,
-                vars: Arc::clone(&vars),
-                data,
-            }],
-            counters,
-        }));
-        let source = Self {
-            state,
-            node: 0,
-            vars,
-        };
-        if let (Some(trace), Some(span)) = (trace, span) {
-            trace.finish_span(
-                span,
-                TraceCounters {
-                    source_filter_rows_tested,
-                    source_filter_survivors: source.offset_len() as u64,
-                    colt_nodes_created: 1,
-                    ..TraceCounters::default()
-                },
-            );
+    ) -> OwnedColtSource {
+        let mut owner = ColtSourceOwner::new();
+        let source =
+            owner.add_filtered_with_trace(atom, base, schemas, filters, Some(trace), String::new());
+        OwnedColtSource {
+            _owner: owner,
+            source,
         }
-        source
     }
 
     pub(crate) fn counters(&self) -> ColtCounters {
-        self.state
-            .lock()
-            .map_or_else(|_| ColtCounters::default(), |state| state.counters.clone())
+        self.state().counters.clone()
     }
 
     pub(crate) fn try_for_each_tuple_traced<E, F>(
@@ -200,8 +144,8 @@ impl ColtSource {
         let batch = self.fill_batch(cursor, batch_size);
         let after = self.counters();
         if let Some(span) = span {
-            let mut counters = colt_counter_delta(before, after, batch.tuples.len());
-            counters.batches_yielded = u64::from(!batch.tuples.is_empty());
+            let mut counters = colt_counter_delta(before, after, batch.len());
+            counters.batches_yielded = u64::from(!batch.is_empty());
             trace.finish_span(span, counters);
         }
         batch
@@ -233,24 +177,17 @@ impl ColtSource {
 
         let before_get = self.counters();
         let span = trace.start_span(TracePhase::ColtGet, label);
-        let mut state = self.lock_state();
+        let state = self.state_mut();
         state.counters.get_calls += 1;
-        let ColtData::Map(map) = &state.nodes[self.node].data else {
-            if let Some(span) = span {
-                trace.finish_span(span, TraceCounters::default());
-            }
-            return None;
-        };
-        let child = map.get(tuple.bytes()).cloned();
+        let child = map_for_source(state, self)
+            .and_then(|map| state.arena.lookup_map(map, KeyRef::new(tuple.bytes())));
         if child.is_none() {
             state.counters.misses += 1;
         }
         let output = child.map(|node| ColtSource {
-            vars: Arc::clone(&state.nodes[node].vars),
-            state: Arc::clone(&self.state),
+            state: self.state,
             node,
         });
-        drop(state);
         let after_get = self.counters();
         if let Some(span) = span {
             trace.finish_span(span, colt_counter_delta(before_get, after_get, 0));
@@ -259,25 +196,24 @@ impl ColtSource {
     }
 
     pub(crate) fn is_vector(&self) -> bool {
-        let state = self.lock_state();
-        matches!(
-            state.nodes[self.node].data,
-            ColtData::Range(_) | ColtData::Offsets(_) | ColtData::Offset(_)
-        )
+        let state = self.state();
+        state
+            .arena
+            .node_data(self.node)
+            .is_some_and(|data| !matches!(data, NodeData::Map(_)))
     }
 
     pub(crate) fn offset_len(&self) -> usize {
-        let state = self.lock_state();
-        match &state.nodes[self.node].data {
-            ColtData::Range(len) => *len,
-            ColtData::Offsets(offsets) => offsets.len(),
-            ColtData::Offset(_) => 1,
-            ColtData::Map(map) => map.len(),
-        }
+        let state = self.state();
+        state
+            .arena
+            .node_data(self.node)
+            .map_or(0, |data| state.arena.item_count(data))
     }
 
     pub(crate) fn has_child_level(&self) -> bool {
-        self.lock_state().nodes[self.node].schemas.len() > 1
+        let state = self.state();
+        state.nodes[self.node.0 as usize].level + 1 < state.schemas.len()
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -285,101 +221,224 @@ impl ColtSource {
     }
 
     fn force(&self) {
-        if !self.is_vector() {
+        let state = self.state_mut();
+        let Some(data) = state.arena.node_data(self.node) else {
+            return;
+        };
+        if matches!(data, NodeData::Map(_)) {
             return;
         }
-        let mut state = self.lock_state();
-        if !matches!(
-            state.nodes[self.node].data,
-            ColtData::Range(_) | ColtData::Offsets(_) | ColtData::Offset(_)
-        ) {
+        let node_index = self.node.0 as usize;
+        let offset_count = state.arena.item_count(data);
+        let level = state.nodes[node_index].level;
+        if level >= state.schemas.len() {
+            let empty = state.arena.child_offsets_data(&[]);
+            state.arena.set_node_data(self.node, empty);
             return;
         }
-        let data = std::mem::replace(
-            &mut state.nodes[self.node].data,
-            ColtData::Offsets(Vec::new()),
-        );
-        let offset_count = match &data {
-            ColtData::Range(len) => *len,
-            ColtData::Offsets(offsets) => offsets.len(),
-            ColtData::Offset(_) => 1,
-            ColtData::Map(_) => 0,
-        };
-        let offsets: Box<dyn Iterator<Item = usize>> = match data {
-            ColtData::Range(len) => Box::new(0..len),
-            ColtData::Offsets(offsets) => {
-                Box::new(offsets.into_iter().map(|offset| offset as usize))
-            }
-            ColtData::Offset(offset) => Box::new(std::iter::once(offset)),
-            ColtData::Map(map) => {
-                state.nodes[self.node].data = ColtData::Map(map);
-                return;
-            }
-        };
-        let Some(schema) = state.nodes[self.node].schemas.first().cloned() else {
-            state.nodes[self.node].data = ColtData::Offsets(Vec::new());
-            return;
-        };
-        let child_schemas: Arc<[TupleSchema]> = state.nodes[self.node]
-            .schemas
-            .iter()
-            .skip(1)
-            .cloned()
-            .collect::<Vec<_>>()
-            .into();
-        let child_vars: Arc<[usize]> = child_schemas
-            .first()
-            .map_or_else(Vec::new, TupleSchema::vars)
-            .into();
-        let base = Arc::clone(&state.nodes[self.node].base);
-        let atom = state.nodes[self.node].atom;
-        let mut map: HashMap<KeyOwned, usize> = HashMap::with_capacity(offset_count);
-        let mut key_bytes = Vec::with_capacity(schema.encoded_width());
-        for offset in offsets {
+        let child_level = level + 1;
+        let map = state.arena.add_map_table(offset_count, offset_count);
+        let mut key_tuple = InlineTuple::default();
+        let first_child = state.nodes.len();
+        let mut child_counts = Vec::new();
+        for position in 0..offset_count as u32 {
+            let Some(offset) = state.arena.offset_at_position(data, position) else {
+                continue;
+            };
             state.counters.offsets_scanned += 1;
-            if schema
-                .write_tuple_from_base_offset(&base, offset, &mut key_bytes)
+            if state.schemas[level]
+                .inline_tuple_from_base_offset(&state.base, offset as usize, &mut key_tuple)
                 .is_err()
             {
                 continue;
             }
-            if let Some(child) = map.get(key_bytes.as_slice()).copied() {
-                push_child_offset(&mut state, child, offset);
+            let key = KeyRef::new(key_tuple.as_ref().bytes());
+            if let Some(child) = state.arena.lookup_map(map, key) {
+                let index = child.0 as usize - first_child;
+                child_counts[index] += 1;
             } else {
                 state.counters.nodes_created += 1;
-                let child = state.nodes.len();
-                state.nodes.push(ColtNode {
-                    atom,
-                    base: Arc::clone(&base),
-                    schemas: Arc::clone(&child_schemas),
-                    vars: Arc::clone(&child_vars),
-                    data: ColtData::Offset(offset),
-                });
-                map.insert(KeyOwned::from_slice(&key_bytes), child);
+                let child = state.arena.add_singleton_node(offset);
+                debug_assert_eq!(child.0 as usize, state.nodes.len());
+                state.nodes.push(ColtNode { level: child_level });
+                child_counts.push(1u32);
+                state.arena.insert_map_entry(map, key, child);
             }
         }
-        state.counters.map_entries_built += map.len();
+        for (index, count) in child_counts.iter().copied().enumerate() {
+            if count > 1 {
+                let range = state.arena.reserve_offsets(count);
+                state.arena.set_node_data(
+                    ColtNodeId((first_child + index) as u32),
+                    NodeData::Offsets(range),
+                );
+            }
+        }
+        let mut child_positions = vec![0u32; child_counts.len()];
+        for position in 0..offset_count as u32 {
+            let Some(offset) = state.arena.offset_at_position(data, position) else {
+                continue;
+            };
+            if state.schemas[level]
+                .inline_tuple_from_base_offset(&state.base, offset as usize, &mut key_tuple)
+                .is_err()
+            {
+                continue;
+            }
+            let key = KeyRef::new(key_tuple.as_ref().bytes());
+            let Some(child) = state.arena.lookup_map(map, key) else {
+                continue;
+            };
+            let index = child.0 as usize - first_child;
+            if child_counts[index] > 1
+                && let Some(NodeData::Offsets(range)) = state.arena.node_data(child)
+            {
+                state
+                    .arena
+                    .set_offset(range, child_positions[index], offset);
+                child_positions[index] += 1;
+            }
+        }
+        state.counters.map_entries_built += state.arena.map_entry_count(map);
         state.counters.nodes_forced += 1;
         state.counters.hash_maps_built += 1;
-        state.nodes[self.node].data = ColtData::Map(map);
+        state.arena.set_node_data(self.node, NodeData::Map(map));
     }
 
-    pub(super) fn lock_state(&self) -> std::sync::MutexGuard<'_, ColtState> {
-        match self.state.lock() {
-            Ok(state) => state,
-            Err(poisoned) => poisoned.into_inner(),
-        }
+    pub(super) fn state(&self) -> &ColtState {
+        // SAFETY: `ColtSource` handles are created only by `ColtSourceOwner`,
+        // which owns the boxed state for the whole query/test execution. The
+        // engine is single-threaded and never uses a handle after its owner is
+        // dropped.
+        unsafe { &*self.state.as_ref().get() }
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    pub(super) fn state_mut(&self) -> &mut ColtState {
+        // SAFETY: execution mutates COLT state through short-lived operations on
+        // one thread. Handles are compact aliases into the query-local owner;
+        // callers do not retain references returned from this method across a
+        // recursive call or user callback.
+        unsafe { &mut *self.state.as_ref().get() }
     }
 }
 
-fn push_child_offset(state: &mut ColtState, child: usize, offset: usize) {
-    match &mut state.nodes[child].data {
-        ColtData::Offset(first) if *first != offset => {
-            state.nodes[child].data = ColtData::Offsets(vec![*first as u32, offset as u32]);
-        }
-        ColtData::Offsets(child_offsets) => child_offsets.push(offset as u32),
-        _ => {}
+impl ColtSourceOwner {
+    pub(crate) fn new() -> Self {
+        Self::with_capacity(1)
     }
+
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
+        Self {
+            states: Vec::with_capacity(capacity),
+        }
+    }
+
+    pub(crate) fn add_filtered_traced_labeled(
+        &mut self,
+        atom: AtomOccurrenceId,
+        base: RelationBaseImageRef,
+        schemas: Vec<TupleSchema>,
+        filters: Vec<SourceFilter>,
+        trace_label: String,
+        trace: &mut QueryTrace,
+    ) -> ColtSource {
+        self.add_filtered_with_trace(atom, base, schemas, filters, Some(trace), trace_label)
+    }
+
+    pub(crate) fn add_filtered_with_trace(
+        &mut self,
+        atom: AtomOccurrenceId,
+        base: RelationBaseImageRef,
+        schemas: Vec<TupleSchema>,
+        filters: Vec<SourceFilter>,
+        mut trace: Option<&mut QueryTrace>,
+        trace_label: String,
+    ) -> ColtSource {
+        let span = trace.as_deref_mut().and_then(|trace| {
+            crate::query_trace_span!(
+                trace,
+                TracePhase::ColtBuild,
+                "relation={} atom={:?} filters={}",
+                base.name,
+                atom,
+                trace_label
+            )
+        });
+        let counters = ColtCounters {
+            nodes_created: 1,
+            ..ColtCounters::default()
+        };
+        let vars_by_level = vars_by_level(&schemas);
+        let source_filter_rows_tested = base.row_handles.len() as u64;
+        let mut arena = ColtArena::new();
+        let data = if filters.is_empty() {
+            NodeData::Range {
+                start: 0,
+                len: base.row_handles.len() as u32,
+            }
+        } else {
+            arena.filtered_offsets_data(base.row_handles.len(), |offset| {
+                filters
+                    .iter()
+                    .all(|filter| source_filter_matches(&base, offset, filter))
+            })
+        };
+        let root = arena.add_node_data(data);
+        debug_assert_eq!(root.0, 0);
+        let state = ColtState {
+            arena,
+            atom,
+            base,
+            schemas,
+            vars_by_level,
+            nodes: vec![ColtNode { level: 0 }],
+            counters,
+        };
+        self.states.push(UnsafeCell::new(state));
+        let state_index = self.states.len() - 1;
+        let state_ptr = NonNull::from(&self.states[state_index]);
+        let source = ColtSource {
+            state: state_ptr,
+            node: root,
+        };
+        if let (Some(trace), Some(span)) = (trace, span) {
+            trace.finish_span(
+                span,
+                TraceCounters {
+                    source_filter_rows_tested,
+                    source_filter_survivors: source.offset_len() as u64,
+                    colt_nodes_created: 1,
+                    ..TraceCounters::default()
+                },
+            );
+        }
+        source
+    }
+}
+
+impl std::ops::Deref for OwnedColtSource {
+    type Target = ColtSource;
+
+    fn deref(&self) -> &Self::Target {
+        &self.source
+    }
+}
+
+fn map_for_source(state: &ColtState, source: &ColtSource) -> Option<ColtMapId> {
+    state.arena.map_for_node(source.node)
+}
+
+fn vars_by_level(schemas: &[TupleSchema]) -> Vec<Vec<usize>> {
+    let mut vars = Vec::with_capacity(schemas.len());
+    for schema in schemas {
+        let mut level = Vec::with_capacity(schema.fields.len());
+        for field in &schema.fields {
+            level.push(field.variable);
+        }
+        vars.push(level);
+    }
+    vars
 }
 
 fn colt_counter_delta(before: ColtCounters, after: ColtCounters, tuples: usize) -> TraceCounters {

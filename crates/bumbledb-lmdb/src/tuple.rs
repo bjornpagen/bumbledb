@@ -7,6 +7,9 @@ use std::ops::ControlFlow;
 use crate::base_image::RelationBaseImage;
 use crate::query::model::AtomOccurrenceId;
 
+const INLINE_TUPLE_BYTES: usize = 128;
+const TUPLE_BATCH_CAPACITY: usize = 64;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TupleField {
     pub(crate) variable: usize,
@@ -95,6 +98,54 @@ impl TupleSchema {
         }
         Ok(())
     }
+
+    fn write_tuple_from_base_offset_inline(
+        &self,
+        image: &RelationBaseImage,
+        offset: usize,
+        out: &mut [u8],
+    ) -> Result<usize, TupleError> {
+        let mut written = 0;
+        for field in &self.fields {
+            let field_id = field.field_id.ok_or(TupleError::MissingFieldId {
+                variable: field.variable,
+            })?;
+            let column = image
+                .columns
+                .get(&field_id)
+                .ok_or(TupleError::MissingColumn { field_id })?;
+            let value = column
+                .value_at(offset)
+                .ok_or(TupleError::OffsetOutOfRange { offset })?;
+            if value.len() != field.width {
+                return Err(TupleError::ComponentWidthMismatch {
+                    expected: field.width,
+                    actual: value.len(),
+                });
+            }
+            let end = written + value.len();
+            if end > out.len() {
+                return Err(TupleError::TupleTooWide {
+                    max: out.len(),
+                    actual: end,
+                });
+            }
+            out[written..end].copy_from_slice(value);
+            written = end;
+        }
+        Ok(written)
+    }
+
+    pub(crate) fn inline_tuple_from_base_offset(
+        &self,
+        image: &RelationBaseImage,
+        offset: usize,
+        tuple: &mut InlineTuple,
+    ) -> Result<(), TupleError> {
+        let len = self.write_tuple_from_base_offset_inline(image, offset, &mut tuple.bytes)?;
+        tuple.len = len as u16;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -158,10 +209,104 @@ pub(crate) struct TupleCursor {
     pub(crate) position: usize,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct InlineTuple {
+    len: u16,
+    bytes: [u8; INLINE_TUPLE_BYTES],
+}
+
+impl InlineTuple {
+    fn set(&mut self, bytes: &[u8]) -> Result<(), TupleError> {
+        if bytes.len() > self.bytes.len() {
+            return Err(TupleError::TupleTooWide {
+                max: self.bytes.len(),
+                actual: bytes.len(),
+            });
+        }
+        self.len = bytes.len() as u16;
+        self.bytes[..bytes.len()].copy_from_slice(bytes);
+        Ok(())
+    }
+
+    pub(crate) fn as_ref(&self) -> EncodedTupleRef<'_> {
+        EncodedTupleRef::new(&self.bytes[..self.len as usize])
+    }
+}
+
+impl Default for InlineTuple {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            bytes: [0; INLINE_TUPLE_BYTES],
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TupleBatch {
-    pub(crate) tuples: Vec<EncodedTuple>,
+    pub(crate) tuples: [InlineTuple; TUPLE_BATCH_CAPACITY],
+    len: usize,
     pub(crate) exhausted: bool,
+}
+
+impl TupleBatch {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn exhausted() -> Self {
+        Self {
+            exhausted: true,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> Result<(), TupleError> {
+        if self.len >= self.tuples.len() {
+            return Ok(());
+        }
+        self.tuples[self.len].set(bytes)?;
+        self.len += 1;
+        Ok(())
+    }
+
+    pub(crate) fn push_from_base(
+        &mut self,
+        schema: &TupleSchema,
+        image: &RelationBaseImage,
+        offset: usize,
+    ) -> Result<(), TupleError> {
+        if self.len >= self.tuples.len() {
+            return Ok(());
+        }
+        let tuple = &mut self.tuples[self.len];
+        let len = schema.write_tuple_from_base_offset_inline(image, offset, &mut tuple.bytes)?;
+        tuple.len = len as u16;
+        self.len += 1;
+        Ok(())
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = EncodedTupleRef<'_>> {
+        self.tuples[..self.len].iter().map(InlineTuple::as_ref)
+    }
+}
+
+impl Default for TupleBatch {
+    fn default() -> Self {
+        Self {
+            tuples: [InlineTuple::default(); TUPLE_BATCH_CAPACITY],
+            len: 0,
+            exhausted: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,6 +336,8 @@ pub(crate) enum TupleError {
     UnsupportedWidth { width: usize },
     #[error("tuple width mismatch: expected {expected}, got {actual}")]
     TupleWidthMismatch { expected: usize, actual: usize },
+    #[error("tuple width {actual} exceeds inline batch width {max}")]
+    TupleTooWide { max: usize, actual: usize },
     #[error("component width mismatch: expected {expected}, got {actual}")]
     ComponentWidthMismatch { expected: usize, actual: usize },
     #[error("missing binding for variable {variable}")]

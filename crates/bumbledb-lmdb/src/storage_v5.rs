@@ -5,7 +5,9 @@ use crate::storage_format::{
     canonical_fact_key, column_key, fact_handle_key, live_row_key, reverse_fk_guard_key,
     reverse_fk_guard_prefix, unique_guard_key,
 };
-use crate::{Databases, DeleteOutcome, Error, Fact, InsertOutcome, ReadTxn, Result, WriteTxn};
+use crate::{
+    Databases, DeleteOutcome, Error, Fact, FactView, InsertOutcome, ReadTxn, Result, WriteTxn,
+};
 use bumbledb_core::schema::{ConstraintDescriptor, SchemaDescriptor, ValueType};
 
 #[path = "storage_v5_codec.rs"]
@@ -64,7 +66,7 @@ pub(crate) fn encode_existing_value(
     schema: &SchemaDescriptor,
     value_type: &ValueType,
     value: &Value,
-) -> Result<Option<Vec<u8>>> {
+) -> Result<Option<crate::colt::KeyOwned>> {
     codec::encode_existing_value(txn, schema, value_type, value)
 }
 
@@ -77,12 +79,12 @@ pub(crate) fn relation_fact_count(
     read_relation_count(txn.dbs.data, &txn.txn, relation_id)
 }
 
-pub(crate) fn insert(
+pub(crate) fn insert<F: FactView>(
     txn: &mut WriteTxn<'_>,
     schema: &crate::StorageSchema,
-    fact: Fact,
+    fact: &F,
 ) -> Result<InsertOutcome> {
-    let encoded = encode_insert_fact(txn, schema.descriptor(), &fact)?;
+    let encoded = encode_insert_fact(txn, schema.descriptor(), fact)?;
     let canonical_key = canonical_fact_key(encoded.relation_id, &encoded.bytes);
     if txn.dbs.data.get(&txn.txn, &canonical_key)?.is_some() {
         return Ok(InsertOutcome::AlreadyPresent);
@@ -95,12 +97,12 @@ pub(crate) fn insert(
     Ok(InsertOutcome::Inserted)
 }
 
-pub(crate) fn delete(
+pub(crate) fn delete<F: FactView>(
     txn: &mut WriteTxn<'_>,
     schema: &crate::StorageSchema,
-    fact: Fact,
+    fact: &F,
 ) -> Result<DeleteOutcome> {
-    let encoded = match encode_delete_fact(txn, schema.descriptor(), &fact)? {
+    let encoded = match encode_delete_fact(txn, schema.descriptor(), fact)? {
         EncodeDelete::Encoded(encoded) => encoded,
         EncodeDelete::MissingDictionary => return Ok(DeleteOutcome::Absent),
     };
@@ -122,7 +124,7 @@ pub(crate) fn bulk_load(
 ) -> Result<usize> {
     let mut inserted = 0;
     for fact in facts {
-        if insert(txn, schema, fact)? == InsertOutcome::Inserted {
+        if insert(txn, schema, &fact)? == InsertOutcome::Inserted {
             inserted += 1;
         }
     }
@@ -152,7 +154,11 @@ pub(crate) fn debug_relation_facts(
     Ok(facts)
 }
 
-fn write_fact(txn: &mut WriteTxn<'_>, schema: &SchemaDescriptor, fact: &EncodedFact) -> Result<()> {
+fn write_fact(
+    txn: &mut WriteTxn<'_>,
+    schema: &SchemaDescriptor,
+    fact: &EncodedFact<'_>,
+) -> Result<()> {
     let data = txn.dbs.data;
     data.put(
         &mut txn.txn,
@@ -169,11 +175,11 @@ fn write_fact(txn: &mut WriteTxn<'_>, schema: &SchemaDescriptor, fact: &EncodedF
         &live_row_key(fact.relation_id, fact.handle),
         &[],
     )?;
-    for (field_id, bytes) in fact.fields.iter().enumerate() {
+    for field_id in 0..fact.fields.len() {
         data.put(
             &mut txn.txn,
             &column_key(fact.relation_id, field_id as u32, fact.handle),
-            bytes,
+            fact.field_bytes(field_id),
         )?;
     }
     write_unique_guards(txn, fact)?;
@@ -184,7 +190,7 @@ fn write_fact(txn: &mut WriteTxn<'_>, schema: &SchemaDescriptor, fact: &EncodedF
 fn delete_fact(
     txn: &mut WriteTxn<'_>,
     schema: &SchemaDescriptor,
-    fact: &EncodedFact,
+    fact: &EncodedFact<'_>,
 ) -> Result<()> {
     delete_reverse_fk_guards(txn, schema, fact)?;
     delete_unique_guards(txn, fact)?;
@@ -207,10 +213,10 @@ fn delete_fact(
     adjust_relation_count(txn, fact.relation_id, -1)
 }
 
-fn check_unique_constraints(txn: &WriteTxn<'_>, fact: &EncodedFact) -> Result<()> {
+fn check_unique_constraints(txn: &WriteTxn<'_>, fact: &EncodedFact<'_>) -> Result<()> {
     for constraint in &fact.relation.constraints {
         if let ConstraintDescriptor::Unique { name, fields } = constraint {
-            let key_bytes = encoded_key_from_fields(&fact.relation, fact, fields)?;
+            let key_bytes = encoded_key_from_fields(fact.relation, fact, fields)?;
             if txn
                 .dbs
                 .data
@@ -227,10 +233,10 @@ fn check_unique_constraints(txn: &WriteTxn<'_>, fact: &EncodedFact) -> Result<()
     Ok(())
 }
 
-fn write_unique_guards(txn: &mut WriteTxn<'_>, fact: &EncodedFact) -> Result<()> {
+fn write_unique_guards(txn: &mut WriteTxn<'_>, fact: &EncodedFact<'_>) -> Result<()> {
     for constraint in &fact.relation.constraints {
         if let ConstraintDescriptor::Unique { name, fields } = constraint {
-            let key_bytes = encoded_key_from_fields(&fact.relation, fact, fields)?;
+            let key_bytes = encoded_key_from_fields(fact.relation, fact, fields)?;
             txn.dbs.data.put(
                 &mut txn.txn,
                 &unique_guard_key(fact.relation_id, name, &key_bytes),
@@ -241,10 +247,10 @@ fn write_unique_guards(txn: &mut WriteTxn<'_>, fact: &EncodedFact) -> Result<()>
     Ok(())
 }
 
-fn delete_unique_guards(txn: &mut WriteTxn<'_>, fact: &EncodedFact) -> Result<()> {
+fn delete_unique_guards(txn: &mut WriteTxn<'_>, fact: &EncodedFact<'_>) -> Result<()> {
     for constraint in &fact.relation.constraints {
         if let ConstraintDescriptor::Unique { name, fields } = constraint {
-            let key_bytes = encoded_key_from_fields(&fact.relation, fact, fields)?;
+            let key_bytes = encoded_key_from_fields(fact.relation, fact, fields)?;
             txn.dbs.data.delete(
                 &mut txn.txn,
                 &unique_guard_key(fact.relation_id, name, &key_bytes),
@@ -257,7 +263,7 @@ fn delete_unique_guards(txn: &mut WriteTxn<'_>, fact: &EncodedFact) -> Result<()
 fn check_foreign_keys(
     txn: &WriteTxn<'_>,
     schema: &SchemaDescriptor,
-    fact: &EncodedFact,
+    fact: &EncodedFact<'_>,
 ) -> Result<()> {
     for constraint in &fact.relation.constraints {
         if let ConstraintDescriptor::ForeignKey {
@@ -269,7 +275,7 @@ fn check_foreign_keys(
         } = constraint
         {
             let target_relation_id = relation_id(schema, target_relation)?;
-            let source_key = encoded_key_from_fields(&fact.relation, fact, fields)?;
+            let source_key = encoded_key_from_fields(fact.relation, fact, fields)?;
             let target_key = unique_guard_key(target_relation_id, target_constraint, &source_key);
             if txn.dbs.data.get(&txn.txn, &target_key)?.is_none() {
                 return Err(Error::foreign_key_violation(&fact.relation.name, name));
@@ -282,7 +288,7 @@ fn check_foreign_keys(
 fn write_reverse_fk_guards(
     txn: &mut WriteTxn<'_>,
     schema: &SchemaDescriptor,
-    fact: &EncodedFact,
+    fact: &EncodedFact<'_>,
 ) -> Result<()> {
     for constraint in &fact.relation.constraints {
         if let ConstraintDescriptor::ForeignKey {
@@ -294,7 +300,7 @@ fn write_reverse_fk_guards(
         } = constraint
         {
             let target_relation_id = relation_id(schema, target_relation)?;
-            let source_key = encoded_key_from_fields(&fact.relation, fact, fields)?;
+            let source_key = encoded_key_from_fields(fact.relation, fact, fields)?;
             txn.dbs.data.put(
                 &mut txn.txn,
                 &reverse_fk_guard_key(
@@ -315,7 +321,7 @@ fn write_reverse_fk_guards(
 fn delete_reverse_fk_guards(
     txn: &mut WriteTxn<'_>,
     schema: &SchemaDescriptor,
-    fact: &EncodedFact,
+    fact: &EncodedFact<'_>,
 ) -> Result<()> {
     for constraint in &fact.relation.constraints {
         if let ConstraintDescriptor::ForeignKey {
@@ -327,7 +333,7 @@ fn delete_reverse_fk_guards(
         } = constraint
         {
             let target_relation_id = relation_id(schema, target_relation)?;
-            let source_key = encoded_key_from_fields(&fact.relation, fact, fields)?;
+            let source_key = encoded_key_from_fields(fact.relation, fact, fields)?;
             txn.dbs.data.delete(
                 &mut txn.txn,
                 &reverse_fk_guard_key(
@@ -344,10 +350,10 @@ fn delete_reverse_fk_guards(
     Ok(())
 }
 
-fn check_restrict_delete(txn: &WriteTxn<'_>, fact: &EncodedFact) -> Result<()> {
+fn check_restrict_delete(txn: &WriteTxn<'_>, fact: &EncodedFact<'_>) -> Result<()> {
     for constraint in &fact.relation.constraints {
         if let ConstraintDescriptor::Unique { name, fields } = constraint {
-            let key_bytes = encoded_key_from_fields(&fact.relation, fact, fields)?;
+            let key_bytes = encoded_key_from_fields(fact.relation, fact, fields)?;
             let prefix = reverse_fk_guard_prefix(fact.relation_id, name, &key_bytes);
             let mut iter = txn.dbs.data.prefix_iter(&txn.txn, &prefix)?;
             if let Some(item) = iter.next() {

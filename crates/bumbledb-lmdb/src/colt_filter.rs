@@ -1,4 +1,5 @@
 use crate::base_image::RelationBaseImage;
+use crate::colt::KeyOwned;
 
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6,7 +7,7 @@ pub(crate) enum SourceFilterOp { Eq, NotEq, Lt, Lte, Gt, Gte }
 
 #[rustfmt::skip]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum SourceFilter { Compare { field_id: usize, op: SourceFilterOp, value: Vec<u8> }, False }
+pub(crate) enum SourceFilter { Compare { field_id: usize, op: SourceFilterOp, value: KeyOwned }, False }
 
 impl SourceFilter {
     pub(crate) fn field_id(&self) -> Option<usize> {
@@ -32,7 +33,7 @@ pub(crate) fn source_filter_matches(
             .columns
             .get(field_id)
             .and_then(|column| column.value_at(offset))
-            .is_some_and(|candidate| compare_encoded(candidate, *op, value)),
+            .is_some_and(|candidate| compare_encoded(candidate, *op, value.bytes())),
     }
 }
 

@@ -1,8 +1,6 @@
 use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
 
-use crate::tuple::EncodedTuple;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct KeyRef<'key> {
     bytes: &'key [u8],
@@ -20,14 +18,17 @@ impl<'key> KeyRef<'key> {
 
 #[derive(Clone, Debug)]
 pub(crate) enum KeyOwned {
+    K1([u8; 1]),
     K8([u8; 8]),
     K16([u8; 16]),
+    Inline { len: u8, bytes: [u8; 32] },
     Heap(Vec<u8>),
 }
 
 impl KeyOwned {
     pub(crate) fn from_slice(bytes: &[u8]) -> Self {
         match bytes.len() {
+            1 => Self::K1([bytes[0]]),
             8 => {
                 let mut out = [0; 8];
                 out.copy_from_slice(bytes);
@@ -38,24 +39,30 @@ impl KeyOwned {
                 out.copy_from_slice(bytes);
                 Self::K16(out)
             }
+            len if len <= 32 => {
+                let mut out = [0; 32];
+                out[..len].copy_from_slice(bytes);
+                Self::Inline {
+                    len: len as u8,
+                    bytes: out,
+                }
+            }
             _ => Self::Heap(bytes.to_vec()),
         }
     }
 
     pub(crate) fn bytes(&self) -> &[u8] {
         match self {
+            Self::K1(bytes) => bytes,
             Self::K8(bytes) => bytes,
             Self::K16(bytes) => bytes,
+            Self::Inline { len, bytes } => &bytes[..*len as usize],
             Self::Heap(bytes) => bytes,
         }
     }
 
     pub(crate) fn as_key_ref(&self) -> KeyRef<'_> {
         KeyRef::new(self.bytes())
-    }
-
-    pub(crate) fn to_encoded_tuple(&self) -> EncodedTuple {
-        EncodedTuple::from_bytes(self.bytes().to_vec())
     }
 
     #[cfg(test)]
@@ -113,6 +120,33 @@ impl KeyScratch {
             KeyRef::new(&self.heap)
         }
     }
+
+    pub(crate) fn clear(&mut self) {
+        self.len = 0;
+        self.heap.clear();
+    }
+
+    pub(crate) fn extend_from_slice(&mut self, bytes: &[u8]) {
+        let next_len = self.len + bytes.len();
+        if self.heap.is_empty() && next_len <= self.inline.len() {
+            self.inline[self.len..next_len].copy_from_slice(bytes);
+            self.len = next_len;
+            return;
+        }
+        if self.heap.is_empty() {
+            self.heap.extend_from_slice(&self.inline[..self.len]);
+        }
+        self.heap.extend_from_slice(bytes);
+        self.len = next_len;
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        if self.len <= self.inline.len() {
+            &self.inline[..self.len]
+        } else {
+            &self.heap
+        }
+    }
 }
 
 #[cfg(test)]
@@ -123,6 +157,7 @@ mod tests {
     use crate::diagnostics::{
         allocation_delta, allocation_snapshot, with_allocation_tracking_for_test,
     };
+    use crate::tuple::EncodedTuple;
 
     use super::*;
 
@@ -148,11 +183,11 @@ mod tests {
     }
 
     #[test]
-    fn wider_keys_fall_back_safely() {
+    fn wider_inline_keys_and_heap_fallback_work() {
         let k24 = KeyOwned::from_slice(&[3; 24]);
         let k64 = KeyOwned::from_slice(&[4; 64]);
 
-        assert!(matches!(k24, KeyOwned::Heap(_)));
+        assert!(matches!(k24, KeyOwned::Inline { .. }));
         assert!(matches!(k64, KeyOwned::Heap(_)));
         assert_eq!(k24.bytes(), &[3; 24]);
         assert_eq!(k64.bytes(), &[4; 64]);

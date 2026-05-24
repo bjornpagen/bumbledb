@@ -33,7 +33,7 @@ fn factorized_output_equals_materialized_for_triangle() -> Result<()> {
             pair("S", 3, 4),
             pair("T", 4, 1),
         ] {
-            txn.insert(&schema, fact)?;
+            txn.insert(&schema, &fact)?;
         }
         Ok::<(), crate::Error>(())
     })?;
@@ -61,7 +61,7 @@ fn factorized_output_suppresses_duplicate_projection_witnesses() -> Result<()> {
             pair("S", 1, 20),
             pair("S", 1, 21),
         ] {
-            txn.insert(&schema, fact)?;
+            txn.insert(&schema, &fact)?;
         }
         Ok::<(), crate::Error>(())
     })?;
@@ -87,10 +87,10 @@ fn factorized_output_records_cartesian_projection_compression() -> Result<()> {
     let (env, schema) = env_and_schema("cartesian")?;
     env.write(|txn| {
         for a in 0..5 {
-            txn.insert(&schema, pair("R", 1, a))?;
+            txn.insert(&schema, &pair("R", 1, a))?;
         }
         for b in 0..5 {
-            txn.insert(&schema, pair("S", 1, b))?;
+            txn.insert(&schema, &pair("S", 1, b))?;
         }
         Ok::<(), crate::Error>(())
     })?;
@@ -115,10 +115,10 @@ fn encoded_set_sink_avoids_reexpanding_seen_projection_prefix() -> Result<()> {
     let (env, schema) = env_and_schema("prefix-avoidance")?;
     env.write(|txn| {
         for a in 0..10 {
-            txn.insert(&schema, pair("R", 1, a))?;
+            txn.insert(&schema, &pair("R", 1, a))?;
         }
         for b in 0..10 {
-            txn.insert(&schema, pair("S", 1, b))?;
+            txn.insert(&schema, &pair("S", 1, b))?;
         }
         Ok::<(), crate::Error>(())
     })?;
@@ -143,7 +143,7 @@ fn encoded_set_sink_avoids_reexpanding_seen_projection_prefix() -> Result<()> {
 #[test]
 fn factorized_output_decodes_strings_and_bytes_from_lmdb_dictionary() -> Result<()> {
     let (env, schema) = env_and_schema("dictionary")?;
-    env.write(|txn| txn.insert(&schema, text_fact(1, "alice", b"blob")))?;
+    env.write(|txn| txn.insert(&schema, &text_fact(1, "alice", b"blob")))?;
     let query = TypedQuery {
         variables: vec![
             TypedVariable {
@@ -183,7 +183,7 @@ fn factorized_output_decodes_strings_and_bytes_from_lmdb_dictionary() -> Result<
 #[test]
 fn factorized_output_handles_empty_output() -> Result<()> {
     let (env, schema) = env_and_schema("empty")?;
-    env.write(|txn| txn.insert(&schema, pair("R", 1, 10)))?;
+    env.write(|txn| txn.insert(&schema, &pair("R", 1, 10)))?;
     let query = typed_query(
         &["x", "a", "b"],
         &[0],
@@ -280,7 +280,7 @@ fn insert_clover(env: &Environment, schema: &StorageSchema) -> Result<()> {
             pair("T", 1, 50),
             pair("T", 4, 60),
         ] {
-            txn.insert(schema, fact)?;
+            txn.insert(schema, &fact)?;
         }
         Ok::<(), crate::Error>(())
     })

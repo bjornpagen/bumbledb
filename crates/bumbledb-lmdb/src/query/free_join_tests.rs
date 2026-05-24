@@ -11,17 +11,19 @@ fn free_join_validates_clover_binary_plan() -> Result<(), FjPlanError> {
     let query = clover_query();
     let plan = FjPlan {
         query_variables: 4,
-        nodes: vec![
+        nodes: [
             node(0, [sub(0, [0, 1], [0, 1]), sub(1, [0], [0])]),
             node(1, [sub(1, [2], [1]), sub(2, [0], [0])]),
             node(2, [sub(2, [3], [1])]),
-        ],
+        ]
+        .into_iter()
+        .collect(),
     };
 
     let validated = plan.validate(&query)?;
 
-    assert_eq!(validated.nodes[0].new_vars, vec![0, 1]);
-    assert_eq!(validated.nodes[0].covers[0].subatom, 0);
+    assert_eq!(validated.node_new_vars(&validated.nodes[0]), &[0, 1]);
+    assert_eq!(validated.node_covers(&validated.nodes[0])[0].subatom, 0);
     assert_eq!(validated.atom_partitions.len(), 3);
     Ok(())
 }
@@ -31,14 +33,16 @@ fn free_join_validates_clover_factorized_plan() {
     let query = clover_query();
     let plan = FjPlan {
         query_variables: 4,
-        nodes: vec![
+        nodes: [
             node(
                 0,
                 [sub(0, [0, 1], [0, 1]), sub(1, [0], [0]), sub(2, [0], [0])],
             ),
             node(1, [sub(1, [2], [1])]),
             node(2, [sub(2, [3], [1])]),
-        ],
+        ]
+        .into_iter()
+        .collect(),
     };
 
     assert!(plan.validate(&query).is_ok());
@@ -49,17 +53,19 @@ fn free_join_validates_clover_generic_plan() -> Result<(), FjPlanError> {
     let query = clover_query();
     let plan = FjPlan {
         query_variables: 4,
-        nodes: vec![
+        nodes: [
             node(0, [sub(0, [0], [0]), sub(1, [0], [0]), sub(2, [0], [0])]),
             node(1, [sub(0, [1], [1])]),
             node(2, [sub(1, [2], [1])]),
             node(3, [sub(2, [3], [1])]),
-        ],
+        ]
+        .into_iter()
+        .collect(),
     };
 
     let validated = plan.validate(&query)?;
 
-    assert_eq!(validated.nodes[0].covers.len(), 3);
+    assert_eq!(validated.node_covers(&validated.nodes[0]).len(), 3);
     Ok(())
 }
 
@@ -68,11 +74,13 @@ fn free_join_validates_triangle_singleton_plan() {
     let query = query_from_atoms([vec![0, 1], vec![1, 2], vec![2, 0]]);
     let plan = FjPlan {
         query_variables: 3,
-        nodes: vec![
+        nodes: [
             node(0, [sub(0, [0], [0]), sub(2, [0], [1])]),
             node(1, [sub(0, [1], [1]), sub(1, [1], [0])]),
             node(2, [sub(1, [2], [1]), sub(2, [2], [0])]),
-        ],
+        ]
+        .into_iter()
+        .collect(),
     };
 
     assert!(plan.validate(&query).is_ok());
@@ -83,12 +91,14 @@ fn free_join_validates_chain_binary_shape() {
     let query = query_from_atoms([vec![0, 1], vec![1, 2], vec![2, 3], vec![3, 4]]);
     let plan = FjPlan {
         query_variables: 5,
-        nodes: vec![
+        nodes: [
             node(0, [sub(0, [0, 1], [0, 1]), sub(1, [1], [0])]),
             node(1, [sub(1, [2], [1]), sub(2, [2], [0])]),
             node(2, [sub(2, [3], [1]), sub(3, [3], [0])]),
             node(3, [sub(3, [4], [1])]),
-        ],
+        ]
+        .into_iter()
+        .collect(),
     };
 
     assert!(plan.validate(&query).is_ok());
@@ -99,7 +109,9 @@ fn free_join_rejects_missing_partition() {
     let query = clover_query();
     let plan = FjPlan {
         query_variables: 4,
-        nodes: vec![node(0, [sub(0, [0, 1], [0, 1]), sub(1, [0], [0])])],
+        nodes: [node(0, [sub(0, [0, 1], [0, 1]), sub(1, [0], [0])])]
+            .into_iter()
+            .collect(),
     };
 
     assert!(matches!(
@@ -113,10 +125,12 @@ fn free_join_rejects_duplicate_partition_assignment() {
     let query = clover_query();
     let plan = FjPlan {
         query_variables: 4,
-        nodes: vec![
+        nodes: [
             node(0, [sub(0, [0, 1], [0, 1])]),
             node(1, [sub(0, [0], [0])]),
-        ],
+        ]
+        .into_iter()
+        .collect(),
     };
 
     assert!(matches!(
@@ -130,7 +144,9 @@ fn free_join_rejects_duplicate_atom_in_node() {
     let query = clover_query();
     let plan = FjPlan {
         query_variables: 4,
-        nodes: vec![node(0, [sub(0, [0], [0]), sub(0, [1], [1])])],
+        nodes: [node(0, [sub(0, [0], [0]), sub(0, [1], [1])])]
+            .into_iter()
+            .collect(),
     };
 
     assert!(matches!(
@@ -144,10 +160,12 @@ fn free_join_rejects_missing_cover() {
     let query = clover_query();
     let plan = FjPlan {
         query_variables: 4,
-        nodes: vec![FjNode {
+        nodes: [FjNode {
             id: 0,
-            subatoms: Vec::new(),
-        }],
+            subatoms: Default::default(),
+        }]
+        .into_iter()
+        .collect(),
     };
 
     assert!(matches!(
@@ -161,7 +179,9 @@ fn free_join_rejects_unavailable_probe_variable() {
     let query = query_from_atoms([vec![0], vec![1]]);
     let plan = FjPlan {
         query_variables: 2,
-        nodes: vec![node(0, [sub(0, [0], [0]), sub(1, [1], [0])])],
+        nodes: [node(0, [sub(0, [0], [0]), sub(1, [1], [0])])]
+            .into_iter()
+            .collect(),
     };
 
     assert!(matches!(
@@ -175,7 +195,7 @@ fn free_join_rejects_variable_outside_atom_occurrence() {
     let query = clover_query();
     let plan = FjPlan {
         query_variables: 4,
-        nodes: vec![node(0, [sub(0, [2], [0])])],
+        nodes: [node(0, [sub(0, [2], [0])])].into_iter().collect(),
     };
 
     assert!(matches!(
@@ -189,7 +209,7 @@ fn free_join_rejects_duplicate_subatom_variable() {
     let query = clover_query();
     let plan = FjPlan {
         query_variables: 4,
-        nodes: vec![node(0, [sub(0, [0, 0], [0, 0])])],
+        nodes: [node(0, [sub(0, [0, 0], [0, 0])])].into_iter().collect(),
     };
 
     assert!(matches!(

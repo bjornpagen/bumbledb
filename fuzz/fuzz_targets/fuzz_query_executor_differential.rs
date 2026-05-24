@@ -20,8 +20,8 @@ fuzz_target!(|data: &[u8]| {
         Err(_) => return,
     };
     let _ = env.write(|txn| {
-        txn.insert(&schema, pair("R", data[0] as u64, data[1] as u64))?;
-        txn.insert(&schema, pair("S", data[0] as u64, data[2] as u64))?;
+        txn.insert(&schema, &pair("R", data[0] as u64, data[1] as u64))?;
+        txn.insert(&schema, &pair("S", data[0] as u64, data[2] as u64))?;
         Ok::<(), bumbledb_lmdb::Error>(())
     });
     let query = query();

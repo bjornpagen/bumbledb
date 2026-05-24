@@ -37,12 +37,12 @@ fn public_exports_cover_current_contract_without_raw_internals()
     assert_eq!(result.cardinality(), 1);
     assert_eq!(report.facts_inserted, 0);
     assert_eq!(
-        env.write(|txn| txn.insert(&schema, fact))?,
+        env.write(|txn| txn.insert(&schema, &fact))?,
         InsertOutcome::Inserted
     );
     assert_eq!(env.read(|txn| txn.relation_fact_count(&schema, "R"))?, 1);
     assert_eq!(
-        env.write(|txn| txn.delete(&schema, Fact::new("R", [("x", Value::U64(2))])))?,
+        env.write(|txn| txn.delete(&schema, &Fact::new("R", [("x", Value::U64(2))])))?,
         DeleteOutcome::Absent
     );
     std::fs::remove_dir_all(path)?;

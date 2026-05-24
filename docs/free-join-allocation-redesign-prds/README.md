@@ -50,7 +50,6 @@ Latest useful no-query-tracing release sample, allocation tracking enabled, `--o
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 15 | `15-source-filter-pruning-after-arena.md` | Revisit source filtering only after arena COLT exists. |
 | 16 | `16-storage-accelerators-after-arena.md` | Revisit optional LMDB accelerators only after source filtering is measured. |
 | 17 | `17-neon-only-after-arena.md` | Add AArch64 NEON kernels only after arena and contiguous buffers are stable. |
 | 18 | `18-cutover-and-api-cleanup.md` | Remove stale APIs, comments, diagnostics, and compatibility leftovers. |

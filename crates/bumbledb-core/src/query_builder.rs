@@ -1,7 +1,5 @@
 //! Schema-aware builder for language-neutral typed query IR.
 
-use std::collections::BTreeMap;
-
 use crate::query_ir::{
     ComparisonOperator, Literal, TypedClause, TypedComparison, TypedFieldBinding, TypedFindTerm,
     TypedInput, TypedLiteral, TypedOperand, TypedQuery, TypedRelationAtom, TypedTerm,
@@ -57,9 +55,9 @@ pub enum QueryBuildError {
 pub struct QueryBuilder<'schema> {
     schema: &'schema SchemaDescriptor,
     variables: Vec<TypedVariable>,
-    variable_ids: BTreeMap<String, usize>,
+    variable_ids: Vec<(String, usize)>,
     inputs: Vec<TypedInput>,
-    input_ids: BTreeMap<String, usize>,
+    input_ids: Vec<(String, usize)>,
     find: Vec<TypedFindTerm>,
     clauses: Vec<TypedClause>,
 }
@@ -70,9 +68,9 @@ impl<'schema> QueryBuilder<'schema> {
         Self {
             schema,
             variables: Vec::new(),
-            variable_ids: BTreeMap::new(),
+            variable_ids: Vec::new(),
             inputs: Vec::new(),
-            input_ids: BTreeMap::new(),
+            input_ids: Vec::new(),
             find: Vec::new(),
             clauses: Vec::new(),
         }
@@ -144,7 +142,7 @@ impl<'schema> QueryBuilder<'schema> {
 
     /// Adds a variable projection term.
     pub fn find_var(&mut self, variable: &str) -> QueryBuildResult<&mut Self> {
-        let Some(id) = self.variable_ids.get(variable).copied() else {
+        let Some(id) = self.variable_id(variable) else {
             return Err(QueryBuildError::UnboundProjectionVariable {
                 variable: variable.to_owned(),
             });
@@ -175,7 +173,7 @@ impl<'schema> QueryBuilder<'schema> {
     }
 
     fn bind_variable(&mut self, name: &str, incoming: ValueType) -> QueryBuildResult<usize> {
-        if let Some(id) = self.variable_ids.get(name).copied() {
+        if let Some(id) = self.variable_id(name) {
             let existing = self.variables[id].value_type.clone();
             let Some(merged) = merge_types(&existing, &incoming) else {
                 return Err(QueryBuildError::VariableTypeConflict {
@@ -188,7 +186,7 @@ impl<'schema> QueryBuilder<'schema> {
             Ok(id)
         } else {
             let id = self.variables.len();
-            self.variable_ids.insert(name.to_owned(), id);
+            self.variable_ids.push((name.to_owned(), id));
             self.variables.push(TypedVariable {
                 id,
                 name: name.to_owned(),
@@ -199,7 +197,7 @@ impl<'schema> QueryBuilder<'schema> {
     }
 
     fn bind_input(&mut self, name: &str, incoming: ValueType) -> QueryBuildResult<usize> {
-        if let Some(id) = self.input_ids.get(name).copied() {
+        if let Some(id) = self.input_id(name) {
             let existing = self.inputs[id].value_type.clone();
             let Some(merged) = merge_types(&existing, &incoming) else {
                 return Err(QueryBuildError::InputTypeConflict {
@@ -212,7 +210,7 @@ impl<'schema> QueryBuilder<'schema> {
             Ok(id)
         } else {
             let id = self.inputs.len();
-            self.input_ids.insert(name.to_owned(), id);
+            self.input_ids.push((name.to_owned(), id));
             self.inputs.push(TypedInput {
                 id,
                 name: name.to_owned(),
@@ -242,13 +240,11 @@ impl<'schema> QueryBuilder<'schema> {
     fn operand_type(&self, operand: &OperandRef) -> Option<ValueType> {
         match operand {
             OperandRef::Variable(name) => self
-                .variable_ids
-                .get(name)
-                .map(|id| self.variables[*id].value_type.clone()),
+                .variable_id(name)
+                .map(|id| self.variables[id].value_type.clone()),
             OperandRef::Input(name) => self
-                .input_ids
-                .get(name)
-                .map(|id| self.inputs[*id].value_type.clone()),
+                .input_id(name)
+                .map(|id| self.inputs[id].value_type.clone()),
             OperandRef::Literal(_) => None,
         }
     }
@@ -269,6 +265,18 @@ impl<'schema> QueryBuilder<'schema> {
                 Ok(TypedOperand::Literal(self.type_literal(literal, expected)?))
             }
         }
+    }
+
+    fn variable_id(&self, name: &str) -> Option<usize> {
+        self.variable_ids
+            .iter()
+            .find_map(|(candidate, id)| (candidate == name).then_some(*id))
+    }
+
+    fn input_id(&self, name: &str) -> Option<usize> {
+        self.input_ids
+            .iter()
+            .find_map(|(candidate, id)| (candidate == name).then_some(*id))
     }
 }
 

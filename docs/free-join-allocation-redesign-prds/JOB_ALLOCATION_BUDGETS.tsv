@@ -1,9 +1,9 @@
 query	alloc_calls	allocated_bytes
-job_broad_cast_keyword_company	65119	13182458
-job_broad_movie_info_star	11185	15910962
-job_q01_top_production	3746	2332750
-job_q09_voice_us_actor	36730	18184538
-job_q16_character_title_us	37174	8805104
-job_q24_voice_keyword_actor	39354	13700911
-job_movie_link_bridge	6790	14699305
-job_q33_linked_series_companies	9487	4329197
+job_broad_cast_keyword_company	854	7020472
+job_broad_movie_info_star	1104	10790345
+job_q01_top_production	484	2125740
+job_q09_voice_us_actor	912	10028565
+job_q16_character_title_us	919	6613883
+job_q24_voice_keyword_actor	1208	9487267
+job_movie_link_bridge	1144	7802283
+job_q33_linked_series_companies	1182	5658476

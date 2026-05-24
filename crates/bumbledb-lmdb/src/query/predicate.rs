@@ -1,6 +1,7 @@
 use bumbledb_core::query_ir::{ComparisonOperator, Literal, TypedLiteral, TypedOperand};
 use bumbledb_core::schema::{SchemaDescriptor, ValueType};
 
+use crate::colt::KeyOwned;
 use crate::colt::{SourceFilter, SourceFilterOp};
 use crate::query::model::{AtomOccurrence, NormalizedQuery, NormalizedTerm, SourcePredicate};
 use crate::query::sink::Binding;
@@ -125,7 +126,7 @@ pub(super) fn binding_satisfies(
         let (Some(left), Some(right)) = (left, right) else {
             return Ok(false);
         };
-        if !compare_encoded(&left, comparison.operator, &right) {
+        if !compare_encoded(left.bytes(), comparison.operator, right.bytes()) {
             return Ok(false);
         }
     }
@@ -183,9 +184,9 @@ fn operand_bytes(
     binding: &Binding,
     inputs: &InputBindings,
     operand: &TypedOperand,
-) -> Result<Option<Vec<u8>>> {
+) -> Result<Option<KeyOwned>> {
     match operand {
-        TypedOperand::Variable(variable) => Ok(binding.value(*variable).map(<[u8]>::to_vec)),
+        TypedOperand::Variable(variable) => Ok(binding.value(*variable).map(KeyOwned::from_slice)),
         TypedOperand::Input(input) => {
             let value_type = &query.inputs[*input].value_type;
             let value = input_value(query, inputs, *input, value_type)?;

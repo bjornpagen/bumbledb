@@ -12,7 +12,7 @@ fn binary2fj_generates_clover_shape() -> Result<(), FjPlanError> {
     let query = clover_query();
     let plan = binary2fj_from_atoms(&query, &atoms([0, 1, 2]))?;
 
-    assert_eq!(plan.nodes, clover_binary_nodes());
+    assert_eq!(plan.nodes.as_slice(), clover_binary_nodes().as_slice());
     Ok(())
 }
 
@@ -22,7 +22,7 @@ fn binary2fj_generates_chain_shape() -> Result<(), FjPlanError> {
     let plan = binary2fj_from_atoms(&query, &atoms([0, 1, 2, 3]))?;
 
     assert_eq!(
-        plan.nodes,
+        plan.nodes.as_slice(),
         vec![
             node(0, [sub(0, [0, 1], [0, 1]), sub(1, [1], [0])]),
             node(1, [sub(1, [2], [1]), sub(2, [2], [0])]),
@@ -39,7 +39,7 @@ fn binary2fj_generates_triangle_shape_with_static_tail() -> Result<(), FjPlanErr
     let plan = binary2fj_from_atoms(&query, &atoms([0, 1, 2]))?;
 
     assert_eq!(
-        plan.nodes,
+        plan.nodes.as_slice(),
         vec![
             node(0, [sub(0, [0, 1], [0, 1]), sub(1, [1], [0])]),
             node(1, [sub(1, [2], [1]), sub(2, [2, 0], [0, 1])]),
@@ -55,7 +55,7 @@ fn binary2fj_generates_self_join_shape_by_occurrence_id() -> Result<(), FjPlanEr
     let plan = binary2fj_from_atoms(&query, &atoms([0, 1]))?;
 
     assert_eq!(
-        plan.nodes,
+        plan.nodes.as_slice(),
         vec![
             node(0, [sub(0, [0, 1], [0, 1]), sub(1, [1], [0])]),
             node(1, [sub(1, [2], [1])]),
@@ -69,13 +69,13 @@ fn factor_transforms_clover_to_paper_shape() -> Result<(), FjPlanError> {
     let query = clover_query();
     let plan = FjPlan {
         query_variables: 4,
-        nodes: clover_binary_nodes(),
+        nodes: clover_binary_nodes().into_iter().collect(),
     };
 
-    let (factored, trace) = factor_plan(&query, &plan)?;
+    let (factored, trace) = factor_plan(&query, plan)?;
 
     assert_eq!(
-        factored.nodes,
+        factored.nodes.as_slice(),
         vec![
             node(
                 0,
@@ -100,14 +100,16 @@ fn factor_noops_when_variables_are_unavailable() -> Result<(), FjPlanError> {
     let query = query_from_atoms([vec![0, 1], vec![1, 2], vec![2, 3]]);
     let plan = FjPlan {
         query_variables: 4,
-        nodes: vec![
+        nodes: [
             node(0, [sub(0, [0, 1], [0, 1]), sub(1, [1], [0])]),
             node(1, [sub(1, [2], [1]), sub(2, [2, 3], [0, 1])]),
             node(2, [sub(2, [], [])]),
-        ],
+        ]
+        .into_iter()
+        .collect(),
     };
 
-    let (factored, trace) = factor_plan(&query, &plan)?;
+    let (factored, trace) = factor_plan(&query, plan.clone())?;
 
     assert_eq!(factored, plan);
     assert_eq!(trace.steps[0].outcome, PlanRewriteOutcome::Rejected);
@@ -119,13 +121,15 @@ fn factor_noops_when_previous_node_has_same_atom() -> Result<(), FjPlanError> {
     let query = query_from_atoms([vec![0, 1], vec![0, 2]]);
     let plan = FjPlan {
         query_variables: 3,
-        nodes: vec![
+        nodes: [
             node(0, [sub(0, [0, 1], [0, 1]), sub(1, [0], [0])]),
             node(1, [sub(1, [2], [1]), sub(0, [], [])]),
-        ],
+        ]
+        .into_iter()
+        .collect(),
     };
 
-    let (factored, trace) = factor_plan(&query, &plan)?;
+    let (factored, trace) = factor_plan(&query, plan.clone())?;
 
     assert_eq!(factored, plan);
     assert_eq!(trace.steps[0].outcome, PlanRewriteOutcome::Rejected);
@@ -137,7 +141,7 @@ fn factor_stops_at_first_unmoved_probe() -> Result<(), FjPlanError> {
     let query = query_from_atoms([vec![0, 1], vec![0, 2], vec![0], vec![0]]);
     let plan = FjPlan {
         query_variables: 3,
-        nodes: vec![
+        nodes: [
             node(0, [sub(0, [0, 1], [0, 1]), sub(1, [0], [0])]),
             node(
                 1,
@@ -148,10 +152,12 @@ fn factor_stops_at_first_unmoved_probe() -> Result<(), FjPlanError> {
                     sub(3, [0], [0]),
                 ],
             ),
-        ],
+        ]
+        .into_iter()
+        .collect(),
     };
 
-    let (factored, trace) = factor_plan(&query, &plan)?;
+    let (factored, trace) = factor_plan(&query, plan.clone())?;
 
     assert_eq!(factored, plan);
     assert_eq!(trace.steps.len(), 1);

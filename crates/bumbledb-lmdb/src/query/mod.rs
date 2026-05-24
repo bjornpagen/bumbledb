@@ -7,6 +7,7 @@ pub(crate) mod model;
 pub(crate) mod normalize;
 pub(crate) mod planner;
 pub(crate) mod predicate;
+pub(crate) mod projection_dedup;
 pub(crate) mod run;
 pub(crate) mod runtime;
 pub(crate) mod runtime_frame;

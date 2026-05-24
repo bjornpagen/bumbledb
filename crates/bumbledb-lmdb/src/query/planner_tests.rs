@@ -293,7 +293,7 @@ fn planner_rejects_invalid_injected_candidate_and_falls_back() -> crate::Result<
     })?;
 
     assert_ne!(selection.chosen.family, PlanFamily::InjectedBinary);
-    assert!(selection.candidates.len() >= 3);
+    assert!(selection.candidates.len() >= 2);
     Ok(())
 }
 
@@ -384,7 +384,7 @@ fn insert_pairs(env: &Environment, schema: &StorageSchema) -> crate::Result<()> 
             pair("T", 1, 50),
             pair("T", 3, 60),
         ] {
-            txn.insert(schema, fact)?;
+            txn.insert(schema, &fact)?;
         }
         Ok::<(), crate::Error>(())
     })

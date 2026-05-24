@@ -7,20 +7,9 @@ use super::key::{KeyOwned, KeyRef};
 const MAP_EMPTY: u32 = u32::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(super) struct ColtSourceId(pub(super) u32);
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct ColtNodeId(pub(super) u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct ColtMapId(pub(super) u32);
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(super) struct SchemaVarsId(pub(super) u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ArenaSourceHandle {
-    pub(super) arena_id: ColtSourceId,
-    pub(super) node_id: ColtNodeId,
-    pub(super) vars_id: SchemaVarsId,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct OffsetRange {
@@ -93,18 +82,6 @@ pub(super) enum ArenaIterItem<'arena> {
     Key(KeyRef<'arena>),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ArenaSourceUndo {
-    atom: usize,
-    previous: ArenaSourceHandle,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct ArenaSourceStore {
-    current: Vec<Option<ArenaSourceHandle>>,
-    undo: Vec<ArenaSourceUndo>,
-}
-
 impl ColtArena {
     pub(super) fn new() -> Self {
         Self::default()
@@ -116,6 +93,10 @@ impl ColtArena {
 
     pub(super) fn add_singleton_node(&mut self, offset: u32) -> ColtNodeId {
         self.push_node(NodeData::Singleton { offset })
+    }
+
+    pub(super) fn add_node_data(&mut self, data: NodeData) -> ColtNodeId {
+        self.push_node(data)
     }
 
     pub(super) fn add_offsets_node(&mut self, offsets: &[u32]) -> ColtNodeId {
@@ -132,6 +113,39 @@ impl ColtArena {
             [] => NodeData::Offsets(OffsetRange { start: 0, len: 0 }),
             [offset] => NodeData::Singleton { offset: *offset },
             offsets => NodeData::Offsets(self.append_offsets(offsets)),
+        }
+    }
+
+    pub(super) fn filtered_offsets_data(
+        &mut self,
+        row_count: usize,
+        mut keep: impl FnMut(usize) -> bool,
+    ) -> NodeData {
+        let mut first = None;
+        let mut range: Option<OffsetRange> = None;
+        for offset in 0..row_count {
+            if !keep(offset) {
+                continue;
+            }
+            let offset = offset as u32;
+            if let Some(range) = &mut range {
+                self.offsets.push(offset);
+                range.len += 1;
+            } else if let Some(first_offset) = first {
+                let start = self.offsets.len() as u32;
+                self.offsets.push(first_offset);
+                self.offsets.push(offset);
+                range = Some(OffsetRange { start, len: 2 });
+            } else {
+                first = Some(offset);
+            }
+        }
+        if let Some(range) = range {
+            NodeData::Offsets(range)
+        } else if let Some(offset) = first {
+            NodeData::Singleton { offset }
+        } else {
+            NodeData::Offsets(OffsetRange { start: 0, len: 0 })
         }
     }
 
@@ -202,6 +216,24 @@ impl ColtArena {
 
     pub(super) fn map_entry_count(&self, map: ColtMapId) -> usize {
         self.maps[map.0 as usize].table.entries.len as usize
+    }
+
+    pub(super) fn map_key_at(&self, map: ColtMapId, position: usize) -> Option<KeyRef<'_>> {
+        let table = self.maps.get(map.0 as usize)?.table;
+        if position >= table.entries.len as usize {
+            return None;
+        }
+        let index = table.entries.start as usize + position;
+        self.map_entries
+            .get(index)
+            .map(|entry| entry.key.as_key_ref())
+    }
+
+    pub(super) fn map_for_node(&self, node: ColtNodeId) -> Option<ColtMapId> {
+        match self.nodes.get(node.0 as usize)?.data {
+            NodeData::Map(map) => Some(map),
+            _ => None,
+        }
     }
 
     pub(super) fn try_for_each_item<E>(
@@ -282,12 +314,34 @@ impl ColtArena {
         self.nodes.get(id.0 as usize)
     }
 
+    pub(super) fn node_data(&self, id: ColtNodeId) -> Option<NodeData> {
+        self.node(id).map(|node| node.data)
+    }
+
+    pub(super) fn set_node_data(&mut self, id: ColtNodeId, data: NodeData) {
+        if let Some(node) = self.nodes.get_mut(id.0 as usize) {
+            node.data = data;
+        }
+    }
+
     pub(super) fn append_offsets(&mut self, offsets: &[u32]) -> OffsetRange {
         let start = self.offsets.len() as u32;
         self.offsets.extend_from_slice(offsets);
         OffsetRange {
             start,
             len: offsets.len() as u32,
+        }
+    }
+
+    pub(super) fn reserve_offsets(&mut self, len: u32) -> OffsetRange {
+        let start = self.offsets.len() as u32;
+        self.offsets.resize(self.offsets.len() + len as usize, 0);
+        OffsetRange { start, len }
+    }
+
+    pub(super) fn set_offset(&mut self, range: OffsetRange, position: u32, offset: u32) {
+        if position < range.len {
+            self.offsets[(range.start + position) as usize] = offset;
         }
     }
 
@@ -333,6 +387,10 @@ impl ColtArena {
         }
     }
 
+    pub(super) fn item_count(&self, data: NodeData) -> usize {
+        self.offset_count(data)
+    }
+
     fn offset_at(&self, data: NodeData, position: u32) -> Option<u32> {
         match data {
             NodeData::Range { start, len } if position < len => Some(start + position),
@@ -342,6 +400,10 @@ impl ColtArena {
             }
             _ => None,
         }
+    }
+
+    pub(super) fn offset_at_position(&self, data: NodeData, position: u32) -> Option<u32> {
+        self.offset_at(data, position)
     }
 
     fn for_each_offset(&mut self, data: NodeData, mut f: impl FnMut(&mut Self, u32)) {
@@ -361,7 +423,7 @@ impl ColtArena {
         }
     }
 
-    fn push_offset_to_child(&mut self, child: ColtNodeId, offset: u32) {
+    pub(super) fn push_offset_to_child(&mut self, child: ColtNodeId, offset: u32) {
         let data = self.nodes[child.0 as usize].data;
         self.nodes[child.0 as usize].data = match data {
             NodeData::Singleton { offset: first } if first == offset => data,
@@ -410,87 +472,6 @@ impl Iterator for OffsetIter<'_> {
             OffsetIter::Slice(iter) => iter.next(),
             OffsetIter::Empty => None,
         }
-    }
-}
-
-impl ArenaSourceHandle {
-    pub(super) fn new(arena_id: ColtSourceId, node_id: ColtNodeId, vars_id: SchemaVarsId) -> Self {
-        Self {
-            arena_id,
-            node_id,
-            vars_id,
-        }
-    }
-
-    pub(super) fn child(self, node_id: ColtNodeId, vars_id: SchemaVarsId) -> Self {
-        Self {
-            arena_id: self.arena_id,
-            node_id,
-            vars_id,
-        }
-    }
-}
-
-impl ArenaSourceStore {
-    pub(super) fn with_atom_count(atom_count: usize) -> Self {
-        Self {
-            current: vec![None; atom_count],
-            undo: Vec::new(),
-        }
-    }
-
-    pub(super) fn set_initial(&mut self, atom: usize, source: ArenaSourceHandle) {
-        self.ensure_atom(atom);
-        self.current[atom] = Some(source);
-    }
-
-    pub(super) fn source_for(&self, atom: usize) -> Option<ArenaSourceHandle> {
-        self.current.get(atom).copied().flatten()
-    }
-
-    pub(super) fn undo_mark(&self) -> usize {
-        self.undo.len()
-    }
-
-    pub(super) fn slot_count(&self) -> usize {
-        self.current.len()
-    }
-
-    pub(super) fn replace_source(&mut self, atom: usize, next: ArenaSourceHandle) -> bool {
-        let Some(previous) = self.source_for(atom) else {
-            return false;
-        };
-        self.current[atom] = Some(next);
-        self.undo.push(ArenaSourceUndo { atom, previous });
-        true
-    }
-
-    pub(super) fn restore_to(&mut self, mark: usize) {
-        while self.undo.len() > mark {
-            let Some(entry) = self.undo.pop() else { break };
-            self.current[entry.atom] = Some(entry.previous);
-        }
-    }
-
-    fn ensure_atom(&mut self, atom: usize) {
-        if atom >= self.current.len() {
-            self.current.resize(atom + 1, None);
-        }
-    }
-}
-
-impl ColtArena {
-    pub(super) fn get_child_source(
-        &self,
-        source: ArenaSourceHandle,
-        key: KeyRef<'_>,
-        child_vars: SchemaVarsId,
-    ) -> Option<ArenaSourceHandle> {
-        let NodeData::Map(map) = self.node(source.node_id)?.data else {
-            return None;
-        };
-        self.lookup_map(map, key)
-            .map(|child| source.child(child, child_vars))
     }
 }
 

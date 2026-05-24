@@ -92,8 +92,8 @@ fn differential_covers_inputs_literals_ranges_self_joins_and_empty_sets()
 fn storage_sequence_reopen_and_snapshot_regressions() -> bumbledb_lmdb::Result<()> {
     let (env, schema) = env_and_schema("storage")?;
     env.write(|txn| {
-        txn.insert(&schema, mixed(1, true, 7, -1, 1, "a", b"a"))?;
-        txn.insert(&schema, mixed(1, true, 7, -1, 1, "a", b"a"))?;
+        txn.insert(&schema, &mixed(1, true, 7, -1, 1, "a", b"a"))?;
+        txn.insert(&schema, &mixed(1, true, 7, -1, 1, "a", b"a"))?;
         Ok::<(), bumbledb_lmdb::Error>(())
     })?;
     assert_eq!(
@@ -102,7 +102,7 @@ fn storage_sequence_reopen_and_snapshot_regressions() -> bumbledb_lmdb::Result<(
     );
     env.read(|read| {
         assert_eq!(read.relation_fact_count(&schema, "Mixed")?, 1);
-        env.write(|write| write.insert(&schema, mixed(2, false, 8, 1, 2, "b", b"b")))?;
+        env.write(|write| write.insert(&schema, &mixed(2, false, 8, 1, 2, "b", b"b")))?;
         assert_eq!(read.relation_fact_count(&schema, "Mixed")?, 1);
         Ok::<(), bumbledb_lmdb::Error>(())
     })?;

@@ -1,18 +1,10 @@
-//! Minimal LMDB boundary retained after purging the v4 engine.
-//!
-//! The old v4 storage and query implementation was deleted so the
-//! Free Join paper alignment PRDs can rebuild from a clean substrate. This crate
-//! intentionally exposes only stable shell types until the ordered PRDs replace
-//! the implementation with v5 storage, GHT/COLT, and formal Free Join execution.
-
 #![allow(clippy::result_large_err)]
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::rc::Rc;
 
 use bumbledb_core::query_ir::TypedQuery;
-use bumbledb_core::schema::{SchemaDescriptor, ValueType};
+use bumbledb_core::schema::SchemaDescriptor;
 use heed::types::Bytes;
 use heed::{Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
@@ -26,11 +18,17 @@ pub(crate) mod query;
 pub(crate) mod storage_format;
 pub(crate) mod storage_v5;
 pub(crate) mod tuple;
+mod types;
 
 pub use error::{Error, Result};
 pub use query::trace::{
     ExecutionModePublic, ProfiledQueryResult, QUERY_TRACING_ENABLED, QueryExecutionOptions,
     QueryTrace, QueryTraceMetadata, TraceCounters, TracePhase, TraceSpan,
+};
+pub(crate) use types::FactView;
+pub use types::{
+    DeleteOutcome, Fact, FactRef, InputBindings, InsertOutcome, QueryResultSet, ResultColumn,
+    ResultFact, Value, ValueRef,
 };
 
 #[cfg(test)]
@@ -55,10 +53,8 @@ pub(crate) struct Databases {
     pub(crate) dict: RawDatabase,
 }
 
-/// Current on-disk storage format version for the rebuild line.
 pub const STORAGE_FORMAT_VERSION: u32 = storage_format::STORAGE_FORMAT_VERSION;
 
-/// Compiled storage schema shell.
 #[derive(Clone, Debug)]
 pub struct StorageSchema {
     descriptor: SchemaDescriptor,
@@ -66,7 +62,6 @@ pub struct StorageSchema {
 }
 
 impl StorageSchema {
-    /// Validates and stores a schema descriptor for future v5 storage work.
     pub fn new(descriptor: SchemaDescriptor, max_key_size: usize) -> Result<Self> {
         descriptor.validate()?;
         Ok(Self {
@@ -101,7 +96,6 @@ pub struct BulkLoadReport {
 pub struct Environment {
     env: Env<WithoutTls>,
     dbs: Databases,
-    base_images: Arc<base_image::BaseImageCache>,
     path: PathBuf,
 }
 
@@ -122,7 +116,6 @@ impl Environment {
         Ok(Self {
             env,
             dbs,
-            base_images: Arc::default(),
             path: path.to_path_buf(),
         })
     }
@@ -160,7 +153,6 @@ impl Environment {
         self.write(|txn| storage_v5::verify_schema(txn.dbs, &mut txn.txn, schema.descriptor()))
     }
 
-    /// Bulk load is unavailable until PRD 08 rebuilds v5 writes.
     pub fn bulk_load(
         &self,
         schema: &StorageSchema,
@@ -188,7 +180,7 @@ impl Environment {
         let read = ReadTxn {
             txn,
             dbs: self.dbs,
-            base_images: &self.base_images,
+            base_images: base_image::BaseImageCache::default(),
         };
         f(&read)
     }
@@ -235,27 +227,22 @@ impl Environment {
 pub struct ReadTxn<'env> {
     pub(crate) txn: RoTxn<'env, WithoutTls>,
     pub(crate) dbs: Databases,
-    #[allow(dead_code)]
-    pub(crate) base_images: &'env base_image::BaseImageCache,
+    pub(crate) base_images: base_image::BaseImageCache,
 }
 
 impl ReadTxn<'_> {
-    /// Reads the storage format version visible to this snapshot.
     pub fn storage_format_version(&self) -> Result<u32> {
         storage_v5::storage_format_version(self)
     }
 
-    /// Reads the logical storage transaction ID visible to this snapshot.
     pub fn storage_tx_id(&self) -> Result<u64> {
         storage_v5::storage_tx_id(self)
     }
 
-    /// Counts dictionary entries visible to this snapshot.
     pub fn dictionary_entry_count(&self) -> Result<usize> {
         storage_v5::dictionary_entry_count(self)
     }
 
-    /// Query execution is unavailable until formal Free Join is rebuilt.
     pub fn execute_query(
         &self,
         schema: &StorageSchema,
@@ -276,7 +263,6 @@ impl ReadTxn<'_> {
         query::executor::execute_query_profiled(self, schema, query, inputs, options)
     }
 
-    /// Relation counts are unavailable until PRD 08 rebuilds v5 reads.
     pub fn relation_fact_count(&self, schema: &StorageSchema, relation: &str) -> Result<u64> {
         storage_v5::relation_fact_count(self, schema, relation)
     }
@@ -287,7 +273,7 @@ impl ReadTxn<'_> {
         schema: &StorageSchema,
         relation: &str,
         field_ids: impl IntoIterator<Item = usize>,
-    ) -> Result<Arc<base_image::RelationBaseImage>> {
+    ) -> Result<Rc<base_image::RelationBaseImage>> {
         base_image::relation_base_image(self, schema, relation, field_ids)
     }
 
@@ -297,7 +283,7 @@ impl ReadTxn<'_> {
         relation: &str,
         field_ids: impl IntoIterator<Item = usize>,
         trace: &mut QueryTrace,
-    ) -> Result<Arc<base_image::RelationBaseImage>> {
+    ) -> Result<Rc<base_image::RelationBaseImage>> {
         base_image::relation_base_image_with_trace(self, schema, relation, field_ids, trace)
     }
 
@@ -318,179 +304,35 @@ pub struct WriteTxn<'env> {
 }
 
 impl WriteTxn<'_> {
-    /// Insert is unavailable until PRD 08 rebuilds v5 writes.
-    pub fn insert(&mut self, schema: &StorageSchema, fact: Fact) -> Result<InsertOutcome> {
+    pub fn insert(&mut self, schema: &StorageSchema, fact: &Fact) -> Result<InsertOutcome> {
         storage_v5::insert(self, schema, fact)
     }
 
-    /// Delete is unavailable until PRD 08 rebuilds v5 writes.
-    pub fn delete(&mut self, schema: &StorageSchema, fact: Fact) -> Result<DeleteOutcome> {
+    pub fn insert_ref(
+        &mut self,
+        schema: &StorageSchema,
+        fact: &FactRef<'_>,
+    ) -> Result<InsertOutcome> {
+        storage_v5::insert(self, schema, fact)
+    }
+
+    pub fn delete(&mut self, schema: &StorageSchema, fact: &Fact) -> Result<DeleteOutcome> {
         storage_v5::delete(self, schema, fact)
     }
 
-    /// Bulk load is unavailable until PRD 08 rebuilds v5 writes.
+    pub fn delete_ref(
+        &mut self,
+        schema: &StorageSchema,
+        fact: &FactRef<'_>,
+    ) -> Result<DeleteOutcome> {
+        storage_v5::delete(self, schema, fact)
+    }
+
     pub fn bulk_load(
         &mut self,
         schema: &StorageSchema,
         facts: impl IntoIterator<Item = Fact>,
     ) -> Result<usize> {
         storage_v5::bulk_load(self, schema, facts)
-    }
-}
-
-/// Logical relation fact.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Fact {
-    relation: String,
-    values: BTreeMap<String, Value>,
-}
-
-impl Fact {
-    /// Creates a fact for `relation`.
-    pub fn new(
-        relation: impl Into<String>,
-        values: impl IntoIterator<Item = (impl Into<String>, Value)>,
-    ) -> Self {
-        Self {
-            relation: relation.into(),
-            values: values
-                .into_iter()
-                .map(|(field, value)| (field.into(), value))
-                .collect(),
-        }
-    }
-
-    /// Returns the relation name.
-    pub fn relation(&self) -> &str {
-        &self.relation
-    }
-
-    /// Returns a field value.
-    pub fn value(&self, field: &str) -> Option<&Value> {
-        self.values.get(field)
-    }
-
-    /// Returns all values keyed by field name.
-    pub fn values(&self) -> &BTreeMap<String, Value> {
-        &self.values
-    }
-}
-
-/// Logical storage value.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Value {
-    /// Boolean.
-    Bool(bool),
-    /// Unsigned 64-bit integer.
-    U64(u64),
-    /// Signed 64-bit integer.
-    I64(i64),
-    /// Database-generated monotonic nominal `u64` sequence value.
-    Serial(u64),
-    /// Closed enum represented as a stable one-byte code.
-    Enum(u8),
-    /// UTF-8 string.
-    String(String),
-    /// Raw bytes.
-    Bytes(Vec<u8>),
-}
-
-impl Value {
-    /// Returns whether this value matches a schema value type.
-    pub fn matches_type(&self, value_type: &ValueType) -> bool {
-        matches!(
-            (self, value_type),
-            (Value::Bool(_), ValueType::Bool)
-                | (Value::U64(_), ValueType::U64)
-                | (Value::I64(_), ValueType::I64)
-                | (Value::Serial(_), ValueType::Serial { .. })
-                | (Value::Enum(_), ValueType::Enum { .. })
-                | (Value::String(_), ValueType::String)
-                | (Value::Bytes(_), ValueType::Bytes)
-        )
-    }
-}
-
-/// Result of inserting a set fact.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InsertOutcome {
-    /// The fact was newly inserted.
-    Inserted,
-    /// The exact fact was already present.
-    AlreadyPresent,
-}
-
-/// Result of deleting an exact set fact.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DeleteOutcome {
-    /// The fact was present and deleted.
-    Deleted,
-    /// The exact fact was absent.
-    Absent,
-}
-
-/// Query input bindings keyed by input name without `$`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct InputBindings {
-    values: BTreeMap<String, Value>,
-}
-
-impl InputBindings {
-    /// Creates empty input bindings.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Creates bindings from key/value pairs.
-    pub fn from_values(values: impl IntoIterator<Item = (impl Into<String>, Value)>) -> Self {
-        Self {
-            values: values
-                .into_iter()
-                .map(|(name, value)| (name.into(), value))
-                .collect(),
-        }
-    }
-
-    /// Returns a bound input value by name.
-    pub fn value(&self, name: &str) -> Option<&Value> {
-        self.values.get(name)
-    }
-
-    /// Returns true when no runtime inputs are bound.
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
-}
-
-/// Result column metadata.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ResultColumn {
-    /// Projected variable.
-    Variable(String),
-}
-
-/// One fact in a query result set.
-pub type ResultFact = Vec<Value>;
-
-/// Duplicate-free query result set in canonical fact order.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct QueryResultSet {
-    /// Result columns in projection order.
-    pub columns: Vec<ResultColumn>,
-    /// Result facts in canonical order.
-    pub facts: Vec<ResultFact>,
-}
-
-impl QueryResultSet {
-    /// Builds a canonical result set from possibly unordered facts.
-    pub fn new(columns: Vec<ResultColumn>, mut facts: Vec<ResultFact>) -> Self {
-        facts.sort();
-        facts.dedup();
-        Self { columns, facts }
-    }
-
-    /// Number of facts in the set.
-    pub fn cardinality(&self) -> usize {
-        self.facts.len()
     }
 }

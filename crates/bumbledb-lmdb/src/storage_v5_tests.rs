@@ -14,12 +14,12 @@ fn storage_duplicate_insert_is_noop() -> Result<()> {
     let fact = holder(1, "alice");
 
     assert_eq!(
-        env.write(|txn| txn.insert(&schema, fact.clone()))?,
+        env.write(|txn| txn.insert(&schema, &fact))?,
         InsertOutcome::Inserted
     );
     let tx_id = env.read(|txn| txn.storage_tx_id())?;
     assert_eq!(
-        env.write(|txn| txn.insert(&schema, fact))?,
+        env.write(|txn| txn.insert(&schema, &fact))?,
         InsertOutcome::AlreadyPresent
     );
 
@@ -38,7 +38,7 @@ fn storage_generates_omitted_serial_field() -> Result<()> {
     env.write(|txn| {
         txn.insert(
             &schema,
-            Fact::new("Holder", [("name", Value::String("alice".to_owned()))]),
+            &Fact::new("Holder", [("name", Value::String("alice".to_owned()))]),
         )
     })?;
 
@@ -51,11 +51,11 @@ fn storage_generates_omitted_serial_field() -> Result<()> {
 fn storage_explicit_serial_advances_high_water() -> Result<()> {
     let (env, schema) = env_and_schema("explicit-serial")?;
 
-    env.write(|txn| txn.insert(&schema, holder(41, "alice")))?;
+    env.write(|txn| txn.insert(&schema, &holder(41, "alice")))?;
     env.write(|txn| {
         txn.insert(
             &schema,
-            Fact::new("Holder", [("name", Value::String("bob".to_owned()))]),
+            &Fact::new("Holder", [("name", Value::String("bob".to_owned()))]),
         )
     })?;
 
@@ -75,7 +75,7 @@ fn storage_aborted_generated_serial_does_not_advance_sequence() -> Result<()> {
     let aborted: Result<()> = env.write(|txn| {
         txn.insert(
             &schema,
-            Fact::new("Holder", [("name", Value::String("alice".to_owned()))]),
+            &Fact::new("Holder", [("name", Value::String("alice".to_owned()))]),
         )?;
         Err(Error::invalid_query("abort"))
     });
@@ -83,7 +83,7 @@ fn storage_aborted_generated_serial_does_not_advance_sequence() -> Result<()> {
     env.write(|txn| {
         txn.insert(
             &schema,
-            Fact::new("Holder", [("name", Value::String("bob".to_owned()))]),
+            &Fact::new("Holder", [("name", Value::String("bob".to_owned()))]),
         )
     })?;
 
@@ -97,7 +97,7 @@ fn storage_absent_delete_is_noop() -> Result<()> {
     let (env, schema) = env_and_schema("absent-delete")?;
 
     assert_eq!(
-        env.write(|txn| txn.delete(&schema, holder(1, "alice")))?,
+        env.write(|txn| txn.delete(&schema, &holder(1, "alice")))?,
         DeleteOutcome::Absent
     );
 
@@ -110,13 +110,13 @@ fn storage_delete_then_reinsert() -> Result<()> {
     let (env, schema) = env_and_schema("delete-reinsert")?;
     let fact = holder(1, "alice");
 
-    env.write(|txn| txn.insert(&schema, fact.clone()))?;
+    env.write(|txn| txn.insert(&schema, &fact))?;
     assert_eq!(
-        env.write(|txn| txn.delete(&schema, fact.clone()))?,
+        env.write(|txn| txn.delete(&schema, &fact))?,
         DeleteOutcome::Deleted
     );
     assert_eq!(
-        env.write(|txn| txn.insert(&schema, fact))?,
+        env.write(|txn| txn.insert(&schema, &fact))?,
         InsertOutcome::Inserted
     );
 
@@ -131,8 +131,8 @@ fn storage_delete_then_reinsert() -> Result<()> {
 fn storage_unique_violation_rejects_conflict() -> Result<()> {
     let (env, schema) = env_and_schema("unique")?;
 
-    env.write(|txn| txn.insert(&schema, holder(1, "alice")))?;
-    let result = env.write(|txn| txn.insert(&schema, holder(2, "alice")));
+    env.write(|txn| txn.insert(&schema, &holder(1, "alice")))?;
+    let result = env.write(|txn| txn.insert(&schema, &holder(2, "alice")));
 
     assert!(matches!(result, Err(Error::UniqueViolation { .. })));
     Ok(())
@@ -142,7 +142,7 @@ fn storage_unique_violation_rejects_conflict() -> Result<()> {
 fn storage_fk_violation_rejects_missing_target() -> Result<()> {
     let (env, schema) = env_and_schema("fk")?;
 
-    let result = env.write(|txn| txn.insert(&schema, pet(1, 999, 1)));
+    let result = env.write(|txn| txn.insert(&schema, &pet(1, 999, 1)));
 
     assert!(matches!(result, Err(Error::ForeignKeyViolation { .. })));
     Ok(())
@@ -152,9 +152,9 @@ fn storage_fk_violation_rejects_missing_target() -> Result<()> {
 fn storage_restrict_delete_rejects_referenced_target() -> Result<()> {
     let (env, schema) = env_and_schema("restrict")?;
 
-    env.write(|txn| txn.insert(&schema, holder(1, "alice")))?;
-    env.write(|txn| txn.insert(&schema, pet(1, 1, 1)))?;
-    let result = env.write(|txn| txn.delete(&schema, holder(1, "alice")));
+    env.write(|txn| txn.insert(&schema, &holder(1, "alice")))?;
+    env.write(|txn| txn.insert(&schema, &pet(1, 1, 1)))?;
+    let result = env.write(|txn| txn.delete(&schema, &holder(1, "alice")));
 
     assert!(matches!(result, Err(Error::RestrictViolation { .. })));
     Ok(())
@@ -179,7 +179,7 @@ fn storage_failpoints_abort_before_commit_leaves_no_partial_state() -> Result<()
     let (env, schema) = env_and_schema("failpoint-abort")?;
 
     let result: Result<()> = env.write(|txn| {
-        txn.insert(&schema, holder(1, "alice"))?;
+        txn.insert(&schema, &holder(1, "alice"))?;
         Err(Error::invalid_query("synthetic failpoint before commit"))
     });
 
@@ -197,7 +197,7 @@ fn storage_reopen_verifies_counts_and_facts() -> Result<()> {
     let (env, schema) = env_and_schema("reopen")?;
     let path = env.path().to_path_buf();
 
-    env.write(|txn| txn.insert(&schema, holder(1, "alice")))?;
+    env.write(|txn| txn.insert(&schema, &holder(1, "alice")))?;
     drop(env);
     let reopened = Environment::open_with_schema(&path, &schema)?;
 
@@ -217,10 +217,10 @@ fn storage_reopen_verifies_counts_and_facts() -> Result<()> {
 fn storage_concurrency_read_snapshot_survives_concurrent_write() -> Result<()> {
     let (env, schema) = env_and_schema("snapshot")?;
 
-    env.write(|txn| txn.insert(&schema, holder(1, "alice")))?;
+    env.write(|txn| txn.insert(&schema, &holder(1, "alice")))?;
     env.read(|read| {
         assert_eq!(read.relation_fact_count(&schema, "Holder")?, 1);
-        env.write(|write| write.insert(&schema, holder(2, "bob")))?;
+        env.write(|write| write.insert(&schema, &holder(2, "bob")))?;
         assert_eq!(read.relation_fact_count(&schema, "Holder")?, 1);
         Ok::<(), Error>(())
     })?;
@@ -238,8 +238,8 @@ fn storage_interns_long_string_and_bytes_values() -> Result<()> {
     let long_bytes = vec![7; 10_000];
 
     env.write(|txn| {
-        txn.insert(&schema, holder(1, &long_name))?;
-        txn.insert(&schema, blob(1, long_bytes.clone()))?;
+        txn.insert(&schema, &holder(1, &long_name))?;
+        txn.insert(&schema, &blob(1, long_bytes.clone()))?;
         Ok::<(), Error>(())
     })?;
 
