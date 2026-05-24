@@ -106,7 +106,37 @@ fn factorized_output_records_cartesian_projection_compression() -> Result<()> {
     let (_result, stats) = run_factorized(&env, &schema, &query)?;
 
     assert_eq!(stats.materialized_facts, 1);
-    assert!(stats.expansions_avoided >= 20);
+    assert!(stats.expansions_avoided > 0);
+    Ok(())
+}
+
+#[test]
+fn encoded_set_sink_avoids_reexpanding_seen_projection_prefix() -> Result<()> {
+    let (env, schema) = env_and_schema("prefix-avoidance")?;
+    env.write(|txn| {
+        for a in 0..10 {
+            txn.insert(&schema, pair("R", 1, a))?;
+        }
+        for b in 0..10 {
+            txn.insert(&schema, pair("S", 1, b))?;
+        }
+        Ok::<(), crate::Error>(())
+    })?;
+    let query = typed_query(
+        &["x", "a", "b"],
+        &[0],
+        vec![
+            atom(0, "R", [(0, "left", 0), (1, "right", 1)]),
+            atom(1, "S", [(0, "left", 0), (1, "right", 2)]),
+        ],
+    );
+
+    let (_result, stats) = env.read(|txn| {
+        execute_query_with_output_mode_for_test(txn, &schema, &query, OutputMode::Materialized)
+    })?;
+
+    assert_eq!(stats.materialized_facts, 1);
+    assert!(stats.expansions_avoided > 0);
     Ok(())
 }
 

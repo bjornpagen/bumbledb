@@ -212,6 +212,7 @@ pub struct TraceCounters {
     pub source_frame_changes: u64,
     pub sink_consumes: u64,
     pub projection_duplicates_suppressed: u64,
+    pub factorized_expansions_avoided: u64,
     pub decoded_values: u64,
 }
 
@@ -246,6 +247,7 @@ impl TraceCounters {
         self.source_frame_changes += other.source_frame_changes;
         self.sink_consumes += other.sink_consumes;
         self.projection_duplicates_suppressed += other.projection_duplicates_suppressed;
+        self.factorized_expansions_avoided += other.factorized_expansions_avoided;
         self.decoded_values += other.decoded_values;
     }
 }

@@ -33,7 +33,6 @@ After PRDs 08-11, the active order is intentionally refocused on paper-faithful 
 
 ## Current Paper-Alignment Gaps
 
-- Factorized materialization remains shallow relative to the paper's materialization discussion.
 - Dynamic cover choice often uses offset counts as estimates rather than true key counts.
 - The current vectorized mode is scalar batching, not NEON vectorization.
 - Source filters are applied after full base-image rows are available, so selective predicates still pay broad scan/load cost.
@@ -44,7 +43,6 @@ After PRDs 08-11, the active order is intentionally refocused on paper-faithful 
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 14 | `14-factorized-materialization.md` | Deepens factorized output and materialization alignment without public aggregation. |
 | 15 | `15-neon-only-vectorized-execution.md` | Implements real AArch64 NEON-only vectorized kernels and forbids x86 SIMD. |
 | 16 | `16-dynamic-cover-costing.md` | Improves dynamic cover selection with measured key counts and selectivity. |
 | 17 | `17-source-filter-pruning.md` | Turns source predicates into early pruning rather than post-load scans. |

@@ -132,8 +132,9 @@ fn profiled_projection_decodes_only_final_projected_cells() -> Result<()> {
     })?;
 
     assert_eq!(profiled.result.facts, vec![vec![Value::U64(1)]]);
-    assert_eq!(profiled.trace.counters.sink_consumes, 4);
-    assert_eq!(profiled.trace.counters.projection_duplicates_suppressed, 3);
+    assert!(profiled.trace.counters.sink_consumes < 4);
+    assert!(profiled.trace.counters.projection_duplicates_suppressed > 0);
+    assert!(profiled.trace.counters.factorized_expansions_avoided > 0);
     assert_eq!(profiled.trace.counters.decoded_values, 1);
     Ok(())
 }

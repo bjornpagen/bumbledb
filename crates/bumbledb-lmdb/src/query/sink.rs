@@ -116,6 +116,14 @@ pub(super) struct BindingExtend {
 
 pub(super) trait BindingSink {
     fn consume(&mut self, query: &NormalizedQuery, binding: &Binding) -> Result<SinkConsumeStats>;
+
+    fn skip_seen_projection(
+        &mut self,
+        _query: &NormalizedQuery,
+        _binding: &Binding,
+    ) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -171,6 +179,17 @@ impl BindingSink for ProjectionSink<'_, '_> {
         }
         Ok(SinkConsumeStats { inserted })
     }
+
+    fn skip_seen_projection(&mut self, query: &NormalizedQuery, binding: &Binding) -> Result<bool> {
+        let Some(encoded) = encoded_projection_if_bound(query, binding)? else {
+            return Ok(false);
+        };
+        if self.encoded_facts.contains(&encoded) {
+            self.stats.expansions_avoided += 1;
+            return Ok(true);
+        }
+        Ok(false)
+    }
 }
 
 #[allow(dead_code)]
@@ -219,6 +238,17 @@ impl BindingSink for FactorizedProjectionSink<'_, '_> {
         }
         Ok(SinkConsumeStats { inserted })
     }
+
+    fn skip_seen_projection(&mut self, query: &NormalizedQuery, binding: &Binding) -> Result<bool> {
+        let Some(encoded) = encoded_projection_if_bound(query, binding)? else {
+            return Ok(false);
+        };
+        if self.encoded_facts.contains(&encoded) {
+            self.stats.expansions_avoided += 1;
+            return Ok(true);
+        }
+        Ok(false)
+    }
 }
 
 #[cfg(test)]
@@ -255,18 +285,26 @@ fn result_columns(query: &NormalizedQuery) -> Result<Vec<ResultColumn>> {
 
 #[allow(dead_code)]
 fn encoded_projection(query: &NormalizedQuery, binding: &Binding) -> Result<Vec<u8>> {
+    encoded_projection_if_bound(query, binding)?
+        .ok_or_else(|| Error::corrupt("projection variable is unbound"))
+}
+
+fn encoded_projection_if_bound(
+    query: &NormalizedQuery,
+    binding: &Binding,
+) -> Result<Option<Vec<u8>>> {
     let mut out = Vec::new();
     for term in &query.find {
         match term {
             TypedFindTerm::Variable { variable } => {
-                let bytes = binding.value(*variable).ok_or_else(|| {
-                    Error::corrupt(format!("projection variable {variable} is unbound"))
-                })?;
+                let Some(bytes) = binding.value(*variable) else {
+                    return Ok(None);
+                };
                 out.extend_from_slice(bytes);
             }
         }
     }
-    Ok(out)
+    Ok(Some(out))
 }
 
 #[allow(dead_code)]

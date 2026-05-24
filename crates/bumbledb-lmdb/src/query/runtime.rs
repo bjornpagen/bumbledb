@@ -87,6 +87,10 @@ pub(super) fn execute_node<S: BindingSink>(
         finish_node_span(trace, node_span, depth);
         return result;
     };
+    if sink.skip_seen_projection(query, binding)? {
+        finish_skipped_node_span(trace, node_span, depth);
+        return Ok(());
+    }
     let cover_span = trace.start_span(TracePhase::CoverChoice, format!("node={node_index}"));
     let cover_index = choose_cover(node, sources, cover_policy, stats)?;
     if let Some(span) = cover_span {
@@ -219,6 +223,26 @@ fn finish_node_span(
                 max_recursion_depth: depth as u64,
                 frame_pushes: 1,
                 frame_pops: 1,
+                ..TraceCounters::default()
+            },
+        );
+    }
+}
+
+fn finish_skipped_node_span(
+    trace: &mut QueryTrace,
+    span: Option<crate::query::trace::TraceSpanId>,
+    depth: usize,
+) {
+    if let Some(span) = span {
+        trace.finish_span(
+            span,
+            TraceCounters {
+                recursive_node_entries: 1,
+                max_recursion_depth: depth as u64,
+                frame_pushes: 1,
+                frame_pops: 1,
+                factorized_expansions_avoided: 1,
                 ..TraceCounters::default()
             },
         );

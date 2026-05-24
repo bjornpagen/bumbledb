@@ -134,7 +134,7 @@ fn metadata_json(trace: &QueryTrace) -> String {
 
 fn counters_json(counters: TraceCounters) -> String {
     format!(
-        "{{\"base_image_cache_hits\":{},\"base_image_cache_misses\":{},\"live_rows_scanned\":{},\"column_values_loaded\":{},\"loaded_bytes\":{},\"source_filters_encoded\":{},\"source_filter_false_decisions\":{},\"source_filter_rows_tested\":{},\"source_filter_survivors\":{},\"colt_nodes_created\":{},\"colt_nodes_forced\":{},\"colt_offsets_scanned\":{},\"colt_map_entries_built\":{},\"tuples_yielded\":{},\"batches_yielded\":{},\"cover_choices\":{},\"probe_calls\":{},\"probe_misses\":{},\"recursive_node_entries\":{},\"max_recursion_depth\":{},\"frame_pushes\":{},\"frame_pops\":{},\"binding_copies\":{},\"binding_writes\":{},\"binding_conflicts\":{},\"source_replacements\":{},\"source_frame_changes\":{},\"sink_consumes\":{},\"projection_duplicates_suppressed\":{},\"decoded_values\":{}}}",
+        "{{\"base_image_cache_hits\":{},\"base_image_cache_misses\":{},\"live_rows_scanned\":{},\"column_values_loaded\":{},\"loaded_bytes\":{},\"source_filters_encoded\":{},\"source_filter_false_decisions\":{},\"source_filter_rows_tested\":{},\"source_filter_survivors\":{},\"colt_nodes_created\":{},\"colt_nodes_forced\":{},\"colt_offsets_scanned\":{},\"colt_map_entries_built\":{},\"tuples_yielded\":{},\"batches_yielded\":{},\"cover_choices\":{},\"probe_calls\":{},\"probe_misses\":{},\"recursive_node_entries\":{},\"max_recursion_depth\":{},\"frame_pushes\":{},\"frame_pops\":{},\"binding_copies\":{},\"binding_writes\":{},\"binding_conflicts\":{},\"source_replacements\":{},\"source_frame_changes\":{},\"sink_consumes\":{},\"projection_duplicates_suppressed\":{},\"factorized_expansions_avoided\":{},\"decoded_values\":{}}}",
         counters.base_image_cache_hits,
         counters.base_image_cache_misses,
         counters.live_rows_scanned,
@@ -164,6 +164,7 @@ fn counters_json(counters: TraceCounters) -> String {
         counters.source_frame_changes,
         counters.sink_consumes,
         counters.projection_duplicates_suppressed,
+        counters.factorized_expansions_avoided,
         counters.decoded_values,
     )
 }

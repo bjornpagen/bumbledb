@@ -284,3 +284,21 @@ Measured report after making the default projection sink deduplicate encoded pro
 Trace file: `data/traces/prd13_q09-38731-0.json`.
 
 Decode-count acceptance is covered by `profiled_projection_decodes_only_final_projected_cells`, because q09 returns zero rows and therefore has zero final projected cells to decode.
+
+## PRD 14 Follow-Up
+
+Command:
+
+```bash
+cargo run --release -p bumbledb-bench --features query-tracing -- --preset job-sample --job-dir data/job --open-limit 100000 --query job_q09_voice_us_actor --format json --repeats 1 --warmup 1 --trace-output file --profile-query-label prd14_q09 --alloc on
+```
+
+Measured report after skipping already-seen encoded projection subtrees:
+
+| query | bumbledb_ms | sqlite_ms | alloc_calls | allocated_bytes | result_rows |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `job_q09_voice_us_actor` | 40.170 | 5.253 | 352850 | 99908089 | 0 |
+
+Trace file: `data/traces/prd14_q09-43376-0.json`.
+
+Factorized-expansion acceptance is covered by `encoded_set_sink_avoids_reexpanding_seen_projection_prefix`, because q09 returns zero rows and therefore has no repeated projected fact to skip.
