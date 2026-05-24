@@ -54,124 +54,42 @@ pub(super) fn query_sqlite(db_path: &Path, sql: &str) -> Result<Vec<Vec<Value>>,
 
 fn push_insert(out: &mut String, fact: &Fact) -> Result<(), String> {
     match fact.relation() {
-        "CompCastType" => insert(out, "comp_cast_type", fact, &["id", "kind"]),
-        "CompanyName" => insert(
-            out,
-            "company_name",
-            fact,
-            &[
-                "id",
-                "name",
-                "country_code",
-                "imdb_id",
-                "name_pcode_nf",
-                "name_pcode_sf",
-            ],
-        ),
+        "CompanyName" => insert(out, "company_name", fact, &["id", "country_code"]),
         "CompanyType" => insert(out, "company_type", fact, &["id", "kind"]),
         "InfoType" => insert(out, "info_type", fact, &["id", "info"]),
-        "Keyword" => insert(out, "keyword", fact, &["id", "keyword", "phonetic_code"]),
+        "Keyword" => insert(out, "keyword", fact, &["id", "keyword"]),
         "KindType" => insert(out, "kind_type", fact, &["id", "kind"]),
         "LinkType" => insert(out, "link_type", fact, &["id", "link"]),
         "RoleType" => insert(out, "role_type", fact, &["id", "role"]),
-        "CharName" => insert(
-            out,
-            "char_name",
-            fact,
-            &[
-                "id",
-                "name",
-                "imdb_index",
-                "imdb_id",
-                "name_pcode_nf",
-                "surname_pcode",
-            ],
-        ),
-        "Name" => insert(
-            out,
-            "name",
-            fact,
-            &[
-                "id",
-                "name",
-                "imdb_index",
-                "imdb_id",
-                "gender",
-                "name_pcode_cf",
-                "name_pcode_nf",
-                "surname_pcode",
-            ],
-        ),
+        "CharName" => insert(out, "char_name", fact, &["id"]),
+        "Name" => insert(out, "name", fact, &["id", "gender"]),
         "Title" => insert(
             out,
             "title",
             fact,
-            &[
-                "id",
-                "title",
-                "imdb_index",
-                "kind",
-                "production_year",
-                "imdb_id",
-                "phonetic_code",
-                "episode_of",
-                "season_nr",
-                "episode_nr",
-                "series_years",
-            ],
+            &["id", "kind", "production_year", "episode_nr"],
         ),
-        "AkaName" => insert(
-            out,
-            "aka_name",
-            fact,
-            &[
-                "id",
-                "person",
-                "name",
-                "imdb_index",
-                "name_pcode_cf",
-                "name_pcode_nf",
-                "surname_pcode",
-            ],
-        ),
+        "AkaName" => insert(out, "aka_name", fact, &["person"]),
         "CastInfo" => insert(
             out,
             "cast_info",
             fact,
-            &[
-                "id",
-                "person",
-                "movie",
-                "person_role",
-                "note",
-                "nr_order",
-                "role",
-            ],
+            &["person", "movie", "person_role", "role"],
         ),
         "MovieCompanies" => insert(
             out,
             "movie_companies",
             fact,
-            &["id", "movie", "company", "company_type", "note"],
+            &["movie", "company", "company_type"],
         ),
-        "MovieInfoIdx" => insert(
-            out,
-            "movie_info_idx",
-            fact,
-            &["id", "movie", "info_type", "info", "note"],
-        ),
-        "MovieInfo" => insert(
-            out,
-            "movie_info",
-            fact,
-            &["id", "movie", "info_type", "info", "note"],
-        ),
-        "MovieKeyword" => insert(out, "movie_keyword", fact, &["id", "movie", "keyword"]),
+        "MovieInfo" => insert(out, "movie_info", fact, &["movie", "info_type"]),
+        "MovieInfoIdx" => insert(out, "movie_info_idx", fact, &["movie", "info_type"]),
+        "MovieKeyword" => insert(out, "movie_keyword", fact, &["movie", "keyword"]),
         "MovieLink" => insert(
             out,
             "movie_link",
             fact,
-            &["id", "movie", "linked_movie", "link_type"],
+            &["movie", "linked_movie", "link_type"],
         ),
         _ => Ok(()),
     }
@@ -215,26 +133,26 @@ fn push_sql_value(out: &mut String, value: &Value) {
 }
 
 const SQLITE_SCHEMA: &str = r#"
-CREATE TABLE comp_cast_type (id INTEGER PRIMARY KEY, kind TEXT NOT NULL);
-CREATE TABLE company_name (id INTEGER PRIMARY KEY, name TEXT NOT NULL, country_code TEXT NOT NULL, imdb_id INTEGER NOT NULL, name_pcode_nf TEXT NOT NULL, name_pcode_sf TEXT NOT NULL);
+CREATE TABLE company_name (id INTEGER PRIMARY KEY, country_code TEXT NOT NULL);
 CREATE TABLE company_type (id INTEGER PRIMARY KEY, kind TEXT NOT NULL);
 CREATE TABLE info_type (id INTEGER PRIMARY KEY, info TEXT NOT NULL);
-CREATE TABLE keyword (id INTEGER PRIMARY KEY, keyword TEXT NOT NULL, phonetic_code TEXT NOT NULL);
+CREATE TABLE keyword (id INTEGER PRIMARY KEY, keyword TEXT NOT NULL);
 CREATE TABLE kind_type (id INTEGER PRIMARY KEY, kind TEXT NOT NULL);
 CREATE TABLE link_type (id INTEGER PRIMARY KEY, link TEXT NOT NULL);
 CREATE TABLE role_type (id INTEGER PRIMARY KEY, role TEXT NOT NULL);
-CREATE TABLE char_name (id INTEGER PRIMARY KEY, name TEXT NOT NULL, imdb_index TEXT NOT NULL, imdb_id INTEGER NOT NULL, name_pcode_nf TEXT NOT NULL, surname_pcode TEXT NOT NULL);
-CREATE TABLE name (id INTEGER PRIMARY KEY, name TEXT NOT NULL, imdb_index TEXT NOT NULL, imdb_id INTEGER NOT NULL, gender TEXT NOT NULL, name_pcode_cf TEXT NOT NULL, name_pcode_nf TEXT NOT NULL, surname_pcode TEXT NOT NULL);
-CREATE TABLE title (id INTEGER PRIMARY KEY, title TEXT NOT NULL, imdb_index TEXT NOT NULL, kind INTEGER NOT NULL, production_year INTEGER NOT NULL, imdb_id INTEGER NOT NULL, phonetic_code TEXT NOT NULL, episode_of INTEGER NOT NULL, season_nr INTEGER NOT NULL, episode_nr INTEGER NOT NULL, series_years TEXT NOT NULL);
-CREATE TABLE aka_name (id INTEGER PRIMARY KEY, person INTEGER NOT NULL, name TEXT NOT NULL, imdb_index TEXT NOT NULL, name_pcode_cf TEXT NOT NULL, name_pcode_nf TEXT NOT NULL, surname_pcode TEXT NOT NULL);
-CREATE TABLE cast_info (id INTEGER PRIMARY KEY, person INTEGER NOT NULL, movie INTEGER NOT NULL, person_role INTEGER NOT NULL, note TEXT NOT NULL, nr_order INTEGER NOT NULL, role INTEGER NOT NULL);
-CREATE TABLE movie_companies (id INTEGER PRIMARY KEY, movie INTEGER NOT NULL, company INTEGER NOT NULL, company_type INTEGER NOT NULL, note TEXT NOT NULL);
-CREATE TABLE movie_info_idx (id INTEGER PRIMARY KEY, movie INTEGER NOT NULL, info_type INTEGER NOT NULL, info TEXT NOT NULL, note TEXT NOT NULL);
-CREATE TABLE movie_info (id INTEGER PRIMARY KEY, movie INTEGER NOT NULL, info_type INTEGER NOT NULL, info TEXT NOT NULL, note TEXT NOT NULL);
-CREATE TABLE movie_keyword (id INTEGER PRIMARY KEY, movie INTEGER NOT NULL, keyword INTEGER NOT NULL);
-CREATE TABLE movie_link (id INTEGER PRIMARY KEY, movie INTEGER NOT NULL, linked_movie INTEGER NOT NULL, link_type INTEGER NOT NULL);
-CREATE INDEX cast_info_movie ON cast_info(movie, role, person, person_role, id);
-CREATE INDEX movie_companies_movie ON movie_companies(movie, company_type, company, id);
-CREATE INDEX movie_keyword_movie ON movie_keyword(movie, keyword, id);
-CREATE INDEX movie_info_idx_movie_type ON movie_info_idx(movie, info_type, id);
+CREATE TABLE char_name (id INTEGER PRIMARY KEY);
+CREATE TABLE name (id INTEGER PRIMARY KEY, gender TEXT NOT NULL);
+CREATE TABLE title (id INTEGER PRIMARY KEY, kind INTEGER NOT NULL, production_year INTEGER NOT NULL, episode_nr INTEGER NOT NULL);
+CREATE TABLE aka_name (person INTEGER NOT NULL);
+CREATE TABLE cast_info (person INTEGER NOT NULL, movie INTEGER NOT NULL, person_role INTEGER NOT NULL, role INTEGER NOT NULL);
+CREATE TABLE movie_companies (movie INTEGER NOT NULL, company INTEGER NOT NULL, company_type INTEGER NOT NULL);
+CREATE TABLE movie_info (movie INTEGER NOT NULL, info_type INTEGER NOT NULL);
+CREATE TABLE movie_info_idx (movie INTEGER NOT NULL, info_type INTEGER NOT NULL);
+CREATE TABLE movie_keyword (movie INTEGER NOT NULL, keyword INTEGER NOT NULL);
+CREATE TABLE movie_link (movie INTEGER NOT NULL, linked_movie INTEGER NOT NULL, link_type INTEGER NOT NULL);
+CREATE INDEX cast_info_movie ON cast_info(movie, role, person, person_role);
+CREATE INDEX movie_companies_movie ON movie_companies(movie, company_type, company);
+CREATE INDEX movie_keyword_movie ON movie_keyword(movie, keyword);
+CREATE INDEX movie_info_idx_movie_type ON movie_info_idx(movie, info_type);
+CREATE INDEX movie_info_movie_type ON movie_info(movie, info_type);
 "#;

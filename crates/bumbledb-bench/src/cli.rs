@@ -12,11 +12,6 @@ pub(crate) struct Config {
     pub(crate) format: OutputFormat,
     pub(crate) repeats: usize,
     pub(crate) warmup: usize,
-    pub(crate) plan_mode: Option<String>,
-    pub(crate) cover_mode: Option<String>,
-    pub(crate) batch_size: Option<usize>,
-    pub(crate) output_mode: Option<String>,
-    pub(crate) source_mode: Option<String>,
     pub(crate) hardware: Option<String>,
     pub(crate) job_dir: Option<String>,
     pub(crate) open_limit: Option<usize>,
@@ -37,13 +32,6 @@ impl Config {
                 "--format" => config.format = parse_format(&next_arg(&mut args, "--format")?)?,
                 "--repeats" => config.repeats = parse_usize(&next_arg(&mut args, "--repeats")?)?,
                 "--warmup" => config.warmup = parse_usize(&next_arg(&mut args, "--warmup")?)?,
-                "--plan-mode" => config.plan_mode = Some(next_arg(&mut args, "--plan-mode")?),
-                "--cover-mode" => config.cover_mode = Some(next_arg(&mut args, "--cover-mode")?),
-                "--batch-size" => {
-                    config.batch_size = Some(parse_usize(&next_arg(&mut args, "--batch-size")?)?)
-                }
-                "--output-mode" => config.output_mode = Some(next_arg(&mut args, "--output-mode")?),
-                "--source-mode" => config.source_mode = Some(next_arg(&mut args, "--source-mode")?),
                 "--hardware" => config.hardware = Some(next_arg(&mut args, "--hardware")?),
                 "--job-dir" => config.job_dir = Some(next_arg(&mut args, "--job-dir")?),
                 "--open-limit" => {
@@ -65,11 +53,6 @@ impl Default for Config {
             format: OutputFormat::Json,
             repeats: 1,
             warmup: 0,
-            plan_mode: None,
-            cover_mode: None,
-            batch_size: None,
-            output_mode: None,
-            source_mode: None,
             hardware: None,
             job_dir: None,
             open_limit: Some(10_000),
@@ -102,7 +85,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_cli_modes() -> BenchResult<()> {
+    fn parses_cli_options() -> BenchResult<()> {
         let config = Config::from_args(
             [
                 "--preset",
@@ -113,16 +96,12 @@ mod tests {
                 "2",
                 "--warmup",
                 "1",
-                "--plan-mode",
-                "factored",
-                "--cover-mode",
-                "dynamic",
-                "--batch-size",
-                "100",
-                "--output-mode",
-                "factorized",
-                "--source-mode",
-                "colt",
+                "--job-dir",
+                "data/job",
+                "--open-limit",
+                "1000",
+                "--query",
+                "job_q01_top_production",
             ]
             .into_iter()
             .map(str::to_owned),
@@ -130,10 +109,9 @@ mod tests {
 
         assert_eq!(config.repeats, 2);
         assert_eq!(config.warmup, 1);
-        assert_eq!(config.plan_mode.as_deref(), Some("factored"));
-        assert_eq!(config.cover_mode.as_deref(), Some("dynamic"));
-        assert_eq!(config.batch_size, Some(100));
-        assert_eq!(config.output_mode.as_deref(), Some("factorized"));
+        assert_eq!(config.job_dir.as_deref(), Some("data/job"));
+        assert_eq!(config.open_limit, Some(1000));
+        assert_eq!(config.queries, vec!["job_q01_top_production"]);
         Ok(())
     }
 }

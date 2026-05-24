@@ -251,15 +251,14 @@ pub(super) fn encode_existing_value(
         (Value::I64(value), ValueType::I64) => encode_i64(*value).to_vec(),
         (Value::Enum(value), ValueType::Enum { name }) => encode_enum_value(schema, name, *value)?,
         (Value::String(value), ValueType::String) => {
-            let Some(id) =
-                lookup_intern_id(&txn.dbs.dict, &txn.txn, DICT_STRING, value.as_bytes())?
+            let Some(id) = lookup_intern_id(txn.dbs.dict, &txn.txn, DICT_STRING, value.as_bytes())?
             else {
                 return Ok(None);
             };
             encode_intern_id(InternId(id)).to_vec()
         }
         (Value::Bytes(value), ValueType::Bytes) => {
-            let Some(id) = lookup_intern_id(&txn.dbs.dict, &txn.txn, DICT_BYTES, value)? else {
+            let Some(id) = lookup_intern_id(txn.dbs.dict, &txn.txn, DICT_BYTES, value)? else {
                 return Ok(None);
             };
             encode_intern_id(InternId(id)).to_vec()
@@ -342,7 +341,7 @@ fn intern_value(
     raw: &[u8],
     mode: InternMode,
 ) -> Result<Option<u64>> {
-    if let Some(id) = lookup_intern_id(&txn.dbs.dict, &txn.txn, kind, raw)? {
+    if let Some(id) = lookup_intern_id(txn.dbs.dict, &txn.txn, kind, raw)? {
         return Ok(Some(id));
     }
     if matches!(mode, InternMode::Existing) {
@@ -360,7 +359,7 @@ fn intern_value(
 }
 
 fn lookup_intern_id(
-    db: &RawDatabase,
+    db: RawDatabase,
     txn: &heed::RoTxn<'_>,
     kind: u8,
     raw: &[u8],
@@ -368,7 +367,12 @@ fn lookup_intern_id(
     let Some(bytes) = db.get(txn, &dict_fwd_key(kind, raw))? else {
         return Ok(None);
     };
-    bytes_to_u64(bytes).map(Some)
+    let id = bytes_to_u64(bytes)?;
+    let existing = lookup_intern_raw(db, txn, kind, id)?;
+    if existing != raw {
+        return Err(Error::corrupt("dictionary hash collision"));
+    }
+    Ok(Some(id))
 }
 
 fn lookup_intern_raw(db: RawDatabase, txn: &heed::RoTxn<'_>, kind: u8, id: u64) -> Result<Vec<u8>> {
@@ -379,7 +383,7 @@ fn lookup_intern_raw(db: RawDatabase, txn: &heed::RoTxn<'_>, kind: u8, id: u64) 
 
 fn dict_fwd_key(kind: u8, raw: &[u8]) -> Vec<u8> {
     let mut key = vec![DICT_FWD, kind];
-    key.extend_from_slice(raw);
+    key.extend_from_slice(blake3::hash(raw).as_bytes());
     key
 }
 

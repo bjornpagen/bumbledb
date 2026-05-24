@@ -7,9 +7,7 @@ use bumbledb_test_support::{clover_query, env_and_schema, execute, insert, pair,
 
 use crate::cli::{Config, OutputFormat};
 use crate::lint::validate_select_distinct;
-use crate::report::{
-    BenchmarkReport, Counters, fingerprint_rows, render_json_array, render_markdown,
-};
+use crate::report::{BenchmarkReport, fingerprint_rows, render_json_array, render_markdown};
 
 pub(crate) type BenchResult<T> = Result<T, BenchError>;
 
@@ -40,15 +38,6 @@ impl From<std::io::Error> for BenchError {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct BenchMode {
-    plan_mode: String,
-    cover_mode: String,
-    batch_size: usize,
-    output_mode: String,
-    source_mode: String,
-}
-
 #[derive(Clone)]
 struct Dataset {
     name: String,
@@ -71,15 +60,12 @@ pub(crate) fn run_cli(config: Config) -> BenchResult<String> {
         return Err(BenchError::new("only the quick preset is implemented"));
     }
     let dataset = dataset_by_name("clover_skew")?;
-    let modes = modes_for_config(&config)?;
     let mut reports = Vec::new();
-    for mode in modes {
-        for _ in 0..config.warmup {
-            let _ = run_once(&dataset, &mode, &config)?;
-        }
-        for _ in 0..config.repeats.max(1) {
-            reports.push(run_once(&dataset, &mode, &config)?);
-        }
+    for _ in 0..config.warmup {
+        let _ = run_once(&dataset, &config)?;
+    }
+    for _ in 0..config.repeats.max(1) {
+        reports.push(run_once(&dataset, &config)?);
     }
     Ok(match config.format {
         OutputFormat::Json => render_json_array(&reports),
@@ -87,7 +73,7 @@ pub(crate) fn run_cli(config: Config) -> BenchResult<String> {
     })
 }
 
-fn run_once(dataset: &Dataset, mode: &BenchMode, config: &Config) -> BenchResult<BenchmarkReport> {
+fn run_once(dataset: &Dataset, config: &Config) -> BenchResult<BenchmarkReport> {
     validate_select_distinct(&dataset.sql)?;
     let (env, schema) = env_and_schema(&format!("bench-{}", dataset.name))?;
     insert(&env, &schema, dataset.facts.clone())?;
@@ -99,11 +85,8 @@ fn run_once(dataset: &Dataset, mode: &BenchMode, config: &Config) -> BenchResult
         scale: 1,
         dataset: dataset.name.clone(),
         query: dataset.query_name.clone(),
-        plan_mode: mode.plan_mode.clone(),
-        cover_mode: mode.cover_mode.clone(),
-        batch_size: mode.batch_size,
-        output_mode: mode.output_mode.clone(),
-        source_mode: mode.source_mode.clone(),
+        engine: "free_join".to_owned(),
+        sqlite_reference: "embedded exact expected rows".to_owned(),
         git_commit: option_env!("GIT_COMMIT").unwrap_or("unknown").to_owned(),
         hardware: config
             .hardware
@@ -112,7 +95,9 @@ fn run_once(dataset: &Dataset, mode: &BenchMode, config: &Config) -> BenchResult
         correctness_fingerprint: fingerprint_rows(&result.facts),
         gate_status: "passed".to_owned(),
         elapsed_nanos,
-        counters: counters(dataset, mode, &result),
+        sqlite_elapsed_nanos: 0,
+        load_nanos: 0,
+        result_rows: result.facts.len(),
     })
 }
 
@@ -124,80 +109,6 @@ fn compare_exact(result: &QueryResultSet, expected: &[Vec<Value>]) -> BenchResul
         )));
     }
     Ok(())
-}
-
-fn counters(dataset: &Dataset, mode: &BenchMode, result: &QueryResultSet) -> Counters {
-    let vectorized_batches = if mode.batch_size > 1 {
-        dataset.facts.len().div_ceil(mode.batch_size)
-    } else {
-        0
-    };
-    Counters {
-        cover_choices: if mode.cover_mode == "dynamic" { 3 } else { 1 },
-        vectorized_batches,
-        vectorized_survivors: result.facts.len(),
-        vectorized_failed: dataset.facts.len().saturating_sub(result.facts.len()),
-        colt_nodes_created: dataset.facts.len().max(1),
-        colt_nodes_forced: if mode.source_mode == "colt" { 1 } else { 0 },
-        colt_offsets_scanned: dataset.facts.len(),
-        duplicate_witnesses: dataset.facts.len().saturating_sub(result.facts.len()),
-        factored_dynamic_skew_delta: usize::from(
-            dataset.name == "clover_skew"
-                && mode.plan_mode == "factored"
-                && mode.cover_mode == "dynamic",
-        ),
-    }
-}
-
-fn modes_for_config(config: &Config) -> BenchResult<Vec<BenchMode>> {
-    if config.source_mode.as_deref() == Some("accelerator") {
-        return Err(BenchError::new(
-            "optional accelerator source is not implemented",
-        ));
-    }
-    if config.plan_mode.is_some()
-        || config.cover_mode.is_some()
-        || config.batch_size.is_some()
-        || config.output_mode.is_some()
-        || config.source_mode.is_some()
-    {
-        return Ok(vec![BenchMode {
-            plan_mode: config
-                .plan_mode
-                .clone()
-                .unwrap_or_else(|| "factored".to_owned()),
-            cover_mode: config
-                .cover_mode
-                .clone()
-                .unwrap_or_else(|| "dynamic".to_owned()),
-            batch_size: config.batch_size.unwrap_or(1000),
-            output_mode: config
-                .output_mode
-                .clone()
-                .unwrap_or_else(|| "materialized".to_owned()),
-            source_mode: config
-                .source_mode
-                .clone()
-                .unwrap_or_else(|| "colt".to_owned()),
-        }]);
-    }
-    let mut modes = Vec::new();
-    for plan_mode in ["singleton", "binary-derived", "factored"] {
-        for cover_mode in ["static", "dynamic"] {
-            for batch_size in [1, 10, 100, 1000] {
-                for output_mode in ["materialized", "factorized"] {
-                    modes.push(BenchMode {
-                        plan_mode: plan_mode.to_owned(),
-                        cover_mode: cover_mode.to_owned(),
-                        batch_size,
-                        output_mode: output_mode.to_owned(),
-                        source_mode: "colt".to_owned(),
-                    });
-                }
-            }
-        }
-    }
-    Ok(modes)
 }
 
 fn dataset_by_name(name: &str) -> BenchResult<Dataset> {
@@ -245,32 +156,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn small_benchmark_run_covers_each_required_mode() -> BenchResult<()> {
+    fn small_benchmark_run_uses_public_free_join() -> BenchResult<()> {
         let config = Config::default();
         let dataset = dataset_by_name("clover_skew")?;
-        let modes = modes_for_config(&config)?;
-        let mut seen_plan = Vec::new();
-        let mut seen_cover = Vec::new();
-        let mut seen_batch = Vec::new();
-        let mut seen_output = Vec::new();
-        for mode in modes {
-            let report = run_once(&dataset, &mode, &config)?;
-            seen_plan.push(report.plan_mode);
-            seen_cover.push(report.cover_mode);
-            seen_batch.push(report.batch_size);
-            seen_output.push(report.output_mode);
-        }
-        assert!(seen_plan.contains(&"singleton".to_owned()));
-        assert!(seen_plan.contains(&"binary-derived".to_owned()));
-        assert!(seen_plan.contains(&"factored".to_owned()));
-        assert!(seen_cover.contains(&"static".to_owned()));
-        assert!(seen_cover.contains(&"dynamic".to_owned()));
-        assert!(seen_batch.contains(&1));
-        assert!(seen_batch.contains(&10));
-        assert!(seen_batch.contains(&100));
-        assert!(seen_batch.contains(&1000));
-        assert!(seen_output.contains(&"materialized".to_owned()));
-        assert!(seen_output.contains(&"factorized".to_owned()));
+        let report = run_once(&dataset, &config)?;
+        assert_eq!(report.engine, "free_join");
         Ok(())
     }
 
@@ -288,23 +178,6 @@ mod tests {
         ]];
         assert_eq!(result.facts.len(), wrong_same_count.len());
         assert!(compare_exact(&result, &wrong_same_count).is_err());
-        Ok(())
-    }
-
-    #[test]
-    fn counters_prove_colt_vectorization_and_skew_ablation() -> BenchResult<()> {
-        let dataset = dataset_by_name("clover_skew")?;
-        let mode = BenchMode {
-            plan_mode: "factored".to_owned(),
-            cover_mode: "dynamic".to_owned(),
-            batch_size: 10,
-            output_mode: "factorized".to_owned(),
-            source_mode: "colt".to_owned(),
-        };
-        let report = run_once(&dataset, &mode, &Config::default())?;
-        assert!(report.counters.colt_nodes_created > report.counters.colt_nodes_forced);
-        assert!(report.counters.vectorized_batches > 0);
-        assert_eq!(report.counters.factored_dynamic_skew_delta, 1);
         Ok(())
     }
 

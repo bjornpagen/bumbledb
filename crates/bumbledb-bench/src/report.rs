@@ -1,86 +1,55 @@
 use bumbledb_lmdb::Value;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Counters {
-    pub(crate) cover_choices: usize,
-    pub(crate) vectorized_batches: usize,
-    pub(crate) vectorized_survivors: usize,
-    pub(crate) vectorized_failed: usize,
-    pub(crate) colt_nodes_created: usize,
-    pub(crate) colt_nodes_forced: usize,
-    pub(crate) colt_offsets_scanned: usize,
-    pub(crate) duplicate_witnesses: usize,
-    pub(crate) factored_dynamic_skew_delta: usize,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BenchmarkReport {
     pub(crate) scale: u64,
     pub(crate) dataset: String,
     pub(crate) query: String,
-    pub(crate) plan_mode: String,
-    pub(crate) cover_mode: String,
-    pub(crate) batch_size: usize,
-    pub(crate) output_mode: String,
-    pub(crate) source_mode: String,
+    pub(crate) engine: String,
+    pub(crate) sqlite_reference: String,
     pub(crate) git_commit: String,
     pub(crate) hardware: String,
     pub(crate) correctness_fingerprint: String,
     pub(crate) gate_status: String,
     pub(crate) elapsed_nanos: u128,
-    pub(crate) counters: Counters,
+    pub(crate) sqlite_elapsed_nanos: u128,
+    pub(crate) load_nanos: u128,
+    pub(crate) result_rows: usize,
 }
 
 impl BenchmarkReport {
     pub(crate) fn render_json(&self) -> String {
         format!(
-            "{{\"scale\":{},\"dataset\":\"{}\",\"query\":\"{}\",\"plan_mode\":\"{}\",\"cover_mode\":\"{}\",\"batch_size\":{},\"output_mode\":\"{}\",\"source_mode\":\"{}\",\"git_commit\":\"{}\",\"hardware\":\"{}\",\"correctness_fingerprint\":\"{}\",\"gate_status\":\"{}\",\"elapsed_nanos\":{},\"cover_choices\":{},\"vectorized_batches\":{},\"vectorized_survivors\":{},\"vectorized_failed\":{},\"colt_nodes_created\":{},\"colt_nodes_forced\":{},\"colt_offsets_scanned\":{},\"duplicate_witnesses\":{},\"factored_dynamic_skew_delta\":{}}}",
+            "{{\"scale\":{},\"dataset\":\"{}\",\"query\":\"{}\",\"engine\":\"{}\",\"sqlite_reference\":\"{}\",\"git_commit\":\"{}\",\"hardware\":\"{}\",\"correctness_fingerprint\":\"{}\",\"gate_status\":\"{}\",\"elapsed_nanos\":{},\"sqlite_elapsed_nanos\":{},\"load_nanos\":{},\"result_rows\":{}}}",
             self.scale,
             escape(&self.dataset),
             escape(&self.query),
-            escape(&self.plan_mode),
-            escape(&self.cover_mode),
-            self.batch_size,
-            escape(&self.output_mode),
-            escape(&self.source_mode),
+            escape(&self.engine),
+            escape(&self.sqlite_reference),
             escape(&self.git_commit),
             escape(&self.hardware),
             escape(&self.correctness_fingerprint),
             escape(&self.gate_status),
             self.elapsed_nanos,
-            self.counters.cover_choices,
-            self.counters.vectorized_batches,
-            self.counters.vectorized_survivors,
-            self.counters.vectorized_failed,
-            self.counters.colt_nodes_created,
-            self.counters.colt_nodes_forced,
-            self.counters.colt_offsets_scanned,
-            self.counters.duplicate_witnesses,
-            self.counters.factored_dynamic_skew_delta,
+            self.sqlite_elapsed_nanos,
+            self.load_nanos,
+            self.result_rows,
         )
     }
 
     pub(crate) fn render_markdown(&self) -> String {
         format!(
-            "| field | value |\n| --- | --- |\n| dataset | {} |\n| query | {} |\n| plan_mode | {} |\n| cover_mode | {} |\n| batch_size | {} |\n| output_mode | {} |\n| source_mode | {} |\n| correctness_fingerprint | {} |\n| gate_status | {} |\n| Free Join counters | covers={} duplicate_witnesses={} skew_delta={} |\n| COLT counters | nodes_created={} nodes_forced={} offsets_scanned={} |\n| vectorized counters | batches={} survivors={} failed={} |\n",
+            "| field | value |\n| --- | --- |\n| dataset | {} |\n| query | {} |\n| engine | {} |\n| sqlite_reference | {} |\n| bumbledb_ms | {:.3} |\n| sqlite_ms | {:.3} |\n| load_ms | {:.3} |\n| result_rows | {} |\n| correctness_fingerprint | {} |\n| gate_status | {} |\n",
             self.dataset,
             self.query,
-            self.plan_mode,
-            self.cover_mode,
-            self.batch_size,
-            self.output_mode,
-            self.source_mode,
+            self.engine,
+            self.sqlite_reference,
+            self.elapsed_nanos as f64 / 1_000_000.0,
+            self.sqlite_elapsed_nanos as f64 / 1_000_000.0,
+            self.load_nanos as f64 / 1_000_000.0,
+            self.result_rows,
             self.correctness_fingerprint,
             self.gate_status,
-            self.counters.cover_choices,
-            self.counters.duplicate_witnesses,
-            self.counters.factored_dynamic_skew_delta,
-            self.counters.colt_nodes_created,
-            self.counters.colt_nodes_forced,
-            self.counters.colt_offsets_scanned,
-            self.counters.vectorized_batches,
-            self.counters.vectorized_survivors,
-            self.counters.vectorized_failed,
         )
     }
 }
@@ -126,38 +95,23 @@ mod tests {
             scale: 1,
             dataset: "clover_skew".to_owned(),
             query: "clover".to_owned(),
-            plan_mode: "factored".to_owned(),
-            cover_mode: "dynamic".to_owned(),
-            batch_size: 1000,
-            output_mode: "factorized".to_owned(),
-            source_mode: "colt".to_owned(),
+            engine: "free_join".to_owned(),
+            sqlite_reference: "exact SELECT DISTINCT".to_owned(),
             git_commit: "unknown".to_owned(),
             hardware: "unspecified".to_owned(),
             correctness_fingerprint: "abc".to_owned(),
             gate_status: "passed".to_owned(),
             elapsed_nanos: 1,
-            counters: Counters {
-                cover_choices: 1,
-                vectorized_batches: 2,
-                vectorized_survivors: 3,
-                vectorized_failed: 4,
-                colt_nodes_created: 5,
-                colt_nodes_forced: 1,
-                colt_offsets_scanned: 6,
-                duplicate_witnesses: 7,
-                factored_dynamic_skew_delta: 1,
-            },
+            sqlite_elapsed_nanos: 2,
+            load_nanos: 3,
+            result_rows: 1,
         };
 
         let json = report.render_json();
         let markdown = report.render_markdown();
 
-        assert!(json.contains("\"plan_mode\":\"factored\""));
-        assert!(json.contains("\"cover_mode\":\"dynamic\""));
-        assert!(json.contains("\"batch_size\":1000"));
-        assert!(json.contains("\"source_mode\":\"colt\""));
-        assert!(markdown.contains("Free Join counters"));
-        assert!(markdown.contains("COLT counters"));
-        assert!(markdown.contains("vectorized counters"));
+        assert!(json.contains("\"engine\":\"free_join\""));
+        assert!(json.contains("\"sqlite_elapsed_nanos\":2"));
+        assert!(markdown.contains("sqlite_reference"));
     }
 }

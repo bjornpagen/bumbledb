@@ -11,7 +11,7 @@ use std::time::Instant;
 use bumbledb_lmdb::{Environment, InputBindings, StorageSchema};
 
 use crate::cli::Config;
-use crate::report::{BenchmarkReport, Counters, fingerprint_rows};
+use crate::report::{BenchmarkReport, fingerprint_rows};
 use crate::runner::{BenchError, BenchResult};
 
 pub(crate) fn run_job(config: &Config) -> BenchResult<Vec<BenchmarkReport>> {
@@ -58,13 +58,17 @@ pub(crate) fn run_job(config: &Config) -> BenchResult<Vec<BenchmarkReport>> {
 
     let mut reports = Vec::new();
     for query in &selected {
-        let expected = sqlite::query_sqlite(&sqlite_db, query.sqlite).map_err(BenchError::new)?;
         for _ in 0..config.warmup {
             let _ = env.read(|txn| {
                 txn.execute_query(&bench_schema, &query.query, &InputBindings::new())
             })?;
+            let _ = sqlite::query_sqlite(&sqlite_db, query.sqlite).map_err(BenchError::new)?;
         }
         for _ in 0..config.repeats.max(1) {
+            let sqlite_start = Instant::now();
+            let expected =
+                sqlite::query_sqlite(&sqlite_db, query.sqlite).map_err(BenchError::new)?;
+            let sqlite_elapsed_nanos = sqlite_start.elapsed().as_nanos();
             let start = Instant::now();
             let result = env.read(|txn| {
                 txn.execute_query(&bench_schema, &query.query, &InputBindings::new())
@@ -77,23 +81,22 @@ pub(crate) fn run_job(config: &Config) -> BenchResult<Vec<BenchmarkReport>> {
                 )));
             }
             reports.push(BenchmarkReport {
-                scale: config.open_limit.unwrap_or(0) as u64,
+                scale: facts.len() as u64,
                 dataset: "job".to_owned(),
                 query: query.name.to_owned(),
-                plan_mode: "default".to_owned(),
-                cover_mode: "dynamic".to_owned(),
-                batch_size: 1,
-                output_mode: "materialized".to_owned(),
-                source_mode: "colt".to_owned(),
+                engine: "free_join".to_owned(),
+                sqlite_reference: "exact SELECT DISTINCT".to_owned(),
                 git_commit: option_env!("GIT_COMMIT").unwrap_or("unknown").to_owned(),
                 hardware: config
                     .hardware
                     .clone()
                     .unwrap_or_else(|| "unspecified".to_owned()),
                 correctness_fingerprint: fingerprint_rows(&result.facts),
-                gate_status: format!("passed load_nanos={load_nanos}"),
+                gate_status: "passed".to_owned(),
                 elapsed_nanos,
-                counters: Counters::default(),
+                sqlite_elapsed_nanos,
+                load_nanos,
+                result_rows: result.facts.len(),
             });
         }
     }
@@ -160,11 +163,6 @@ mod tests {
             format: OutputFormat::Json,
             repeats: 1,
             warmup: 0,
-            plan_mode: None,
-            cover_mode: None,
-            batch_size: None,
-            output_mode: None,
-            source_mode: None,
             hardware: None,
             job_dir: Some(dir.to_string_lossy().to_string()),
             open_limit: None,

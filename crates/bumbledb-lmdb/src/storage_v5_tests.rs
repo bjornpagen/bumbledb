@@ -231,6 +231,26 @@ fn storage_concurrency_read_snapshot_survives_concurrent_write() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn storage_interns_long_string_and_bytes_values() -> Result<()> {
+    let (env, schema) = env_and_schema("long-interned-values")?;
+    let long_name = "x".repeat(10_000);
+    let long_bytes = vec![7; 10_000];
+
+    env.write(|txn| {
+        txn.insert(&schema, holder(1, &long_name))?;
+        txn.insert(&schema, blob(1, long_bytes.clone()))?;
+        Ok::<(), Error>(())
+    })?;
+
+    let holder = env.read(|txn| txn.debug_relation_facts(&schema, "Holder"))?;
+    let blob = env.read(|txn| txn.debug_relation_facts(&schema, "Blob"))?;
+
+    assert_eq!(holder[0].value("name"), Some(&Value::String(long_name)));
+    assert_eq!(blob[0].value("payload"), Some(&Value::Bytes(long_bytes)));
+    Ok(())
+}
+
 fn env_and_schema(name: &str) -> Result<(Environment, StorageSchema)> {
     let path = test_path(name);
     clean(&path)?;
@@ -272,6 +292,14 @@ fn schema() -> SchemaDescriptor {
                 "Holder",
                 "id",
             )),
+            RelationDescriptor::new(
+                "Blob",
+                vec![
+                    FieldDescriptor::generated_serial("id", "BlobId", "Blob"),
+                    FieldDescriptor::new("payload", ValueType::Bytes),
+                ],
+            )
+            .with_unique("id", ["id"]),
         ],
     )
     .with_enum(EnumDescriptor::codes("Kind", [1, 2]))
@@ -294,6 +322,16 @@ fn pet(id: u64, holder: u64, kind: u8) -> Fact {
             ("id", Value::Serial(id)),
             ("holder", Value::Serial(holder)),
             ("kind", Value::Enum(kind)),
+        ],
+    )
+}
+
+fn blob(id: u64, payload: Vec<u8>) -> Fact {
+    Fact::new(
+        "Blob",
+        [
+            ("id", Value::Serial(id)),
+            ("payload", Value::Bytes(payload)),
         ],
     )
 }
