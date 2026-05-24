@@ -12,7 +12,9 @@ use crate::query::model::{
     AtomOccurrence, AtomOccurrenceId, NormalizedFieldBinding, NormalizedQuery, NormalizedTerm,
 };
 use crate::storage_format::FactHandle;
-use crate::tuple::{EncodedTuple, GhtSource, TupleError, TupleField, TupleSchema};
+use crate::tuple::{
+    EncodedTuple, GhtSource, KeyCountEstimate, TupleError, TupleField, TupleSchema,
+};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -127,6 +129,16 @@ fn colt_output_equals_eager_grouping_for_small_relation() -> TestResult {
         colt.iter(),
         vec![tuple_xb(1, 10)?, tuple_xb(1, 11)?, tuple_xb(2, 20)?]
     );
+    Ok(())
+}
+
+#[test]
+fn dynamic_cover_counting_unforced_vector_does_not_force() -> TestResult {
+    let colt = clover_s_colt(vec![TupleSchema::new(vec![field(0, 0)?])]);
+
+    assert_eq!(colt.key_count(), KeyCountEstimate::Estimate(3));
+    assert!(colt.is_vector());
+    assert_eq!(colt.counters().hash_maps_built, 0);
     Ok(())
 }
 

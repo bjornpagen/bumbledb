@@ -1,13 +1,23 @@
+use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use bumbledb_core::encoding::encode_u64;
 use bumbledb_core::query_ir::{
     TypedClause, TypedFieldBinding, TypedFindTerm, TypedQuery, TypedRelationAtom, TypedTerm,
     TypedVariable,
 };
 use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
 
-use super::{count_bindings_for_test, execute_plan_for_test};
+use super::{count_bindings_for_test, execute_plan_for_test, execute_plan_with_policy_for_test};
+use crate::base_image::{ColumnImage, RelationBaseImage, RelationStats};
+use crate::colt::ColtSource;
+use crate::query::cover::{CoverPolicy, ExecutionStats, choose_cover};
 use crate::query::free_join::{FjNode, FjPlan, FjSubatom};
+use crate::query::model::AtomOccurrenceId;
+use crate::query::normalize::normalize_query;
+use crate::storage_format::FactHandle;
+use crate::tuple::{EncodedTuple, GhtSource, KeyCountEstimate, TupleField, TupleSchema};
 use crate::{Environment, Fact, InputBindings, QueryResultSet, Result, StorageSchema, Value};
 
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
@@ -293,6 +303,208 @@ fn free_join_executor_matches_reference_for_small_query() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn dynamic_cover_triangle_with_asymmetric_sizes_chooses_smaller_cover() -> Result<()> {
+    let (env, schema) = env_and_schema("dynamic-triangle")?;
+    env.write(|txn| {
+        for fact in [
+            pair("R", 1, 2),
+            pair("R", 1, 3),
+            pair("R", 9, 9),
+            pair("S", 2, 4),
+            pair("S", 3, 4),
+            pair("T", 4, 1),
+        ] {
+            txn.insert(&schema, fact)?;
+        }
+        Ok::<(), crate::Error>(())
+    })?;
+    let query = typed_query(
+        &["x", "y", "z"],
+        &[0, 1, 2],
+        vec![
+            atom(0, "R", [(0, "left", 0), (1, "right", 1)]),
+            atom(1, "S", [(0, "left", 1), (1, "right", 2)]),
+            atom(2, "T", [(0, "left", 2), (1, "right", 0)]),
+        ],
+    );
+    let plan = FjPlan {
+        query_variables: 3,
+        nodes: vec![
+            node(0, [sub(0, [0], [0]), sub(2, [0], [1])]),
+            node(1, [sub(0, [1], [1]), sub(1, [1], [0])]),
+            node(2, [sub(1, [2], [1]), sub(2, [2], [0])]),
+        ],
+    };
+
+    let (result, stats) = env.read(|txn| {
+        execute_plan_with_policy_for_test(txn, &schema, &query, &plan, CoverPolicy::DynamicMinKeys)
+    })?;
+
+    assert_eq!(result.facts, vec![row([1, 2, 4]), row([1, 3, 4])]);
+    assert_eq!(stats.cover_choices[0].chosen_subatom, 1);
+    assert!(matches!(
+        stats.cover_choices[0].candidates[1].key_count,
+        KeyCountEstimate::Estimate(1)
+    ));
+    Ok(())
+}
+
+#[test]
+fn dynamic_cover_choice_can_change_by_prefix_subtrie() -> Result<()> {
+    let (env, schema) = env_and_schema("dynamic-prefix")?;
+    env.write(|txn| {
+        for fact in [
+            pair("R", 1, 10),
+            pair("R", 1, 11),
+            pair("R", 1, 12),
+            pair("R", 2, 20),
+            pair("S", 1, 10),
+            pair("S", 2, 20),
+            pair("S", 2, 21),
+            pair("S", 2, 22),
+        ] {
+            txn.insert(&schema, fact)?;
+        }
+        Ok::<(), crate::Error>(())
+    })?;
+    let query = typed_query(
+        &["x", "y"],
+        &[0, 1],
+        vec![
+            atom(0, "R", [(0, "left", 0), (1, "right", 1)]),
+            atom(1, "S", [(0, "left", 0), (1, "right", 1)]),
+        ],
+    );
+    let plan = FjPlan {
+        query_variables: 2,
+        nodes: vec![
+            node(0, [sub(0, [0], [0]), sub(1, [0], [0])]),
+            node(1, [sub(0, [1], [1]), sub(1, [1], [1])]),
+        ],
+    };
+
+    let (_result, stats) = env.read(|txn| {
+        execute_plan_with_policy_for_test(txn, &schema, &query, &plan, CoverPolicy::DynamicMinKeys)
+    })?;
+    let node_one_choices: Vec<_> = stats
+        .cover_choices
+        .iter()
+        .filter(|choice| choice.node == 1)
+        .map(|choice| choice.chosen_subatom)
+        .collect();
+
+    assert!(node_one_choices.contains(&0));
+    assert!(node_one_choices.contains(&1));
+    Ok(())
+}
+
+#[test]
+fn dynamic_cover_static_and_dynamic_modes_return_same_set() -> Result<()> {
+    let (env, schema) = env_and_schema("dynamic-static-equivalence")?;
+    insert_clover(&env, &schema)?;
+    let query = clover_query(["x", "a", "b", "c"], &[0, 1, 2, 3]);
+    let plan = FjPlan {
+        query_variables: 4,
+        nodes: vec![
+            node(
+                0,
+                [sub(0, [0, 1], [0, 1]), sub(1, [0], [0]), sub(2, [0], [0])],
+            ),
+            node(1, [sub(1, [2], [1])]),
+            node(2, [sub(2, [3], [1])]),
+        ],
+    };
+
+    let (dynamic, dynamic_stats) = env.read(|txn| {
+        execute_plan_with_policy_for_test(txn, &schema, &query, &plan, CoverPolicy::DynamicMinKeys)
+    })?;
+    let (static_first, static_stats) = env.read(|txn| {
+        execute_plan_with_policy_for_test(txn, &schema, &query, &plan, CoverPolicy::StaticFirst)
+    })?;
+
+    assert_eq!(dynamic, static_first);
+    assert!(!dynamic_stats.cover_choices.is_empty());
+    assert!(!static_stats.cover_choices.is_empty());
+    Ok(())
+}
+
+#[test]
+fn dynamic_cover_tie_break_is_deterministic() -> Result<()> {
+    let (env, schema) = env_and_schema("dynamic-tie")?;
+    env.write(|txn| {
+        txn.insert(&schema, pair("R", 1, 10))?;
+        txn.insert(&schema, pair("S", 1, 20))?;
+        Ok::<(), crate::Error>(())
+    })?;
+    let query = typed_query(
+        &["x"],
+        &[0],
+        vec![
+            atom(0, "R", [(0, "left", 0)]),
+            atom(1, "S", [(0, "left", 0)]),
+        ],
+    );
+    let plan = FjPlan {
+        query_variables: 1,
+        nodes: vec![node(0, [sub(0, [0], [0]), sub(1, [0], [0])])],
+    };
+
+    let (_result, stats) = env.read(|txn| {
+        execute_plan_with_policy_for_test(txn, &schema, &query, &plan, CoverPolicy::DynamicMinKeys)
+    })?;
+
+    assert_eq!(stats.cover_choices[0].chosen_subatom, 0);
+    assert!(stats.cover_choices[0].tie_break);
+    Ok(())
+}
+
+#[test]
+fn dynamic_cover_prefers_smaller_exact_map_when_available() -> Result<()> {
+    let schema = StorageSchema::new(schema(), 511)?;
+    let query = typed_query(
+        &["x"],
+        &[0],
+        vec![
+            atom(0, "R", [(0, "left", 0)]),
+            atom(1, "S", [(0, "left", 0)]),
+        ],
+    );
+    let normalized = normalize_query(schema.descriptor(), &query)?;
+    let plan = FjPlan {
+        query_variables: 1,
+        nodes: vec![node(0, [sub(0, [0], [0]), sub(1, [0], [0])])],
+    };
+    let validated = plan
+        .validate(&normalized)
+        .map_err(|error| crate::Error::invalid_query(error.to_string()))?;
+    let r = manual_colt(0, [1])?;
+    let s = manual_colt(1, [1, 2, 3])?;
+    let key = tuple_x(1)?;
+    assert!(r.get(&key).is_some());
+    let mut sources = BTreeMap::from([(AtomOccurrenceId(0), r), (AtomOccurrenceId(1), s)]);
+    let mut stats = ExecutionStats::default();
+
+    let chosen = choose_cover(
+        &validated.nodes[0],
+        &sources,
+        CoverPolicy::DynamicMinKeys,
+        &mut stats,
+    )?;
+
+    assert_eq!(chosen, 0);
+    assert!(matches!(
+        stats.cover_choices[0].candidates[0].key_count,
+        KeyCountEstimate::Exact(1)
+    ));
+    assert!(matches!(
+        stats.cover_choices[0].candidates[1].key_count,
+        KeyCountEstimate::Estimate(3)
+    ));
+    sources.clear();
+    Ok(())
+}
+
 fn env_and_schema(name: &str) -> Result<(Environment, StorageSchema)> {
     let id = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
     let path =
@@ -421,6 +633,44 @@ fn unary(relation: &str, value: u64) -> Fact {
 
 fn row<const N: usize>(values: [u64; N]) -> Vec<Value> {
     values.into_iter().map(Value::U64).collect()
+}
+
+fn manual_colt<const N: usize>(atom: usize, values: [u64; N]) -> Result<ColtSource> {
+    let image = RelationBaseImage {
+        relation_id: atom as u32,
+        name: format!("A{atom}"),
+        row_handles: (0..values.len())
+            .map(|offset| FactHandle([offset as u8; 16]))
+            .collect(),
+        columns: BTreeMap::from([(
+            0,
+            ColumnImage {
+                field_id: 0,
+                field: "left".to_owned(),
+                values: values
+                    .into_iter()
+                    .map(|value| encode_u64(value).to_vec())
+                    .collect(),
+            },
+        )]),
+        stats: RelationStats { row_count: N },
+    };
+    Ok(ColtSource::new(
+        AtomOccurrenceId(atom),
+        Arc::new(image),
+        vec![TupleSchema::new(vec![
+            TupleField::new(0, Some(0), 8)
+                .map_err(|error| crate::Error::corrupt(error.to_string()))?,
+        ])],
+    ))
+}
+
+fn tuple_x(value: u64) -> Result<EncodedTuple> {
+    let schema = TupleSchema::new(vec![
+        TupleField::new(0, Some(0), 8).map_err(|error| crate::Error::corrupt(error.to_string()))?,
+    ]);
+    EncodedTuple::new(&schema, encode_u64(value).to_vec())
+        .map_err(|error| crate::Error::corrupt(error.to_string()))
 }
 
 fn node<const N: usize>(id: usize, subatoms: [FjSubatom; N]) -> FjNode {

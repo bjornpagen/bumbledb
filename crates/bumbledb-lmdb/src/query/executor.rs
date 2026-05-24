@@ -5,6 +5,7 @@ use bumbledb_core::query_ir::{TypedFindTerm, TypedQuery};
 use crate::base_image::field_scope_for_plan;
 use crate::colt::{ColtSource, tuple_schemas_for_atom};
 use crate::query::binary2fj::{binary2fj, factor_plan};
+use crate::query::cover::{CoverPolicy, ExecutionStats, choose_cover};
 use crate::query::free_join::{FjPlan, FjSubatom, ValidatedFjNode, ValidatedFjPlan};
 use crate::query::model::{AtomOccurrenceId, NormalizedQuery};
 use crate::query::normalize::normalize_query;
@@ -25,7 +26,16 @@ pub(crate) fn execute_query(
     validate_supported(&normalized, inputs)?;
     let plan = default_plan(&normalized)?;
     let mut sink = ProjectionSink::new(txn);
-    execute_validated_plan(txn, schema, &normalized, &plan, &mut sink)?;
+    let mut stats = ExecutionStats::default();
+    execute_validated_plan(
+        txn,
+        schema,
+        &normalized,
+        &plan,
+        CoverPolicy::DynamicMinKeys,
+        &mut stats,
+        &mut sink,
+    )?;
     sink.finish(&normalized)
 }
 
@@ -40,8 +50,42 @@ pub(crate) fn execute_plan_for_test(
     validate_supported(&normalized, &InputBindings::new())?;
     let validated = validate_plan(plan, &normalized)?;
     let mut sink = ProjectionSink::new(txn);
-    execute_validated_plan(txn, schema, &normalized, &validated, &mut sink)?;
+    let mut stats = ExecutionStats::default();
+    execute_validated_plan(
+        txn,
+        schema,
+        &normalized,
+        &validated,
+        CoverPolicy::DynamicMinKeys,
+        &mut stats,
+        &mut sink,
+    )?;
     sink.finish(&normalized)
+}
+
+#[cfg(test)]
+pub(crate) fn execute_plan_with_policy_for_test(
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    query: &TypedQuery,
+    plan: &FjPlan,
+    cover_policy: CoverPolicy,
+) -> Result<(QueryResultSet, ExecutionStats)> {
+    let normalized = normalize_query(schema.descriptor(), query)?;
+    validate_supported(&normalized, &InputBindings::new())?;
+    let validated = validate_plan(plan, &normalized)?;
+    let mut sink = ProjectionSink::new(txn);
+    let mut stats = ExecutionStats::default();
+    execute_validated_plan(
+        txn,
+        schema,
+        &normalized,
+        &validated,
+        cover_policy,
+        &mut stats,
+        &mut sink,
+    )?;
+    Ok((sink.finish(&normalized)?, stats))
 }
 
 #[cfg(test)]
@@ -54,7 +98,16 @@ pub(crate) fn count_bindings_for_test(
     validate_supported(&normalized, &InputBindings::new())?;
     let plan = default_plan(&normalized)?;
     let mut sink = CountingSink::default();
-    execute_validated_plan(txn, schema, &normalized, &plan, &mut sink)?;
+    let mut stats = ExecutionStats::default();
+    execute_validated_plan(
+        txn,
+        schema,
+        &normalized,
+        &plan,
+        CoverPolicy::DynamicMinKeys,
+        &mut stats,
+        &mut sink,
+    )?;
     Ok(sink.count)
 }
 
@@ -75,10 +128,21 @@ fn execute_validated_plan<S: BindingSink>(
     schema: &StorageSchema,
     query: &NormalizedQuery,
     plan: &ValidatedFjPlan,
+    cover_policy: CoverPolicy,
+    stats: &mut ExecutionStats,
     sink: &mut S,
 ) -> Result<()> {
     let sources = build_sources(txn, schema, query, plan)?;
-    execute_node(0, query, plan, &sources, &Binding::default(), sink)
+    execute_node(
+        0,
+        query,
+        plan,
+        &sources,
+        &Binding::default(),
+        cover_policy,
+        stats,
+        sink,
+    )
 }
 
 fn build_sources(
@@ -104,22 +168,21 @@ fn build_sources(
     Ok(sources)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_node<S: BindingSink>(
     node_index: usize,
     query: &NormalizedQuery,
     plan: &ValidatedFjPlan,
     sources: &BTreeMap<AtomOccurrenceId, ColtSource>,
     binding: &Binding,
+    cover_policy: CoverPolicy,
+    stats: &mut ExecutionStats,
     sink: &mut S,
 ) -> Result<()> {
     let Some(node) = plan.nodes.get(node_index) else {
         return sink.consume(query, binding);
     };
-    let cover = node
-        .covers
-        .first()
-        .ok_or_else(|| Error::invalid_query(format!("node {} has no cover", node.id)))?;
-    let cover_index = cover.subatom;
+    let cover_index = choose_cover(node, sources, cover_policy, stats)?;
     let cover_subatom = &node.subatoms[cover_index];
     let cover_source = source_for(sources, cover_subatom)?;
 
@@ -132,6 +195,8 @@ fn execute_node<S: BindingSink>(
             binding,
             node,
             cover_index,
+            cover_policy,
+            stats,
             sink,
         );
     }
@@ -155,6 +220,8 @@ fn execute_node<S: BindingSink>(
                 plan,
                 &next_sources,
                 &next_binding,
+                cover_policy,
+                stats,
                 sink,
             )?;
         }
@@ -171,6 +238,8 @@ fn execute_bound_cover<S: BindingSink>(
     binding: &Binding,
     node: &ValidatedFjNode,
     cover_index: usize,
+    cover_policy: CoverPolicy,
+    stats: &mut ExecutionStats,
     sink: &mut S,
 ) -> Result<()> {
     let cover_subatom = &node.subatoms[cover_index];
@@ -188,7 +257,16 @@ fn execute_bound_cover<S: BindingSink>(
         next_sources.insert(cover_subatom.atom, child);
     }
     if probe_siblings(query, node, cover_index, binding, &mut next_sources)? {
-        execute_node(node_index + 1, query, plan, &next_sources, binding, sink)?;
+        execute_node(
+            node_index + 1,
+            query,
+            plan,
+            &next_sources,
+            binding,
+            cover_policy,
+            stats,
+            sink,
+        )?;
     }
     Ok(())
 }
