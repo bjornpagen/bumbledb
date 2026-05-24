@@ -1,0 +1,9 @@
+query	alloc_calls	allocated_bytes
+job_broad_cast_keyword_company	65119	13182458
+job_broad_movie_info_star	11185	15910962
+job_q01_top_production	3746	2332750
+job_q09_voice_us_actor	36730	18184538
+job_q16_character_title_us	37174	8805104
+job_q24_voice_keyword_actor	39354	13700911
+job_movie_link_bridge	6790	14699305
+job_q33_linked_series_companies	9487	4329197

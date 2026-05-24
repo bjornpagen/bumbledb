@@ -50,7 +50,6 @@ Latest useful no-query-tracing release sample, allocation tracking enabled, `--o
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 13 | `13-job-allocation-gates.md` | Convert no-trace JOB allocation budgets into enforced gates. |
 | 14 | `14-output-and-plan-allocation-cleanup.md` | Remove remaining non-COLT query allocation hotspots. |
 | 15 | `15-source-filter-pruning-after-arena.md` | Revisit source filtering only after arena COLT exists. |
 | 16 | `16-storage-accelerators-after-arena.md` | Revisit optional LMDB accelerators only after source filtering is measured. |

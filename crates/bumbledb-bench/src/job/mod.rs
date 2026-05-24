@@ -5,6 +5,7 @@ mod queries;
 mod schema;
 mod sqlite;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -38,6 +39,15 @@ pub(crate) fn run_job(config: &Config) -> BenchResult<Vec<BenchmarkReport>> {
     }
 
     let bench_schema = StorageSchema::new(schema, 511)?;
+    let budgets = match &config.allocation_budget {
+        Some(path) => Some(load_budgets(path)?),
+        None => None,
+    };
+    if budgets.is_some() && !config.alloc_tracking {
+        return Err(BenchError::new(
+            "allocation budgets require --alloc on so allocation counts are measured",
+        ));
+    }
     let path = std::env::temp_dir().join(format!("bumbledb-job-bench-{}", std::process::id()));
     if path.exists() {
         std::fs::remove_dir_all(&path)?;
@@ -94,7 +104,7 @@ pub(crate) fn run_job(config: &Config) -> BenchResult<Vec<BenchmarkReport>> {
                     query.name, result.facts, expected
                 )));
             }
-            reports.push(BenchmarkReport {
+            let report = BenchmarkReport {
                 scale: facts.len() as u64,
                 dataset: "job".to_owned(),
                 query: query.name.to_owned(),
@@ -117,12 +127,77 @@ pub(crate) fn run_job(config: &Config) -> BenchResult<Vec<BenchmarkReport>> {
                 deallocated_bytes: alloc_delta.deallocated_bytes,
                 net_allocated_bytes: alloc_delta.net_bytes,
                 trace_json,
-            });
+            };
+            if let Some(budgets) = &budgets {
+                check_budget(&report, budgets)?;
+            }
+            reports.push(report);
         }
     }
     let _ = std::fs::remove_dir_all(&path);
     let _ = std::fs::remove_file(&sqlite_db);
     Ok(reports)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AllocationBudget {
+    alloc_calls: u64,
+    allocated_bytes: u64,
+}
+
+fn load_budgets(path: &str) -> BenchResult<BTreeMap<String, AllocationBudget>> {
+    let text = std::fs::read_to_string(path)?;
+    let mut budgets = BTreeMap::new();
+    for (line_number, line) in text.lines().enumerate() {
+        if line_number == 0 || line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields = line.split('\t').collect::<Vec<_>>();
+        if fields.len() != 3 {
+            return Err(BenchError::new(format!(
+                "invalid allocation budget line {} in {path}",
+                line_number + 1
+            )));
+        }
+        budgets.insert(
+            fields[0].to_owned(),
+            AllocationBudget {
+                alloc_calls: parse_u64(fields[1], path, line_number + 1)?,
+                allocated_bytes: parse_u64(fields[2], path, line_number + 1)?,
+            },
+        );
+    }
+    Ok(budgets)
+}
+
+fn check_budget(
+    report: &BenchmarkReport,
+    budgets: &BTreeMap<String, AllocationBudget>,
+) -> BenchResult<()> {
+    let Some(budget) = budgets.get(&report.query) else {
+        return Err(BenchError::new(format!(
+            "missing allocation budget for {}",
+            report.query
+        )));
+    };
+    if report.alloc_calls > budget.alloc_calls {
+        return Err(BenchError::new(format!(
+            "JOB {} allocation calls {} exceed budget {}",
+            report.query, report.alloc_calls, budget.alloc_calls
+        )));
+    }
+    if report.allocated_bytes > budget.allocated_bytes {
+        return Err(BenchError::new(format!(
+            "JOB {} allocated bytes {} exceed budget {}",
+            report.query, report.allocated_bytes, budget.allocated_bytes
+        )));
+    }
+    Ok(())
+}
+
+fn parse_u64(raw: &str, path: &str, line: usize) -> BenchResult<u64> {
+    raw.parse()
+        .map_err(|_| BenchError::new(format!("invalid integer at {path}:{line}")))
 }
 
 #[cfg(test)]
@@ -188,6 +263,7 @@ mod tests {
             open_limit: None,
             queries: vec!["job_q01_top_production".to_owned()],
             alloc_tracking: false,
+            allocation_budget: None,
             trace_output: TraceOutput::Inline,
             profile_query_label: None,
         };
@@ -200,5 +276,39 @@ mod tests {
         assert_eq!(reports[0].query, "job_q01_top_production");
         assert!(reports[0].gate_status.starts_with("passed"));
         Ok(())
+    }
+
+    #[test]
+    fn job_allocation_budget_detects_regression() {
+        let report = BenchmarkReport {
+            scale: 1,
+            dataset: "job".to_owned(),
+            query: "q".to_owned(),
+            engine: "free_join".to_owned(),
+            sqlite_reference: "exact SELECT DISTINCT".to_owned(),
+            git_commit: "unknown".to_owned(),
+            hardware: "test".to_owned(),
+            correctness_fingerprint: "fingerprint".to_owned(),
+            gate_status: "passed".to_owned(),
+            elapsed_nanos: 1,
+            sqlite_elapsed_nanos: 1,
+            load_nanos: 1,
+            result_rows: 1,
+            allocation_tracking: true,
+            alloc_calls: 11,
+            allocated_bytes: 10,
+            deallocated_bytes: 0,
+            net_allocated_bytes: 10,
+            trace_json: "{\"enabled\":false}".to_owned(),
+        };
+        let budgets = BTreeMap::from([(
+            "q".to_owned(),
+            AllocationBudget {
+                alloc_calls: 10,
+                allocated_bytes: 10,
+            },
+        )]);
+
+        assert!(check_budget(&report, &budgets).is_err());
     }
 }
