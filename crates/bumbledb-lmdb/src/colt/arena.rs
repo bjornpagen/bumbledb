@@ -8,13 +8,10 @@ const MAP_EMPTY: u32 = u32::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct ColtSourceId(pub(super) u32);
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct ColtNodeId(pub(super) u32);
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct ColtMapId(pub(super) u32);
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct SchemaVarsId(pub(super) u32);
 
@@ -424,6 +421,14 @@ impl ArenaSourceHandle {
             vars_id,
         }
     }
+
+    pub(super) fn child(self, node_id: ColtNodeId, vars_id: SchemaVarsId) -> Self {
+        Self {
+            arena_id: self.arena_id,
+            node_id,
+            vars_id,
+        }
+    }
 }
 
 impl ArenaSourceStore {
@@ -447,6 +452,10 @@ impl ArenaSourceStore {
         self.undo.len()
     }
 
+    pub(super) fn slot_count(&self) -> usize {
+        self.current.len()
+    }
+
     pub(super) fn replace_source(&mut self, atom: usize, next: ArenaSourceHandle) -> bool {
         let Some(previous) = self.source_for(atom) else {
             return false;
@@ -467,6 +476,21 @@ impl ArenaSourceStore {
         if atom >= self.current.len() {
             self.current.resize(atom + 1, None);
         }
+    }
+}
+
+impl ColtArena {
+    pub(super) fn get_child_source(
+        &self,
+        source: ArenaSourceHandle,
+        key: KeyRef<'_>,
+        child_vars: SchemaVarsId,
+    ) -> Option<ArenaSourceHandle> {
+        let NodeData::Map(map) = self.node(source.node_id)?.data else {
+            return None;
+        };
+        self.lookup_map(map, key)
+            .map(|child| source.child(child, child_vars))
     }
 }
 
