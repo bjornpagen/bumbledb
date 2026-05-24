@@ -26,7 +26,32 @@ pub(crate) struct OutputStats {
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct Binding {
-    slots: Vec<Option<Vec<u8>>>,
+    slots: Vec<Option<EncodedValueSlot>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EncodedValueSlot {
+    len: u8,
+    bytes: [u8; 16],
+}
+
+impl EncodedValueSlot {
+    fn new(value: &[u8]) -> Result<Self> {
+        let len = value.len();
+        if len > 16 {
+            return Err(Error::corrupt("encoded binding value is too wide"));
+        }
+        let mut bytes = [0; 16];
+        bytes[..len].copy_from_slice(value);
+        Ok(Self {
+            len: len as u8,
+            bytes,
+        })
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len as usize]
+    }
 }
 
 impl Binding {
@@ -37,7 +62,10 @@ impl Binding {
     }
 
     pub(super) fn value(&self, variable: usize) -> Option<&[u8]> {
-        self.slots.get(variable)?.as_deref()
+        self.slots
+            .get(variable)?
+            .as_ref()
+            .map(EncodedValueSlot::as_slice)
     }
 
     pub(super) fn undo_mark(undo: &[BindingUndo]) -> usize {
@@ -72,7 +100,7 @@ impl Binding {
                 .slots
                 .get_mut(*variable)
                 .ok_or_else(|| Error::corrupt(format!("missing binding slot {variable}")))?;
-            match slot.as_deref() {
+            match slot.as_ref().map(EncodedValueSlot::as_slice) {
                 Some(existing) if existing != bytes => {
                     return Ok(BindingExtend {
                         accepted: false,
@@ -82,7 +110,7 @@ impl Binding {
                 }
                 Some(_) => {}
                 None => {
-                    *slot = Some(bytes.to_vec());
+                    *slot = Some(EncodedValueSlot::new(bytes)?);
                     undo.push(BindingUndo {
                         variable: *variable,
                     });

@@ -113,6 +113,10 @@ impl EncodedTuple {
         Ok(Self { bytes })
     }
 
+    pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
+
     pub(crate) fn as_ref(&self) -> EncodedTupleRef<'_> {
         EncodedTupleRef { bytes: &self.bytes }
     }

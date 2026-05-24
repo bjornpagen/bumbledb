@@ -18,6 +18,8 @@ use heed::{Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
 pub(crate) mod base_image;
 pub(crate) mod colt;
+pub(crate) mod colt_filter;
+pub(crate) mod colt_schema;
 pub mod diagnostics;
 mod error;
 pub(crate) mod query;
