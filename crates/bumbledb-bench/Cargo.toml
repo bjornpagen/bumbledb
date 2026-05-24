@@ -11,5 +11,8 @@ bumbledb-lmdb = { path = "../bumbledb-lmdb" }
 bumbledb-test-support = { path = "../bumbledb-test-support" }
 csv.workspace = true
 
+[features]
+query-tracing = ["bumbledb-lmdb/query-tracing"]
+
 [lints]
 workspace = true

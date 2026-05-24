@@ -71,7 +71,7 @@ pub(crate) fn select_plan(
     query: &NormalizedQuery,
     mode: PlanMode,
 ) -> Result<PlannerSelection> {
-    let mut trace = QueryTrace::disabled();
+    let mut trace = QueryTrace::new();
     select_plan_with_trace(txn, schema, query, mode, &mut trace)
 }
 
@@ -108,7 +108,7 @@ pub(crate) fn select_plan_with_trace(
 }
 
 pub(crate) fn generate_plan_candidates(query: &NormalizedQuery) -> Result<Vec<PlanCandidate>> {
-    let mut trace = QueryTrace::disabled();
+    let mut trace = QueryTrace::new();
     generate_plan_candidates_with_trace(query, &mut trace)
 }
 
@@ -247,7 +247,7 @@ fn collect_planner_stats(
     schema: &StorageSchema,
     query: &NormalizedQuery,
 ) -> Result<PlannerStats> {
-    let mut trace = QueryTrace::disabled();
+    let mut trace = QueryTrace::new();
     collect_planner_stats_with_trace(txn, schema, query, &mut trace)
 }
 

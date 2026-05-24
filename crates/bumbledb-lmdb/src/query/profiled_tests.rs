@@ -7,8 +7,8 @@ use bumbledb_core::query_ir::{
 use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
 
 use crate::{
-    Environment, Fact, InputBindings, QueryExecutionOptions, Result, StorageSchema, TraceMode,
-    TracePhase, Value,
+    Environment, Fact, InputBindings, QueryExecutionOptions, Result, StorageSchema, TracePhase,
+    Value,
 };
 
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
@@ -24,10 +24,7 @@ fn profiled_execution_matches_plain_and_emits_top_level_spans() -> Result<()> {
             &schema,
             &query,
             &InputBindings::new(),
-            QueryExecutionOptions {
-                tracing: TraceMode::Full,
-                ..QueryExecutionOptions::default()
-            },
+            QueryExecutionOptions::default(),
         )
     })?;
     let plain = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
@@ -87,10 +84,7 @@ fn profiled_execution_rejects_malformed_query() -> Result<()> {
             &schema,
             &query,
             &InputBindings::new(),
-            QueryExecutionOptions {
-                tracing: TraceMode::Full,
-                ..QueryExecutionOptions::default()
-            },
+            QueryExecutionOptions::default(),
         )
     });
 

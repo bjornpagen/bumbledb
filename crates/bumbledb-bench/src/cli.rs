@@ -7,6 +7,12 @@ pub(crate) enum OutputFormat {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TraceOutput {
+    Inline,
+    File,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Config {
     pub(crate) preset: String,
     pub(crate) format: OutputFormat,
@@ -17,6 +23,8 @@ pub(crate) struct Config {
     pub(crate) open_limit: Option<usize>,
     pub(crate) queries: Vec<String>,
     pub(crate) alloc_tracking: bool,
+    pub(crate) trace_output: TraceOutput,
+    pub(crate) profile_query_label: Option<String>,
 }
 
 impl Config {
@@ -43,6 +51,13 @@ impl Config {
                 "--alloc" => {
                     config.alloc_tracking = parse_on_off(&next_arg(&mut args, "--alloc")?)?
                 }
+                "--trace-output" => {
+                    config.trace_output =
+                        parse_trace_output(&next_arg(&mut args, "--trace-output")?)?
+                }
+                "--profile-query-label" => {
+                    config.profile_query_label = Some(next_arg(&mut args, "--profile-query-label")?)
+                }
                 other => return Err(BenchError::new(format!("unknown argument {other}"))),
             }
         }
@@ -62,6 +77,8 @@ impl Default for Config {
             open_limit: Some(10_000),
             queries: Vec::new(),
             alloc_tracking: false,
+            trace_output: TraceOutput::Inline,
+            profile_query_label: None,
         }
     }
 }
@@ -93,6 +110,14 @@ fn parse_on_off(value: &str) -> BenchResult<bool> {
     }
 }
 
+fn parse_trace_output(value: &str) -> BenchResult<TraceOutput> {
+    match value {
+        "inline" => Ok(TraceOutput::Inline),
+        "file" => Ok(TraceOutput::File),
+        _ => Err(BenchError::new(format!("unknown trace output {value}"))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,6 +142,10 @@ mod tests {
                 "job_q01_top_production",
                 "--alloc",
                 "on",
+                "--trace-output",
+                "file",
+                "--profile-query-label",
+                "q01-profile",
             ]
             .into_iter()
             .map(str::to_owned),
@@ -128,6 +157,8 @@ mod tests {
         assert_eq!(config.open_limit, Some(1000));
         assert_eq!(config.queries, vec!["job_q01_top_production"]);
         assert!(config.alloc_tracking);
+        assert_eq!(config.trace_output, TraceOutput::File);
+        assert_eq!(config.profile_query_label.as_deref(), Some("q01-profile"));
         Ok(())
     }
 }

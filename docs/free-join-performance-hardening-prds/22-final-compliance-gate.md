@@ -51,7 +51,7 @@ cargo test --workspace --all-features
 cargo check --manifest-path fuzz/Cargo.toml
 bash scripts/check-cutover.sh
 bash scripts/check-line-counts.sh
-cargo run --release -p bumbledb-bench -- --preset job-sample --job-dir data/job --open-limit 100000 --format json --repeats 3 --warmup 1 --trace summary --alloc on
+cargo run --release -p bumbledb-bench --features query-tracing -- --preset job-sample --job-dir data/job --open-limit 100000 --format json --repeats 3 --warmup 1 --trace-output file --profile-query-label final_job --alloc on
 ```
 
 ## Passing Criteria

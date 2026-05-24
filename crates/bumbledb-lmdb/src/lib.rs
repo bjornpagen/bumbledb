@@ -27,8 +27,8 @@ pub(crate) mod tuple;
 
 pub use error::{Error, Result};
 pub use query::trace::{
-    ExecutionModePublic, ProfiledQueryResult, QueryExecutionOptions, QueryTrace,
-    QueryTraceMetadata, TraceMode, TracePhase,
+    ExecutionModePublic, ProfiledQueryResult, QUERY_TRACING_ENABLED, QueryExecutionOptions,
+    QueryTrace, QueryTraceMetadata, TraceCounters, TracePhase, TraceSpan,
 };
 
 #[cfg(test)]

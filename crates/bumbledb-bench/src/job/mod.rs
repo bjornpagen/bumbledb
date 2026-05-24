@@ -13,7 +13,7 @@ use bumbledb_lmdb::{Environment, InputBindings, QueryExecutionOptions, StorageSc
 
 use crate::cli::Config;
 use crate::report::{BenchmarkReport, fingerprint_rows};
-use crate::runner::{BenchError, BenchResult};
+use crate::runner::{BenchError, BenchResult, trace_json_for_report};
 
 pub(crate) fn run_job(config: &Config) -> BenchResult<Vec<BenchmarkReport>> {
     let job_dir = config
@@ -83,6 +83,8 @@ pub(crate) fn run_job(config: &Config) -> BenchResult<Vec<BenchmarkReport>> {
                     },
                 )
             })?;
+            let trace_json =
+                trace_json_for_report(config, query.name, reports.len(), &profiled.trace)?;
             let result = profiled.result;
             let alloc_delta = allocation_delta(alloc_start, allocation_snapshot());
             let elapsed_nanos = start.elapsed().as_nanos();
@@ -114,6 +116,7 @@ pub(crate) fn run_job(config: &Config) -> BenchResult<Vec<BenchmarkReport>> {
                 allocated_bytes: alloc_delta.allocated_bytes,
                 deallocated_bytes: alloc_delta.deallocated_bytes,
                 net_allocated_bytes: alloc_delta.net_bytes,
+                trace_json,
             });
         }
     }
@@ -125,7 +128,7 @@ pub(crate) fn run_job(config: &Config) -> BenchResult<Vec<BenchmarkReport>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::OutputFormat;
+    use crate::cli::{OutputFormat, TraceOutput};
 
     #[test]
     fn job_schema_and_queries_build() -> BenchResult<()> {
@@ -185,6 +188,8 @@ mod tests {
             open_limit: None,
             queries: vec!["job_q01_top_production".to_owned()],
             alloc_tracking: false,
+            trace_output: TraceOutput::Inline,
+            profile_query_label: None,
         };
 
         let reports = run_job(&config)?;

@@ -1,18 +1,23 @@
 #![allow(clippy::result_large_err)]
 
 use std::fmt;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use bumbledb_core::query_ir::TypedQuery;
 use bumbledb_lmdb::diagnostics::{
     allocation_delta, allocation_snapshot, set_allocation_tracking_enabled,
 };
-use bumbledb_lmdb::{Fact, InputBindings, QueryExecutionOptions, QueryResultSet, Value};
+use bumbledb_lmdb::{
+    Fact, InputBindings, QueryExecutionOptions, QueryResultSet, QueryTrace, Value,
+};
 use bumbledb_test_support::{clover_query, env_and_schema, insert, pair, rows};
 
-use crate::cli::{Config, OutputFormat};
+use crate::cli::{Config, OutputFormat, TraceOutput};
 use crate::lint::validate_select_distinct;
-use crate::report::{BenchmarkReport, fingerprint_rows, render_json_array, render_markdown};
+use crate::report::{
+    BenchmarkReport, fingerprint_rows, render_json_array, render_markdown, render_trace_json,
+};
 
 pub(crate) type BenchResult<T> = Result<T, BenchError>;
 
@@ -96,6 +101,7 @@ fn run_once(dataset: &Dataset, config: &Config) -> BenchResult<BenchmarkReport> 
             },
         )
     })?;
+    let trace_json = trace_json_for_report(config, &dataset.query_name, 0, &profiled.trace)?;
     let result = profiled.result;
     let alloc_delta = allocation_delta(alloc_start, allocation_snapshot());
     let elapsed_nanos = start.elapsed().as_nanos();
@@ -122,7 +128,56 @@ fn run_once(dataset: &Dataset, config: &Config) -> BenchResult<BenchmarkReport> 
         allocated_bytes: alloc_delta.allocated_bytes,
         deallocated_bytes: alloc_delta.deallocated_bytes,
         net_allocated_bytes: alloc_delta.net_bytes,
+        trace_json,
     })
+}
+
+pub(crate) fn trace_json_for_report(
+    config: &Config,
+    query_name: &str,
+    index: usize,
+    trace: &QueryTrace,
+) -> BenchResult<String> {
+    if !trace.is_enabled() {
+        return Ok(render_trace_json(trace, false));
+    }
+    match config.trace_output {
+        TraceOutput::Inline => Ok(render_trace_json(trace, true)),
+        TraceOutput::File => {
+            let dir = PathBuf::from("data/traces");
+            std::fs::create_dir_all(&dir)?;
+            let label = config.profile_query_label.as_deref().unwrap_or(query_name);
+            let file = dir.join(format!(
+                "{}-{}-{index}.json",
+                sanitize_file_component(label),
+                std::process::id()
+            ));
+            let full = render_trace_json(trace, true);
+            std::fs::write(&file, full)?;
+            Ok(format!(
+                "{{\"enabled\":true,\"file\":\"{}\",\"summary\":{}}}",
+                escape_json(&file.to_string_lossy()),
+                render_trace_json(trace, false)
+            ))
+        }
+    }
+}
+
+fn sanitize_file_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn escape_json(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn compare_exact(result: &QueryResultSet, expected: &[Vec<Value>]) -> BenchResult<()> {

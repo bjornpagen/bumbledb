@@ -34,7 +34,7 @@ Implement NEON acceleration only where traces prove value:
 Run on Apple Silicon or another AArch64 NEON host:
 
 ```bash
-cargo run --release -p bumbledb-bench -- --preset job-sample --job-dir data/job --open-limit 100000 --query job_q09_voice_us_actor --format json --repeats 5 --warmup 2 --trace summary --alloc on
+cargo run --release -p bumbledb-bench --features query-tracing -- --preset job-sample --job-dir data/job --open-limit 100000 --query job_q09_voice_us_actor --format json --repeats 5 --warmup 2 --trace-output file --profile-query-label job_q09_voice_us_actor_neon --alloc on
 ```
 
 ## Passing Criteria

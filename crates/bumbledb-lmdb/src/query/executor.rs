@@ -43,7 +43,7 @@ pub(crate) fn execute_query_profiled(
     options: QueryExecutionOptions,
 ) -> Result<ProfiledQueryResult> {
     set_allocation_tracking_enabled(options.allocation_tracking);
-    let mut trace = QueryTrace::new(options.tracing);
+    let mut trace = QueryTrace::new();
 
     let normalize_span = trace.start_span(TracePhase::Normalize, "normalize query");
     let normalized = normalize_query(schema.descriptor(), query)?;

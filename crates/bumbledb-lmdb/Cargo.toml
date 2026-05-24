@@ -10,5 +10,8 @@ bumbledb-core.workspace = true
 heed.workspace = true
 thiserror.workspace = true
 
+[features]
+query-tracing = []
+
 [lints]
 workspace = true

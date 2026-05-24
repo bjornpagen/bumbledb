@@ -1,4 +1,4 @@
-use bumbledb_lmdb::Value;
+use bumbledb_lmdb::{QueryTrace, TraceCounters, TraceSpan, Value};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BenchmarkReport {
@@ -20,12 +20,13 @@ pub(crate) struct BenchmarkReport {
     pub(crate) allocated_bytes: u64,
     pub(crate) deallocated_bytes: u64,
     pub(crate) net_allocated_bytes: i128,
+    pub(crate) trace_json: String,
 }
 
 impl BenchmarkReport {
     pub(crate) fn render_json(&self) -> String {
         format!(
-            "{{\"scale\":{},\"dataset\":\"{}\",\"query\":\"{}\",\"engine\":\"{}\",\"sqlite_reference\":\"{}\",\"git_commit\":\"{}\",\"hardware\":\"{}\",\"correctness_fingerprint\":\"{}\",\"gate_status\":\"{}\",\"elapsed_nanos\":{},\"sqlite_elapsed_nanos\":{},\"load_nanos\":{},\"result_rows\":{},\"allocation_tracking\":{},\"alloc_calls\":{},\"allocated_bytes\":{},\"deallocated_bytes\":{},\"net_allocated_bytes\":{}}}",
+            "{{\"scale\":{},\"dataset\":\"{}\",\"query\":\"{}\",\"engine\":\"{}\",\"sqlite_reference\":\"{}\",\"git_commit\":\"{}\",\"hardware\":\"{}\",\"correctness_fingerprint\":\"{}\",\"gate_status\":\"{}\",\"elapsed_nanos\":{},\"sqlite_elapsed_nanos\":{},\"load_nanos\":{},\"result_rows\":{},\"allocation_tracking\":{},\"alloc_calls\":{},\"allocated_bytes\":{},\"deallocated_bytes\":{},\"net_allocated_bytes\":{},\"trace\":{}}}",
             self.scale,
             escape(&self.dataset),
             escape(&self.query),
@@ -44,12 +45,13 @@ impl BenchmarkReport {
             self.allocated_bytes,
             self.deallocated_bytes,
             self.net_allocated_bytes,
+            self.trace_json,
         )
     }
 
     pub(crate) fn render_markdown(&self) -> String {
         format!(
-            "| field | value |\n| --- | --- |\n| dataset | {} |\n| query | {} |\n| engine | {} |\n| sqlite_reference | {} |\n| bumbledb_ms | {:.3} |\n| sqlite_ms | {:.3} |\n| load_ms | {:.3} |\n| result_rows | {} |\n| allocation_tracking | {} |\n| alloc_calls | {} |\n| allocated_bytes | {} |\n| deallocated_bytes | {} |\n| net_allocated_bytes | {} |\n| correctness_fingerprint | {} |\n| gate_status | {} |\n",
+            "| field | value |\n| --- | --- |\n| dataset | {} |\n| query | {} |\n| engine | {} |\n| sqlite_reference | {} |\n| bumbledb_ms | {:.3} |\n| sqlite_ms | {:.3} |\n| load_ms | {:.3} |\n| result_rows | {} |\n| allocation_tracking | {} |\n| alloc_calls | {} |\n| allocated_bytes | {} |\n| deallocated_bytes | {} |\n| net_allocated_bytes | {} |\n| trace | {} |\n| correctness_fingerprint | {} |\n| gate_status | {} |\n",
             self.dataset,
             self.query,
             self.engine,
@@ -63,6 +65,7 @@ impl BenchmarkReport {
             self.allocated_bytes,
             self.deallocated_bytes,
             self.net_allocated_bytes,
+            self.trace_json,
             self.correctness_fingerprint,
             self.gate_status,
         )
@@ -96,6 +99,112 @@ pub(crate) fn fingerprint_rows(rows: &[Vec<Value>]) -> String {
     hasher.finalize().to_hex().to_string()
 }
 
+pub(crate) fn render_trace_json(trace: &QueryTrace, include_spans: bool) -> String {
+    if !trace.is_enabled() {
+        return "{\"enabled\":false}".to_owned();
+    }
+    format!(
+        "{{\"enabled\":true,\"metadata\":{},\"counters\":{},\"top_elapsed\":{},\"top_allocated\":{},\"spans\":{}}}",
+        metadata_json(trace),
+        counters_json(trace.counters),
+        top_spans_json(trace, TopSpanKey::Elapsed),
+        top_spans_json(trace, TopSpanKey::Allocated),
+        if include_spans {
+            spans_json(trace)
+        } else {
+            "[]".to_owned()
+        },
+    )
+}
+
+fn metadata_json(trace: &QueryTrace) -> String {
+    format!(
+        "{{\"selected_plan_family\":\"{}\",\"node_count\":{},\"cover_policy\":\"{}\",\"execution_mode\":\"{}\",\"output_mode\":\"{}\"}}",
+        escape(&trace.metadata.selected_plan_family),
+        trace.metadata.node_count,
+        escape(&trace.metadata.cover_policy),
+        escape(&trace.metadata.execution_mode),
+        escape(&trace.metadata.output_mode),
+    )
+}
+
+fn counters_json(counters: TraceCounters) -> String {
+    format!(
+        "{{\"base_image_cache_hits\":{},\"base_image_cache_misses\":{},\"live_rows_scanned\":{},\"column_values_loaded\":{},\"loaded_bytes\":{},\"source_filters_encoded\":{},\"source_filter_false_decisions\":{},\"source_filter_rows_tested\":{},\"source_filter_survivors\":{},\"colt_nodes_created\":{},\"colt_nodes_forced\":{},\"colt_offsets_scanned\":{},\"colt_map_entries_built\":{},\"tuples_yielded\":{},\"batches_yielded\":{},\"cover_choices\":{},\"probe_calls\":{},\"probe_misses\":{},\"recursive_node_entries\":{},\"max_recursion_depth\":{},\"binding_copies\":{},\"source_frame_changes\":{},\"sink_consumes\":{},\"projection_duplicates_suppressed\":{},\"decoded_values\":{}}}",
+        counters.base_image_cache_hits,
+        counters.base_image_cache_misses,
+        counters.live_rows_scanned,
+        counters.column_values_loaded,
+        counters.loaded_bytes,
+        counters.source_filters_encoded,
+        counters.source_filter_false_decisions,
+        counters.source_filter_rows_tested,
+        counters.source_filter_survivors,
+        counters.colt_nodes_created,
+        counters.colt_nodes_forced,
+        counters.colt_offsets_scanned,
+        counters.colt_map_entries_built,
+        counters.tuples_yielded,
+        counters.batches_yielded,
+        counters.cover_choices,
+        counters.probe_calls,
+        counters.probe_misses,
+        counters.recursive_node_entries,
+        counters.max_recursion_depth,
+        counters.binding_copies,
+        counters.source_frame_changes,
+        counters.sink_consumes,
+        counters.projection_duplicates_suppressed,
+        counters.decoded_values,
+    )
+}
+
+enum TopSpanKey {
+    Elapsed,
+    Allocated,
+}
+
+fn top_spans_json(trace: &QueryTrace, key: TopSpanKey) -> String {
+    let mut spans = trace.spans.iter().collect::<Vec<_>>();
+    match key {
+        TopSpanKey::Elapsed => spans.sort_by_key(|span| std::cmp::Reverse(span.elapsed_nanos)),
+        TopSpanKey::Allocated => {
+            spans.sort_by_key(|span| std::cmp::Reverse(span.allocs.allocated_bytes));
+        }
+    }
+    let body = spans
+        .into_iter()
+        .take(10)
+        .map(span_json)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{body}]")
+}
+
+fn spans_json(trace: &QueryTrace) -> String {
+    let body = trace
+        .spans
+        .iter()
+        .map(span_json)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{body}]")
+}
+
+fn span_json(span: &TraceSpan) -> String {
+    format!(
+        "{{\"id\":{},\"parent_id\":{},\"phase\":\"{:?}\",\"label\":\"{}\",\"elapsed_nanos\":{},\"alloc_calls\":{},\"allocated_bytes\":{}}}",
+        span.id,
+        span.parent_id
+            .map_or_else(|| "null".to_owned(), |id| id.to_string()),
+        span.phase,
+        escape(&span.label),
+        span.elapsed_nanos,
+        span.allocs.alloc_calls,
+        span.allocs.allocated_bytes,
+    )
+}
+
 fn escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -125,6 +234,7 @@ mod tests {
             allocated_bytes: 0,
             deallocated_bytes: 0,
             net_allocated_bytes: 0,
+            trace_json: "{\"enabled\":false}".to_owned(),
         };
 
         let json = report.render_json();
@@ -133,6 +243,14 @@ mod tests {
         assert!(json.contains("\"engine\":\"free_join\""));
         assert!(json.contains("\"sqlite_elapsed_nanos\":2"));
         assert!(json.contains("\"allocation_tracking\":false"));
+        assert!(json.contains("\"trace\":{\"enabled\":false}"));
         assert!(markdown.contains("sqlite_reference"));
+    }
+
+    #[test]
+    fn trace_renderer_outputs_disabled_trace() {
+        let trace = QueryTrace::new();
+
+        assert!(render_trace_json(&trace, false).contains("\"enabled\":true"));
     }
 }

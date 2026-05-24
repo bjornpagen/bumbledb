@@ -20,7 +20,7 @@ pub(super) fn execute_validated_plan<S: BindingSink>(
     stats: &mut ExecutionStats,
     sink: &mut S,
 ) -> Result<()> {
-    let mut trace = QueryTrace::disabled();
+    let mut trace = QueryTrace::new();
     execute_validated_plan_with_trace(
         txn,
         schema,

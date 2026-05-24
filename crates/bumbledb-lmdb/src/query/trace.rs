@@ -2,23 +2,11 @@
 
 use std::time::Instant;
 
-use crate::diagnostics::{
-    AllocationDelta, AllocationSnapshot, allocation_delta, allocation_snapshot,
-};
+use crate::diagnostics::{AllocationDelta, AllocationSnapshot};
+#[cfg(any(debug_assertions, feature = "query-tracing"))]
+use crate::diagnostics::{allocation_delta, allocation_snapshot};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum TraceMode {
-    #[default]
-    Off,
-    Summary,
-    Full,
-}
-
-impl TraceMode {
-    pub fn is_enabled(self) -> bool {
-        !matches!(self, TraceMode::Off)
-    }
-}
+pub const QUERY_TRACING_ENABLED: bool = cfg!(any(debug_assertions, feature = "query-tracing"));
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ExecutionModePublic {
@@ -31,7 +19,6 @@ pub enum ExecutionModePublic {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QueryExecutionOptions {
-    pub tracing: TraceMode,
     pub allocation_tracking: bool,
     pub execution_mode: ExecutionModePublic,
 }
@@ -39,7 +26,6 @@ pub struct QueryExecutionOptions {
 impl Default for QueryExecutionOptions {
     fn default() -> Self {
         Self {
-            tracing: TraceMode::Off,
             allocation_tracking: false,
             execution_mode: ExecutionModePublic::Scalar,
         }
@@ -57,7 +43,6 @@ pub struct QueryTrace {
     pub spans: Vec<TraceSpan>,
     pub counters: TraceCounters,
     pub metadata: QueryTraceMetadata,
-    mode: TraceMode,
     #[allow(dead_code)]
     origin: Instant,
     next_id: u64,
@@ -66,20 +51,11 @@ pub struct QueryTrace {
 }
 
 impl QueryTrace {
-    pub fn disabled() -> Self {
-        Self::new(TraceMode::Off)
-    }
-
-    pub fn enabled() -> Self {
-        Self::new(TraceMode::Full)
-    }
-
-    pub fn new(mode: TraceMode) -> Self {
+    pub fn new() -> Self {
         Self {
             spans: Vec::new(),
             counters: TraceCounters::default(),
             metadata: QueryTraceMetadata::default(),
-            mode,
             origin: Instant::now(),
             next_id: 0,
             stack: Vec::new(),
@@ -87,17 +63,15 @@ impl QueryTrace {
     }
 
     pub fn is_enabled(&self) -> bool {
-        self.mode.is_enabled()
+        QUERY_TRACING_ENABLED
     }
 
+    #[cfg(any(debug_assertions, feature = "query-tracing"))]
     pub(crate) fn start_span(
         &mut self,
         phase: TracePhase,
         label: impl Into<String>,
     ) -> Option<TraceSpanId> {
-        if !self.is_enabled() {
-            return None;
-        }
         let id = TraceSpanId(self.next_id);
         self.next_id += 1;
         let parent_id = self.stack.last().map(|span| span.id.0);
@@ -113,10 +87,17 @@ impl QueryTrace {
         Some(id)
     }
 
+    #[cfg(not(any(debug_assertions, feature = "query-tracing")))]
+    pub(crate) fn start_span(
+        &mut self,
+        _phase: TracePhase,
+        _label: impl Into<String>,
+    ) -> Option<TraceSpanId> {
+        None
+    }
+
+    #[cfg(any(debug_assertions, feature = "query-tracing"))]
     pub(crate) fn finish_span(&mut self, id: TraceSpanId, counters: TraceCounters) {
-        if !self.is_enabled() {
-            return;
-        }
         let Some(active) = self.stack.pop() else {
             return;
         };
@@ -137,10 +118,21 @@ impl QueryTrace {
         });
     }
 
+    #[cfg(not(any(debug_assertions, feature = "query-tracing")))]
+    pub(crate) fn finish_span(&mut self, _id: TraceSpanId, _counters: TraceCounters) {}
+
+    #[cfg(any(debug_assertions, feature = "query-tracing"))]
     pub(crate) fn add_counters(&mut self, counters: &TraceCounters) {
-        if self.is_enabled() {
-            self.counters.merge(counters);
-        }
+        self.counters.merge(counters);
+    }
+
+    #[cfg(not(any(debug_assertions, feature = "query-tracing")))]
+    pub(crate) fn add_counters(&mut self, _counters: &TraceCounters) {}
+}
+
+impl Default for QueryTrace {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -266,7 +258,7 @@ mod tests {
 
     #[test]
     fn query_trace_constructs_without_storage() {
-        let trace = QueryTrace::enabled();
+        let trace = QueryTrace::new();
 
         assert!(trace.is_enabled());
         assert!(trace.spans.is_empty());
@@ -275,7 +267,7 @@ mod tests {
 
     #[test]
     fn nested_span_parent_ids_are_preserved() {
-        let mut trace = QueryTrace::enabled();
+        let mut trace = QueryTrace::new();
         let parent = trace.start_span(TracePhase::Normalize, "normalize");
         assert!(parent.is_some());
         let Some(parent) = parent else {
@@ -294,8 +286,8 @@ mod tests {
     }
 
     #[test]
-    fn disabled_tracing_adds_no_spans() {
-        let mut trace = QueryTrace::disabled();
+    fn compile_time_tracing_records_counters_in_debug_tests() {
+        let mut trace = QueryTrace::new();
 
         let span = trace.start_span(TracePhase::Normalize, "normalize");
         trace.add_counters(&TraceCounters {
@@ -303,15 +295,14 @@ mod tests {
             ..TraceCounters::default()
         });
 
-        assert!(span.is_none());
-        assert!(trace.spans.is_empty());
-        assert_eq!(trace.counters, TraceCounters::default());
+        assert!(span.is_some());
+        assert_eq!(trace.counters.tuples_yielded, 10);
     }
 
     #[test]
     fn allocation_delta_is_attached_to_span() {
         with_allocation_tracking_for_test(|| {
-            let mut trace = QueryTrace::enabled();
+            let mut trace = QueryTrace::new();
             let span = trace.start_span(TracePhase::ColtIter, "allocating span");
             assert!(span.is_some());
             let Some(span) = span else { return };
