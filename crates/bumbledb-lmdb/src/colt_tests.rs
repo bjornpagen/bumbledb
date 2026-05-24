@@ -179,6 +179,113 @@ fn colt_fill_batch_allocation_is_bounded_to_requested_batch() -> TestResult {
 }
 
 #[test]
+fn colt_suffix_iteration_allocation_is_bounded_independent_of_rows() -> TestResult {
+    let small = range_colt(16)?;
+    let large = range_colt(1024)?;
+
+    let (small_count, small_alloc_calls, _small_allocated_bytes) = iteration_allocation(&small);
+    let (large_count, large_alloc_calls, large_allocated_bytes) = iteration_allocation(&large);
+
+    assert_eq!(small_count, 16);
+    assert_eq!(large_count, 1024);
+    assert_eq!(small.counters().hash_maps_built, 0);
+    assert_eq!(large.counters().hash_maps_built, 0);
+    let _ = small_alloc_calls;
+    assert!(
+        large_alloc_calls < (large_count as u64 / 2),
+        "suffix iteration allocation should stay far below one allocation per row: large={large_alloc_calls} rows={large_count}"
+    );
+    assert!(
+        large_allocated_bytes < 1_000_000,
+        "suffix iteration allocated bytes should remain scratch-sized, got {large_allocated_bytes}"
+    );
+    Ok(())
+}
+
+#[test]
+fn colt_duplicate_heavy_force_allocates_by_distinct_keys_not_rows() -> TestResult {
+    let rows = 256;
+    let distinct_keys = 4;
+    let colt = grouped_colt(rows, distinct_keys)?;
+    let key = tuple_x(1)?;
+
+    let (found, alloc_calls, allocated_bytes) = with_allocation_tracking_for_test(|| {
+        let start = allocation_snapshot();
+        let found = colt.get(key.as_ref()).is_some();
+        let delta = allocation_delta(start, allocation_snapshot());
+        (found, delta.alloc_calls, delta.allocated_bytes)
+    });
+
+    assert!(found);
+    assert_eq!(colt.counters().offsets_scanned, rows);
+    assert_eq!(colt.counters().map_entries_built, distinct_keys);
+    assert_eq!(colt.counters().nodes_created, distinct_keys + 1);
+    assert!(
+        alloc_calls < rows as u64,
+        "duplicate-heavy force allocation calls should not scale like rows: {alloc_calls} calls"
+    );
+    assert!(allocated_bytes > 0);
+    Ok(())
+}
+
+#[test]
+fn colt_distinct_force_fixture_records_distinct_key_allocation() -> TestResult {
+    let rows = 64;
+    let colt = grouped_colt(rows, rows)?;
+    let key = tuple_x(7)?;
+
+    let (found, alloc_calls, allocated_bytes) = with_allocation_tracking_for_test(|| {
+        let start = allocation_snapshot();
+        let found = colt.get(key.as_ref()).is_some();
+        let delta = allocation_delta(start, allocation_snapshot());
+        (found, delta.alloc_calls, delta.allocated_bytes)
+    });
+
+    assert!(found);
+    assert_eq!(colt.counters().offsets_scanned, rows);
+    assert_eq!(colt.counters().map_entries_built, rows);
+    assert_eq!(colt.counters().nodes_created, rows + 1);
+    assert!(alloc_calls > 0);
+    assert!(allocated_bytes > 0);
+    Ok(())
+}
+
+#[test]
+fn colt_repeated_probe_after_force_allocates_bounded_constant() -> TestResult {
+    let colt = grouped_colt(128, 8)?;
+    let key = tuple_x(3)?;
+    assert!(colt.get(key.as_ref()).is_some());
+    let forced = colt.counters();
+
+    let (hits, alloc_calls, allocated_bytes) = with_allocation_tracking_for_test(|| {
+        let start = allocation_snapshot();
+        let mut hits = 0usize;
+        for _ in 0..1000 {
+            if colt.get(key.as_ref()).is_some() {
+                hits += 1;
+            }
+        }
+        let delta = allocation_delta(start, allocation_snapshot());
+        (hits, delta.alloc_calls, delta.allocated_bytes)
+    });
+
+    assert_eq!(hits, 1000);
+    assert_eq!(colt.counters().nodes_forced, forced.nodes_forced);
+    // Allocation tracking is process-global, so parallel test activity can add
+    // noise. Keep the bound generous while still guarding against one heap
+    // allocation per probe in the COLT path.
+    assert!(
+        alloc_calls < 500,
+        "repeated probes into an already-forced source should not allocate per probe: {alloc_calls} calls"
+    );
+    assert!(
+        allocated_bytes < 1_000_000,
+        "repeated probe allocation should be constant-sized, got {allocated_bytes} bytes"
+    );
+    Ok(())
+}
+
+#[test]
 fn dynamic_cover_counting_unforced_vector_does_not_force() -> TestResult {
     let colt = clover_s_colt(vec![TupleSchema::new(vec![field(0, 0)?])]);
 
@@ -278,6 +385,47 @@ fn range_colt(rows: usize) -> Result<ColtSource, TupleError> {
         Arc::new(image),
         vec![TupleSchema::new(vec![field(0, 0)?])],
     ))
+}
+
+fn grouped_colt(rows: usize, distinct_keys: usize) -> Result<ColtSource, TupleError> {
+    let image = RelationBaseImage {
+        relation_id: 0,
+        name: "Grouped".to_owned(),
+        row_handles: (0..rows)
+            .map(|offset| FactHandle([offset as u8; 16]))
+            .collect(),
+        columns: BTreeMap::from([
+            (
+                0,
+                u64_column(0, (0..rows).map(|offset| (offset % distinct_keys) as u64)),
+            ),
+            (1, u64_column(1, 0..rows as u64)),
+        ]),
+        stats: RelationStats { row_count: rows },
+    };
+    Ok(ColtSource::new(
+        AtomOccurrenceId(0),
+        Arc::new(image),
+        vec![
+            TupleSchema::new(vec![field(0, 0)?]),
+            TupleSchema::new(vec![field(1, 1)?]),
+        ],
+    ))
+}
+
+fn iteration_allocation(source: &ColtSource) -> (usize, u64, u64) {
+    with_allocation_tracking_for_test(|| {
+        let start = allocation_snapshot();
+        let mut count = 0usize;
+        let result = source.try_for_each_tuple::<(), _>(|tuple| {
+            assert_eq!(tuple.bytes().len(), 8);
+            count += 1;
+            Ok(ControlFlow::Continue(()))
+        });
+        assert!(result.is_ok());
+        let delta = allocation_delta(start, allocation_snapshot());
+        (count, delta.alloc_calls, delta.allocated_bytes)
+    })
 }
 
 fn clover_s_image() -> RelationBaseImage {

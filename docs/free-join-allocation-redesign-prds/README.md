@@ -50,7 +50,6 @@ Latest useful no-query-tracing release sample, allocation tracking enabled, `--o
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 01 | `01-allocation-instrumentation-truth.md` | Add low-noise allocation fixtures for COLT without trace amplification. |
 | 02 | `02-colt-arena-data-model.md` | Introduce the arena-backed COLT model without runtime cutover. |
 | 03 | `03-colt-source-handle-cutover.md` | Replace `Rc<RefCell<ColtNode>>` source handles with compact IDs. |
 | 04 | `04-offset-storage-arena.md` | Replace per-node/per-child offset vectors with range/singleton/arena storage. |
