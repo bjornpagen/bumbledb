@@ -47,7 +47,6 @@ This suite deliberately prioritizes correctness, observability, Free Join paper 
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 02 | `02-trace-event-model.md` | Defines the canonical tracing span/counter schema before code instrumentation. |
 | 03 | `03-allocation-profiler.md` | Adds benchmark-scoped allocation tracking with span deltas. |
 | 04 | `04-profiled-execution-api.md` | Adds the profiled execution surface and removes ad hoc diagnostics. |
 | 05 | `05-executor-span-coverage.md` | Instruments normalization, planning, base images, COLT, recursion, probes, and sinks. |

@@ -9,6 +9,7 @@ pub(crate) mod planner;
 pub(crate) mod predicate;
 pub(crate) mod run;
 pub(crate) mod sink;
+pub(crate) mod trace;
 
 #[cfg(test)]
 #[path = "normalize_tests.rs"]
