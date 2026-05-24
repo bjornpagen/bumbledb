@@ -1,6 +1,6 @@
 use bumbledb_lmdb::Value;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Counters {
     pub(crate) cover_choices: usize,
     pub(crate) vectorized_batches: usize,

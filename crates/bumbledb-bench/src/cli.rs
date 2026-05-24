@@ -18,6 +18,9 @@ pub(crate) struct Config {
     pub(crate) output_mode: Option<String>,
     pub(crate) source_mode: Option<String>,
     pub(crate) hardware: Option<String>,
+    pub(crate) job_dir: Option<String>,
+    pub(crate) open_limit: Option<usize>,
+    pub(crate) queries: Vec<String>,
 }
 
 impl Config {
@@ -42,6 +45,12 @@ impl Config {
                 "--output-mode" => config.output_mode = Some(next_arg(&mut args, "--output-mode")?),
                 "--source-mode" => config.source_mode = Some(next_arg(&mut args, "--source-mode")?),
                 "--hardware" => config.hardware = Some(next_arg(&mut args, "--hardware")?),
+                "--job-dir" => config.job_dir = Some(next_arg(&mut args, "--job-dir")?),
+                "--open-limit" => {
+                    config.open_limit = Some(parse_usize(&next_arg(&mut args, "--open-limit")?)?)
+                }
+                "--open-full" => config.open_limit = None,
+                "--query" => config.queries.push(next_arg(&mut args, "--query")?),
                 other => return Err(BenchError::new(format!("unknown argument {other}"))),
             }
         }
@@ -62,6 +71,9 @@ impl Default for Config {
             output_mode: None,
             source_mode: None,
             hardware: None,
+            job_dir: None,
+            open_limit: Some(10_000),
+            queries: Vec::new(),
         }
     }
 }

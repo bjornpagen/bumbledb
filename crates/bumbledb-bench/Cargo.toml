@@ -9,6 +9,7 @@ blake3.workspace = true
 bumbledb-core.workspace = true
 bumbledb-lmdb = { path = "../bumbledb-lmdb" }
 bumbledb-test-support = { path = "../bumbledb-test-support" }
+csv.workspace = true
 
 [lints]
 workspace = true

@@ -1,5 +1,6 @@
 /target/
 /fuzz/target/
+/data/
 /.idea/
 /.vscode/
 *.tmp

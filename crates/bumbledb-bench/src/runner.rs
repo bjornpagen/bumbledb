@@ -34,6 +34,12 @@ impl From<bumbledb_lmdb::Error> for BenchError {
     }
 }
 
+impl From<std::io::Error> for BenchError {
+    fn from(value: std::io::Error) -> Self {
+        Self(value.to_string())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BenchMode {
     plan_mode: String,
@@ -54,6 +60,13 @@ struct Dataset {
 }
 
 pub(crate) fn run_cli(config: Config) -> BenchResult<String> {
+    if matches!(config.preset.as_str(), "job" | "job-sample" | "job-full") {
+        let reports = crate::job::run_job(&config)?;
+        return Ok(match config.format {
+            OutputFormat::Json => render_json_array(&reports),
+            OutputFormat::Markdown => render_markdown(&reports),
+        });
+    }
     if config.preset != "quick" {
         return Err(BenchError::new("only the quick preset is implemented"));
     }
