@@ -9,12 +9,14 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use bumbledb_core::query_ir::TypedQuery;
 use bumbledb_core::schema::{SchemaDescriptor, ValueType};
 use heed::types::Bytes;
 use heed::{Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
+pub(crate) mod base_image;
 mod error;
 pub(crate) mod query;
 pub(crate) mod storage_format;
@@ -85,6 +87,7 @@ pub struct BulkLoadReport {
 pub struct Environment {
     env: Env<WithoutTls>,
     dbs: Databases,
+    base_images: Arc<base_image::BaseImageCache>,
     path: PathBuf,
 }
 
@@ -105,6 +108,7 @@ impl Environment {
         Ok(Self {
             env,
             dbs,
+            base_images: Arc::default(),
             path: path.to_path_buf(),
         })
     }
@@ -167,7 +171,11 @@ impl Environment {
         E: From<Error>,
     {
         let txn = self.env.read_txn().map_err(Error::from).map_err(E::from)?;
-        let read = ReadTxn { txn, dbs: self.dbs };
+        let read = ReadTxn {
+            txn,
+            dbs: self.dbs,
+            base_images: &self.base_images,
+        };
         f(&read)
     }
 
@@ -213,6 +221,8 @@ impl Environment {
 pub struct ReadTxn<'env> {
     pub(crate) txn: RoTxn<'env, WithoutTls>,
     pub(crate) dbs: Databases,
+    #[allow(dead_code)]
+    pub(crate) base_images: &'env base_image::BaseImageCache,
 }
 
 impl ReadTxn<'_> {
@@ -245,6 +255,16 @@ impl ReadTxn<'_> {
     /// Relation counts are unavailable until PRD 08 rebuilds v5 reads.
     pub fn relation_fact_count(&self, schema: &StorageSchema, relation: &str) -> Result<u64> {
         storage_v5::relation_fact_count(self, schema, relation)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn relation_base_image(
+        &self,
+        schema: &StorageSchema,
+        relation: &str,
+        field_ids: impl IntoIterator<Item = usize>,
+    ) -> Result<Arc<base_image::RelationBaseImage>> {
+        base_image::relation_base_image(self, schema, relation, field_ids)
     }
 
     #[cfg(test)]
