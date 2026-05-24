@@ -248,10 +248,9 @@ impl ReadTxn<'_> {
         &self,
         schema: &StorageSchema,
         query: &TypedQuery,
-        _inputs: &InputBindings,
+        inputs: &InputBindings,
     ) -> Result<QueryResultSet> {
-        let _normalized = query::normalize::normalize_query(schema.descriptor(), query)?;
-        Err(Error::unavailable("execute_query", "PRD 12"))
+        query::executor::execute_query(self, schema, query, inputs)
     }
 
     /// Relation counts are unavailable until PRD 08 rebuilds v5 reads.
@@ -422,6 +421,11 @@ impl InputBindings {
     /// Returns a bound input value by name.
     pub fn value(&self, name: &str) -> Option<&Value> {
         self.values.get(name)
+    }
+
+    /// Returns true when no runtime inputs are bound.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
     }
 }
 

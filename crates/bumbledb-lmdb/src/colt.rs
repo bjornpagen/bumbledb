@@ -81,6 +81,14 @@ impl ColtSource {
         }
     }
 
+    pub(crate) fn has_child_level(&self) -> bool {
+        self.node.borrow().schemas.len() > 1
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.offset_len() == 0
+    }
+
     fn force(&self) {
         if !self.is_vector() {
             return;

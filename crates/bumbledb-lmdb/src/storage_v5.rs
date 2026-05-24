@@ -1,3 +1,4 @@
+use crate::Value;
 #[cfg(test)]
 use crate::storage_format::FactHandle;
 use crate::storage_format::{
@@ -5,7 +6,7 @@ use crate::storage_format::{
     reverse_fk_guard_prefix, unique_guard_key,
 };
 use crate::{Databases, DeleteOutcome, Error, Fact, InsertOutcome, ReadTxn, Result, WriteTxn};
-use bumbledb_core::schema::{ConstraintDescriptor, SchemaDescriptor};
+use bumbledb_core::schema::{ConstraintDescriptor, SchemaDescriptor, ValueType};
 
 #[path = "storage_v5_codec.rs"]
 mod codec;
@@ -48,6 +49,14 @@ pub(crate) fn storage_tx_id(txn: &ReadTxn<'_>) -> Result<u64> {
 
 pub(crate) fn dictionary_entry_count(txn: &ReadTxn<'_>) -> Result<usize> {
     meta::dictionary_entry_count(txn)
+}
+
+pub(crate) fn decode_value(
+    txn: &ReadTxn<'_>,
+    value_type: &ValueType,
+    bytes: &[u8],
+) -> Result<Value> {
+    codec::decode_value(txn, value_type, bytes)
 }
 
 pub(crate) fn relation_fact_count(

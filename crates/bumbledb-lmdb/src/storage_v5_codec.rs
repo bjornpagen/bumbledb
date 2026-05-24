@@ -3,10 +3,9 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 use bumbledb_core::encoding::{
-    InternId, encode_bool, encode_enum, encode_i64, encode_intern_id, encode_u64,
+    InternId, decode_bool, decode_enum, decode_i64, decode_intern_id, decode_u64, encode_bool,
+    encode_enum, encode_i64, encode_intern_id, encode_u64,
 };
-#[cfg(test)]
-use bumbledb_core::encoding::{decode_bool, decode_enum, decode_i64, decode_intern_id, decode_u64};
 use bumbledb_core::schema::{
     FieldDescriptor, FieldGeneration, RelationDescriptor, SchemaDescriptor, ValueType,
 };
@@ -15,10 +14,8 @@ use super::meta::{
     DICT_BYTES, DICT_FWD, DICT_REV, DICT_STRING, META_NEXT_DICT_ID, bytes_to_u64, read_u64,
     relation_id, write_u64,
 };
-#[cfg(test)]
-use crate::ReadTxn;
 use crate::storage_format::{FactHandle, fact_handle, serial_sequence_key};
-use crate::{Error, Fact, RawDatabase, Result, Value, WriteTxn};
+use crate::{Error, Fact, RawDatabase, ReadTxn, Result, Value, WriteTxn};
 
 #[derive(Clone, Copy)]
 enum InternMode {
@@ -214,8 +211,11 @@ pub(super) fn decode_fact(
     Ok(Fact::new(relation.name.clone(), values))
 }
 
-#[cfg(test)]
-fn decode_value(txn: &ReadTxn<'_>, value_type: &ValueType, bytes: &[u8]) -> Result<Value> {
+pub(super) fn decode_value(
+    txn: &ReadTxn<'_>,
+    value_type: &ValueType,
+    bytes: &[u8],
+) -> Result<Value> {
     Ok(match value_type {
         ValueType::Bool => {
             Value::Bool(decode_bool(bytes).map_err(|error| Error::corrupt(error.to_string()))?)
@@ -237,7 +237,6 @@ fn decode_value(txn: &ReadTxn<'_>, value_type: &ValueType, bytes: &[u8]) -> Resu
     })
 }
 
-#[cfg(test)]
 fn decode_string(txn: &ReadTxn<'_>, bytes: &[u8]) -> Result<Value> {
     let id = decode_intern_id(bytes)
         .map_err(|error| Error::corrupt(error.to_string()))?
@@ -247,7 +246,6 @@ fn decode_string(txn: &ReadTxn<'_>, bytes: &[u8]) -> Result<Value> {
     Ok(Value::String(value))
 }
 
-#[cfg(test)]
 fn decode_bytes(txn: &ReadTxn<'_>, bytes: &[u8]) -> Result<Value> {
     let id = decode_intern_id(bytes)
         .map_err(|error| Error::corrupt(error.to_string()))?
@@ -342,7 +340,6 @@ fn lookup_intern_id(
     bytes_to_u64(bytes).map(Some)
 }
 
-#[cfg(test)]
 fn lookup_intern_raw(db: RawDatabase, txn: &heed::RoTxn<'_>, kind: u8, id: u64) -> Result<Vec<u8>> {
     db.get(txn, &dict_rev_key(kind, id))?
         .map(ToOwned::to_owned)
