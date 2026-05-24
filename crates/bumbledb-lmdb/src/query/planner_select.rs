@@ -1,6 +1,5 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-use crate::base_image::RelationBaseImage;
 use crate::query::binary2fj::{binary2fj, factor_plan};
 use crate::query::free_join::{FjNode, FjPlan, FjPlanError, FjSubatom};
 use crate::query::model::{AtomOccurrenceId, NormalizedQuery, NormalizedTerm};
@@ -54,15 +53,15 @@ pub(crate) struct PlannerRelationStats {
     pub(crate) atom: AtomOccurrenceId,
     pub(crate) relation: String,
     pub(crate) relation_fact_count: u64,
-    pub(crate) base_image_rows: usize,
-    pub(crate) field_distinct: BTreeMap<usize, usize>,
-    pub(crate) prefix_distinct: Vec<PrefixDistinctEstimate>,
+    pub(crate) estimated_source_rows: u64,
+    pub(crate) field_distinct_estimate: BTreeMap<usize, u64>,
+    pub(crate) prefix_distinct_estimate: Vec<PrefixDistinctEstimate>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PrefixDistinctEstimate {
     pub(crate) fields: Vec<usize>,
-    pub(crate) distinct: usize,
+    pub(crate) distinct_estimate: u64,
 }
 
 pub(crate) fn select_plan(
@@ -264,23 +263,18 @@ fn collect_planner_stats_with_trace(
             TracePhase::PlannerStats,
             format!("planner relation={} atom={:?}", atom.relation, atom.id),
         );
-        let field_ids: BTreeSet<_> = atom
+        let field_ids = atom
             .fields
             .iter()
             .filter(|field| matches!(field.term, NormalizedTerm::Variable(_)))
             .map(|field| field.field_id)
-            .collect();
-        let image = txn.relation_base_image_with_trace(
-            schema,
-            &atom.relation,
-            field_ids.iter().copied(),
-            trace,
-        )?;
+            .collect::<Vec<_>>();
+        let relation_fact_count = txn.relation_fact_count(schema, &atom.relation)?;
         relations.push(relation_stats(
             atom.id,
             &atom.relation,
-            txn.relation_fact_count(schema, &atom.relation)?,
-            &image,
+            relation_fact_count,
+            &field_ids,
             &atom.variable_tuple,
         ));
         if let Some(span) = relation_span {
@@ -289,12 +283,12 @@ fn collect_planner_stats_with_trace(
     }
     let max_rows = relations
         .iter()
-        .map(|r| r.base_image_rows as u64)
+        .map(|r| r.estimated_source_rows)
         .max()
         .unwrap_or(0);
     let min_rows = relations
         .iter()
-        .map(|r| r.base_image_rows as u64)
+        .map(|r| r.estimated_source_rows)
         .filter(|rows| *rows > 0)
         .min()
         .unwrap_or(1);
@@ -316,63 +310,56 @@ fn relation_stats(
     atom: AtomOccurrenceId,
     relation: &str,
     relation_fact_count: u64,
-    image: &RelationBaseImage,
+    field_ids: &[usize],
     variable_tuple: &[usize],
 ) -> PlannerRelationStats {
-    let mut field_distinct = BTreeMap::new();
-    for (field_id, column) in &image.columns {
-        field_distinct.insert(
-            *field_id,
-            column.values.iter().collect::<BTreeSet<_>>().len(),
-        );
-    }
+    let estimated_source_rows = relation_fact_count;
+    let field_distinct_estimate = field_ids
+        .iter()
+        .copied()
+        .map(|field_id| {
+            (
+                field_id,
+                conservative_distinct_estimate(relation_fact_count),
+            )
+        })
+        .collect();
     PlannerRelationStats {
         atom,
         relation: relation.to_owned(),
         relation_fact_count,
-        base_image_rows: image.stats.row_count,
-        field_distinct,
-        prefix_distinct: prefix_distinct(image, variable_tuple),
+        estimated_source_rows,
+        field_distinct_estimate,
+        prefix_distinct_estimate: prefix_distinct_estimate(
+            field_ids,
+            variable_tuple,
+            relation_fact_count,
+        ),
     }
 }
 
-fn prefix_distinct(
-    image: &RelationBaseImage,
+fn prefix_distinct_estimate(
+    field_ids: &[usize],
     variable_tuple: &[usize],
+    relation_fact_count: u64,
 ) -> Vec<PrefixDistinctEstimate> {
-    let field_ids: Vec<_> = image.columns.keys().copied().collect();
     (1..=variable_tuple.len().min(field_ids.len()))
-        .map(|width| prefix_distinct_for_width(image, &field_ids, width))
+        .map(|width| PrefixDistinctEstimate {
+            fields: field_ids.iter().copied().take(width).collect(),
+            distinct_estimate: conservative_distinct_estimate(relation_fact_count),
+        })
         .collect()
 }
 
-fn prefix_distinct_for_width(
-    image: &RelationBaseImage,
-    field_ids: &[usize],
-    width: usize,
-) -> PrefixDistinctEstimate {
-    let fields = field_ids.iter().copied().take(width).collect::<Vec<_>>();
-    let mut keys = BTreeSet::new();
-    for offset in 0..image.stats.row_count {
-        let mut key = Vec::new();
-        for field_id in &fields {
-            if let Some(value) = image.columns[field_id].values.get(offset) {
-                key.extend_from_slice(value);
-            }
-        }
-        keys.insert(key);
-    }
-    PrefixDistinctEstimate {
-        fields,
-        distinct: keys.len(),
-    }
+fn conservative_distinct_estimate(row_count: u64) -> u64 {
+    row_count.max(1)
 }
 
 fn score_candidate(candidate: &PlanCandidate, stats: &PlannerStats) -> u64 {
     let rows: u64 = stats
         .relations
         .iter()
-        .map(|relation| relation.base_image_rows as u64)
+        .map(|relation| relation.estimated_source_rows)
         .sum();
     let base = match candidate.family {
         PlanFamily::FactoredBinary => 100,

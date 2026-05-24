@@ -20,6 +20,7 @@ This inventory tracks known mismatches between Bumbledb, Rosetta, and the local 
 | G14 | Paper does not address durable storage accelerators, while Bumbledb has namespaces but no real value accelerator path. | Adding accelerators without discipline could make correctness depend on optional structures. | 18 | Queries produce identical exact results with accelerators enabled and disabled. | open |
 | G15 | Current explain says timings and allocations are not collected. | Diagnostics misrepresent the hardened engine and leave benchmark regressions opaque. | 04 | `ReadTxn::execute_query_profiled` emits canonical trace spans, explain points to profiled execution traces, and PRD 06 harvest records real JOB trace files. | closed |
 | G16 | x86 SIMD is forbidden for this suite; vectorization must be AArch64 NEON only. | Adding x86 SIMD would expand support burden and violate the user's NEON-only direction. | product-rejected | The x86 forbidden search returns no matches under `crates/`, and any SIMD implementation is AArch64-gated. | rejected |
+| G17 | Planner statistics used to call `relation_base_image` and scan base-image columns for exact distinct counts. | Empty or selective queries paid source materialization and allocation cost before a Free Join plan was selected. | 08 | `planner_stats_do_not_load_base_images` proves traced plan selection on populated relations emits no base-image cache or load spans, while planner stats use durable relation counts and explicit estimates. | closed |
 
 ## Metric Audit
 

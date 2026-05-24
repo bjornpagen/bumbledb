@@ -11,8 +11,9 @@ use crate::query::model::{
 use crate::query::normalize::normalize_query;
 use crate::query::planner::{
     BinaryPlan, BinaryPlanError, LeftDeepSource, PlanFamily, PlanMode, deterministic_binary_plan,
-    generate_plan_candidates, select_plan,
+    generate_plan_candidates, select_plan, select_plan_with_trace,
 };
+use crate::query::trace::{QueryTrace, TracePhase};
 use crate::{Environment, Fact, StorageSchema, Value};
 
 #[test]
@@ -241,6 +242,36 @@ fn planner_tie_break_is_deterministic() -> crate::Result<()> {
 
     assert_eq!(first.chosen.family, second.chosen.family);
     assert_eq!(first.candidates, second.candidates);
+    Ok(())
+}
+
+#[test]
+fn planner_stats_do_not_load_base_images() -> crate::Result<()> {
+    let (env, schema) = env_and_schema("no-base-image-stats")?;
+    insert_pairs(&env, &schema)?;
+    let typed = join_query();
+    let normalized = normalize_query(schema.descriptor(), &typed)?;
+
+    let trace = env.read(|txn| {
+        let mut trace = QueryTrace::new();
+        let selection =
+            select_plan_with_trace(txn, &schema, &normalized, PlanMode::Default, &mut trace)?;
+        assert!(!selection.stats.relations.is_empty());
+        Ok::<_, crate::Error>(trace)
+    })?;
+
+    assert!(
+        trace
+            .spans
+            .iter()
+            .any(|span| span.phase == TracePhase::PlannerStats)
+    );
+    assert!(trace.spans.iter().all(|span| {
+        !matches!(
+            span.phase,
+            TracePhase::BaseImageCacheLookup | TracePhase::BaseImageLoad
+        )
+    }));
     Ok(())
 }
 

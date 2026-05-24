@@ -31,7 +31,6 @@ This suite deliberately prioritizes correctness, observability, Free Join paper 
 
 - `GhtSource::iter` returns `Vec<EncodedTuple>` rather than an iterator, causing eager materialization not present in the paper interface.
 - `iter_batch` is implemented by materializing all tuples first, so it is not true vectorized execution.
-- Planner statistics currently call `relation_base_image`, which builds or loads snapshot images during planning.
 - Base-image columns are `Vec<Vec<u8>>`, creating one allocation per loaded value instead of a tight column-oriented layout.
 - Source filters are applied after full base-image rows are available, so selective predicates still pay broad scan/load cost.
 - Recursive execution clones binding maps and source maps along hot paths.
@@ -47,7 +46,6 @@ This suite deliberately prioritizes correctness, observability, Free Join paper 
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 08 | `08-planner-stats-without-base-images.md` | Stops plan selection from building base images. |
 | 09 | `09-base-image-columnar-layout.md` | Breaks base-image storage into tight fixed-width column buffers. |
 | 10 | `10-streaming-ght-interface.md` | Replaces eager `Vec` iteration with streaming and real batching. |
 | 11 | `11-colt-lazy-paper-alignment.md` | Makes COLT closer to the paper's lazy column-oriented trie. |

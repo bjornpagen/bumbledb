@@ -171,3 +171,24 @@ Aggregate counters, repeat 1:
 5. Push selective source filters earlier and short-circuit empty sources.
 6. Deduplicate encoded projected facts before decoding values.
 7. Add measured storage stats and optional value accelerators only after the scan/allocation fixes above are complete.
+
+## PRD 08 Follow-Up
+
+Command:
+
+```bash
+cargo run --release -p bumbledb-bench --features query-tracing -- --preset job-sample --job-dir data/job --open-limit 100000 --query job_q09_voice_us_actor --format json --repeats 1 --warmup 1 --trace-output file --profile-query-label prd08_q09 --alloc on
+```
+
+Measured report after planner stats stopped using base images:
+
+| query | bumbledb_ms | sqlite_ms | alloc_calls | allocated_bytes | result_rows |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `job_q09_voice_us_actor` | 43.244 | 5.307 | 567463 | 102294267 | 0 |
+
+Trace acceptance evidence:
+
+- Trace file: `data/traces/prd08_q09-18280-0.json`.
+- `BaseImageCacheLookup` spans under `PlannerStats`: 0.
+- `BaseImageLoad` spans under `PlannerStats`: 0.
+- `select Free Join plan` elapsed: 0.212 ms.
