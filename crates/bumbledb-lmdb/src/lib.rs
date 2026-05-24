@@ -16,11 +16,12 @@ use bumbledb_core::schema::{SchemaDescriptor, ValueType};
 
 mod error;
 pub(crate) mod query;
+pub(crate) mod storage_format;
 
 pub use error::{Error, Result};
 
 /// Current on-disk storage format version for the rebuild line.
-pub const STORAGE_FORMAT_VERSION: u32 = 5;
+pub const STORAGE_FORMAT_VERSION: u32 = storage_format::STORAGE_FORMAT_VERSION;
 
 /// Compiled storage schema shell.
 #[derive(Clone, Debug)]
@@ -71,6 +72,7 @@ impl Environment {
     /// Opens or creates the environment directory.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         std::fs::create_dir_all(path.as_ref())?;
+        storage_format::open_or_init_format(path.as_ref())?;
         Ok(Self {
             path: path.as_ref().to_path_buf(),
         })
@@ -101,8 +103,7 @@ impl Environment {
 
     /// Returns the rebuild storage format version.
     pub fn storage_format_version(&self) -> Result<u32> {
-        let _ = &self.path;
-        Ok(STORAGE_FORMAT_VERSION)
+        storage_format::read_format_version(&self.path)
     }
 
     /// Bulk load is unavailable until PRD 08 rebuilds v5 writes.

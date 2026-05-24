@@ -27,6 +27,15 @@ pub enum Error {
         reason: String,
     },
 
+    /// On-disk storage format marker is missing or incompatible.
+    #[error("storage format mismatch: expected {expected}, found {found}")]
+    StorageFormatMismatch {
+        /// Expected storage format version.
+        expected: u32,
+        /// Found marker or absence reason.
+        found: String,
+    },
+
     /// I/O failure.
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -42,6 +51,14 @@ impl Error {
     pub fn invalid_query(reason: impl Into<String>) -> Self {
         Self::InvalidQuery {
             reason: reason.into(),
+        }
+    }
+
+    /// Creates a storage-format mismatch error.
+    pub fn storage_format_mismatch(expected: u32, found: impl Into<String>) -> Self {
+        Self::StorageFormatMismatch {
+            expected,
+            found: found.into(),
         }
     }
 }

@@ -3,6 +3,8 @@ use super::{
     ForeignKeyAction, RelationDescriptor, SchemaDescriptor, SchemaFingerprint, ValueType,
 };
 
+const SCHEMA_CANONICAL_LABEL: &str = "bumbledb.schema.v5.columnar-set-layout";
+
 impl SchemaDescriptor {
     /// Computes the deterministic schema fingerprint.
     pub fn fingerprint(&self) -> SchemaFingerprint {
@@ -11,7 +13,7 @@ impl SchemaDescriptor {
 
     fn canonical_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        push_str(&mut out, "bumbledb.schema.v4.set-native-layout");
+        push_str(&mut out, SCHEMA_CANONICAL_LABEL);
         push_str(&mut out, &self.name);
         push_u32(&mut out, self.enums.len() as u32);
         for enum_descriptor in &self.enums {
@@ -153,5 +155,18 @@ fn push_string_list(out: &mut Vec<u8>, values: &[String]) {
     push_u32(out, values.len() as u32);
     for value in values {
         push_str(out, value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v5_schema_label_differs_from_v4_label() {
+        assert_ne!(
+            SCHEMA_CANONICAL_LABEL,
+            "bumbledb.schema.v4.set-native-layout"
+        );
     }
 }

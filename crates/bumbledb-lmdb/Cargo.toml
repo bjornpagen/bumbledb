@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+blake3.workspace = true
 bumbledb-core.workspace = true
 thiserror.workspace = true
 
