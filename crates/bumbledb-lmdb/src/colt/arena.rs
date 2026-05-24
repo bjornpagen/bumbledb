@@ -9,6 +9,16 @@ pub(super) struct ColtNodeId(pub(super) u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct ColtMapId(pub(super) u32);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(super) struct SchemaVarsId(pub(super) u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ArenaSourceHandle {
+    pub(super) arena_id: ColtSourceId,
+    pub(super) node_id: ColtNodeId,
+    pub(super) vars_id: SchemaVarsId,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct OffsetRange {
     pub(super) start: u32,
@@ -38,6 +48,18 @@ pub(super) struct ColtArena {
     nodes: Vec<ColtNodeRecord>,
     maps: Vec<ColtMapRecord>,
     offsets: Vec<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ArenaSourceUndo {
+    atom: usize,
+    previous: ArenaSourceHandle,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct ArenaSourceStore {
+    current: Vec<Option<ArenaSourceHandle>>,
+    undo: Vec<ArenaSourceUndo>,
 }
 
 impl ColtArena {
@@ -92,6 +114,60 @@ impl ColtArena {
         let id = ColtMapId(self.maps.len() as u32);
         self.maps.push(ColtMapRecord { entries });
         id
+    }
+}
+
+impl ArenaSourceHandle {
+    pub(super) fn new(arena_id: ColtSourceId, node_id: ColtNodeId, vars_id: SchemaVarsId) -> Self {
+        Self {
+            arena_id,
+            node_id,
+            vars_id,
+        }
+    }
+}
+
+impl ArenaSourceStore {
+    pub(super) fn with_atom_count(atom_count: usize) -> Self {
+        Self {
+            current: vec![None; atom_count],
+            undo: Vec::new(),
+        }
+    }
+
+    pub(super) fn set_initial(&mut self, atom: usize, source: ArenaSourceHandle) {
+        self.ensure_atom(atom);
+        self.current[atom] = Some(source);
+    }
+
+    pub(super) fn source_for(&self, atom: usize) -> Option<ArenaSourceHandle> {
+        self.current.get(atom).copied().flatten()
+    }
+
+    pub(super) fn undo_mark(&self) -> usize {
+        self.undo.len()
+    }
+
+    pub(super) fn replace_source(&mut self, atom: usize, next: ArenaSourceHandle) -> bool {
+        let Some(previous) = self.source_for(atom) else {
+            return false;
+        };
+        self.current[atom] = Some(next);
+        self.undo.push(ArenaSourceUndo { atom, previous });
+        true
+    }
+
+    pub(super) fn restore_to(&mut self, mark: usize) {
+        while self.undo.len() > mark {
+            let Some(entry) = self.undo.pop() else { break };
+            self.current[entry.atom] = Some(entry.previous);
+        }
+    }
+
+    fn ensure_atom(&mut self, atom: usize) {
+        if atom >= self.current.len() {
+            self.current.resize(atom + 1, None);
+        }
     }
 }
 
@@ -175,5 +251,36 @@ mod tests {
             arena.node(empty).map(|node| node.data),
             arena.node(singleton).map(|node| node.data)
         );
+    }
+
+    #[test]
+    fn arena_source_handle_is_compact_copy_state() {
+        assert!(std::mem::size_of::<ArenaSourceHandle>() <= 24);
+        assert!(std::mem::size_of::<ArenaSourceUndo>() <= 32);
+    }
+
+    #[test]
+    fn arena_source_store_replaces_and_restores_compact_handles() {
+        let root = ArenaSourceHandle::new(ColtSourceId(0), ColtNodeId(0), SchemaVarsId(0));
+        let child = ArenaSourceHandle::new(ColtSourceId(0), ColtNodeId(1), SchemaVarsId(1));
+        let mut store = ArenaSourceStore::with_atom_count(1);
+        store.set_initial(0, root);
+        let mark = store.undo_mark();
+
+        assert_eq!(store.source_for(0), Some(root));
+        assert!(store.replace_source(0, child));
+        assert_eq!(store.source_for(0), Some(child));
+
+        store.restore_to(mark);
+        assert_eq!(store.source_for(0), Some(root));
+    }
+
+    #[test]
+    fn arena_source_store_missing_atom_replacement_is_rejected() {
+        let child = ArenaSourceHandle::new(ColtSourceId(0), ColtNodeId(1), SchemaVarsId(1));
+        let mut store = ArenaSourceStore::with_atom_count(1);
+
+        assert!(!store.replace_source(0, child));
+        assert_eq!(store.source_for(0), None);
     }
 }
