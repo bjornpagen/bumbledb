@@ -9,7 +9,9 @@ use bumbledb_core::schema::RelationDescriptor;
 use crate::query::free_join::ValidatedFjPlan;
 use crate::query::model::AtomOccurrenceId;
 use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
-use crate::storage_format::{FactHandle, column_key, live_row_key};
+use crate::storage_format::{
+    FactHandle, column_prefix_key, decode_column_key_handle, live_row_key,
+};
 use crate::{Error, ReadTxn, Result, StorageSchema};
 
 /// Snapshot-local immutable relation image for GHT/COLT sources.
@@ -278,21 +280,7 @@ fn load_relation_base_image(
     for field_id in field_ids.iter() {
         let field = &relation.fields[field_id];
         let width = field.value_type.encoded_width();
-        let mut values = Vec::with_capacity(row_handles.len() * width);
-        for handle in &row_handles {
-            let key = column_key(relation_id, field_id as u32, *handle);
-            let value = txn
-                .dbs
-                .data
-                .get(&txn.txn, &key)?
-                .ok_or_else(|| Error::corrupt("column entry missing for live row"))?;
-            if value.len() != width {
-                return Err(Error::corrupt(format!(
-                    "column entry width mismatch for field {field_id}"
-                )));
-            }
-            values.extend_from_slice(value);
-        }
+        let values = load_column_values(txn, relation_id, field_id, width, &row_handles)?;
         columns.insert(
             field_id,
             ColumnImage {
@@ -312,6 +300,49 @@ fn load_relation_base_image(
         row_handles,
         columns,
     })
+}
+
+fn load_column_values(
+    txn: &ReadTxn<'_>,
+    relation_id: u32,
+    field_id: usize,
+    width: usize,
+    row_handles: &[FactHandle],
+) -> Result<Vec<u8>> {
+    let prefix_key = column_prefix_key(relation_id, field_id as u32);
+    let prefix = prefix_key.as_bytes();
+    let mut values = Vec::with_capacity(row_handles.len() * width);
+    let mut live_index = 0usize;
+
+    for item in txn.dbs.data.prefix_iter(&txn.txn, prefix)? {
+        let (key, value) = item?;
+        let handle = decode_column_key_handle(key)
+            .ok_or_else(|| Error::corrupt("column key handle width invalid"))?;
+        if value.len() != width {
+            return Err(Error::corrupt(format!(
+                "column entry width mismatch for field {field_id}"
+            )));
+        }
+        if live_index < row_handles.len() && row_handles[live_index] < handle {
+            return Err(Error::corrupt(format!(
+                "column entry missing for live row field {field_id}"
+            )));
+        }
+        if live_index == row_handles.len() || row_handles[live_index] > handle {
+            return Err(Error::corrupt(format!(
+                "column entry without live row for field {field_id}"
+            )));
+        }
+        values.extend_from_slice(value);
+        live_index += 1;
+    }
+
+    if live_index != row_handles.len() {
+        return Err(Error::corrupt(format!(
+            "column entry missing for live row field {field_id}"
+        )));
+    }
+    Ok(values)
 }
 
 fn live_row_handles(txn: &ReadTxn<'_>, relation_id: u32) -> Result<Vec<FactHandle>> {

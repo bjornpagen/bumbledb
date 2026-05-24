@@ -89,6 +89,17 @@ fn storage_format_serial_sequence_key_is_distinct_from_fact_handle_key() {
 }
 
 #[test]
+fn storage_format_column_prefix_decodes_handle() {
+    let handle = fact_handle(7, b"abc");
+    let key = column_key(7, 3, handle);
+    let prefix = column_prefix_key(7, 3);
+
+    assert!(key.starts_with(prefix.as_bytes()));
+    assert_eq!(decode_column_key_handle(&key), Some(handle));
+    assert_eq!(decode_column_key_handle(prefix.as_bytes()), None);
+}
+
+#[test]
 fn storage_format_schema_fingerprint_uses_v5_label() {
     let schema = SchemaDescriptor::new(
         "Fingerprint",

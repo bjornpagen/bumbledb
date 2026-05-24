@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use std::collections::BTreeSet;
 
-use bumbledb_core::encoding::{InternId, encode_intern_id, encode_u64};
+use bumbledb_core::encoding::{InternId, decode_u64, encode_intern_id, encode_u64};
 use bumbledb_core::query_ir::{TypedFindTerm, TypedVariable};
 use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
 
@@ -15,6 +15,7 @@ use crate::query::free_join::{FjNode, FjPlan, FjSubatom};
 use crate::query::model::{
     AtomOccurrence, AtomOccurrenceId, NormalizedFieldBinding, NormalizedQuery, NormalizedTerm,
 };
+use crate::storage_format::{FactHandle, column_key};
 use crate::{Environment, Error, Fact, InsertOutcome, Result, StorageSchema, Value};
 
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
@@ -138,6 +139,99 @@ fn base_image_load_allocations_are_below_per_cell_value_allocation_pattern() -> 
 }
 
 #[test]
+fn base_image_prefix_scan_preserves_multi_column_alignment() -> Result<()> {
+    let (env, schema) = number_env_and_schema("prefix-align")?;
+    env.write(|txn| {
+        txn.insert(&schema, &number(1, 10, 100))?;
+        txn.insert(&schema, &number(2, 20, 200))?;
+        txn.insert(&schema, &number(3, 30, 300))?;
+        Ok::<(), Error>(())
+    })?;
+
+    env.read(|txn| {
+        let image = txn.relation_base_image(&schema, "Number", [0, 1, 2])?;
+        let a = &image.columns[&0];
+        let b = &image.columns[&1];
+        let c = &image.columns[&2];
+
+        assert_eq!(image.row_handles.len(), 3);
+        for offset in 0..image.row_handles.len() {
+            let av = decode_u64(
+                a.value_at(offset)
+                    .ok_or_else(|| Error::corrupt("missing a"))?,
+            )
+            .map_err(|error| Error::corrupt(error.to_string()))?;
+            let bv = decode_u64(
+                b.value_at(offset)
+                    .ok_or_else(|| Error::corrupt("missing b"))?,
+            )
+            .map_err(|error| Error::corrupt(error.to_string()))?;
+            let cv = decode_u64(
+                c.value_at(offset)
+                    .ok_or_else(|| Error::corrupt("missing c"))?,
+            )
+            .map_err(|error| Error::corrupt(error.to_string()))?;
+            assert_eq!(bv, av * 10);
+            assert_eq!(cv, av * 100);
+        }
+        Ok::<(), Error>(())
+    })
+}
+
+#[test]
+fn base_image_prefix_scan_rejects_missing_column_entry() -> Result<()> {
+    let (env, schema) = number_env_and_schema("missing-column")?;
+    let handle = insert_one_number_and_handle(&env, &schema)?;
+    env.write(|txn| {
+        txn.dbs
+            .data
+            .delete(&mut txn.txn, &column_key(0, 1, handle))?;
+        Ok::<(), Error>(())
+    })?;
+
+    let result = env.read(|txn| txn.relation_base_image(&schema, "Number", [0, 1]));
+
+    assert!(matches!(result, Err(Error::Corrupt { .. })));
+    Ok(())
+}
+
+#[test]
+fn base_image_prefix_scan_rejects_extra_column_entry() -> Result<()> {
+    let (env, schema) = number_env_and_schema("extra-column")?;
+    insert_one_number_and_handle(&env, &schema)?;
+    env.write(|txn| {
+        txn.dbs.data.put(
+            &mut txn.txn,
+            &column_key(0, 1, FactHandle([255; 16])),
+            &encode_u64(999),
+        )?;
+        Ok::<(), Error>(())
+    })?;
+
+    let result = env.read(|txn| txn.relation_base_image(&schema, "Number", [1]));
+
+    assert!(matches!(result, Err(Error::Corrupt { .. })));
+    Ok(())
+}
+
+#[test]
+fn base_image_prefix_scan_rejects_wrong_column_width() -> Result<()> {
+    let (env, schema) = number_env_and_schema("wrong-width")?;
+    let handle = insert_one_number_and_handle(&env, &schema)?;
+    env.write(|txn| {
+        txn.dbs
+            .data
+            .put(&mut txn.txn, &column_key(0, 1, handle), &[1, 2, 3])?;
+        Ok::<(), Error>(())
+    })?;
+
+    let result = env.read(|txn| txn.relation_base_image(&schema, "Number", [1]));
+
+    assert!(matches!(result, Err(Error::Corrupt { .. })));
+    Ok(())
+}
+
+#[test]
 fn base_image_deleting_row_removes_it_from_new_images() -> Result<()> {
     let (env, schema) = env_and_schema("delete-row")?;
     insert_people(&env, &schema)?;
@@ -243,6 +337,20 @@ fn env_and_schema(name: &str) -> Result<(Environment, StorageSchema)> {
     Ok((env, schema))
 }
 
+fn number_env_and_schema(name: &str) -> Result<(Environment, StorageSchema)> {
+    let id = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "bumbledb-prd09-number-{name}-{}-{id}",
+        std::process::id()
+    ));
+    if path.exists() {
+        std::fs::remove_dir_all(&path)?;
+    }
+    let schema = StorageSchema::new(number_schema(), 511)?;
+    let env = Environment::open_with_schema(path, &schema)?;
+    Ok((env, schema))
+}
+
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor::new(
         "BaseImage",
@@ -252,6 +360,20 @@ fn schema() -> SchemaDescriptor {
                 FieldDescriptor::new("id", ValueType::U64),
                 FieldDescriptor::new("name", ValueType::String),
                 FieldDescriptor::new("blob", ValueType::Bytes),
+            ],
+        )],
+    )
+}
+
+fn number_schema() -> SchemaDescriptor {
+    SchemaDescriptor::new(
+        "BaseImageNumber",
+        vec![RelationDescriptor::new(
+            "Number",
+            vec![
+                FieldDescriptor::new("a", ValueType::U64),
+                FieldDescriptor::new("b", ValueType::U64),
+                FieldDescriptor::new("c", ValueType::U64),
             ],
         )],
     )
@@ -280,6 +402,29 @@ fn person(id: u64, name: &str, blob: &[u8]) -> Fact {
             ("blob", Value::Bytes(blob.to_vec())),
         ],
     )
+}
+
+fn number(a: u64, b: u64, c: u64) -> Fact {
+    Fact::new(
+        "Number",
+        [
+            ("a", Value::U64(a)),
+            ("b", Value::U64(b)),
+            ("c", Value::U64(c)),
+        ],
+    )
+}
+
+fn insert_one_number_and_handle(env: &Environment, schema: &StorageSchema) -> Result<FactHandle> {
+    env.write(|txn| txn.insert(schema, &number(1, 10, 100)))?;
+    env.read(|txn| {
+        let image = txn.relation_base_image(schema, "Number", [0])?;
+        image
+            .row_handles
+            .first()
+            .copied()
+            .ok_or_else(|| Error::corrupt("missing number row handle"))
+    })
 }
 
 fn query_from_atoms<const N: usize>(atom_vars: [Vec<usize>; N]) -> NormalizedQuery {

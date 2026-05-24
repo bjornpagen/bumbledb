@@ -75,7 +75,6 @@ The Free Join paper assumes raw data is already stored column-wise and that sele
 
 | order | PRD | purpose |
 | ---: | --- | --- |
-| 01 | `01-v5-sequential-base-image-loader.md` | Replace per-cell LMDB point gets with column-prefix scans on v5. |
 | 02 | `02-base-image-filter-pruning.md` | Push filters into base-image loading and short-circuit zero sources before COLT. |
 | 03 | `03-query-local-column-cache-and-image-views.md` | Stop reloading the same relation columns for different atom occurrences and scopes. |
 | 04 | `04-source-handle-sets-and-survivor-views.md` | Make filtered source images handle/offset views instead of copied full-column images. |

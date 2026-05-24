@@ -141,6 +141,28 @@ pub(crate) fn column_key(relation_id: u32, field_id: u32, handle: FactHandle) ->
     )
 }
 
+/// `C | relation_id | field_id` prefix for sequential column scans.
+pub(crate) fn column_prefix_key(relation_id: u32, field_id: u32) -> StorageKey {
+    key(
+        Namespace::Column,
+        &[&u32_bytes(relation_id), &u32_bytes(field_id)],
+    )
+}
+
+/// Decodes the fact handle suffix from a full column key.
+pub(crate) fn decode_column_key_handle(key: &[u8]) -> Option<FactHandle> {
+    const COLUMN_PREFIX_LEN: usize = 1 + 4 + 4;
+    const COLUMN_KEY_LEN: usize = COLUMN_PREFIX_LEN + 16;
+    if key.len() != COLUMN_KEY_LEN {
+        return None;
+    }
+    let handle = key
+        .get(COLUMN_PREFIX_LEN..COLUMN_KEY_LEN)?
+        .try_into()
+        .ok()?;
+    Some(FactHandle(handle))
+}
+
 /// `Q | relation_id | field_id -> next_u64`.
 pub(crate) fn serial_sequence_key(relation_id: u32, field_id: u32) -> StorageKey {
     key(
