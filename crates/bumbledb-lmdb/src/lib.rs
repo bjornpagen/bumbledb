@@ -15,6 +15,7 @@ use bumbledb_core::query_ir::TypedQuery;
 use bumbledb_core::schema::{SchemaDescriptor, ValueType};
 
 mod error;
+pub(crate) mod query;
 
 pub use error::{Error, Result};
 
@@ -153,10 +154,11 @@ impl ReadTxn<'_> {
     /// Query execution is unavailable until formal Free Join is rebuilt.
     pub fn execute_query(
         &self,
-        _schema: &StorageSchema,
-        _query: &TypedQuery,
+        schema: &StorageSchema,
+        query: &TypedQuery,
         _inputs: &InputBindings,
     ) -> Result<QueryResultSet> {
+        let _normalized = query::normalize::normalize_query(schema.descriptor(), query)?;
         Err(Error::unavailable("execute_query", "PRD 12"))
     }
 
