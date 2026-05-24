@@ -224,3 +224,23 @@ Measured report after replacing eager GHT tuple vectors with streaming iteration
 | `job_q09_voice_us_actor` | 42.910 | 4.826 | 535347 | 101016803 | 0 |
 
 Trace file: `data/traces/prd10_q09-21799-0.json`.
+
+## PRD 11 Note
+
+COLT now uses `HashMap` for forced map nodes, suffix iteration streams from base-image offsets without forcing, and trace spans distinguish `ColtBuild`, `ColtIter`, `ColtForce`, and `ColtGet`.
+
+`Rc<RefCell<...>>` remains in the private COLT handle structure. No current trace isolates borrow/refcell overhead as material separate from forced map allocation, so replacing it stays an open trace-backed optimization target under the broader COLT allocation/locality work.
+
+Command:
+
+```bash
+cargo run --release -p bumbledb-bench --features query-tracing -- --preset job-sample --job-dir data/job --open-limit 100000 --query job_q09_voice_us_actor --format json --repeats 1 --warmup 1 --trace-output file --profile-query-label prd11_q09 --alloc on
+```
+
+Measured report after COLT lazy-alignment and `HashMap` forced nodes:
+
+| query | bumbledb_ms | sqlite_ms | alloc_calls | allocated_bytes | result_rows |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `job_q09_voice_us_actor` | 37.990 | 5.201 | 513072 | 110363704 | 0 |
+
+Trace file: `data/traces/prd11_q09-24120-0.json`.

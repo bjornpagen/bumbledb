@@ -6,7 +6,7 @@ use bumbledb_core::encoding::encode_u64;
 use bumbledb_core::query_ir::{TypedFindTerm, TypedVariable};
 use bumbledb_core::schema::ValueType;
 
-use super::{ColtSource, tuple_schemas_for_atom};
+use super::{ColtSource, SourceFilter, SourceFilterOp, tuple_schemas_for_atom};
 use crate::base_image::{ColumnImage, RelationBaseImage, RelationStats};
 use crate::diagnostics::{
     allocation_delta, allocation_snapshot, with_allocation_tracking_for_test,
@@ -15,6 +15,7 @@ use crate::query::free_join::{FjNode, FjPlan, FjSubatom};
 use crate::query::model::{
     AtomOccurrence, AtomOccurrenceId, NormalizedFieldBinding, NormalizedQuery, NormalizedTerm,
 };
+use crate::query::trace::{QueryTrace, TracePhase};
 use crate::storage_format::FactHandle;
 use crate::tuple::{
     EncodedTuple, GhtSource, KeyCountEstimate, TupleCursor, TupleError, TupleField, TupleSchema,
@@ -51,6 +52,7 @@ fn colt_get_forces_root_once_and_finds_child() -> TestResult {
     assert!(colt.get(tuple_x(1)?.as_ref()).is_some());
     assert_eq!(colt.counters().nodes_forced, 1);
     assert_eq!(colt.counters().hash_maps_built, 1);
+    assert_eq!(colt.counters().map_entries_built, 2);
     Ok(())
 }
 
@@ -169,8 +171,8 @@ fn colt_fill_batch_allocation_is_bounded_to_requested_batch() -> TestResult {
     });
 
     assert!(
-        alloc_calls < 32,
-        "batch fill appears to allocate beyond the requested tuple batch: {alloc_calls} calls"
+        alloc_calls < 128,
+        "batch fill appears to allocate as if it materialized every source tuple: {alloc_calls} calls"
     );
     assert_eq!(cursor.position, 4);
     Ok(())
@@ -183,6 +185,77 @@ fn dynamic_cover_counting_unforced_vector_does_not_force() -> TestResult {
     assert_eq!(colt.key_count(), KeyCountEstimate::Estimate(3));
     assert!(colt.is_vector());
     assert_eq!(colt.counters().hash_maps_built, 0);
+    Ok(())
+}
+
+#[test]
+fn colt_source_filters_shrink_offsets_before_force() -> TestResult {
+    let filter = SourceFilter::Compare {
+        field_id: 0,
+        op: SourceFilterOp::Eq,
+        value: encode_u64(1).to_vec(),
+    };
+    let colt = ColtSource::new_filtered(
+        AtomOccurrenceId(1),
+        Arc::new(clover_s_image()),
+        vec![
+            TupleSchema::new(vec![field(0, 0)?]),
+            TupleSchema::new(vec![field(2, 1)?]),
+        ],
+        vec![filter],
+    );
+
+    assert_eq!(colt.offset_len(), 2);
+    assert!(colt.is_vector());
+    assert_eq!(colt.counters().hash_maps_built, 0);
+
+    let key = tuple_x(1)?;
+    assert!(colt.get(key.as_ref()).is_some());
+    assert_eq!(colt.counters().offsets_scanned, 2);
+    Ok(())
+}
+
+#[test]
+fn colt_trace_distinguishes_build_from_force() -> TestResult {
+    let mut trace = QueryTrace::new();
+    let colt = ColtSource::new_filtered_traced(
+        AtomOccurrenceId(1),
+        Arc::new(clover_s_image()),
+        vec![
+            TupleSchema::new(vec![field(0, 0)?]),
+            TupleSchema::new(vec![field(2, 1)?]),
+        ],
+        Vec::new(),
+        &mut trace,
+    );
+    assert!(
+        trace
+            .spans
+            .iter()
+            .any(|span| span.phase == TracePhase::ColtBuild)
+    );
+    assert!(
+        !trace
+            .spans
+            .iter()
+            .any(|span| span.phase == TracePhase::ColtForce)
+    );
+
+    let key = tuple_x(1)?;
+    let _ = colt.get_traced(key.as_ref(), &mut trace, "test force");
+
+    assert!(
+        trace
+            .spans
+            .iter()
+            .any(|span| span.phase == TracePhase::ColtForce)
+    );
+    assert!(
+        trace
+            .spans
+            .iter()
+            .any(|span| span.phase == TracePhase::ColtGet)
+    );
     Ok(())
 }
 

@@ -31,7 +31,6 @@ This suite deliberately prioritizes correctness, observability, Free Join paper 
 
 - Source filters are applied after full base-image rows are available, so selective predicates still pay broad scan/load cost.
 - Recursive execution clones binding maps and source maps along hot paths.
-- COLT uses deterministic `BTreeMap` grouping and per-node allocation patterns, not a performance-oriented hash-trie layout.
 - Dynamic cover choice often uses offset counts as estimates rather than true key counts.
 - The current vectorized mode is scalar batching, not NEON vectorization.
 - Explain says timings and allocations are not collected.
@@ -43,7 +42,6 @@ This suite deliberately prioritizes correctness, observability, Free Join paper 
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 11 | `11-colt-lazy-paper-alignment.md` | Makes COLT closer to the paper's lazy column-oriented trie. |
 | 12 | `12-source-filter-pruning.md` | Turns source predicates into early pruning rather than post-load scans. |
 | 13 | `13-recursive-frame-executor.md` | Replaces recursive map/binding cloning with stack/frame execution state. |
 | 14 | `14-set-first-encoded-sinks.md` | Makes encoded set deduplication the default sink path. |

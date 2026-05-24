@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -15,25 +15,13 @@ use crate::tuple::{
     TupleField, TupleSchema,
 };
 
+#[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SourceFilterOp {
-    Eq,
-    NotEq,
-    Lt,
-    Lte,
-    Gt,
-    Gte,
-}
+pub(crate) enum SourceFilterOp { Eq, NotEq, Lt, Lte, Gt, Gte }
 
+#[rustfmt::skip]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum SourceFilter {
-    Compare {
-        field_id: usize,
-        op: SourceFilterOp,
-        value: Vec<u8>,
-    },
-    False,
-}
+pub(crate) enum SourceFilter { Compare { field_id: usize, op: SourceFilterOp, value: Vec<u8> }, False }
 
 impl SourceFilter {
     pub(crate) fn field_id(&self) -> Option<usize> {
@@ -47,21 +35,21 @@ impl SourceFilter {
 #[derive(Clone)]
 pub(crate) struct ColtSource {
     node: Rc<RefCell<ColtNode>>,
-    vars: Vec<usize>,
+    vars: Rc<Vec<usize>>,
 }
 
 struct ColtNode {
     atom: AtomOccurrenceId,
     base: Arc<RelationBaseImage>,
     schemas: Vec<TupleSchema>,
-    vars: Vec<usize>,
+    vars: Rc<Vec<usize>>,
     data: ColtData,
     counters: Rc<RefCell<ColtCounters>>,
 }
 
 enum ColtData {
     Offsets(Vec<usize>),
-    Map(BTreeMap<EncodedTuple, Rc<RefCell<ColtNode>>>),
+    Map(HashMap<EncodedTuple, Rc<RefCell<ColtNode>>>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -70,6 +58,7 @@ pub(crate) struct ColtCounters {
     pub(crate) nodes_forced: usize,
     pub(crate) offsets_scanned: usize,
     pub(crate) hash_maps_built: usize,
+    pub(crate) map_entries_built: usize,
     pub(crate) get_calls: usize,
     pub(crate) misses: usize,
     pub(crate) iter_calls: usize,
@@ -120,7 +109,7 @@ impl ColtSource {
             nodes_created: 1,
             ..ColtCounters::default()
         }));
-        let vars = schemas.first().map_or_else(Vec::new, TupleSchema::vars);
+        let vars = Rc::new(schemas.first().map_or_else(Vec::new, TupleSchema::vars));
         let source_filter_rows_tested = base.row_handles.len() as u64;
         let offsets = (0..base.row_handles.len())
             .filter(|offset| {
@@ -130,7 +119,7 @@ impl ColtSource {
             })
             .collect();
         let source = Self {
-            vars: vars.clone(),
+            vars: Rc::clone(&vars),
             node: Rc::new(RefCell::new(ColtNode {
                 atom,
                 base,
@@ -238,7 +227,7 @@ impl ColtSource {
         }
         drop(node);
         let output = child.map(|node| {
-            let vars = node.borrow().vars.clone();
+            let vars = Rc::clone(&node.borrow().vars);
             ColtSource { node, vars }
         });
         let after_get = self.counters();
@@ -282,17 +271,19 @@ impl ColtSource {
             return;
         };
         let child_schemas = node.schemas.iter().skip(1).cloned().collect::<Vec<_>>();
-        let child_vars = child_schemas
-            .first()
-            .map_or_else(Vec::new, TupleSchema::vars);
-        let mut grouped: BTreeMap<EncodedTuple, Vec<usize>> = BTreeMap::new();
+        let child_vars = Rc::new(
+            child_schemas
+                .first()
+                .map_or_else(Vec::new, TupleSchema::vars),
+        );
+        let mut grouped: HashMap<EncodedTuple, Vec<usize>> = HashMap::new();
         for offset in offsets {
             node.counters.borrow_mut().offsets_scanned += 1;
             if let Ok(tuple) = schema.tuple_from_base_offset(&node.base, offset) {
                 grouped.entry(tuple).or_default().push(offset);
             }
         }
-        let mut map = BTreeMap::new();
+        let mut map = HashMap::new();
         for (tuple, offsets) in grouped {
             node.counters.borrow_mut().nodes_created += 1;
             map.insert(
@@ -301,12 +292,13 @@ impl ColtSource {
                     atom: node.atom,
                     base: Arc::clone(&node.base),
                     schemas: child_schemas.clone(),
-                    vars: child_vars.clone(),
+                    vars: Rc::clone(&child_vars),
                     data: ColtData::Offsets(offsets),
                     counters: Rc::clone(&node.counters),
                 })),
             );
         }
+        node.counters.borrow_mut().map_entries_built += map.len();
         node.counters.borrow_mut().nodes_forced += 1;
         node.counters.borrow_mut().hash_maps_built += 1;
         node.data = ColtData::Map(map);
@@ -318,7 +310,9 @@ fn colt_counter_delta(before: ColtCounters, after: ColtCounters, tuples: usize) 
         colt_nodes_created: after.nodes_created.saturating_sub(before.nodes_created) as u64,
         colt_nodes_forced: after.nodes_forced.saturating_sub(before.nodes_forced) as u64,
         colt_offsets_scanned: after.offsets_scanned.saturating_sub(before.offsets_scanned) as u64,
-        colt_map_entries_built: after.hash_maps_built.saturating_sub(before.hash_maps_built) as u64,
+        colt_map_entries_built: after
+            .map_entries_built
+            .saturating_sub(before.map_entries_built) as u64,
         tuples_yielded: tuples as u64,
         probe_calls: after.get_calls.saturating_sub(before.get_calls) as u64,
         probe_misses: after.misses.saturating_sub(before.misses) as u64,
@@ -360,7 +354,7 @@ impl GhtSource for ColtSource {
     }
 
     fn vars(&self) -> &[usize] {
-        &self.vars
+        self.vars.as_slice()
     }
 
     fn try_for_each_tuple<E, F>(&self, mut f: F) -> std::result::Result<(), E>
@@ -450,7 +444,7 @@ impl GhtSource for ColtSource {
             node.counters.borrow_mut().misses += 1;
         }
         child.map(|node| {
-            let vars = node.borrow().vars.clone();
+            let vars = Rc::clone(&node.borrow().vars);
             ColtSource { node, vars }
         })
     }
