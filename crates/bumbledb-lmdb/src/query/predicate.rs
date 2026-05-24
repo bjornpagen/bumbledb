@@ -24,9 +24,12 @@ pub(crate) fn source_filters_for_atom_with_trace(
     mode: PredicateMode,
     trace: &mut QueryTrace,
 ) -> Result<Vec<SourceFilter>> {
-    let span = trace.start_span(
+    let span = crate::query_trace_span!(
+        trace,
         TracePhase::SourceFilterEncode,
-        format!("relation={} atom={:?}", atom.relation, atom.id),
+        "relation={} atom={:?}",
+        atom.relation,
+        atom.id
     );
     let filters = source_filters_for_atom_inner(txn, schema, query, atom, inputs, mode)?;
     if let Some(span) = span {

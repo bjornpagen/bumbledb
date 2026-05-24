@@ -98,9 +98,12 @@ impl ColtSource {
         mut trace: Option<&mut QueryTrace>,
     ) -> Self {
         let span = trace.as_deref_mut().and_then(|trace| {
-            trace.start_span(
+            crate::query_trace_span!(
+                trace,
                 TracePhase::ColtBuild,
-                format!("relation={} atom={:?}", base.name, atom),
+                "relation={} atom={:?}",
+                base.name,
+                atom
             )
         });
         let counters = ColtCounters {
@@ -213,9 +216,11 @@ impl ColtSource {
         let force_span = self
             .is_vector()
             .then(|| {
-                trace.start_span(
+                crate::query_trace_span!(
+                    trace,
                     TracePhase::ColtForce,
-                    format!("force before get relation={:?}", self.atom()),
+                    "force before get relation={:?}",
+                    self.atom()
                 )
             })
             .flatten();

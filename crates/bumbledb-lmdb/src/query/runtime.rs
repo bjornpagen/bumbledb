@@ -7,7 +7,8 @@ use crate::query::free_join::{FjSubatom, ValidatedFjNode, ValidatedFjPlan};
 use crate::query::model::{AtomOccurrenceId, NormalizedQuery};
 use crate::query::predicate::{self, PredicateMode};
 use crate::query::runtime_frame::{
-    SourceUndo, finish_binding_span, finish_probe_span, replace_source, restore_sources, source_for,
+    SourceUndo, finish_binding_span, finish_node_span, finish_probe_span, finish_skipped_node_span,
+    lazy_atom_label, lazy_label, replace_source, restore_sources, source_for,
 };
 use crate::query::sink::{Binding, BindingSink, BindingUndo};
 use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
@@ -81,7 +82,7 @@ pub(super) fn execute_node<S: BindingSink>(
     sink: &mut S,
     trace: &mut QueryTrace,
 ) -> Result<()> {
-    let node_span = trace.start_span(TracePhase::ExecuteNode, format!("node={node_index}"));
+    let node_span = crate::query_trace_span!(trace, TracePhase::ExecuteNode, "node={}", node_index);
     let Some(node) = plan.nodes.get(node_index) else {
         let result = consume_terminal_binding(query, binding, txn, schema, inputs, sink, trace);
         finish_node_span(trace, node_span, depth);
@@ -91,7 +92,8 @@ pub(super) fn execute_node<S: BindingSink>(
         finish_skipped_node_span(trace, node_span, depth);
         return Ok(());
     }
-    let cover_span = trace.start_span(TracePhase::CoverChoice, format!("node={node_index}"));
+    let cover_span =
+        crate::query_trace_span!(trace, TracePhase::CoverChoice, "node={}", node_index);
     let cover_index = choose_cover(node, sources, cover_policy, stats)?;
     if let Some(span) = cover_span {
         trace.finish_span(
@@ -194,7 +196,8 @@ fn consume_terminal_binding<S: BindingSink>(
     if !predicate::binding_satisfies(txn, schema.descriptor(), query, binding, inputs)? {
         return Ok(());
     }
-    let sink_span = trace.start_span(TracePhase::SinkConsume, "consume projection binding");
+    let sink_span =
+        crate::query_trace_span!(trace, TracePhase::SinkConsume, "consume projection binding");
     let result = sink.consume(query, binding);
     if let Some(span) = sink_span {
         let inserted = result.as_ref().is_ok_and(|stats| stats.inserted);
@@ -208,45 +211,6 @@ fn consume_terminal_binding<S: BindingSink>(
         );
     }
     result.map(|_| ())
-}
-
-fn finish_node_span(
-    trace: &mut QueryTrace,
-    span: Option<crate::query::trace::TraceSpanId>,
-    depth: usize,
-) {
-    if let Some(span) = span {
-        trace.finish_span(
-            span,
-            TraceCounters {
-                recursive_node_entries: 1,
-                max_recursion_depth: depth as u64,
-                frame_pushes: 1,
-                frame_pops: 1,
-                ..TraceCounters::default()
-            },
-        );
-    }
-}
-
-fn finish_skipped_node_span(
-    trace: &mut QueryTrace,
-    span: Option<crate::query::trace::TraceSpanId>,
-    depth: usize,
-) {
-    if let Some(span) = span {
-        trace.finish_span(
-            span,
-            TraceCounters {
-                recursive_node_entries: 1,
-                max_recursion_depth: depth as u64,
-                frame_pushes: 1,
-                frame_pops: 1,
-                factorized_expansions_avoided: 1,
-                ..TraceCounters::default()
-            },
-        );
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -283,7 +247,7 @@ fn execute_bound_cover<S: BindingSink>(
         let Some(child) = cover_source.get_traced(
             key.as_ref(),
             trace,
-            format!("cover get node={node_index} atom={:?}", cover_subatom.atom),
+            lazy_label("cover get", node_index, cover_subatom.atom),
         ) else {
             return Ok(());
         };
@@ -354,7 +318,7 @@ fn execute_scalar_cover_loop<S: BindingSink>(
 ) -> Result<()> {
     cover_source.try_for_each_tuple_traced(
         trace,
-        format!("cover iter node={node_index} atom={:?}", cover_subatom.atom),
+        lazy_label("cover iter", node_index, cover_subatom.atom),
         |tuple, trace| {
             let binding_mark = Binding::undo_mark(binding_undo);
             let source_mark = source_undo.len();
@@ -425,9 +389,11 @@ pub(super) fn bind_cover_tuple(
     tuple: EncodedTupleRef<'_>,
     trace: &mut QueryTrace,
 ) -> Result<bool> {
-    let span = trace.start_span(
+    let span = crate::query_trace_span!(
+        trace,
         TracePhase::BindingExtend,
-        format!("cover atom={:?}", cover_subatom.atom),
+        "cover atom={:?}",
+        cover_subatom.atom
     );
     let extend = binding.extend_from_tuple(cover_source.vars(), tuple, query, binding_undo)?;
     if !extend.accepted {
@@ -439,7 +405,7 @@ pub(super) fn bind_cover_tuple(
         let Some(child) = cover_source.get_traced(
             tuple,
             trace,
-            format!("cover child atom={:?}", cover_subatom.atom),
+            lazy_atom_label("cover child", cover_subatom.atom),
         ) else {
             finish_binding_span(
                 trace,
@@ -476,16 +442,19 @@ fn probe_siblings(
         if index == cover_index {
             continue;
         }
-        let span = trace.start_span(
+        let span = crate::query_trace_span!(
+            trace,
             TracePhase::ProbeSibling,
-            format!("node={} atom={:?}", node.id, subatom.atom),
+            "node={} atom={:?}",
+            node.id,
+            subatom.atom
         );
         let source = source_for(sources, subatom)?;
         let key = super::runtime_keys::key_from_binding(query, binding, subatom)?;
         let Some(child) = source.get_traced(
             key.as_ref(),
             trace,
-            format!("sibling get node={} atom={:?}", node.id, subatom.atom),
+            lazy_label("sibling get", node.id, subatom.atom),
         ) else {
             finish_probe_span(trace, span, true);
             return Ok(false);

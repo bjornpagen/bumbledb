@@ -120,12 +120,14 @@ pub(crate) fn generate_plan_candidates_with_trace(
     let binary_fj = binary2fj(query, &binary).map_err(invalid_plan)?;
     let (factored, rewrite_trace) = factor_plan(query, &binary_fj).map_err(invalid_plan)?;
     for step in rewrite_trace.steps {
-        let span = trace.start_span(
+        let span = crate::query_trace_span!(
+            trace,
             TracePhase::PlanSelect,
-            format!(
-                "factorization from={} to={} outcome={:?} reason={}",
-                step.from_node, step.to_node, step.outcome, step.reason
-            ),
+            "factorization from={} to={} outcome={:?} reason={}",
+            step.from_node,
+            step.to_node,
+            step.outcome,
+            step.reason
         );
         if let Some(span) = span {
             trace.finish_span(span, TraceCounters::default());
@@ -259,9 +261,12 @@ fn collect_planner_stats_with_trace(
     let stats_span = trace.start_span(TracePhase::PlannerStats, "collect planner stats");
     let mut relations = Vec::new();
     for atom in &query.atoms {
-        let relation_span = trace.start_span(
+        let relation_span = crate::query_trace_span!(
+            trace,
             TracePhase::PlannerStats,
-            format!("planner relation={} atom={:?}", atom.relation, atom.id),
+            "planner relation={} atom={:?}",
+            atom.relation,
+            atom.id
         );
         let field_ids = atom
             .fields

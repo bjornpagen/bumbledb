@@ -8,6 +8,23 @@ use crate::diagnostics::{allocation_delta, allocation_snapshot};
 
 pub const QUERY_TRACING_ENABLED: bool = cfg!(any(debug_assertions, feature = "query-tracing"));
 
+#[macro_export]
+macro_rules! query_trace_span {
+    ($trace:expr, $phase:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {{
+        #[cfg(any(debug_assertions, feature = "query-tracing"))]
+        {
+            $trace.start_span($phase, format!($fmt $(, $arg)*))
+        }
+        #[cfg(not(any(debug_assertions, feature = "query-tracing")))]
+        {
+            let _ = &$trace;
+            let _ = $phase;
+            $(let _ = &$arg;)*
+            None
+        }
+    }};
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ExecutionModePublic {
     #[default]

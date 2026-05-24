@@ -85,6 +85,22 @@ cargo run --release -p bumbledb-bench -- --preset job-sample --job-dir data/job 
 | `job_movie_link_bridge` | 53824 | 9695041 | 4714875 | 0 |
 | `job_q33_linked_series_companies` | 15225 | 3495309 | 1747500 | 0 |
 
+## PRD 14 Non-COLT Allocation Cleanup
+
+Changed hotspot: trace label formatting in hot query execution paths. Before this cleanup, many `format!` labels were constructed even in no-query-tracing release builds. The cleanup gates those labels behind compile-time tracing so release no-trace execution does not pay for diagnostic strings.
+
+Command:
+
+```bash
+cargo run --release -p bumbledb-bench -- --preset job-sample --job-dir data/job --open-limit 100000 --query job_broad_cast_keyword_company --query job_broad_movie_info_star --query job_q09_voice_us_actor --format json --repeats 1 --warmup 1 --alloc on
+```
+
+| query | before alloc_calls | after alloc_calls | before allocated_bytes | after allocated_bytes | result_rows |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `job_broad_cast_keyword_company` | 65119 | 19336 | 13182458 | 10475760 | 3 |
+| `job_broad_movie_info_star` | 11185 | 10070 | 15910962 | 15852662 | 3 |
+| `job_q09_voice_us_actor` | 36730 | 4104 | 18184538 | 16040798 | 0 |
+
 ## Architecture Contract
 
 Allowed:

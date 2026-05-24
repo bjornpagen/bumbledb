@@ -45,10 +45,7 @@ pub(super) fn execute_vectorized_cover_loop<S: BindingSink>(
             &mut cursor,
             batch_size,
             trace,
-            format!(
-                "cover batch node={node_index} atom={:?}",
-                cover_subatom.atom
-            ),
+            lazy_label("cover batch", node_index, cover_subatom.atom),
         );
         let exhausted = batch.exhausted;
         if batch.tuples.is_empty() {
@@ -145,7 +142,7 @@ fn probe_vectorized_survivor(
         if let Some(child) = source.get_traced(
             key.as_ref(),
             trace,
-            format!("vector probe node={node_index} atom={:?}", subatom.atom),
+            lazy_label("vector probe", node_index, subatom.atom),
         ) {
             replace_source(sources, subatom.atom, child, source_undo)?;
         } else {
@@ -153,4 +150,16 @@ fn probe_vectorized_survivor(
         }
     }
     Ok(true)
+}
+
+fn lazy_label(
+    prefix: &'static str,
+    node: usize,
+    atom: crate::query::model::AtomOccurrenceId,
+) -> String {
+    if crate::query::trace::QUERY_TRACING_ENABLED {
+        format!("{prefix} node={node} atom={atom:?}")
+    } else {
+        String::new()
+    }
 }

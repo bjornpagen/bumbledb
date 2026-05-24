@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::colt::ColtSource;
 use crate::query::free_join::FjSubatom;
 use crate::query::model::AtomOccurrenceId;
-use crate::query::trace::{QueryTrace, TraceCounters, TraceSpanId};
+use crate::query::trace::{QUERY_TRACING_ENABLED, QueryTrace, TraceCounters, TraceSpanId};
 use crate::tuple::GhtSource;
 use crate::{Error, Result};
 
@@ -75,6 +75,41 @@ pub(super) fn finish_binding_span(
     }
 }
 
+pub(super) fn finish_node_span(trace: &mut QueryTrace, span: Option<TraceSpanId>, depth: usize) {
+    if let Some(span) = span {
+        trace.finish_span(
+            span,
+            TraceCounters {
+                recursive_node_entries: 1,
+                max_recursion_depth: depth as u64,
+                frame_pushes: 1,
+                frame_pops: 1,
+                ..TraceCounters::default()
+            },
+        );
+    }
+}
+
+pub(super) fn finish_skipped_node_span(
+    trace: &mut QueryTrace,
+    span: Option<TraceSpanId>,
+    depth: usize,
+) {
+    if let Some(span) = span {
+        trace.finish_span(
+            span,
+            TraceCounters {
+                recursive_node_entries: 1,
+                max_recursion_depth: depth as u64,
+                frame_pushes: 1,
+                frame_pops: 1,
+                factorized_expansions_avoided: 1,
+                ..TraceCounters::default()
+            },
+        );
+    }
+}
+
 pub(super) fn finish_probe_span(trace: &mut QueryTrace, span: Option<TraceSpanId>, missed: bool) {
     if let Some(span) = span {
         trace.finish_span(
@@ -87,5 +122,21 @@ pub(super) fn finish_probe_span(trace: &mut QueryTrace, span: Option<TraceSpanId
                 ..TraceCounters::default()
             },
         );
+    }
+}
+
+pub(super) fn lazy_label(prefix: &'static str, node: usize, atom: AtomOccurrenceId) -> String {
+    if QUERY_TRACING_ENABLED {
+        format!("{prefix} node={node} atom={atom:?}")
+    } else {
+        String::new()
+    }
+}
+
+pub(super) fn lazy_atom_label(prefix: &'static str, atom: AtomOccurrenceId) -> String {
+    if QUERY_TRACING_ENABLED {
+        format!("{prefix} atom={atom:?}")
+    } else {
+        String::new()
     }
 }

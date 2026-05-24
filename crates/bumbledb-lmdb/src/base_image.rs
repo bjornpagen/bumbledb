@@ -114,9 +114,12 @@ fn relation_base_image_inner(
         field_ids,
     };
     let lookup_span = trace.as_deref_mut().and_then(|trace| {
-        trace.start_span(
+        crate::query_trace_span!(
+            trace,
             TracePhase::BaseImageCacheLookup,
-            format!("relation={relation_name} fields={:?}", key.field_ids),
+            "relation={} fields={:?}",
+            relation_name,
+            key.field_ids
         )
     });
     if let Some(image) = txn.base_images.images.lock().map_err(lock_error)?.get(&key) {
@@ -142,9 +145,12 @@ fn relation_base_image_inner(
     }
 
     let load_span = trace.as_deref_mut().and_then(|trace| {
-        trace.start_span(
+        crate::query_trace_span!(
+            trace,
             TracePhase::BaseImageLoad,
-            format!("relation={relation_name} fields={:?}", key.field_ids),
+            "relation={} fields={:?}",
+            relation_name,
+            key.field_ids
         )
     });
     let image = Arc::new(load_relation_base_image(
