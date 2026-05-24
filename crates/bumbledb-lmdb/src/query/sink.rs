@@ -7,6 +7,21 @@ use crate::storage_v5;
 use crate::tuple::EncodedTuple;
 use crate::{Error, QueryResultSet, ReadTxn, Result, ResultColumn, ResultFact};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum OutputMode {
+    Materialized,
+    Factorized,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct OutputStats {
+    pub(crate) logical_facts_represented: usize,
+    pub(crate) materialized_facts: usize,
+    pub(crate) duplicate_witnesses_suppressed: usize,
+    pub(crate) expansions_avoided: usize,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct Binding {
     pub(super) values: BTreeMap<usize, Vec<u8>>,
@@ -49,6 +64,7 @@ pub(super) trait BindingSink {
 pub(super) struct ProjectionSink<'txn, 'env> {
     txn: &'txn ReadTxn<'env>,
     facts: BTreeSet<ResultFact>,
+    stats: OutputStats,
 }
 
 impl<'txn, 'env> ProjectionSink<'txn, 'env> {
@@ -56,6 +72,7 @@ impl<'txn, 'env> ProjectionSink<'txn, 'env> {
         Self {
             txn,
             facts: BTreeSet::new(),
+            stats: OutputStats::default(),
         }
     }
 
@@ -64,6 +81,17 @@ impl<'txn, 'env> ProjectionSink<'txn, 'env> {
             result_columns(query)?,
             self.facts.into_iter().collect(),
         ))
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn finish_with_stats(
+        mut self,
+        query: &NormalizedQuery,
+    ) -> Result<(QueryResultSet, OutputStats)> {
+        self.stats.materialized_facts = self.facts.len();
+        let columns = result_columns(query)?;
+        let facts = self.facts.into_iter().collect();
+        Ok((QueryResultSet::new(columns, facts), self.stats))
     }
 }
 
@@ -81,7 +109,54 @@ impl BindingSink for ProjectionSink<'_, '_> {
                 }
             }
         }
-        self.facts.insert(fact);
+        self.stats.logical_facts_represented += 1;
+        if !self.facts.insert(fact) {
+            self.stats.duplicate_witnesses_suppressed += 1;
+        }
+        Ok(())
+    }
+}
+
+#[allow(dead_code)]
+pub(super) struct FactorizedProjectionSink<'txn, 'env> {
+    txn: &'txn ReadTxn<'env>,
+    encoded_facts: BTreeSet<Vec<u8>>,
+    stats: OutputStats,
+}
+
+#[allow(dead_code)]
+impl<'txn, 'env> FactorizedProjectionSink<'txn, 'env> {
+    pub(super) fn new(txn: &'txn ReadTxn<'env>) -> Self {
+        Self {
+            txn,
+            encoded_facts: BTreeSet::new(),
+            stats: OutputStats::default(),
+        }
+    }
+
+    pub(super) fn finish(
+        mut self,
+        query: &NormalizedQuery,
+    ) -> Result<(QueryResultSet, OutputStats)> {
+        self.stats.materialized_facts = self.encoded_facts.len();
+        let facts = self
+            .encoded_facts
+            .iter()
+            .map(|fact| decode_encoded_projection(self.txn, query, fact))
+            .collect::<Result<Vec<_>>>()?;
+        let stats = self.stats;
+        Ok((QueryResultSet::new(result_columns(query)?, facts), stats))
+    }
+}
+
+impl BindingSink for FactorizedProjectionSink<'_, '_> {
+    fn consume(&mut self, query: &NormalizedQuery, binding: &Binding) -> Result<()> {
+        let encoded = encoded_projection(query, binding)?;
+        self.stats.logical_facts_represented += 1;
+        if !self.encoded_facts.insert(encoded) {
+            self.stats.duplicate_witnesses_suppressed += 1;
+            self.stats.expansions_avoided += 1;
+        }
         Ok(())
     }
 }
@@ -112,4 +187,47 @@ fn result_columns(query: &NormalizedQuery) -> Result<Vec<ResultColumn>> {
                 .ok_or_else(|| Error::invalid_query(format!("unknown projection {variable}"))),
         })
         .collect()
+}
+
+#[allow(dead_code)]
+fn encoded_projection(query: &NormalizedQuery, binding: &Binding) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    for term in &query.find {
+        match term {
+            TypedFindTerm::Variable { variable } => {
+                let bytes = binding.values.get(variable).ok_or_else(|| {
+                    Error::corrupt(format!("projection variable {variable} is unbound"))
+                })?;
+                out.extend_from_slice(bytes);
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[allow(dead_code)]
+fn decode_encoded_projection(
+    txn: &ReadTxn<'_>,
+    query: &NormalizedQuery,
+    encoded: &[u8],
+) -> Result<ResultFact> {
+    let mut offset = 0;
+    let mut fact = Vec::with_capacity(query.find.len());
+    for term in &query.find {
+        match term {
+            TypedFindTerm::Variable { variable } => {
+                let value_type = &query.variables[*variable].value_type;
+                let width = value_type.encoded_width();
+                let Some(bytes) = encoded.get(offset..offset + width) else {
+                    return Err(Error::corrupt("encoded projection is too short"));
+                };
+                fact.push(storage_v5::decode_value(txn, value_type, bytes)?);
+                offset += width;
+            }
+        }
+    }
+    if offset != encoded.len() {
+        return Err(Error::corrupt("encoded projection has trailing bytes"));
+    }
+    Ok(fact)
 }

@@ -10,6 +10,8 @@ use crate::query::run::execute_validated_plan;
 #[cfg(test)]
 use crate::query::sink::CountingSink;
 use crate::query::sink::ProjectionSink;
+#[cfg(test)]
+use crate::query::sink::{FactorizedProjectionSink, OutputMode, OutputStats};
 use crate::{Error, InputBindings, QueryResultSet, ReadTxn, Result, StorageSchema};
 
 pub(crate) fn execute_query(
@@ -241,6 +243,53 @@ pub(crate) fn execute_query_with_plan_mode_for_test(
     sink.finish(&normalized)
 }
 
+#[cfg(test)]
+pub(crate) fn execute_query_with_output_mode_for_test(
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    query: &TypedQuery,
+    output_mode: OutputMode,
+) -> Result<(QueryResultSet, OutputStats)> {
+    let normalized = normalize_query(schema.descriptor(), query)?;
+    validate_supported(&normalized, &InputBindings::new())?;
+    let plan = selected_plan(txn, schema, &normalized, PlanMode::Default)?;
+    let mut execution_stats = ExecutionStats::default();
+    match output_mode {
+        OutputMode::Materialized => {
+            let mut sink = ProjectionSink::new(txn);
+            execute_validated_plan(
+                txn,
+                schema,
+                &normalized,
+                &plan,
+                &InputBindings::new(),
+                PredicateMode::Pushdown,
+                ExecutionMode::Scalar,
+                CoverPolicy::DynamicMinKeys,
+                &mut execution_stats,
+                &mut sink,
+            )?;
+            sink.finish_with_stats(&normalized)
+        }
+        OutputMode::Factorized => {
+            let mut sink = FactorizedProjectionSink::new(txn);
+            execute_validated_plan(
+                txn,
+                schema,
+                &normalized,
+                &plan,
+                &InputBindings::new(),
+                PredicateMode::Pushdown,
+                ExecutionMode::Scalar,
+                CoverPolicy::DynamicMinKeys,
+                &mut execution_stats,
+                &mut sink,
+            )?;
+            sink.finish(&normalized)
+        }
+    }
+}
+
 fn validate_plan(plan: &FjPlan, query: &NormalizedQuery) -> Result<ValidatedFjPlan> {
     plan.validate(query)
         .map_err(|error| Error::invalid_query(error.to_string()))
@@ -279,3 +328,7 @@ mod vectorized_tests;
 #[cfg(test)]
 #[path = "predicate_tests.rs"]
 mod predicate_tests;
+
+#[cfg(test)]
+#[path = "factorized_output_tests.rs"]
+mod factorized_output_tests;
