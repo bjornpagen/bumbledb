@@ -395,3 +395,7 @@ fn colt_counter_delta(before: ColtCounters, after: ColtCounters, tuples: usize) 
 #[cfg(test)]
 #[path = "colt_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "colt_alloc_benchmarks.rs"]
+mod allocation_benchmarks;
