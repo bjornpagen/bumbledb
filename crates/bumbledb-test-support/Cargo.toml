@@ -1,0 +1,12 @@
+[package]
+name = "bumbledb-test-support"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bumbledb-core.workspace = true
+bumbledb-lmdb = { path = "../bumbledb-lmdb" }
+
+[lints]
+workspace = true

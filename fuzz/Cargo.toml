@@ -11,6 +11,7 @@ cargo-fuzz = true
 
 [dependencies]
 bumbledb-core = { path = "../crates/bumbledb-core" }
+bumbledb-lmdb = { path = "../crates/bumbledb-lmdb" }
 libfuzzer-sys = "0.4"
 
 [lints.rust]
@@ -38,6 +39,13 @@ vec_box = "warn"
 [[bin]]
 name = "fuzz_encoding_decode"
 path = "fuzz_targets/fuzz_encoding_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_query_executor_differential"
+path = "fuzz_targets/fuzz_query_executor_differential.rs"
 test = false
 doc = false
 bench = false

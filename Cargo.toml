@@ -2,6 +2,7 @@
 members = [
     "crates/bumbledb-core",
     "crates/bumbledb-lmdb",
+    "crates/bumbledb-test-support",
 ]
 resolver = "3"
 
