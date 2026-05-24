@@ -96,8 +96,5 @@ Explain must include:
 ```text
 cargo fmt --all --check
 cargo test -p bumbledb-lmdb explain --all-features
-cargo test -p bumbledb-bench --bin bumbledb-bench renderer --all-features
-bash scripts/summarize-trace-jsonl.sh --help
+cargo test --workspace --all-features
 ```
-
-If the script has no help mode, replace the final command with a minimal generated trace fixture test.

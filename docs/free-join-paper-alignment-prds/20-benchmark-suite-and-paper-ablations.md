@@ -12,6 +12,7 @@ Build correctness-first benchmarks that can evaluate paper-compliant Free Join w
 
 ## Scope
 
+- Recreate `crates/bumbledb-bench`.
 - `crates/bumbledb-bench` datasets, runners, config, reports, and gates.
 - Benchmark scripts.
 - SQLite reference checks.
@@ -95,4 +96,4 @@ cargo test -p bumbledb-bench --bin bumbledb-bench renderer --all-features
 cargo run -p bumbledb-bench -- --preset quick --format json --repeats 1 --warmup 0
 ```
 
-If CLI names change, the final command must be replaced with the strictest equivalent quick correctness-first run.
+These commands are valid only after this PRD recreates `crates/bumbledb-bench`. If CLI names change, the final command must be replaced with the strictest equivalent quick correctness-first run.

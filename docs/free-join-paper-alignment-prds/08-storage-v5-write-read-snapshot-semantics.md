@@ -96,7 +96,7 @@ Implement v5 storage operations over the new columnar set layout. This PRD resto
 ```text
 cargo fmt --all --check
 cargo test -p bumbledb-lmdb storage --all-features
-cargo test -p bumbledb-test-support --test failpoints --all-features
-cargo test -p bumbledb-test-support --test concurrency --all-features
+cargo test -p bumbledb-lmdb failpoints --all-features
+cargo test -p bumbledb-lmdb concurrency --all-features
 cargo check --manifest-path fuzz/Cargo.toml
 ```

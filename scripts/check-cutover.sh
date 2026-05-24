@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-! rg "candidate_values_for_variable|collect_atom_candidates|BTreeSet<EncodedValue>" crates/bumbledb-lmdb/src
-! rg "scan_encoded_index_prefix" crates/bumbledb-lmdb/src/query.rs
-! rg "execute_atoms|execute_atom|ChosenAccess|PlannedAtom|plan\.atoms|wcoj|WCOJ" crates/bumbledb-lmdb/src
+rg "FreeJoinPlan|free_join_node|execute_free_join|bind_vars|lftj_runtime|lftj_access|sorted_trie|query_image|QueryImage|AccessLayout|IndexDescriptor|range_indexed|TimestampMicros|Decimal|NominalId|BenchmarkComparison|sqlite_count" crates && exit 1
+exit 0

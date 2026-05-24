@@ -14,6 +14,7 @@ Build the comprehensive correctness suite required to trust the new paper-compli
 
 ## Scope
 
+- Recreate `crates/bumbledb-test-support`.
 - Unit tests.
 - Golden tests.
 - Property tests.

@@ -35,7 +35,7 @@ Cut over to the paper-compliant architecture and delete stale compatibility path
 - Prefer deletion over compatibility shims.
 - If a legacy adapter is necessary for a short transition, it must be crate-private and documented with a deletion PRD reference.
 - Public exports should be minimal and aligned with Rosetta.
-- Keep `QueryOutput` and `QueryResultSet` public unless deliberately changed by prior PRDs.
+- Keep `QueryResultSet` public unless deliberately changed by prior PRDs. Do not revive `QueryOutput` as a hollow wrapper.
 - Keep no legacy LFTJ compatibility path.
 
 ## Non-Goals

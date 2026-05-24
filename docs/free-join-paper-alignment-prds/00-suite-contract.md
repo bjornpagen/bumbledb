@@ -14,8 +14,7 @@ None.
 - `docs/free-join-paper/arXiv-2301.10841v2/tex/02-background.tex`
 - `docs/free-join-paper/arXiv-2301.10841v2/tex/03-free-join.tex`
 - `docs/free-join-paper/arXiv-2301.10841v2/tex/04-optimizations.tex`
-- `docs/free-join-paper/audits/01-formal-free-join-plan-audit.md`
-- `docs/free-join-paper/audits/04-rosetta-set-semantics-paper-adaptation-audit.md`
+- `docs/free-join-paper-alignment-prds/README.md`
 
 ## Contract
 

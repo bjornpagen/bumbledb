@@ -49,7 +49,7 @@ The exact type may differ, but it must provide:
 
 ## Technical Direction
 
-- Rename `QueryImage` only if needed. The important change is semantic: immutable base relation columns first, plan source structures later.
+- Do not reintroduce `QueryImage` as an access-entry-centered abstraction. The important target is immutable base relation columns first, plan source structures later.
 - Build from `L` row handles then load `C` columns for scoped fields.
 - Keep fixed-width encoded column representation for supported persistent types.
 - Decide whether `row_handles` are always loaded or only loaded when diagnostics/reconstruction need them.

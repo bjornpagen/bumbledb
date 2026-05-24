@@ -79,6 +79,5 @@ For each node:
 ```text
 cargo fmt --all --check
 cargo test -p bumbledb-lmdb free_join_executor --all-features
-cargo test -p bumbledb-test-support --test golden_examples --all-features
-cargo test -p bumbledb-test-support --test property_and_differential --all-features
+cargo test --workspace --all-features
 ```

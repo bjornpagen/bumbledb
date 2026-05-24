@@ -67,5 +67,5 @@ Adapt the paper's pushed-selection assumption to Bumbledb's typed IR. Literals, 
 cargo fmt --all --check
 cargo test -p bumbledb-core query_builder --all-features
 cargo test -p bumbledb-lmdb predicate --all-features
-cargo test -p bumbledb-test-support --test sqlite_comparison --all-features
+cargo test --workspace --all-features
 ```

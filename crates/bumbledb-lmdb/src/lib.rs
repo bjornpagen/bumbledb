@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 use bumbledb_core::query_ir::TypedQuery;
 use bumbledb_core::schema::{SchemaDescriptor, ValueType};
 
-pub mod allocation;
 mod error;
 
 pub use error::{Error, Result};
@@ -157,7 +156,7 @@ impl ReadTxn<'_> {
         _schema: &StorageSchema,
         _query: &TypedQuery,
         _inputs: &InputBindings,
-    ) -> Result<QueryOutput> {
+    ) -> Result<QueryResultSet> {
         Err(Error::unavailable("execute_query", "PRD 12"))
     }
 
@@ -344,101 +343,4 @@ impl QueryResultSet {
     pub fn cardinality(&self) -> usize {
         self.facts.len()
     }
-}
-
-/// Query execution output.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct QueryOutput {
-    /// Duplicate-free result set.
-    pub result: QueryResultSet,
-    /// Physical plan and counters shell.
-    pub plan: QueryPlan,
-}
-
-impl QueryOutput {
-    /// Renders a placeholder explain plan.
-    pub fn explain(&self) -> String {
-        self.plan.explain()
-    }
-}
-
-/// Physical query plan shell.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct QueryPlan {
-    /// Deterministic variable binding order.
-    pub variable_order: Vec<String>,
-    /// Coarse query phase timings.
-    pub timings: QueryTimings,
-    /// Allocation summary for this query.
-    pub allocations: QueryAllocationStats,
-    /// Execution counters.
-    pub counters: PlanCounters,
-}
-
-impl QueryPlan {
-    /// Renders a placeholder explain plan.
-    pub fn explain(&self) -> String {
-        "QueryPlan\nexecution_mode: unavailable_pending_prd_12\n".to_owned()
-    }
-}
-
-/// Coarse query phase timings in microseconds.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct QueryTimings {
-    /// Inclusive total query execution time.
-    pub total_micros: u128,
-}
-
-/// Allocation counters for one query phase.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct AllocationPhaseStats {
-    /// True when allocation profiling was enabled.
-    pub enabled: bool,
-    /// Allocation calls observed.
-    pub alloc_calls: u64,
-    /// Bytes allocated.
-    pub bytes_allocated: u64,
-}
-
-/// Allocation summary for one query execution.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct QueryAllocationStats {
-    /// True when allocation profiling was enabled.
-    pub enabled: bool,
-    /// Allocation calls observed.
-    pub alloc_calls: u64,
-    /// Bytes allocated.
-    pub bytes_allocated: u64,
-    /// Total query allocation delta.
-    pub total: AllocationPhaseStats,
-}
-
-/// Execution counters for the future query executor.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct PlanCounters {
-    /// Number of final output facts.
-    pub output_facts: u64,
-    /// Number of final logical output values materialized.
-    pub materialized_output_values: u64,
-}
-
-/// Storage diagnostics shell.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct StorageDiagnostics {
-    /// Storage format version.
-    pub storage_format_version: u32,
-}
-
-/// Query image cache diagnostics shell retained for public compatibility during rebuild.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct QueryImageCacheDiagnostics {
-    /// Cached image count.
-    pub cached_images: usize,
-}
-
-/// Planner statistics cache diagnostics shell retained during rebuild.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PlannerStatsCacheDiagnostics {
-    /// Cached relation count.
-    pub cached_relations: usize,
 }

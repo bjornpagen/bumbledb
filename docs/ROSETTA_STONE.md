@@ -1,6 +1,6 @@
 # Rosetta Stone
 
-This document is the normative product and architecture contract for Bumbledb v4.
+This document is the normative product and architecture contract for the Bumbledb v5 rebuild line.
 
 ## Product Thesis
 
@@ -27,7 +27,7 @@ Bumbledb competes on one battlefield: embedded, read-heavy, single-writer, multi
 
 ## Compatibility Policy
 
-Bumbledb v4 is not compatible with v1, v2, or v3 databases.
+Bumbledb v5 is not compatible with v1, v2, v3, or v4 databases.
 
 Storage format mismatch on open is a hard failure. Schema mismatch on open is a hard failure. There is no migration path except explicit ETL into a new database. There are no compatibility readers, no old layout translators, no compatibility aliases, and no in-place upgrades.
 
@@ -65,7 +65,7 @@ pub struct FieldDescriptor {
 }
 ```
 
-There is no primary-key descriptor, no generated-ID descriptor, and no relation-kind enum.
+There is no primary-key descriptor and no relation-kind enum. Generated IDs exist only as field-level `Serial` generation policy.
 
 Canonical fact membership is implicit for every relation. It is not modeled as a primary key or as a required all-field unique constraint.
 
@@ -122,19 +122,23 @@ Open numeric domains use `U64` or `I64`. Timestamp-like values are application-l
 
 LMDB is the only storage backend.
 
-Current storage has canonical fact membership, fact-id lookup, scan access, and constraint guard namespaces:
+The v5 storage target has canonical fact membership, content-derived fact handles, live row handles, per-field column entries, serial sequence metadata, constraint guards, optional physical accelerators, and statistics:
 
 ```text
-canonical fact = T | relation_id | fact_bytes -> empty
-fact id lookup = F | relation_id | fact_id -> fact_bytes
-access entry = A | relation_id | access_id | declared_key_bytes | fact_id -> empty
-unique guard = U | relation_id | constraint_name | unique_key_bytes -> fact_id
-reverse FK guard = R | target_relation_id | target_constraint | target_key_bytes | source_relation_id | source_constraint | source_fact_id -> empty
+canonical fact = T | relation_id | fact_bytes -> fact_handle
+fact handle lookup = H | relation_id | fact_handle -> fact_bytes
+live row = L | relation_id | fact_handle -> empty
+column entry = C | relation_id | field_id | fact_handle -> encoded_field_bytes
+serial sequence = Q | relation_id | field_id -> next_u64
+unique guard = U | relation_id | constraint_name | unique_key_bytes -> fact_handle
+reverse FK guard = R | target_relation_id | target_constraint | target_key_bytes | source_relation_id | source_constraint | source_fact_handle -> empty
+optional accelerator = A | relation_id | accelerator_id | tuple_key | fact_handle -> empty
+stats = S | relation_id | stat_name -> encoded_stat
 ```
 
-The canonical fact namespace owns exact fact membership. Access entries support scans and query-image construction without carrying undeclared payload fields. Unique constraints and reverse foreign-key delete checks use dedicated guard namespaces rather than overloading scan access entries. Access layouts are generated from fact-set access, named unique constraints, foreign keys, range annotations, and explicit physical indexes.
+The canonical fact namespace owns exact fact membership. Live rows and column entries are the source for snapshot-local base images and COLT. Unique constraints and reverse foreign-key delete checks use dedicated guard namespaces. Optional accelerators may speed access but must never be required for correctness.
 
-Query images are built from current access state under an LMDB read snapshot. Durable historical relation snapshots and history/audit records are not part of the v4 write path.
+Base images are built from current live rows and column entries under an LMDB read snapshot. Durable historical relation snapshots and history/audit records are not part of the v5 write path.
 
 ## Write Semantics
 
@@ -146,7 +150,7 @@ Bulk load is an ETL convenience that applies insert semantics in one write trans
 
 Successful logical writes advance the Bumbledb storage transaction ID. Duplicate inserts and absent deletes do not change logical storage state.
 
-Failed writes leave no partial canonical fact, access entry, constraint, dictionary, or cardinality state committed.
+Failed writes leave no partial canonical fact, live row, column entry, serial sequence, constraint guard, dictionary, or cardinality state committed.
 
 ## Query Semantics
 
@@ -160,11 +164,11 @@ The retained execution target is formal Free Join over GHT/COLT plus fact-native
 
 Projection materialization uses a result-set sink. Duplicate projected facts are rejected before final output decoding.
 
-Query images are internal snapshot-local execution structures. They are scoped to required fields/accesses and are not a public API contract.
+Base images, GHTs, and COLTs are internal snapshot-local execution structures. They are scoped to required fields/accesses and are not a public API contract.
 
 ## Public Output Contract
 
-Query execution returns `QueryOutput` containing a `QueryResultSet`:
+Query execution returns `QueryResultSet` directly:
 
 ```rust
 pub struct QueryResultSet {
@@ -173,7 +177,7 @@ pub struct QueryResultSet {
 }
 ```
 
-`QueryResultSet` is duplicate-free and canonicalized. Result-set execution is the current query output contract.
+`QueryResultSet` is duplicate-free and canonicalized. Result-set execution is the current query output contract. Future plan, explain, timing, or trace diagnostics must be separate observability surfaces, not wrappers required to access result facts.
 
 ## Benchmark Contract
 

@@ -75,6 +75,5 @@ Build a real internal optimizer for Bumbledb's typed set engine. It must choose 
 ```text
 cargo fmt --all --check
 cargo test -p bumbledb-lmdb planner --all-features
-cargo test -p bumbledb-test-support --test property_and_differential --all-features
 cargo test --workspace --all-features
 ```

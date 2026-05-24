@@ -29,13 +29,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bumbledb-bench"
-version = "0.1.0"
-dependencies = [
- "bumbledb-lmdb",
-]
-
-[[package]]
 name = "bumbledb-core"
 version = "0.1.0"
 dependencies = [
@@ -50,10 +43,6 @@ dependencies = [
  "bumbledb-core",
  "thiserror",
 ]
-
-[[package]]
-name = "bumbledb-test-support"
-version = "0.1.0"
 
 [[package]]
 name = "cc"

@@ -8,7 +8,7 @@ Drafted. This suite is the ordered implementation map for breaking Bumbledb into
 
 - Normative product contract: `docs/ROSETTA_STONE.md`.
 - Local paper source: `docs/free-join-paper/arXiv-2301.10841v2/`.
-- Investigator reports: `docs/free-join-paper/audits/*.md`.
+- Historical investigator reports were deleted after this suite superseded them.
 
 ## Non-Negotiable Constraints
 

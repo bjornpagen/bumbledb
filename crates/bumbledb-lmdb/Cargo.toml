@@ -8,9 +8,5 @@ rust-version.workspace = true
 bumbledb-core.workspace = true
 thiserror.workspace = true
 
-[features]
-allocation-telemetry = []
-test-failpoints = []
-
 [lints]
 workspace = true

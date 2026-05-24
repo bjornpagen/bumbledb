@@ -35,7 +35,7 @@ Implement the paper's vectorized Free Join algorithm: batch cover iteration, bat
 - Start with scalar `get` in a batch loop if implementing true `lookup_batch` is too large. The algorithmic batch boundary and survivor compaction are mandatory.
 - Add a later optimization point for true batched hash lookup/seek.
 - Keep batch buffers reusable to avoid excessive allocation.
-- Do not change public `QueryOutput` semantics.
+- Do not change public `QueryResultSet` semantics.
 
 ## Non-Goals
 
@@ -68,6 +68,5 @@ Implement the paper's vectorized Free Join algorithm: batch cover iteration, bat
 ```text
 cargo fmt --all --check
 cargo test -p bumbledb-lmdb vectorized --all-features
-cargo test -p bumbledb-test-support --test property_and_differential --all-features
-cargo test -p bumbledb-bench --bin bumbledb-bench renderer --all-features
+cargo test --workspace --all-features
 ```

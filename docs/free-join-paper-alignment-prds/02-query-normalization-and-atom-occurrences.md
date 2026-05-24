@@ -67,5 +67,5 @@ Define the normalized query model required before formal Free Join planning. The
 cargo fmt --all --check
 cargo test -p bumbledb-core --all-features
 cargo test -p bumbledb-lmdb query --all-features
-cargo test -p bumbledb-test-support --test golden_examples --all-features
+cargo test --workspace --all-features
 ```

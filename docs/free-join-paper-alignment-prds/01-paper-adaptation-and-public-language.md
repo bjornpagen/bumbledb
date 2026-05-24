@@ -11,7 +11,7 @@ Remove current public-language drift and document how Bumbledb adapts the Free J
 ## Scope
 
 - Public Rust docs and comments in `crates/bumbledb-core` and `crates/bumbledb-lmdb`.
-- Benchmark labels and correctness wording in `crates/bumbledb-bench`.
+- Benchmark labels and correctness wording if benchmark code is reintroduced before PRD 20.
 - Rosetta-adjacent documentation.
 - Count-only benchmark fixtures that can mislead future work.
 

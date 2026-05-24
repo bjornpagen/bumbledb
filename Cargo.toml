@@ -1,9 +1,7 @@
 [workspace]
 members = [
-    "crates/bumbledb-bench",
     "crates/bumbledb-core",
     "crates/bumbledb-lmdb",
-    "crates/bumbledb-test-support",
 ]
 resolver = "3"
 
@@ -13,18 +11,8 @@ rust-version = "1.96"
 
 [workspace.dependencies]
 bumbledb-core = { path = "crates/bumbledb-core" }
-bumbledb-lmdb = { path = "crates/bumbledb-lmdb" }
 blake3 = "1.8.2"
-csv = "1.4.0"
-heed = { version = "0.22.1", default-features = false }
-proptest = "1.9.0"
-rusqlite = { version = "0.37.0", features = ["bundled"] }
-smallvec = "1.15.1"
-tempfile = "3.23.0"
 thiserror = "2.0.17"
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "json"] }
-trybuild = "1.0.114"
 
 [workspace.lints.rust]
 unused = "deny"

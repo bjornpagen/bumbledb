@@ -59,6 +59,8 @@ bash scripts/check-line-counts.sh
 git diff --check
 ```
 
+The `bumbledb-test-support` and `bumbledb-bench` commands are final-suite requirements. They become valid after PRDs 19 and 20 recreate those crates.
+
 ## Required Benchmark Smoke
 
 Run the strictest available quick benchmark command after PRD 20. It must include:

@@ -18,7 +18,7 @@ Add an internal factorized output path inspired by the paper and factorized data
 
 ## Required Semantics
 
-- Public `QueryOutput.result` remains a canonical duplicate-free `QueryResultSet`.
+- Public query execution returns a canonical duplicate-free `QueryResultSet`.
 - Internal factorized representation may avoid expanding Cartesian products where projection does not require them.
 - Duplicate witnesses must not multiply public output.
 - Factorized mode and materialized mode must return identical final result sets.
@@ -60,6 +60,5 @@ Add an internal factorized output path inspired by the paper and factorized data
 ```text
 cargo fmt --all --check
 cargo test -p bumbledb-lmdb factorized_output --all-features
-cargo test -p bumbledb-test-support --test golden_examples --all-features
-cargo test -p bumbledb-bench --bin bumbledb-bench renderer --all-features
+cargo test --workspace --all-features
 ```
