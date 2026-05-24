@@ -142,6 +142,8 @@ Open numeric domains use `U64` or `I64`. Timestamp-like values are application-l
 
 LMDB is the only storage backend.
 
+The Rust implementation uses LMDB through the `heed` binding unless a later explicit architecture decision replaces it. Durability, write atomicity, and reader snapshot isolation must come from real LMDB `Env`, `RwTxn`, and `RoTxn` behavior. In-memory maps, application-level copy-on-write shadow state, filesystem sidecar stores, or fake transaction layers are not acceptable substitutes for storage PRDs.
+
 The v5 storage target has canonical fact membership, content-derived fact handles, live row handles, per-field column entries, serial sequence metadata, constraint guards, optional physical accelerators, and statistics:
 
 ```text

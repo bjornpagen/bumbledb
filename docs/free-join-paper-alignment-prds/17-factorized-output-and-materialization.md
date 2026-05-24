@@ -16,6 +16,7 @@ Add an internal factorized output path inspired by the paper and factorized data
 - Optional count/materialization shortcuts for benchmarks if kept internal.
 - Final materialization into `QueryResultSet`.
 - Reuse or extension of the PRD 12 private sink/fold boundary.
+- Final decoding through dictionaries visible in the same LMDB read snapshot.
 
 ## Required Semantics
 
@@ -33,6 +34,7 @@ Add an internal factorized output path inspired by the paper and factorized data
 - Keep encoded values until final materialization.
 - Add counters for logical facts represented, materialized facts, duplicate witnesses suppressed, and expansions avoided.
 - Ensure final decoding still uses dictionary reverse lookups correctly.
+- Dictionary lookups must read LMDB-backed dictionary state from the active snapshot, not process-global intern maps.
 - Keep the interface general enough that a future aggregate sink can fold over grouped binding sets without requiring a different executor.
 
 ## Non-Goals

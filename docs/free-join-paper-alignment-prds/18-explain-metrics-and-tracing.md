@@ -59,6 +59,7 @@ Explain must include:
 - Output mode: materialized set or internal factorized.
 - Sink mode: projection result-set sink, internal factorized sink, or other private non-aggregate sink names that exist at that PRD.
 - Query-image/base-image cache diagnostics.
+- LMDB-backed storage metadata relevant to execution, such as storage tx ID, schema fingerprint, and read-snapshot/source-cache status.
 - Timings and allocation stats.
 
 ## Technical Direction
@@ -68,12 +69,14 @@ Explain must include:
 - Do not print raw user data values except where existing explain already does so safely.
 - Keep dead counters out of explain. Remove or increment counters like stale `trie_intersections`.
 - Trace spans must align with real phases: plan validation, binary2fj, factorization, base image build, COLT force, cover choice, vectorized batch probe, sink materialization, benchmark correctness.
+- Trace spans around storage must align with real LMDB transaction phases: open, read transaction, write transaction, commit, abort, metadata read, namespace scan.
 
 ## Non-Goals
 
 - Do not make explain output a stable public API unless explicitly documented.
 - Do not expose query images, COLT nodes, or fact handles as public data structures.
 - Do not claim public aggregation support merely because an internal sink/fold seam exists.
+- Do not expose raw `heed::Env`, `heed::RoTxn`, `heed::RwTxn`, database handles, or LMDB keys as public API.
 
 ## Acceptance Criteria
 

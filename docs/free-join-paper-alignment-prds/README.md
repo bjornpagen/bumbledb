@@ -19,6 +19,8 @@ Drafted. This suite is the ordered implementation map for breaking Bumbledb into
 - SQL bag semantics are forbidden.
 - SQL is allowed only inside benchmark reference oracles using `SELECT DISTINCT`.
 - LMDB remains the only durable backend.
+- The v5 storage rebuild must use real LMDB through the Rust `heed` binding, matching the pre-purge backend choice unless a later explicit decision replaces it.
+- Application-level copy-on-write maps, in-memory shadow stores, or fake transaction layers are forbidden as substitutes for LMDB write transactions and MVCC read snapshots.
 - Runtime DDL, server mode, network protocol, async API, nulls, floating-point persistence, non-serial generated IDs, and public aggregation remain out of scope.
 - The paper's bag-semantics and DuckDB assumptions must be adapted, not copied.
 - A future Logica-like language may lower into typed IR, but it must adapt to Rosetta set semantics rather than importing upstream Logica multiset/null/SQL assumptions.
@@ -59,6 +61,7 @@ Drafted. This suite is the ordered implementation map for breaking Bumbledb into
 Each PRD is complete only when all of these are true:
 
 - The implementation preserves Rosetta set semantics.
+- Storage/query behavior that claims durability, atomicity, or snapshot isolation is backed by `heed::Env`, `heed::RwTxn`, and `heed::RoTxn`, not by process-local simulation.
 - No public API or documentation implies bag semantics, SQL support, or aggregation unless a later Rosetta update explicitly approves it.
 - New behavior is covered by focused unit tests and at least one integration or differential test when execution semantics change.
 - Public explain/diagnostics do not claim a paper feature unless that feature is represented and tested.

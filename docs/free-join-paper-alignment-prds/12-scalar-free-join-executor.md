@@ -19,6 +19,7 @@ Implement the paper's recursive node/cover/probe Free Join executor in scalar fo
 - Private result sink integration preserving set semantics.
 - A sink/fold execution boundary that can receive complete typed bindings before final public materialization.
 - No legacy LFTJ baseline remains; execution starts from the formal Free Join plan.
+- Execution is driven from a `ReadTxn` over a real LMDB snapshot through PRD 09 base images and PRD 11 COLT sources.
 
 ## Required Execution Semantics
 
@@ -39,6 +40,7 @@ For each node:
 
 - Use the formal PRD 03 plan as the execution input.
 - Build one GHT/COLT source per atom occurrence using the atom's subatom partition sequence.
+- Never bypass PRD 09/11 by reading an in-memory test store directly. Test fixtures must either use mock GHT sources for pure executor tests or real LMDB-backed base images for integration tests.
 - Binding state must reject conflicting variable values.
 - Static zero-variable atoms must be checked exactly once through existence semantics.
 - Keep public output materialization through a duplicate-free projection sink unless PRD 17 has already replaced internals.
@@ -54,6 +56,7 @@ For each node:
 - Do not implement factorized output here.
 - Do not revive the deleted LFTJ baseline here.
 - Do not implement public aggregation or Logica aggregation syntax here.
+- Do not add a non-LMDB execution data source for production.
 
 ## Acceptance Criteria
 

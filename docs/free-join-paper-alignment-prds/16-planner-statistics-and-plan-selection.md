@@ -30,10 +30,12 @@ Build a real internal optimizer for Bumbledb's typed set engine. It must choose 
 ## Required Statistics
 
 - Relation fact count.
+- Stored statistics from LMDB `S` namespace and/or exact scans over LMDB-backed base images.
 - Loaded base image row count.
 - Per-field distinct estimate or exact count for small relations.
 - Prefix distinct/fanout estimates for tuple schemas used by candidate plans.
 - Optional accelerator entry counts and prefix estimates.
+- Logical storage transaction ID and schema fingerprint from LMDB metadata for cache/stat freshness.
 - Skew indicators sufficient to identify clover/sand-dollar style bad binary intermediates.
 - Materialization/output estimates for projection-heavy queries.
 
@@ -43,6 +45,7 @@ Build a real internal optimizer for Bumbledb's typed set engine. It must choose 
 - All candidate plans must validate under PRD 03 before costing or execution.
 - Start with simple cost formulas if needed, but expose enough counters to replace them.
 - Do not make query correctness depend on the chosen plan.
+- Do not use process-local statistics as authoritative after reopen; persisted stats must live in LMDB or be recomputed from LMDB.
 - Plan mode overrides should be internal/test/benchmark configuration, not stable public API.
 - Keep current variable-order scoring only as one candidate generator if useful.
 

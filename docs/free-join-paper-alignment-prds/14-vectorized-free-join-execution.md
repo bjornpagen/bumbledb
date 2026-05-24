@@ -22,6 +22,7 @@ Implement the paper's vectorized Free Join algorithm: batch cover iteration, bat
 ## Required Behavior
 
 - Batch size 1 is exactly equivalent to scalar PRD 12 execution.
+- Vectorized execution must preserve the same LMDB read snapshot as scalar execution for the full query.
 - A cover source can yield up to `batch_size` cover tuples.
 - For each probe subatom, construct keys for surviving batch tuples.
 - Probe all surviving tuples for that subatom before moving to the next subatom.
@@ -44,6 +45,7 @@ Implement the paper's vectorized Free Join algorithm: batch cover iteration, bat
 - Do not implement SIMD.
 - Do not expose vectorized execution as a stable public API.
 - Do not remove scalar mode.
+- Do not introduce separate storage reads outside the active LMDB-backed source structures.
 
 ## Acceptance Criteria
 

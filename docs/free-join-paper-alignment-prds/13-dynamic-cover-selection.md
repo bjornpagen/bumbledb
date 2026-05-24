@@ -19,6 +19,7 @@ Implement the paper's runtime cover choice. A Free Join node may have multiple c
 
 - For each node, compute all cover candidates from the formal plan.
 - At execution time, evaluate cover candidates against their current GHT/COLT node state.
+- Cover estimates must come from current execution sources derived from an LMDB read snapshot, not global mutable process state.
 - Prefer exact key count when the node is already a map.
 - Use offset-vector length as an estimate when exact key count would force a COLT map.
 - Do not force a COLT solely to count keys unless a later cost model explicitly chooses that behavior.
@@ -38,6 +39,7 @@ Implement the paper's runtime cover choice. A Free Join node may have multiple c
 - Do not implement vectorized execution here.
 - Do not implement an advanced cost model here.
 - Do not force materialization just to mimic Generic Join if COLT estimates suffice.
+- Do not open new LMDB transactions during per-node cover choice; use the sources already built for the active read snapshot.
 
 ## Acceptance Criteria
 

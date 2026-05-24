@@ -15,6 +15,7 @@ Implement execution-local Column-Oriented Lazy Trie over immutable relation base
 - Offset-vector leaves and lazy hash-map forcing.
 - GHT schema construction for one atom occurrence from a formal Free Join plan.
 - COLT counters for tests and future explain output.
+- Execution over immutable relation base images loaded from real LMDB read snapshots.
 
 ## Required Model
 
@@ -31,6 +32,7 @@ The exact implementation may use arenas or node IDs, but observable behavior mus
 ## Required Behavior
 
 - `new(base, schema)` starts from all live offsets for the relation/atom occurrence.
+- `base` must be the PRD 09 snapshot-local image derived from LMDB `L/C` state; COLT must not open LMDB transactions itself.
 - `iter()` over a map returns map keys.
 - `iter()` over an offset vector streams tuple values from base columns only when allowed by the current schema semantics.
 - `iter()` over a non-streamable offset vector calls `force()` first.
@@ -43,6 +45,7 @@ The exact implementation may use arenas or node IDs, but observable behavior mus
 ## Technical Direction
 
 - Implement execution-local mutable COLT nodes rather than mutating shared cached base images.
+- Keep COLT execution-local. Do not persist COLT nodes, maps, or offset vectors back into LMDB.
 - Use an arena to avoid borrow-checker problems with child nodes if needed.
 - Build GHT schemas from `FreeJoinPlan` atom partitions, not durable indexes.
 - Support unbalanced trees and maps/vectors at the same depth.
@@ -55,6 +58,7 @@ The exact implementation may use arenas or node IDs, but observable behavior mus
 - Do not implement vectorized execution here.
 - Do not persist COLT nodes to LMDB.
 - Do not require optional physical accelerators for correctness.
+- Do not use an in-memory database as a source relation replacement; all source data originates from LMDB-backed base images.
 
 ## Acceptance Criteria
 

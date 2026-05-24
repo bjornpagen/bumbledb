@@ -15,6 +15,7 @@ Introduce tuple-key primitives and the paper's GHT interface. This is the execut
 - Tuple schema representation.
 - GHT trait/interface.
 - Unit tests for tuple hashing, equality, ordering if needed, and width handling.
+- Integration with base-image columns derived from LMDB snapshots, not direct durable GHT storage.
 
 ## Required Types
 
@@ -30,6 +31,7 @@ Introduce tuple-key primitives and the paper's GHT interface. This is the execut
 - Tuple keys support fixed encoded widths 1, 8, and 16.
 - Strings and bytes compare/probe by intern ID, not raw variable-width bytes.
 - Tuple construction from a base image offset is deterministic.
+- Tuple construction assumes base image offsets are dense positions in immutable vectors loaded from `L/C` LMDB namespaces under one read transaction.
 - Tuple construction from current bindings is deterministic.
 - `get(tuple)` can return no child without error.
 - Key-count estimates can distinguish exact map count from offset-vector estimate later used by COLT.
@@ -46,6 +48,7 @@ Introduce tuple-key primitives and the paper's GHT interface. This is the execut
 - Do not implement COLT force here.
 - Do not implement the Free Join executor here.
 - Do not add durable tuple-key indexes here.
+- Do not read directly from LMDB inside generic tuple/GHT tests except through PRD 09 base-image fixtures.
 
 ## Acceptance Criteria
 

@@ -14,6 +14,7 @@ Prove the refactor is complete. This PRD is the final acceptance gate for direct
 - Full validation run.
 - Documentation finalization.
 - Benchmark smoke and ablation verification.
+- Real LMDB backend audit.
 - Deletion of stale PRD leftovers only if the project policy calls for it.
 
 ## Required Compliance Claims
@@ -33,6 +34,7 @@ Bumbledb may claim paper-aligned Free Join only if all are true:
 - Benchmarks validate exact projected values before timing.
 - Rosetta constraints remain intact.
 - Private sink/fold execution mechanics preserve future aggregation readiness without exposing public aggregation.
+- Storage, snapshot, dictionary, stats, base-image, and benchmark paths are backed by `heed`/LMDB, not in-memory substitutes.
 
 ## Required Audit Checks
 
@@ -41,6 +43,7 @@ Bumbledb may claim paper-aligned Free Join only if all are true:
 - Read all investigator reports and confirm every P0 and P1 violation is resolved or explicitly rejected by Rosetta with documentation.
 - Search for stale terms and deleted mechanics.
 - Inspect public exports from `bumbledb-lmdb`.
+- Inspect internal storage implementation and confirm `heed::Env`, `heed::RoTxn`, and `heed::RwTxn` own durability and snapshot semantics.
 - Inspect explain output for representative queries.
 - Inspect benchmark JSON for representative queries.
 
@@ -83,6 +86,7 @@ Run the strictest available quick benchmark command after PRD 20. It must includ
 - No stale public claims remain.
 - No old v4 compatibility path remains unless explicitly documented as a mismatch failure path.
 - No SQL, bag, aggregation, DuckDB, null, generated-ID, or non-LMDB feature was introduced.
+- No application-level copy-on-write, fake transaction store, or non-LMDB durable sidecar remains.
 - Any Logica-like-language references remain framed as future lowering/adaptation work, not current product support.
 - The final architecture is documented in Rosetta or a Rosetta-linked architecture note.
 - Worktree is clean after the final commit if a commit is requested.

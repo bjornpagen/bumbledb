@@ -35,6 +35,7 @@ Build the comprehensive correctness suite required to trust the new paper-compli
 - SQLite `SELECT DISTINCT` exact-value tests.
 - Storage operation sequence tests under v5.
 - Failpoint atomicity tests across v5 namespaces.
+- Real LMDB transaction, reopen, and MVCC snapshot tests using temporary directories.
 - Query validation tests for malformed IR.
 - Fuzz tests for plans, queries, COLT, and vectorized/scalar equivalence.
 
@@ -55,6 +56,7 @@ Build the comprehensive correctness suite required to trust the new paper-compli
 ## Technical Direction
 
 - Extend `ReferenceDb` to understand the same normalized query semantics chosen in PRD 15.
+- Reference databases are test oracles only. They must never replace LMDB as the Bumbledb storage engine under test.
 - Generate SQLite only for small schemas where exact `SELECT DISTINCT` SQL can be generated safely.
 - Add execution mode matrix tests: scalar/vectorized, static/dynamic cover, materialized/factorized, singleton/binary/factored plan where applicable.
 - Keep slow exhaustive tests separated from fast unit tests if needed, but ensure CI or standard validation can run a representative subset.
@@ -73,6 +75,7 @@ Build the comprehensive correctness suite required to trust the new paper-compli
 - Internal sink tests prove projection deduplication is a sink behavior, not a limitation of Free Join traversal.
 - Fuzz crate includes at least one query/executor differential fuzz target.
 - Failpoint tests cover v5 canonical, live row, column, guard, stats, and commit stages.
+- Storage tests prove behavior survives process-local cache loss by reopening the LMDB environment from disk.
 - Existing golden families still pass.
 - New paper examples are permanent fixtures.
 

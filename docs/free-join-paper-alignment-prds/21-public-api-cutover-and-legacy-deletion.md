@@ -16,6 +16,7 @@ Cut over to the paper-compliant architecture and delete stale compatibility path
 - Internal module names.
 - Old query image/access code.
 - Old storage v4 code paths.
+- Any temporary filesystem marker or non-LMDB storage scaffolding left from earlier PRDs.
 - Old tests that assert rejected behavior.
 - Docs and scripts.
 
@@ -27,6 +28,7 @@ Cut over to the paper-compliant architecture and delete stale compatibility path
 - Keep LFTJ-only modules/types/counters deleted unless rebuilt as formal singleton-plan internals.
 - Delete tests that require singleton Free Join nodes as a formal invariant.
 - Delete stale benchmark count-only correctness code.
+- Delete fake storage engines, process-local durable state, or copy-on-write substitutes for LMDB transactions.
 - Delete stale docs or comments mentioning aggregation, bag semantics, or public SQL support.
 - Delete dead counters and stale trace fields.
 
@@ -35,6 +37,7 @@ Cut over to the paper-compliant architecture and delete stale compatibility path
 - Prefer deletion over compatibility shims.
 - If a legacy adapter is necessary for a short transition, it must be crate-private and documented with a deletion PRD reference.
 - Public exports should be minimal and aligned with Rosetta.
+- Public exports must not expose `heed` raw handles, but internal implementation must still be LMDB-backed.
 - Keep `QueryResultSet` public unless deliberately changed by prior PRDs. Do not revive `QueryOutput` as a hollow wrapper.
 - Keep no legacy LFTJ compatibility path.
 - Keep private sink/fold internals out of the public API unless a later Rosetta update explicitly makes them product surface.
@@ -51,6 +54,7 @@ Cut over to the paper-compliant architecture and delete stale compatibility path
 - No production type named `FreeJoinPlan` lacks subatoms, partitions, and covers.
 - No production explain output claims Free Join without formal plan data.
 - No production storage path writes old v4 access entries as required query structures.
+- No production storage path uses non-LMDB durable state or filesystem sidecar markers for v5 metadata.
 - Count-only benchmark correctness is gone.
 - All docs and scripts reference current counters/fields.
 - No public aggregate API, aggregate docs, or Logica compatibility claim was accidentally introduced by private sink/fold work.

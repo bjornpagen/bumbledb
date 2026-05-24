@@ -16,6 +16,7 @@ Adapt the paper's pushed-selection assumption to Bumbledb's typed IR. Literals, 
 - Literal/input equality filters.
 - Residual comparisons.
 - Range predicate pushdown into COLT/base image or optional accelerators.
+- Pushdown over v5 LMDB-derived base images and optional LMDB-backed accelerator namespaces.
 
 ## Required Semantics
 
@@ -32,6 +33,7 @@ Adapt the paper's pushed-selection assumption to Bumbledb's typed IR. Literals, 
 - Add a `SourcePredicate` or equivalent for atom-local filters.
 - For COLT, source filters can reduce initial offset vectors or filter during `force()`.
 - For optional physical accelerators, range predicates may choose accelerator-backed offset vectors only when correctness does not depend on the accelerator.
+- Accelerator-backed pushdown must read from LMDB `A` namespace entries visible to the active read transaction.
 - Preserve current encoded-comparison fast path where correct.
 - Do not let range pushdown reintroduce SQL null or three-valued logic.
 
@@ -40,6 +42,7 @@ Adapt the paper's pushed-selection assumption to Bumbledb's typed IR. Literals, 
 - Do not add aggregation.
 - Do not add arbitrary expressions.
 - Do not add SQL WHERE parsing.
+- Do not implement pushdown with out-of-band in-memory indexes that are required for correctness.
 
 ## Acceptance Criteria
 

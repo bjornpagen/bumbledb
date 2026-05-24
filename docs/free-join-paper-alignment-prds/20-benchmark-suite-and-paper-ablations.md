@@ -16,6 +16,7 @@ Build correctness-first benchmarks that can evaluate paper-compliant Free Join w
 - `crates/bumbledb-bench` datasets, runners, config, reports, and gates.
 - Benchmark scripts.
 - SQLite reference checks.
+- Real LMDB database creation/loading through the public `bumbledb-lmdb` API.
 - Paper-shaped synthetic fixtures.
 
 ## Required Correctness Rules
@@ -62,6 +63,7 @@ Build correctness-first benchmarks that can evaluate paper-compliant Free Join w
 - Add benchmark lints for `SELECT DISTINCT` and forbidden SQL features.
 - Keep exploratory scripts able to run without gates, but add a strict script for final validation.
 - Do not report performance for a query whose correctness check failed.
+- Do not benchmark an in-memory substitute for Bumbledb storage. Every Bumbledb timing must use the real LMDB-backed environment.
 
 ## Non-Goals
 
@@ -69,6 +71,7 @@ Build correctness-first benchmarks that can evaluate paper-compliant Free Join w
 - Do not add SQL frontend support.
 - Do not implement LSQB features that violate Rosetta, such as nulls, anti-joins, or outer joins.
 - Do not add public aggregate benchmarks in this PRD unless Rosetta has been updated first.
+- Do not call DuckDB as planner or storage backend. SQLite remains a correctness oracle only.
 
 ## Acceptance Criteria
 
