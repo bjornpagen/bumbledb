@@ -4,6 +4,10 @@ mod lint;
 mod report;
 mod runner;
 
+#[global_allocator]
+static GLOBAL_ALLOCATOR: bumbledb_lmdb::diagnostics::TrackingAllocator<std::alloc::System> =
+    bumbledb_lmdb::diagnostics::TrackingAllocator::system();
+
 fn main() {
     match cli::Config::from_env().and_then(runner::run_cli) {
         Ok(output) => println!("{output}"),

@@ -8,6 +8,7 @@ mod sqlite;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use bumbledb_lmdb::diagnostics::{allocation_delta, allocation_snapshot};
 use bumbledb_lmdb::{Environment, InputBindings, StorageSchema};
 
 use crate::cli::Config;
@@ -70,9 +71,11 @@ pub(crate) fn run_job(config: &Config) -> BenchResult<Vec<BenchmarkReport>> {
                 sqlite::query_sqlite(&sqlite_db, query.sqlite).map_err(BenchError::new)?;
             let sqlite_elapsed_nanos = sqlite_start.elapsed().as_nanos();
             let start = Instant::now();
+            let alloc_start = allocation_snapshot();
             let result = env.read(|txn| {
                 txn.execute_query(&bench_schema, &query.query, &InputBindings::new())
             })?;
+            let alloc_delta = allocation_delta(alloc_start, allocation_snapshot());
             let elapsed_nanos = start.elapsed().as_nanos();
             if result.facts != expected {
                 return Err(BenchError::new(format!(
@@ -97,6 +100,11 @@ pub(crate) fn run_job(config: &Config) -> BenchResult<Vec<BenchmarkReport>> {
                 sqlite_elapsed_nanos,
                 load_nanos,
                 result_rows: result.facts.len(),
+                allocation_tracking: config.alloc_tracking,
+                alloc_calls: alloc_delta.alloc_calls,
+                allocated_bytes: alloc_delta.allocated_bytes,
+                deallocated_bytes: alloc_delta.deallocated_bytes,
+                net_allocated_bytes: alloc_delta.net_bytes,
             });
         }
     }
@@ -167,6 +175,7 @@ mod tests {
             job_dir: Some(dir.to_string_lossy().to_string()),
             open_limit: None,
             queries: vec!["job_q01_top_production".to_owned()],
+            alloc_tracking: false,
         };
 
         let reports = run_job(&config)?;

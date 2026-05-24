@@ -18,6 +18,7 @@ use heed::{Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
 pub(crate) mod base_image;
 pub(crate) mod colt;
+pub mod diagnostics;
 mod error;
 pub(crate) mod query;
 pub(crate) mod storage_format;
@@ -25,6 +26,11 @@ pub(crate) mod storage_v5;
 pub(crate) mod tuple;
 
 pub use error::{Error, Result};
+
+#[cfg(test)]
+#[global_allocator]
+static TEST_ALLOCATOR: diagnostics::TrackingAllocator<std::alloc::System> =
+    diagnostics::TrackingAllocator::system();
 
 pub(crate) type RawDatabase = Database<Bytes, Bytes>;
 

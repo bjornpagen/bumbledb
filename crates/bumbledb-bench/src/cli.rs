@@ -16,6 +16,7 @@ pub(crate) struct Config {
     pub(crate) job_dir: Option<String>,
     pub(crate) open_limit: Option<usize>,
     pub(crate) queries: Vec<String>,
+    pub(crate) alloc_tracking: bool,
 }
 
 impl Config {
@@ -39,6 +40,9 @@ impl Config {
                 }
                 "--open-full" => config.open_limit = None,
                 "--query" => config.queries.push(next_arg(&mut args, "--query")?),
+                "--alloc" => {
+                    config.alloc_tracking = parse_on_off(&next_arg(&mut args, "--alloc")?)?
+                }
                 other => return Err(BenchError::new(format!("unknown argument {other}"))),
             }
         }
@@ -57,6 +61,7 @@ impl Default for Config {
             job_dir: None,
             open_limit: Some(10_000),
             queries: Vec::new(),
+            alloc_tracking: false,
         }
     }
 }
@@ -78,6 +83,14 @@ fn parse_usize(value: &str) -> BenchResult<usize> {
     value
         .parse()
         .map_err(|_| BenchError::new(format!("invalid integer {value}")))
+}
+
+fn parse_on_off(value: &str) -> BenchResult<bool> {
+    match value {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        _ => Err(BenchError::new(format!("expected on or off, got {value}"))),
+    }
 }
 
 #[cfg(test)]
@@ -102,6 +115,8 @@ mod tests {
                 "1000",
                 "--query",
                 "job_q01_top_production",
+                "--alloc",
+                "on",
             ]
             .into_iter()
             .map(str::to_owned),
@@ -112,6 +127,7 @@ mod tests {
         assert_eq!(config.job_dir.as_deref(), Some("data/job"));
         assert_eq!(config.open_limit, Some(1000));
         assert_eq!(config.queries, vec!["job_q01_top_production"]);
+        assert!(config.alloc_tracking);
         Ok(())
     }
 }

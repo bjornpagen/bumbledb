@@ -15,12 +15,17 @@ pub(crate) struct BenchmarkReport {
     pub(crate) sqlite_elapsed_nanos: u128,
     pub(crate) load_nanos: u128,
     pub(crate) result_rows: usize,
+    pub(crate) allocation_tracking: bool,
+    pub(crate) alloc_calls: u64,
+    pub(crate) allocated_bytes: u64,
+    pub(crate) deallocated_bytes: u64,
+    pub(crate) net_allocated_bytes: i128,
 }
 
 impl BenchmarkReport {
     pub(crate) fn render_json(&self) -> String {
         format!(
-            "{{\"scale\":{},\"dataset\":\"{}\",\"query\":\"{}\",\"engine\":\"{}\",\"sqlite_reference\":\"{}\",\"git_commit\":\"{}\",\"hardware\":\"{}\",\"correctness_fingerprint\":\"{}\",\"gate_status\":\"{}\",\"elapsed_nanos\":{},\"sqlite_elapsed_nanos\":{},\"load_nanos\":{},\"result_rows\":{}}}",
+            "{{\"scale\":{},\"dataset\":\"{}\",\"query\":\"{}\",\"engine\":\"{}\",\"sqlite_reference\":\"{}\",\"git_commit\":\"{}\",\"hardware\":\"{}\",\"correctness_fingerprint\":\"{}\",\"gate_status\":\"{}\",\"elapsed_nanos\":{},\"sqlite_elapsed_nanos\":{},\"load_nanos\":{},\"result_rows\":{},\"allocation_tracking\":{},\"alloc_calls\":{},\"allocated_bytes\":{},\"deallocated_bytes\":{},\"net_allocated_bytes\":{}}}",
             self.scale,
             escape(&self.dataset),
             escape(&self.query),
@@ -34,12 +39,17 @@ impl BenchmarkReport {
             self.sqlite_elapsed_nanos,
             self.load_nanos,
             self.result_rows,
+            self.allocation_tracking,
+            self.alloc_calls,
+            self.allocated_bytes,
+            self.deallocated_bytes,
+            self.net_allocated_bytes,
         )
     }
 
     pub(crate) fn render_markdown(&self) -> String {
         format!(
-            "| field | value |\n| --- | --- |\n| dataset | {} |\n| query | {} |\n| engine | {} |\n| sqlite_reference | {} |\n| bumbledb_ms | {:.3} |\n| sqlite_ms | {:.3} |\n| load_ms | {:.3} |\n| result_rows | {} |\n| correctness_fingerprint | {} |\n| gate_status | {} |\n",
+            "| field | value |\n| --- | --- |\n| dataset | {} |\n| query | {} |\n| engine | {} |\n| sqlite_reference | {} |\n| bumbledb_ms | {:.3} |\n| sqlite_ms | {:.3} |\n| load_ms | {:.3} |\n| result_rows | {} |\n| allocation_tracking | {} |\n| alloc_calls | {} |\n| allocated_bytes | {} |\n| deallocated_bytes | {} |\n| net_allocated_bytes | {} |\n| correctness_fingerprint | {} |\n| gate_status | {} |\n",
             self.dataset,
             self.query,
             self.engine,
@@ -48,6 +58,11 @@ impl BenchmarkReport {
             self.sqlite_elapsed_nanos as f64 / 1_000_000.0,
             self.load_nanos as f64 / 1_000_000.0,
             self.result_rows,
+            self.allocation_tracking,
+            self.alloc_calls,
+            self.allocated_bytes,
+            self.deallocated_bytes,
+            self.net_allocated_bytes,
             self.correctness_fingerprint,
             self.gate_status,
         )
@@ -105,6 +120,11 @@ mod tests {
             sqlite_elapsed_nanos: 2,
             load_nanos: 3,
             result_rows: 1,
+            allocation_tracking: false,
+            alloc_calls: 0,
+            allocated_bytes: 0,
+            deallocated_bytes: 0,
+            net_allocated_bytes: 0,
         };
 
         let json = report.render_json();
@@ -112,6 +132,7 @@ mod tests {
 
         assert!(json.contains("\"engine\":\"free_join\""));
         assert!(json.contains("\"sqlite_elapsed_nanos\":2"));
+        assert!(json.contains("\"allocation_tracking\":false"));
         assert!(markdown.contains("sqlite_reference"));
     }
 }

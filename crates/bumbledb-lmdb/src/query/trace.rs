@@ -2,6 +2,10 @@
 
 use std::time::Instant;
 
+use crate::diagnostics::{
+    AllocationDelta, AllocationSnapshot, allocation_delta, allocation_snapshot,
+};
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum TraceMode {
     #[default]
@@ -68,7 +72,7 @@ impl QueryTrace {
             label: label.into(),
             start_nanos: self.origin.elapsed().as_nanos(),
             started_at: Instant::now(),
-            start_allocs: AllocationSnapshot::default(),
+            start_allocs: allocation_snapshot(),
         });
         Some(id)
     }
@@ -92,10 +96,7 @@ impl QueryTrace {
             label: active.label,
             start_nanos: active.start_nanos,
             elapsed_nanos: active.started_at.elapsed().as_nanos(),
-            allocs: AllocationDelta::from_snapshots(
-                active.start_allocs,
-                AllocationSnapshot::default(),
-            ),
+            allocs: allocation_delta(active.start_allocs, allocation_snapshot()),
             counters,
         });
     }
@@ -141,42 +142,6 @@ pub(crate) enum TracePhase {
     SinkConsume,
     SinkFinish,
     DecodeValue,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct AllocationSnapshot {
-    pub(crate) alloc_calls: u64,
-    pub(crate) dealloc_calls: u64,
-    pub(crate) realloc_calls: u64,
-    pub(crate) allocated_bytes: u64,
-    pub(crate) deallocated_bytes: u64,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct AllocationDelta {
-    pub(crate) alloc_calls: u64,
-    pub(crate) dealloc_calls: u64,
-    pub(crate) realloc_calls: u64,
-    pub(crate) allocated_bytes: u64,
-    pub(crate) deallocated_bytes: u64,
-    pub(crate) net_bytes: i128,
-}
-
-impl AllocationDelta {
-    fn from_snapshots(start: AllocationSnapshot, end: AllocationSnapshot) -> Self {
-        let allocated_bytes = end.allocated_bytes.saturating_sub(start.allocated_bytes);
-        let deallocated_bytes = end
-            .deallocated_bytes
-            .saturating_sub(start.deallocated_bytes);
-        Self {
-            alloc_calls: end.alloc_calls.saturating_sub(start.alloc_calls),
-            dealloc_calls: end.dealloc_calls.saturating_sub(start.dealloc_calls),
-            realloc_calls: end.realloc_calls.saturating_sub(start.realloc_calls),
-            allocated_bytes,
-            deallocated_bytes,
-            net_bytes: allocated_bytes as i128 - deallocated_bytes as i128,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -252,6 +217,7 @@ struct ActiveSpan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostics::with_allocation_tracking_for_test;
 
     #[test]
     fn query_trace_constructs_without_storage() {
@@ -295,6 +261,24 @@ mod tests {
         assert!(span.is_none());
         assert!(trace.spans.is_empty());
         assert_eq!(trace.counters, TraceCounters::default());
+    }
+
+    #[test]
+    fn allocation_delta_is_attached_to_span() {
+        with_allocation_tracking_for_test(|| {
+            let mut trace = QueryTrace::enabled();
+            let span = trace.start_span(TracePhase::ColtIter, "allocating span");
+            assert!(span.is_some());
+            let Some(span) = span else { return };
+
+            let values = Vec::<u64>::with_capacity(64);
+
+            trace.finish_span(span, TraceCounters::default());
+            assert!(values.capacity() >= 64);
+            assert_eq!(trace.spans.len(), 1);
+            assert!(trace.spans[0].allocs.alloc_calls > 0);
+            assert!(trace.spans[0].allocs.allocated_bytes >= 64 * 8);
+        });
     }
 
     #[test]
