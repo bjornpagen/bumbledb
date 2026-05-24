@@ -115,7 +115,7 @@ The first search may find tests or helper construction, but must not find a per-
 
 Run the full traced JOB sample.
 
-Required improvements against PRD 00 baseline:
+Required improvements against the suite baseline in `README.md`:
 
 - Total `BaseImageLoad` elapsed must drop by at least 40% from 235.06 ms.
 - Exact SQLite comparisons must pass for all 8 JOB sample queries.

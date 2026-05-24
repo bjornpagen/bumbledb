@@ -35,7 +35,7 @@ Columns:
 query	max_elapsed_nanos	max_alloc_calls	max_allocated_bytes	max_base_image_load_nanos	max_colt_offsets_scanned	max_binding_conflicts
 ```
 
-Budgets must be based on the improved final trace, not the PRD 00 baseline.
+Budgets must be based on the improved final trace, not the suite baseline in `README.md`.
 
 ## Required Script Cleanup
 
