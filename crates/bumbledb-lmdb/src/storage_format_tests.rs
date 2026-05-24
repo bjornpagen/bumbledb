@@ -1,7 +1,11 @@
 use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
+use crate::storage_v5::META_STORAGE_FORMAT_VERSION;
 use crate::{Environment, Error, STORAGE_FORMAT_VERSION};
+
+static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn storage_format_new_database_writes_v5_marker() -> crate::Result<()> {
@@ -19,8 +23,7 @@ fn storage_format_new_database_writes_v5_marker() -> crate::Result<()> {
 fn storage_format_old_marker_fails() -> crate::Result<()> {
     let path = test_path("old-marker");
     clean(&path)?;
-    std::fs::create_dir_all(&path)?;
-    std::fs::write(path.join("FORMAT"), "4")?;
+    write_raw_lmdb_format(&path, Some(4))?;
 
     let result = Environment::open(&path);
 
@@ -33,8 +36,7 @@ fn storage_format_old_marker_fails() -> crate::Result<()> {
 fn storage_format_missing_marker_in_non_empty_directory_fails() -> crate::Result<()> {
     let path = test_path("missing-marker");
     clean(&path)?;
-    std::fs::create_dir_all(&path)?;
-    std::fs::write(path.join("stray"), "old data")?;
+    write_raw_lmdb_format(&path, None)?;
 
     let result = Environment::open(&path);
 
@@ -100,12 +102,33 @@ fn storage_format_schema_fingerprint_uses_v5_label() {
 }
 
 fn test_path(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("bumbledb-prd07-{name}"))
+    let id = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("bumbledb-prd07-{name}-{}-{id}", std::process::id()))
 }
 
 fn clean(path: &std::path::Path) -> crate::Result<()> {
     if path.exists() {
         std::fs::remove_dir_all(path)?;
     }
+    Ok(())
+}
+
+fn write_raw_lmdb_format(path: &std::path::Path, version: Option<u32>) -> crate::Result<()> {
+    std::fs::create_dir_all(path)?;
+    let mut options = heed::EnvOpenOptions::new().read_txn_without_tls();
+    options.map_size(1024 * 1024).max_dbs(3).max_readers(8);
+    // SAFETY: The test directory exists and options are initialized.
+    let env = unsafe { options.open(path)? };
+    let mut txn = env.write_txn()?;
+    let meta: heed::Database<heed::types::Bytes, heed::types::Bytes> =
+        env.create_database(&mut txn, Some("_meta"))?;
+    if let Some(version) = version {
+        meta.put(
+            &mut txn,
+            META_STORAGE_FORMAT_VERSION,
+            &version.to_be_bytes(),
+        )?;
+    }
+    txn.commit()?;
     Ok(())
 }

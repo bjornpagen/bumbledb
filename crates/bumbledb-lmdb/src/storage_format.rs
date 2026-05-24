@@ -1,13 +1,7 @@
 #![allow(dead_code)]
 
-use std::path::Path;
-
-use crate::{Error, Result};
-
 /// Current breaking storage format version.
 pub(crate) const STORAGE_FORMAT_VERSION: u32 = 5;
-
-const FORMAT_MARKER_FILE: &str = "FORMAT";
 
 /// Durable key namespace byte.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -51,49 +45,6 @@ pub(crate) fn fact_handle(relation_id: u32, fact_bytes: &[u8]) -> FactHandle {
     let mut handle = [0; 16];
     handle.copy_from_slice(&hash.as_bytes()[..16]);
     FactHandle(handle)
-}
-
-/// Opens an existing format marker or initializes a new empty environment.
-pub(crate) fn open_or_init_format(path: &Path) -> Result<()> {
-    let marker = path.join(FORMAT_MARKER_FILE);
-    if marker.exists() {
-        let version = read_format_version(path)?;
-        if version == STORAGE_FORMAT_VERSION {
-            Ok(())
-        } else {
-            Err(Error::storage_format_mismatch(
-                STORAGE_FORMAT_VERSION,
-                version.to_string(),
-            ))
-        }
-    } else if is_empty_directory(path)? {
-        std::fs::write(marker, STORAGE_FORMAT_VERSION.to_string())?;
-        Ok(())
-    } else {
-        Err(Error::storage_format_mismatch(
-            STORAGE_FORMAT_VERSION,
-            "missing marker in non-empty directory",
-        ))
-    }
-}
-
-/// Reads the storage format marker.
-pub(crate) fn read_format_version(path: &Path) -> Result<u32> {
-    let marker = path.join(FORMAT_MARKER_FILE);
-    let raw = std::fs::read_to_string(&marker).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            Error::storage_format_mismatch(STORAGE_FORMAT_VERSION, "missing marker")
-        } else {
-            Error::Io(error)
-        }
-    })?;
-    raw.trim()
-        .parse::<u32>()
-        .map_err(|_| Error::storage_format_mismatch(STORAGE_FORMAT_VERSION, raw.trim().to_owned()))
-}
-
-fn is_empty_directory(path: &Path) -> Result<bool> {
-    Ok(std::fs::read_dir(path)?.next().is_none())
 }
 
 fn key(namespace: Namespace, parts: &[&[u8]]) -> Vec<u8> {
@@ -174,13 +125,10 @@ pub(crate) fn unique_guard_key(
 }
 
 /// `R | target_relation | target_constraint | target_key | source_relation | source_constraint | source_handle`.
-pub(crate) fn reverse_fk_guard_key(
+pub(crate) fn reverse_fk_guard_prefix(
     target_relation_id: u32,
     target_constraint: &str,
     target_key_bytes: &[u8],
-    source_relation_id: u32,
-    source_constraint: &str,
-    source_handle: FactHandle,
 ) -> Vec<u8> {
     key(
         Namespace::ReverseForeignKeyGuard,
@@ -189,12 +137,25 @@ pub(crate) fn reverse_fk_guard_key(
             target_constraint.as_bytes(),
             b"\0",
             target_key_bytes,
-            &u32_bytes(source_relation_id),
-            source_constraint.as_bytes(),
-            b"\0",
-            &handle_bytes(source_handle),
         ],
     )
+}
+
+/// `R | target_relation | target_constraint | target_key | source_relation | source_constraint | source_handle`.
+pub(crate) fn reverse_fk_guard_key(
+    target_relation_id: u32,
+    target_constraint: &str,
+    target_key_bytes: &[u8],
+    source_relation_id: u32,
+    source_constraint: &str,
+    source_handle: FactHandle,
+) -> Vec<u8> {
+    let mut out = reverse_fk_guard_prefix(target_relation_id, target_constraint, target_key_bytes);
+    out.extend_from_slice(&u32_bytes(source_relation_id));
+    out.extend_from_slice(source_constraint.as_bytes());
+    out.extend_from_slice(b"\0");
+    out.extend_from_slice(&handle_bytes(source_handle));
+    out
 }
 
 /// `A | relation_id | accelerator_id | tuple_key | fact_handle -> empty`.

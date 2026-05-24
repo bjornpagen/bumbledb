@@ -12,6 +12,7 @@ rust-version = "1.96"
 [workspace.dependencies]
 bumbledb-core = { path = "crates/bumbledb-core" }
 blake3 = "1.8.2"
+heed = { version = "0.22.1", default-features = false }
 thiserror = "2.0.17"
 
 [workspace.lints.rust]

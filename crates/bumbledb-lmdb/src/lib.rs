@@ -8,17 +8,36 @@
 #![allow(clippy::result_large_err)]
 
 use std::collections::BTreeMap;
-use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
 use bumbledb_core::query_ir::TypedQuery;
 use bumbledb_core::schema::{SchemaDescriptor, ValueType};
+use heed::types::Bytes;
+use heed::{Database, Env, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
 mod error;
 pub(crate) mod query;
 pub(crate) mod storage_format;
+pub(crate) mod storage_v5;
 
 pub use error::{Error, Result};
+
+pub(crate) type RawDatabase = Database<Bytes, Bytes>;
+
+const DEFAULT_MAP_SIZE: usize = 64 * 1024 * 1024 * 1024;
+const DEFAULT_MAX_READERS: u32 = 1024;
+const FIXED_DATABASE_COUNT: u32 = 3;
+const META_DB: &str = "_meta";
+const DATA_DB: &str = "_data";
+const DICT_DB: &str = "_dict";
+const DATA_FILE: &str = "data.mdb";
+
+#[derive(Clone, Copy)]
+pub(crate) struct Databases {
+    pub(crate) meta: RawDatabase,
+    pub(crate) data: RawDatabase,
+    pub(crate) dict: RawDatabase,
+}
 
 /// Current on-disk storage format version for the rebuild line.
 pub const STORAGE_FORMAT_VERSION: u32 = storage_format::STORAGE_FORMAT_VERSION;
@@ -63,25 +82,38 @@ pub struct BulkLoadReport {
 }
 
 /// Embedded LMDB environment shell.
-#[derive(Clone, Debug)]
 pub struct Environment {
+    env: Env<WithoutTls>,
+    dbs: Databases,
     path: PathBuf,
 }
 
 impl Environment {
     /// Opens or creates the environment directory.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        std::fs::create_dir_all(path.as_ref())?;
-        storage_format::open_or_init_format(path.as_ref())?;
+        let path = path.as_ref();
+        let had_data_file = path.join(DATA_FILE).exists();
+        std::fs::create_dir_all(path)?;
+        let mut options = EnvOpenOptions::new().read_txn_without_tls();
+        options
+            .map_size(DEFAULT_MAP_SIZE)
+            .max_dbs(FIXED_DATABASE_COUNT)
+            .max_readers(DEFAULT_MAX_READERS);
+        // SAFETY: The target directory exists and LMDB options are fully initialized.
+        let env = unsafe { options.open(path)? };
+        let dbs = Self::open_databases(&env, had_data_file)?;
         Ok(Self {
-            path: path.as_ref().to_path_buf(),
+            env,
+            dbs,
+            path: path.to_path_buf(),
         })
     }
 
     /// Opens an environment and validates the supplied schema shell.
     pub fn open_with_schema(path: impl AsRef<Path>, schema: &StorageSchema) -> Result<Self> {
-        let _ = schema.descriptor();
-        Self::open(path)
+        let env = Self::open(path)?;
+        env.verify_schema(schema)?;
+        Ok(env)
     }
 
     /// Creates a new database and bulk-loads facts.
@@ -97,22 +129,33 @@ impl Environment {
 
     /// Returns a conservative LMDB key-size placeholder.
     pub fn max_key_size(&self) -> usize {
-        let _ = &self.path;
-        511
+        self.env.max_key_size()
     }
 
     /// Returns the rebuild storage format version.
     pub fn storage_format_version(&self) -> Result<u32> {
-        storage_format::read_format_version(&self.path)
+        self.read(|txn| txn.storage_format_version())
+    }
+
+    /// Verifies or initializes the stored schema fingerprint.
+    pub fn verify_schema(&self, schema: &StorageSchema) -> Result<()> {
+        self.write(|txn| storage_v5::verify_schema(txn.dbs, &mut txn.txn, schema.descriptor()))
     }
 
     /// Bulk load is unavailable until PRD 08 rebuilds v5 writes.
     pub fn bulk_load(
         &self,
-        _schema: &StorageSchema,
-        _facts: impl IntoIterator<Item = Fact>,
+        schema: &StorageSchema,
+        facts: impl IntoIterator<Item = Fact>,
     ) -> Result<BulkLoadReport> {
-        Err(Error::unavailable("bulk_load", "PRD 08"))
+        let facts_inserted = self.write(|txn| txn.bulk_load(schema, facts))?;
+        self.read(|txn| {
+            Ok(BulkLoadReport {
+                facts_inserted,
+                storage_tx_id: txn.storage_tx_id()?,
+                dictionary_entries: txn.dictionary_entry_count()?,
+            })
+        })
     }
 
     /// Runs a read closure against a shell read transaction.
@@ -123,8 +166,9 @@ impl Environment {
     where
         E: From<Error>,
     {
-        let txn = ReadTxn { _env: PhantomData };
-        f(&txn)
+        let txn = self.env.read_txn().map_err(Error::from).map_err(E::from)?;
+        let read = ReadTxn { txn, dbs: self.dbs };
+        f(&read)
     }
 
     /// Runs a write closure against a shell write transaction.
@@ -135,23 +179,58 @@ impl Environment {
     where
         E: From<Error>,
     {
-        let mut txn = WriteTxn { _env: PhantomData };
-        f(&mut txn)
+        let txn = self.env.write_txn().map_err(Error::from).map_err(E::from)?;
+        let mut write = WriteTxn { txn, dbs: self.dbs };
+        match f(&mut write) {
+            Ok(value) => {
+                let WriteTxn { txn, .. } = write;
+                txn.commit().map_err(Error::from).map_err(E::from)?;
+                Ok(value)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Returns the environment path.
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    fn open_databases(env: &Env<WithoutTls>, had_data_file: bool) -> Result<Databases> {
+        let mut txn = env.write_txn()?;
+        let dbs = Databases {
+            meta: env.create_database(&mut txn, Some(META_DB))?,
+            data: env.create_database(&mut txn, Some(DATA_DB))?,
+            dict: env.create_database(&mut txn, Some(DICT_DB))?,
+        };
+        storage_v5::init_metadata(dbs, &mut txn, had_data_file)?;
+        txn.commit()?;
+        Ok(dbs)
+    }
 }
 
 /// Opaque read transaction shell.
-#[derive(Clone, Debug)]
 pub struct ReadTxn<'env> {
-    _env: PhantomData<&'env ()>,
+    pub(crate) txn: RoTxn<'env, WithoutTls>,
+    pub(crate) dbs: Databases,
 }
 
 impl ReadTxn<'_> {
+    /// Reads the storage format version visible to this snapshot.
+    pub fn storage_format_version(&self) -> Result<u32> {
+        storage_v5::storage_format_version(self)
+    }
+
+    /// Reads the logical storage transaction ID visible to this snapshot.
+    pub fn storage_tx_id(&self) -> Result<u64> {
+        storage_v5::storage_tx_id(self)
+    }
+
+    /// Counts dictionary entries visible to this snapshot.
+    pub fn dictionary_entry_count(&self) -> Result<usize> {
+        storage_v5::dictionary_entry_count(self)
+    }
+
     /// Query execution is unavailable until formal Free Join is rebuilt.
     pub fn execute_query(
         &self,
@@ -164,35 +243,44 @@ impl ReadTxn<'_> {
     }
 
     /// Relation counts are unavailable until PRD 08 rebuilds v5 reads.
-    pub fn relation_fact_count(&self, _schema: &StorageSchema, _relation: &str) -> Result<u64> {
-        Err(Error::unavailable("relation_fact_count", "PRD 08"))
+    pub fn relation_fact_count(&self, schema: &StorageSchema, relation: &str) -> Result<u64> {
+        storage_v5::relation_fact_count(self, schema, relation)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_relation_facts(
+        &self,
+        schema: &StorageSchema,
+        relation: &str,
+    ) -> Result<Vec<Fact>> {
+        storage_v5::debug_relation_facts(self, schema, relation)
     }
 }
 
 /// Opaque write transaction shell.
-#[derive(Clone, Debug)]
 pub struct WriteTxn<'env> {
-    _env: PhantomData<&'env mut ()>,
+    pub(crate) txn: RwTxn<'env>,
+    pub(crate) dbs: Databases,
 }
 
 impl WriteTxn<'_> {
     /// Insert is unavailable until PRD 08 rebuilds v5 writes.
-    pub fn insert(&mut self, _schema: &StorageSchema, _fact: Fact) -> Result<InsertOutcome> {
-        Err(Error::unavailable("insert", "PRD 08"))
+    pub fn insert(&mut self, schema: &StorageSchema, fact: Fact) -> Result<InsertOutcome> {
+        storage_v5::insert(self, schema, fact)
     }
 
     /// Delete is unavailable until PRD 08 rebuilds v5 writes.
-    pub fn delete(&mut self, _schema: &StorageSchema, _fact: Fact) -> Result<DeleteOutcome> {
-        Err(Error::unavailable("delete", "PRD 08"))
+    pub fn delete(&mut self, schema: &StorageSchema, fact: Fact) -> Result<DeleteOutcome> {
+        storage_v5::delete(self, schema, fact)
     }
 
     /// Bulk load is unavailable until PRD 08 rebuilds v5 writes.
     pub fn bulk_load(
         &mut self,
-        _schema: &StorageSchema,
-        _facts: impl IntoIterator<Item = Fact>,
+        schema: &StorageSchema,
+        facts: impl IntoIterator<Item = Fact>,
     ) -> Result<usize> {
-        Err(Error::unavailable("write_bulk_load", "PRD 08"))
+        storage_v5::bulk_load(self, schema, facts)
     }
 }
 
