@@ -12,14 +12,16 @@ pub(crate) use crate::colt_filter::{SourceFilter, SourceFilterOp};
 pub(crate) use crate::colt_schema::tuple_schemas_for_atom;
 use crate::query::model::AtomOccurrenceId;
 use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
-use crate::tuple::{
-    EncodedTuple, EncodedTupleRef, GhtSource, TupleBatch, TupleCursor, TupleSchema,
-};
+use crate::tuple::{EncodedTupleRef, GhtSource, TupleBatch, TupleCursor, TupleSchema};
 
 #[path = "colt/arena.rs"]
 mod arena;
 #[path = "colt/ght.rs"]
 mod ght;
+#[path = "colt/key.rs"]
+mod key;
+
+use key::KeyOwned;
 
 #[derive(Clone)]
 pub(crate) struct ColtSource {
@@ -40,7 +42,7 @@ pub(super) enum ColtData {
     Range(usize),
     Offsets(Vec<usize>),
     Offset(usize),
-    Map(HashMap<EncodedTuple, Rc<RefCell<ColtNode>>>),
+    Map(HashMap<KeyOwned, Rc<RefCell<ColtNode>>>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -290,7 +292,7 @@ impl ColtSource {
                 .first()
                 .map_or_else(Vec::new, TupleSchema::vars),
         );
-        let mut map: HashMap<EncodedTuple, Rc<RefCell<ColtNode>>> =
+        let mut map: HashMap<KeyOwned, Rc<RefCell<ColtNode>>> =
             HashMap::with_capacity(offset_count);
         let mut key_bytes = Vec::with_capacity(schema.encoded_width());
         for offset in offsets {
@@ -306,7 +308,7 @@ impl ColtSource {
             } else {
                 node.counters.borrow_mut().nodes_created += 1;
                 map.insert(
-                    EncodedTuple::from_bytes(key_bytes.clone()),
+                    KeyOwned::from_slice(&key_bytes),
                     Rc::new(RefCell::new(ColtNode {
                         atom: node.atom,
                         base: Arc::clone(&node.base),

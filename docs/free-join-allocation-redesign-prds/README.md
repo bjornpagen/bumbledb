@@ -50,7 +50,6 @@ Latest useful no-query-tracing release sample, allocation tracking enabled, `--o
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 05 | `05-inline-key-and-scratch-model.md` | Replace heap keys and probe keys with compact inline/scratch key representations. |
 | 06 | `06-flat-map-table.md` | Replace `HashMap<EncodedTuple, ...>` with an arena-owned flat map table. |
 | 07 | `07-lazy-force-builder.md` | Rebuild COLT force around the arena map and offset pool. |
 | 08 | `08-streaming-iteration-and-batching.md` | Restore paper-style iterator behavior over the arena without tuple materialization. |

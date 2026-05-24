@@ -27,7 +27,7 @@ impl GhtSource for ColtSource {
         self.force();
         if let ColtData::Map(map) = &self.node.borrow().data {
             for key in map.keys() {
-                if f(key.as_ref())?.is_break() {
+                if f(EncodedTupleRef::new(key.bytes()))?.is_break() {
                     break;
                 }
             }
@@ -48,7 +48,7 @@ impl GhtSource for ColtSource {
                 if tuples.len() >= batch_size {
                     break;
                 }
-                tuples.push(key.clone());
+                tuples.push(key.to_encoded_tuple());
             }
             cursor.position += tuples.len();
             return TupleBatch {

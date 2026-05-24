@@ -64,6 +64,27 @@ The traced allocation totals are not used as budgets. They identify phase shape 
 - Probe key construction still creates owned `EncodedTuple` values.
 - Source handle state still clones `Rc<RefCell<ColtNode>>` handles and stores heap-owned metadata.
 
+## PRD 05 No-Trace Checkpoint
+
+After replacing COLT map keys with 8-byte and 16-byte inline owned keys, no-query-tracing release allocation calls improved on q09 and both broad queries. Allocated bytes improved versus the PRD 00 baseline for every JOB sample query.
+
+Command:
+
+```bash
+cargo run --release -p bumbledb-bench -- --preset job-sample --job-dir data/job --open-limit 100000 --format json --repeats 1 --warmup 1 --alloc on
+```
+
+| query | alloc_calls | allocated_bytes | elapsed_nanos | result_rows |
+| --- | ---: | ---: | ---: | ---: |
+| `job_broad_cast_keyword_company` | 97287 | 9636194 | 8498667 | 3 |
+| `job_broad_movie_info_star` | 59550 | 10523910 | 6041708 | 3 |
+| `job_q01_top_production` | 8809 | 1250698 | 849542 | 0 |
+| `job_q09_voice_us_actor` | 82900 | 12203798 | 8342250 | 0 |
+| `job_q16_character_title_us` | 51866 | 5675092 | 4907041 | 0 |
+| `job_q24_voice_keyword_actor` | 69045 | 9117707 | 6608208 | 0 |
+| `job_movie_link_bridge` | 53824 | 9695041 | 4714875 | 0 |
+| `job_q33_linked_series_companies` | 15225 | 3495309 | 1747500 | 0 |
+
 ## Architecture Contract
 
 Allowed:
