@@ -1,5 +1,11 @@
 #![allow(dead_code)]
 
+use std::hash::{Hash, Hasher};
+
+use super::key::{KeyOwned, KeyRef};
+
+const MAP_EMPTY: u32 = u32::MAX;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct ColtSourceId(pub(super) u32);
 
@@ -40,7 +46,21 @@ pub(super) struct ColtNodeRecord {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ColtMapRecord {
+    pub(super) table: MapTable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct MapTable {
+    pub(super) buckets: OffsetRange,
     pub(super) entries: OffsetRange,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct MapEntry {
+    pub(super) hash: u64,
+    pub(super) key: KeyOwned,
+    pub(super) child: ColtNodeId,
+    pub(super) next: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -48,6 +68,8 @@ pub(super) struct ColtArena {
     nodes: Vec<ColtNodeRecord>,
     maps: Vec<ColtMapRecord>,
     offsets: Vec<u32>,
+    map_buckets: Vec<u32>,
+    map_entries: Vec<MapEntry>,
 }
 
 pub(super) enum OffsetIter<'arena> {
@@ -100,8 +122,72 @@ impl ColtArena {
     }
 
     pub(super) fn add_map_placeholder_node(&mut self) -> ColtNodeId {
-        let map = self.add_map(OffsetRange { start: 0, len: 0 });
+        let map = self.add_map_table(0, 0);
         self.push_node(NodeData::Map(map))
+    }
+
+    pub(super) fn add_map_table(&mut self, bucket_hint: usize, entry_hint: usize) -> ColtMapId {
+        let bucket_len = bucket_hint.max(1).next_power_of_two();
+        let bucket_start = self.map_buckets.len() as u32;
+        self.map_buckets
+            .resize(self.map_buckets.len() + bucket_len, MAP_EMPTY);
+        let entry_start = self.map_entries.len() as u32;
+        self.map_entries.reserve(entry_hint);
+        let id = ColtMapId(self.maps.len() as u32);
+        self.maps.push(ColtMapRecord {
+            table: MapTable {
+                buckets: OffsetRange {
+                    start: bucket_start,
+                    len: bucket_len as u32,
+                },
+                entries: OffsetRange {
+                    start: entry_start,
+                    len: 0,
+                },
+            },
+        });
+        id
+    }
+
+    pub(super) fn insert_map_entry(
+        &mut self,
+        map: ColtMapId,
+        key: KeyRef<'_>,
+        child: ColtNodeId,
+    ) -> ColtNodeId {
+        if let Some(existing) = self.lookup_map(map, key) {
+            return existing;
+        }
+        let hash = hash_key(key.bytes());
+        let bucket = self.bucket_index(map, hash);
+        let next = self.map_buckets[bucket];
+        let entry_index = self.map_entries.len() as u32;
+        self.map_entries.push(MapEntry {
+            hash,
+            key: KeyOwned::from_slice(key.bytes()),
+            child,
+            next,
+        });
+        self.map_buckets[bucket] = entry_index;
+        self.maps[map.0 as usize].table.entries.len += 1;
+        child
+    }
+
+    pub(super) fn lookup_map(&self, map: ColtMapId, key: KeyRef<'_>) -> Option<ColtNodeId> {
+        let hash = hash_key(key.bytes());
+        let mut entry = self.map_buckets[self.bucket_index(map, hash)];
+        while entry != MAP_EMPTY {
+            let candidate = &self.map_entries[entry as usize];
+            if candidate.hash == hash && candidate.key.bytes() == key.bytes() {
+                return Some(candidate.child);
+            }
+            entry = candidate.next;
+        }
+        None
+    }
+
+    pub(super) fn map_entry_count(&self, map: ColtMapId) -> usize {
+        self.maps[map.0 as usize].table.entries.len as usize
     }
 
     pub(super) fn node(&self, id: ColtNodeId) -> Option<&ColtNodeRecord> {
@@ -145,11 +231,16 @@ impl ColtArena {
         id
     }
 
-    fn add_map(&mut self, entries: OffsetRange) -> ColtMapId {
-        let id = ColtMapId(self.maps.len() as u32);
-        self.maps.push(ColtMapRecord { entries });
-        id
+    fn bucket_index(&self, map: ColtMapId, hash: u64) -> usize {
+        let buckets = self.maps[map.0 as usize].table.buckets;
+        buckets.start as usize + (hash as usize & (buckets.len as usize - 1))
     }
+}
+
+fn hash_key(bytes: &[u8]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
 }
 
 impl Iterator for OffsetIter<'_> {
@@ -228,174 +319,5 @@ impl ArenaSourceStore {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn arena_creates_all_node_data_variants() {
-        let mut arena = ColtArena::new();
-
-        let range = arena.add_range_node(0, 10);
-        let singleton = arena.add_singleton_node(7);
-        let offsets = arena.add_offsets_node(&[2, 4, 8]);
-        let map = arena.add_map_placeholder_node();
-
-        assert_eq!(
-            arena.node(range).map(|node| node.data),
-            Some(NodeData::Range { start: 0, len: 10 })
-        );
-        assert_eq!(
-            arena.node(singleton).map(|node| node.data),
-            Some(NodeData::Singleton { offset: 7 })
-        );
-        assert_eq!(
-            arena.node(offsets).map(|node| node.data),
-            Some(NodeData::Offsets(OffsetRange { start: 0, len: 3 }))
-        );
-        assert_eq!(
-            arena.node(map).map(|node| node.data),
-            Some(NodeData::Map(ColtMapId(0)))
-        );
-    }
-
-    #[test]
-    fn arena_node_ids_remain_stable_after_insertions() {
-        let mut arena = ColtArena::new();
-        let first = arena.add_singleton_node(1);
-        let second = arena.add_range_node(0, 2);
-
-        for offset in 10..100 {
-            let _ = arena.add_singleton_node(offset);
-        }
-
-        assert_eq!(
-            arena.node(first).map(|node| node.data),
-            Some(NodeData::Singleton { offset: 1 })
-        );
-        assert_eq!(
-            arena.node(second).map(|node| node.data),
-            Some(NodeData::Range { start: 0, len: 2 })
-        );
-    }
-
-    #[test]
-    fn arena_offset_ranges_read_back_exact_offsets() {
-        let mut arena = ColtArena::new();
-
-        let first = arena.append_offsets(&[1, 3, 5]);
-        let second = arena.append_offsets(&[8, 13]);
-
-        assert_eq!(arena.offsets(first), &[1, 3, 5]);
-        assert_eq!(arena.offsets(second), &[8, 13]);
-    }
-
-    #[test]
-    fn arena_iterates_range_singleton_and_pooled_offsets() {
-        let mut arena = ColtArena::new();
-        let range = NodeData::Range { start: 3, len: 4 };
-        let singleton = NodeData::Singleton { offset: 42 };
-        let pooled = arena.child_offsets_data(&[5, 8, 13]);
-
-        assert_eq!(
-            arena.iter_offsets(range).collect::<Vec<_>>(),
-            vec![3, 4, 5, 6]
-        );
-        assert_eq!(arena.iter_offsets(singleton).collect::<Vec<_>>(), vec![42]);
-        assert_eq!(
-            arena.iter_offsets(pooled).collect::<Vec<_>>(),
-            vec![5, 8, 13]
-        );
-    }
-
-    #[test]
-    fn arena_duplicate_heavy_children_use_singletons_without_pool_offsets() {
-        let mut arena = ColtArena::new();
-        let child = arena.child_offsets_data(&[17]);
-
-        assert_eq!(child, NodeData::Singleton { offset: 17 });
-        assert_eq!(arena.offset_pool_len(), 0);
-        assert_eq!(arena.iter_offsets(child).collect::<Vec<_>>(), vec![17]);
-    }
-
-    #[test]
-    fn arena_many_offset_child_uses_one_offset_pool_range() {
-        let mut arena = ColtArena::new();
-        let child = arena.child_offsets_data(&[1, 2, 3, 5, 8]);
-
-        assert_eq!(child, NodeData::Offsets(OffsetRange { start: 0, len: 5 }));
-        assert_eq!(arena.offset_pool_len(), 5);
-        assert_eq!(
-            arena.iter_offsets(child).collect::<Vec<_>>(),
-            vec![1, 2, 3, 5, 8]
-        );
-    }
-
-    #[test]
-    fn arena_full_unfiltered_source_uses_implicit_range() {
-        let mut arena = ColtArena::new();
-        let source = arena.add_full_source_node(4);
-
-        assert_eq!(arena.offset_pool_len(), 0);
-        assert_eq!(
-            arena.node(source).map(|node| node.data),
-            Some(NodeData::Range { start: 0, len: 4 })
-        );
-        assert_eq!(
-            arena
-                .node(source)
-                .map(|node| arena.iter_offsets(node.data).collect::<Vec<_>>()),
-            Some(vec![0, 1, 2, 3])
-        );
-    }
-
-    #[test]
-    fn arena_empty_ranges_and_singletons_are_distinct() {
-        let mut arena = ColtArena::new();
-        let empty = arena.add_offsets_node(&[]);
-        let singleton = arena.add_singleton_node(0);
-
-        assert_eq!(
-            arena.node(empty).map(|node| node.data),
-            Some(NodeData::Offsets(OffsetRange { start: 0, len: 0 }))
-        );
-        assert_eq!(
-            arena.node(singleton).map(|node| node.data),
-            Some(NodeData::Singleton { offset: 0 })
-        );
-        assert_ne!(
-            arena.node(empty).map(|node| node.data),
-            arena.node(singleton).map(|node| node.data)
-        );
-    }
-
-    #[test]
-    fn arena_source_handle_is_compact_copy_state() {
-        assert!(std::mem::size_of::<ArenaSourceHandle>() <= 24);
-        assert!(std::mem::size_of::<ArenaSourceUndo>() <= 32);
-    }
-
-    #[test]
-    fn arena_source_store_replaces_and_restores_compact_handles() {
-        let root = ArenaSourceHandle::new(ColtSourceId(0), ColtNodeId(0), SchemaVarsId(0));
-        let child = ArenaSourceHandle::new(ColtSourceId(0), ColtNodeId(1), SchemaVarsId(1));
-        let mut store = ArenaSourceStore::with_atom_count(1);
-        store.set_initial(0, root);
-        let mark = store.undo_mark();
-
-        assert_eq!(store.source_for(0), Some(root));
-        assert!(store.replace_source(0, child));
-        assert_eq!(store.source_for(0), Some(child));
-
-        store.restore_to(mark);
-        assert_eq!(store.source_for(0), Some(root));
-    }
-
-    #[test]
-    fn arena_source_store_missing_atom_replacement_is_rejected() {
-        let child = ArenaSourceHandle::new(ColtSourceId(0), ColtNodeId(1), SchemaVarsId(1));
-        let mut store = ArenaSourceStore::with_atom_count(1);
-
-        assert!(!store.replace_source(0, child));
-        assert_eq!(store.source_for(0), None);
-    }
-}
+#[path = "arena_tests.rs"]
+mod tests;
