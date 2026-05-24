@@ -60,7 +60,7 @@ impl TupleSchema {
                 })?;
             push_checked(&mut bytes, value, field.width)?;
         }
-        Ok(EncodedTuple { bytes })
+        Ok(EncodedTuple::from_bytes(bytes))
     }
 
     pub(crate) fn tuple_from_base_offset(
@@ -70,7 +70,7 @@ impl TupleSchema {
     ) -> Result<EncodedTuple, TupleError> {
         let mut bytes = Vec::with_capacity(self.encoded_width());
         self.write_tuple_from_base_offset(image, offset, &mut bytes)?;
-        Ok(EncodedTuple { bytes })
+        Ok(EncodedTuple::from_bytes(bytes))
     }
 
     pub(crate) fn write_tuple_from_base_offset(
@@ -110,7 +110,7 @@ impl EncodedTuple {
                 actual: bytes.len(),
             });
         }
-        Ok(Self { bytes })
+        Ok(Self::from_bytes(bytes))
     }
 
     pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
@@ -118,11 +118,13 @@ impl EncodedTuple {
     }
 
     pub(crate) fn as_ref(&self) -> EncodedTupleRef<'_> {
-        EncodedTupleRef { bytes: &self.bytes }
+        EncodedTupleRef {
+            bytes: self.bytes(),
+        }
     }
 
     pub(crate) fn bytes(&self) -> &[u8] {
-        &self.bytes
+        self.bytes.as_slice()
     }
 }
 
@@ -147,9 +149,7 @@ impl<'a> EncodedTupleRef<'a> {
     }
 
     pub(crate) fn to_owned_tuple(self) -> EncodedTuple {
-        EncodedTuple {
-            bytes: self.bytes.to_vec(),
-        }
+        EncodedTuple::from_bytes(self.bytes.to_vec())
     }
 }
 
