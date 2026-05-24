@@ -79,7 +79,7 @@ fn explain_golden_for_dynamic_cover_and_modes() -> Result<()> {
     assert!(text.contains("sink mode: internal factorized projection sink"));
     assert!(text.contains("source kind: COLT"));
     assert!(text.contains("storage_tx_id"));
-    assert!(text.contains("no aggregation support"));
+    assert!(text.contains("no public aggregate support"));
     Ok(())
 }
 

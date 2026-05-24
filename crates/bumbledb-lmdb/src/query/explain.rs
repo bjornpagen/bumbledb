@@ -94,7 +94,9 @@ impl QueryPlan {
             "sink mode: {}",
             sink_mode_label(self.config.output_mode)
         ));
-        out.push("public output: duplicate-free QueryResultSet; no aggregation support".to_owned());
+        out.push(
+            "public output: duplicate-free QueryResultSet; no public aggregate support".to_owned(),
+        );
         out.push(format!("free join nodes: {}", self.validated.nodes.len()));
         out.push(format!(
             "subatoms: {}",

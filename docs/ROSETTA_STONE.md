@@ -22,12 +22,12 @@ This means the Free Join rebuild should optimize for the correct internal seams 
 
 The Free Join paper is algorithmic authority for plan structure and execution mechanics, not product-scope authority for Bumbledb.
 
-- Paper SQL examples are illustrative only. They do not imply a Bumbledb SQL parser, SQL frontend, SQL null semantics, SQL bags, or SQL aggregation.
+- Paper SQL examples are illustrative only. They do not imply a Bumbledb SQL parser, SQL frontend, SQL null semantics, SQL bags, or SQL aggregate queries.
 - Paper bag-semantics references are rejected. Bumbledb base relations are sets, solution bindings are sets, and public projected outputs are sets.
 - DuckDB appears in the paper as a source of binary plans and as an evaluation baseline. Bumbledb must not depend on DuckDB or call DuckDB as planner/runtime infrastructure.
-- Paper aggregation references are deferred. Bumbledb may preserve private sink/fold seams for future aggregate consumers, but public aggregation is not part of the v5 Free Join PRD suite.
+- Paper aggregate-query references are deferred. Bumbledb may preserve private sink/fold seams for future aggregate consumers, but public aggregate queries are not part of the v5 Free Join PRD suite.
 - Paper main-memory assumptions are adapted to LMDB snapshots. Durable storage is LMDB-only; GHT, COLT, base images, and query images are private snapshot-local execution structures.
-- Upstream Logica syntax is a future frontend inspiration only. Bumbledb may later implement a Rosetta-compatible Logica-like lowering path, but it must not inherit upstream multiset, null, float, SQL dialect, or graph-database assumptions.
+- Upstream Logica syntax is a future frontend inspiration only. Bumbledb may later implement a Rosetta-compatible Logica-like lowering path, but it must not inherit upstream duplicate-preserving predicate, null, float, SQL dialect, or graph-database assumptions.
 
 ## Core Commitments
 
@@ -62,7 +62,7 @@ The Rust API is also not a frozen public interface. The typed query IR is an int
 - There is no update operation.
 - DB-generated IDs exist only through declared `Serial` fields.
 - Projection output has set semantics.
-- SQL-style multiset behavior is out of scope.
+- SQL-style duplicate-preserving bag behavior is out of scope.
 - There is no `SELECT DISTINCT` concept because distinctness is the default.
 
 ## Schema Model
@@ -180,23 +180,23 @@ Queries are built as typed IR with schema-aware builder support and execution-bo
 
 The logical solution of a query is a set of variable bindings. Projection returns the set of projected facts. Existential variables do not multiply projected output.
 
-Future Logica-like syntax must lower to this model. Upstream Logica concepts that rely on multiset predicate semantics, nulls, floats, dialect SQL expressions, arrays/lists as first-class persistent values, or graph-query product assumptions are not inherited automatically. They may be added only as Rosetta-compatible typed IR features.
+Future Logica-like syntax must lower to this model. Upstream Logica concepts that rely on duplicate-preserving predicate semantics, nulls, floats, dialect SQL expressions, arrays/lists as first-class persistent values, or graph-query product assumptions are not inherited automatically. They may be added only as Rosetta-compatible typed IR features.
 
-## Aggregation Readiness
+## Aggregate Readiness
 
-Public aggregation remains out of scope for the v5 Free Join PRD suite. No current public API, docs, benchmark claim, or query result contract may imply aggregate queries are supported.
+Public aggregate queries remain out of scope for the v5 Free Join PRD suite. No current public API, docs, benchmark claim, or query result contract may imply aggregate queries are supported.
 
-However, the Free Join executor must not be built as a black box whose only internal behavior is “materialize every full result row into a vector and post-process it.” That design would make a future Logica-like aggregate layer expensive to add. The executor must instead emit through a private typed sink/fold boundary. The first sink is the result-set projection sink; future sinks may implement aggregate folds after Rosetta explicitly admits public aggregation.
+However, the Free Join executor must not be built as a black box whose only internal behavior is “materialize every full result row into a vector and post-process it.” That design would make a future Logica-like aggregate layer expensive to add. The executor must instead emit through a private typed sink/fold boundary. The first sink is the result-set projection sink; future sinks may implement aggregate folds after Rosetta explicitly admits public aggregate queries.
 
 The required internal seam is:
 
 - The executor can expose complete encoded variable bindings to a private consumer before final public materialization.
 - Projection is one consumer: it maps bindings to projected result facts and deduplicates them.
 - Factorized output is one consumer or consumer mode: it may avoid expanding Cartesian products when final `QueryResultSet` equality is preserved.
-- Future aggregation can be another consumer: it groups bindings and folds typed values without changing Free Join plan validity.
+- Future aggregate queries can be another consumer: they group bindings and fold typed values without changing Free Join plan validity.
 - Sink/consumer hooks are private implementation details, not public query APIs.
 
-If aggregation is later added, its default semantics must be set-based over Bumbledb solution bindings, not SQL bags. Group keys are explicit non-aggregated output fields. Aggregate input is derived from the set of satisfying full bindings for that group. Duplicate base facts cannot exist, and duplicate projected facts do not define aggregation cardinality. Any aggregate that intentionally counts bindings, distinct values, or grouped facts must say which set it folds.
+If aggregate queries are later added, their default semantics must be set-based over Bumbledb solution bindings, not SQL bags. Group keys are explicit non-aggregated output fields. Aggregate input is derived from the set of satisfying full bindings for that group. Duplicate base facts cannot exist, and duplicate projected facts do not define aggregate cardinality. Any aggregate that intentionally counts bindings, distinct values, or grouped facts must say which set it folds.
 
 Future aggregate operators must be typed and deterministic. Integer sums use checked or explicitly specified overflow behavior. `Min`, `Max`, `ArgMin`, and `ArgMax` require stable tie-breaking when multiple bindings compare equal. Null-skipping from upstream Logica does not apply because Bumbledb has no nulls. Floating-point aggregates remain forbidden unless Rosetta changes. List/array-producing aggregates remain out of scope until the persistent/runtime value model explicitly supports them.
 
