@@ -5,9 +5,10 @@ use crate::query::cover::{CoverPolicy, ExecutionMode, ExecutionStats};
 use crate::query::free_join::{FjSubatom, ValidatedFjNode, ValidatedFjPlan};
 use crate::query::model::{AtomOccurrenceId, NormalizedQuery};
 use crate::query::predicate::PredicateMode;
-use crate::query::runtime::{Candidate, bind_cover_tuple, execute_node, source_for};
+use crate::query::runtime::{bind_cover_tuple, execute_node};
+use crate::query::runtime_frame::{SourceUndo, replace_source, restore_sources, source_for};
 use crate::query::runtime_keys::key_from_binding_by_bound_widths;
-use crate::query::sink::{Binding, BindingSink};
+use crate::query::sink::{Binding, BindingSink, BindingUndo};
 use crate::query::trace::QueryTrace;
 use crate::tuple::TupleCursor;
 use crate::{ReadTxn, Result, StorageSchema};
@@ -18,8 +19,10 @@ pub(super) fn execute_vectorized_cover_loop<S: BindingSink>(
     depth: usize,
     query: &NormalizedQuery,
     plan: &ValidatedFjPlan,
-    sources: &BTreeMap<AtomOccurrenceId, ColtSource>,
-    binding: &Binding,
+    sources: &mut BTreeMap<AtomOccurrenceId, ColtSource>,
+    binding: &mut Binding,
+    binding_undo: &mut Vec<BindingUndo>,
+    source_undo: &mut Vec<SourceUndo>,
     txn: &ReadTxn<'_>,
     schema: &StorageSchema,
     inputs: &crate::InputBindings,
@@ -56,37 +59,63 @@ pub(super) fn execute_vectorized_cover_loop<S: BindingSink>(
         }
         stats.vectorized.batches += 1;
         stats.vectorized.input_tuples += batch.tuples.len();
-        let survivors = bind_vectorized_batch(
-            query,
-            sources,
-            binding,
-            cover_source,
-            cover_subatom,
-            batch.tuples,
-            stats,
-            trace,
-        )?;
-        let survivors =
-            probe_vectorized_survivors(node_index, node, cover_index, survivors, stats, trace)?;
-        stats.vectorized.survivor_tuples += survivors.len();
-        for (next_binding, next_sources) in survivors {
-            execute_node(
-                node_index + 1,
-                depth + 1,
+        for tuple in batch.tuples {
+            let binding_mark = Binding::undo_mark(binding_undo);
+            let source_mark = source_undo.len();
+            let bound = bind_cover_tuple(
                 query,
-                plan,
-                &next_sources,
-                &next_binding,
-                txn,
-                schema,
-                inputs,
-                predicate_mode,
-                ExecutionMode::Vectorized { batch_size },
-                cover_policy,
-                stats,
-                sink,
+                sources,
+                binding,
+                binding_undo,
+                source_undo,
+                cover_source,
+                cover_subatom,
+                tuple.as_ref(),
                 trace,
             )?;
+            let mut survived = false;
+            let result = if bound
+                && probe_vectorized_survivor(
+                    node_index,
+                    node,
+                    cover_index,
+                    binding,
+                    sources,
+                    source_undo,
+                    stats,
+                    trace,
+                )? {
+                survived = true;
+                execute_node(
+                    node_index + 1,
+                    depth + 1,
+                    query,
+                    plan,
+                    sources,
+                    binding,
+                    binding_undo,
+                    source_undo,
+                    txn,
+                    schema,
+                    inputs,
+                    predicate_mode,
+                    ExecutionMode::Vectorized { batch_size },
+                    cover_policy,
+                    stats,
+                    sink,
+                    trace,
+                )
+            } else {
+                Ok(())
+            };
+            if survived {
+                stats.vectorized.survivor_tuples += 1;
+            } else {
+                stats.vectorized.failed_tuples += 1;
+            }
+            restore_sources(sources, source_undo, source_mark);
+            binding.undo_to(binding_undo, binding_mark);
+            result?;
         }
         if exhausted {
             break;
@@ -96,64 +125,32 @@ pub(super) fn execute_vectorized_cover_loop<S: BindingSink>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn bind_vectorized_batch(
-    query: &NormalizedQuery,
-    sources: &BTreeMap<AtomOccurrenceId, ColtSource>,
-    binding: &Binding,
-    cover_source: &ColtSource,
-    cover_subatom: &FjSubatom,
-    batch: Vec<crate::tuple::EncodedTuple>,
-    stats: &mut ExecutionStats,
-    trace: &mut QueryTrace,
-) -> Result<Vec<Candidate>> {
-    let mut survivors = Vec::new();
-    for tuple in batch {
-        if let Some(entry) = bind_cover_tuple(
-            query,
-            sources,
-            binding,
-            cover_source,
-            cover_subatom,
-            tuple.as_ref(),
-            trace,
-        )? {
-            survivors.push(entry);
-        } else {
-            stats.vectorized.failed_tuples += 1;
-        }
-    }
-    Ok(survivors)
-}
-
-fn probe_vectorized_survivors(
+fn probe_vectorized_survivor(
     node_index: usize,
     node: &ValidatedFjNode,
     cover_index: usize,
-    mut survivors: Vec<Candidate>,
+    binding: &Binding,
+    sources: &mut BTreeMap<AtomOccurrenceId, ColtSource>,
+    source_undo: &mut Vec<SourceUndo>,
     stats: &mut ExecutionStats,
     trace: &mut QueryTrace,
-) -> Result<Vec<Candidate>> {
+) -> Result<bool> {
     for (index, subatom) in node.subatoms.iter().enumerate() {
-        if index == cover_index || survivors.is_empty() {
+        if index == cover_index {
             continue;
         }
-        let mut next_survivors = Vec::new();
-        for (candidate_binding, mut candidate_sources) in survivors {
-            stats.vectorized.probe_calls += 1;
-            let source = source_for(&candidate_sources, subatom)?;
-            let key = key_from_binding_by_bound_widths(&candidate_binding, subatom)?;
-            if let Some(child) = source.get_traced(
-                key.as_ref(),
-                trace,
-                format!("vector probe node={node_index} atom={:?}", subatom.atom),
-            ) {
-                candidate_sources.insert(subatom.atom, child);
-                next_survivors.push((candidate_binding, candidate_sources));
-            } else {
-                stats.vectorized.failed_tuples += 1;
-            }
+        stats.vectorized.probe_calls += 1;
+        let source = source_for(sources, subatom)?;
+        let key = key_from_binding_by_bound_widths(binding, subatom)?;
+        if let Some(child) = source.get_traced(
+            key.as_ref(),
+            trace,
+            format!("vector probe node={node_index} atom={:?}", subatom.atom),
+        ) {
+            replace_source(sources, subatom.atom, child, source_undo)?;
+        } else {
+            return Ok(false);
         }
-        survivors = next_survivors;
     }
-    Ok(survivors)
+    Ok(true)
 }

@@ -203,7 +203,12 @@ pub struct TraceCounters {
     pub probe_misses: u64,
     pub recursive_node_entries: u64,
     pub max_recursion_depth: u64,
+    pub frame_pushes: u64,
+    pub frame_pops: u64,
     pub binding_copies: u64,
+    pub binding_writes: u64,
+    pub binding_conflicts: u64,
+    pub source_replacements: u64,
     pub source_frame_changes: u64,
     pub sink_consumes: u64,
     pub projection_duplicates_suppressed: u64,
@@ -232,7 +237,12 @@ impl TraceCounters {
         self.probe_misses += other.probe_misses;
         self.recursive_node_entries += other.recursive_node_entries;
         self.max_recursion_depth = self.max_recursion_depth.max(other.max_recursion_depth);
+        self.frame_pushes += other.frame_pushes;
+        self.frame_pops += other.frame_pops;
         self.binding_copies += other.binding_copies;
+        self.binding_writes += other.binding_writes;
+        self.binding_conflicts += other.binding_conflicts;
+        self.source_replacements += other.source_replacements;
         self.source_frame_changes += other.source_frame_changes;
         self.sink_consumes += other.sink_consumes;
         self.projection_duplicates_suppressed += other.projection_duplicates_suppressed;

@@ -9,6 +9,7 @@ pub(crate) mod planner;
 pub(crate) mod predicate;
 pub(crate) mod run;
 pub(crate) mod runtime;
+pub(crate) mod runtime_frame;
 pub(crate) mod runtime_keys;
 pub(crate) mod runtime_vectorized;
 pub(crate) mod sink;

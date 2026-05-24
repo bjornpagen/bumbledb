@@ -33,7 +33,6 @@ After PRDs 08-11, the active order is intentionally refocused on paper-faithful 
 
 ## Current Paper-Alignment Gaps
 
-- Recursive execution clones binding maps and source maps along hot paths.
 - Projection sinks decode and materialize duplicate witnesses before final set output.
 - Factorized materialization remains shallow relative to the paper's materialization discussion.
 - Dynamic cover choice often uses offset counts as estimates rather than true key counts.
@@ -46,7 +45,6 @@ After PRDs 08-11, the active order is intentionally refocused on paper-faithful 
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 12 | `12-recursive-frame-executor.md` | Replaces recursive map/binding cloning with stack/frame execution state. |
 | 13 | `13-set-first-encoded-sinks.md` | Makes encoded set deduplication the default sink path. |
 | 14 | `14-factorized-materialization.md` | Deepens factorized output and materialization alignment without public aggregation. |
 | 15 | `15-neon-only-vectorized-execution.md` | Implements real AArch64 NEON-only vectorized kernels and forbids x86 SIMD. |

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use bumbledb_core::query_ir::TypedFindTerm;
 
@@ -24,29 +24,67 @@ pub(crate) struct OutputStats {
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct Binding {
-    pub(super) values: BTreeMap<usize, Vec<u8>>,
+    slots: Vec<Option<Vec<u8>>>,
 }
 
 impl Binding {
+    pub(super) fn new(variable_count: usize) -> Self {
+        Self {
+            slots: vec![None; variable_count],
+        }
+    }
+
+    pub(super) fn value(&self, variable: usize) -> Option<&[u8]> {
+        self.slots.get(variable)?.as_deref()
+    }
+
+    pub(super) fn undo_mark(undo: &[BindingUndo]) -> usize {
+        undo.len()
+    }
+
+    pub(super) fn undo_to(&mut self, undo: &mut Vec<BindingUndo>, mark: usize) {
+        while undo.len() > mark {
+            let Some(entry) = undo.pop() else { break };
+            if let Some(slot) = self.slots.get_mut(entry.variable) {
+                *slot = None;
+            }
+        }
+    }
+
     pub(super) fn extend_from_tuple(
-        &self,
+        &mut self,
         vars: &[usize],
         tuple: EncodedTupleRef<'_>,
         query: &NormalizedQuery,
-    ) -> Result<Option<Self>> {
-        let mut next = self.clone();
+        undo: &mut Vec<BindingUndo>,
+    ) -> Result<BindingExtend> {
         let mut offset = 0;
+        let mut writes = 0;
         let tuple = tuple.bytes();
         for variable in vars {
             let width = query.variables[*variable].value_type.encoded_width();
             let Some(bytes) = tuple.get(offset..offset + width) else {
                 return Err(Error::corrupt("cover tuple width is too short"));
             };
-            match next.values.get(variable) {
-                Some(existing) if existing != bytes => return Ok(None),
+            let slot = self
+                .slots
+                .get_mut(*variable)
+                .ok_or_else(|| Error::corrupt(format!("missing binding slot {variable}")))?;
+            match slot.as_deref() {
+                Some(existing) if existing != bytes => {
+                    return Ok(BindingExtend {
+                        accepted: false,
+                        writes,
+                        conflicts: 1,
+                    });
+                }
                 Some(_) => {}
                 None => {
-                    next.values.insert(*variable, bytes.to_vec());
+                    *slot = Some(bytes.to_vec());
+                    undo.push(BindingUndo {
+                        variable: *variable,
+                    });
+                    writes += 1;
                 }
             }
             offset += width;
@@ -54,8 +92,24 @@ impl Binding {
         if offset != tuple.len() {
             return Err(Error::corrupt("cover tuple width has trailing bytes"));
         }
-        Ok(Some(next))
+        Ok(BindingExtend {
+            accepted: true,
+            writes,
+            conflicts: 0,
+        })
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct BindingUndo {
+    variable: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct BindingExtend {
+    pub(super) accepted: bool,
+    pub(super) writes: u64,
+    pub(super) conflicts: u64,
 }
 
 pub(super) trait BindingSink {
@@ -103,7 +157,7 @@ impl BindingSink for ProjectionSink<'_, '_> {
             match term {
                 TypedFindTerm::Variable { variable } => {
                     let value_type = &query.variables[*variable].value_type;
-                    let bytes = binding.values.get(variable).ok_or_else(|| {
+                    let bytes = binding.value(*variable).ok_or_else(|| {
                         Error::corrupt(format!("projection variable {variable} is unbound"))
                     })?;
                     fact.push(storage_v5::decode_value(self.txn, value_type, bytes)?);
@@ -196,7 +250,7 @@ fn encoded_projection(query: &NormalizedQuery, binding: &Binding) -> Result<Vec<
     for term in &query.find {
         match term {
             TypedFindTerm::Variable { variable } => {
-                let bytes = binding.values.get(variable).ok_or_else(|| {
+                let bytes = binding.value(*variable).ok_or_else(|| {
                     Error::corrupt(format!("projection variable {variable} is unbound"))
                 })?;
                 out.extend_from_slice(bytes);

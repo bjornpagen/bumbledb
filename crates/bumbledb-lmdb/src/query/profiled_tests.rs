@@ -62,7 +62,14 @@ fn profiled_execution_matches_plain_and_emits_top_level_spans() -> Result<()> {
     assert!(profiled.trace.counters.cover_choices > 0);
     assert!(profiled.trace.counters.probe_calls > 0);
     assert!(profiled.trace.counters.recursive_node_entries > 0);
-    assert!(profiled.trace.counters.binding_copies > 0);
+    assert_eq!(profiled.trace.counters.binding_copies, 0);
+    assert!(profiled.trace.counters.binding_writes > 0);
+    assert!(profiled.trace.counters.frame_pushes > 0);
+    assert_eq!(
+        profiled.trace.counters.frame_pushes,
+        profiled.trace.counters.frame_pops
+    );
+    assert!(profiled.trace.counters.source_replacements > 0);
     assert!(profiled.trace.counters.source_frame_changes > 0);
     assert!(profiled.trace.counters.sink_consumes > 0);
     assert!(profiled.trace.counters.decoded_values > 0);

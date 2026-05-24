@@ -1,10 +1,9 @@
-use std::collections::BTreeMap;
-
 use bumbledb_core::query_ir::{ComparisonOperator, Literal, TypedLiteral, TypedOperand};
 use bumbledb_core::schema::{SchemaDescriptor, ValueType};
 
 use crate::colt::{SourceFilter, SourceFilterOp};
 use crate::query::model::{AtomOccurrence, NormalizedQuery, NormalizedTerm, SourcePredicate};
+use crate::query::sink::Binding;
 use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
 use crate::storage_v5;
 use crate::{Error, InputBindings, ReadTxn, Result, Value};
@@ -110,11 +109,11 @@ fn source_filters_for_atom_inner(
     Ok(filters)
 }
 
-pub(crate) fn binding_satisfies(
+pub(super) fn binding_satisfies(
     txn: &ReadTxn<'_>,
     schema: &SchemaDescriptor,
     query: &NormalizedQuery,
-    binding: &BTreeMap<usize, Vec<u8>>,
+    binding: &Binding,
     inputs: &InputBindings,
 ) -> Result<bool> {
     for comparison in &query.comparisons {
@@ -178,12 +177,12 @@ fn operand_bytes(
     txn: &ReadTxn<'_>,
     schema: &SchemaDescriptor,
     query: &NormalizedQuery,
-    binding: &BTreeMap<usize, Vec<u8>>,
+    binding: &Binding,
     inputs: &InputBindings,
     operand: &TypedOperand,
 ) -> Result<Option<Vec<u8>>> {
     match operand {
-        TypedOperand::Variable(variable) => Ok(binding.get(variable).cloned()),
+        TypedOperand::Variable(variable) => Ok(binding.value(*variable).map(<[u8]>::to_vec)),
         TypedOperand::Input(input) => {
             let value_type = &query.inputs[*input].value_type;
             let value = input_value(query, inputs, *input, value_type)?;

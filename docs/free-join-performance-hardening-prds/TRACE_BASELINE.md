@@ -244,3 +244,25 @@ Measured report after COLT lazy-alignment and `HashMap` forced nodes:
 | `job_q09_voice_us_actor` | 37.990 | 5.201 | 513072 | 110363704 | 0 |
 
 Trace file: `data/traces/prd11_q09-24120-0.json`.
+
+## PRD 12 Follow-Up
+
+Command:
+
+```bash
+cargo run --release -p bumbledb-bench --features query-tracing -- --preset job-sample --job-dir data/job --open-limit 100000 --query job_q09_voice_us_actor --format json --repeats 1 --warmup 1 --trace-output file --profile-query-label prd12_q09 --alloc on
+```
+
+Measured report after replacing recursive binding/source-map clones with dense binding slots and source undo records:
+
+| query | bumbledb_ms | sqlite_ms | alloc_calls | allocated_bytes | result_rows |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `job_q09_voice_us_actor` | 38.113 | 5.092 | 352792 | 99905193 | 0 |
+
+Trace evidence:
+
+- Trace file: `data/traces/prd12_q09-34955-0.json`.
+- `binding_copies`: 0.
+- `frame_pushes`: 79.
+- `frame_pops`: 79.
+- `source_replacements`: 139.
