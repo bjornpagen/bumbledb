@@ -50,7 +50,6 @@ Latest useful no-query-tracing release sample, allocation tracking enabled, `--o
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 11 | `11-vectorized-arena-batches.md` | Make vectorized execution use arena batches and scratch state. |
 | 12 | `12-colt-allocation-benchmarks.md` | Add focused allocation benchmarks and allocation budgets for COLT. |
 | 13 | `13-job-allocation-gates.md` | Convert no-trace JOB allocation budgets into enforced gates. |
 | 14 | `14-output-and-plan-allocation-cleanup.md` | Remove remaining non-COLT query allocation hotspots. |

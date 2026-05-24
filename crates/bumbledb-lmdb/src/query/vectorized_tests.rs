@@ -53,7 +53,7 @@ fn vectorized_batch_sizes_return_identical_sets() -> Result<()> {
     let query = join_query(&[0, 1, 2]);
     let (expected, _) = run(&env, &schema, &query, ExecutionMode::Scalar)?;
 
-    for batch_size in [1, 10, 100, 1000] {
+    for batch_size in [1, 4, 16, 100, 1000, 1024] {
         let (actual, _) = run(
             &env,
             &schema,
