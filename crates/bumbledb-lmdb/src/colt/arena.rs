@@ -190,6 +190,34 @@ impl ColtArena {
         self.maps[map.0 as usize].table.entries.len as usize
     }
 
+    pub(super) fn force_node_with_key_fn(
+        &mut self,
+        node: ColtNodeId,
+        mut key_for_offset: impl FnMut(u32, &mut Vec<u8>),
+    ) -> ColtMapId {
+        if let NodeData::Map(map) = self.nodes[node.0 as usize].data {
+            return map;
+        }
+        let data = self.nodes[node.0 as usize].data;
+        let count = self.offset_count(data);
+        let map = self.add_map_table(count, count);
+        let mut key = Vec::new();
+        self.for_each_offset(data, |arena, offset| {
+            key_for_offset(offset, &mut key);
+            let key_ref = KeyRef::new(&key);
+            let child = match arena.lookup_map(map, key_ref) {
+                Some(child) => {
+                    arena.push_offset_to_child(child, offset);
+                    child
+                }
+                None => arena.add_singleton_node(offset),
+            };
+            arena.insert_map_entry(map, key_ref, child);
+        });
+        self.nodes[node.0 as usize].data = NodeData::Map(map);
+        map
+    }
+
     pub(super) fn node(&self, id: ColtNodeId) -> Option<&ColtNodeRecord> {
         self.nodes.get(id.0 as usize)
     }
@@ -234,6 +262,56 @@ impl ColtArena {
     fn bucket_index(&self, map: ColtMapId, hash: u64) -> usize {
         let buckets = self.maps[map.0 as usize].table.buckets;
         buckets.start as usize + (hash as usize & (buckets.len as usize - 1))
+    }
+
+    fn offset_count(&self, data: NodeData) -> usize {
+        match data {
+            NodeData::Range { len, .. } => len as usize,
+            NodeData::Singleton { .. } => 1,
+            NodeData::Offsets(range) => range.len as usize,
+            NodeData::Map(map) => self.map_entry_count(map),
+        }
+    }
+
+    fn for_each_offset(&mut self, data: NodeData, mut f: impl FnMut(&mut Self, u32)) {
+        match data {
+            NodeData::Range { start, len } => {
+                for offset in start..start + len {
+                    f(self, offset);
+                }
+            }
+            NodeData::Singleton { offset } => f(self, offset),
+            NodeData::Offsets(range) => {
+                for index in range.start..range.start + range.len {
+                    f(self, self.offsets[index as usize]);
+                }
+            }
+            NodeData::Map(_) => {}
+        }
+    }
+
+    fn push_offset_to_child(&mut self, child: ColtNodeId, offset: u32) {
+        let data = self.nodes[child.0 as usize].data;
+        self.nodes[child.0 as usize].data = match data {
+            NodeData::Singleton { offset: first } if first == offset => data,
+            NodeData::Singleton { offset: first } => {
+                let range = self.append_offsets(&[first, offset]);
+                NodeData::Offsets(range)
+            }
+            NodeData::Offsets(mut range)
+                if range.start + range.len == self.offsets.len() as u32 =>
+            {
+                self.offsets.push(offset);
+                range.len += 1;
+                NodeData::Offsets(range)
+            }
+            NodeData::Offsets(range) => {
+                let mut offsets = self.offsets(range).to_vec();
+                offsets.push(offset);
+                NodeData::Offsets(self.append_offsets(&offsets))
+            }
+            _ => data,
+        };
     }
 }
 

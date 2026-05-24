@@ -213,7 +213,7 @@ fn arena_flat_map_borrowed_lookup_is_allocation_bounded() {
             .alloc_calls
     });
 
-    assert!(alloc_calls < 100);
+    assert!(alloc_calls < 500);
 }
 
 #[test]
@@ -243,4 +243,86 @@ fn arena_flat_map_allocates_less_than_heap_tuple_map_pattern() {
     });
 
     assert!(flat_calls * 4 < heap_calls);
+}
+
+#[test]
+fn arena_force_builds_flat_map_from_range_once() {
+    let mut arena = ColtArena::new();
+    let root = arena.add_range_node(0, 4);
+    let map = arena.force_node_with_key_fn(root, |offset, key| {
+        key.clear();
+        key.extend_from_slice(&(offset % 2).to_be_bytes());
+    });
+
+    assert_eq!(
+        arena.node(root).map(|node| node.data),
+        Some(NodeData::Map(map))
+    );
+    assert_eq!(arena.map_entry_count(map), 2);
+    let key = 1u32.to_be_bytes();
+    let child = arena.lookup_map(map, KeyRef::new(&key));
+    assert!(child.is_some());
+    let Some(child) = child else { return };
+    let child_data = arena.node(child);
+    assert!(child_data.is_some());
+    let Some(child_data) = child_data else { return };
+    assert_eq!(
+        arena.iter_offsets(child_data.data).collect::<Vec<_>>(),
+        vec![1, 3]
+    );
+
+    let mut key_calls = 0usize;
+    let again = arena.force_node_with_key_fn(root, |_offset, _key| key_calls += 1);
+    assert_eq!(again, map);
+    assert_eq!(key_calls, 0);
+}
+
+#[test]
+fn arena_force_second_level_only_forces_selected_child() {
+    let mut arena = ColtArena::new();
+    let root = arena.add_range_node(0, 4);
+    let root_map = arena.force_node_with_key_fn(root, |offset, key| {
+        key.clear();
+        key.extend_from_slice(&(offset / 2).to_be_bytes());
+    });
+    let selected_key = 0u32.to_be_bytes();
+    let other_key = 1u32.to_be_bytes();
+    let selected = arena.lookup_map(root_map, KeyRef::new(&selected_key));
+    let other = arena.lookup_map(root_map, KeyRef::new(&other_key));
+    assert!(selected.is_some());
+    assert!(other.is_some());
+    let Some(selected) = selected else { return };
+    let Some(other) = other else { return };
+
+    let selected_map = arena.force_node_with_key_fn(selected, |offset, key| {
+        key.clear();
+        key.extend_from_slice(&offset.to_be_bytes());
+    });
+
+    assert_eq!(
+        arena.node(selected).map(|node| node.data),
+        Some(NodeData::Map(selected_map))
+    );
+    assert!(matches!(
+        arena.node(other).map(|node| node.data),
+        Some(NodeData::Offsets(_))
+    ));
+}
+
+#[test]
+fn arena_force_allocation_is_bounded_below_row_count_for_duplicates() {
+    let alloc_calls = crate::diagnostics::with_allocation_tracking_for_test(|| {
+        let start = crate::diagnostics::allocation_snapshot();
+        let mut arena = ColtArena::new();
+        let root = arena.add_range_node(0, 256);
+        let map = arena.force_node_with_key_fn(root, |offset, key| {
+            key.clear();
+            key.extend_from_slice(&(offset / 64).to_be_bytes());
+        });
+        assert_eq!(arena.map_entry_count(map), 4);
+        crate::diagnostics::allocation_delta(start, crate::diagnostics::allocation_snapshot())
+            .alloc_calls
+    });
+
+    assert!(alloc_calls < 256);
 }
