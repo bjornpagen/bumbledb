@@ -160,6 +160,12 @@ fn push_insert(out: &mut String, fact: &Fact) -> Result<(), String> {
             fact,
             &["id", "movie", "info_type", "info", "note"],
         ),
+        "MovieInfo" => insert(
+            out,
+            "movie_info",
+            fact,
+            &["id", "movie", "info_type", "info", "note"],
+        ),
         "MovieKeyword" => insert(out, "movie_keyword", fact, &["id", "movie", "keyword"]),
         "MovieLink" => insert(
             out,
@@ -224,6 +230,7 @@ CREATE TABLE aka_name (id INTEGER PRIMARY KEY, person INTEGER NOT NULL, name TEX
 CREATE TABLE cast_info (id INTEGER PRIMARY KEY, person INTEGER NOT NULL, movie INTEGER NOT NULL, person_role INTEGER NOT NULL, note TEXT NOT NULL, nr_order INTEGER NOT NULL, role INTEGER NOT NULL);
 CREATE TABLE movie_companies (id INTEGER PRIMARY KEY, movie INTEGER NOT NULL, company INTEGER NOT NULL, company_type INTEGER NOT NULL, note TEXT NOT NULL);
 CREATE TABLE movie_info_idx (id INTEGER PRIMARY KEY, movie INTEGER NOT NULL, info_type INTEGER NOT NULL, info TEXT NOT NULL, note TEXT NOT NULL);
+CREATE TABLE movie_info (id INTEGER PRIMARY KEY, movie INTEGER NOT NULL, info_type INTEGER NOT NULL, info TEXT NOT NULL, note TEXT NOT NULL);
 CREATE TABLE movie_keyword (id INTEGER PRIMARY KEY, movie INTEGER NOT NULL, keyword INTEGER NOT NULL);
 CREATE TABLE movie_link (id INTEGER PRIMARY KEY, movie INTEGER NOT NULL, linked_movie INTEGER NOT NULL, link_type INTEGER NOT NULL);
 CREATE INDEX cast_info_movie ON cast_info(movie, role, person, person_role, id);

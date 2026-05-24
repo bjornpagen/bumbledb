@@ -112,6 +112,7 @@ mod tests {
         let schema = schema::job_schema();
         let queries =
             queries::job_queries(&schema).map_err(|error| BenchError::new(error.to_string()))?;
+        assert_eq!(queries.len(), 8);
         assert!(
             queries
                 .iter()
@@ -147,6 +148,7 @@ mod tests {
             ("aka_name.csv", "1,1,Alias,,,,\n"),
             ("cast_info.csv", "1,1,1,1,,1,1\n"),
             ("movie_companies.csv", "1,1,1,1,\n"),
+            ("movie_info.csv", "1,1,1,info,\n"),
             ("movie_info_idx.csv", "1,1,1,10,\n"),
             ("movie_keyword.csv", "1,1,1\n"),
             ("movie_link.csv", "1,1,1,1\n"),

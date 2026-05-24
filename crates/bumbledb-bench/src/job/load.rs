@@ -286,6 +286,25 @@ pub(super) fn load_job_facts(dir: &Path, limit: Option<usize>) -> Result<Vec<Fac
         ));
         true
     })?;
+    read_job_csv(dir, "movie_info.csv", fact_limit, |record| {
+        let id = parse_u64(get(record, 0));
+        let movie = parse_u64(get(record, 1));
+        let info_type = parse_u64(get(record, 2));
+        if id == 0 || !(titles.contains(&movie) && info_types.contains(&info_type)) {
+            return false;
+        }
+        facts.push(Fact::new(
+            "MovieInfo",
+            [
+                ("id", s(id)),
+                ("movie", s(movie)),
+                ("info_type", s(info_type)),
+                ("info", text(get(record, 3))),
+                ("note", text(get(record, 4))),
+            ],
+        ));
+        true
+    })?;
     read_job_csv(dir, "movie_keyword.csv", fact_limit, |record| {
         let id = parse_u64(get(record, 0));
         let movie = parse_u64(get(record, 1));
@@ -359,11 +378,16 @@ fn get(record: &StringRecord, index: usize) -> &str {
     record.get(index).unwrap_or("")
 }
 fn text(value: &str) -> Value {
-    Value::String(if value.is_empty() || value == r"\N" {
-        String::new()
-    } else {
-        value.to_owned()
-    })
+    if value.is_empty() || value == r"\N" {
+        return Value::String(String::new());
+    }
+    if value.len() > 240 {
+        return Value::String(format!(
+            "#long: {}",
+            blake3::hash(value.as_bytes()).to_hex()
+        ));
+    }
+    Value::String(value.to_owned())
 }
 fn s(value: u64) -> Value {
     Value::Serial(value)

@@ -11,6 +11,16 @@ pub(super) struct JobQuery {
 pub(super) fn job_queries(schema: &SchemaDescriptor) -> QueryBuildResult<Vec<JobQuery>> {
     Ok(vec![
         JobQuery {
+            name: "job_broad_cast_keyword_company",
+            query: broad_cast_keyword_company(schema)?,
+            sqlite: "SELECT DISTINCT t.id FROM title t JOIN cast_info ci ON ci.movie = t.id JOIN role_type rt ON rt.id = ci.role JOIN movie_keyword mk ON mk.movie = t.id JOIN keyword k ON k.id = mk.keyword JOIN movie_companies mc ON mc.movie = t.id JOIN company_name cn ON cn.id = mc.company JOIN company_type ct ON ct.id = mc.company_type ORDER BY 1",
+        },
+        JobQuery {
+            name: "job_broad_movie_info_star",
+            query: broad_movie_info_star(schema)?,
+            sqlite: "SELECT DISTINCT t.id FROM title t JOIN cast_info ci ON ci.movie = t.id JOIN role_type rt ON rt.id = ci.role JOIN movie_companies mc ON mc.movie = t.id JOIN company_type ct ON ct.id = mc.company_type JOIN movie_keyword mk ON mk.movie = t.id JOIN keyword k ON k.id = mk.keyword JOIN movie_info mi ON mi.movie = t.id JOIN info_type it ON it.id = mi.info_type JOIN movie_info_idx mi_idx ON mi_idx.movie = t.id JOIN info_type it_idx ON it_idx.id = mi_idx.info_type ORDER BY 1",
+        },
+        JobQuery {
             name: "job_q01_top_production",
             query: q01(schema)?,
             sqlite: "SELECT DISTINCT t.id FROM company_type ct JOIN movie_companies mc ON mc.company_type = ct.id JOIN movie_info_idx mi_idx ON mi_idx.movie = mc.movie JOIN info_type it ON it.id = mi_idx.info_type JOIN title t ON t.id = mc.movie WHERE ct.kind = 'production companies' AND it.info = 'top 250 rank' ORDER BY 1",
@@ -35,7 +45,92 @@ pub(super) fn job_queries(schema: &SchemaDescriptor) -> QueryBuildResult<Vec<Job
             query: bridge(schema)?,
             sqlite: "SELECT DISTINCT t1.id FROM movie_link ml JOIN link_type lt ON lt.id = ml.link_type JOIN title t1 ON t1.id = ml.movie JOIN title t2 ON t2.id = ml.linked_movie JOIN movie_companies mc1 ON mc1.movie = t1.id JOIN company_name cn1 ON cn1.id = mc1.company JOIN movie_companies mc2 ON mc2.movie = t2.id JOIN company_name cn2 ON cn2.id = mc2.company JOIN movie_info_idx mi_idx1 ON mi_idx1.movie = t1.id JOIN info_type it1 ON it1.id = mi_idx1.info_type JOIN movie_info_idx mi_idx2 ON mi_idx2.movie = t2.id JOIN info_type it2 ON it2.id = mi_idx2.info_type ORDER BY 1",
         },
+        JobQuery {
+            name: "job_q33_linked_series_companies",
+            query: q33(schema)?,
+            sqlite: "SELECT DISTINCT t1.id FROM company_name cn1 JOIN movie_companies mc1 ON mc1.company = cn1.id JOIN title t1 ON t1.id = mc1.movie JOIN kind_type kt1 ON kt1.id = t1.kind JOIN movie_link ml ON ml.movie = t1.id JOIN link_type lt ON lt.id = ml.link_type JOIN title t2 ON t2.id = ml.linked_movie JOIN kind_type kt2 ON kt2.id = t2.kind JOIN movie_companies mc2 ON mc2.movie = t2.id JOIN company_name cn2 ON cn2.id = mc2.company WHERE cn1.country_code = '[us]' AND kt1.kind = 'tv series' AND kt2.kind = 'tv series' AND lt.link = 'sequel' AND t2.production_year BETWEEN 2005 AND 2008 ORDER BY 1",
+        },
     ])
+}
+
+fn broad_cast_keyword_company(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut q = QueryBuilder::new(schema);
+    q.rel("Title")?
+        .var("id", "movie")?
+        .var("kind", "kind")?
+        .done()
+        .rel("CastInfo")?
+        .var("movie", "movie")?
+        .var("person", "person")?
+        .var("role", "role")?
+        .done()
+        .rel("RoleType")?
+        .var("id", "role")?
+        .done()
+        .rel("MovieKeyword")?
+        .var("movie", "movie")?
+        .var("keyword", "keyword")?
+        .done()
+        .rel("Keyword")?
+        .var("id", "keyword")?
+        .done()
+        .rel("MovieCompanies")?
+        .var("movie", "movie")?
+        .var("company", "company")?
+        .var("company_type", "company_type")?
+        .done()
+        .rel("CompanyName")?
+        .var("id", "company")?
+        .done()
+        .rel("CompanyType")?
+        .var("id", "company_type")?
+        .done()
+        .find_var("movie")?
+        .finish()
+}
+
+fn broad_movie_info_star(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut q = QueryBuilder::new(schema);
+    q.rel("Title")?
+        .var("id", "movie")?
+        .done()
+        .rel("CastInfo")?
+        .var("movie", "movie")?
+        .var("role", "role")?
+        .done()
+        .rel("RoleType")?
+        .var("id", "role")?
+        .done()
+        .rel("MovieCompanies")?
+        .var("movie", "movie")?
+        .var("company_type", "company_type")?
+        .done()
+        .rel("CompanyType")?
+        .var("id", "company_type")?
+        .done()
+        .rel("MovieKeyword")?
+        .var("movie", "movie")?
+        .var("keyword", "keyword")?
+        .done()
+        .rel("Keyword")?
+        .var("id", "keyword")?
+        .done()
+        .rel("MovieInfo")?
+        .var("movie", "movie")?
+        .var("info_type", "info_type")?
+        .done()
+        .rel("InfoType")?
+        .var("id", "info_type")?
+        .done()
+        .rel("MovieInfoIdx")?
+        .var("movie", "movie")?
+        .var("info_type", "idx_info_type")?
+        .done()
+        .rel("InfoType")?
+        .var("id", "idx_info_type")?
+        .done()
+        .find_var("movie")?
+        .finish()
 }
 
 fn q01(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
@@ -231,6 +326,54 @@ fn bridge(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
         .done()
         .find_var("movie1")?
         .finish()
+}
+
+fn q33(schema: &SchemaDescriptor) -> QueryBuildResult<TypedQuery> {
+    let mut q = QueryBuilder::new(schema);
+    q.rel("CompanyName")?
+        .var("id", "company1")?
+        .string("country_code", "[us]")?
+        .done()
+        .rel("CompanyName")?
+        .var("id", "company2")?
+        .done()
+        .rel("KindType")?
+        .var("id", "kind1")?
+        .string("kind", "tv series")?
+        .done()
+        .rel("KindType")?
+        .var("id", "kind2")?
+        .string("kind", "tv series")?
+        .done()
+        .rel("LinkType")?
+        .var("id", "link_type")?
+        .string("link", "sequel")?
+        .done()
+        .rel("MovieCompanies")?
+        .var("movie", "movie1")?
+        .var("company", "company1")?
+        .done()
+        .rel("MovieCompanies")?
+        .var("movie", "movie2")?
+        .var("company", "company2")?
+        .done()
+        .rel("MovieLink")?
+        .var("movie", "movie1")?
+        .var("linked_movie", "movie2")?
+        .var("link_type", "link_type")?
+        .done()
+        .rel("Title")?
+        .var("id", "movie1")?
+        .var("kind", "kind1")?
+        .done()
+        .rel("Title")?
+        .var("id", "movie2")?
+        .var("kind", "kind2")?
+        .var("production_year", "year2")?
+        .done();
+    range(&mut q, "year2", ComparisonOperator::Gte, 2005)?;
+    range(&mut q, "year2", ComparisonOperator::Lte, 2008)?;
+    q.find_var("movie1")?.finish()
 }
 
 fn range(
