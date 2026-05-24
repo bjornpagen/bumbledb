@@ -271,7 +271,8 @@ impl ColtSource {
                 .first()
                 .map_or_else(Vec::new, TupleSchema::vars),
         );
-        let mut map: HashMap<EncodedTuple, Rc<RefCell<ColtNode>>> = HashMap::new();
+        let mut map: HashMap<EncodedTuple, Rc<RefCell<ColtNode>>> =
+            HashMap::with_capacity(offsets.len());
         let mut key_bytes = Vec::with_capacity(schema.encoded_width());
         for offset in offsets {
             node.counters.borrow_mut().offsets_scanned += 1;
