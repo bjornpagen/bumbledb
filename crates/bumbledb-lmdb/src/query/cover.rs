@@ -13,9 +13,27 @@ pub(crate) enum CoverPolicy {
     DynamicMinKeys,
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExecutionMode {
+    Scalar,
+    Vectorized { batch_size: usize },
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ExecutionStats {
     pub(crate) cover_choices: Vec<CoverChoiceEvent>,
+    pub(crate) vectorized: VectorizedStats,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VectorizedStats {
+    pub(crate) batch_size: usize,
+    pub(crate) batches: usize,
+    pub(crate) input_tuples: usize,
+    pub(crate) survivor_tuples: usize,
+    pub(crate) failed_tuples: usize,
+    pub(crate) probe_calls: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

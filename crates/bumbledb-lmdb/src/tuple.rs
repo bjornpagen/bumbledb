@@ -129,6 +129,14 @@ pub(crate) trait GhtSource {
     fn atom(&self) -> Option<AtomOccurrenceId>;
     fn vars(&self) -> &[usize];
     fn iter(&self) -> Vec<EncodedTuple>;
+    fn iter_batch(&self, batch_size: usize) -> Vec<Vec<EncodedTuple>> {
+        let batch_size = batch_size.max(1);
+        let tuples = self.iter();
+        tuples
+            .chunks(batch_size)
+            .map(<[EncodedTuple]>::to_vec)
+            .collect()
+    }
     fn get(&self, tuple: &EncodedTuple) -> Option<Self::Child<'_>>;
     fn key_count(&self) -> KeyCountEstimate;
 }
