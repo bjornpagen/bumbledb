@@ -8,6 +8,7 @@ use std::sync::Arc;
 use crate::base_image::RelationBaseImage;
 use crate::query::free_join::ValidatedFjPlan;
 use crate::query::model::{AtomOccurrenceId, NormalizedQuery};
+use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
 use crate::tuple::{EncodedTuple, GhtSource, KeyCountEstimate, TupleField, TupleSchema};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,11 +86,38 @@ impl ColtSource {
         schemas: Vec<TupleSchema>,
         filters: Vec<SourceFilter>,
     ) -> Self {
+        Self::new_filtered_with_trace(atom, base, schemas, filters, None)
+    }
+
+    pub(crate) fn new_filtered_traced(
+        atom: AtomOccurrenceId,
+        base: Arc<RelationBaseImage>,
+        schemas: Vec<TupleSchema>,
+        filters: Vec<SourceFilter>,
+        trace: &mut QueryTrace,
+    ) -> Self {
+        Self::new_filtered_with_trace(atom, base, schemas, filters, Some(trace))
+    }
+
+    fn new_filtered_with_trace(
+        atom: AtomOccurrenceId,
+        base: Arc<RelationBaseImage>,
+        schemas: Vec<TupleSchema>,
+        filters: Vec<SourceFilter>,
+        mut trace: Option<&mut QueryTrace>,
+    ) -> Self {
+        let span = trace.as_deref_mut().and_then(|trace| {
+            trace.start_span(
+                TracePhase::ColtBuild,
+                format!("relation={} atom={:?}", base.name, atom),
+            )
+        });
         let counters = Rc::new(RefCell::new(ColtCounters {
             nodes_created: 1,
             ..ColtCounters::default()
         }));
         let vars = schemas.first().map_or_else(Vec::new, TupleSchema::vars);
+        let source_filter_rows_tested = base.row_handles.len() as u64;
         let offsets = (0..base.row_handles.len())
             .filter(|offset| {
                 filters
@@ -97,7 +125,7 @@ impl ColtSource {
                     .all(|filter| source_filter_matches(&base, *offset, filter))
             })
             .collect();
-        Self {
+        let source = Self {
             vars: vars.clone(),
             node: Rc::new(RefCell::new(ColtNode {
                 atom,
@@ -107,11 +135,86 @@ impl ColtSource {
                 data: ColtData::Offsets(offsets),
                 counters,
             })),
+        };
+        if let (Some(trace), Some(span)) = (trace, span) {
+            trace.finish_span(
+                span,
+                TraceCounters {
+                    source_filter_rows_tested,
+                    source_filter_survivors: source.offset_len() as u64,
+                    colt_nodes_created: 1,
+                    ..TraceCounters::default()
+                },
+            );
         }
+        source
     }
 
     pub(crate) fn counters(&self) -> ColtCounters {
         self.node.borrow().counters.borrow().clone()
+    }
+
+    pub(crate) fn iter_traced(
+        &self,
+        trace: &mut QueryTrace,
+        label: impl Into<String>,
+    ) -> Vec<EncodedTuple> {
+        let before = self.counters();
+        let span = trace.start_span(TracePhase::ColtIter, label);
+        let tuples = self.iter();
+        let after = self.counters();
+        if let Some(span) = span {
+            trace.finish_span(span, colt_counter_delta(before, after, tuples.len()));
+        }
+        tuples
+    }
+
+    pub(crate) fn get_traced(
+        &self,
+        tuple: &EncodedTuple,
+        trace: &mut QueryTrace,
+        label: impl Into<String>,
+    ) -> Option<ColtSource> {
+        let force_span = self
+            .is_vector()
+            .then(|| {
+                trace.start_span(
+                    TracePhase::ColtForce,
+                    format!("force before get relation={:?}", self.atom()),
+                )
+            })
+            .flatten();
+        let before_force = self.counters();
+        self.force();
+        let after_force = self.counters();
+        if let Some(span) = force_span {
+            trace.finish_span(span, colt_counter_delta(before_force, after_force, 0));
+        }
+
+        let before_get = self.counters();
+        let span = trace.start_span(TracePhase::ColtGet, label);
+        self.node.borrow().counters.borrow_mut().get_calls += 1;
+        let node = self.node.borrow();
+        let ColtData::Map(map) = &node.data else {
+            if let Some(span) = span {
+                trace.finish_span(span, TraceCounters::default());
+            }
+            return None;
+        };
+        let child = map.get(tuple).cloned();
+        if child.is_none() {
+            node.counters.borrow_mut().misses += 1;
+        }
+        drop(node);
+        let output = child.map(|node| {
+            let vars = node.borrow().vars.clone();
+            ColtSource { node, vars }
+        });
+        let after_get = self.counters();
+        if let Some(span) = span {
+            trace.finish_span(span, colt_counter_delta(before_get, after_get, 0));
+        }
+        output
     }
 
     pub(crate) fn is_vector(&self) -> bool {
@@ -176,6 +279,19 @@ impl ColtSource {
         node.counters.borrow_mut().nodes_forced += 1;
         node.counters.borrow_mut().hash_maps_built += 1;
         node.data = ColtData::Map(map);
+    }
+}
+
+fn colt_counter_delta(before: ColtCounters, after: ColtCounters, tuples: usize) -> TraceCounters {
+    TraceCounters {
+        colt_nodes_created: after.nodes_created.saturating_sub(before.nodes_created) as u64,
+        colt_nodes_forced: after.nodes_forced.saturating_sub(before.nodes_forced) as u64,
+        colt_offsets_scanned: after.offsets_scanned.saturating_sub(before.offsets_scanned) as u64,
+        colt_map_entries_built: after.hash_maps_built.saturating_sub(before.hash_maps_built) as u64,
+        tuples_yielded: tuples as u64,
+        probe_calls: after.get_calls.saturating_sub(before.get_calls) as u64,
+        probe_misses: after.misses.saturating_sub(before.misses) as u64,
+        ..TraceCounters::default()
     }
 }
 

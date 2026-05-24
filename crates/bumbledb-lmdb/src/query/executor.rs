@@ -5,9 +5,13 @@ use crate::query::cover::{CoverPolicy, ExecutionMode, ExecutionStats};
 use crate::query::free_join::{FjPlan, ValidatedFjPlan};
 use crate::query::model::NormalizedQuery;
 use crate::query::normalize::normalize_query;
-use crate::query::planner::{PlanMode, select_plan};
+#[cfg(test)]
+use crate::query::planner::select_plan;
+use crate::query::planner::{PlanMode, select_plan_with_trace};
 use crate::query::predicate::PredicateMode;
+#[cfg(test)]
 use crate::query::run::execute_validated_plan;
+use crate::query::run::execute_validated_plan_with_trace;
 #[cfg(test)]
 use crate::query::sink::CountingSink;
 use crate::query::sink::ProjectionSink;
@@ -49,7 +53,8 @@ pub(crate) fn execute_query_profiled(
     }
 
     let plan_span = trace.start_span(TracePhase::PlanSelect, "select Free Join plan");
-    let selection = select_plan(txn, schema, &normalized, PlanMode::Default)?;
+    let selection =
+        select_plan_with_trace(txn, schema, &normalized, PlanMode::Default, &mut trace)?;
     let family = selection.chosen.family;
     let plan = validate_plan(&selection.chosen.plan, &normalized)?;
     trace.metadata = QueryTraceMetadata {
@@ -66,7 +71,7 @@ pub(crate) fn execute_query_profiled(
     let mut sink = ProjectionSink::new(txn);
     let mut stats = ExecutionStats::default();
     let execution_span = trace.start_span(TracePhase::ExecuteNode, "execute Free Join plan");
-    execute_validated_plan(
+    execute_validated_plan_with_trace(
         txn,
         schema,
         &normalized,
@@ -77,6 +82,7 @@ pub(crate) fn execute_query_profiled(
         CoverPolicy::DynamicMinKeys,
         &mut stats,
         &mut sink,
+        &mut trace,
     )?;
     if let Some(span) = execution_span {
         trace.finish_span(span, TraceCounters::default());

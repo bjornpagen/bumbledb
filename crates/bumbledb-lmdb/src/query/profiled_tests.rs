@@ -19,7 +19,6 @@ fn profiled_execution_matches_plain_and_emits_top_level_spans() -> Result<()> {
     insert_clover(&env, &schema)?;
     let query = clover_query(["x", "a", "b", "c"], &[0, 1, 2, 3]);
 
-    let plain = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
     let profiled = env.read(|txn| {
         txn.execute_query_profiled(
             &schema,
@@ -31,6 +30,7 @@ fn profiled_execution_matches_plain_and_emits_top_level_spans() -> Result<()> {
             },
         )
     })?;
+    let plain = env.read(|txn| txn.execute_query(&schema, &query, &InputBindings::new()))?;
 
     assert_eq!(plain, profiled.result);
     let phases = profiled
@@ -41,8 +41,34 @@ fn profiled_execution_matches_plain_and_emits_top_level_spans() -> Result<()> {
         .collect::<Vec<_>>();
     assert!(phases.contains(&TracePhase::Normalize));
     assert!(phases.contains(&TracePhase::PlanSelect));
+    assert!(phases.contains(&TracePhase::PlannerStats));
+    assert!(phases.contains(&TracePhase::BaseImageCacheLookup));
+    assert!(phases.contains(&TracePhase::BaseImageLoad));
+    assert!(phases.contains(&TracePhase::SourceFilterEncode));
+    assert!(phases.contains(&TracePhase::ColtBuild));
+    assert!(phases.contains(&TracePhase::ColtIter));
+    assert!(phases.contains(&TracePhase::ColtForce));
+    assert!(phases.contains(&TracePhase::ColtGet));
+    assert!(phases.contains(&TracePhase::CoverChoice));
     assert!(phases.contains(&TracePhase::ExecuteNode));
+    assert!(phases.contains(&TracePhase::ProbeSibling));
+    assert!(phases.contains(&TracePhase::BindingExtend));
+    assert!(phases.contains(&TracePhase::SinkConsume));
     assert!(phases.contains(&TracePhase::SinkFinish));
+    assert!(profiled.trace.counters.live_rows_scanned > 0);
+    assert!(profiled.trace.counters.column_values_loaded > 0);
+    assert!(profiled.trace.counters.source_filter_rows_tested > 0);
+    assert!(profiled.trace.counters.source_filter_survivors > 0);
+    assert!(profiled.trace.counters.colt_nodes_created > 0);
+    assert!(profiled.trace.counters.colt_offsets_scanned > 0);
+    assert!(profiled.trace.counters.tuples_yielded > 0);
+    assert!(profiled.trace.counters.cover_choices > 0);
+    assert!(profiled.trace.counters.probe_calls > 0);
+    assert!(profiled.trace.counters.recursive_node_entries > 0);
+    assert!(profiled.trace.counters.binding_copies > 0);
+    assert!(profiled.trace.counters.source_frame_changes > 0);
+    assert!(profiled.trace.counters.sink_consumes > 0);
+    assert!(profiled.trace.counters.decoded_values > 0);
     assert!(!profiled.trace.metadata.selected_plan_family.is_empty());
     assert!(profiled.trace.metadata.node_count > 0);
     assert_eq!(profiled.trace.metadata.cover_policy, "DynamicMinKeys");

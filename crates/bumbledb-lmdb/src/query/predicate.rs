@@ -5,6 +5,7 @@ use bumbledb_core::schema::{SchemaDescriptor, ValueType};
 
 use crate::colt::{SourceFilter, SourceFilterOp};
 use crate::query::model::{AtomOccurrence, NormalizedQuery, NormalizedTerm, SourcePredicate};
+use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
 use crate::storage_v5;
 use crate::{Error, InputBindings, ReadTxn, Result, Value};
 
@@ -15,7 +16,37 @@ pub(crate) enum PredicateMode {
     Pushdown,
 }
 
-pub(crate) fn source_filters_for_atom(
+pub(crate) fn source_filters_for_atom_with_trace(
+    txn: &ReadTxn<'_>,
+    schema: &SchemaDescriptor,
+    query: &NormalizedQuery,
+    atom: &AtomOccurrence,
+    inputs: &InputBindings,
+    mode: PredicateMode,
+    trace: &mut QueryTrace,
+) -> Result<Vec<SourceFilter>> {
+    let span = trace.start_span(
+        TracePhase::SourceFilterEncode,
+        format!("relation={} atom={:?}", atom.relation, atom.id),
+    );
+    let filters = source_filters_for_atom_inner(txn, schema, query, atom, inputs, mode)?;
+    if let Some(span) = span {
+        trace.finish_span(
+            span,
+            TraceCounters {
+                source_filters_encoded: filters.len() as u64,
+                source_filter_false_decisions: filters
+                    .iter()
+                    .filter(|filter| matches!(filter, SourceFilter::False))
+                    .count() as u64,
+                ..TraceCounters::default()
+            },
+        );
+    }
+    Ok(filters)
+}
+
+fn source_filters_for_atom_inner(
     txn: &ReadTxn<'_>,
     schema: &SchemaDescriptor,
     query: &NormalizedQuery,

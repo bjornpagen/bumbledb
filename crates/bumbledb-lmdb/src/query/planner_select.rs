@@ -5,6 +5,7 @@ use crate::query::binary2fj::{binary2fj, factor_plan};
 use crate::query::free_join::{FjNode, FjPlan, FjPlanError, FjSubatom};
 use crate::query::model::{AtomOccurrenceId, NormalizedQuery, NormalizedTerm};
 use crate::query::planner::{BinaryPlan, deterministic_binary_plan};
+use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
 use crate::{Error, ReadTxn, Result, StorageSchema};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -70,12 +71,31 @@ pub(crate) fn select_plan(
     query: &NormalizedQuery,
     mode: PlanMode,
 ) -> Result<PlannerSelection> {
-    let stats = collect_planner_stats(txn, schema, query)?;
-    let mut candidates = candidates_for_mode(query, mode)?;
+    let mut trace = QueryTrace::disabled();
+    select_plan_with_trace(txn, schema, query, mode, &mut trace)
+}
+
+pub(crate) fn select_plan_with_trace(
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    query: &NormalizedQuery,
+    mode: PlanMode,
+    trace: &mut QueryTrace,
+) -> Result<PlannerSelection> {
+    let stats = collect_planner_stats_with_trace(txn, schema, query, trace)?;
+    let candidate_span = trace.start_span(TracePhase::PlanSelect, "generate plan candidates");
+    let mut candidates = candidates_for_mode(query, mode, trace)?;
+    if let Some(span) = candidate_span {
+        trace.finish_span(span, TraceCounters::default());
+    }
+    let scoring_span = trace.start_span(TracePhase::PlanSelect, "score plan candidates");
     for candidate in &mut candidates {
         candidate.cost = score_candidate(candidate, &stats);
     }
     candidates.sort_by_key(|candidate| (candidate.cost, candidate.family));
+    if let Some(span) = scoring_span {
+        trace.finish_span(span, TraceCounters::default());
+    }
     let chosen = candidates
         .first()
         .cloned()
@@ -88,10 +108,30 @@ pub(crate) fn select_plan(
 }
 
 pub(crate) fn generate_plan_candidates(query: &NormalizedQuery) -> Result<Vec<PlanCandidate>> {
+    let mut trace = QueryTrace::disabled();
+    generate_plan_candidates_with_trace(query, &mut trace)
+}
+
+pub(crate) fn generate_plan_candidates_with_trace(
+    query: &NormalizedQuery,
+    trace: &mut QueryTrace,
+) -> Result<Vec<PlanCandidate>> {
     let binary = deterministic_binary_plan(query).map_err(invalid_plan)?;
     binary.validate(query).map_err(invalid_plan)?;
     let binary_fj = binary2fj(query, &binary).map_err(invalid_plan)?;
-    let (factored, _trace) = factor_plan(query, &binary_fj).map_err(invalid_plan)?;
+    let (factored, rewrite_trace) = factor_plan(query, &binary_fj).map_err(invalid_plan)?;
+    for step in rewrite_trace.steps {
+        let span = trace.start_span(
+            TracePhase::PlanSelect,
+            format!(
+                "factorization from={} to={} outcome={:?} reason={}",
+                step.from_node, step.to_node, step.outcome, step.reason
+            ),
+        );
+        if let Some(span) = span {
+            trace.finish_span(span, TraceCounters::default());
+        }
+    }
     let singleton = singleton_plan(query).map_err(invalid_plan)?;
     Ok(vec![
         candidate(PlanFamily::BinaryDerived, binary_fj, query)?,
@@ -100,8 +140,12 @@ pub(crate) fn generate_plan_candidates(query: &NormalizedQuery) -> Result<Vec<Pl
     ])
 }
 
-fn candidates_for_mode(query: &NormalizedQuery, mode: PlanMode) -> Result<Vec<PlanCandidate>> {
-    let generated = generate_plan_candidates(query)?;
+fn candidates_for_mode(
+    query: &NormalizedQuery,
+    mode: PlanMode,
+    trace: &mut QueryTrace,
+) -> Result<Vec<PlanCandidate>> {
+    let generated = generate_plan_candidates_with_trace(query, trace)?;
     Ok(match mode {
         PlanMode::Default => generated,
         PlanMode::ForceBinaryDerived => only_family(generated, PlanFamily::BinaryDerived),
@@ -203,15 +247,35 @@ fn collect_planner_stats(
     schema: &StorageSchema,
     query: &NormalizedQuery,
 ) -> Result<PlannerStats> {
+    let mut trace = QueryTrace::disabled();
+    collect_planner_stats_with_trace(txn, schema, query, &mut trace)
+}
+
+fn collect_planner_stats_with_trace(
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    query: &NormalizedQuery,
+    trace: &mut QueryTrace,
+) -> Result<PlannerStats> {
+    let stats_span = trace.start_span(TracePhase::PlannerStats, "collect planner stats");
     let mut relations = Vec::new();
     for atom in &query.atoms {
+        let relation_span = trace.start_span(
+            TracePhase::PlannerStats,
+            format!("planner relation={} atom={:?}", atom.relation, atom.id),
+        );
         let field_ids: BTreeSet<_> = atom
             .fields
             .iter()
             .filter(|field| matches!(field.term, NormalizedTerm::Variable(_)))
             .map(|field| field.field_id)
             .collect();
-        let image = txn.relation_base_image(schema, &atom.relation, field_ids.iter().copied())?;
+        let image = txn.relation_base_image_with_trace(
+            schema,
+            &atom.relation,
+            field_ids.iter().copied(),
+            trace,
+        )?;
         relations.push(relation_stats(
             atom.id,
             &atom.relation,
@@ -219,6 +283,9 @@ fn collect_planner_stats(
             &image,
             &atom.variable_tuple,
         ));
+        if let Some(span) = relation_span {
+            trace.finish_span(span, TraceCounters::default());
+        }
     }
     let max_rows = relations
         .iter()
@@ -231,14 +298,18 @@ fn collect_planner_stats(
         .filter(|rows| *rows > 0)
         .min()
         .unwrap_or(1);
-    Ok(PlannerStats {
+    let stats = PlannerStats {
         storage_tx_id: txn.storage_tx_id()?,
         schema_fingerprint: schema.descriptor().fingerprint().0,
         relations,
         skew_ratio: max_rows / min_rows.max(1),
         projection_width: query.find.len(),
         accelerator_entries: 0,
-    })
+    };
+    if let Some(span) = stats_span {
+        trace.finish_span(span, TraceCounters::default());
+    }
+    Ok(stats)
 }
 
 fn relation_stats(

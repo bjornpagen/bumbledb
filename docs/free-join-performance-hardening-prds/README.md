@@ -47,7 +47,6 @@ This suite deliberately prioritizes correctness, observability, Free Join paper 
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 05 | `05-executor-span-coverage.md` | Instruments normalization, planning, base images, COLT, recursion, probes, and sinks. |
 | 06 | `06-benchmark-trace-harvest.md` | Wires trace and allocation output into benchmark runs and establishes the harvest workflow. |
 | 07 | `07-counter-truth-audit.md` | Replaces synthetic or incomplete counters with real engine counters only. |
 | 08 | `08-planner-stats-without-base-images.md` | Stops plan selection from building base images. |

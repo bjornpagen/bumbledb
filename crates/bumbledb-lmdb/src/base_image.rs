@@ -7,6 +7,7 @@ use bumbledb_core::schema::RelationDescriptor;
 
 use crate::query::free_join::ValidatedFjPlan;
 use crate::query::model::AtomOccurrenceId;
+use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
 use crate::storage_format::{FactHandle, column_key, live_row_key};
 use crate::{Error, ReadTxn, Result, StorageSchema};
 
@@ -64,6 +65,26 @@ pub(crate) fn relation_base_image(
     relation_name: &str,
     field_ids: impl IntoIterator<Item = usize>,
 ) -> Result<Arc<RelationBaseImage>> {
+    relation_base_image_inner(txn, schema, relation_name, field_ids, None)
+}
+
+pub(crate) fn relation_base_image_with_trace(
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    relation_name: &str,
+    field_ids: impl IntoIterator<Item = usize>,
+    trace: &mut QueryTrace,
+) -> Result<Arc<RelationBaseImage>> {
+    relation_base_image_inner(txn, schema, relation_name, field_ids, Some(trace))
+}
+
+fn relation_base_image_inner(
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    relation_name: &str,
+    field_ids: impl IntoIterator<Item = usize>,
+    mut trace: Option<&mut QueryTrace>,
+) -> Result<Arc<RelationBaseImage>> {
     let (relation_id, relation) = find_relation(schema, relation_name)?;
     let mut field_ids: Vec<_> = field_ids.into_iter().collect();
     field_ids.sort_unstable();
@@ -75,22 +96,75 @@ pub(crate) fn relation_base_image(
         relation_id,
         field_ids,
     };
+    let lookup_span = trace.as_deref_mut().and_then(|trace| {
+        trace.start_span(
+            TracePhase::BaseImageCacheLookup,
+            format!("relation={relation_name} fields={:?}", key.field_ids),
+        )
+    });
     if let Some(image) = txn.base_images.images.lock().map_err(lock_error)?.get(&key) {
+        if let (Some(trace), Some(span)) = (trace.as_deref_mut(), lookup_span) {
+            trace.finish_span(
+                span,
+                TraceCounters {
+                    base_image_cache_hits: 1,
+                    ..TraceCounters::default()
+                },
+            );
+        }
         return Ok(Arc::clone(image));
     }
+    if let (Some(trace), Some(span)) = (trace.as_deref_mut(), lookup_span) {
+        trace.finish_span(
+            span,
+            TraceCounters {
+                base_image_cache_misses: 1,
+                ..TraceCounters::default()
+            },
+        );
+    }
 
+    let load_span = trace.as_deref_mut().and_then(|trace| {
+        trace.start_span(
+            TracePhase::BaseImageLoad,
+            format!("relation={relation_name} fields={:?}", key.field_ids),
+        )
+    });
     let image = Arc::new(load_relation_base_image(
         txn,
         relation_id,
         relation,
         &key.field_ids,
     )?);
+    if let (Some(trace), Some(span)) = (trace, load_span) {
+        trace.finish_span(span, base_image_counters(&image));
+    }
     txn.base_images
         .images
         .lock()
         .map_err(lock_error)?
         .insert(key, Arc::clone(&image));
     Ok(image)
+}
+
+fn base_image_counters(image: &RelationBaseImage) -> TraceCounters {
+    let column_values_loaded = image
+        .columns
+        .values()
+        .map(|column| column.values.len() as u64)
+        .sum();
+    let loaded_bytes = image
+        .columns
+        .values()
+        .flat_map(|column| column.values.iter())
+        .map(|value| value.len() as u64)
+        .sum();
+    TraceCounters {
+        live_rows_scanned: image.row_handles.len() as u64,
+        column_values_loaded,
+        loaded_bytes,
+        ..TraceCounters::default()
+    }
 }
 
 /// Computes required field IDs per atom occurrence from a validated FJ plan.

@@ -289,6 +289,16 @@ impl ReadTxn<'_> {
         base_image::relation_base_image(self, schema, relation, field_ids)
     }
 
+    pub(crate) fn relation_base_image_with_trace(
+        &self,
+        schema: &StorageSchema,
+        relation: &str,
+        field_ids: impl IntoIterator<Item = usize>,
+        trace: &mut QueryTrace,
+    ) -> Result<Arc<base_image::RelationBaseImage>> {
+        base_image::relation_base_image_with_trace(self, schema, relation, field_ids, trace)
+    }
+
     #[cfg(test)]
     pub(crate) fn debug_relation_facts(
         &self,
