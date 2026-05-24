@@ -5,6 +5,7 @@ use crate::colt::{ColtSource, tuple_schemas_for_atom};
 use crate::query::cover::{CoverPolicy, ExecutionMode, ExecutionStats, choose_cover};
 use crate::query::free_join::{FjSubatom, ValidatedFjNode, ValidatedFjPlan};
 use crate::query::model::{AtomOccurrenceId, NormalizedQuery};
+use crate::query::predicate::{self, PredicateMode};
 use crate::query::sink::{Binding, BindingSink};
 use crate::tuple::{EncodedTuple, GhtSource, TupleError, TupleField, TupleSchema};
 use crate::{Error, ReadTxn, Result, StorageSchema};
@@ -15,18 +16,24 @@ pub(super) fn execute_validated_plan<S: BindingSink>(
     schema: &StorageSchema,
     query: &NormalizedQuery,
     plan: &ValidatedFjPlan,
+    inputs: &crate::InputBindings,
+    predicate_mode: PredicateMode,
     execution_mode: ExecutionMode,
     cover_policy: CoverPolicy,
     stats: &mut ExecutionStats,
     sink: &mut S,
 ) -> Result<()> {
-    let sources = build_sources(txn, schema, query, plan)?;
+    let sources = build_sources(txn, schema, query, plan, inputs, predicate_mode)?;
     execute_node(
         0,
         query,
         plan,
         &sources,
         &Binding::default(),
+        txn,
+        schema,
+        inputs,
+        predicate_mode,
         execution_mode,
         cover_policy,
         stats,
@@ -39,10 +46,25 @@ fn build_sources(
     schema: &StorageSchema,
     query: &NormalizedQuery,
     plan: &ValidatedFjPlan,
+    inputs: &crate::InputBindings,
+    predicate_mode: PredicateMode,
 ) -> Result<BTreeMap<AtomOccurrenceId, ColtSource>> {
-    let scopes = field_scope_for_plan(plan);
+    let mut scopes = field_scope_for_plan(plan);
     let mut sources = BTreeMap::new();
     for atom in &query.atoms {
+        let filters = predicate::source_filters_for_atom(
+            txn,
+            schema.descriptor(),
+            query,
+            atom,
+            inputs,
+            predicate_mode,
+        )?;
+        scopes.entry(atom.id).or_default().extend(
+            filters
+                .iter()
+                .filter_map(crate::colt::SourceFilter::field_id),
+        );
         let field_ids = scopes.get(&atom.id).into_iter().flatten().copied();
         let image = txn.relation_base_image(schema, &atom.relation, field_ids)?;
         let tuple_schemas = tuple_schemas_for_atom(query, plan, atom.id);
@@ -52,7 +74,10 @@ fn build_sources(
                 atom.id
             )));
         }
-        sources.insert(atom.id, ColtSource::new(atom.id, image, tuple_schemas));
+        sources.insert(
+            atom.id,
+            ColtSource::new_filtered(atom.id, image, tuple_schemas, filters),
+        );
     }
     Ok(sources)
 }
@@ -64,13 +89,20 @@ fn execute_node<S: BindingSink>(
     plan: &ValidatedFjPlan,
     sources: &BTreeMap<AtomOccurrenceId, ColtSource>,
     binding: &Binding,
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    inputs: &crate::InputBindings,
+    predicate_mode: PredicateMode,
     execution_mode: ExecutionMode,
     cover_policy: CoverPolicy,
     stats: &mut ExecutionStats,
     sink: &mut S,
 ) -> Result<()> {
     let Some(node) = plan.nodes.get(node_index) else {
-        return sink.consume(query, binding);
+        if predicate::binding_satisfies(txn, schema.descriptor(), query, &binding.values, inputs)? {
+            return sink.consume(query, binding);
+        }
+        return Ok(());
     };
     let cover_index = choose_cover(node, sources, cover_policy, stats)?;
     let cover_subatom = &node.subatoms[cover_index];
@@ -83,6 +115,10 @@ fn execute_node<S: BindingSink>(
             plan,
             sources,
             binding,
+            txn,
+            schema,
+            inputs,
+            predicate_mode,
             node,
             cover_index,
             execution_mode,
@@ -99,6 +135,10 @@ fn execute_node<S: BindingSink>(
             plan,
             sources,
             binding,
+            txn,
+            schema,
+            inputs,
+            predicate_mode,
             node,
             cover_index,
             &cover_source,
@@ -113,6 +153,10 @@ fn execute_node<S: BindingSink>(
             plan,
             sources,
             binding,
+            txn,
+            schema,
+            inputs,
+            predicate_mode,
             node,
             cover_index,
             &cover_source,
@@ -132,6 +176,10 @@ fn execute_bound_cover<S: BindingSink>(
     plan: &ValidatedFjPlan,
     sources: &BTreeMap<AtomOccurrenceId, ColtSource>,
     binding: &Binding,
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    inputs: &crate::InputBindings,
+    predicate_mode: PredicateMode,
     node: &ValidatedFjNode,
     cover_index: usize,
     execution_mode: ExecutionMode,
@@ -160,6 +208,10 @@ fn execute_bound_cover<S: BindingSink>(
             plan,
             &next_sources,
             binding,
+            txn,
+            schema,
+            inputs,
+            predicate_mode,
             execution_mode,
             cover_policy,
             stats,
@@ -176,6 +228,10 @@ fn execute_scalar_cover_loop<S: BindingSink>(
     plan: &ValidatedFjPlan,
     sources: &BTreeMap<AtomOccurrenceId, ColtSource>,
     binding: &Binding,
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    inputs: &crate::InputBindings,
+    predicate_mode: PredicateMode,
     node: &ValidatedFjNode,
     cover_index: usize,
     cover_source: &ColtSource,
@@ -197,6 +253,10 @@ fn execute_scalar_cover_loop<S: BindingSink>(
                 plan,
                 &next_sources,
                 &next_binding,
+                txn,
+                schema,
+                inputs,
+                predicate_mode,
                 ExecutionMode::Scalar,
                 cover_policy,
                 stats,
@@ -214,6 +274,10 @@ fn execute_vectorized_cover_loop<S: BindingSink>(
     plan: &ValidatedFjPlan,
     sources: &BTreeMap<AtomOccurrenceId, ColtSource>,
     binding: &Binding,
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    inputs: &crate::InputBindings,
+    predicate_mode: PredicateMode,
     node: &ValidatedFjNode,
     cover_index: usize,
     cover_source: &ColtSource,
@@ -267,6 +331,10 @@ fn execute_vectorized_cover_loop<S: BindingSink>(
                 plan,
                 &next_sources,
                 &next_binding,
+                txn,
+                schema,
+                inputs,
+                predicate_mode,
                 ExecutionMode::Vectorized { batch_size },
                 cover_policy,
                 stats,

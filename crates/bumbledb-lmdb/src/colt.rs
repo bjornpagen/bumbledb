@@ -10,6 +10,35 @@ use crate::query::free_join::ValidatedFjPlan;
 use crate::query::model::{AtomOccurrenceId, NormalizedQuery};
 use crate::tuple::{EncodedTuple, GhtSource, KeyCountEstimate, TupleField, TupleSchema};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SourceFilterOp {
+    Eq,
+    NotEq,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SourceFilter {
+    Compare {
+        field_id: usize,
+        op: SourceFilterOp,
+        value: Vec<u8>,
+    },
+    False,
+}
+
+impl SourceFilter {
+    pub(crate) fn field_id(&self) -> Option<usize> {
+        match self {
+            SourceFilter::Compare { field_id, .. } => Some(*field_id),
+            SourceFilter::False => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct ColtSource {
     node: Rc<RefCell<ColtNode>>,
@@ -47,12 +76,27 @@ impl ColtSource {
         base: Arc<RelationBaseImage>,
         schemas: Vec<TupleSchema>,
     ) -> Self {
+        Self::new_filtered(atom, base, schemas, Vec::new())
+    }
+
+    pub(crate) fn new_filtered(
+        atom: AtomOccurrenceId,
+        base: Arc<RelationBaseImage>,
+        schemas: Vec<TupleSchema>,
+        filters: Vec<SourceFilter>,
+    ) -> Self {
         let counters = Rc::new(RefCell::new(ColtCounters {
             nodes_created: 1,
             ..ColtCounters::default()
         }));
         let vars = schemas.first().map_or_else(Vec::new, TupleSchema::vars);
-        let offsets = (0..base.row_handles.len()).collect();
+        let offsets = (0..base.row_handles.len())
+            .filter(|offset| {
+                filters
+                    .iter()
+                    .all(|filter| source_filter_matches(&base, *offset, filter))
+            })
+            .collect();
         Self {
             vars: vars.clone(),
             node: Rc::new(RefCell::new(ColtNode {
@@ -132,6 +176,32 @@ impl ColtSource {
         node.counters.borrow_mut().nodes_forced += 1;
         node.counters.borrow_mut().hash_maps_built += 1;
         node.data = ColtData::Map(map);
+    }
+}
+
+fn source_filter_matches(base: &RelationBaseImage, offset: usize, filter: &SourceFilter) -> bool {
+    match filter {
+        SourceFilter::False => false,
+        SourceFilter::Compare {
+            field_id,
+            op,
+            value,
+        } => base
+            .columns
+            .get(field_id)
+            .and_then(|column| column.values.get(offset))
+            .is_some_and(|candidate| compare_encoded(candidate, *op, value)),
+    }
+}
+
+fn compare_encoded(candidate: &[u8], op: SourceFilterOp, value: &[u8]) -> bool {
+    match op {
+        SourceFilterOp::Eq => candidate == value,
+        SourceFilterOp::NotEq => candidate != value,
+        SourceFilterOp::Lt => candidate < value,
+        SourceFilterOp::Lte => candidate <= value,
+        SourceFilterOp::Gt => candidate > value,
+        SourceFilterOp::Gte => candidate >= value,
     }
 }
 

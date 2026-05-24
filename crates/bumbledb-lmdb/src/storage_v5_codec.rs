@@ -237,6 +237,37 @@ pub(super) fn decode_value(
     })
 }
 
+pub(super) fn encode_existing_value(
+    txn: &ReadTxn<'_>,
+    schema: &SchemaDescriptor,
+    value_type: &ValueType,
+    value: &Value,
+) -> Result<Option<Vec<u8>>> {
+    Ok(Some(match (value, value_type) {
+        (Value::Bool(value), ValueType::Bool) => encode_bool(*value).to_vec(),
+        (Value::U64(value), ValueType::U64) | (Value::Serial(value), ValueType::Serial { .. }) => {
+            encode_u64(*value).to_vec()
+        }
+        (Value::I64(value), ValueType::I64) => encode_i64(*value).to_vec(),
+        (Value::Enum(value), ValueType::Enum { name }) => encode_enum_value(schema, name, *value)?,
+        (Value::String(value), ValueType::String) => {
+            let Some(id) =
+                lookup_intern_id(&txn.dbs.dict, &txn.txn, DICT_STRING, value.as_bytes())?
+            else {
+                return Ok(None);
+            };
+            encode_intern_id(InternId(id)).to_vec()
+        }
+        (Value::Bytes(value), ValueType::Bytes) => {
+            let Some(id) = lookup_intern_id(&txn.dbs.dict, &txn.txn, DICT_BYTES, value)? else {
+                return Ok(None);
+            };
+            encode_intern_id(InternId(id)).to_vec()
+        }
+        _ => return Err(Error::invalid_query("input value/type mismatch")),
+    }))
+}
+
 fn decode_string(txn: &ReadTxn<'_>, bytes: &[u8]) -> Result<Value> {
     let id = decode_intern_id(bytes)
         .map_err(|error| Error::corrupt(error.to_string()))?

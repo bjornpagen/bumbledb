@@ -59,6 +59,15 @@ pub(crate) fn decode_value(
     codec::decode_value(txn, value_type, bytes)
 }
 
+pub(crate) fn encode_existing_value(
+    txn: &ReadTxn<'_>,
+    schema: &SchemaDescriptor,
+    value_type: &ValueType,
+    value: &Value,
+) -> Result<Option<Vec<u8>>> {
+    codec::encode_existing_value(txn, schema, value_type, value)
+}
+
 pub(crate) fn relation_fact_count(
     txn: &ReadTxn<'_>,
     schema: &crate::StorageSchema,
