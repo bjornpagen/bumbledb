@@ -1,0 +1,14 @@
+[package]
+name = "bumbledb-bench"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+blake3.workspace = true
+bumbledb-core.workspace = true
+bumbledb-lmdb = { path = "../bumbledb-lmdb" }
+bumbledb-test-support = { path = "../bumbledb-test-support" }
+
+[lints]
+workspace = true
