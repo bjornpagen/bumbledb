@@ -4,7 +4,7 @@ use bumbledb_core::query_ir::TypedFindTerm;
 
 use crate::query::model::NormalizedQuery;
 use crate::storage_v5;
-use crate::tuple::EncodedTuple;
+use crate::tuple::EncodedTupleRef;
 use crate::{Error, QueryResultSet, ReadTxn, Result, ResultColumn, ResultFact};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,14 +31,15 @@ impl Binding {
     pub(super) fn extend_from_tuple(
         &self,
         vars: &[usize],
-        tuple: &EncodedTuple,
+        tuple: EncodedTupleRef<'_>,
         query: &NormalizedQuery,
     ) -> Result<Option<Self>> {
         let mut next = self.clone();
         let mut offset = 0;
+        let tuple = tuple.bytes();
         for variable in vars {
             let width = query.variables[*variable].value_type.encoded_width();
-            let Some(bytes) = tuple.bytes().get(offset..offset + width) else {
+            let Some(bytes) = tuple.get(offset..offset + width) else {
                 return Err(Error::corrupt("cover tuple width is too short"));
             };
             match next.values.get(variable) {
@@ -50,7 +51,7 @@ impl Binding {
             }
             offset += width;
         }
-        if offset != tuple.bytes().len() {
+        if offset != tuple.len() {
             return Err(Error::corrupt("cover tuple width has trailing bytes"));
         }
         Ok(Some(next))

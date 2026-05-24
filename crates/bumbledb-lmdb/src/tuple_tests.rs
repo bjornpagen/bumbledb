@@ -1,8 +1,12 @@
 use std::collections::BTreeMap;
+use std::ops::ControlFlow;
 
 use bumbledb_core::encoding::{InternId, encode_enum, encode_intern_id, encode_u64};
 
-use super::{EncodedTuple, GhtSource, KeyCountEstimate, TupleError, TupleField, TupleSchema};
+use super::{
+    EncodedTuple, EncodedTupleRef, GhtSource, KeyCountEstimate, TupleBatch, TupleCursor,
+    TupleError, TupleField, TupleSchema,
+};
 use crate::base_image::{ColumnImage, RelationBaseImage, RelationStats};
 use crate::query::model::AtomOccurrenceId;
 
@@ -110,8 +114,12 @@ fn ght_mock_iterates_and_gets_tuple_children() -> Result<(), TupleError> {
         count: KeyCountEstimate::Exact(1),
     };
 
-    assert_eq!(source.iter(), vec![key.clone()]);
-    assert!(source.get(&key).is_some());
+    assert_eq!(collect_tuples(&source), vec![key.clone()]);
+    assert_eq!(
+        source.fill_batch(&mut TupleCursor::default(), 10).tuples,
+        vec![key.clone()]
+    );
+    assert!(source.get(key.as_ref()).is_some());
     assert_eq!(source.key_count(), KeyCountEstimate::Exact(1));
     Ok(())
 }
@@ -148,12 +156,33 @@ impl GhtSource for MockGht {
         &self.vars
     }
 
-    fn iter(&self) -> Vec<EncodedTuple> {
-        self.keys.clone()
+    fn try_for_each_tuple<E, F>(&self, mut f: F) -> std::result::Result<(), E>
+    where
+        F: FnMut(EncodedTupleRef<'_>) -> std::result::Result<ControlFlow<()>, E>,
+    {
+        for key in &self.keys {
+            if f(key.as_ref())?.is_break() {
+                break;
+            }
+        }
+        Ok(())
     }
 
-    fn get(&self, tuple: &EncodedTuple) -> Option<Self::Child<'_>> {
-        self.children.get(tuple)
+    fn fill_batch(&self, cursor: &mut TupleCursor, batch_size: usize) -> TupleBatch {
+        let batch_size = batch_size.max(1);
+        let mut tuples = Vec::with_capacity(batch_size.min(self.keys.len()));
+        while cursor.position < self.keys.len() && tuples.len() < batch_size {
+            tuples.push(self.keys[cursor.position].clone());
+            cursor.position += 1;
+        }
+        TupleBatch {
+            tuples,
+            exhausted: cursor.position >= self.keys.len(),
+        }
+    }
+
+    fn get(&self, tuple: EncodedTupleRef<'_>) -> Option<Self::Child<'_>> {
+        self.children.get(tuple.bytes())
     }
 
     fn key_count(&self) -> KeyCountEstimate {
@@ -175,17 +204,34 @@ impl GhtSource for &MockGht {
         (*self).vars()
     }
 
-    fn iter(&self) -> Vec<EncodedTuple> {
-        (*self).iter()
+    fn try_for_each_tuple<E, F>(&self, f: F) -> std::result::Result<(), E>
+    where
+        F: FnMut(EncodedTupleRef<'_>) -> std::result::Result<ControlFlow<()>, E>,
+    {
+        (*self).try_for_each_tuple(f)
     }
 
-    fn get(&self, tuple: &EncodedTuple) -> Option<Self::Child<'_>> {
+    fn fill_batch(&self, cursor: &mut TupleCursor, batch_size: usize) -> TupleBatch {
+        (*self).fill_batch(cursor, batch_size)
+    }
+
+    fn get(&self, tuple: EncodedTupleRef<'_>) -> Option<Self::Child<'_>> {
         (*self).get(tuple)
     }
 
     fn key_count(&self) -> KeyCountEstimate {
         (*self).key_count()
     }
+}
+
+fn collect_tuples(source: &impl GhtSource) -> Vec<EncodedTuple> {
+    let mut tuples = Vec::new();
+    let result = source.try_for_each_tuple::<(), _>(|tuple| {
+        tuples.push(tuple.to_owned_tuple());
+        Ok(ControlFlow::Continue(()))
+    });
+    assert!(result.is_ok());
+    tuples
 }
 
 fn base_image() -> RelationBaseImage {

@@ -8,8 +8,8 @@ use crate::query::predicate::PredicateMode;
 use crate::query::runtime::{Candidate, bind_cover_tuple, execute_node, source_for};
 use crate::query::runtime_keys::key_from_binding_by_bound_widths;
 use crate::query::sink::{Binding, BindingSink};
-use crate::query::trace::{QueryTrace, TraceCounters};
-use crate::tuple::GhtSource;
+use crate::query::trace::QueryTrace;
+use crate::tuple::TupleCursor;
 use crate::{ReadTxn, Result, StorageSchema};
 
 #[allow(clippy::too_many_arguments)]
@@ -36,24 +36,33 @@ pub(super) fn execute_vectorized_cover_loop<S: BindingSink>(
 ) -> Result<()> {
     let batch_size = batch_size.max(1);
     stats.vectorized.batch_size = batch_size;
-    for batch in cover_source.iter_batch(batch_size) {
-        if batch.is_empty() {
+    let mut cursor = TupleCursor::default();
+    loop {
+        let batch = cover_source.fill_batch_traced(
+            &mut cursor,
+            batch_size,
+            trace,
+            format!(
+                "cover batch node={node_index} atom={:?}",
+                cover_subatom.atom
+            ),
+        );
+        let exhausted = batch.exhausted;
+        if batch.tuples.is_empty() {
+            if exhausted {
+                break;
+            }
             continue;
         }
         stats.vectorized.batches += 1;
-        stats.vectorized.input_tuples += batch.len();
-        trace.add_counters(&TraceCounters {
-            batches_yielded: 1,
-            tuples_yielded: batch.len() as u64,
-            ..TraceCounters::default()
-        });
+        stats.vectorized.input_tuples += batch.tuples.len();
         let survivors = bind_vectorized_batch(
             query,
             sources,
             binding,
             cover_source,
             cover_subatom,
-            batch,
+            batch.tuples,
             stats,
             trace,
         )?;
@@ -79,6 +88,9 @@ pub(super) fn execute_vectorized_cover_loop<S: BindingSink>(
                 trace,
             )?;
         }
+        if exhausted {
+            break;
+        }
     }
     Ok(())
 }
@@ -102,7 +114,7 @@ fn bind_vectorized_batch(
             binding,
             cover_source,
             cover_subatom,
-            &tuple,
+            tuple.as_ref(),
             trace,
         )? {
             survivors.push(entry);
@@ -131,7 +143,7 @@ fn probe_vectorized_survivors(
             let source = source_for(&candidate_sources, subatom)?;
             let key = key_from_binding_by_bound_widths(&candidate_binding, subatom)?;
             if let Some(child) = source.get_traced(
-                &key,
+                key.as_ref(),
                 trace,
                 format!("vector probe node={node_index} atom={:?}", subatom.atom),
             ) {

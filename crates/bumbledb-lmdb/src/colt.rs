@@ -2,6 +2,7 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -9,7 +10,10 @@ use crate::base_image::RelationBaseImage;
 use crate::query::free_join::ValidatedFjPlan;
 use crate::query::model::{AtomOccurrenceId, NormalizedQuery};
 use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
-use crate::tuple::{EncodedTuple, GhtSource, KeyCountEstimate, TupleField, TupleSchema};
+use crate::tuple::{
+    EncodedTuple, EncodedTupleRef, GhtSource, KeyCountEstimate, TupleBatch, TupleCursor,
+    TupleField, TupleSchema,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SourceFilterOp {
@@ -154,24 +158,51 @@ impl ColtSource {
         self.node.borrow().counters.borrow().clone()
     }
 
-    pub(crate) fn iter_traced(
+    pub(crate) fn try_for_each_tuple_traced<E, F>(
         &self,
         trace: &mut QueryTrace,
         label: impl Into<String>,
-    ) -> Vec<EncodedTuple> {
+        mut f: F,
+    ) -> std::result::Result<(), E>
+    where
+        F: FnMut(EncodedTupleRef<'_>, &mut QueryTrace) -> std::result::Result<ControlFlow<()>, E>,
+    {
         let before = self.counters();
         let span = trace.start_span(TracePhase::ColtIter, label);
-        let tuples = self.iter();
+        let mut tuples = 0usize;
+        let result = self.try_for_each_tuple(|tuple| {
+            tuples += 1;
+            f(tuple, trace)
+        });
         let after = self.counters();
         if let Some(span) = span {
-            trace.finish_span(span, colt_counter_delta(before, after, tuples.len()));
+            trace.finish_span(span, colt_counter_delta(before, after, tuples));
         }
-        tuples
+        result
+    }
+
+    pub(crate) fn fill_batch_traced(
+        &self,
+        cursor: &mut TupleCursor,
+        batch_size: usize,
+        trace: &mut QueryTrace,
+        label: impl Into<String>,
+    ) -> TupleBatch {
+        let before = self.counters();
+        let span = trace.start_span(TracePhase::ColtIter, label);
+        let batch = self.fill_batch(cursor, batch_size);
+        let after = self.counters();
+        if let Some(span) = span {
+            let mut counters = colt_counter_delta(before, after, batch.tuples.len());
+            counters.batches_yielded = u64::from(!batch.tuples.is_empty());
+            trace.finish_span(span, counters);
+        }
+        batch
     }
 
     pub(crate) fn get_traced(
         &self,
-        tuple: &EncodedTuple,
+        tuple: EncodedTupleRef<'_>,
         trace: &mut QueryTrace,
         label: impl Into<String>,
     ) -> Option<ColtSource> {
@@ -201,7 +232,7 @@ impl ColtSource {
             }
             return None;
         };
-        let child = map.get(tuple).cloned();
+        let child = map.get(tuple.bytes()).cloned();
         if child.is_none() {
             node.counters.borrow_mut().misses += 1;
         }
@@ -332,33 +363,89 @@ impl GhtSource for ColtSource {
         &self.vars
     }
 
-    fn iter(&self) -> Vec<EncodedTuple> {
+    fn try_for_each_tuple<E, F>(&self, mut f: F) -> std::result::Result<(), E>
+    where
+        F: FnMut(EncodedTupleRef<'_>) -> std::result::Result<ControlFlow<()>, E>,
+    {
         self.node.borrow().counters.borrow_mut().iter_calls += 1;
         if let ColtData::Offsets(offsets) = &self.node.borrow().data
             && self.node.borrow().schemas.len() == 1
         {
             let node = self.node.borrow();
             let schema = &node.schemas[0];
-            return offsets
-                .iter()
-                .filter_map(|offset| schema.tuple_from_base_offset(&node.base, *offset).ok())
-                .collect();
+            let mut bytes = Vec::with_capacity(schema.encoded_width());
+            for offset in offsets {
+                if schema
+                    .write_tuple_from_base_offset(&node.base, *offset, &mut bytes)
+                    .is_ok()
+                    && f(EncodedTupleRef::new(&bytes))?.is_break()
+                {
+                    break;
+                }
+            }
+            return Ok(());
         }
         self.force();
-        match &self.node.borrow().data {
-            ColtData::Map(map) => map.keys().cloned().collect(),
-            ColtData::Offsets(_) => Vec::new(),
+        if let ColtData::Map(map) = &self.node.borrow().data {
+            for key in map.keys() {
+                if f(key.as_ref())?.is_break() {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn fill_batch(&self, cursor: &mut TupleCursor, batch_size: usize) -> TupleBatch {
+        let batch_size = batch_size.max(1);
+        self.node.borrow().counters.borrow_mut().iter_calls += 1;
+        if let ColtData::Offsets(offsets) = &self.node.borrow().data
+            && self.node.borrow().schemas.len() == 1
+        {
+            let node = self.node.borrow();
+            let schema = &node.schemas[0];
+            let mut tuples = Vec::with_capacity(batch_size.min(offsets.len()));
+            while cursor.position < offsets.len() && tuples.len() < batch_size {
+                let offset = offsets[cursor.position];
+                cursor.position += 1;
+                if let Ok(tuple) = schema.tuple_from_base_offset(&node.base, offset) {
+                    tuples.push(tuple);
+                }
+            }
+            return TupleBatch {
+                tuples,
+                exhausted: cursor.position >= offsets.len(),
+            };
+        }
+        self.force();
+        if let ColtData::Map(map) = &self.node.borrow().data {
+            let mut tuples = Vec::with_capacity(batch_size.min(map.len()));
+            for key in map.keys().skip(cursor.position) {
+                if tuples.len() >= batch_size {
+                    break;
+                }
+                tuples.push(key.clone());
+            }
+            cursor.position += tuples.len();
+            return TupleBatch {
+                tuples,
+                exhausted: cursor.position >= map.len(),
+            };
+        }
+        TupleBatch {
+            tuples: Vec::new(),
+            exhausted: true,
         }
     }
 
-    fn get(&self, tuple: &EncodedTuple) -> Option<Self::Child<'_>> {
+    fn get(&self, tuple: EncodedTupleRef<'_>) -> Option<Self::Child<'_>> {
         self.node.borrow().counters.borrow_mut().get_calls += 1;
         self.force();
         let node = self.node.borrow();
         let ColtData::Map(map) = &node.data else {
             return None;
         };
-        let child = map.get(tuple).cloned();
+        let child = map.get(tuple.bytes()).cloned();
         if child.is_none() {
             node.counters.borrow_mut().misses += 1;
         }

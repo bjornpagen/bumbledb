@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ops::ControlFlow;
 
 use crate::colt::ColtSource;
 use crate::query::cover::{CoverPolicy, ExecutionMode, ExecutionStats, choose_cover};
@@ -7,7 +8,7 @@ use crate::query::model::{AtomOccurrenceId, NormalizedQuery};
 use crate::query::predicate::{self, PredicateMode};
 use crate::query::sink::{Binding, BindingSink};
 use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
-use crate::tuple::{EncodedTuple, GhtSource};
+use crate::tuple::{EncodedTupleRef, GhtSource};
 use crate::{Error, ReadTxn, Result, StorageSchema};
 
 #[allow(clippy::too_many_arguments)]
@@ -239,7 +240,7 @@ fn execute_bound_cover<S: BindingSink>(
     } else {
         let key = super::runtime_keys::key_from_binding(query, binding, cover_subatom)?;
         let Some(child) = cover_source.get_traced(
-            &key,
+            key.as_ref(),
             trace,
             format!("cover get node={node_index} atom={:?}", cover_subatom.atom),
         ) else {
@@ -290,50 +291,51 @@ fn execute_scalar_cover_loop<S: BindingSink>(
     sink: &mut S,
     trace: &mut QueryTrace,
 ) -> Result<()> {
-    for tuple in cover_source.iter_traced(
+    cover_source.try_for_each_tuple_traced(
         trace,
         format!("cover iter node={node_index} atom={:?}", cover_subatom.atom),
-    ) {
-        let Some((next_binding, mut next_sources)) = bind_cover_tuple(
-            query,
-            sources,
-            binding,
-            cover_source,
-            cover_subatom,
-            &tuple,
-            trace,
-        )?
-        else {
-            continue;
-        };
-        if probe_siblings(
-            query,
-            node,
-            cover_index,
-            &next_binding,
-            &mut next_sources,
-            trace,
-        )? {
-            execute_node(
-                node_index + 1,
-                depth + 1,
+        |tuple, trace| {
+            let Some((next_binding, mut next_sources)) = bind_cover_tuple(
                 query,
-                plan,
-                &next_sources,
-                &next_binding,
-                txn,
-                schema,
-                inputs,
-                predicate_mode,
-                ExecutionMode::Scalar,
-                cover_policy,
-                stats,
-                sink,
+                sources,
+                binding,
+                cover_source,
+                cover_subatom,
+                tuple,
                 trace,
-            )?;
-        }
-    }
-    Ok(())
+            )?
+            else {
+                return Ok(ControlFlow::Continue(()));
+            };
+            if probe_siblings(
+                query,
+                node,
+                cover_index,
+                &next_binding,
+                &mut next_sources,
+                trace,
+            )? {
+                execute_node(
+                    node_index + 1,
+                    depth + 1,
+                    query,
+                    plan,
+                    &next_sources,
+                    &next_binding,
+                    txn,
+                    schema,
+                    inputs,
+                    predicate_mode,
+                    ExecutionMode::Scalar,
+                    cover_policy,
+                    stats,
+                    sink,
+                    trace,
+                )?;
+            }
+            Ok(ControlFlow::Continue(()))
+        },
+    )
 }
 
 pub(super) type Candidate = (Binding, BTreeMap<AtomOccurrenceId, ColtSource>);
@@ -344,7 +346,7 @@ pub(super) fn bind_cover_tuple(
     binding: &Binding,
     cover_source: &ColtSource,
     cover_subatom: &FjSubatom,
-    tuple: &EncodedTuple,
+    tuple: EncodedTupleRef<'_>,
     trace: &mut QueryTrace,
 ) -> Result<Option<(Binding, BTreeMap<AtomOccurrenceId, ColtSource>)>> {
     let span = trace.start_span(
@@ -410,7 +412,7 @@ fn probe_siblings(
         let source = source_for(sources, subatom)?;
         let key = super::runtime_keys::key_from_binding(query, binding, subatom)?;
         let Some(child) = source.get_traced(
-            &key,
+            key.as_ref(),
             trace,
             format!("sibling get node={} atom={:?}", node.id, subatom.atom),
         ) else {

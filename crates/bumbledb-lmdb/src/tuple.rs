@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
+use std::borrow::Borrow;
 use std::collections::BTreeMap;
+use std::ops::ControlFlow;
 
 use crate::base_image::RelationBaseImage;
 use crate::query::model::AtomOccurrenceId;
@@ -67,6 +69,17 @@ impl TupleSchema {
         offset: usize,
     ) -> Result<EncodedTuple, TupleError> {
         let mut bytes = Vec::with_capacity(self.encoded_width());
+        self.write_tuple_from_base_offset(image, offset, &mut bytes)?;
+        Ok(EncodedTuple { bytes })
+    }
+
+    pub(crate) fn write_tuple_from_base_offset(
+        &self,
+        image: &RelationBaseImage,
+        offset: usize,
+        bytes: &mut Vec<u8>,
+    ) -> Result<(), TupleError> {
+        bytes.clear();
         for field in &self.fields {
             let field_id = field.field_id.ok_or(TupleError::MissingFieldId {
                 variable: field.variable,
@@ -78,9 +91,9 @@ impl TupleSchema {
             let value = column
                 .value_at(offset)
                 .ok_or(TupleError::OffsetOutOfRange { offset })?;
-            push_checked(&mut bytes, value, field.width)?;
+            push_checked(bytes, value, field.width)?;
         }
-        Ok(EncodedTuple { bytes })
+        Ok(())
     }
 }
 
@@ -109,9 +122,42 @@ impl EncodedTuple {
     }
 }
 
+impl Borrow<[u8]> for EncodedTuple {
+    fn borrow(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct EncodedTupleRef<'a> {
     bytes: &'a [u8],
+}
+
+impl<'a> EncodedTupleRef<'a> {
+    pub(crate) fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
+
+    pub(crate) fn bytes(self) -> &'a [u8] {
+        self.bytes
+    }
+
+    pub(crate) fn to_owned_tuple(self) -> EncodedTuple {
+        EncodedTuple {
+            bytes: self.bytes.to_vec(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TupleCursor {
+    pub(crate) position: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TupleBatch {
+    pub(crate) tuples: Vec<EncodedTuple>,
+    pub(crate) exhausted: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,16 +173,11 @@ pub(crate) trait GhtSource {
 
     fn atom(&self) -> Option<AtomOccurrenceId>;
     fn vars(&self) -> &[usize];
-    fn iter(&self) -> Vec<EncodedTuple>;
-    fn iter_batch(&self, batch_size: usize) -> Vec<Vec<EncodedTuple>> {
-        let batch_size = batch_size.max(1);
-        let tuples = self.iter();
-        tuples
-            .chunks(batch_size)
-            .map(<[EncodedTuple]>::to_vec)
-            .collect()
-    }
-    fn get(&self, tuple: &EncodedTuple) -> Option<Self::Child<'_>>;
+    fn try_for_each_tuple<E, F>(&self, f: F) -> std::result::Result<(), E>
+    where
+        F: FnMut(EncodedTupleRef<'_>) -> std::result::Result<ControlFlow<()>, E>;
+    fn fill_batch(&self, cursor: &mut TupleCursor, batch_size: usize) -> TupleBatch;
+    fn get(&self, tuple: EncodedTupleRef<'_>) -> Option<Self::Child<'_>>;
     fn key_count(&self) -> KeyCountEstimate;
 }
 

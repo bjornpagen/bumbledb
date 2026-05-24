@@ -481,7 +481,7 @@ fn dynamic_cover_prefers_smaller_exact_map_when_available() -> Result<()> {
     let r = manual_colt(0, [1])?;
     let s = manual_colt(1, [1, 2, 3])?;
     let key = tuple_x(1)?;
-    assert!(r.get(&key).is_some());
+    assert!(r.get(key.as_ref()).is_some());
     let mut sources = BTreeMap::from([(AtomOccurrenceId(0), r), (AtomOccurrenceId(1), s)]);
     let mut stats = ExecutionStats::default();
 

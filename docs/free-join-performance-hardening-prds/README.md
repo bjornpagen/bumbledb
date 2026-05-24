@@ -29,8 +29,6 @@ This suite deliberately prioritizes correctness, observability, Free Join paper 
 
 ## Current Paper-Alignment Gaps
 
-- `GhtSource::iter` returns `Vec<EncodedTuple>` rather than an iterator, causing eager materialization not present in the paper interface.
-- `iter_batch` is implemented by materializing all tuples first, so it is not true vectorized execution.
 - Source filters are applied after full base-image rows are available, so selective predicates still pay broad scan/load cost.
 - Recursive execution clones binding maps and source maps along hot paths.
 - COLT uses deterministic `BTreeMap` grouping and per-node allocation patterns, not a performance-oriented hash-trie layout.
@@ -45,7 +43,6 @@ This suite deliberately prioritizes correctness, observability, Free Join paper 
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 10 | `10-streaming-ght-interface.md` | Replaces eager `Vec` iteration with streaming and real batching. |
 | 11 | `11-colt-lazy-paper-alignment.md` | Makes COLT closer to the paper's lazy column-oriented trie. |
 | 12 | `12-source-filter-pruning.md` | Turns source predicates into early pruning rather than post-load scans. |
 | 13 | `13-recursive-frame-executor.md` | Replaces recursive map/binding cloning with stack/frame execution state. |
