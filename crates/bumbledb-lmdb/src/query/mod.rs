@@ -1,3 +1,4 @@
+pub(crate) mod free_join;
 pub(crate) mod model;
 pub(crate) mod normalize;
 
