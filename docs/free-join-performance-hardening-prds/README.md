@@ -47,7 +47,6 @@ This suite deliberately prioritizes correctness, observability, Free Join paper 
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 01 | `01-paper-gap-inventory.md` | Turns known paper and Rosetta alignment gaps into explicit tracked obligations. |
 | 02 | `02-trace-event-model.md` | Defines the canonical tracing span/counter schema before code instrumentation. |
 | 03 | `03-allocation-profiler.md` | Adds benchmark-scoped allocation tracking with span deltas. |
 | 04 | `04-profiled-execution-api.md` | Adds the profiled execution surface and removes ad hoc diagnostics. |
