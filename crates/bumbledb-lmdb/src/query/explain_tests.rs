@@ -6,10 +6,10 @@ use bumbledb_core::query_ir::{
 };
 use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
 
-use super::{BenchmarkReport, ExplainConfig, QueryPlan, TraceSpan, summarize_trace_json};
-use crate::query::cover::{CoverPolicy, ExecutionMode, ExecutionStats, VectorizedStats};
+use super::{ExplainConfig, QueryPlan, TraceSpan, summarize_trace_json};
+use crate::query::cover::{CoverPolicy, ExecutionMode};
 use crate::query::planner::PlanMode;
-use crate::query::sink::{OutputMode, OutputStats};
+use crate::query::sink::OutputMode;
 use crate::{Environment, Fact, Result, StorageSchema, Value};
 
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
@@ -83,47 +83,6 @@ fn explain_golden_for_dynamic_cover_and_modes() -> Result<()> {
     assert!(text.contains("storage_tx_id"));
     assert!(text.contains("no public aggregate support"));
     Ok(())
-}
-
-#[test]
-fn benchmark_renderers_include_required_fields() {
-    let report = BenchmarkReport {
-        plan_mode: "factored".to_owned(),
-        batch_size: 1000,
-        cover_mode: "dynamic".to_owned(),
-        output_mode: "factorized".to_owned(),
-        source_mode: "COLT".to_owned(),
-        sink_mode: "internal factorized projection sink".to_owned(),
-        execution: ExecutionStats {
-            vectorized: VectorizedStats {
-                batch_size: 1000,
-                batches: 2,
-                input_tuples: 10,
-                survivor_tuples: 5,
-                failed_tuples: 5,
-                probe_calls: 10,
-            },
-            ..ExecutionStats::default()
-        },
-        output: OutputStats {
-            logical_facts_represented: 10,
-            materialized_facts: 2,
-            duplicate_witnesses_suppressed: 8,
-            expansions_avoided: 8,
-        },
-    };
-
-    let json = report.render_json();
-    let markdown = report.render_markdown();
-
-    assert!(json.contains("\"plan_mode\""));
-    assert!(json.contains("\"batch_size\":1000"));
-    assert!(json.contains("\"cover_mode\""));
-    assert!(json.contains("\"output_mode\""));
-    assert!(json.contains("\"expansions_saved\":8"));
-    assert!(markdown.contains("vectorized counters"));
-    assert!(markdown.contains("COLT counters"));
-    assert!(markdown.contains("output counters"));
 }
 
 #[test]

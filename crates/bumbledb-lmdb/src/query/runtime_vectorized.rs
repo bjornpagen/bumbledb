@@ -6,7 +6,7 @@ use crate::query::free_join::{FjSubatom, ValidatedFjNode, ValidatedFjPlan};
 use crate::query::model::{AtomOccurrenceId, NormalizedQuery};
 use crate::query::predicate::PredicateMode;
 use crate::query::runtime::{Candidate, bind_cover_tuple, execute_node, source_for};
-use crate::query::runtime_keys::key_from_binding_placeholder;
+use crate::query::runtime_keys::key_from_binding_by_bound_widths;
 use crate::query::sink::{Binding, BindingSink};
 use crate::query::trace::{QueryTrace, TraceCounters};
 use crate::tuple::GhtSource;
@@ -129,7 +129,7 @@ fn probe_vectorized_survivors(
         for (candidate_binding, mut candidate_sources) in survivors {
             stats.vectorized.probe_calls += 1;
             let source = source_for(&candidate_sources, subatom)?;
-            let key = key_from_binding_placeholder(&candidate_binding, subatom)?;
+            let key = key_from_binding_by_bound_widths(&candidate_binding, subatom)?;
             if let Some(child) = source.get_traced(
                 &key,
                 trace,

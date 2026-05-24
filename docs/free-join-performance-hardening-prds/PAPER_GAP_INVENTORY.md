@@ -21,6 +21,10 @@ This inventory tracks known mismatches between Bumbledb, Rosetta, and the local 
 | G15 | Current explain says timings and allocations are not collected. | Diagnostics misrepresent the hardened engine and leave benchmark regressions opaque. | 04 | `ReadTxn::execute_query_profiled` emits canonical trace spans, explain points to profiled execution traces, and PRD 06 harvest records real JOB trace files. | closed |
 | G16 | x86 SIMD is forbidden for this suite; vectorization must be AArch64 NEON only. | Adding x86 SIMD would expand support burden and violate the user's NEON-only direction. | product-rejected | The x86 forbidden search returns no matches under `crates/`, and any SIMD implementation is AArch64-gated. | rejected |
 
+## Metric Audit
+
+PRD 07 created `BENCHMARK_METRICS.md` as the source of truth for benchmark JSON fields and removed the stale internal explain benchmark report that exposed vague `source_mode` and `sink_mode` fields.
+
 ## Update Rule
 
 When a PRD closes a gap, update its `status` to `closed` and replace the `acceptance_signal` with the concrete test, benchmark, or trace evidence. If a later PRD changes ownership, update `target_prd` in the same commit that changes the ordered suite.

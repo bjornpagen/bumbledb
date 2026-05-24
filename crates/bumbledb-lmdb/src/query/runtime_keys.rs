@@ -14,7 +14,7 @@ pub(super) fn key_from_binding(
         .map_err(tuple_error)
 }
 
-pub(super) fn key_from_binding_placeholder(
+pub(super) fn key_from_binding_by_bound_widths(
     binding: &Binding,
     subatom: &FjSubatom,
 ) -> Result<EncodedTuple> {

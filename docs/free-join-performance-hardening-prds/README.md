@@ -47,7 +47,6 @@ This suite deliberately prioritizes correctness, observability, Free Join paper 
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 07 | `07-counter-truth-audit.md` | Replaces synthetic or incomplete counters with real engine counters only. |
 | 08 | `08-planner-stats-without-base-images.md` | Stops plan selection from building base images. |
 | 09 | `09-base-image-columnar-layout.md` | Breaks base-image storage into tight fixed-width column buffers. |
 | 10 | `10-streaming-ght-interface.md` | Replaces eager `Vec` iteration with streaming and real batching. |

@@ -103,6 +103,10 @@ pub(crate) fn render_trace_json(trace: &QueryTrace, include_spans: bool) -> Stri
     if !trace.is_enabled() {
         return "{\"enabled\":false}".to_owned();
     }
+    assert!(
+        !trace.spans.is_empty() || trace.counters != TraceCounters::default(),
+        "enabled trace rendering requires source measurements"
+    );
     format!(
         "{{\"enabled\":true,\"metadata\":{},\"counters\":{},\"top_elapsed\":{},\"top_allocated\":{},\"spans\":{}}}",
         metadata_json(trace),
@@ -248,9 +252,11 @@ mod tests {
     }
 
     #[test]
-    fn trace_renderer_outputs_disabled_trace() {
+    fn trace_renderer_rejects_enabled_empty_measurements() {
         let trace = QueryTrace::new();
 
-        assert!(render_trace_json(&trace, false).contains("\"enabled\":true"));
+        let result = std::panic::catch_unwind(|| render_trace_json(&trace, false));
+
+        assert!(result.is_err());
     }
 }

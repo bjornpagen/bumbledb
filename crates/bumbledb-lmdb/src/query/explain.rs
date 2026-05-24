@@ -3,11 +3,11 @@
 use bumbledb_core::query_ir::TypedQuery;
 
 use crate::colt::tuple_schemas_for_atom;
-use crate::query::cover::{CoverPolicy, ExecutionMode, ExecutionStats};
+use crate::query::cover::{CoverPolicy, ExecutionMode};
 use crate::query::free_join::ValidatedFjPlan;
 use crate::query::normalize::normalize_query;
 use crate::query::planner::{PlanFamily, PlanMode, PlannerSelection, select_plan};
-use crate::query::sink::{OutputMode, OutputStats};
+use crate::query::sink::OutputMode;
 use crate::{Error, ReadTxn, Result, StorageSchema};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -125,7 +125,10 @@ impl QueryPlan {
             "base-image cache: snapshot-local keyed by storage tx and schema fingerprint"
                 .to_owned(),
         );
-        out.push("timings and allocations: available through profiled execution traces".to_owned());
+        out.push(
+            "timings and allocations: available in debug builds and release builds compiled with query-tracing"
+                .to_owned(),
+        );
         out.push("formal Free Join plan after factorization/selection:".to_owned());
         for node in &self.validated.nodes {
             out.push(format!(
@@ -149,61 +152,6 @@ impl QueryPlan {
                 .collect::<Vec<_>>()
         ));
         out.join("\n")
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct BenchmarkReport {
-    pub(crate) plan_mode: String,
-    pub(crate) batch_size: usize,
-    pub(crate) cover_mode: String,
-    pub(crate) output_mode: String,
-    pub(crate) source_mode: String,
-    pub(crate) sink_mode: String,
-    pub(crate) execution: ExecutionStats,
-    pub(crate) output: OutputStats,
-}
-
-impl BenchmarkReport {
-    pub(crate) fn render_json(&self) -> String {
-        format!(
-            "{{\"plan_mode\":\"{}\",\"batch_size\":{},\"cover_mode\":\"{}\",\"output_mode\":\"{}\",\"source_mode\":\"{}\",\"sink_mode\":\"{}\",\"cover_choices\":{},\"probe_calls\":{},\"batch_count\":{},\"input_tuples\":{},\"survivor_tuples\":{},\"failed_tuples\":{},\"projection_duplicate_witnesses\":{},\"factorized_logical_facts\":{},\"factorized_materialized_facts\":{},\"expansions_saved\":{}}}",
-            self.plan_mode,
-            self.batch_size,
-            self.cover_mode,
-            self.output_mode,
-            self.source_mode,
-            self.sink_mode,
-            self.execution.cover_choices.len(),
-            self.execution.vectorized.probe_calls,
-            self.execution.vectorized.batches,
-            self.execution.vectorized.input_tuples,
-            self.execution.vectorized.survivor_tuples,
-            self.execution.vectorized.failed_tuples,
-            self.output.duplicate_witnesses_suppressed,
-            self.output.logical_facts_represented,
-            self.output.materialized_facts,
-            self.output.expansions_avoided
-        )
-    }
-
-    pub(crate) fn render_markdown(&self) -> String {
-        format!(
-            "| field | value |\n| --- | --- |\n| plan_mode | {} |\n| cover_mode | {} |\n| batch_size | {} |\n| output_mode | {} |\n| source_mode | {} |\n| COLT counters | source_mode={} |\n| vectorized counters | batches={} survivors={} failed={} probes={} |\n| output counters | duplicate_witnesses={} materialized={} expansions_saved={} |\n",
-            self.plan_mode,
-            self.cover_mode,
-            self.batch_size,
-            self.output_mode,
-            self.source_mode,
-            self.source_mode,
-            self.execution.vectorized.batches,
-            self.execution.vectorized.survivor_tuples,
-            self.execution.vectorized.failed_tuples,
-            self.execution.vectorized.probe_calls,
-            self.output.duplicate_witnesses_suppressed,
-            self.output.materialized_facts,
-            self.output.expansions_avoided
-        )
     }
 }
 
