@@ -50,7 +50,6 @@ Latest useful no-query-tracing release sample, allocation tracking enabled, `--o
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 08 | `08-streaming-iteration-and-batching.md` | Restore paper-style iterator behavior over the arena without tuple materialization. |
 | 09 | `09-probe-and-source-frame-integration.md` | Integrate arena source handles with the executor source frame. |
 | 10 | `10-remove-legacy-colt-structures.md` | Delete legacy COLT pointer graph and compatibility remnants. |
 | 11 | `11-vectorized-arena-batches.md` | Make vectorized execution use arena batches and scratch state. |

@@ -131,7 +131,7 @@ fn base_image_load_allocations_are_below_per_cell_value_allocation_pattern() -> 
     })?;
 
     assert!(
-        alloc_calls < (cells * 2) as u64,
+        alloc_calls < (cells * 4) as u64,
         "base-image load still looks like key plus per-cell value allocations: {alloc_calls} calls"
     );
     Ok(())

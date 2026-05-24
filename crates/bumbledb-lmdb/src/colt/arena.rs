@@ -79,6 +79,23 @@ pub(super) enum OffsetIter<'arena> {
     Empty,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct ArenaOffsetCursor {
+    pub(super) position: u32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct ArenaOffsetBatch {
+    pub(super) offsets: Vec<u32>,
+    pub(super) exhausted: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ArenaIterItem<'arena> {
+    Offset(u32),
+    Key(KeyRef<'arena>),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ArenaSourceUndo {
     atom: usize,
@@ -190,6 +207,52 @@ impl ColtArena {
         self.maps[map.0 as usize].table.entries.len as usize
     }
 
+    pub(super) fn try_for_each_item<E>(
+        &self,
+        node: ColtNodeId,
+        mut f: impl FnMut(ArenaIterItem<'_>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        match self.nodes[node.0 as usize].data {
+            NodeData::Map(map) => {
+                let table = self.maps[map.0 as usize].table;
+                for index in table.entries.start..table.entries.start + table.entries.len {
+                    f(ArenaIterItem::Key(
+                        self.map_entries[index as usize].key.as_key_ref(),
+                    ))?;
+                }
+            }
+            data => {
+                for offset in self.iter_offsets(data) {
+                    f(ArenaIterItem::Offset(offset))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn fill_offset_batch(
+        &self,
+        node: ColtNodeId,
+        cursor: &mut ArenaOffsetCursor,
+        batch_size: usize,
+    ) -> ArenaOffsetBatch {
+        let batch_size = batch_size.max(1);
+        let data = self.nodes[node.0 as usize].data;
+        let total = self.offset_count(data) as u32;
+        let mut offsets =
+            Vec::with_capacity(batch_size.min(total.saturating_sub(cursor.position) as usize));
+        while cursor.position < total && offsets.len() < batch_size {
+            if let Some(offset) = self.offset_at(data, cursor.position) {
+                offsets.push(offset);
+            }
+            cursor.position += 1;
+        }
+        ArenaOffsetBatch {
+            offsets,
+            exhausted: cursor.position >= total,
+        }
+    }
+
     pub(super) fn force_node_with_key_fn(
         &mut self,
         node: ColtNodeId,
@@ -270,6 +333,17 @@ impl ColtArena {
             NodeData::Singleton { .. } => 1,
             NodeData::Offsets(range) => range.len as usize,
             NodeData::Map(map) => self.map_entry_count(map),
+        }
+    }
+
+    fn offset_at(&self, data: NodeData, position: u32) -> Option<u32> {
+        match data {
+            NodeData::Range { start, len } if position < len => Some(start + position),
+            NodeData::Singleton { offset } if position == 0 => Some(offset),
+            NodeData::Offsets(range) if position < range.len => {
+                Some(self.offsets[(range.start + position) as usize])
+            }
+            _ => None,
         }
     }
 

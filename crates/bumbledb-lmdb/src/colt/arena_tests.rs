@@ -326,3 +326,75 @@ fn arena_force_allocation_is_bounded_below_row_count_for_duplicates() {
 
     assert!(alloc_calls < 256);
 }
+
+#[test]
+fn arena_streams_offsets_and_map_keys_without_materializing_all_items() {
+    let mut arena = ColtArena::new();
+    let offsets = arena.add_offsets_node(&[2, 4, 8]);
+    let mut seen_offsets = Vec::new();
+    arena
+        .try_for_each_item::<()>(offsets, |item| {
+            if let ArenaIterItem::Offset(offset) = item {
+                seen_offsets.push(offset);
+            }
+            Ok(())
+        })
+        .unwrap_or(());
+    assert_eq!(seen_offsets, vec![2, 4, 8]);
+
+    let root = arena.add_range_node(0, 2);
+    let map = arena.force_node_with_key_fn(root, |offset, key| {
+        key.clear();
+        key.extend_from_slice(&offset.to_be_bytes());
+    });
+    let mut key_count = 0;
+    arena
+        .try_for_each_item::<()>(root, |item| {
+            if matches!(item, ArenaIterItem::Key(_)) {
+                key_count += 1;
+            }
+            Ok(())
+        })
+        .unwrap_or(());
+    assert_eq!(arena.map_entry_count(map), 2);
+    assert_eq!(key_count, 2);
+}
+
+#[test]
+fn arena_fill_offset_batch_is_bounded_by_requested_size() {
+    let mut arena = ColtArena::new();
+    let node = arena.add_range_node(0, 1000);
+    let mut cursor = ArenaOffsetCursor::default();
+
+    let alloc_calls = crate::diagnostics::with_allocation_tracking_for_test(|| {
+        let start = crate::diagnostics::allocation_snapshot();
+        let first = arena.fill_offset_batch(node, &mut cursor, 4);
+        assert_eq!(first.offsets, vec![0, 1, 2, 3]);
+        assert!(!first.exhausted);
+        crate::diagnostics::allocation_delta(start, crate::diagnostics::allocation_snapshot())
+            .alloc_calls
+    });
+
+    assert!(alloc_calls < 100);
+    assert_eq!(cursor.position, 4);
+}
+
+#[test]
+fn arena_fill_offset_batch_handles_partial_and_empty_sources() {
+    let mut arena = ColtArena::new();
+    let partial = arena.add_range_node(0, 5);
+    let empty = arena.add_offsets_node(&[]);
+    let mut cursor = ArenaOffsetCursor::default();
+
+    assert_eq!(
+        arena.fill_offset_batch(partial, &mut cursor, 4).offsets,
+        vec![0, 1, 2, 3]
+    );
+    let final_batch = arena.fill_offset_batch(partial, &mut cursor, 4);
+    assert_eq!(final_batch.offsets, vec![4]);
+    assert!(final_batch.exhausted);
+
+    let empty_batch = arena.fill_offset_batch(empty, &mut ArenaOffsetCursor::default(), 4);
+    assert!(empty_batch.offsets.is_empty());
+    assert!(empty_batch.exhausted);
+}
