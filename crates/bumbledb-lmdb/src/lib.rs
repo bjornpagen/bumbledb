@@ -21,6 +21,7 @@ mod error;
 pub(crate) mod query;
 pub(crate) mod storage_format;
 pub(crate) mod storage_v5;
+pub(crate) mod tuple;
 
 pub use error::{Error, Result};
 
