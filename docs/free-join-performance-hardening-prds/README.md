@@ -6,6 +6,10 @@ Drafted. This suite is the ordered, breaking-change implementation map for turni
 
 This suite deliberately prioritizes correctness, observability, Free Join paper alignment, Rosetta set semantics, and speed over API compatibility. Compatibility shims are forbidden unless a PRD explicitly allows one.
 
+## Ordering Update
+
+After PRDs 08-11, the active order is intentionally refocused on paper-faithful Free Join execution and allocation removal before planner, source-filter, storage-accelerator, or benchmark-budget sophistication. Source-filter pruning remains required, but it is deferred until after the executor, sink, factorized materialization, vectorized execution, and cover-costing work are closer to the paper model.
+
 ## Inputs
 
 - Normative product contract: `docs/ROSETTA_STONE.md`.
@@ -29,12 +33,12 @@ This suite deliberately prioritizes correctness, observability, Free Join paper 
 
 ## Current Paper-Alignment Gaps
 
-- Source filters are applied after full base-image rows are available, so selective predicates still pay broad scan/load cost.
 - Recursive execution clones binding maps and source maps along hot paths.
+- Projection sinks decode and materialize duplicate witnesses before final set output.
+- Factorized materialization remains shallow relative to the paper's materialization discussion.
 - Dynamic cover choice often uses offset counts as estimates rather than true key counts.
 - The current vectorized mode is scalar batching, not NEON vectorization.
-- Explain says timings and allocations are not collected.
-- JOB benchmark output does not expose phase timings, allocation deltas, or execution counters.
+- Source filters are applied after full base-image rows are available, so selective predicates still pay broad scan/load cost.
 - Storage has stats and accelerator namespaces but no real value accelerator path for source predicates.
 - The planner is deterministic and heuristic, not yet an integrated Free Join optimizer exploring the design space between binary join and Generic Join.
 
@@ -42,12 +46,12 @@ This suite deliberately prioritizes correctness, observability, Free Join paper 
 
 | Order | PRD | Purpose |
 | --- | --- | --- |
-| 12 | `12-source-filter-pruning.md` | Turns source predicates into early pruning rather than post-load scans. |
-| 13 | `13-recursive-frame-executor.md` | Replaces recursive map/binding cloning with stack/frame execution state. |
-| 14 | `14-set-first-encoded-sinks.md` | Makes encoded set deduplication the default sink path. |
+| 12 | `12-recursive-frame-executor.md` | Replaces recursive map/binding cloning with stack/frame execution state. |
+| 13 | `13-set-first-encoded-sinks.md` | Makes encoded set deduplication the default sink path. |
+| 14 | `14-factorized-materialization.md` | Deepens factorized output and materialization alignment without public aggregation. |
 | 15 | `15-neon-only-vectorized-execution.md` | Implements real AArch64 NEON-only vectorized kernels and forbids x86 SIMD. |
 | 16 | `16-dynamic-cover-costing.md` | Improves dynamic cover selection with measured key counts and selectivity. |
-| 17 | `17-factorized-materialization.md` | Deepens factorized output and materialization alignment without public aggregation. |
+| 17 | `17-source-filter-pruning.md` | Turns source predicates into early pruning rather than post-load scans. |
 | 18 | `18-storage-v6-stats-accelerators.md` | Introduces breaking storage v6 stats and optional value accelerators. |
 | 19 | `19-job-benchmark-gates.md` | Makes JOB correctness, trace, allocation, and performance gates mandatory. |
 | 20 | `20-api-cutover-cleanup.md` | Deletes stale APIs, compatibility remnants, and misleading diagnostics. |

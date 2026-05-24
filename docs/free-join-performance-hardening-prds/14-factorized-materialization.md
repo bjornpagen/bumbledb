@@ -1,4 +1,4 @@
-# PRD 17: Factorized Materialization
+# PRD 14: Factorized Materialization
 
 ## Purpose
 
@@ -10,7 +10,7 @@ Reduce output and intermediate materialization cost while preserving public dupl
 - Keep public `QueryResultSet` as duplicate-free set output.
 - Avoid expanding Cartesian products when projection does not require them.
 - Do not add public aggregate queries.
-- Use encoded set sinks from PRD 14 as the default public materialization path.
+- Use encoded set sinks from PRD 13 as the default public materialization path.
 
 ## Required Work
 

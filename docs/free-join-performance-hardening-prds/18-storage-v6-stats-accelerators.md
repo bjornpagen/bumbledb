@@ -8,7 +8,7 @@ Introduce a breaking storage v6 layout for real planner statistics and optional 
 
 - PRD 06 trace harvest must identify base-image load, source filter scan, or planner stats as a top bottleneck.
 - PRD 08 must already remove base-image dependency from planner stats.
-- PRD 12 must already expose source filter survivor counts.
+- PRD 17 must already expose source filter survivor counts.
 
 ## Required Storage Direction
 
