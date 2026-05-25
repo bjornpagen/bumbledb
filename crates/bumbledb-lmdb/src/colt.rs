@@ -38,6 +38,12 @@ pub(crate) struct OwnedColtSource {
     source: ColtSource,
 }
 
+pub(crate) struct SourceBuildConfig {
+    filters: Vec<SourceFilter>,
+    trace_label: String,
+    record_filter_counts: bool,
+}
+
 pub(super) struct ColtState {
     arena: ColtArena,
     atom: AtomOccurrenceId,
@@ -81,11 +87,23 @@ impl ColtSource {
         filters: Vec<SourceFilter>,
     ) -> OwnedColtSource {
         let mut owner = ColtSourceOwner::new();
-        let source =
-            owner.add_filtered_with_trace(atom, base, schemas, filters, None, String::new());
+        let config = Self::build_config(filters, String::new(), true);
+        let source = owner.add_filtered_with_trace(atom, base, schemas, config, None);
         OwnedColtSource {
             _owner: owner,
             source,
+        }
+    }
+
+    pub(crate) fn build_config(
+        filters: Vec<SourceFilter>,
+        trace_label: String,
+        record_filter_counts: bool,
+    ) -> SourceBuildConfig {
+        SourceBuildConfig {
+            filters,
+            trace_label,
+            record_filter_counts,
         }
     }
 
@@ -97,8 +115,8 @@ impl ColtSource {
         trace: &mut QueryTrace,
     ) -> OwnedColtSource {
         let mut owner = ColtSourceOwner::new();
-        let source =
-            owner.add_filtered_with_trace(atom, base, schemas, filters, Some(trace), String::new());
+        let config = Self::build_config(filters, String::new(), true);
+        let source = owner.add_filtered_with_trace(atom, base, schemas, config, Some(trace));
         OwnedColtSource {
             _owner: owner,
             source,
@@ -339,11 +357,10 @@ impl ColtSourceOwner {
         atom: AtomOccurrenceId,
         base: RelationBaseImageRef,
         schemas: Vec<TupleSchema>,
-        filters: Vec<SourceFilter>,
-        trace_label: String,
+        config: SourceBuildConfig,
         trace: &mut QueryTrace,
     ) -> ColtSource {
-        self.add_filtered_with_trace(atom, base, schemas, filters, Some(trace), trace_label)
+        self.add_filtered_with_trace(atom, base, schemas, config, Some(trace))
     }
 
     pub(crate) fn add_filtered_with_trace(
@@ -351,10 +368,14 @@ impl ColtSourceOwner {
         atom: AtomOccurrenceId,
         base: RelationBaseImageRef,
         schemas: Vec<TupleSchema>,
-        filters: Vec<SourceFilter>,
+        config: SourceBuildConfig,
         mut trace: Option<&mut QueryTrace>,
-        trace_label: String,
     ) -> ColtSource {
+        let SourceBuildConfig {
+            filters,
+            trace_label,
+            record_filter_counts,
+        } = config;
         let span = trace.as_deref_mut().and_then(|trace| {
             crate::query_trace_span!(
                 trace,
@@ -403,11 +424,16 @@ impl ColtSourceOwner {
             node: root,
         };
         if let (Some(trace), Some(span)) = (trace, span) {
+            let (source_filter_rows_tested, source_filter_survivors) = if record_filter_counts {
+                (source_filter_rows_tested, source.offset_len() as u64)
+            } else {
+                (0, 0)
+            };
             trace.finish_span(
                 span,
                 TraceCounters {
                     source_filter_rows_tested,
-                    source_filter_survivors: source.offset_len() as u64,
+                    source_filter_survivors,
                     colt_nodes_created: 1,
                     ..TraceCounters::default()
                 },

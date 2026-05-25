@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use crate::base_image::{RelationBaseImage, RelationStats, field_scope_for_plan};
+use crate::base_image::{FieldScope, RelationBaseImage, RelationStats, field_scope_for_plan};
 use crate::colt::tuple_schemas_for_atom;
 use crate::query::free_join::ValidatedFjPlan;
 use crate::query::model::{AtomOccurrence, NormalizedQuery, SourcePredicate};
@@ -19,7 +19,7 @@ pub(super) fn build_sources(
     predicate_mode: PredicateMode,
     trace: &mut QueryTrace,
 ) -> Result<SourceStore> {
-    let mut scopes = field_scope_for_plan(plan);
+    let scopes = field_scope_for_plan(plan);
     let mut sources = SourceStore::with_atom_count(query.atoms.len());
     for atom in &query.atoms {
         let filters = predicate::source_filters_for_atom_with_trace(
@@ -39,11 +39,6 @@ pub(super) fn build_sources(
         } else {
             String::new()
         };
-        scopes.entry(atom.id).or_default().extend(
-            filters
-                .iter()
-                .filter_map(crate::colt::SourceFilter::field_id),
-        );
         let tuple_schemas = tuple_schemas_for_atom(query, plan, atom.id);
         if tuple_schemas.is_empty() {
             return Err(Error::invalid_query(format!(
@@ -74,27 +69,49 @@ pub(super) fn build_sources(
                 atom.id,
                 Rc::new(empty_image(atom)),
                 tuple_schemas,
-                filters,
-                filter_label,
+                crate::colt::ColtSource::build_config(Vec::new(), filter_label, false),
                 trace,
             );
             continue;
         }
-        let field_ids = scopes
-            .get(&atom.id)
-            .into_iter()
-            .flat_map(|scope| scope.iter());
-        let image = txn.relation_base_image_with_trace(schema, &atom.relation, field_ids, trace)?;
+        let field_scope = scopes.get(&atom.id).copied().unwrap_or_default();
+        let image =
+            relation_image_for_source(txn, schema, &atom.relation, field_scope, &filters, trace)?;
+        let record_filter_counts_in_colt = filters.is_empty();
         sources.insert_filtered_traced_labeled(
             atom.id,
             image,
             tuple_schemas,
-            filters,
-            filter_label,
+            crate::colt::ColtSource::build_config(
+                if record_filter_counts_in_colt {
+                    filters
+                } else {
+                    Vec::new()
+                },
+                filter_label,
+                record_filter_counts_in_colt,
+            ),
             trace,
         );
     }
     Ok(sources)
+}
+
+fn relation_image_for_source(
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    relation: &str,
+    field_scope: FieldScope,
+    filters: &[crate::colt::SourceFilter],
+    trace: &mut QueryTrace,
+) -> Result<Rc<RelationBaseImage>> {
+    txn.relation_base_image_filtered_with_trace(
+        schema,
+        relation,
+        field_scope.iter(),
+        filters,
+        trace,
+    )
 }
 
 fn empty_image(atom: &AtomOccurrence) -> RelationBaseImage {

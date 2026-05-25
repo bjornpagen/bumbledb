@@ -6,13 +6,15 @@ use std::rc::Rc;
 
 use bumbledb_core::schema::RelationDescriptor;
 
+use crate::colt_filter::SourceFilter;
 use crate::query::free_join::ValidatedFjPlan;
 use crate::query::model::AtomOccurrenceId;
 use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
-use crate::storage_format::{
-    FactHandle, column_prefix_key, decode_column_key_handle, live_row_key,
-};
+use crate::storage_format::FactHandle;
 use crate::{Error, ReadTxn, Result, StorageSchema};
+
+#[path = "base_image/load.rs"]
+mod load;
 
 /// Snapshot-local immutable relation image for GHT/COLT sources.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -152,6 +154,38 @@ pub(crate) fn relation_base_image_with_trace(
     relation_base_image_inner(txn, schema, relation_name, field_ids, Some(trace))
 }
 
+pub(crate) fn relation_base_image_filtered_with_trace(
+    txn: &ReadTxn<'_>,
+    schema: &StorageSchema,
+    relation_name: &str,
+    field_ids: impl IntoIterator<Item = usize>,
+    filters: &[SourceFilter],
+    trace: &mut QueryTrace,
+) -> Result<RelationBaseImageRef> {
+    if filters.is_empty() {
+        return relation_base_image_with_trace(txn, schema, relation_name, field_ids, trace);
+    }
+
+    let (relation_id, relation) = find_relation(schema, relation_name)?;
+    let mut field_scope = FieldScope::default();
+    field_scope.extend(field_ids);
+    validate_fields(relation, field_scope)?;
+    let load_span = crate::query_trace_span!(
+        trace,
+        TracePhase::BaseImageLoad,
+        "relation={} fields={:?} filters=pruned",
+        relation_name,
+        field_scope
+    );
+    let (image, rows_tested) =
+        load::load_filtered_relation_base_image(txn, relation_id, relation, field_scope, filters)?;
+    let image = Rc::new(image);
+    if let Some(span) = load_span {
+        trace.finish_span(span, filtered_base_image_counters(&image, rows_tested));
+    }
+    Ok(image)
+}
+
 fn relation_base_image_inner(
     txn: &ReadTxn<'_>,
     schema: &StorageSchema,
@@ -215,7 +249,7 @@ fn relation_base_image_inner(
             key.field_ids
         )
     });
-    let image = Rc::new(load_relation_base_image(
+    let image = Rc::new(load::load_relation_base_image(
         txn,
         relation_id,
         relation,
@@ -253,6 +287,13 @@ fn base_image_counters(image: &RelationBaseImage) -> TraceCounters {
     }
 }
 
+fn filtered_base_image_counters(image: &RelationBaseImage, rows_tested: usize) -> TraceCounters {
+    let mut counters = base_image_counters(image);
+    counters.source_filter_rows_tested = rows_tested as u64;
+    counters.source_filter_survivors = image.row_handles.len() as u64;
+    counters
+}
+
 /// Computes required field IDs per atom occurrence from a validated FJ plan.
 pub(crate) fn field_scope_for_plan(
     plan: &ValidatedFjPlan,
@@ -267,98 +308,6 @@ pub(crate) fn field_scope_for_plan(
         }
     }
     scope
-}
-
-fn load_relation_base_image(
-    txn: &ReadTxn<'_>,
-    relation_id: u32,
-    relation: &RelationDescriptor,
-    field_ids: FieldScope,
-) -> Result<RelationBaseImage> {
-    let row_handles = live_row_handles(txn, relation_id)?;
-    let mut columns = BTreeMap::new();
-    for field_id in field_ids.iter() {
-        let field = &relation.fields[field_id];
-        let width = field.value_type.encoded_width();
-        let values = load_column_values(txn, relation_id, field_id, width, &row_handles)?;
-        columns.insert(
-            field_id,
-            ColumnImage {
-                field_id,
-                width,
-                values,
-            },
-        );
-    }
-
-    Ok(RelationBaseImage {
-        relation_id,
-        name: relation.name.clone(),
-        stats: RelationStats {
-            row_count: row_handles.len(),
-        },
-        row_handles,
-        columns,
-    })
-}
-
-fn load_column_values(
-    txn: &ReadTxn<'_>,
-    relation_id: u32,
-    field_id: usize,
-    width: usize,
-    row_handles: &[FactHandle],
-) -> Result<Vec<u8>> {
-    let prefix_key = column_prefix_key(relation_id, field_id as u32);
-    let prefix = prefix_key.as_bytes();
-    let mut values = Vec::with_capacity(row_handles.len() * width);
-    let mut live_index = 0usize;
-
-    for item in txn.dbs.data.prefix_iter(&txn.txn, prefix)? {
-        let (key, value) = item?;
-        let handle = decode_column_key_handle(key)
-            .ok_or_else(|| Error::corrupt("column key handle width invalid"))?;
-        if value.len() != width {
-            return Err(Error::corrupt(format!(
-                "column entry width mismatch for field {field_id}"
-            )));
-        }
-        if live_index < row_handles.len() && row_handles[live_index] < handle {
-            return Err(Error::corrupt(format!(
-                "column entry missing for live row field {field_id}"
-            )));
-        }
-        if live_index == row_handles.len() || row_handles[live_index] > handle {
-            return Err(Error::corrupt(format!(
-                "column entry without live row for field {field_id}"
-            )));
-        }
-        values.extend_from_slice(value);
-        live_index += 1;
-    }
-
-    if live_index != row_handles.len() {
-        return Err(Error::corrupt(format!(
-            "column entry missing for live row field {field_id}"
-        )));
-    }
-    Ok(values)
-}
-
-fn live_row_handles(txn: &ReadTxn<'_>, relation_id: u32) -> Result<Vec<FactHandle>> {
-    let prefix_key = live_row_key(relation_id, FactHandle([0; 16]));
-    let prefix = &prefix_key[..5];
-    let mut handles = Vec::new();
-    for item in txn.dbs.data.prefix_iter(&txn.txn, prefix)? {
-        let (key, _) = item?;
-        let handle_bytes: [u8; 16] = key
-            .get(5..21)
-            .ok_or_else(|| Error::corrupt("live row key too short"))?
-            .try_into()
-            .map_err(|_| Error::corrupt("live row handle width invalid"))?;
-        handles.push(FactHandle(handle_bytes));
-    }
-    Ok(handles)
 }
 
 fn find_relation<'schema>(

@@ -277,6 +277,7 @@ impl ReadTxn<'_> {
         base_image::relation_base_image(self, schema, relation, field_ids)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn relation_base_image_with_trace(
         &self,
         schema: &StorageSchema,
@@ -285,6 +286,19 @@ impl ReadTxn<'_> {
         trace: &mut QueryTrace,
     ) -> Result<Rc<base_image::RelationBaseImage>> {
         base_image::relation_base_image_with_trace(self, schema, relation, field_ids, trace)
+    }
+
+    pub(crate) fn relation_base_image_filtered_with_trace(
+        &self,
+        schema: &StorageSchema,
+        relation: &str,
+        field_ids: impl IntoIterator<Item = usize>,
+        filters: &[colt::SourceFilter],
+        trace: &mut QueryTrace,
+    ) -> Result<Rc<base_image::RelationBaseImage>> {
+        base_image::relation_base_image_filtered_with_trace(
+            self, schema, relation, field_ids, filters, trace,
+        )
     }
 
     #[cfg(test)]

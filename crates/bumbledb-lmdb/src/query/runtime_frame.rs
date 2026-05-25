@@ -1,5 +1,5 @@
 use crate::base_image::RelationBaseImageRef;
-use crate::colt::{ColtSource, ColtSourceOwner, SourceFilter};
+use crate::colt::{ColtSource, ColtSourceOwner, SourceBuildConfig};
 use crate::query::free_join::{ValidatedFjPlan, ValidatedFjSubatom};
 use crate::query::model::AtomOccurrenceId;
 use crate::query::trace::{QUERY_TRACING_ENABLED, QueryTrace, TraceCounters, TraceSpanId};
@@ -30,19 +30,13 @@ impl SourceStore {
         atom: AtomOccurrenceId,
         base: RelationBaseImageRef,
         schemas: Vec<TupleSchema>,
-        filters: Vec<SourceFilter>,
-        trace_label: String,
+        config: SourceBuildConfig,
         trace: &mut QueryTrace,
     ) {
         self.ensure_atom(atom);
-        let source = self.owner.add_filtered_traced_labeled(
-            atom,
-            base,
-            schemas,
-            filters,
-            trace_label,
-            trace,
-        );
+        let source = self
+            .owner
+            .add_filtered_traced_labeled(atom, base, schemas, config, trace);
         self.current[atom.0] = Some(source);
     }
 

@@ -11,6 +11,7 @@ use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescripto
 
 use super::{count_bindings_for_test, execute_plan_for_test, execute_plan_with_policy_for_test};
 use crate::base_image::{ColumnImage, RelationBaseImage, RelationStats};
+use crate::colt::ColtSource;
 use crate::query::cover::{CoverPolicy, ExecutionStats, choose_cover};
 use crate::query::free_join::{FjNode, FjPlan, FjSubatom, NodeList};
 use crate::query::model::AtomOccurrenceId;
@@ -665,8 +666,7 @@ fn insert_manual_colt<const N: usize>(
             TupleField::new(0, Some(0), 8)
                 .map_err(|error| crate::Error::corrupt(error.to_string()))?,
         ])],
-        Vec::new(),
-        String::new(),
+        ColtSource::build_config(Vec::new(), String::new(), true),
         &mut trace,
     );
     Ok(())

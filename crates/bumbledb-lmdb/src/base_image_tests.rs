@@ -8,6 +8,7 @@ use bumbledb_core::query_ir::{TypedFindTerm, TypedVariable};
 use bumbledb_core::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
 
 use super::field_scope_for_plan;
+use crate::colt::{KeyOwned, SourceFilter, SourceFilterOp};
 use crate::diagnostics::{
     allocation_delta, allocation_snapshot, with_allocation_tracking_for_test,
 };
@@ -15,6 +16,7 @@ use crate::query::free_join::{FjNode, FjPlan, FjSubatom};
 use crate::query::model::{
     AtomOccurrence, AtomOccurrenceId, NormalizedFieldBinding, NormalizedQuery, NormalizedTerm,
 };
+use crate::query::trace::{QueryTrace, TracePhase};
 use crate::storage_format::{FactHandle, column_key};
 use crate::{Environment, Error, Fact, InsertOutcome, Result, StorageSchema, Value};
 
@@ -229,6 +231,101 @@ fn base_image_prefix_scan_rejects_wrong_column_width() -> Result<()> {
 
     assert!(matches!(result, Err(Error::Corrupt { .. })));
     Ok(())
+}
+
+#[test]
+fn base_image_filtered_prunes_zero_survivors_before_plan_columns() -> Result<()> {
+    let (env, schema) = number_env_and_schema("filtered-zero")?;
+    env.write(|txn| {
+        txn.insert(&schema, &number(1, 10, 100))?;
+        txn.insert(&schema, &number(2, 20, 200))?;
+        txn.insert(&schema, &number(3, 30, 300))?;
+        Ok::<(), Error>(())
+    })?;
+    let filters = vec![SourceFilter::Compare {
+        field_id: 1,
+        op: SourceFilterOp::Eq,
+        value: KeyOwned::from_slice(&encode_u64(999)),
+    }];
+
+    env.read(|txn| {
+        let mut trace = QueryTrace::new();
+        let image = super::relation_base_image_filtered_with_trace(
+            txn,
+            &schema,
+            "Number",
+            [0],
+            &filters,
+            &mut trace,
+        )?;
+
+        assert!(image.row_handles.is_empty());
+        assert_eq!(image.columns[&0].row_count(), 0);
+        let load = trace
+            .spans
+            .iter()
+            .find(|span| span.phase == TracePhase::BaseImageLoad)
+            .ok_or_else(|| Error::corrupt("missing base-image load span"))?;
+        assert_eq!(load.counters.source_filter_rows_tested, 3);
+        assert_eq!(load.counters.source_filter_survivors, 0);
+        assert_eq!(load.counters.column_values_loaded, 0);
+        assert_eq!(load.counters.loaded_bytes, 0);
+        Ok::<(), Error>(())
+    })
+}
+
+#[test]
+fn base_image_filtered_preserves_survivor_column_alignment() -> Result<()> {
+    let (env, schema) = number_env_and_schema("filtered-align")?;
+    env.write(|txn| {
+        txn.insert(&schema, &number(1, 10, 100))?;
+        txn.insert(&schema, &number(2, 20, 200))?;
+        txn.insert(&schema, &number(3, 30, 300))?;
+        Ok::<(), Error>(())
+    })?;
+    let filters = vec![SourceFilter::Compare {
+        field_id: 1,
+        op: SourceFilterOp::Gt,
+        value: KeyOwned::from_slice(&encode_u64(10)),
+    }];
+
+    env.read(|txn| {
+        let mut trace = QueryTrace::new();
+        let image = super::relation_base_image_filtered_with_trace(
+            txn,
+            &schema,
+            "Number",
+            [0, 2],
+            &filters,
+            &mut trace,
+        )?;
+        let a = &image.columns[&0];
+        let c = &image.columns[&2];
+
+        assert_eq!(image.row_handles.len(), 2);
+        for offset in 0..image.row_handles.len() {
+            let av = decode_u64(
+                a.value_at(offset)
+                    .ok_or_else(|| Error::corrupt("missing a"))?,
+            )
+            .map_err(|error| Error::corrupt(error.to_string()))?;
+            let cv = decode_u64(
+                c.value_at(offset)
+                    .ok_or_else(|| Error::corrupt("missing c"))?,
+            )
+            .map_err(|error| Error::corrupt(error.to_string()))?;
+            assert_eq!(cv, av * 100);
+        }
+        let load = trace
+            .spans
+            .iter()
+            .find(|span| span.phase == TracePhase::BaseImageLoad)
+            .ok_or_else(|| Error::corrupt("missing base-image load span"))?;
+        assert_eq!(load.counters.source_filter_rows_tested, 3);
+        assert_eq!(load.counters.source_filter_survivors, 2);
+        assert_eq!(load.counters.column_values_loaded, 4);
+        Ok::<(), Error>(())
+    })
 }
 
 #[test]
