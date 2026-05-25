@@ -75,7 +75,6 @@ The Free Join paper assumes raw data is already stored column-wise and that sele
 
 | order | PRD | purpose |
 | ---: | --- | --- |
-| 07 | `07-index-backed-ght-colt-sources.md` | Back GHT/COLT sources directly from accelerators and survivor handle sets. |
 | 08 | `08-selectivity-aware-free-join-planner.md` | Stop choosing plans that burn 32k binding conflicts before proving emptiness. |
 | 09 | `09-dynamic-cover-and-access-costing.md` | Make dynamic cover choice exact-or-labeled and access-path aware. |
 | 10 | `10-colt-force-and-iteration-cleanup.md` | Attack the post-base-image runtime: COLT force, iteration, and probe allocation. |
