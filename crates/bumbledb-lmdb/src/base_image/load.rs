@@ -118,30 +118,33 @@ pub(super) fn load_filtered_relation_base_image(
         .map(|offset| all_handles[*offset])
         .collect::<Vec<_>>();
     let survivor_handles = Rc::new(survivor_handles);
+    let dense_survivors = survivor_handles.len() * 2 >= all_handles.len();
+    let survivor_offsets = Rc::new(
+        survivor_offsets
+            .into_iter()
+            .map(|offset| offset as u32)
+            .collect::<Vec<_>>(),
+    );
 
     let mut columns = BTreeMap::new();
     for field_id in field_ids.iter() {
         let width = relation.fields[field_id].value_type.encoded_width();
-        let values = if let Some(filter_column) = filter_columns.get(&field_id) {
-            selected_column_values(filter_column, &survivor_offsets)?
+        let column = if let Some(filter_column) = filter_columns.get(&field_id) {
+            selected_column(filter_column, &survivor_offsets, dense_survivors)?
         } else {
-            load_column_values_for_selection(
+            load_plan_column_for_selection(
                 txn,
-                scope.relation_id,
+                scope,
                 field_id,
                 width,
                 &all_handles,
                 &survivor_handles,
+                &survivor_offsets,
+                dense_survivors,
+                &mut cache_stats,
             )?
         };
-        columns.insert(
-            field_id,
-            ColumnImage {
-                field_id,
-                width,
-                values: Rc::new(values),
-            },
-        );
+        columns.insert(field_id, column);
     }
 
     Ok(LoadResult {
@@ -193,6 +196,7 @@ fn cached_full_column(
         field_id,
         width,
         values: Rc::new(values),
+        row_offsets: None,
     };
     txn.base_images
         .insert_column(scope, field_id, column.clone());
@@ -221,6 +225,7 @@ fn cached_primary_filter_column(
                 field_id,
                 width,
                 values: Rc::new(values),
+                row_offsets: None,
             };
             txn.base_images
                 .insert_row_handles(scope, Rc::clone(&row_handles));
@@ -308,15 +313,69 @@ fn compare_encoded(candidate: &[u8], op: SourceFilterOp, value: &[u8]) -> bool {
     }
 }
 
-fn selected_column_values(column: &ColumnImage, offsets: &[usize]) -> Result<Vec<u8>> {
+fn selected_column(
+    column: &ColumnImage,
+    offsets: &Rc<Vec<u32>>,
+    dense_survivors: bool,
+) -> Result<ColumnImage> {
+    if dense_survivors {
+        return Ok(ColumnImage {
+            field_id: column.field_id,
+            width: column.width,
+            values: Rc::clone(&column.values),
+            row_offsets: Some(Rc::clone(offsets)),
+        });
+    }
     let mut values = Vec::with_capacity(offsets.len() * column.width);
-    for offset in offsets {
+    for offset in offsets.iter().copied() {
         let value = column
-            .value_at(*offset)
+            .value_at(offset as usize)
             .ok_or_else(|| Error::corrupt("filtered column offset missing"))?;
         values.extend_from_slice(value);
     }
-    Ok(values)
+    Ok(ColumnImage {
+        field_id: column.field_id,
+        width: column.width,
+        values: Rc::new(values),
+        row_offsets: None,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_plan_column_for_selection(
+    txn: &ReadTxn<'_>,
+    scope: CacheScope,
+    field_id: usize,
+    width: usize,
+    row_handles: &[FactHandle],
+    selected_handles: &[FactHandle],
+    survivor_offsets: &Rc<Vec<u32>>,
+    dense_survivors: bool,
+    stats: &mut PhysicalCacheStats,
+) -> Result<ColumnImage> {
+    if dense_survivors {
+        let column = cached_full_column(txn, scope, field_id, width, row_handles, stats)?;
+        return Ok(ColumnImage {
+            field_id,
+            width,
+            values: Rc::clone(&column.values),
+            row_offsets: Some(Rc::clone(survivor_offsets)),
+        });
+    }
+    let values = load_column_values_for_selection(
+        txn,
+        scope.relation_id,
+        field_id,
+        width,
+        row_handles,
+        selected_handles,
+    )?;
+    Ok(ColumnImage {
+        field_id,
+        width,
+        values: Rc::new(values),
+        row_offsets: None,
+    })
 }
 
 fn load_column_values(

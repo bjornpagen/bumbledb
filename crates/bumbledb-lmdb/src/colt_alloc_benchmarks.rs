@@ -280,6 +280,7 @@ fn u64_column(field_id: usize, values: impl IntoIterator<Item = u64>) -> ColumnI
         field_id,
         width: 8,
         values: Rc::new(bytes),
+        row_offsets: None,
     }
 }
 

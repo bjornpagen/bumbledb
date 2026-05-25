@@ -461,6 +461,7 @@ fn empty_image() -> RelationBaseImage {
                 field_id: 0,
                 width: 8,
                 values: Rc::new(Vec::new()),
+                row_offsets: None,
             },
         )]),
         stats: RelationStats { row_count: 0 },
@@ -481,6 +482,7 @@ fn u64_column(field_id: usize, values: impl IntoIterator<Item = u64>) -> ColumnI
         field_id,
         width: 8,
         values: Rc::new(bytes),
+        row_offsets: None,
     }
 }
 

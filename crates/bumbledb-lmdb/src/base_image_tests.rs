@@ -327,6 +327,29 @@ fn base_image_filtered_preserves_survivor_column_alignment() -> Result<()> {
         Ok::<(), Error>(())
     })
 }
+#[test]
+#[rustfmt::skip]
+fn base_image_sparse_and_dense_survivor_views_choose_expected_column_shape() -> Result<()> {
+    let (env, schema) = number_env_and_schema("survivor-view-shapes")?;
+    env.write(|txn| { for id in 0..10 { txn.insert(&schema, &number(id, id * 10, id * 100))?; } Ok::<(), Error>(()) })?;
+
+    env.read(|txn| {
+        let mut trace = QueryTrace::new();
+        let sparse = super::relation_base_image_filtered_with_trace(txn, &schema, "Number", [0], &[SourceFilter::Compare { field_id: 1, op: SourceFilterOp::Lt, value: KeyOwned::from_slice(&encode_u64(10)) }], &mut trace)?;
+        let dense = super::relation_base_image_filtered_with_trace(txn, &schema, "Number", [0], &[SourceFilter::Compare { field_id: 1, op: SourceFilterOp::Gte, value: KeyOwned::from_slice(&encode_u64(50)) }], &mut trace)?;
+        assert_eq!(sparse.row_handles.len(), 1);
+        assert_eq!(sparse.columns[&0].values.len(), 8);
+        assert!(sparse.columns[&0].row_offsets.is_none());
+        assert_eq!(dense.row_handles.len(), 5);
+        assert_eq!(dense.columns[&0].values.len(), 80);
+        assert_eq!(dense.columns[&0].row_offsets.as_ref().map(|offsets| offsets.len()), Some(5));
+        let observed = (0..dense.columns[&0].row_count())
+            .filter_map(|offset| dense.columns[&0].value_at(offset).map(<[u8]>::to_vec))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(observed, (5..10).map(|value| encode_u64(value).to_vec()).collect());
+        Ok::<(), Error>(())
+    })
+}
 
 #[test]
 fn base_image_deleting_row_removes_it_from_new_images() -> Result<()> {

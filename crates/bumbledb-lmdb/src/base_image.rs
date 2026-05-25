@@ -42,12 +42,19 @@ pub(crate) struct ColumnImage {
     pub(crate) width: usize,
     /// Contiguous encoded values aligned with `RelationBaseImage::row_handles`.
     pub(crate) values: Rc<Vec<u8>>,
+    /// Optional source-row to physical-row mapping for filtered survivor views.
+    pub(crate) row_offsets: Option<Rc<Vec<u32>>>,
 }
 
 impl ColumnImage {
     /// Returns a zero-copy cell slice by row offset.
     pub(crate) fn value_at(&self, offset: usize) -> Option<&[u8]> {
-        let start = offset.checked_mul(self.width)?;
+        let physical_offset = self
+            .row_offsets
+            .as_ref()
+            .and_then(|offsets| offsets.get(offset).copied().map(|offset| offset as usize))
+            .unwrap_or(offset);
+        let start = physical_offset.checked_mul(self.width)?;
         let end = start.checked_add(self.width)?;
         self.values.get(start..end)
     }
@@ -56,6 +63,9 @@ impl ColumnImage {
     pub(crate) fn row_count(&self) -> usize {
         if self.width == 0 {
             return 0;
+        }
+        if let Some(offsets) = &self.row_offsets {
+            return offsets.len();
         }
         self.values.len() / self.width
     }

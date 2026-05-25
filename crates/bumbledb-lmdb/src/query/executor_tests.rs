@@ -644,7 +644,7 @@ fn insert_manual_colt<const N: usize>(sources: &mut SourceStore, atom: usize, va
         relation_id: atom as u32,
         name: format!("A{atom}"),
         row_handles: Rc::new((0..values.len()).map(|offset| FactHandle([offset as u8; 16])).collect()),
-        columns: BTreeMap::from([(0, ColumnImage { field_id: 0, width: 8, values: Rc::new(values.into_iter().flat_map(encode_u64).collect()) })]),
+        columns: BTreeMap::from([(0, ColumnImage { field_id: 0, width: 8, values: Rc::new(values.into_iter().flat_map(encode_u64).collect()), row_offsets: None })]),
         stats: RelationStats { row_count: N },
     };
     let mut trace = QueryTrace::new();

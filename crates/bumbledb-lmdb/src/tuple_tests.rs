@@ -256,6 +256,7 @@ fn column_u64<const N: usize>(field_id: usize, values: [u64; N]) -> ColumnImage 
         field_id,
         width: 8,
         values: Rc::new(bytes),
+        row_offsets: None,
     }
 }
 
@@ -268,5 +269,6 @@ fn column_enum<const N: usize>(field_id: usize, values: [u8; N]) -> ColumnImage 
         field_id,
         width: 1,
         values: Rc::new(bytes),
+        row_offsets: None,
     }
 }
