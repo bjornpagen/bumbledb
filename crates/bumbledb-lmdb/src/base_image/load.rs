@@ -9,10 +9,15 @@ use super::{
 };
 use crate::colt_filter::{SourceFilter, SourceFilterOp};
 use crate::storage_format::{
-    FactHandle, RowId, column_key, column_prefix_key, decode_column_key_row_id,
-    decode_live_row_key_row_id, live_row_key,
+    FactHandle, RowId, accelerator_prefix_key, column_prefix_key, decode_accelerator_key_row_id,
+    decode_column_key_row_id, live_row_key,
 };
 use crate::{Error, ReadTxn, Result};
+
+#[path = "load/storage.rs"]
+mod storage;
+
+use storage::{live_rows, load_column_values, load_column_values_by_row_id};
 
 pub(super) fn load_relation_base_image(
     txn: &ReadTxn<'_>,
@@ -88,21 +93,65 @@ pub(super) fn load_filtered_relation_base_image(
     let primary_width = relation.fields[primary_filter_field]
         .value_type
         .encoded_width();
-    let (all_row_ids, primary_column) = load_filter_primary_column(
-        txn,
-        scope,
-        primary_filter_field,
-        primary_width,
-        &mut cache_stats,
-    )?;
+    let accelerated = accelerator_seed(filters);
+    let (all_row_ids, primary_column, seeded_by_accelerator) =
+        if let Some((field_id, value)) = accelerated {
+            let candidate_row_ids = accelerator_row_ids(txn, scope.relation_id, field_id, value)?;
+            if candidate_row_ids.is_empty() || candidate_row_ids.len() <= 4096 {
+                let values = repeated_value_bytes(value, candidate_row_ids.len());
+                (
+                    Rc::new(candidate_row_ids),
+                    ColumnImage {
+                        field_id,
+                        width: primary_width,
+                        values: Rc::new(values),
+                        row_offsets: None,
+                    },
+                    true,
+                )
+            } else {
+                let (row_ids, column) = load_filter_primary_column(
+                    txn,
+                    scope,
+                    primary_filter_field,
+                    primary_width,
+                    &mut cache_stats,
+                )?;
+                (row_ids, column, false)
+            }
+        } else {
+            let (row_ids, column) = load_filter_primary_column(
+                txn,
+                scope,
+                primary_filter_field,
+                primary_width,
+                &mut cache_stats,
+            )?;
+            (row_ids, column, false)
+        };
     filter_columns.insert(primary_filter_field, primary_column);
     for field_id in filter_scope.iter() {
         if field_id == primary_filter_field {
             continue;
         }
         let width = relation.fields[field_id].value_type.encoded_width();
-        let column =
-            cached_full_column(txn, scope, field_id, width, &all_row_ids, &mut cache_stats)?;
+        let column = if seeded_by_accelerator {
+            let values = load_column_values_by_row_id(
+                txn,
+                scope.relation_id,
+                field_id,
+                width,
+                &all_row_ids,
+            )?;
+            ColumnImage {
+                field_id,
+                width,
+                values: Rc::new(values),
+                row_offsets: None,
+            }
+        } else {
+            cached_full_column(txn, scope, field_id, width, &all_row_ids, &mut cache_stats)?
+        };
         filter_columns.insert(field_id, column);
     }
 
@@ -120,7 +169,7 @@ pub(super) fn load_filtered_relation_base_image(
         .collect::<Vec<_>>();
     let survivor_handles = load_live_handles_by_row_id(txn, scope.relation_id, &survivor_row_ids)?;
     let survivor_handles = Rc::new(survivor_handles);
-    let dense_survivors = survivor_handles.len() * 2 >= all_row_ids.len();
+    let dense_survivors = !seeded_by_accelerator && survivor_handles.len() * 2 >= all_row_ids.len();
     let survivor_offsets = Rc::new(
         survivor_offsets
             .into_iter()
@@ -162,6 +211,42 @@ pub(super) fn load_filtered_relation_base_image(
         rows_tested: all_row_ids.len(),
         cache_stats,
     })
+}
+
+fn accelerator_seed(filters: &[SourceFilter]) -> Option<(usize, &[u8])> {
+    filters.iter().find_map(|filter| match filter {
+        SourceFilter::Compare {
+            field_id,
+            op: SourceFilterOp::Eq,
+            value,
+        } => Some((*field_id, value.bytes())),
+        _ => None,
+    })
+}
+
+fn accelerator_row_ids(
+    txn: &ReadTxn<'_>,
+    relation_id: u32,
+    field_id: usize,
+    encoded_value: &[u8],
+) -> Result<Vec<RowId>> {
+    let prefix = accelerator_prefix_key(relation_id, field_id as u32, encoded_value);
+    let mut row_ids = Vec::new();
+    for item in txn.dbs.data.prefix_iter(&txn.txn, &prefix)? {
+        let (key, _) = item?;
+        let row_id = decode_accelerator_key_row_id(key)
+            .ok_or_else(|| Error::corrupt("accelerator key row id width invalid"))?;
+        row_ids.push(row_id);
+    }
+    Ok(row_ids)
+}
+
+fn repeated_value_bytes(value: &[u8], rows: usize) -> Vec<u8> {
+    let mut values = Vec::with_capacity(value.len() * rows);
+    for _ in 0..rows {
+        values.extend_from_slice(value);
+    }
+    values
 }
 
 fn load_filter_primary_column(
@@ -373,59 +458,6 @@ fn load_plan_column_for_selection(
     })
 }
 
-fn load_column_values(
-    txn: &ReadTxn<'_>,
-    relation_id: u32,
-    field_id: usize,
-    width: usize,
-    row_ids: &[RowId],
-) -> Result<Vec<u8>> {
-    load_column_values_for_selection(txn, relation_id, field_id, width, row_ids)
-}
-
-fn load_column_values_for_selection(
-    txn: &ReadTxn<'_>,
-    relation_id: u32,
-    field_id: usize,
-    width: usize,
-    row_ids: &[RowId],
-) -> Result<Vec<u8>> {
-    let prefix_key = column_prefix_key(relation_id, field_id as u32);
-    let prefix = prefix_key.as_bytes();
-    let mut values = Vec::with_capacity(row_ids.len() * width);
-    let mut row_index = 0usize;
-
-    for item in txn.dbs.data.prefix_iter(&txn.txn, prefix)? {
-        let (key, value) = item?;
-        let row_id = decode_column_key_row_id(key)
-            .ok_or_else(|| Error::corrupt("column key row id width invalid"))?;
-        if value.len() != width {
-            return Err(Error::corrupt(format!(
-                "column entry width mismatch for field {field_id}"
-            )));
-        }
-        if row_index < row_ids.len() && row_ids[row_index] < row_id {
-            return Err(Error::corrupt(format!(
-                "column entry missing for live row field {field_id}"
-            )));
-        }
-        if row_index == row_ids.len() || row_ids[row_index] > row_id {
-            return Err(Error::corrupt(format!(
-                "column entry without live row for field {field_id}"
-            )));
-        }
-        values.extend_from_slice(value);
-        row_index += 1;
-    }
-
-    if row_index != row_ids.len() {
-        return Err(Error::corrupt(format!(
-            "column entry missing for live row field {field_id}"
-        )));
-    }
-    Ok(values)
-}
-
 fn load_selected_column_values_by_key(
     txn: &ReadTxn<'_>,
     relation_id: u32,
@@ -435,39 +467,13 @@ fn load_selected_column_values_by_key(
 ) -> Result<Vec<u8>> {
     let mut values = Vec::with_capacity(selected_row_ids.len() * width);
     for row_id in selected_row_ids {
-        let key = column_key(relation_id, field_id as u32, *row_id);
-        let value = txn
-            .dbs
-            .data
-            .get(&txn.txn, &key)?
-            .ok_or_else(|| Error::corrupt("selected column entry missing"))?;
-        if value.len() != width {
-            return Err(Error::corrupt(format!(
-                "column entry width mismatch for field {field_id}"
-            )));
-        }
-        values.extend_from_slice(value);
+        values.extend_from_slice(&load_column_values_by_row_id(
+            txn,
+            relation_id,
+            field_id,
+            width,
+            &[*row_id],
+        )?);
     }
     Ok(values)
-}
-
-fn live_rows(txn: &ReadTxn<'_>, relation_id: u32) -> Result<RelationRows> {
-    let prefix_key = live_row_key(relation_id, RowId(0));
-    let prefix = &prefix_key[..5];
-    let mut row_ids = Vec::new();
-    let mut handles = Vec::new();
-    for item in txn.dbs.data.prefix_iter(&txn.txn, prefix)? {
-        let (key, value) = item?;
-        let row_id = decode_live_row_key_row_id(key)
-            .ok_or_else(|| Error::corrupt("live row key row id width invalid"))?;
-        let handle_bytes: [u8; 16] = value
-            .try_into()
-            .map_err(|_| Error::corrupt("live row value handle width invalid"))?;
-        row_ids.push(row_id);
-        handles.push(FactHandle(handle_bytes));
-    }
-    Ok(RelationRows {
-        row_ids: Rc::new(row_ids),
-        row_handles: Rc::new(handles),
-    })
 }

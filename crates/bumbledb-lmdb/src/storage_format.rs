@@ -254,22 +254,43 @@ pub(crate) fn reverse_fk_guard_key(
     out
 }
 
-/// `A | relation_id | accelerator_id | tuple_key | fact_handle -> empty`.
+/// `A | relation_id | field_id | encoded_value | row_id -> empty`.
 pub(crate) fn accelerator_key(
     relation_id: u32,
-    accelerator_id: u32,
-    tuple_key: &[u8],
-    handle: FactHandle,
+    field_id: u32,
+    encoded_value: &[u8],
+    row_id: RowId,
 ) -> StorageKey {
     key(
         Namespace::Accelerator,
         &[
             &u32_bytes(relation_id),
-            &u32_bytes(accelerator_id),
-            tuple_key,
-            &handle_bytes(handle),
+            &u32_bytes(field_id),
+            encoded_value,
+            &row_id_bytes(row_id),
         ],
     )
+}
+
+/// `A | relation_id | field_id | encoded_value` prefix for value accelerator scans.
+pub(crate) fn accelerator_prefix_key(
+    relation_id: u32,
+    field_id: u32,
+    encoded_value: &[u8],
+) -> StorageKey {
+    key(
+        Namespace::Accelerator,
+        &[&u32_bytes(relation_id), &u32_bytes(field_id), encoded_value],
+    )
+}
+
+/// Decodes the row id suffix from a full accelerator key.
+pub(crate) fn decode_accelerator_key_row_id(key: &[u8]) -> Option<RowId> {
+    if key.len() < 1 + 4 + 4 + 8 {
+        return None;
+    }
+    let bytes: [u8; 8] = key.get(key.len() - 8..)?.try_into().ok()?;
+    Some(RowId(u64::from_be_bytes(bytes)))
 }
 
 /// `S | relation_id | stat_name -> encoded_stat`.

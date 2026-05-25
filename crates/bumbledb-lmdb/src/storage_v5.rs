@@ -2,8 +2,8 @@ use crate::Value;
 #[cfg(test)]
 use crate::storage_format::FactHandle;
 use crate::storage_format::{
-    RowId, canonical_fact_key, column_key, fact_handle_key, live_row_key, physical_row_key,
-    reverse_fk_guard_key, reverse_fk_guard_prefix, unique_guard_key,
+    RowId, accelerator_key, canonical_fact_key, column_key, fact_handle_key, live_row_key,
+    physical_row_key, reverse_fk_guard_key, reverse_fk_guard_prefix, unique_guard_key,
 };
 use crate::{
     Databases, DeleteOutcome, Error, Fact, FactView, InsertOutcome, ReadTxn, Result, WriteTxn,
@@ -191,6 +191,16 @@ fn write_fact(
             &column_key(fact.relation_id, field_id as u32, row_id),
             fact.field_bytes(field_id),
         )?;
+        data.put(
+            &mut txn.txn,
+            &accelerator_key(
+                fact.relation_id,
+                field_id as u32,
+                fact.field_bytes(field_id),
+                row_id,
+            ),
+            &[],
+        )?;
     }
     write_unique_guards(txn, fact)?;
     write_reverse_fk_guards(txn, schema, fact)?;
@@ -210,6 +220,15 @@ fn delete_fact(
         data.delete(
             &mut txn.txn,
             &column_key(fact.relation_id, field_id as u32, row_id),
+        )?;
+        data.delete(
+            &mut txn.txn,
+            &accelerator_key(
+                fact.relation_id,
+                field_id as u32,
+                fact.field_bytes(field_id),
+                row_id,
+            ),
         )?;
     }
     data.delete(&mut txn.txn, &live_row_key(fact.relation_id, row_id))?;

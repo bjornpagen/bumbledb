@@ -266,7 +266,7 @@ fn base_image_filtered_prunes_zero_survivors_before_plan_columns() -> Result<()>
             .iter()
             .find(|span| span.phase == TracePhase::BaseImageLoad)
             .ok_or_else(|| Error::corrupt("missing base-image load span"))?;
-        assert_eq!(load.counters.source_filter_rows_tested, 3);
+        assert_eq!(load.counters.source_filter_rows_tested, 0);
         assert_eq!(load.counters.source_filter_survivors, 0);
         assert_eq!(load.counters.column_values_loaded, 0);
         assert_eq!(load.counters.loaded_bytes, 0);

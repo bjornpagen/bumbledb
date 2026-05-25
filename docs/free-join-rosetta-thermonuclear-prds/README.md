@@ -75,7 +75,6 @@ The Free Join paper assumes raw data is already stored column-wise and that sele
 
 | order | PRD | purpose |
 | ---: | --- | --- |
-| 06 | `06-durable-value-accelerators.md` | Add correctness-optional durable value accelerators maintained by writes. |
 | 07 | `07-index-backed-ght-colt-sources.md` | Back GHT/COLT sources directly from accelerators and survivor handle sets. |
 | 08 | `08-selectivity-aware-free-join-planner.md` | Stop choosing plans that burn 32k binding conflicts before proving emptiness. |
 | 09 | `09-dynamic-cover-and-access-costing.md` | Make dynamic cover choice exact-or-labeled and access-path aware. |

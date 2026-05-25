@@ -70,7 +70,7 @@ fn storage_format_key_namespaces_are_ordered_and_distinct() {
         serial_sequence_key(1, 2),
         unique_guard_key(1, "u", b"key"),
         reverse_fk_guard_key(1, "u", b"key", 2, "fk", handle),
-        accelerator_key(1, 3, b"tuple", handle),
+        accelerator_key(1, 3, b"tuple", RowId(9)),
         stats_key(1, "count"),
     ];
     let namespace_bytes: Vec<_> = keys.iter().map(|key| key[0]).collect();

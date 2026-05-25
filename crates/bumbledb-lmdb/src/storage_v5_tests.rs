@@ -1,9 +1,11 @@
+use bumbledb_core::encoding::encode_enum;
 use bumbledb_core::schema::{
     ConstraintDescriptor, EnumDescriptor, FieldDescriptor, RelationDescriptor, SchemaDescriptor,
     ValueType,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::storage_format::{RowId, accelerator_key};
 use crate::{DeleteOutcome, Environment, Error, Fact, InsertOutcome, Result, StorageSchema, Value};
 
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
@@ -125,6 +127,37 @@ fn storage_delete_then_reinsert() -> Result<()> {
         1
     );
     Ok(())
+}
+
+#[test]
+fn storage_maintains_value_accelerators_atomically() -> Result<()> {
+    let (env, schema) = env_and_schema("accelerator-maintenance")?;
+    env.write(|txn| {
+        txn.insert(&schema, &holder(1, "alice"))?;
+        txn.insert(&schema, &pet(1, 1, 1))?;
+        Ok::<(), Error>(())
+    })?;
+    let key = accelerator_key(1, 2, &encode_enum(1), RowId(1));
+
+    env.read(|txn| {
+        assert!(txn.dbs.data.get(&txn.txn, &key)?.is_some());
+        Ok::<(), Error>(())
+    })?;
+    let tx_id = env.read(|txn| txn.storage_tx_id())?;
+    assert_eq!(
+        env.write(|txn| txn.insert(&schema, &pet(1, 1, 1)))?,
+        InsertOutcome::AlreadyPresent
+    );
+    assert_eq!(env.read(|txn| txn.storage_tx_id())?, tx_id);
+    env.read(|txn| {
+        assert!(txn.dbs.data.get(&txn.txn, &key)?.is_some());
+        Ok::<(), Error>(())
+    })?;
+    env.write(|txn| txn.delete(&schema, &pet(1, 1, 1)))?;
+    env.read(|txn| {
+        assert!(txn.dbs.data.get(&txn.txn, &key)?.is_none());
+        Ok::<(), Error>(())
+    })
 }
 
 #[test]
