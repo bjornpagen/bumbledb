@@ -195,7 +195,7 @@ fn grouped_colt(
     let image = RelationBaseImage {
         relation_id: 0,
         name: "Grouped".to_owned(),
-        row_handles: row_handles(rows),
+        row_handles: Rc::new(row_handles(rows)),
         columns: columns(rows, distinct_keys, key_width),
         stats: RelationStats { row_count: rows },
     };
@@ -220,7 +220,7 @@ fn range_colt(rows: usize) -> Result<OwnedColtSource, crate::tuple::TupleError> 
     let image = RelationBaseImage {
         relation_id: 0,
         name: "Range".to_owned(),
-        row_handles: row_handles(rows),
+        row_handles: Rc::new(row_handles(rows)),
         columns: BTreeMap::from([(0, u64_column(0, 0..rows as u64))]),
         stats: RelationStats { row_count: rows },
     };
@@ -279,7 +279,7 @@ fn u64_column(field_id: usize, values: impl IntoIterator<Item = u64>) -> ColumnI
     ColumnImage {
         field_id,
         width: 8,
-        values: bytes,
+        values: Rc::new(bytes),
     }
 }
 

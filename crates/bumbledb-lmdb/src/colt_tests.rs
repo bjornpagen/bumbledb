@@ -208,7 +208,7 @@ fn colt_suffix_iteration_allocation_is_bounded_independent_of_rows() -> TestResu
 
 #[test]
 fn colt_duplicate_heavy_force_allocates_by_distinct_keys_not_rows() -> TestResult {
-    let rows = 256;
+    let rows = 1024;
     let distinct_keys = 4;
     let colt = grouped_colt(rows, distinct_keys)?;
     let key = tuple_x(1)?;
@@ -378,9 +378,11 @@ fn range_colt(rows: usize) -> Result<OwnedColtSource, TupleError> {
     let image = RelationBaseImage {
         relation_id: 0,
         name: "Range".to_owned(),
-        row_handles: (0..rows)
-            .map(|offset| FactHandle([offset as u8; 16]))
-            .collect(),
+        row_handles: Rc::new(
+            (0..rows)
+                .map(|offset| FactHandle([offset as u8; 16]))
+                .collect(),
+        ),
         columns: BTreeMap::from([(0, u64_column(0, 0..rows as u64))]),
         stats: RelationStats { row_count: rows },
     };
@@ -395,9 +397,11 @@ fn grouped_colt(rows: usize, distinct_keys: usize) -> Result<OwnedColtSource, Tu
     let image = RelationBaseImage {
         relation_id: 0,
         name: "Grouped".to_owned(),
-        row_handles: (0..rows)
-            .map(|offset| FactHandle([offset as u8; 16]))
-            .collect(),
+        row_handles: Rc::new(
+            (0..rows)
+                .map(|offset| FactHandle([offset as u8; 16]))
+                .collect(),
+        ),
         columns: BTreeMap::from([
             (
                 0,
@@ -436,11 +440,11 @@ fn clover_s_image() -> RelationBaseImage {
     RelationBaseImage {
         relation_id: 1,
         name: "S".to_owned(),
-        row_handles: vec![
+        row_handles: Rc::new(vec![
             FactHandle([1; 16]),
             FactHandle([2; 16]),
             FactHandle([3; 16]),
-        ],
+        ]),
         columns: BTreeMap::from([(0, column("x", [1, 1, 2])), (1, column("b", [10, 11, 20]))]),
         stats: RelationStats { row_count: 3 },
     }
@@ -450,13 +454,13 @@ fn empty_image() -> RelationBaseImage {
     RelationBaseImage {
         relation_id: 0,
         name: "E".to_owned(),
-        row_handles: Vec::new(),
+        row_handles: Rc::new(Vec::new()),
         columns: BTreeMap::from([(
             0,
             ColumnImage {
                 field_id: 0,
                 width: 8,
-                values: Vec::new(),
+                values: Rc::new(Vec::new()),
             },
         )]),
         stats: RelationStats { row_count: 0 },
@@ -476,7 +480,7 @@ fn u64_column(field_id: usize, values: impl IntoIterator<Item = u64>) -> ColumnI
     ColumnImage {
         field_id,
         width: 8,
-        values: bytes,
+        values: Rc::new(bytes),
     }
 }
 

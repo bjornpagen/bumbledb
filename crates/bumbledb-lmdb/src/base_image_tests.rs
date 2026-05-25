@@ -380,6 +380,84 @@ fn base_image_cache_hits_for_same_tx_and_scope() -> Result<()> {
 }
 
 #[test]
+fn base_image_reuses_physical_columns_for_overlapping_scopes() -> Result<()> {
+    let (env, schema) = number_env_and_schema("overlap-cache")?;
+    env.write(|txn| {
+        txn.insert(&schema, &number(1, 10, 100))?;
+        txn.insert(&schema, &number(2, 20, 200))?;
+        Ok::<(), Error>(())
+    })?;
+
+    env.read(|txn| {
+        let mut trace = QueryTrace::new();
+        let first = super::relation_base_image_with_trace(txn, &schema, "Number", [0], &mut trace)?;
+        let second =
+            super::relation_base_image_with_trace(txn, &schema, "Number", [0, 1], &mut trace)?;
+
+        assert_eq!(first.columns[&0], second.columns[&0]);
+        assert!(
+            trace.counters.base_image_cache_hits >= 2,
+            "overlapping scope should reuse row handles and field 0 column"
+        );
+        Ok::<(), Error>(())
+    })
+}
+
+#[test]
+fn base_image_physical_cache_is_read_transaction_local() -> Result<()> {
+    let (env, schema) = number_env_and_schema("tx-local-cache")?;
+    env.write(|txn| txn.insert(&schema, &number(1, 10, 100)))?;
+
+    env.read(|txn| {
+        let mut trace = QueryTrace::new();
+        let _ = super::relation_base_image_with_trace(txn, &schema, "Number", [0], &mut trace)?;
+        assert_eq!(trace.counters.base_image_cache_hits, 0);
+        Ok::<(), Error>(())
+    })?;
+    env.read(|txn| {
+        let mut trace = QueryTrace::new();
+        let _ = super::relation_base_image_with_trace(txn, &schema, "Number", [0], &mut trace)?;
+        assert_eq!(trace.counters.base_image_cache_hits, 0);
+        Ok::<(), Error>(())
+    })
+}
+
+#[test]
+fn base_image_filtered_and_unfiltered_views_coexist() -> Result<()> {
+    let (env, schema) = number_env_and_schema("filtered-unfiltered")?;
+    env.write(|txn| {
+        txn.insert(&schema, &number(1, 10, 100))?;
+        txn.insert(&schema, &number(2, 20, 200))?;
+        txn.insert(&schema, &number(3, 30, 300))?;
+        Ok::<(), Error>(())
+    })?;
+    let filters = vec![SourceFilter::Compare {
+        field_id: 1,
+        op: SourceFilterOp::Gt,
+        value: KeyOwned::from_slice(&encode_u64(10)),
+    }];
+
+    env.read(|txn| {
+        let mut trace = QueryTrace::new();
+        let filtered = super::relation_base_image_filtered_with_trace(
+            txn,
+            &schema,
+            "Number",
+            [0],
+            &filters,
+            &mut trace,
+        )?;
+        let unfiltered =
+            super::relation_base_image_with_trace(txn, &schema, "Number", [0], &mut trace)?;
+
+        assert_eq!(filtered.row_handles.len(), 2);
+        assert_eq!(unfiltered.row_handles.len(), 3);
+        assert!(trace.counters.base_image_cache_hits > 0);
+        Ok::<(), Error>(())
+    })
+}
+
+#[test]
 fn base_image_cache_misses_for_changed_tx_or_scope() -> Result<()> {
     let (env, schema) = env_and_schema("cache-miss")?;
     env.write(|txn| txn.insert(&schema, &person(1, "alice", b"a")))?;

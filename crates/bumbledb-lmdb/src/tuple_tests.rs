@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::ops::ControlFlow;
+use std::rc::Rc;
 
 use bumbledb_core::encoding::{InternId, encode_enum, encode_intern_id, encode_u64};
 
@@ -240,7 +241,7 @@ fn base_image() -> RelationBaseImage {
     RelationBaseImage {
         relation_id: 0,
         name: "R".to_owned(),
-        row_handles: Vec::new(),
+        row_handles: Rc::new(Vec::new()),
         columns: BTreeMap::from([(0, column_u64(0, [1, 2])), (1, column_enum(1, [7, 8]))]),
         stats: RelationStats { row_count: 2 },
     }
@@ -254,7 +255,7 @@ fn column_u64<const N: usize>(field_id: usize, values: [u64; N]) -> ColumnImage 
     ColumnImage {
         field_id,
         width: 8,
-        values: bytes,
+        values: Rc::new(bytes),
     }
 }
 
@@ -266,6 +267,6 @@ fn column_enum<const N: usize>(field_id: usize, values: [u8; N]) -> ColumnImage 
     ColumnImage {
         field_id,
         width: 1,
-        values: bytes,
+        values: Rc::new(bytes),
     }
 }

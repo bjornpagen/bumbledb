@@ -24,7 +24,7 @@ pub(crate) struct RelationBaseImage {
     /// Relation name.
     pub(crate) name: String,
     /// Live fact handles in deterministic snapshot order.
-    pub(crate) row_handles: Vec<FactHandle>,
+    pub(crate) row_handles: Rc<Vec<FactHandle>>,
     /// Loaded columns by field ID.
     pub(crate) columns: BTreeMap<usize, ColumnImage>,
     /// Lightweight relation stats.
@@ -41,7 +41,7 @@ pub(crate) struct ColumnImage {
     /// Fixed encoded width of one cell.
     pub(crate) width: usize,
     /// Contiguous encoded values aligned with `RelationBaseImage::row_handles`.
-    pub(crate) values: Vec<u8>,
+    pub(crate) values: Rc<Vec<u8>>,
 }
 
 impl ColumnImage {
@@ -74,6 +74,34 @@ struct BaseImageCacheKey {
     storage_tx_id: u64,
     relation_id: u32,
     field_ids: FieldScope,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct CacheScope {
+    schema: [u8; 32],
+    storage_tx_id: u64,
+    pub(super) relation_id: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct RelationRowsCacheKey {
+    schema: [u8; 32],
+    storage_tx_id: u64,
+    relation_id: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct ColumnCacheKey {
+    schema: [u8; 32],
+    storage_tx_id: u64,
+    relation_id: u32,
+    field_id: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct PhysicalCacheStats {
+    pub(super) hits: u64,
+    pub(super) misses: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -127,11 +155,74 @@ impl Iterator for FieldScopeIter {
 #[derive(Default)]
 pub(crate) struct BaseImageCache {
     images: RefCell<Vec<BaseImageCacheEntry>>,
+    row_handles: RefCell<Vec<RelationRowsCacheEntry>>,
+    columns: RefCell<Vec<ColumnCacheEntry>>,
 }
 
 struct BaseImageCacheEntry {
     key: BaseImageCacheKey,
     image: Rc<RelationBaseImage>,
+}
+
+struct RelationRowsCacheEntry {
+    key: RelationRowsCacheKey,
+    row_handles: Rc<Vec<FactHandle>>,
+}
+
+struct ColumnCacheEntry {
+    key: ColumnCacheKey,
+    column: ColumnImage,
+}
+
+impl CacheScope {
+    fn rows_key(self) -> RelationRowsCacheKey {
+        RelationRowsCacheKey {
+            schema: self.schema,
+            storage_tx_id: self.storage_tx_id,
+            relation_id: self.relation_id,
+        }
+    }
+
+    fn column_key(self, field_id: usize) -> ColumnCacheKey {
+        ColumnCacheKey {
+            schema: self.schema,
+            storage_tx_id: self.storage_tx_id,
+            relation_id: self.relation_id,
+            field_id,
+        }
+    }
+}
+
+impl BaseImageCache {
+    pub(super) fn row_handles(&self, scope: CacheScope) -> Option<Rc<Vec<FactHandle>>> {
+        let key = scope.rows_key();
+        self.row_handles
+            .borrow()
+            .iter()
+            .find_map(|entry| (entry.key == key).then(|| Rc::clone(&entry.row_handles)))
+    }
+
+    pub(super) fn insert_row_handles(&self, scope: CacheScope, row_handles: Rc<Vec<FactHandle>>) {
+        self.row_handles.borrow_mut().push(RelationRowsCacheEntry {
+            key: scope.rows_key(),
+            row_handles,
+        });
+    }
+
+    pub(super) fn column(&self, scope: CacheScope, field_id: usize) -> Option<ColumnImage> {
+        let key = scope.column_key(field_id);
+        self.columns
+            .borrow()
+            .iter()
+            .find_map(|entry| (entry.key == key).then(|| entry.column.clone()))
+    }
+
+    pub(super) fn insert_column(&self, scope: CacheScope, field_id: usize, column: ColumnImage) {
+        self.columns.borrow_mut().push(ColumnCacheEntry {
+            key: scope.column_key(field_id),
+            column,
+        });
+    }
 }
 
 /// Builds or retrieves a relation base image for the current read snapshot.
@@ -177,11 +268,22 @@ pub(crate) fn relation_base_image_filtered_with_trace(
         relation_name,
         field_scope
     );
-    let (image, rows_tested) =
-        load::load_filtered_relation_base_image(txn, relation_id, relation, field_scope, filters)?;
+    let scope = CacheScope {
+        schema: schema.descriptor().fingerprint().0,
+        storage_tx_id: txn.storage_tx_id()?,
+        relation_id,
+    };
+    let loaded =
+        load::load_filtered_relation_base_image(txn, scope, relation, field_scope, filters)?;
+    let rows_tested = loaded.rows_tested;
+    let stats = loaded.cache_stats;
+    let image = loaded.image;
     let image = Rc::new(image);
     if let Some(span) = load_span {
-        trace.finish_span(span, filtered_base_image_counters(&image, rows_tested));
+        trace.finish_span(
+            span,
+            filtered_base_image_counters(&image, rows_tested, stats),
+        );
     }
     Ok(image)
 }
@@ -249,14 +351,20 @@ fn relation_base_image_inner(
             key.field_ids
         )
     });
-    let image = Rc::new(load::load_relation_base_image(
+    let loaded = load::load_relation_base_image(
         txn,
-        relation_id,
+        CacheScope {
+            schema: key.schema,
+            storage_tx_id: key.storage_tx_id,
+            relation_id,
+        },
         relation,
         key.field_ids,
-    )?);
+    )?;
+    let stats = loaded.cache_stats;
+    let image = Rc::new(loaded.image);
     if let (Some(trace), Some(span)) = (trace, load_span) {
-        trace.finish_span(span, base_image_counters(&image));
+        trace.finish_span(span, base_image_counters(&image, stats));
     }
     txn.base_images
         .images
@@ -268,7 +376,7 @@ fn relation_base_image_inner(
     Ok(image)
 }
 
-fn base_image_counters(image: &RelationBaseImage) -> TraceCounters {
+fn base_image_counters(image: &RelationBaseImage, stats: PhysicalCacheStats) -> TraceCounters {
     let column_values_loaded = image
         .columns
         .values()
@@ -283,12 +391,18 @@ fn base_image_counters(image: &RelationBaseImage) -> TraceCounters {
         live_rows_scanned: image.row_handles.len() as u64,
         column_values_loaded,
         loaded_bytes,
+        base_image_cache_hits: stats.hits,
+        base_image_cache_misses: stats.misses,
         ..TraceCounters::default()
     }
 }
 
-fn filtered_base_image_counters(image: &RelationBaseImage, rows_tested: usize) -> TraceCounters {
-    let mut counters = base_image_counters(image);
+fn filtered_base_image_counters(
+    image: &RelationBaseImage,
+    rows_tested: usize,
+    stats: PhysicalCacheStats,
+) -> TraceCounters {
+    let mut counters = base_image_counters(image, stats);
     counters.source_filter_rows_tested = rows_tested as u64;
     counters.source_filter_survivors = image.row_handles.len() as u64;
     counters

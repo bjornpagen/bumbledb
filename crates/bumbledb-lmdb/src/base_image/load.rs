@@ -1,8 +1,12 @@
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use bumbledb_core::schema::RelationDescriptor;
 
-use super::{ColumnImage, FieldScope, RelationBaseImage, RelationStats, validate_fields};
+use super::{
+    CacheScope, ColumnImage, FieldScope, PhysicalCacheStats, RelationBaseImage, RelationStats,
+    validate_fields,
+};
 use crate::colt_filter::{SourceFilter, SourceFilterOp};
 use crate::storage_format::{
     FactHandle, column_key, column_prefix_key, decode_column_key_handle, live_row_key,
@@ -11,58 +15,65 @@ use crate::{Error, ReadTxn, Result};
 
 pub(super) fn load_relation_base_image(
     txn: &ReadTxn<'_>,
-    relation_id: u32,
+    scope: CacheScope,
     relation: &RelationDescriptor,
     field_ids: FieldScope,
-) -> Result<RelationBaseImage> {
-    let row_handles = live_row_handles(txn, relation_id)?;
+) -> Result<LoadResult> {
+    let mut cache_stats = PhysicalCacheStats::default();
+    let row_handles = cached_row_handles(txn, scope, &mut cache_stats)?;
     let mut columns = BTreeMap::new();
     for field_id in field_ids.iter() {
         let field = &relation.fields[field_id];
         let width = field.value_type.encoded_width();
-        let values = load_column_values(txn, relation_id, field_id, width, &row_handles)?;
-        columns.insert(
-            field_id,
-            ColumnImage {
-                field_id,
-                width,
-                values,
-            },
-        );
+        let column =
+            cached_full_column(txn, scope, field_id, width, &row_handles, &mut cache_stats)?;
+        columns.insert(field_id, column);
     }
 
-    Ok(RelationBaseImage {
-        relation_id,
-        name: relation.name.clone(),
-        stats: RelationStats {
-            row_count: row_handles.len(),
+    Ok(LoadResult {
+        image: RelationBaseImage {
+            relation_id: scope.relation_id,
+            name: relation.name.clone(),
+            stats: RelationStats {
+                row_count: row_handles.len(),
+            },
+            row_handles,
+            columns,
         },
-        row_handles,
-        columns,
+        rows_tested: 0,
+        cache_stats,
     })
+}
+
+pub(super) struct LoadResult {
+    pub(super) image: RelationBaseImage,
+    pub(super) rows_tested: usize,
+    pub(super) cache_stats: PhysicalCacheStats,
 }
 
 pub(super) fn load_filtered_relation_base_image(
     txn: &ReadTxn<'_>,
-    relation_id: u32,
+    scope: CacheScope,
     relation: &RelationDescriptor,
     field_ids: FieldScope,
     filters: &[SourceFilter],
-) -> Result<(RelationBaseImage, usize)> {
+) -> Result<LoadResult> {
+    let mut cache_stats = PhysicalCacheStats::default();
     if filters
         .iter()
         .any(|filter| matches!(filter, SourceFilter::False))
     {
-        return Ok((
-            RelationBaseImage {
-                relation_id,
+        return Ok(LoadResult {
+            image: RelationBaseImage {
+                relation_id: scope.relation_id,
                 name: relation.name.clone(),
                 stats: RelationStats { row_count: 0 },
-                row_handles: Vec::new(),
+                row_handles: Rc::new(Vec::new()),
                 columns: BTreeMap::new(),
             },
-            0,
-        ));
+            rows_tested: 0,
+            cache_stats,
+        });
     }
     let mut filter_scope = FieldScope::default();
     filter_scope.extend(filters.iter().filter_map(SourceFilter::field_id));
@@ -76,37 +87,22 @@ pub(super) fn load_filtered_relation_base_image(
     let primary_width = relation.fields[primary_filter_field]
         .value_type
         .encoded_width();
-    let (all_handles, primary_values) =
-        load_column_handles_and_values(txn, relation_id, primary_filter_field, primary_width)?;
-    filter_columns.insert(
+    let (all_handles, primary_column) = cached_primary_filter_column(
+        txn,
+        scope,
         primary_filter_field,
-        ColumnImage {
-            field_id: primary_filter_field,
-            width: primary_width,
-            values: primary_values,
-        },
-    );
+        primary_width,
+        &mut cache_stats,
+    )?;
+    filter_columns.insert(primary_filter_field, primary_column);
     for field_id in filter_scope.iter() {
         if field_id == primary_filter_field {
             continue;
         }
         let width = relation.fields[field_id].value_type.encoded_width();
-        let values = load_column_values_for_selection(
-            txn,
-            relation_id,
-            field_id,
-            width,
-            &all_handles,
-            &all_handles,
-        )?;
-        filter_columns.insert(
-            field_id,
-            ColumnImage {
-                field_id,
-                width,
-                values,
-            },
-        );
+        let column =
+            cached_full_column(txn, scope, field_id, width, &all_handles, &mut cache_stats)?;
+        filter_columns.insert(field_id, column);
     }
 
     let compiled_filters = compile_filters(&filter_columns, filters)?;
@@ -121,6 +117,7 @@ pub(super) fn load_filtered_relation_base_image(
         .iter()
         .map(|offset| all_handles[*offset])
         .collect::<Vec<_>>();
+    let survivor_handles = Rc::new(survivor_handles);
 
     let mut columns = BTreeMap::new();
     for field_id in field_ids.iter() {
@@ -130,7 +127,7 @@ pub(super) fn load_filtered_relation_base_image(
         } else {
             load_column_values_for_selection(
                 txn,
-                relation_id,
+                scope.relation_id,
                 field_id,
                 width,
                 &all_handles,
@@ -142,23 +139,96 @@ pub(super) fn load_filtered_relation_base_image(
             ColumnImage {
                 field_id,
                 width,
-                values,
+                values: Rc::new(values),
             },
         );
     }
 
-    Ok((
-        RelationBaseImage {
-            relation_id,
+    Ok(LoadResult {
+        image: RelationBaseImage {
+            relation_id: scope.relation_id,
             name: relation.name.clone(),
             stats: RelationStats {
                 row_count: survivor_handles.len(),
             },
-            row_handles: survivor_handles,
+            row_handles: Rc::clone(&survivor_handles),
             columns,
         },
-        all_handles.len(),
-    ))
+        rows_tested: all_handles.len(),
+        cache_stats,
+    })
+}
+
+fn cached_row_handles(
+    txn: &ReadTxn<'_>,
+    scope: CacheScope,
+    stats: &mut PhysicalCacheStats,
+) -> Result<Rc<Vec<FactHandle>>> {
+    if let Some(row_handles) = txn.base_images.row_handles(scope) {
+        stats.hits += 1;
+        return Ok(row_handles);
+    }
+    stats.misses += 1;
+    let row_handles = Rc::new(live_row_handles(txn, scope.relation_id)?);
+    txn.base_images
+        .insert_row_handles(scope, Rc::clone(&row_handles));
+    Ok(row_handles)
+}
+
+fn cached_full_column(
+    txn: &ReadTxn<'_>,
+    scope: CacheScope,
+    field_id: usize,
+    width: usize,
+    row_handles: &[FactHandle],
+    stats: &mut PhysicalCacheStats,
+) -> Result<ColumnImage> {
+    if let Some(column) = txn.base_images.column(scope, field_id) {
+        stats.hits += 1;
+        return Ok(column);
+    }
+    stats.misses += 1;
+    let values = load_column_values(txn, scope.relation_id, field_id, width, row_handles)?;
+    let column = ColumnImage {
+        field_id,
+        width,
+        values: Rc::new(values),
+    };
+    txn.base_images
+        .insert_column(scope, field_id, column.clone());
+    Ok(column)
+}
+
+fn cached_primary_filter_column(
+    txn: &ReadTxn<'_>,
+    scope: CacheScope,
+    field_id: usize,
+    width: usize,
+    stats: &mut PhysicalCacheStats,
+) -> Result<(Rc<Vec<FactHandle>>, ColumnImage)> {
+    let cached_rows = txn.base_images.row_handles(scope);
+    let cached_column = txn.base_images.column(scope, field_id);
+    match (cached_rows, cached_column) {
+        (Some(row_handles), Some(column)) => {
+            stats.hits += 2;
+            Ok((row_handles, column))
+        }
+        _ => {
+            stats.misses += 2;
+            let (row_handles, values) =
+                load_column_handles_and_values(txn, scope.relation_id, field_id, width)?;
+            let column = ColumnImage {
+                field_id,
+                width,
+                values: Rc::new(values),
+            };
+            txn.base_images
+                .insert_row_handles(scope, Rc::clone(&row_handles));
+            txn.base_images
+                .insert_column(scope, field_id, column.clone());
+            Ok((row_handles, column))
+        }
+    }
 }
 
 fn load_column_handles_and_values(
@@ -166,7 +236,7 @@ fn load_column_handles_and_values(
     relation_id: u32,
     field_id: usize,
     width: usize,
-) -> Result<(Vec<FactHandle>, Vec<u8>)> {
+) -> Result<(Rc<Vec<FactHandle>>, Vec<u8>)> {
     let prefix_key = column_prefix_key(relation_id, field_id as u32);
     let prefix = prefix_key.as_bytes();
     let mut handles = Vec::new();
@@ -183,7 +253,7 @@ fn load_column_handles_and_values(
         handles.push(handle);
         values.extend_from_slice(value);
     }
-    Ok((handles, values))
+    Ok((Rc::new(handles), values))
 }
 
 struct CompiledFilter<'a> {

@@ -637,40 +637,21 @@ fn unary(relation: &str, value: u64) -> Fact {
 fn row<const N: usize>(values: [u64; N]) -> Vec<Value> {
     values.into_iter().map(Value::U64).collect()
 }
-fn insert_manual_colt<const N: usize>(
-    sources: &mut SourceStore,
-    atom: usize,
-    values: [u64; N],
-) -> Result<()> {
+
+#[rustfmt::skip]
+fn insert_manual_colt<const N: usize>(sources: &mut SourceStore, atom: usize, values: [u64; N]) -> Result<()> {
     let image = RelationBaseImage {
         relation_id: atom as u32,
         name: format!("A{atom}"),
-        row_handles: (0..values.len())
-            .map(|offset| FactHandle([offset as u8; 16]))
-            .collect(),
-        columns: BTreeMap::from([(
-            0,
-            ColumnImage {
-                field_id: 0,
-                width: 8,
-                values: values.into_iter().flat_map(encode_u64).collect(),
-            },
-        )]),
+        row_handles: Rc::new((0..values.len()).map(|offset| FactHandle([offset as u8; 16])).collect()),
+        columns: BTreeMap::from([(0, ColumnImage { field_id: 0, width: 8, values: Rc::new(values.into_iter().flat_map(encode_u64).collect()) })]),
         stats: RelationStats { row_count: N },
     };
     let mut trace = QueryTrace::new();
-    sources.insert_filtered_traced_labeled(
-        AtomOccurrenceId(atom),
-        Rc::new(image),
-        vec![TupleSchema::new(vec![
-            TupleField::new(0, Some(0), 8)
-                .map_err(|error| crate::Error::corrupt(error.to_string()))?,
-        ])],
-        ColtSource::build_config(Vec::new(), String::new(), true),
-        &mut trace,
-    );
+    sources.insert_filtered_traced_labeled(AtomOccurrenceId(atom), Rc::new(image), vec![TupleSchema::new(vec![TupleField::new(0, Some(0), 8).map_err(|error| crate::Error::corrupt(error.to_string()))?])], ColtSource::build_config(Vec::new(), String::new(), true), &mut trace);
     Ok(())
 }
+
 fn tuple_x(value: u64) -> Result<EncodedTuple> {
     let schema = TupleSchema::new(vec![
         TupleField::new(0, Some(0), 8).map_err(|error| crate::Error::corrupt(error.to_string()))?,
@@ -678,12 +659,14 @@ fn tuple_x(value: u64) -> Result<EncodedTuple> {
     EncodedTuple::new(&schema, encode_u64(value).to_vec())
         .map_err(|error| crate::Error::corrupt(error.to_string()))
 }
+
 fn node<const N: usize>(id: usize, subatoms: [FjSubatom; N]) -> FjNode {
     FjNode {
         id,
         subatoms: subatoms.into_iter().collect(),
     }
 }
+
 fn plan_nodes<const N: usize>(nodes: [FjNode; N]) -> NodeList {
     nodes.into_iter().collect()
 }

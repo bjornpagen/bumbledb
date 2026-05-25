@@ -118,7 +118,7 @@ fn empty_image(atom: &AtomOccurrence) -> RelationBaseImage {
     RelationBaseImage {
         relation_id: atom.relation_id as u32,
         name: atom.relation.clone(),
-        row_handles: Vec::new(),
+        row_handles: Rc::new(Vec::new()),
         columns: BTreeMap::new(),
         stats: RelationStats { row_count: 0 },
     }
