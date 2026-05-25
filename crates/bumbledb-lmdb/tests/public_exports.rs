@@ -32,7 +32,7 @@ fn public_exports_cover_current_contract_without_raw_internals()
     );
     let report = BulkLoadReport::default();
 
-    assert_eq!(STORAGE_FORMAT_VERSION, 5);
+    assert_eq!(STORAGE_FORMAT_VERSION, 6);
     assert!(inputs.is_empty());
     assert_eq!(result.cardinality(), 1);
     assert_eq!(report.facts_inserted, 0);

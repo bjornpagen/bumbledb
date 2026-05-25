@@ -2,8 +2,8 @@ use crate::Value;
 #[cfg(test)]
 use crate::storage_format::FactHandle;
 use crate::storage_format::{
-    canonical_fact_key, column_key, fact_handle_key, live_row_key, reverse_fk_guard_key,
-    reverse_fk_guard_prefix, unique_guard_key,
+    RowId, canonical_fact_key, column_key, fact_handle_key, live_row_key, physical_row_key,
+    reverse_fk_guard_key, reverse_fk_guard_prefix, unique_guard_key,
 };
 use crate::{
     Databases, DeleteOutcome, Error, Fact, FactView, InsertOutcome, ReadTxn, Result, WriteTxn,
@@ -23,7 +23,10 @@ use codec::decode_fact;
 use codec::{
     EncodeDelete, EncodedFact, encode_delete_fact, encode_insert_fact, encoded_key_from_fields,
 };
-use meta::{adjust_relation_count, advance_storage_tx_id, read_relation_count, relation_id};
+use meta::{
+    adjust_relation_count, advance_storage_tx_id, allocate_row_id, bytes_to_u64,
+    read_relation_count, relation_id,
+};
 
 pub(crate) fn init_metadata(
     dbs: Databases,
@@ -92,7 +95,8 @@ pub(crate) fn insert<F: FactView>(
 
     check_foreign_keys(txn, schema.descriptor(), &encoded)?;
     check_unique_constraints(txn, &encoded)?;
-    write_fact(txn, schema.descriptor(), &encoded)?;
+    let row_id = allocate_row_id(txn, encoded.relation_id)?;
+    write_fact(txn, schema.descriptor(), &encoded, row_id)?;
     advance_storage_tx_id(txn)?;
     Ok(InsertOutcome::Inserted)
 }
@@ -158,6 +162,7 @@ fn write_fact(
     txn: &mut WriteTxn<'_>,
     schema: &SchemaDescriptor,
     fact: &EncodedFact<'_>,
+    row_id: RowId,
 ) -> Result<()> {
     let data = txn.dbs.data;
     data.put(
@@ -172,13 +177,18 @@ fn write_fact(
     )?;
     data.put(
         &mut txn.txn,
-        &live_row_key(fact.relation_id, fact.handle),
-        &[],
+        &live_row_key(fact.relation_id, row_id),
+        &fact.handle.0,
+    )?;
+    data.put(
+        &mut txn.txn,
+        &physical_row_key(fact.relation_id, fact.handle),
+        &row_id.0.to_be_bytes(),
     )?;
     for field_id in 0..fact.fields.len() {
         data.put(
             &mut txn.txn,
-            &column_key(fact.relation_id, field_id as u32, fact.handle),
+            &column_key(fact.relation_id, field_id as u32, row_id),
             fact.field_bytes(field_id),
         )?;
     }
@@ -195,13 +205,18 @@ fn delete_fact(
     delete_reverse_fk_guards(txn, schema, fact)?;
     delete_unique_guards(txn, fact)?;
     let data = txn.dbs.data;
+    let row_id = row_id_for_fact(txn, fact.relation_id, fact.handle)?;
     for field_id in 0..fact.fields.len() {
         data.delete(
             &mut txn.txn,
-            &column_key(fact.relation_id, field_id as u32, fact.handle),
+            &column_key(fact.relation_id, field_id as u32, row_id),
         )?;
     }
-    data.delete(&mut txn.txn, &live_row_key(fact.relation_id, fact.handle))?;
+    data.delete(&mut txn.txn, &live_row_key(fact.relation_id, row_id))?;
+    data.delete(
+        &mut txn.txn,
+        &physical_row_key(fact.relation_id, fact.handle),
+    )?;
     data.delete(
         &mut txn.txn,
         &fact_handle_key(fact.relation_id, fact.handle),
@@ -211,6 +226,19 @@ fn delete_fact(
         &canonical_fact_key(fact.relation_id, &fact.bytes),
     )?;
     adjust_relation_count(txn, fact.relation_id, -1)
+}
+
+fn row_id_for_fact(
+    txn: &WriteTxn<'_>,
+    relation_id: u32,
+    handle: crate::storage_format::FactHandle,
+) -> Result<RowId> {
+    let bytes = txn
+        .dbs
+        .data
+        .get(&txn.txn, &physical_row_key(relation_id, handle))?
+        .ok_or_else(|| Error::corrupt("physical row lookup missing"))?;
+    Ok(RowId(bytes_to_u64(bytes)?))
 }
 
 fn check_unique_constraints(txn: &WriteTxn<'_>, fact: &EncodedFact<'_>) -> Result<()> {

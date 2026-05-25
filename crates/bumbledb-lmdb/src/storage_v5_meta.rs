@@ -1,4 +1,4 @@
-use crate::storage_format::{STORAGE_FORMAT_VERSION, stats_key};
+use crate::storage_format::{RowId, STORAGE_FORMAT_VERSION, stats_key};
 use crate::{Databases, Error, RawDatabase, ReadTxn, Result, WriteTxn};
 use bumbledb_core::schema::SchemaDescriptor;
 
@@ -11,6 +11,7 @@ pub(crate) const DICT_REV: u8 = b'R';
 pub(crate) const DICT_STRING: u8 = b's';
 pub(crate) const DICT_BYTES: u8 = b'b';
 const STAT_FACT_COUNT: &str = "fact_count";
+const STAT_NEXT_ROW_ID: &str = "next_row_id";
 
 pub(crate) fn init_metadata(
     dbs: Databases,
@@ -108,6 +109,16 @@ pub(crate) fn adjust_relation_count(
         &stats_key(relation_id, STAT_FACT_COUNT),
         next,
     )
+}
+
+pub(crate) fn allocate_row_id(txn: &mut WriteTxn<'_>, relation_id: u32) -> Result<RowId> {
+    let key = stats_key(relation_id, STAT_NEXT_ROW_ID);
+    let next = read_u64(&txn.dbs.data, &txn.txn, &key)?.unwrap_or(1);
+    let following = next
+        .checked_add(1)
+        .ok_or_else(|| Error::corrupt("row id overflow"))?;
+    write_u64(&txn.dbs.data, &mut txn.txn, &key, following)?;
+    Ok(RowId(next))
 }
 
 pub(crate) fn advance_storage_tx_id(txn: &mut WriteTxn<'_>) -> Result<()> {

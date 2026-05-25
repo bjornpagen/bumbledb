@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 /// Current breaking storage format version.
-pub(crate) const STORAGE_FORMAT_VERSION: u32 = 5;
+pub(crate) const STORAGE_FORMAT_VERSION: u32 = 6;
 
 /// Durable key namespace byte.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -14,6 +14,8 @@ pub(crate) enum Namespace {
     LiveRow = b'L' as isize,
     /// Durable column value by relation, field, and fact handle.
     Column = b'C' as isize,
+    /// Fact handle to physical row id lookup.
+    PhysicalRow = b'P' as isize,
     /// Serial sequence metadata.
     SerialSequence = b'Q' as isize,
     /// Unique constraint guard.
@@ -35,6 +37,10 @@ impl Namespace {
 /// Content-derived fact handle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct FactHandle(pub(crate) [u8; 16]);
+
+/// Stable relation-local physical row identifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct RowId(pub(crate) u64);
 
 const STORAGE_KEY_INLINE: usize = 4096;
 
@@ -105,6 +111,10 @@ fn handle_bytes(handle: FactHandle) -> [u8; 16] {
     handle.0
 }
 
+fn row_id_bytes(row_id: RowId) -> [u8; 8] {
+    row_id.0.to_be_bytes()
+}
+
 /// `T | relation_id | fact_bytes -> fact_handle`.
 pub(crate) fn canonical_fact_key(relation_id: u32, fact_bytes: &[u8]) -> StorageKey {
     key(
@@ -121,22 +131,30 @@ pub(crate) fn fact_handle_key(relation_id: u32, handle: FactHandle) -> StorageKe
     )
 }
 
-/// `L | relation_id | fact_handle -> empty`.
-pub(crate) fn live_row_key(relation_id: u32, handle: FactHandle) -> StorageKey {
+/// `L | relation_id | row_id -> fact_handle`.
+pub(crate) fn live_row_key(relation_id: u32, row_id: RowId) -> StorageKey {
     key(
         Namespace::LiveRow,
+        &[&u32_bytes(relation_id), &row_id_bytes(row_id)],
+    )
+}
+
+/// `P | relation_id | fact_handle -> row_id`.
+pub(crate) fn physical_row_key(relation_id: u32, handle: FactHandle) -> StorageKey {
+    key(
+        Namespace::PhysicalRow,
         &[&u32_bytes(relation_id), &handle_bytes(handle)],
     )
 }
 
-/// `C | relation_id | field_id | fact_handle -> encoded_field_bytes`.
-pub(crate) fn column_key(relation_id: u32, field_id: u32, handle: FactHandle) -> StorageKey {
+/// `C | relation_id | field_id | row_id -> encoded_field_bytes`.
+pub(crate) fn column_key(relation_id: u32, field_id: u32, row_id: RowId) -> StorageKey {
     key(
         Namespace::Column,
         &[
             &u32_bytes(relation_id),
             &u32_bytes(field_id),
-            &handle_bytes(handle),
+            &row_id_bytes(row_id),
         ],
     )
 }
@@ -149,18 +167,32 @@ pub(crate) fn column_prefix_key(relation_id: u32, field_id: u32) -> StorageKey {
     )
 }
 
-/// Decodes the fact handle suffix from a full column key.
-pub(crate) fn decode_column_key_handle(key: &[u8]) -> Option<FactHandle> {
+/// Decodes the row id suffix from a full live-row key.
+pub(crate) fn decode_live_row_key_row_id(key: &[u8]) -> Option<RowId> {
+    const LIVE_ROW_PREFIX_LEN: usize = 1 + 4;
+    const LIVE_ROW_KEY_LEN: usize = LIVE_ROW_PREFIX_LEN + 8;
+    if key.len() != LIVE_ROW_KEY_LEN {
+        return None;
+    }
+    let bytes: [u8; 8] = key
+        .get(LIVE_ROW_PREFIX_LEN..LIVE_ROW_KEY_LEN)?
+        .try_into()
+        .ok()?;
+    Some(RowId(u64::from_be_bytes(bytes)))
+}
+
+/// Decodes the row id suffix from a full column key.
+pub(crate) fn decode_column_key_row_id(key: &[u8]) -> Option<RowId> {
     const COLUMN_PREFIX_LEN: usize = 1 + 4 + 4;
-    const COLUMN_KEY_LEN: usize = COLUMN_PREFIX_LEN + 16;
+    const COLUMN_KEY_LEN: usize = COLUMN_PREFIX_LEN + 8;
     if key.len() != COLUMN_KEY_LEN {
         return None;
     }
-    let handle = key
+    let bytes: [u8; 8] = key
         .get(COLUMN_PREFIX_LEN..COLUMN_KEY_LEN)?
         .try_into()
         .ok()?;
-    Some(FactHandle(handle))
+    Some(RowId(u64::from_be_bytes(bytes)))
 }
 
 /// `Q | relation_id | field_id -> next_u64`.

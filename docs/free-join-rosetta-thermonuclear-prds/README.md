@@ -75,7 +75,6 @@ The Free Join paper assumes raw data is already stored column-wise and that sele
 
 | order | PRD | purpose |
 | ---: | --- | --- |
-| 05 | `05-storage-v6-columnar-read-layout.md` | Break storage format for query-native columnar read layout. |
 | 06 | `06-durable-value-accelerators.md` | Add correctness-optional durable value accelerators maintained by writes. |
 | 07 | `07-index-backed-ght-colt-sources.md` | Back GHT/COLT sources directly from accelerators and survivor handle sets. |
 | 08 | `08-selectivity-aware-free-join-planner.md` | Stop choosing plans that burn 32k binding conflicts before proving emptiness. |

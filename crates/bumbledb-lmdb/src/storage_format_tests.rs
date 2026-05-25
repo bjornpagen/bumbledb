@@ -8,7 +8,7 @@ use crate::{Environment, Error, STORAGE_FORMAT_VERSION};
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn storage_format_new_database_writes_v5_marker() -> crate::Result<()> {
+fn storage_format_new_database_writes_v6_marker() -> crate::Result<()> {
     let path = test_path("new-marker");
     clean(&path)?;
 
@@ -24,6 +24,19 @@ fn storage_format_old_marker_fails() -> crate::Result<()> {
     let path = test_path("old-marker");
     clean(&path)?;
     write_raw_lmdb_format(&path, Some(4))?;
+
+    let result = Environment::open(&path);
+
+    clean(&path)?;
+    assert!(matches!(result, Err(Error::StorageFormatMismatch { .. })));
+    Ok(())
+}
+
+#[test]
+fn storage_format_v5_marker_fails_hard() -> crate::Result<()> {
+    let path = test_path("v5-marker");
+    clean(&path)?;
+    write_raw_lmdb_format(&path, Some(5))?;
 
     let result = Environment::open(&path);
 
@@ -51,8 +64,9 @@ fn storage_format_key_namespaces_are_ordered_and_distinct() {
     let keys = vec![
         canonical_fact_key(1, b"fact"),
         fact_handle_key(1, handle),
-        live_row_key(1, handle),
-        column_key(1, 2, handle),
+        live_row_key(1, RowId(9)),
+        physical_row_key(1, handle),
+        column_key(1, 2, RowId(9)),
         serial_sequence_key(1, 2),
         unique_guard_key(1, "u", b"key"),
         reverse_fk_guard_key(1, "u", b"key", 2, "fk", handle),
@@ -61,7 +75,7 @@ fn storage_format_key_namespaces_are_ordered_and_distinct() {
     ];
     let namespace_bytes: Vec<_> = keys.iter().map(|key| key[0]).collect();
 
-    assert_eq!(namespace_bytes, b"THLCQURAS");
+    assert_eq!(namespace_bytes, b"THLPCQURAS");
     for key in keys {
         assert!(!key.is_empty());
     }
@@ -89,18 +103,22 @@ fn storage_format_serial_sequence_key_is_distinct_from_fact_handle_key() {
 }
 
 #[test]
-fn storage_format_column_prefix_decodes_handle() {
-    let handle = fact_handle(7, b"abc");
-    let key = column_key(7, 3, handle);
+fn storage_format_column_prefix_decodes_row_id() {
+    let row_id = RowId(42);
+    let key = column_key(7, 3, row_id);
     let prefix = column_prefix_key(7, 3);
 
     assert!(key.starts_with(prefix.as_bytes()));
-    assert_eq!(decode_column_key_handle(&key), Some(handle));
-    assert_eq!(decode_column_key_handle(prefix.as_bytes()), None);
+    assert_eq!(decode_column_key_row_id(&key), Some(row_id));
+    assert_eq!(decode_column_key_row_id(prefix.as_bytes()), None);
+    assert_eq!(
+        decode_live_row_key_row_id(&live_row_key(7, row_id)),
+        Some(row_id)
+    );
 }
 
 #[test]
-fn storage_format_schema_fingerprint_uses_v5_label() {
+fn storage_format_schema_fingerprint_is_stable() {
     let schema = SchemaDescriptor::new(
         "Fingerprint",
         vec![RelationDescriptor::new(

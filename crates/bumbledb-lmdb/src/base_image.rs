@@ -10,7 +10,7 @@ use crate::colt_filter::SourceFilter;
 use crate::query::free_join::ValidatedFjPlan;
 use crate::query::model::AtomOccurrenceId;
 use crate::query::trace::{QueryTrace, TraceCounters, TracePhase};
-use crate::storage_format::FactHandle;
+use crate::storage_format::{FactHandle, RowId};
 use crate::{Error, ReadTxn, Result, StorageSchema};
 
 #[path = "base_image/load.rs"]
@@ -114,6 +114,12 @@ pub(super) struct PhysicalCacheStats {
     pub(super) misses: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct RelationRows {
+    pub(super) row_ids: Rc<Vec<RowId>>,
+    pub(super) row_handles: Rc<Vec<FactHandle>>,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct FieldScope {
     words: [u64; 4],
@@ -176,7 +182,7 @@ struct BaseImageCacheEntry {
 
 struct RelationRowsCacheEntry {
     key: RelationRowsCacheKey,
-    row_handles: Rc<Vec<FactHandle>>,
+    rows: RelationRows,
 }
 
 struct ColumnCacheEntry {
@@ -204,18 +210,18 @@ impl CacheScope {
 }
 
 impl BaseImageCache {
-    pub(super) fn row_handles(&self, scope: CacheScope) -> Option<Rc<Vec<FactHandle>>> {
+    pub(super) fn rows(&self, scope: CacheScope) -> Option<RelationRows> {
         let key = scope.rows_key();
         self.row_handles
             .borrow()
             .iter()
-            .find_map(|entry| (entry.key == key).then(|| Rc::clone(&entry.row_handles)))
+            .find_map(|entry| (entry.key == key).then(|| entry.rows.clone()))
     }
 
-    pub(super) fn insert_row_handles(&self, scope: CacheScope, row_handles: Rc<Vec<FactHandle>>) {
+    pub(super) fn insert_rows(&self, scope: CacheScope, rows: RelationRows) {
         self.row_handles.borrow_mut().push(RelationRowsCacheEntry {
             key: scope.rows_key(),
-            row_handles,
+            rows,
         });
     }
 

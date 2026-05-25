@@ -4,12 +4,13 @@ use std::rc::Rc;
 use bumbledb_core::schema::RelationDescriptor;
 
 use super::{
-    CacheScope, ColumnImage, FieldScope, PhysicalCacheStats, RelationBaseImage, RelationStats,
-    validate_fields,
+    CacheScope, ColumnImage, FieldScope, PhysicalCacheStats, RelationBaseImage, RelationRows,
+    RelationStats, validate_fields,
 };
 use crate::colt_filter::{SourceFilter, SourceFilterOp};
 use crate::storage_format::{
-    FactHandle, column_key, column_prefix_key, decode_column_key_handle, live_row_key,
+    FactHandle, RowId, column_key, column_prefix_key, decode_column_key_row_id,
+    decode_live_row_key_row_id, live_row_key,
 };
 use crate::{Error, ReadTxn, Result};
 
@@ -20,13 +21,13 @@ pub(super) fn load_relation_base_image(
     field_ids: FieldScope,
 ) -> Result<LoadResult> {
     let mut cache_stats = PhysicalCacheStats::default();
-    let row_handles = cached_row_handles(txn, scope, &mut cache_stats)?;
+    let rows = cached_rows(txn, scope, &mut cache_stats)?;
     let mut columns = BTreeMap::new();
     for field_id in field_ids.iter() {
         let field = &relation.fields[field_id];
         let width = field.value_type.encoded_width();
         let column =
-            cached_full_column(txn, scope, field_id, width, &row_handles, &mut cache_stats)?;
+            cached_full_column(txn, scope, field_id, width, &rows.row_ids, &mut cache_stats)?;
         columns.insert(field_id, column);
     }
 
@@ -35,9 +36,9 @@ pub(super) fn load_relation_base_image(
             relation_id: scope.relation_id,
             name: relation.name.clone(),
             stats: RelationStats {
-                row_count: row_handles.len(),
+                row_count: rows.row_handles.len(),
             },
-            row_handles,
+            row_handles: rows.row_handles,
             columns,
         },
         rows_tested: 0,
@@ -87,7 +88,7 @@ pub(super) fn load_filtered_relation_base_image(
     let primary_width = relation.fields[primary_filter_field]
         .value_type
         .encoded_width();
-    let (all_handles, primary_column) = cached_primary_filter_column(
+    let (all_row_ids, primary_column) = load_filter_primary_column(
         txn,
         scope,
         primary_filter_field,
@@ -101,24 +102,25 @@ pub(super) fn load_filtered_relation_base_image(
         }
         let width = relation.fields[field_id].value_type.encoded_width();
         let column =
-            cached_full_column(txn, scope, field_id, width, &all_handles, &mut cache_stats)?;
+            cached_full_column(txn, scope, field_id, width, &all_row_ids, &mut cache_stats)?;
         filter_columns.insert(field_id, column);
     }
 
     let compiled_filters = compile_filters(&filter_columns, filters)?;
-    let survivor_offsets = (0..all_handles.len())
+    let survivor_offsets = (0..all_row_ids.len())
         .filter(|offset| {
             compiled_filters
                 .iter()
                 .all(|filter| filter.matches(*offset))
         })
         .collect::<Vec<_>>();
-    let survivor_handles = survivor_offsets
+    let survivor_row_ids = survivor_offsets
         .iter()
-        .map(|offset| all_handles[*offset])
+        .map(|offset| all_row_ids[*offset])
         .collect::<Vec<_>>();
+    let survivor_handles = load_live_handles_by_row_id(txn, scope.relation_id, &survivor_row_ids)?;
     let survivor_handles = Rc::new(survivor_handles);
-    let dense_survivors = survivor_handles.len() * 2 >= all_handles.len();
+    let dense_survivors = survivor_handles.len() * 2 >= all_row_ids.len();
     let survivor_offsets = Rc::new(
         survivor_offsets
             .into_iter()
@@ -137,8 +139,8 @@ pub(super) fn load_filtered_relation_base_image(
                 scope,
                 field_id,
                 width,
-                &all_handles,
-                &survivor_handles,
+                &all_row_ids,
+                &survivor_row_ids,
                 &survivor_offsets,
                 dense_survivors,
                 &mut cache_stats,
@@ -157,25 +159,77 @@ pub(super) fn load_filtered_relation_base_image(
             row_handles: Rc::clone(&survivor_handles),
             columns,
         },
-        rows_tested: all_handles.len(),
+        rows_tested: all_row_ids.len(),
         cache_stats,
     })
 }
 
-fn cached_row_handles(
+fn load_filter_primary_column(
+    txn: &ReadTxn<'_>,
+    scope: CacheScope,
+    field_id: usize,
+    width: usize,
+    stats: &mut PhysicalCacheStats,
+) -> Result<(Rc<Vec<RowId>>, ColumnImage)> {
+    stats.misses += 1;
+    let prefix_key = column_prefix_key(scope.relation_id, field_id as u32);
+    let prefix = prefix_key.as_bytes();
+    let mut row_ids = Vec::new();
+    let mut values = Vec::new();
+    for item in txn.dbs.data.prefix_iter(&txn.txn, prefix)? {
+        let (key, value) = item?;
+        let row_id = decode_column_key_row_id(key)
+            .ok_or_else(|| Error::corrupt("column key row id width invalid"))?;
+        if value.len() != width {
+            return Err(Error::corrupt(format!(
+                "column entry width mismatch for field {field_id}"
+            )));
+        }
+        row_ids.push(row_id);
+        values.extend_from_slice(value);
+    }
+    let column = ColumnImage {
+        field_id,
+        width,
+        values: Rc::new(values),
+        row_offsets: None,
+    };
+    Ok((Rc::new(row_ids), column))
+}
+
+fn load_live_handles_by_row_id(
+    txn: &ReadTxn<'_>,
+    relation_id: u32,
+    row_ids: &[RowId],
+) -> Result<Vec<FactHandle>> {
+    let mut handles = Vec::with_capacity(row_ids.len());
+    for row_id in row_ids {
+        let bytes = txn
+            .dbs
+            .data
+            .get(&txn.txn, &live_row_key(relation_id, *row_id))?
+            .ok_or_else(|| Error::corrupt("live row missing for survivor row id"))?;
+        let handle_bytes: [u8; 16] = bytes
+            .try_into()
+            .map_err(|_| Error::corrupt("live row value handle width invalid"))?;
+        handles.push(FactHandle(handle_bytes));
+    }
+    Ok(handles)
+}
+
+fn cached_rows(
     txn: &ReadTxn<'_>,
     scope: CacheScope,
     stats: &mut PhysicalCacheStats,
-) -> Result<Rc<Vec<FactHandle>>> {
-    if let Some(row_handles) = txn.base_images.row_handles(scope) {
+) -> Result<RelationRows> {
+    if let Some(rows) = txn.base_images.rows(scope) {
         stats.hits += 1;
-        return Ok(row_handles);
+        return Ok(rows);
     }
     stats.misses += 1;
-    let row_handles = Rc::new(live_row_handles(txn, scope.relation_id)?);
-    txn.base_images
-        .insert_row_handles(scope, Rc::clone(&row_handles));
-    Ok(row_handles)
+    let rows = live_rows(txn, scope.relation_id)?;
+    txn.base_images.insert_rows(scope, rows.clone());
+    Ok(rows)
 }
 
 fn cached_full_column(
@@ -183,7 +237,7 @@ fn cached_full_column(
     scope: CacheScope,
     field_id: usize,
     width: usize,
-    row_handles: &[FactHandle],
+    row_ids: &[RowId],
     stats: &mut PhysicalCacheStats,
 ) -> Result<ColumnImage> {
     if let Some(column) = txn.base_images.column(scope, field_id) {
@@ -191,7 +245,7 @@ fn cached_full_column(
         return Ok(column);
     }
     stats.misses += 1;
-    let values = load_column_values(txn, scope.relation_id, field_id, width, row_handles)?;
+    let values = load_column_values(txn, scope.relation_id, field_id, width, row_ids)?;
     let column = ColumnImage {
         field_id,
         width,
@@ -201,64 +255,6 @@ fn cached_full_column(
     txn.base_images
         .insert_column(scope, field_id, column.clone());
     Ok(column)
-}
-
-fn cached_primary_filter_column(
-    txn: &ReadTxn<'_>,
-    scope: CacheScope,
-    field_id: usize,
-    width: usize,
-    stats: &mut PhysicalCacheStats,
-) -> Result<(Rc<Vec<FactHandle>>, ColumnImage)> {
-    let cached_rows = txn.base_images.row_handles(scope);
-    let cached_column = txn.base_images.column(scope, field_id);
-    match (cached_rows, cached_column) {
-        (Some(row_handles), Some(column)) => {
-            stats.hits += 2;
-            Ok((row_handles, column))
-        }
-        _ => {
-            stats.misses += 2;
-            let (row_handles, values) =
-                load_column_handles_and_values(txn, scope.relation_id, field_id, width)?;
-            let column = ColumnImage {
-                field_id,
-                width,
-                values: Rc::new(values),
-                row_offsets: None,
-            };
-            txn.base_images
-                .insert_row_handles(scope, Rc::clone(&row_handles));
-            txn.base_images
-                .insert_column(scope, field_id, column.clone());
-            Ok((row_handles, column))
-        }
-    }
-}
-
-fn load_column_handles_and_values(
-    txn: &ReadTxn<'_>,
-    relation_id: u32,
-    field_id: usize,
-    width: usize,
-) -> Result<(Rc<Vec<FactHandle>>, Vec<u8>)> {
-    let prefix_key = column_prefix_key(relation_id, field_id as u32);
-    let prefix = prefix_key.as_bytes();
-    let mut handles = Vec::new();
-    let mut values = Vec::new();
-    for item in txn.dbs.data.prefix_iter(&txn.txn, prefix)? {
-        let (key, value) = item?;
-        let handle = decode_column_key_handle(key)
-            .ok_or_else(|| Error::corrupt("column key handle width invalid"))?;
-        if value.len() != width {
-            return Err(Error::corrupt(format!(
-                "column entry width mismatch for field {field_id}"
-            )));
-        }
-        handles.push(handle);
-        values.extend_from_slice(value);
-    }
-    Ok((Rc::new(handles), values))
 }
 
 struct CompiledFilter<'a> {
@@ -347,14 +343,14 @@ fn load_plan_column_for_selection(
     scope: CacheScope,
     field_id: usize,
     width: usize,
-    row_handles: &[FactHandle],
-    selected_handles: &[FactHandle],
+    row_ids: &[RowId],
+    selected_row_ids: &[RowId],
     survivor_offsets: &Rc<Vec<u32>>,
     dense_survivors: bool,
     stats: &mut PhysicalCacheStats,
 ) -> Result<ColumnImage> {
     if dense_survivors {
-        let column = cached_full_column(txn, scope, field_id, width, row_handles, stats)?;
+        let column = cached_full_column(txn, scope, field_id, width, row_ids, stats)?;
         return Ok(ColumnImage {
             field_id,
             width,
@@ -362,13 +358,12 @@ fn load_plan_column_for_selection(
             row_offsets: Some(Rc::clone(survivor_offsets)),
         });
     }
-    let values = load_column_values_for_selection(
+    let values = load_selected_column_values_by_key(
         txn,
         scope.relation_id,
         field_id,
         width,
-        row_handles,
-        selected_handles,
+        selected_row_ids,
     )?;
     Ok(ColumnImage {
         field_id,
@@ -383,9 +378,9 @@ fn load_column_values(
     relation_id: u32,
     field_id: usize,
     width: usize,
-    row_handles: &[FactHandle],
+    row_ids: &[RowId],
 ) -> Result<Vec<u8>> {
-    load_column_values_for_selection(txn, relation_id, field_id, width, row_handles, row_handles)
+    load_column_values_for_selection(txn, relation_id, field_id, width, row_ids)
 }
 
 fn load_column_values_for_selection(
@@ -393,58 +388,39 @@ fn load_column_values_for_selection(
     relation_id: u32,
     field_id: usize,
     width: usize,
-    row_handles: &[FactHandle],
-    selected_handles: &[FactHandle],
+    row_ids: &[RowId],
 ) -> Result<Vec<u8>> {
-    if !selected_handles.is_empty() && selected_handles.len() * 32 < row_handles.len() {
-        return load_selected_column_values_by_key(
-            txn,
-            relation_id,
-            field_id,
-            width,
-            selected_handles,
-        );
-    }
     let prefix_key = column_prefix_key(relation_id, field_id as u32);
     let prefix = prefix_key.as_bytes();
-    let mut values = Vec::with_capacity(selected_handles.len() * width);
-    let mut live_index = 0usize;
-    let mut selected_index = 0usize;
+    let mut values = Vec::with_capacity(row_ids.len() * width);
+    let mut row_index = 0usize;
 
     for item in txn.dbs.data.prefix_iter(&txn.txn, prefix)? {
         let (key, value) = item?;
-        let handle = decode_column_key_handle(key)
-            .ok_or_else(|| Error::corrupt("column key handle width invalid"))?;
+        let row_id = decode_column_key_row_id(key)
+            .ok_or_else(|| Error::corrupt("column key row id width invalid"))?;
         if value.len() != width {
             return Err(Error::corrupt(format!(
                 "column entry width mismatch for field {field_id}"
             )));
         }
-        if live_index < row_handles.len() && row_handles[live_index] < handle {
+        if row_index < row_ids.len() && row_ids[row_index] < row_id {
             return Err(Error::corrupt(format!(
                 "column entry missing for live row field {field_id}"
             )));
         }
-        if live_index == row_handles.len() || row_handles[live_index] > handle {
+        if row_index == row_ids.len() || row_ids[row_index] > row_id {
             return Err(Error::corrupt(format!(
                 "column entry without live row for field {field_id}"
             )));
         }
-        if selected_index < selected_handles.len() && selected_handles[selected_index] == handle {
-            values.extend_from_slice(value);
-            selected_index += 1;
-        }
-        live_index += 1;
+        values.extend_from_slice(value);
+        row_index += 1;
     }
 
-    if live_index != row_handles.len() {
+    if row_index != row_ids.len() {
         return Err(Error::corrupt(format!(
             "column entry missing for live row field {field_id}"
-        )));
-    }
-    if selected_index != selected_handles.len() {
-        return Err(Error::corrupt(format!(
-            "selected column entry missing for field {field_id}"
         )));
     }
     Ok(values)
@@ -455,11 +431,11 @@ fn load_selected_column_values_by_key(
     relation_id: u32,
     field_id: usize,
     width: usize,
-    selected_handles: &[FactHandle],
+    selected_row_ids: &[RowId],
 ) -> Result<Vec<u8>> {
-    let mut values = Vec::with_capacity(selected_handles.len() * width);
-    for handle in selected_handles {
-        let key = column_key(relation_id, field_id as u32, *handle);
+    let mut values = Vec::with_capacity(selected_row_ids.len() * width);
+    for row_id in selected_row_ids {
+        let key = column_key(relation_id, field_id as u32, *row_id);
         let value = txn
             .dbs
             .data
@@ -475,18 +451,23 @@ fn load_selected_column_values_by_key(
     Ok(values)
 }
 
-fn live_row_handles(txn: &ReadTxn<'_>, relation_id: u32) -> Result<Vec<FactHandle>> {
-    let prefix_key = live_row_key(relation_id, FactHandle([0; 16]));
+fn live_rows(txn: &ReadTxn<'_>, relation_id: u32) -> Result<RelationRows> {
+    let prefix_key = live_row_key(relation_id, RowId(0));
     let prefix = &prefix_key[..5];
+    let mut row_ids = Vec::new();
     let mut handles = Vec::new();
     for item in txn.dbs.data.prefix_iter(&txn.txn, prefix)? {
-        let (key, _) = item?;
-        let handle_bytes: [u8; 16] = key
-            .get(5..21)
-            .ok_or_else(|| Error::corrupt("live row key too short"))?
+        let (key, value) = item?;
+        let row_id = decode_live_row_key_row_id(key)
+            .ok_or_else(|| Error::corrupt("live row key row id width invalid"))?;
+        let handle_bytes: [u8; 16] = value
             .try_into()
-            .map_err(|_| Error::corrupt("live row handle width invalid"))?;
+            .map_err(|_| Error::corrupt("live row value handle width invalid"))?;
+        row_ids.push(row_id);
         handles.push(FactHandle(handle_bytes));
     }
-    Ok(handles)
+    Ok(RelationRows {
+        row_ids: Rc::new(row_ids),
+        row_handles: Rc::new(handles),
+    })
 }

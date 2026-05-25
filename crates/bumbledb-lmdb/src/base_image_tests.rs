@@ -17,7 +17,7 @@ use crate::query::model::{
     AtomOccurrence, AtomOccurrenceId, NormalizedFieldBinding, NormalizedQuery, NormalizedTerm,
 };
 use crate::query::trace::{QueryTrace, TracePhase};
-use crate::storage_format::{FactHandle, column_key};
+use crate::storage_format::{RowId, column_key};
 use crate::{Environment, Error, Fact, InsertOutcome, Result, StorageSchema, Value};
 
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
@@ -183,11 +183,11 @@ fn base_image_prefix_scan_preserves_multi_column_alignment() -> Result<()> {
 #[test]
 fn base_image_prefix_scan_rejects_missing_column_entry() -> Result<()> {
     let (env, schema) = number_env_and_schema("missing-column")?;
-    let handle = insert_one_number_and_handle(&env, &schema)?;
+    let row_id = insert_one_number_and_row_id(&env, &schema)?;
     env.write(|txn| {
         txn.dbs
             .data
-            .delete(&mut txn.txn, &column_key(0, 1, handle))?;
+            .delete(&mut txn.txn, &column_key(0, 1, row_id))?;
         Ok::<(), Error>(())
     })?;
 
@@ -200,11 +200,11 @@ fn base_image_prefix_scan_rejects_missing_column_entry() -> Result<()> {
 #[test]
 fn base_image_prefix_scan_rejects_extra_column_entry() -> Result<()> {
     let (env, schema) = number_env_and_schema("extra-column")?;
-    insert_one_number_and_handle(&env, &schema)?;
+    insert_one_number_and_row_id(&env, &schema)?;
     env.write(|txn| {
         txn.dbs.data.put(
             &mut txn.txn,
-            &column_key(0, 1, FactHandle([255; 16])),
+            &column_key(0, 1, RowId(255)),
             &encode_u64(999),
         )?;
         Ok::<(), Error>(())
@@ -219,11 +219,11 @@ fn base_image_prefix_scan_rejects_extra_column_entry() -> Result<()> {
 #[test]
 fn base_image_prefix_scan_rejects_wrong_column_width() -> Result<()> {
     let (env, schema) = number_env_and_schema("wrong-width")?;
-    let handle = insert_one_number_and_handle(&env, &schema)?;
+    let row_id = insert_one_number_and_row_id(&env, &schema)?;
     env.write(|txn| {
         txn.dbs
             .data
-            .put(&mut txn.txn, &column_key(0, 1, handle), &[1, 2, 3])?;
+            .put(&mut txn.txn, &column_key(0, 1, row_id), &[1, 2, 3])?;
         Ok::<(), Error>(())
     })?;
 
@@ -613,16 +613,9 @@ fn number(a: u64, b: u64, c: u64) -> Fact {
     )
 }
 
-fn insert_one_number_and_handle(env: &Environment, schema: &StorageSchema) -> Result<FactHandle> {
+fn insert_one_number_and_row_id(env: &Environment, schema: &StorageSchema) -> Result<RowId> {
     env.write(|txn| txn.insert(schema, &number(1, 10, 100)))?;
-    env.read(|txn| {
-        let image = txn.relation_base_image(schema, "Number", [0])?;
-        image
-            .row_handles
-            .first()
-            .copied()
-            .ok_or_else(|| Error::corrupt("missing number row handle"))
-    })
+    Ok(RowId(1))
 }
 
 fn query_from_atoms<const N: usize>(atom_vars: [Vec<usize>; N]) -> NormalizedQuery {
