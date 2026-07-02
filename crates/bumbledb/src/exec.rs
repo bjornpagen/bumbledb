@@ -2,3 +2,5 @@
 
 pub mod colt;
 pub mod run;
+pub mod sink;
+pub mod wordmap;

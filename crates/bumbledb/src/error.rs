@@ -261,6 +261,11 @@ pub enum Error {
     },
 
     // --- Runtime errors ---
+    /// An aggregate's final value exceeds its result type (the once-at-
+    /// finalization range check; deterministic under any fold order).
+    Overflow {
+        find: usize,
+    },
     /// Hard corruption error, never a skip.
     Corruption(CorruptionError),
 }
