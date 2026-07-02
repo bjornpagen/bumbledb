@@ -4,6 +4,7 @@
 //! panics are reserved for programmer-invariant violations. Payloads carry
 //! ids, not formatted strings — `Display` (PRD 28) formats lazily.
 
+use crate::ir::{ParamId, VarId};
 use crate::schema::fingerprint::SchemaFingerprint;
 use crate::schema::{ConstraintId, FieldId, RelationId};
 
@@ -131,6 +132,79 @@ pub enum FkViolation {
     },
 }
 
+/// A query validation error (the IR boundary, PRD 14): one variant per
+/// roster item in `docs/architecture/20-query-ir.md`, returned at prepare
+/// time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationError {
+    UnknownRelation {
+        atom: usize,
+        relation: RelationId,
+    },
+    UnknownField {
+        atom: usize,
+        field: FieldId,
+    },
+    DuplicateFieldBinding {
+        atom: usize,
+        field: FieldId,
+    },
+    VariableTypeConflict {
+        var: VarId,
+    },
+    LiteralTypeMismatch {
+        atom: usize,
+        field: FieldId,
+    },
+    EnumOrdinalOutOfRange {
+        atom: usize,
+        field: FieldId,
+        ordinal: u8,
+    },
+    ParamUnanchored {
+        param: ParamId,
+    },
+    ParamTypeConflict {
+        param: ParamId,
+    },
+    /// Type rules violated: cross-type comparison, or an order operator on
+    /// a non-integer type.
+    IllegalComparison {
+        index: usize,
+    },
+    /// Neither side is a variable — write the query you mean.
+    ConstantComparison {
+        index: usize,
+    },
+    /// Datalog safety: a find (or aggregate-input) variable bound by no atom.
+    UnboundFindVariable {
+        var: VarId,
+    },
+    ComparisonOnlyVariable {
+        var: VarId,
+    },
+    EmptyFinds,
+    DuplicateFindTerm {
+        index: usize,
+    },
+    NoAtoms,
+    /// Sum/Min/Max over a non-integer variable.
+    AggregateInputType {
+        find: usize,
+    },
+    /// Count is nullary; it carries no variable.
+    CountWithVariable {
+        find: usize,
+    },
+    /// Sum/Min/Max require a variable.
+    AggregateWithoutVariable {
+        find: usize,
+    },
+    AggregateOverGroupKey {
+        find: usize,
+    },
+}
+
 /// The one workspace error type, categorized per `docs/architecture/60-api.md`.
 ///
 /// The Validation (IR boundary, PRD 14) and Write (PRDs 07-08) categories
@@ -153,6 +227,7 @@ pub enum Error {
 
     // --- Declaration / validation errors ---
     Schema(SchemaError),
+    Validation(ValidationError),
 
     // --- Write errors ---
     /// A foreign-key invariant would be violated by the committed state:
@@ -198,6 +273,12 @@ impl From<std::io::Error> for Error {
 impl From<SchemaError> for Error {
     fn from(err: SchemaError) -> Self {
         Self::Schema(err)
+    }
+}
+
+impl From<ValidationError> for Error {
+    fn from(err: ValidationError) -> Self {
+        Self::Validation(err)
     }
 }
 

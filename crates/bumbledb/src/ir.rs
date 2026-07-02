@@ -6,6 +6,8 @@
 //! to something" is unwritable. Variables carry dense ids only; names are a
 //! debugging sidecar the engine never stores.
 
+pub mod validate;
+
 use crate::schema::{FieldId, RelationId};
 
 /// Dense query-variable id.
