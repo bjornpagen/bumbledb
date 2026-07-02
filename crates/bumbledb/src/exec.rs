@@ -1,6 +1,7 @@
 //! COLT, the executor, sinks, kernels, dispatch, and EXPLAIN (PRDs 18-24).
 
 pub mod colt;
+pub mod dispatch;
 pub mod kernel;
 pub mod run;
 pub mod sink;
