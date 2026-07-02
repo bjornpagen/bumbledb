@@ -3,6 +3,13 @@
 Reference research document (owner: Bjorn Pagen). This is the hardware model behind the
 performance decisions in `docs/architecture/00-product.md` and `30-execution.md`.
 
+> **Flagged internal contradiction (design-audit finding):** Category 1 states "cache
+> lines are 128 bytes across levels" while Category 5's sources describe L1D as "64B
+> lines, 256 sets." The architecture's 128-byte column alignment is safe under either
+> reading (128-byte alignment implies 64-byte alignment, and 128 B matches L2/SLC).
+> Resolve empirically with a stride microbenchmark before any decision leans on the
+> L1D-specific number.
+
 - Owner
    - Bjorn Pagen
 - Purpose

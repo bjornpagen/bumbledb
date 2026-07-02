@@ -1,108 +1,211 @@
 # 30 — Execution
 
 The execution engine is Free Join as specified in the paper (Wang, Willsey, Suciu,
-SIGMOD 2023 — `docs/free-join-paper/`), run over snapshot-local columnar data, with a
-short list of documented deviations. When this doc and the paper disagree and no
-`Deviation:` block explains why, this doc is wrong.
+SIGMOD 2023 — `docs/free-join-paper/`), run over snapshot-local columnar data, with
+documented deviations. When this doc and the paper disagree and no `Deviation:` block
+explains why, this doc is wrong.
 
-## The paper's core, adopted as-is
+## Access paths (before any join machinery)
 
-- **GHT**: a trie whose internal nodes are hash maps keyed by tuples and whose leaves
-  are vectors; hash tables and GJ hash tries are its two extremes (§3.1).
-- **Plan**: a list of nodes, each a list of subatoms; the plan must partition every
-  atom's variables; a node is valid if no two subatoms share a relation and some subatom
-  (the cover) contains all variables new to the node (§3.2).
-- **Execution**: recurse node by node — iterate the cover, extend the binding, probe the
-  sibling subatoms, replace each atom's current trie, recurse; backtrack restores (§3.3).
-- **Plan construction**: a cost-based **binary** left-deep plan → `binary2fj` →
-  conservative `factor()` hoisting of probe subatoms (all-or-stop per node, preserving
-  the optimizer's probe order) (§4.1).
-- **COLT**: lazy tries — a node is a vector of offsets into the base columns or a forced
-  hash map; the root iterates the base table directly; forcing happens only on `get` or
-  non-suffix `iter`; last trie level stays a vector forever (§4.2).
-- **Dynamic cover choice**: at each node entry, iterate the cover with the fewest keys;
-  unforced COLT vectors expose an estimate (their length), forced maps an exact count
-  (§4.4). *Exact and estimated counts must stay labeled as such* — v5 compared
-  duplicate-inflated vector lengths against exact map counts and systematically chose
-  wrong covers.
+**Guard-probe point lookups.** A single-atom query whose bindings cover a unique
+constraint of the relation (including the auto-unique on serial fields) or the full
+fact executes as: one `U`-guard (or `M`-membership) LMDB get → one `F` fetch → decode.
+No images, no COLT, no plan search. This serves the headline "point lookup by unique
+key" workload at O(log n), including immediately after a commit (no rebuild cost).
+**Decision.** **Alternative:** COLT-only ("the join engine is the only read path") —
+lost because a fully-bound lookup through images pays an O(n) scan for a one-row answer
+and loses the benchmark family outright; the paper itself lists index-blindness as an
+open limitation (§6). **Reverses if:** never — the guards exist anyway (rule: every
+mechanism names its reader; this is `U`/`M`'s read-side reader).
+
+**Time-range scans are O(n)** (image scan + filter) in v0 — decided; acceptability is
+policed by the latency budget (`00-product.md`), and the range-accelerator OPEN item
+triggers on violation.
+
+Everything else executes as Free Join.
+
+## Inputs from normalization
+
+Execution consumes `20-query-ir.md`'s normalized form: distinct-variable atom
+occurrences, per-atom filter lists, and a residual comparison list.
+
+- **Per-atom filters** evaluate at the source: a query-local **filtered view** — a
+  survivor-position vector over the cached full-width image, arena-backed. On a cold
+  relation, one scan produces both the cached unfiltered image and the survivor view
+  (`40-storage.md`). COLT roots iterate the view; view positions index the image.
+- **Residual comparisons** attach to the earliest plan node at which both sides are
+  bound (computed at plan time, stored in the plan). The executor's node loop gains one
+  step: iterate cover → probe siblings → **evaluate the node's residuals** → recurse.
+  In vectorized execution, residuals run as batch survivor compaction after the probes.
+
+**Deviation (paper §2):** the paper assumes selections pre-pushed to base tables and has
+no residual concept; we own filter placement because there is no external optimizer.
+**Reverses if:** never — WLOG assumption, not a design.
+
+## The paper's core, adopted
+
+- **GHT** (§3.1): trie; internal nodes are hash maps keyed by tuples; leaves are vectors.
+- **Plan** (§3.2): a list of nodes, each a list of subatoms; the plan partitions every
+  atom occurrence's variables; per node, no two subatoms share an atom occurrence
+  (validity quantifies over **occurrences** — self-joins are ordinary), and the cover
+  set is every subatom containing all variables new to the node.
+- **Execution** (§3.3): recurse node by node — choose a cover, iterate it, extend the
+  binding, probe siblings, replace each occurrence's current trie, recurse; backtrack
+  restores.
+- **COLT** (§4.2): lazy tries — a node is offsets into the base columns or a forced
+  map; roots iterate the base image (or filtered view) directly; forcing happens only
+  on `get` or non-suffix `iter`. Under laziness the paper's build-phase "drop the
+  trailing []" question dissolves: nothing is ever built eagerly; a last-level subatom
+  that is only ever suffix-iterated is never forced by construction, and one that gets
+  probed forces like any level.
+- **Dynamic cover choice** (§4.4): at node entry, iterate the cover with the fewest
+  keys; forced maps expose `Exact(n)`, unforced vectors `Estimate(len)` — **the labels
+  are load-bearing** and an `Estimate` is duplicate-inflated by construction; the
+  chooser must never compare them as the same quantity blindly (v5 did: post-mortem
+  §40). v0 rule: prefer the smallest `Exact`; otherwise smallest `Estimate`.
+- **`binary2fj` + conservative `factor()`** (§4.1): exactly per paper, over the DP
+  planner's left-deep output.
+
+**`ValidatedPlan` contents** (the witness type execution trusts): atom occurrences with
+field→column maps; the node list with subatom partitions; per-node cover sets; per-
+occurrence trie schemas derived per §3.3; per-node residual lists; per-atom filter
+lists; the binding-slot layout (below); and the provably-distinct-bindings flag (below).
+Validated once at construction; nothing downstream re-checks (post-mortem §38).
+
+## Set semantics in the executor
+
+Bindings are **VarId-indexed slot arrays**, written in place by the recursion and read
+in place by sinks; plan variable order is therefore irrelevant to sinks.
+
+Two facts identical on all *bound* variables produce the same binding; the solution is a
+**set** of bindings, so duplicates must collapse before folding:
+
+- The **projection sink** dedups projected facts (its job anyway).
+- The **aggregate sink** folds a binding only on first occurrence, using a seen-set of
+  full binding tuples — the same arena-backed mechanism as projection dedup.
+- **Elision optimization:** if every atom occurrence's bound fields cover a unique
+  constraint of its relation (typical for ledger queries that bind serial ids),
+  distinct facts ⇒ distinct bindings, and the plan carries a proof flag that lets the
+  aggregate sink skip the seen-set entirely. Provable at plan time from schema
+  constraints — a representation-level fix, not a runtime branch per binding.
+
+**Deviation D2 (set semantics — replaces the old D2):** the paper is bag-semantic
+(leaves may carry multiplicity, output is a tuple stream). We: sets everywhere; leaves
+are membership; binding dedup as above; and the executor may **skip a plan suffix after
+the first witness** when (a) the active sink is the projection sink and (b) the suffix
+binds only variables outside the projection set — the emitted fact cannot change, so
+the recursion unwinds on the sink's first-emit signal. The skip is **never legal under
+an aggregate sink** (any new bound variable multiplies the binding set the fold is
+defined over). **Reverses if:** never — product semantics.
+
+**Deviation D3 (sinks, not `output()`):** the executor emits complete bindings to a
+private sink trait; projection-dedup and aggregate folds (Sum/Min/Max/Count grouped by
+the non-aggregated finds, semantics normative in `20-query-ir.md`) are the two sinks.
+Aggregation never materializes the join. Group maps live in sink arena state; aggregate
+result types: Sum(I64)→I64, Sum(U64)→U64 (i128/u128 accumulators, one final range
+check), Count→U64, Min/Max→input type. **Reverses if:** never structurally.
 
 ## Planner
 
-The paper requires a real cost-based binary plan as input; it used DuckDB's. We grow a
-deliberately boring one:
+**Statistics** (all real, nothing else exists): exact per-relation row counts
+(maintained on write, stored in `S`); schema constraint knowledge (unique/FK); filter
+survivor counts — *measured, not estimated*: filtered views are built before planning
+completes for the atoms that have filters, so the planner uses the view's actual length.
+No NDV fields, no histograms, no magic selectivity constants.
 
-- **Statistics**: per-relation row counts (maintained on write, exact); per-filter
-  survivor estimates from cheap heuristics; unique/FK constraint knowledge. No fake
-  fields — a statistic that isn't real doesn't exist in the struct.
-- **Join ordering**: exhaustive DP (Selinger-style) over the atoms. At this product's
-  query sizes (rarely >10 atoms) DP is exact and effectively free. Estimated
-  cardinality is the entire cost function.
-- Then `binary2fj` + `factor()` exactly per paper, validated once into a
-  `ValidatedPlan` witness.
+**Join cardinality estimator, written down:** for `L ⋈ R` on join variables J —
+- J covers a unique constraint of R (incl. serial auto-unique): estimate = |L| (FK walk;
+  exact upper bound).
+- J covers a unique constraint of L: estimate = |R|.
+- Neither: estimate = |L| × |R| — **no estimate exists, so pessimism**, which pushes
+  non-key joins last; that is the correct behavior, not a modeling failure.
+|X| is the row count or the filtered-view survivor count.
 
-**Alternative:** v5's "candidate families" (FilterAnchored/FactoredBinary/Singleton/…)
-scored by hardcoded derivation constants plus terms identical across candidates. **Why
-it lost:** it was a static preference ranking wearing a cost model's coat — the
-post-mortem's central engine finding. One honest cost model beats five labeled guesses.
+**Search:** exhaustive DP over atom occurrences, **left-deep only**, minimizing the sum
+of intermediate-result estimates; ≤ ~12 atoms makes DP exact and effectively free. Then
+`binary2fj`, then `factor()`, then plan validation into the witness.
+**Decision: left-deep-only.** **Alternative:** bushy plans + materialized intermediates
+(the paper decomposes bushy input into several left-deep plans and names
+materialization its main bottleneck, §5/§6). **Why it lost:** materialized intermediates
+have no home under the sink model and the allocation contract; left-deep + factoring
+covers the design space the workload needs. **Reverses if:** a real query family shows
+a bushy-only win that survives the benchmark protocol.
 
-## Deviation blocks
+Plans **pin their statistics at prepare time** and are never invalidated by writes
+(decision recorded in `20-query-ir.md`).
 
-**Deviation D1 — data source.** *Paper:* relations are already columnar in main memory.
-*We:* durable data lives in LMDB; execution reads **cached columnar images** built once
-per (relation, tx-generation) and shared across read transactions (`40-storage.md`).
-*Why:* LMDB is the only durable truth; at ≤100s of MB the whole working set caches, so
-after warmup execution is exactly the paper's environment. *Reverses if:* image build
-cost dominates real traces despite caching — then persist columns instead.
+**Deviation D5 (no DuckDB):** the paper takes DuckDB's optimizer output; we grow the DP
+above. **Reverses if:** never — no external SQL engine as infrastructure.
 
-**Deviation D2 — set semantics.** *Paper:* bag semantics; leaves may carry multiplicity;
-output is a stream of tuples. *We:* sets everywhere. Trie leaves are membership, never
-counts. Projection deduplicates through the sink, and when the remaining plan suffix
-can only multiply witnesses of an already-emitted projection (existential-only
-variables), the executor skips the subtree — an optimization bag semantics cannot take.
-*Reverses if:* never; this is product semantics.
+## Vectorized execution
 
-**Deviation D3 — sinks, not output().** *Paper:* `output(tuple)` materializes full join
-results; aggregation is post-processing. *We:* the executor emits complete bindings to a
-private sink trait; projection-dedup is one sink, aggregate folds (Sum/Min/Max/Count,
-grouped by the non-aggregated finds) are another. Aggregation never materializes the
-join. *Why:* the ledger workload's primary queries are folds; materialize-then-fold is
-pure waste. *Reverses if:* never structurally; individual sinks may change.
+**Deviation D4 (batching tuned to Apple Silicon):** the paper batches cover iteration
+and probes siblings per batch (§4.3), hardware-generic. We: same algorithm, batch sized
+to fill the M-series' ~28 MLP lanes — model: each probe is ~1–2 dependent loads, so
+~28 lanes want ≥28 independent probes in flight and the batch amortizes bookkeeping
+across several waves: starting range 64–256, measured (OPEN, README). Probe keys and
+hashes are computed for the whole batch before any lookup so loads issue independently;
+NEON (`cfg(aarch64)`, 128-bit) kernels handle fixed-width predicate scans and survivor
+compaction; columns are 128-byte-aligned SoA. Scalar fallback everywhere, equal results
+by test across batch sizes. **Vectorized execution is the default and only path** — a
+scalar "mode" exists solely as the degenerate batch size where useful for testing; v5's
+fake vectorized mode (post-mortem §31) is the cautionary tale. Honest caveat, stated:
+deep in the plan the batch source is the current subtrie, whose fanout on FK walks is
+often 1–10 — large batches are reliably available only at the root; cross-node-entry
+batch accumulation is future work, not assumed. **Reverses if:** measured
+equal-or-worse than scalar on the ledger suite after honest tuning.
 
-**Deviation D4 — vectorization tuned to Apple Silicon.** *Paper:* batch the cover
-iteration and probe siblings per batch (§4.3), batch size unspecified, generic hardware.
-*We:* the same algorithm with the batch sized to the M-series memory subsystem — enough
-independent probes in flight to fill ~28 MLP lanes (batches of 64–256, tuned by
-measurement, not faith); probe key computation and hash mixing done for the whole batch
-before any lookup so loads issue independently; NEON (128-bit, `cfg(aarch64)`) kernels
-for fixed-width predicate scans and survivor compaction; columns 128-byte aligned.
-Scalar fallback everywhere, results identical by test. **Vectorized execution is the
-default path, not a mode** — v5 shipped a "vectorized" mode that ran the scalar path
-per tuple inside a batch and was never turned on; a fake mode is worse than none.
-*Reverses if:* measured equal-or-worse than scalar on the ledger suite after honest
-tuning.
-
-**Deviation D5 — no DuckDB.** *Paper:* uses DuckDB's optimizer for the binary plan.
-*We:* the DP planner above. *Why:* no external SQL engine may be product infrastructure.
+**COLT force is single-pass with chunked child lists:** forcing pushes each offset into
+its key's child list, chunked (64 offsets per arena chunk, chained by chunk — bounded
+pointer-chase, independent loads within a chunk), rather than the paper's growable
+per-key vectors or v5's two-pass contiguous layout (which decoded and hashed every row
+twice — post-mortem §33). **Deviation:** the paper's leaves are plain vectors; ours are
+chunked. **Reverses if:** a force+iterate microbenchmark shows two-pass-contiguous
+winning end-to-end.
 
 ## The allocation contract
 
-**Executing a prepared query performs zero heap allocations in steady state.** All
-scratch — binding slots, probe key buffers, batch buffers, COLT arenas, sink state —
-comes from per-query reusable arenas owned by the prepared query or the transaction
-context. The result buffer is the single sanctioned allocation site (and callers can
-provide one). CI enforces this with a counting allocator on representative queries; the
-counter is a hard gate, one of the very few gates this project keeps.
+**A warm prepared-query execution performs zero heap allocations**, excluding a
+caller-provided result buffer. All scratch — binding slots, probe keys, batch buffers,
+COLT arenas, filtered views, sink state (dedup sets, group maps) — comes from arenas
+owned by the `PreparedQuery`. Retained arena size is O(touched data + output) per
+prepared query and is documented as such (an app holding N prepared queries retains N
+scratch sets); arenas reach a fixpoint for a given data generation.
 
-COLT forcing allocates *within the arena*, proportional to distinct keys — force is
-single-pass (the v5 implementation decoded and hashed every row twice to get contiguous
-child ranges; contiguity is not worth 2× work — children chain within the arena).
+**CI gate protocol (the definition of "steady state"):** single-threaded harness; the
+prepared query executes N warmup runs with parameters drawn from a fixed set and no
+intervening writes; then M measured runs over the same parameter set assert **zero**
+allocator hits, arena growth included (post-warmup growth is a failure), result buffer
+caller-provided. First-execution and post-commit rebuild allocations are sanctioned and
+outside the measured window.
+
+**Concurrency contract:** execution is single-threaded per query; `PreparedQuery` is
+`!Sync` and executes from one thread at a time; arenas imply exclusive access.
+Intra-query parallelism is a non-goal (`00-product.md`).
+
+**Resource limits: none in v0, stated.** Dedup sets, group maps, and result buffers
+grow with output; a pathological query can exceed the envelope and the OS is the
+backstop. The scale axiom makes engine-imposed caps ceremony; revisit only on real pain.
+
+## Deviation D1 — data source
+
+*Paper:* relations are columnar in main memory. *We:* durable data lives in LMDB;
+execution reads **full-width cached columnar images** built once per
+`(relation, storage_tx_id)` and shared across read transactions (`40-storage.md`).
+After warmup, execution runs in exactly the paper's environment. *Why:* LMDB is the
+durable truth; at ≤1 GB the whole working set caches and the write design point
+(≥100 reads/generation) amortizes builds to noise. **Reverses if:** traced rebuild cost
+violates the latency budget despite the cache — then persist columns instead.
 
 ## Observability
 
-`EXPLAIN` (plan + per-node estimated vs actual cardinalities + cover choices) exists
-from day one — it is the debugging story for a database with no REPL. Tracing is a
-compile-time feature that is **structurally absent from release builds**: no
-per-tuple label formatting, no counters accumulating on hot paths, no diagnostics
-allocation in the innermost loops. v5 wove ~1,100 lines of span plumbing through the
-executor and one piece allocated per-binding in release; the lesson is a rule: the hot
-loop's shape is dictated by the algorithm, never by its instrumentation.
+**EXPLAIN exists from day one** and is the debugging story. Mechanism — a
+representation, not a mode: the executor is generic over a `Counters` trait;
+the normal path instantiates `NoopCounters` (zero-sized, compiled to nothing — no
+runtime branch, no hot-loop cost), and the EXPLAIN entry point instantiates the
+counting variant and **executes the query** (ANALYZE semantics), reporting the plan,
+per-node estimated vs actual cardinalities, residual selectivity, and cover-choice
+histograms (choices aggregated per node, not per entry). Output shape: OPEN. Release
+builds contain no other instrumentation: no per-tuple labels, no always-on counters,
+no diagnostics allocation anywhere in the join loops (post-mortem §32 is the reason
+this paragraph exists).

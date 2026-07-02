@@ -1,5 +1,11 @@
 # Consolidated Audit Worklist
 
+> **STATUS: RESOLVED 2026-07-02.** All 22 owner rulings approved; the hard-structural-
+> typing revision (serial → generation attribute, structural enums, host newtypes)
+> approved; all clusters folded into `docs/architecture/` in the commit that follows
+> this note. Kept as the audit-trail record. The post-mortem was re-materialized at
+> `docs/history/post-mortem.md`.
+
 135 findings across 8 audits, deduplicated into clusters. Each cluster lists: the
 converging findings, the proposed resolution, and whether it needs an owner ruling or is
 editorial (Claude drafts, owner reviews). Work top to bottom; A–D are the blockers.
