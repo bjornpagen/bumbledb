@@ -1,6 +1,4 @@
-/target/
-/fuzz/target/
-/data/
+.DS_Store
+*.tmp
 /.idea/
 /.vscode/
-*.tmp
