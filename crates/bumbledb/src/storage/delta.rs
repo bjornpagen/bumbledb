@@ -121,7 +121,7 @@ impl<'s> WriteDelta<'s> {
     ) -> Result<bool> {
         self.advance_serial_marks(view, rel, fact_bytes)?;
         let hash = fact_hash(fact_bytes);
-        let changed = !self.present(view, rel, &hash)?;
+        let changed = !self.present(view, rel, &hash, fact_bytes)?;
         if changed {
             let slice = self.arena.alloc(fact_bytes);
             self.facts.insert((rel, hash), (slice, Disposition::Insert));
@@ -143,7 +143,7 @@ impl<'s> WriteDelta<'s> {
         fact_bytes: &[u8],
     ) -> Result<bool> {
         let hash = fact_hash(fact_bytes);
-        let changed = self.present(view, rel, &hash)?;
+        let changed = self.present(view, rel, &hash, fact_bytes)?;
         if changed {
             let slice = self.arena.alloc(fact_bytes);
             self.facts.insert((rel, hash), (slice, Disposition::Delete));
@@ -242,13 +242,17 @@ impl<'s> WriteDelta<'s> {
 
     /// Effective membership: the delta's disposition if present, else an `M`
     /// probe against the read view (committed state).
-    fn present(&self, view: &ReadTxn<'_>, rel: RelationId, hash: &[u8; 32]) -> Result<bool> {
+    fn present(
+        &self,
+        view: &ReadTxn<'_>,
+        rel: RelationId,
+        hash: &[u8; 32],
+        fact_bytes: &[u8],
+    ) -> Result<bool> {
         if let Some((_, disposition)) = self.facts.get(&(rel, *hash)) {
             return Ok(*disposition == Disposition::Insert);
         }
-        let mut buf: KeyBuf = [0; MAX_KEY];
-        let len = keys::membership_key(&mut buf, rel, hash);
-        Ok(view.env().data().get(view.raw(), &buf[..len])?.is_some())
+        Ok(crate::storage::read::fact_row(view, rel, fact_bytes)?.is_some())
     }
 
     /// Advances serial marks past any serial-field values the fact carries

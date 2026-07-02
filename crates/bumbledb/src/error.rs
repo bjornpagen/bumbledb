@@ -21,6 +21,15 @@ pub enum CorruptionError {
     /// An intern id with no reverse dictionary entry — a fact referencing it
     /// is corrupt.
     DanglingInternId(u64),
+    /// A row id obtained from `M`/`U` has no `F` entry in the same snapshot.
+    MissingFact { relation: RelationId, row_id: u64 },
+    /// A stored fact's length differs from the schema's fact width.
+    WrongFactWidth {
+        relation: RelationId,
+        row_id: u64,
+        expected: usize,
+        actual: usize,
+    },
 }
 
 /// A schema declaration error (PRD 02's validation boundary). Every illegal
