@@ -18,8 +18,8 @@ use crate::storage::env::{ReadTxn, WriteTxn};
 
 /// Type-tag byte hashed into the forward key: a String and a Bytes with
 /// identical raw bytes get distinct ids.
-const TAG_STRING: u8 = 0;
-const TAG_BYTES: u8 = 1;
+pub(crate) const TAG_STRING: u8 = 0;
+pub(crate) const TAG_BYTES: u8 = 1;
 
 /// `_dict` key prefixes.
 const FORWARD: u8 = 0x00;
@@ -107,6 +107,12 @@ pub fn lookup_bytes(txn: &ReadTxn<'_>, value: &[u8]) -> Result<Option<u64>> {
     lookup(txn, TAG_BYTES, value)
 }
 
+/// Read-only tagged lookup (reader: the delta's pending-intern path, which
+/// must consult the committed dictionary before minting a provisional id).
+pub(crate) fn lookup_tagged(txn: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<Option<u64>> {
+    lookup(txn, tag, raw)
+}
+
 fn lookup(txn: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<Option<u64>> {
     let dict = txn.env().dict();
     match dict.get(txn.raw(), &forward_key(tag, raw))? {
@@ -118,6 +124,20 @@ fn lookup(txn: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<Option<u64>> {
             Ok(Some(u64::from_be_bytes(id)))
         }
     }
+}
+
+/// Writes one pending intern entry minted by the delta (reader: PRD 08's
+/// commit counter flush). The provisional id was assigned from the same
+/// counter this commit flushes, under the single-writer discipline.
+pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, tag: u8, raw: &[u8], id: u64) -> Result<()> {
+    let dict = txn.env().dict();
+    let fwd = forward_key(tag, raw);
+    let mut reverse_value = Vec::with_capacity(1 + raw.len());
+    reverse_value.push(tag);
+    reverse_value.extend_from_slice(raw);
+    dict.put(txn.raw_mut(), &fwd, id.to_be_bytes().as_slice())?;
+    dict.put(txn.raw_mut(), &reverse_key(id), &reverse_value)?;
+    Ok(())
 }
 
 /// Resolves an id to its raw bytes (the tag byte is stripped), borrowed from

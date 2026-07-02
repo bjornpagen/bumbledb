@@ -105,7 +105,11 @@ impl Environment {
     /// otherwise.
     pub fn open(path: &Path, schema: &Schema) -> Result<Self> {
         let env = open_env(path)?;
-        let rtxn = env.read_txn()?;
+        // Database handles opened inside a transaction are private to it
+        // until that transaction commits (LMDB dbi semantics): a read txn
+        // would invalidate them on drop, so registration goes through a
+        // write transaction that commits without writing anything.
+        let rtxn = env.write_txn()?;
         let meta: Database<Bytes, Bytes> = env
             .open_database(&rtxn, Some("_meta"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
@@ -134,7 +138,7 @@ impl Environment {
                 expected,
             });
         }
-        drop(rtxn);
+        rtxn.commit()?;
         Ok(Self {
             env,
             meta,
@@ -216,6 +220,12 @@ impl ReadTxn<'_> {
         read_u64(&self.env.meta, &self.txn, META_TX_ID)
     }
 
+    /// The committed dictionary next-id as of this snapshot (reader: the
+    /// delta's lazy pending-intern counter).
+    pub(crate) fn dict_next_id(&self) -> Result<u64> {
+        read_u64(&self.env.meta, &self.txn, META_DICT_NEXT_ID)
+    }
+
     /// The underlying heed transaction (reader: `storage::dict` lookups).
     pub(crate) fn raw(&self) -> &RoTxn<'_, AnyTls> {
         &self.txn
@@ -249,8 +259,19 @@ impl<'env> WriteTxn<'env> {
         drop(self.txn);
     }
 
+    /// Advances the storage tx id (reader: PRD 08's commit step 4; the id
+    /// advances iff the delta changed logical state).
+    pub(crate) fn put_generation(&mut self, generation: u64) -> Result<()> {
+        self.env.meta.put(
+            &mut self.txn,
+            META_TX_ID,
+            generation.to_le_bytes().as_slice(),
+        )?;
+        Ok(())
+    }
+
     /// Reads the dictionary next-id counter (reader: `storage::dict`;
-    /// PRD 06 re-homes this counter into the in-memory-then-flush set).
+    /// re-homed into the delta's pending-intern set by PRD 08).
     pub(crate) fn dict_next_id(&self) -> Result<u64> {
         read_u64(&self.env.meta, &self.txn, META_DICT_NEXT_ID)
     }

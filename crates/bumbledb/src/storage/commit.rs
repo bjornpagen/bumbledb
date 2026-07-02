@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::encoding::field_bytes;
-use crate::error::{CorruptionError, Error, Result};
+use crate::error::{CorruptionError, Error, FkViolation, Result};
 use crate::schema::{ConstraintDescriptor, ConstraintId, Relation, RelationId, Schema};
 use crate::storage::delta::{Disposition, WriteDelta};
 use crate::storage::env::{Environment, WriteTxn};
@@ -112,6 +112,176 @@ pub fn apply<'env, 's>(delta: WriteDelta<'s>, env: &'env Environment) -> Result<
         inserted_guards,
         fk_probes,
     })
+}
+
+/// The commit outcome: whether logical state changed, and the resulting
+/// storage generation (PRD 11's cache-eviction subscriber; PRD 28 wires it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommitReport {
+    pub changed: bool,
+    pub new_generation: u64,
+}
+
+/// The full commit (PRD 08): apply (phases 1-2), FK validation against the
+/// final state (phase 3), counter flush (phase 4), LMDB commit (phase 5).
+/// Any error anywhere aborts — nothing persists.
+///
+/// # Errors
+///
+/// `UniqueViolation`/`ForeignKeyViolation` on constraint violations in the
+/// final state; `Lmdb`/`Corruption` on storage failure.
+///
+/// # Panics
+///
+/// Only on programmer-invariant violations (validated-schema id widths,
+/// well-formed R keys this same commit wrote).
+pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> {
+    // An all-no-op delta commits without touching LMDB at all: the tx id
+    // does not advance and no cached image is invalidated. Pending serial
+    // allocations and interns are dropped — none are observable.
+    if delta.is_empty() {
+        let rtxn = env.read_txn()?;
+        return Ok(CommitReport {
+            changed: false,
+            new_generation: rtxn.generation()?,
+        });
+    }
+
+    let applied = apply(delta, env)?;
+    if !applied.changed {
+        let generation = applied.txn.generation()?;
+        applied.txn.abort(); // nothing was written; equivalent to commit
+        return Ok(CommitReport {
+            changed: false,
+            new_generation: generation,
+        });
+    }
+    let Applied {
+        mut txn,
+        delta,
+        row_id_next,
+        deleted_guards,
+        inserted_guards,
+        fk_probes,
+        ..
+    } = applied;
+    let data = env.data();
+    let mut key: KeyBuf = [0; MAX_KEY];
+
+    // Phase 3a: forward FK validation — every inserted fact's targets must
+    // resolve in the final state (the write txn reads its own writes).
+    for probe in &fk_probes {
+        let u_len = keys::unique_key(
+            &mut key,
+            probe.target_relation,
+            probe.target_constraint,
+            &probe.guard,
+        );
+        if data.get(txn.raw(), &key[..u_len])?.is_none() {
+            return Err(Error::ForeignKeyViolation {
+                relation: probe.source_relation,
+                constraint: probe.source_constraint,
+                violation: FkViolation::MissingTarget {
+                    fact_bytes: probe.fact_bytes.clone().into_boxed_slice(),
+                },
+            });
+        }
+    }
+
+    // Phase 3b: Restrict — every unique key deleted in phase 1 and not
+    // re-established in phase 2 must have no remaining referrer. "No
+    // committed state contains a dangling reference": deleting a target and
+    // all its referrers in one transaction passes, as it should.
+    for (rel, cid, guard) in deleted_guards.difference(&inserted_guards) {
+        let p_len = keys::restrict_prefix(&mut key, *rel, *cid, guard);
+        let mut iter = data.prefix_iter(txn.raw(), &key[..p_len])?;
+        if let Some(entry) = iter.next() {
+            let (surviving_key, ()) = entry.map(|(k, _)| (k, ()))?;
+            // R | target_rel | constraint | guard | source_rel | source_row:
+            // the referencing side is the last 12 bytes.
+            let tail = &surviving_key[surviving_key.len() - 12..];
+            let source_relation = RelationId(u32::from_be_bytes(
+                tail[..4]
+                    .try_into()
+                    .expect("R keys carry a 4-byte source rel"),
+            ));
+            let source_row = u64::from_be_bytes(
+                tail[4..]
+                    .try_into()
+                    .expect("R keys carry an 8-byte source row"),
+            );
+            return Err(Error::ForeignKeyViolation {
+                relation: *rel,
+                constraint: *cid,
+                violation: FkViolation::RemainingReference {
+                    source_relation,
+                    source_row,
+                },
+            });
+        }
+        drop(iter);
+    }
+
+    // Phase 4: counters — row counts, row-id high-waters, serial sequences,
+    // pending dictionary entries and the dictionary next-id.
+    flush_counters(&mut txn, env, &delta, &row_id_next)?;
+
+    // The storage tx id advances exactly once per state-changing commit.
+    let new_generation = txn.generation()? + 1;
+    txn.put_generation(new_generation)?;
+
+    // Phase 5: LMDB commit (fsync per environment defaults).
+    txn.commit()?;
+    Ok(CommitReport {
+        changed: true,
+        new_generation,
+    })
+}
+
+/// Phase 4: folds row-count deltas into `S`, writes row-id high-waters,
+/// serial next-values (`Q`), pending dictionary entries, and the
+/// dictionary next-id.
+fn flush_counters(
+    txn: &mut WriteTxn<'_>,
+    env: &Environment,
+    delta: &WriteDelta<'_>,
+    row_id_next: &BTreeMap<RelationId, u64>,
+) -> Result<()> {
+    let data = env.data();
+    let mut key: KeyBuf = [0; MAX_KEY];
+    for (rel, count_delta) in delta.row_count_deltas() {
+        if count_delta == 0 {
+            continue;
+        }
+        let len = keys::stat_key(&mut key, rel, StatKind::RowCount);
+        let current = match data.get(txn.raw(), &key[..len])? {
+            Some(bytes) => u64::from_le_bytes(
+                bytes
+                    .try_into()
+                    .map_err(|_| Error::Corruption(CorruptionError::MetaMissing))?,
+            ),
+            None => 0,
+        };
+        let updated = current
+            .checked_add_signed(count_delta)
+            .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
+        data.put(txn.raw_mut(), &key[..len], updated.to_le_bytes().as_slice())?;
+    }
+    for (rel, next) in row_id_next {
+        let len = keys::stat_key(&mut key, *rel, StatKind::RowIdHighWater);
+        data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
+    }
+    for (rel, field, next) in delta.serial_marks() {
+        let len = keys::serial_key(&mut key, rel, field);
+        data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
+    }
+    for (tag, raw, id) in delta.pending_interns() {
+        crate::storage::dict::put_pending(txn, tag, raw, id)?;
+    }
+    if let Some(dict_next) = delta.dict_next() {
+        txn.put_dict_next_id(dict_next)?;
+    }
+    Ok(())
 }
 
 /// Working state threaded through phases 1-2.
@@ -325,6 +495,7 @@ mod tests {
         FieldDescriptor, FieldId, Generation, RelationDescriptor, Schema, SchemaDescriptor,
         ValueType,
     };
+    use crate::storage::keys::StatKind;
     use crate::testutil::TempDir;
 
     /// Target(id serial) + Source(id serial, t u64 fk -> Target.id) +
@@ -658,5 +829,312 @@ mod tests {
             0
         ))));
         assert_eq!(applied.fk_probes[0].guard, encode_u64(7).to_vec());
+    }
+    // ---------- PRD 08: full commit ----------
+
+    fn commit_facts(env: &Environment, schema: &Schema, facts: &[(RelationId, Vec<u8>)]) {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(schema);
+        for (rel, fact) in facts {
+            delta.insert(&view, *rel, fact).expect("insert");
+        }
+        drop(view);
+        commit(delta, env).expect("commit");
+    }
+
+    #[test]
+    fn insert_referencing_same_delta_target_commits() {
+        let dir = TempDir::new("commit8-order-irrelevance");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        // Referrer inserted before its target: order is irrelevant.
+        delta
+            .insert(&view, SOURCE, &source_fact(&schema, 1, 5))
+            .expect("insert");
+        delta
+            .insert(&view, TARGET, &target_fact(&schema, 5))
+            .expect("insert");
+        drop(view);
+        let report = commit(delta, &env).expect("commit succeeds");
+        assert!(report.changed);
+        assert_eq!(report.new_generation, 1);
+    }
+
+    #[test]
+    fn insert_referencing_missing_target_aborts_with_fk_violation() {
+        let dir = TempDir::new("commit8-missing-target");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let before = committed_data(&env);
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        let orphan = source_fact(&schema, 1, 99);
+        delta.insert(&view, SOURCE, &orphan).expect("insert");
+        drop(view);
+        let err = commit(delta, &env).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                Error::ForeignKeyViolation {
+                    relation: SOURCE,
+                    constraint: ConstraintId(1),
+                    violation: FkViolation::MissingTarget { fact_bytes },
+                } if **fact_bytes == orphan[..]
+            ),
+            "{err:?}"
+        );
+        assert_eq!(committed_data(&env), before);
+    }
+
+    #[test]
+    fn deleting_a_referenced_target_alone_is_a_restrict_violation() {
+        let dir = TempDir::new("commit8-restrict");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        commit_facts(
+            &env,
+            &schema,
+            &[
+                (TARGET, target_fact(&schema, 5)),
+                (SOURCE, source_fact(&schema, 1, 5)),
+            ],
+        );
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta
+            .delete(&view, TARGET, &target_fact(&schema, 5))
+            .expect("delete");
+        drop(view);
+        let err = commit(delta, &env).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::ForeignKeyViolation {
+                    relation: TARGET,
+                    constraint: C0,
+                    violation: FkViolation::RemainingReference {
+                        source_relation: SOURCE,
+                        source_row: 0,
+                    },
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn deleting_target_and_all_referrers_in_one_delta_commits() {
+        let dir = TempDir::new("commit8-cascade-by-hand");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        commit_facts(
+            &env,
+            &schema,
+            &[
+                (TARGET, target_fact(&schema, 5)),
+                (SOURCE, source_fact(&schema, 1, 5)),
+            ],
+        );
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta
+            .delete(&view, TARGET, &target_fact(&schema, 5))
+            .expect("delete");
+        delta
+            .delete(&view, SOURCE, &source_fact(&schema, 1, 5))
+            .expect("delete");
+        drop(view);
+        commit(delta, &env).expect("deleting target and referrers together passes");
+    }
+
+    #[test]
+    fn delete_and_reinsert_of_referenced_unique_key_commits() {
+        let dir = TempDir::new("commit8-reestablish");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        commit_facts(
+            &env,
+            &schema,
+            &[
+                (TARGET, target_fact(&schema, 5)),
+                (SOURCE, source_fact(&schema, 1, 5)),
+            ],
+        );
+        // Replace the target fact wholesale, re-supplying its unique key —
+        // Restrict sees the re-established key and passes.
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta
+            .delete(&view, TARGET, &target_fact(&schema, 5))
+            .expect("delete");
+        delta
+            .insert(&view, TARGET, &target_fact(&schema, 5))
+            .expect("insert");
+        drop(view);
+        // Net effect: delete then insert of the same fact is a no-op delta
+        // (last disposition wins → Insert of a base-present fact).
+        let report = commit(delta, &env).expect("commit");
+        assert!(!report.changed);
+    }
+
+    #[test]
+    fn tx_id_advances_once_per_state_changing_commit_only() {
+        let dir = TempDir::new("commit8-tx-id");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let f = target_fact(&schema, 5);
+        commit_facts(&env, &schema, &[(TARGET, f.clone())]);
+        {
+            let rtxn = env.read_txn().expect("txn");
+            assert_eq!(rtxn.generation().expect("generation"), 1);
+        }
+
+        // All-no-op delta: re-inserting an existing fact records nothing.
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        assert!(!delta.insert(&view, TARGET, &f).expect("insert"));
+        drop(view);
+        let report = commit(delta, &env).expect("commit");
+        assert!(!report.changed);
+        assert_eq!(report.new_generation, 1);
+        {
+            let rtxn = env.read_txn().expect("txn");
+            assert_eq!(rtxn.generation().expect("generation"), 1);
+        }
+
+        // A second state-changing commit bumps exactly once.
+        commit_facts(&env, &schema, &[(TARGET, target_fact(&schema, 6))]);
+        let rtxn = env.read_txn().expect("txn");
+        assert_eq!(rtxn.generation().expect("generation"), 2);
+    }
+
+    #[test]
+    fn counters_after_reopen_match_a_recount_of_f_entries() {
+        let dir = TempDir::new("commit8-reopen-counters");
+        let schema = schema();
+        {
+            let env = Environment::create(dir.path(), &schema).expect("create");
+            commit_facts(
+                &env,
+                &schema,
+                &[
+                    (TARGET, target_fact(&schema, 1)),
+                    (TARGET, target_fact(&schema, 2)),
+                    (TARGET, target_fact(&schema, 3)),
+                ],
+            );
+            // Mixed insert/delete commit.
+            let view = env.read_txn().expect("txn");
+            let mut delta = WriteDelta::new(&schema);
+            delta
+                .delete(&view, TARGET, &target_fact(&schema, 2))
+                .expect("delete");
+            delta
+                .insert(&view, TARGET, &target_fact(&schema, 4))
+                .expect("insert");
+            drop(view);
+            commit(delta, &env).expect("commit");
+        }
+
+        // Reopen: the flushed counters are the only test that can catch a
+        // never-persisted high-water.
+        let env = Environment::open(dir.path(), &schema).expect("open");
+        let rtxn = env.read_txn().expect("txn");
+        let mut key: KeyBuf = [0; MAX_KEY];
+        let len = keys::stat_key(&mut key, TARGET, StatKind::RowCount);
+        let count = u64::from_le_bytes(
+            env.data()
+                .get(rtxn.raw(), &key[..len])
+                .expect("get")
+                .expect("row count present")
+                .try_into()
+                .expect("u64"),
+        );
+        let prefix_len = keys::fact_prefix(&mut key, TARGET);
+        let scanned = env
+            .data()
+            .prefix_iter(rtxn.raw(), &key[..prefix_len])
+            .expect("iter")
+            .count() as u64;
+        assert_eq!(count, scanned);
+        assert_eq!(count, 3); // 3 inserted + 1 inserted - 1 deleted
+
+        // The high-water also survived: row ids 0..=3 were assigned, so the
+        // stored next id is 4.
+        let hw_len = keys::stat_key(&mut key, TARGET, StatKind::RowIdHighWater);
+        let high_water = u64::from_le_bytes(
+            env.data()
+                .get(rtxn.raw(), &key[..hw_len])
+                .expect("get")
+                .expect("high water present")
+                .try_into()
+                .expect("u64"),
+        );
+        assert_eq!(high_water, 4);
+    }
+
+    #[test]
+    fn serials_allocated_in_an_aborted_txn_are_reissued() {
+        let dir = TempDir::new("commit8-serial-abort");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        {
+            let view = env.read_txn().expect("txn");
+            let mut delta = WriteDelta::new(&schema);
+            assert_eq!(delta.alloc(&view, TARGET, FieldId(0)).expect("alloc"), 0);
+            assert_eq!(delta.alloc(&view, TARGET, FieldId(0)).expect("alloc"), 1);
+            // Abort: drop the delta without committing.
+        }
+        // The committed sequence is untouched: the next transaction
+        // re-issues the same values.
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        let id = delta.alloc(&view, TARGET, FieldId(0)).expect("alloc");
+        assert_eq!(id, 0);
+        delta
+            .insert(&view, TARGET, &target_fact(&schema, id))
+            .expect("insert");
+        drop(view);
+        commit(delta, &env).expect("commit");
+
+        // After a *committed* allocation, the sequence advances past it.
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        assert_eq!(delta.alloc(&view, TARGET, FieldId(0)).expect("alloc"), 1);
+    }
+
+    #[test]
+    fn pending_interns_flush_at_commit_and_advance_the_counter() {
+        let dir = TempDir::new("commit8-pending-interns");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        let id = delta.intern_str(&view, "holder-name").expect("intern");
+        assert_eq!(delta.intern_str(&view, "holder-name").expect("intern"), id);
+        // The delta must record a state change for the commit to flush; a
+        // fact carrying the fresh id plays that role.
+        delta
+            .insert(&view, TARGET, &target_fact(&schema, 7))
+            .expect("insert");
+        drop(view);
+        commit(delta, &env).expect("commit");
+
+        let rtxn = env.read_txn().expect("txn");
+        assert_eq!(
+            crate::storage::dict::lookup_str(&rtxn, "holder-name").expect("lookup"),
+            Some(id)
+        );
+        assert_eq!(
+            crate::storage::dict::resolve(&rtxn, id).expect("resolve"),
+            b"holder-name"
+        );
+        drop(rtxn);
+        // A later direct intern continues past the flushed counter.
+        let mut wtxn = env.write_txn().expect("txn");
+        let next = crate::storage::dict::intern_str(&mut wtxn, "other").expect("intern");
+        assert_eq!(next, id + 1);
     }
 }

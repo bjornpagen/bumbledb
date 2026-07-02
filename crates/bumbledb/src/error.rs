@@ -104,6 +104,21 @@ pub enum SchemaError {
     },
 }
 
+/// How a foreign-key constraint failed at commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FkViolation {
+    /// An inserted fact references a target unique key that does not exist
+    /// in the final state (forward check).
+    MissingTarget { fact_bytes: Box<[u8]> },
+    /// A deleted unique key still has a live referrer in the final state
+    /// (Restrict check); `relation`/`constraint` on the error name the
+    /// *target* side, this names the referencing fact.
+    RemainingReference {
+        source_relation: RelationId,
+        source_row: u64,
+    },
+}
+
 /// The one workspace error type, categorized per `docs/architecture/60-api.md`.
 ///
 /// The Validation (IR boundary, PRD 14) and Write (PRDs 07-08) categories
@@ -128,6 +143,13 @@ pub enum Error {
     Schema(SchemaError),
 
     // --- Write errors ---
+    /// A foreign-key invariant would be violated by the committed state:
+    /// the whole transaction aborts.
+    ForeignKeyViolation {
+        relation: RelationId,
+        constraint: ConstraintId,
+        violation: FkViolation,
+    },
     /// Two live facts claimed one unique key: the commit-time invariant is
     /// violated and the whole transaction aborts.
     UniqueViolation {

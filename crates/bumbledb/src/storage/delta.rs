@@ -43,6 +43,13 @@ pub struct WriteDelta<'s> {
     /// Net row-count change per relation, maintained alongside the
     /// changed-state reports (flushed to `S` by PRD 08).
     row_count_delta: BTreeMap<RelationId, i64>,
+    /// Novel strings/bytes interned by this transaction: provisional ids
+    /// assigned from the committed dictionary counter (the counter is
+    /// in-memory-then-flush like every other counter; single-writer
+    /// discipline makes provisional = final).
+    pending_interns: BTreeMap<(u8, Box<[u8]>), u64>,
+    /// The next dictionary id, lazily read once per transaction.
+    dict_next: Option<u64>,
 }
 
 impl<'s> WriteDelta<'s> {
@@ -54,7 +61,45 @@ impl<'s> WriteDelta<'s> {
             facts: BTreeMap::new(),
             serial_next: BTreeMap::new(),
             row_count_delta: BTreeMap::new(),
+            pending_interns: BTreeMap::new(),
+            dict_next: None,
         }
+    }
+
+    /// Interns a UTF-8 string for use in this transaction's facts: returns
+    /// the committed id if present, else mints a provisional id flushed at
+    /// commit. The `&str` boundary is the UTF-8 validation.
+    ///
+    /// # Errors
+    ///
+    /// `Lmdb` on a failed dictionary or counter read.
+    pub fn intern_str(&mut self, view: &ReadTxn<'_>, value: &str) -> Result<u64> {
+        self.intern(view, crate::storage::dict::TAG_STRING, value.as_bytes())
+    }
+
+    /// Interns a byte sequence; see [`Self::intern_str`].
+    ///
+    /// # Errors
+    ///
+    /// `Lmdb` on a failed dictionary or counter read.
+    pub fn intern_bytes(&mut self, view: &ReadTxn<'_>, value: &[u8]) -> Result<u64> {
+        self.intern(view, crate::storage::dict::TAG_BYTES, value)
+    }
+
+    fn intern(&mut self, view: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<u64> {
+        if let Some(id) = crate::storage::dict::lookup_tagged(view, tag, raw)? {
+            return Ok(id);
+        }
+        if let Some(id) = self.pending_interns.get(&(tag, Box::from(raw))) {
+            return Ok(*id);
+        }
+        let next = match self.dict_next {
+            Some(next) => next,
+            None => view.dict_next_id()?,
+        };
+        self.pending_interns.insert((tag, Box::from(raw)), next);
+        self.dict_next = Some(next + 1);
+        Ok(next)
     }
 
     /// Records an insert. Returns whether the final state changes (an
@@ -153,6 +198,38 @@ impl<'s> WriteDelta<'s> {
     /// The schema this delta was accumulated against (reader: commit).
     pub(crate) fn schema(&self) -> &'s Schema {
         self.schema
+    }
+
+    /// Whether the delta records no dispositions at all (reader: PRD 08's
+    /// skip-empty-commit rule; pending allocations and interns of an empty
+    /// delta are deliberately dropped — none of them are observable).
+    pub(crate) fn is_empty(&self) -> bool {
+        self.facts.is_empty()
+    }
+
+    /// Serial next-values to flush to `Q` (reader: PRD 08 phase 4).
+    pub(crate) fn serial_marks(&self) -> impl Iterator<Item = (RelationId, FieldId, u64)> + '_ {
+        self.serial_next
+            .iter()
+            .map(|((rel, field), next)| (*rel, *field, *next))
+    }
+
+    /// Net row-count changes to fold into `S` (reader: PRD 08 phase 4).
+    pub(crate) fn row_count_deltas(&self) -> impl Iterator<Item = (RelationId, i64)> + '_ {
+        self.row_count_delta.iter().map(|(rel, d)| (*rel, *d))
+    }
+
+    /// Pending intern entries to flush to `_dict` (reader: PRD 08 phase 4).
+    pub(crate) fn pending_interns(&self) -> impl Iterator<Item = (u8, &[u8], u64)> + '_ {
+        self.pending_interns
+            .iter()
+            .map(|((tag, raw), id)| (*tag, raw.as_ref(), *id))
+    }
+
+    /// The dictionary next-id to flush, if this transaction minted any
+    /// provisional ids (reader: PRD 08 phase 4).
+    pub(crate) fn dict_next(&self) -> Option<u64> {
+        self.dict_next
     }
 
     /// The recorded disposition for a fact, if any (last one wins).
