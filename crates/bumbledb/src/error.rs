@@ -18,6 +18,9 @@ pub enum CorruptionError {
     /// The `_meta` database or one of its required keys is absent or
     /// malformed: the environment is not a usable bumbledb database.
     MetaMissing,
+    /// An intern id with no reverse dictionary entry — a fact referencing it
+    /// is corrupt.
+    DanglingInternId(u64),
 }
 
 /// A schema declaration error (PRD 02's validation boundary). Every illegal

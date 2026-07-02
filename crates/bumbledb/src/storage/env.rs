@@ -21,6 +21,7 @@ const MAP_SIZE: usize = 4 << 30;
 const META_FORMAT_VERSION: &[u8] = &[0];
 const META_FINGERPRINT: &[u8] = &[1];
 const META_TX_ID: &[u8] = &[2];
+const META_DICT_NEXT_ID: &[u8] = &[3];
 
 /// The LMDB substrate: environment plus the three named databases.
 ///
@@ -29,8 +30,9 @@ const META_TX_ID: &[u8] = &[2];
 pub struct Environment {
     env: heed::Env<WithTls>,
     meta: Database<Bytes, Bytes>,
-    // The `_data` and `_dict` handles join this struct with their readers
-    // (PRDs 05-07); a field with no reader is dead code, not future-proofing.
+    dict: Database<Bytes, Bytes>,
+    // The `_data` handle joins this struct with its readers (PRDs 06-07);
+    // a field with no reader is dead code, not future-proofing.
 }
 
 impl std::fmt::Debug for Environment {
@@ -71,7 +73,7 @@ impl Environment {
         let mut wtxn = env.write_txn()?;
         let meta = env.create_database(&mut wtxn, Some("_meta"))?;
         let _data: Database<Bytes, Bytes> = env.create_database(&mut wtxn, Some("_data"))?;
-        let _dict: Database<Bytes, Bytes> = env.create_database(&mut wtxn, Some("_dict"))?;
+        let dict = env.create_database(&mut wtxn, Some("_dict"))?;
         meta.put(
             &mut wtxn,
             META_FORMAT_VERSION,
@@ -83,8 +85,9 @@ impl Environment {
             fingerprint(schema).0.as_slice(),
         )?;
         meta.put(&mut wtxn, META_TX_ID, 0u64.to_le_bytes().as_slice())?;
+        meta.put(&mut wtxn, META_DICT_NEXT_ID, 0u64.to_le_bytes().as_slice())?;
         wtxn.commit()?;
-        Ok(Self { env, meta })
+        Ok(Self { env, meta, dict })
     }
 
     /// Opens an existing environment, verifying the storage format version
@@ -105,7 +108,7 @@ impl Environment {
         let _data: Database<Bytes, Bytes> = env
             .open_database(&rtxn, Some("_data"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
-        let _dict: Database<Bytes, Bytes> = env
+        let dict: Database<Bytes, Bytes> = env
             .open_database(&rtxn, Some("_dict"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
 
@@ -128,7 +131,7 @@ impl Environment {
             });
         }
         drop(rtxn);
-        Ok(Self { env, meta })
+        Ok(Self { env, meta, dict })
     }
 
     /// Begins a read snapshot.
@@ -153,6 +156,13 @@ impl Environment {
             env: self,
             txn: self.env.write_txn()?,
         })
+    }
+}
+
+impl Environment {
+    /// The `_dict` database handle (reader: `storage::dict`).
+    pub(crate) fn dict(&self) -> Database<Bytes, Bytes> {
+        self.dict
     }
 }
 
@@ -190,6 +200,16 @@ impl ReadTxn<'_> {
     pub fn generation(&self) -> Result<u64> {
         read_u64(&self.env.meta, &self.txn, META_TX_ID)
     }
+
+    /// The underlying heed transaction (reader: `storage::dict` lookups).
+    pub(crate) fn raw(&self) -> &RoTxn<'_, AnyTls> {
+        &self.txn
+    }
+
+    /// The owning environment (reader: `storage::dict`).
+    pub(crate) fn env(&self) -> &Environment {
+        self.env
+    }
 }
 
 /// The write transaction over the environment.
@@ -198,7 +218,7 @@ pub struct WriteTxn<'env> {
     txn: RwTxn<'env>,
 }
 
-impl WriteTxn<'_> {
+impl<'env> WriteTxn<'env> {
     /// Commits (fsync per LMDB defaults).
     ///
     /// # Errors
@@ -212,6 +232,38 @@ impl WriteTxn<'_> {
     /// Aborts: drops the transaction, nothing persists.
     pub fn abort(self) {
         drop(self.txn);
+    }
+
+    /// Reads the dictionary next-id counter (reader: `storage::dict`;
+    /// PRD 06 re-homes this counter into the in-memory-then-flush set).
+    pub(crate) fn dict_next_id(&self) -> Result<u64> {
+        read_u64(&self.env.meta, &self.txn, META_DICT_NEXT_ID)
+    }
+
+    /// Writes the dictionary next-id counter.
+    pub(crate) fn put_dict_next_id(&mut self, next: u64) -> Result<()> {
+        self.env.meta.put(
+            &mut self.txn,
+            META_DICT_NEXT_ID,
+            next.to_le_bytes().as_slice(),
+        )?;
+        Ok(())
+    }
+
+    /// The underlying heed transaction (reader: `storage::dict` — LMDB
+    /// write transactions read their own writes).
+    pub(crate) fn raw(&self) -> &RoTxn<'_, AnyTls> {
+        &self.txn
+    }
+
+    /// The underlying heed transaction, mutably (reader: `storage::dict`).
+    pub(crate) fn raw_mut(&mut self) -> &mut RwTxn<'env> {
+        &mut self.txn
+    }
+
+    /// The owning environment (reader: `storage::dict`).
+    pub(crate) fn env(&self) -> &Environment {
+        self.env
     }
 
     /// The current committed generation as seen by this write transaction.
