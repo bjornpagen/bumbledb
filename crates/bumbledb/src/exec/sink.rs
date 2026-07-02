@@ -456,6 +456,7 @@ mod tests {
         let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
         let mut sink = AggregateSink::new(finds, plan.slots().len(), plan.distinct_bindings());
         Executor::new(plan).execute(
+            plan,
             &mut colts,
             &mut bindings,
             &mut sink,
@@ -507,7 +508,7 @@ mod tests {
         let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
         let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(1))]);
         let mut counters = SkipCounter::default();
-        Executor::new(&plan).execute(&mut colts, &mut bindings, &mut sink, &mut counters);
+        Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
 
         let rows: Vec<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
         assert_eq!(rows, vec![vec![7]]);
@@ -626,6 +627,7 @@ mod tests {
         let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
         let mut elided = AggregateSink::new(finds(&plan), plan.slots().len(), true);
         Executor::new(&plan).execute(
+            &plan,
             &mut colts,
             &mut bindings,
             &mut elided,
@@ -634,6 +636,7 @@ mod tests {
         let mut colts = colts_for(&plan, &views);
         let mut checked = AggregateSink::new(finds(&plan), plan.slots().len(), false);
         Executor::new(&plan).execute(
+            &plan,
             &mut colts,
             &mut bindings,
             &mut checked,

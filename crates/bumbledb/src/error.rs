@@ -261,6 +261,16 @@ pub enum Error {
     },
 
     // --- Runtime errors ---
+    /// Bind-time: the supplied parameter count does not match the query's.
+    ParamCountMismatch {
+        expected: usize,
+        supplied: usize,
+    },
+    /// Bind-time: a supplied parameter's structural type does not match
+    /// the anchor-inferred one.
+    ParamTypeMismatch {
+        param: ParamId,
+    },
     /// An aggregate's final value exceeds its result type (the once-at-
     /// finalization range check; deterministic under any fold order).
     Overflow {

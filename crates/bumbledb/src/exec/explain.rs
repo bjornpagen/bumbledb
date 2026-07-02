@@ -343,7 +343,7 @@ mod tests {
         let mut bindings = Bindings::new(plan.slots().len());
         let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(2))]);
         let mut counters = CountingCounters::new(&plan);
-        Executor::new(&plan).execute(&mut colts, &mut bindings, &mut sink, &mut counters);
+        Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
 
         // 20 R1 rows each match exactly one R0 row: actual after the last
         // node is 20 emits; estimates rendered beside them.
@@ -413,7 +413,7 @@ mod tests {
         let mut bindings = Bindings::new(plan.slots().len());
         let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(0))]);
         let mut counters = CountingCounters::new(&plan);
-        Executor::new(&plan).execute(&mut colts, &mut bindings, &mut sink, &mut counters);
+        Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
 
         // Node 0 chose subatom 1 (the forced small side), labeled Exact.
         assert_eq!(counters.cover_histogram(0, 1)[0], 1);

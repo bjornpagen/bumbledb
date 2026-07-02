@@ -162,10 +162,11 @@ struct NodeScratch {
     journal: Vec<(usize, Cursor, usize)>,
 }
 
-/// The executor over one plan. Owns per-execution cursor state and
-/// per-node scratch; borrows the COLT sources.
-pub struct Executor<'p> {
-    plan: &'p ValidatedPlan,
+/// The executor scratch for one plan shape: per-execution cursor state and
+/// per-node buffers, sized once at construction. It does not borrow the
+/// plan — the same `&ValidatedPlan` is passed to [`Executor::execute`]
+/// (the prepared query owns both, PRD 25).
+pub struct Executor {
     batch: usize,
     /// Per occurrence: (current cursor, current trie level).
     cursors: Vec<(Cursor, usize)>,
@@ -177,10 +178,10 @@ pub struct Executor<'p> {
     scratch: Vec<NodeScratch>,
 }
 
-impl<'p> Executor<'p> {
+impl Executor {
     /// An executor with the default batch size ([`BATCH`]).
     #[must_use]
-    pub fn new(plan: &'p ValidatedPlan) -> Self {
+    pub fn new(plan: &ValidatedPlan) -> Self {
         Self::with_batch_size(plan, BATCH)
     }
 
@@ -191,7 +192,7 @@ impl<'p> Executor<'p> {
     ///
     /// Only on a programmer-invariant violation: a zero batch size.
     #[must_use]
-    pub fn with_batch_size(plan: &'p ValidatedPlan, batch: usize) -> Self {
+    pub fn with_batch_size(plan: &ValidatedPlan, batch: usize) -> Self {
         assert!(batch > 0, "a batch has at least one element");
         let slot_map: Vec<Vec<Vec<usize>>> = plan
             .nodes()
@@ -243,7 +244,6 @@ impl<'p> Executor<'p> {
             })
             .collect();
         Self {
-            plan,
             batch,
             cursors: Vec::new(),
             slot_map,
@@ -261,30 +261,33 @@ impl<'p> Executor<'p> {
     /// plan's occurrences).
     pub fn execute<S: Sink, C: Counters>(
         &mut self,
+        plan: &ValidatedPlan,
         colts: &mut [Colt<'_>],
         bindings: &mut Bindings,
         sink: &mut S,
         counters: &mut C,
     ) {
-        assert_eq!(colts.len(), self.plan.occurrences().len());
+        assert_eq!(colts.len(), plan.occurrences().len());
+        debug_assert_eq!(plan.nodes().len(), self.scratch.len(), "same plan shape");
         bindings.reset();
         self.cursors.clear();
         self.cursors
             .extend(colts.iter().map(|colt| (colt.root(), 0usize)));
-        self.run_node(0, colts, bindings, sink, counters);
+        self.run_node(plan, 0, colts, bindings, sink, counters);
     }
 
     #[allow(clippy::too_many_lines)] // the one hot loop; splitting it would
                                      // scatter the batch invariants the comments walk through in order
     fn run_node<S: Sink, C: Counters>(
         &mut self,
+        plan: &ValidatedPlan,
         node_idx: usize,
         colts: &mut [Colt<'_>],
         bindings: &mut Bindings,
         sink: &mut S,
         counters: &mut C,
     ) -> Flow {
-        if node_idx == self.plan.nodes().len() {
+        if node_idx == plan.nodes().len() {
             counters.emit();
             return sink.emit(bindings);
         }
@@ -293,8 +296,8 @@ impl<'p> Executor<'p> {
         // Dynamic cover choice (§4.4): prefer the smallest Exact, else the
         // smallest Estimate — the labels are load-bearing and never
         // compared as the same quantity (post-mortem §40).
-        let cover_sub = self.choose_cover(node_idx, colts);
-        let node = &self.plan.nodes()[node_idx];
+        let cover_sub = self.choose_cover(plan, node_idx, colts);
+        let node = &plan.nodes()[node_idx];
         let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
         let (cover_cursor, cover_level) = self.cursors[cover_occ];
         counters.cover_choice(
@@ -323,8 +326,8 @@ impl<'p> Executor<'p> {
         // Resolve value sources against the runtime cover choice: a var
         // bound by the chosen cover reads the batch key column; everything
         // else reads its (already bound) outer slot.
-        let cover_vars = &self.plan.nodes()[node_idx].subatoms[cover_sub].vars;
-        for (sub_idx, subatom) in self.plan.nodes()[node_idx].subatoms.iter().enumerate() {
+        let cover_vars = &plan.nodes()[node_idx].subatoms[cover_sub].vars;
+        for (sub_idx, subatom) in plan.nodes()[node_idx].subatoms.iter().enumerate() {
             scratch.sources[sub_idx].clear();
             for (i, var) in subatom.vars.iter().enumerate() {
                 let source = cover_vars.iter().position(|cv| cv == var).map_or(
@@ -378,11 +381,11 @@ impl<'p> Executor<'p> {
                 Source::Batch(word) => entry_keys[entry * arity + word],
                 Source::Slot(slot) => bindings.get(slot),
             };
-            for sub_idx in 0..self.plan.nodes()[node_idx].subatoms.len() {
+            for sub_idx in 0..plan.nodes()[node_idx].subatoms.len() {
                 if sub_idx == cover_sub || scratch.survivors.is_empty() {
                     continue;
                 }
-                let subatom = &self.plan.nodes()[node_idx].subatoms[sub_idx];
+                let subatom = &plan.nodes()[node_idx].subatoms[sub_idx];
                 let sub_arity = subatom.vars.len();
                 let occ = usize::from(subatom.occ.0);
                 let (s_cursor, s_level) = self.cursors[occ];
@@ -455,7 +458,7 @@ impl<'p> Executor<'p> {
                 scratch.journal.clear();
                 scratch.journal.push((cover_occ, cover_cursor, cover_level));
                 self.cursors[cover_occ] = (scratch.children[entry], cover_level + 1);
-                for (sub_idx, subatom) in self.plan.nodes()[node_idx].subatoms.iter().enumerate() {
+                for (sub_idx, subatom) in plan.nodes()[node_idx].subatoms.iter().enumerate() {
                     if sub_idx == cover_sub {
                         continue;
                     }
@@ -465,14 +468,14 @@ impl<'p> Executor<'p> {
                     self.cursors[occ] = (scratch.sibling_children[sub_idx][entry], level + 1);
                 }
 
-                flow = self.run_node(node_idx + 1, colts, bindings, sink, counters);
+                flow = self.run_node(plan, node_idx + 1, colts, bindings, sink, counters);
 
                 for (occ, cursor, level) in scratch.journal.drain(..).rev() {
                     self.cursors[occ] = (cursor, level);
                 }
 
                 if flow == Flow::SkipSuffix {
-                    if self.plan.nodes()[node_idx].sink_relevant {
+                    if plan.nodes()[node_idx].sink_relevant {
                         // This node binds a projected variable: absorb the
                         // skip — later entries change the output.
                         flow = Flow::Continue;
@@ -492,8 +495,8 @@ impl<'p> Executor<'p> {
 
     /// Chooses the cover with the fewest keys: smallest `Exact` wins;
     /// otherwise the smallest `Estimate` (v0 rule, 30-execution).
-    fn choose_cover(&self, node_idx: usize, colts: &[Colt<'_>]) -> usize {
-        let node = &self.plan.nodes()[node_idx];
+    fn choose_cover(&self, plan: &ValidatedPlan, node_idx: usize, colts: &[Colt<'_>]) -> usize {
+        let node = &plan.nodes()[node_idx];
         let mut best: Option<(usize, KeyCount)> = None;
         for &cover in &node.covers {
             let sub_idx = usize::from(cover);
@@ -685,7 +688,13 @@ mod tests {
         let mut bindings = Bindings::new(plan.slots().len());
         let mut sink = CollectSink::default();
         let mut executor = Executor::new(plan);
-        executor.execute(&mut colts, &mut bindings, &mut sink, &mut NoopCounters);
+        executor.execute(
+            plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut NoopCounters,
+        );
         sink.rows
     }
 
@@ -1003,7 +1012,7 @@ mod tests {
         let mut bindings = Bindings::new(plan.slots().len());
         let mut sink = CollectSink::default();
         let mut counters = RecordingCounters::default();
-        Executor::new(&plan).execute(&mut colts, &mut bindings, &mut sink, &mut counters);
+        Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
 
         // Node 0's first choice: subatom 1 (S), whose count is Exact.
         let (node, subatom, exact) = counters.cover_choices[0];
@@ -1031,9 +1040,21 @@ mod tests {
         let mut executor = Executor::new(&plan);
 
         let mut first = CollectSink::default();
-        executor.execute(&mut colts, &mut bindings, &mut first, &mut NoopCounters);
+        executor.execute(
+            &plan,
+            &mut colts,
+            &mut bindings,
+            &mut first,
+            &mut NoopCounters,
+        );
         let mut second = CollectSink::default();
-        executor.execute(&mut colts, &mut bindings, &mut second, &mut NoopCounters);
+        executor.execute(
+            &plan,
+            &mut colts,
+            &mut bindings,
+            &mut second,
+            &mut NoopCounters,
+        );
         assert_eq!(first.rows, second.rows);
         assert!(!first.rows.is_empty());
     }
@@ -1045,7 +1066,13 @@ mod tests {
         let mut bindings = Bindings::new(plan.slots().len());
         let mut sink = CollectSink::default();
         let mut executor = Executor::with_batch_size(plan, batch);
-        executor.execute(&mut colts, &mut bindings, &mut sink, &mut NoopCounters);
+        executor.execute(
+            plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut NoopCounters,
+        );
         sink.rows
     }
 
@@ -1130,6 +1157,7 @@ mod tests {
         let mut sink = CollectSink::default();
         let mut counters = PhaseOrderCounters::default();
         Executor::with_batch_size(&plan, 128).execute(
+            &plan,
             &mut colts,
             &mut bindings,
             &mut sink,

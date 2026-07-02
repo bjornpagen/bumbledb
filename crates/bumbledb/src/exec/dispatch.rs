@@ -585,7 +585,13 @@ mod tests {
                 .map(|v| plan.slot_of(*v))
                 .collect(),
         );
-        Executor::new(&plan).execute(&mut colts, &mut bindings, &mut sink, &mut NoopCounters);
+        Executor::new(&plan).execute(
+            &plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut NoopCounters,
+        );
         let mut fj_rows: Vec<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
         fj_rows.sort_unstable();
 
