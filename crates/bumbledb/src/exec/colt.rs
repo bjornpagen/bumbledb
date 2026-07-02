@@ -89,9 +89,12 @@ struct Map {
     slots_start: usize,
 }
 
-/// The lazy trie over one occurrence's view.
-pub struct Colt<'v> {
-    view: &'v View,
+/// The lazy trie over one occurrence's view. Owns the view (a cheap
+/// enum over an `Arc`'d image plus survivor positions) and its pools, so a
+/// prepared query can hold and [`Colt::reset`] it across executions with
+/// every capacity retained (PRD 26's zero-alloc discipline).
+pub struct Colt {
+    view: View,
     /// Per trie level, the image column index of each key variable.
     schema_columns: Vec<Vec<usize>>,
     nodes: Vec<NodeState>,
@@ -121,10 +124,10 @@ fn hash_words(words: &[u64]) -> u64 {
     h
 }
 
-impl<'v> Colt<'v> {
+impl Colt {
     /// Builds the root over a view: O(1) — nothing decodes until a force.
     #[must_use]
-    pub fn new(view: &'v View, schema_columns: Vec<Vec<usize>>) -> Self {
+    pub fn new(view: View, schema_columns: Vec<Vec<usize>>) -> Self {
         Self {
             view,
             schema_columns,
@@ -135,6 +138,21 @@ impl<'v> Colt<'v> {
             keys: Vec::new(),
             scratch: Vec::new(),
         }
+    }
+
+    /// Swaps in a fresh view for the next execution, clearing every pool
+    /// while retaining capacity (post-warmup executions of same-shaped
+    /// data allocate nothing here). Returns the old view so its survivor
+    /// buffer can be recycled.
+    pub fn reset(&mut self, view: View) -> View {
+        let old = std::mem::replace(&mut self.view, view);
+        self.nodes.clear();
+        self.nodes.push(NodeState::Unforced(Positions::Root));
+        self.chunks.clear();
+        self.maps.clear();
+        self.slots.clear();
+        self.keys.clear();
+        old
     }
 
     /// The root cursor (level 0).
@@ -566,8 +584,12 @@ mod tests {
 
     const R: RelationId = RelationId(0);
 
-    /// Builds a view over committed (k, v) pairs.
-    fn view_of(dir: &TempDir, schema: &Schema, rows: &[(u64, u64)]) -> Arc<View> {
+    /// Builds an image over committed (k, v) pairs.
+    fn view_of(
+        dir: &TempDir,
+        schema: &Schema,
+        rows: &[(u64, u64)],
+    ) -> Arc<crate::image::RelationImage> {
         let env = Environment::create(dir.path(), schema).expect("create");
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(schema);
@@ -583,12 +605,15 @@ mod tests {
         drop(view);
         commit(delta, &env).expect("commit");
         let txn = env.read_txn().expect("txn");
-        let image = crate::image::build(&txn, schema, R).expect("build");
-        Arc::new(apply(&image, &[], &[], Vec::new()))
+        crate::image::build(&txn, schema, R).expect("build")
+    }
+
+    fn all(image: &Arc<crate::image::RelationImage>) -> View {
+        apply(image, &[], &[], Vec::new())
     }
 
     /// Drains every entry at a cursor/level into (key words, child) pairs.
-    fn drain(colt: &mut Colt<'_>, cursor: Cursor, level: usize) -> Vec<(Vec<u64>, Cursor)> {
+    fn drain(colt: &mut Colt, cursor: Cursor, level: usize) -> Vec<(Vec<u64>, Cursor)> {
         let arity = colt.arity(level);
         let mut keys = vec![0u64; 8 * arity.max(1)];
         let mut children = vec![Cursor::Row(0); 8];
@@ -613,7 +638,7 @@ mod tests {
         let schema = schema();
         let rows: Vec<(u64, u64)> = (0..10_000).map(|i| (i % 100, i)).collect();
         let view = view_of(&dir, &schema, &rows);
-        let mut colt = Colt::new(&view, vec![vec![0], vec![1]]);
+        let mut colt = Colt::new(all(&view), vec![vec![0], vec![1]]);
         let baseline = colt.watermark();
         assert_eq!(baseline, 1, "one root node, nothing else");
         // The first get forces exactly one level.
@@ -632,7 +657,7 @@ mod tests {
         let rows: Vec<(u64, u64)> = (0..500).map(|i| (i, i * 2)).collect();
         let view = view_of(&dir, &schema, &rows);
         // Single-level schema: the root's remaining schema is a suffix.
-        let mut colt = Colt::new(&view, vec![vec![0, 1]]);
+        let mut colt = Colt::new(all(&view), vec![vec![0, 1]]);
         let before = colt.watermark();
         let root = colt.root();
         let entries = drain(&mut colt, root, 0);
@@ -655,7 +680,7 @@ mod tests {
             oracle.entry(*k).or_default().push(*v);
         }
 
-        let mut colt = Colt::new(&view, vec![vec![0], vec![1]]);
+        let mut colt = Colt::new(all(&view), vec![vec![0], vec![1]]);
         let root = colt.root();
         // Root iteration (non-suffix -> forces): keys match the oracle's.
         let entries = drain(&mut colt, root, 0);
@@ -690,7 +715,7 @@ mod tests {
         // 300 duplicates of one key: 64-position chunks must chain.
         let rows: Vec<(u64, u64)> = (0..300).map(|i| (42, i)).collect();
         let view = view_of(&dir, &schema, &rows);
-        let mut colt = Colt::new(&view, vec![vec![0], vec![1]]);
+        let mut colt = Colt::new(all(&view), vec![vec![0], vec![1]]);
         let child = colt.get(colt.root(), 0, &[42]).expect("hit");
         assert!(matches!(colt.key_count(child), KeyCount::Estimate(300)));
         let values = drain(&mut colt, child, 1);
@@ -706,7 +731,7 @@ mod tests {
         let schema = schema();
         let rows: Vec<(u64, u64)> = (0..100).map(|i| (i, i)).collect(); // all unique
         let view = view_of(&dir, &schema, &rows);
-        let mut colt = Colt::new(&view, vec![vec![0], vec![1]]);
+        let mut colt = Colt::new(all(&view), vec![vec![0], vec![1]]);
         let child = colt.get(colt.root(), 0, &[5]).expect("hit");
         // Singletons pin rows inline: no chunk, no extra node.
         assert!(matches!(child, Cursor::Row(_)));
@@ -719,7 +744,7 @@ mod tests {
         let schema = schema();
         let rows: Vec<(u64, u64)> = (0..60).map(|i| (i % 3, i)).collect();
         let view = view_of(&dir, &schema, &rows);
-        let mut colt = Colt::new(&view, vec![vec![0], vec![1]]);
+        let mut colt = Colt::new(all(&view), vec![vec![0], vec![1]]);
         let root = colt.root();
         // Unforced: duplicate-inflated Estimate.
         assert_eq!(colt.key_count(root), KeyCount::Estimate(60));
@@ -735,13 +760,13 @@ mod tests {
         let rows: Vec<(u64, u64)> = vec![(1, 2), (3, 4)];
         let view = view_of(&dir, &schema, &rows);
         // A zero-binding occurrence: one empty level.
-        let mut colt = Colt::new(&view, vec![vec![]]);
+        let mut colt = Colt::new(all(&view), vec![vec![]]);
         let root = colt.root();
         let entries = drain(&mut colt, root, 0);
         // Suffix iteration yields one entry per position (empty keys);
         // a probe with the empty key forces and hits iff nonempty.
         assert_eq!(entries.len(), 2);
-        let mut colt = Colt::new(&view, vec![vec![]]);
+        let mut colt = Colt::new(all(&view), vec![vec![]]);
         assert!(colt.get(colt.root(), 0, &[]).is_some());
     }
 }

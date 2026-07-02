@@ -79,6 +79,11 @@ impl ProjectionSink {
     pub fn is_empty(&self) -> bool {
         self.seen.is_empty()
     }
+
+    /// Empties the sink for the next execution, retaining capacity.
+    pub fn reset(&mut self) {
+        self.seen.clear();
+    }
 }
 
 impl Sink for ProjectionSink {
@@ -155,36 +160,64 @@ impl AggregateSink {
         }
     }
 
-    /// Finalizes into `(row per group, values in find order)`. Sums are
-    /// range-checked here, once — deterministic by construction (i128
-    /// cannot overflow summing fewer than 2^64 i64 terms). Empty input
-    /// yields zero rows: a global aggregate over nothing is the empty set,
-    /// not a 0 or NULL row.
+    /// Empties the sink for the next execution, retaining capacity.
+    pub fn reset(&mut self) {
+        self.groups.clear();
+        self.accs.clear();
+        if let Some(seen) = &mut self.seen {
+            seen.clear();
+        }
+    }
+
+    /// Finalizes each group's row (values in find order) into `emit`,
+    /// assembling rows in a caller-reused scratch. Sums are range-checked
+    /// here, once — deterministic by construction (i128 cannot overflow
+    /// summing fewer than 2^64 i64 terms). Empty input yields zero rows: a
+    /// global aggregate over nothing is the empty set, not a 0 or NULL row.
     ///
     /// # Errors
     ///
-    /// `Overflow` when a Sum's final value exceeds its result type.
-    pub fn into_rows(self) -> Result<Vec<Vec<u64>>> {
-        let mut rows = Vec::with_capacity(self.groups.len());
+    /// `Overflow` when a Sum's final value exceeds its result type; errors
+    /// from `emit` propagate.
+    pub fn finalize_into(
+        &self,
+        row_scratch: &mut Vec<u64>,
+        mut emit: impl FnMut(&[u64]) -> Result<()>,
+    ) -> Result<()> {
         for (key, group_idx) in self.groups.iter() {
             let accs = &self.accs[group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs];
-            let mut row = Vec::with_capacity(self.finds.len());
+            row_scratch.clear();
             let mut key_cursor = 0;
             let mut acc_cursor = 0;
             for (find_idx, find) in self.finds.iter().enumerate() {
                 match find {
                     FindSpec::Var { .. } => {
-                        row.push(key[key_cursor]);
+                        row_scratch.push(key[key_cursor]);
                         key_cursor += 1;
                     }
                     FindSpec::Agg { .. } => {
-                        row.push(finalize(accs[acc_cursor], find_idx)?);
+                        row_scratch.push(finalize(accs[acc_cursor], find_idx)?);
                         acc_cursor += 1;
                     }
                 }
             }
-            rows.push(row);
+            emit(row_scratch)?;
         }
+        Ok(())
+    }
+
+    /// Convenience finalization into fresh vectors (tests).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::finalize_into`].
+    pub fn into_rows(self) -> Result<Vec<Vec<u64>>> {
+        let mut rows = Vec::with_capacity(self.groups.len());
+        let mut scratch = Vec::new();
+        self.finalize_into(&mut scratch, |row| {
+            rows.push(row.to_vec());
+            Ok(())
+        })?;
         Ok(rows)
     }
 }
@@ -283,7 +316,7 @@ mod tests {
     use crate::encoding::{encode_fact, ValueRef};
     use crate::exec::colt::Colt;
     use crate::exec::run::{Counters, Executor};
-    use crate::image::view::{apply, View};
+    use crate::image::view::apply;
     use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence};
     use crate::ir::VarId;
     use crate::plan::fj::{binary2fj, factor, validate, ValidatedPlan};
@@ -355,7 +388,7 @@ mod tests {
         schema: &Schema,
         postings: &[(u64, u64, i64)],
         tags: &[(u64, u64)],
-    ) -> Vec<Arc<View>> {
+    ) -> Vec<Arc<crate::image::RelationImage>> {
         let env = Environment::create(dir.path(), schema).expect("create");
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(schema);
@@ -386,14 +419,11 @@ mod tests {
         let txn = env.read_txn().expect("txn");
         [POSTING, TAG]
             .iter()
-            .map(|rel| {
-                let image = crate::image::build(&txn, schema, *rel).expect("build");
-                Arc::new(apply(&image, &[], &[], Vec::new()))
-            })
+            .map(|rel| crate::image::build(&txn, schema, *rel).expect("build"))
             .collect()
     }
 
-    fn colts_for<'v>(plan: &ValidatedPlan, views: &'v [Arc<View>]) -> Vec<Colt<'v>> {
+    fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) -> Vec<Colt> {
         plan.occurrences()
             .iter()
             .map(|occurrence| {
@@ -415,7 +445,12 @@ mod tests {
                     })
                     .collect();
                 Colt::new(
-                    &views[usize::try_from(occurrence.relation.0).expect("small")],
+                    apply(
+                        &images[usize::try_from(occurrence.relation.0).expect("small")],
+                        &[],
+                        &[],
+                        Vec::new(),
+                    ),
                     columns,
                 )
             })
@@ -449,7 +484,7 @@ mod tests {
 
     fn run_aggregate(
         plan: &ValidatedPlan,
-        views: &[Arc<View>],
+        views: &[Arc<crate::image::RelationImage>],
         finds: Vec<FindSpec>,
     ) -> Result<Vec<Vec<u64>>> {
         let mut colts = colts_for(plan, views);

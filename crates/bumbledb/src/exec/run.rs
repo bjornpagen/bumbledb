@@ -262,7 +262,7 @@ impl Executor {
     pub fn execute<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
-        colts: &mut [Colt<'_>],
+        colts: &mut [Colt],
         bindings: &mut Bindings,
         sink: &mut S,
         counters: &mut C,
@@ -282,7 +282,7 @@ impl Executor {
         &mut self,
         plan: &ValidatedPlan,
         node_idx: usize,
-        colts: &mut [Colt<'_>],
+        colts: &mut [Colt],
         bindings: &mut Bindings,
         sink: &mut S,
         counters: &mut C,
@@ -495,7 +495,7 @@ impl Executor {
 
     /// Chooses the cover with the fewest keys: smallest `Exact` wins;
     /// otherwise the smallest `Estimate` (v0 rule, 30-execution).
-    fn choose_cover(&self, plan: &ValidatedPlan, node_idx: usize, colts: &[Colt<'_>]) -> usize {
+    fn choose_cover(&self, plan: &ValidatedPlan, node_idx: usize, colts: &[Colt]) -> usize {
         let node = &plan.nodes()[node_idx];
         let mut best: Option<(usize, KeyCount)> = None;
         for &cover in &node.covers {
@@ -521,7 +521,7 @@ impl Executor {
 mod tests {
     use super::*;
     use crate::encoding::{encode_fact, ValueRef};
-    use crate::image::view::{apply, View};
+    use crate::image::view::apply;
     use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence, PlacedComparison};
     use crate::ir::{CmpOp, VarId};
     use crate::plan::fj::{binary2fj, factor, validate, ValidatedPlan};
@@ -598,7 +598,11 @@ mod tests {
     }
 
     /// Commits word rows into each relation and returns unfiltered views.
-    fn views_of(dir: &TempDir, schema: &Schema, data: &[Vec<(u64, u64)>]) -> Vec<Arc<View>> {
+    fn views_of(
+        dir: &TempDir,
+        schema: &Schema,
+        data: &[Vec<(u64, u64)>],
+    ) -> Vec<Arc<crate::image::RelationImage>> {
         let env = Environment::create(dir.path(), schema).expect("create");
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(schema);
@@ -620,15 +624,14 @@ mod tests {
         (0..data.len())
             .map(|rel| {
                 let rel_id = RelationId(u32::try_from(rel).expect("small"));
-                let image = crate::image::build(&txn, schema, rel_id).expect("build");
-                Arc::new(apply(&image, &[], &[], Vec::new()))
+                crate::image::build(&txn, schema, rel_id).expect("build")
             })
             .collect()
     }
 
     /// COLT sources for a plan: schema columns from each occurrence's trie
     /// schema and var-to-field map.
-    fn colts_for<'v>(plan: &ValidatedPlan, views: &'v [Arc<View>]) -> Vec<Colt<'v>> {
+    fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) -> Vec<Colt> {
         plan.occurrences()
             .iter()
             .map(|occurrence| {
@@ -650,7 +653,12 @@ mod tests {
                     })
                     .collect();
                 Colt::new(
-                    &views[usize::try_from(occurrence.relation.0).expect("small")],
+                    apply(
+                        &images[usize::try_from(occurrence.relation.0).expect("small")],
+                        &[],
+                        &[],
+                        Vec::new(),
+                    ),
                     columns,
                 )
             })
@@ -683,7 +691,7 @@ mod tests {
         .expect("valid plan")
     }
 
-    fn run(plan: &ValidatedPlan, views: &[Arc<View>]) -> BTreeSet<Vec<u64>> {
+    fn run(plan: &ValidatedPlan, views: &[Arc<crate::image::RelationImage>]) -> BTreeSet<Vec<u64>> {
         let mut colts = colts_for(plan, views);
         let mut bindings = Bindings::new(plan.slots().len());
         let mut sink = CollectSink::default();
@@ -1061,7 +1069,11 @@ mod tests {
     // ---------- PRD 21: vectorized execution ----------
 
     /// Runs a plan at a given batch size.
-    fn run_batched(plan: &ValidatedPlan, views: &[Arc<View>], batch: usize) -> BTreeSet<Vec<u64>> {
+    fn run_batched(
+        plan: &ValidatedPlan,
+        views: &[Arc<crate::image::RelationImage>],
+        batch: usize,
+    ) -> BTreeSet<Vec<u64>> {
         let mut colts = colts_for(plan, views);
         let mut bindings = Bindings::new(plan.slots().len());
         let mut sink = CollectSink::default();

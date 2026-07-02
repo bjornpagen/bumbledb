@@ -202,7 +202,7 @@ mod tests {
     use crate::exec::dispatch::classify;
     use crate::exec::run::{Bindings, Executor, NoopCounters};
     use crate::exec::sink::ProjectionSink;
-    use crate::image::view::{apply, Const, FilterPredicate, View};
+    use crate::image::view::{apply, Const, FilterPredicate};
     use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence};
     use crate::ir::{CmpOp, VarId};
     use crate::plan::fj::{binary2fj, factor, validate, ValidatedPlan};
@@ -243,7 +243,11 @@ mod tests {
         .expect("valid fixture")
     }
 
-    fn views_of(dir: &TempDir, schema: &Schema, data: &[Vec<(u64, u64)>]) -> Vec<Arc<View>> {
+    fn views_of(
+        dir: &TempDir,
+        schema: &Schema,
+        data: &[Vec<(u64, u64)>],
+    ) -> Vec<Arc<crate::image::RelationImage>> {
         let env = Environment::create(dir.path(), schema).expect("create");
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(schema);
@@ -265,13 +269,12 @@ mod tests {
         (0..data.len())
             .map(|rel| {
                 let rel_id = RelationId(u32::try_from(rel).expect("small"));
-                let image = crate::image::build(&txn, schema, rel_id).expect("build");
-                Arc::new(apply(&image, &[], &[], Vec::new()))
+                crate::image::build(&txn, schema, rel_id).expect("build")
             })
             .collect()
     }
 
-    fn colts_for<'v>(plan: &ValidatedPlan, views: &'v [Arc<View>]) -> Vec<Colt<'v>> {
+    fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) -> Vec<Colt> {
         plan.occurrences()
             .iter()
             .map(|occurrence| {
@@ -293,7 +296,12 @@ mod tests {
                     })
                     .collect();
                 Colt::new(
-                    &views[usize::try_from(occurrence.relation.0).expect("small")],
+                    apply(
+                        &images[usize::try_from(occurrence.relation.0).expect("small")],
+                        &[],
+                        &[],
+                        Vec::new(),
+                    ),
                     columns,
                 )
             })

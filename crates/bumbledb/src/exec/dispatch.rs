@@ -232,20 +232,22 @@ pub fn execute_guard<S: Sink>(
     txn: &ReadTxn<'_>,
     schema: &Schema,
     params: &[Const],
+    key_scratch: &mut Vec<u8>,
     bindings: &mut Bindings,
     sink: &mut S,
 ) -> Result<()> {
-    // Build the guard key; a PendingIntern miss empties the query.
-    let mut key_bytes = Vec::new();
+    // Build the guard key in the caller's reused scratch; a PendingIntern
+    // miss empties the query.
+    key_scratch.clear();
     for (_, value) in &plan.key {
-        if !const_bytes(txn, value, params, &mut key_bytes)? {
+        if !const_bytes(txn, value, params, key_scratch)? {
             return Ok(());
         }
     }
 
     let row_id = match plan.constraint {
-        Some(constraint) => read::unique_row(txn, plan.relation, constraint, &key_bytes)?,
-        None => read::fact_row(txn, plan.relation, &key_bytes)?,
+        Some(constraint) => read::unique_row(txn, plan.relation, constraint, key_scratch)?,
+        None => read::fact_row(txn, plan.relation, key_scratch)?,
     };
     let Some(row_id) = row_id else {
         return Ok(()); // miss: empty result
@@ -454,7 +456,17 @@ mod tests {
         let txn = env.read_txn().expect("txn");
         let mut bindings = Bindings::new(plan.vars.len());
         let mut sink = ProjectionSink::new((0..plan.vars.len()).collect());
-        execute_guard(plan, &txn, schema, params, &mut bindings, &mut sink).expect("execute");
+        let mut key = Vec::new();
+        execute_guard(
+            plan,
+            &txn,
+            schema,
+            params,
+            &mut key,
+            &mut bindings,
+            &mut sink,
+        )
+        .expect("execute");
         sink.rows().map(<[u64]>::to_vec).collect()
     }
 
@@ -554,12 +566,7 @@ mod tests {
             validate(&fj, &normalized, &schema, vec![0], &BTreeSet::new()).expect("valid plan");
         let txn = env.read_txn().expect("txn");
         let image = crate::image::build(&txn, &schema, ACCOUNT).expect("build");
-        let view = std::sync::Arc::new(apply(
-            &image,
-            &normalized.occurrences[0].filters,
-            &[],
-            Vec::new(),
-        ));
+        let view = apply(&image, &normalized.occurrences[0].filters, &[], Vec::new());
         let columns: Vec<Vec<usize>> = plan.occurrences()[0]
             .trie_schema
             .iter()
@@ -577,7 +584,7 @@ mod tests {
                     .collect()
             })
             .collect();
-        let mut colts = vec![Colt::new(&view, columns)];
+        let mut colts = vec![Colt::new(view, columns)];
         let mut bindings = Bindings::new(plan.slots().len());
         let mut sink = ProjectionSink::new(
             [VarId(0), VarId(1)]
@@ -617,7 +624,17 @@ mod tests {
             1,
             true,
         );
-        execute_guard(&plan, &txn, &schema, &[], &mut bindings, &mut sink).expect("execute");
+        let mut key = Vec::new();
+        execute_guard(
+            &plan,
+            &txn,
+            &schema,
+            &[],
+            &mut key,
+            &mut bindings,
+            &mut sink,
+        )
+        .expect("execute");
         assert_eq!(sink.into_rows().expect("rows"), vec![vec![1]]);
     }
 

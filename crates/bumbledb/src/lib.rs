@@ -10,6 +10,8 @@
 #[cfg(target_pointer_width = "32")]
 compile_error!("bumbledb targets 64-bit platforms only (docs/architecture/00-product.md)");
 
+#[cfg(feature = "alloc-counter")]
+pub mod alloc_counter;
 pub mod api;
 pub mod arena;
 pub mod encoding;

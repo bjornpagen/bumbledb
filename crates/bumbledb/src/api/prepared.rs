@@ -11,8 +11,6 @@
 //! error, and a value interned by a later write is picked up on the next
 //! execution.
 
-use std::sync::Arc;
-
 use crate::error::{Error, Result};
 use crate::exec::colt::Colt;
 use crate::exec::dispatch::{classify, execute_guard, ExecPlan};
@@ -168,6 +166,16 @@ pub struct PreparedQuery<'s> {
     resolved_filters: Vec<Vec<FilterPredicate>>,
     /// Recycled survivor buffers, one per occurrence.
     survivor_buffers: Vec<Vec<u32>>,
+    /// COLT sources, one per occurrence, reset per execution with every
+    /// pool capacity retained (self-joins rebuild their own views from the
+    /// shared image — a duplicated filter pass, no shared buffer).
+    colts: Vec<Colt>,
+    /// The sink, reset per execution with capacities retained.
+    sink: EitherSink,
+    /// Aggregate-finalization row scratch.
+    row_scratch: Vec<u64>,
+    /// Guard-key byte scratch.
+    guard_key: Vec<u8>,
     /// Marker: a prepared query is single-threaded scratch.
     _not_sync: std::marker::PhantomData<std::cell::Cell<()>>,
 }
@@ -255,6 +263,9 @@ pub fn prepare<'s>(
         ExecPlan::GuardProbe(guard) => (None, guard.vars.len(), 1),
     };
 
+    let colts = build_colts(txn, schema, &exec_plan)?;
+    let sink = make_sink(&finds, slot_count, exec_plan.distinct_bindings());
+
     Ok(PreparedQuery {
         schema,
         plan: exec_plan,
@@ -265,8 +276,45 @@ pub fn prepare<'s>(
         resolved_params: Vec::new(),
         resolved_filters: vec![Vec::new(); occurrence_count],
         survivor_buffers: (0..occurrence_count).map(|_| Vec::new()).collect(),
+        colts,
+        sink,
+        row_scratch: Vec::new(),
+        guard_key: Vec::new(),
         _not_sync: std::marker::PhantomData,
     })
+}
+
+/// COLT sources with their fixed column schemas; the initial views are
+/// placeholders — every execution resets them against fresh images.
+fn build_colts(txn: &ReadTxn<'_>, schema: &Schema, exec_plan: &ExecPlan) -> Result<Vec<Colt>> {
+    match exec_plan {
+        ExecPlan::GuardProbe(_) => Ok(Vec::new()),
+        ExecPlan::FreeJoin(plan) => plan
+            .occurrences()
+            .iter()
+            .map(|occurrence| {
+                let image = crate::image::build(txn, schema, occurrence.relation)?;
+                let columns: Vec<Vec<usize>> = occurrence
+                    .trie_schema
+                    .iter()
+                    .map(|level| {
+                        level
+                            .iter()
+                            .map(|var| {
+                                let (field, _) = occurrence
+                                    .vars
+                                    .iter()
+                                    .find(|(_, v)| v == var)
+                                    .expect("plan vars come from the occurrence");
+                                usize::from(field.0)
+                            })
+                            .collect()
+                    })
+                    .collect();
+                Ok(Colt::new(View::All(image), columns))
+            })
+            .collect(),
+    }
 }
 
 /// Derives per-find output specs (slots + result types) from the witness
@@ -335,28 +383,23 @@ impl PreparedQuery<'_> {
         if !self.bind_params(txn, params)? {
             return Ok(()); // dictionary miss: empty result
         }
+        self.sink.reset();
         match &self.plan {
             ExecPlan::GuardProbe(guard) => {
-                let mut sink = make_sink(&self.finds, self.bindings.slot_count(), true);
                 execute_guard(
                     guard,
                     txn,
                     self.schema,
                     &self.resolved_params,
+                    &mut self.guard_key,
                     &mut self.bindings,
-                    &mut sink.0,
+                    &mut self.sink,
                 )?;
-                finalize(sink, txn, &self.finds, out)
             }
             ExecPlan::FreeJoin(plan) => {
                 if !resolve_filters(txn, plan, &self.resolved_params, &mut self.resolved_filters)? {
                     return Ok(()); // intern miss: empty result
                 }
-                let mut sink = make_sink(
-                    &self.finds,
-                    self.bindings.slot_count(),
-                    plan.distinct_bindings(),
-                );
                 run_join(
                     plan,
                     self.schema,
@@ -368,12 +411,13 @@ impl PreparedQuery<'_> {
                     &mut self.bindings,
                     &self.resolved_filters,
                     &mut self.survivor_buffers,
-                    &mut sink.0,
+                    &mut self.colts,
+                    &mut self.sink,
                     &mut NoopCounters,
                 )?;
-                finalize(sink, txn, &self.finds, out)
             }
         }
+        finalize(&self.sink, &mut self.row_scratch, txn, &self.finds, out)
     }
 
     /// Convenience path: a fresh buffer per call.
@@ -433,11 +477,7 @@ impl PreparedQuery<'_> {
                     let report = format!("{}", Report::FreeJoin { plan, counters });
                     return Ok((out, report));
                 }
-                let mut sink = make_sink(
-                    &self.finds,
-                    self.bindings.slot_count(),
-                    plan.distinct_bindings(),
-                );
+                self.sink.reset();
                 run_join(
                     plan,
                     self.schema,
@@ -449,13 +489,29 @@ impl PreparedQuery<'_> {
                     &mut self.bindings,
                     &self.resolved_filters,
                     &mut self.survivor_buffers,
-                    &mut sink.0,
+                    &mut self.colts,
+                    &mut self.sink,
                     &mut counters,
                 )?;
                 let report = format!("{}", Report::FreeJoin { plan, counters });
-                finalize(sink, txn, &self.finds, &mut out)?;
+                finalize(
+                    &self.sink,
+                    &mut self.row_scratch,
+                    txn,
+                    &self.finds,
+                    &mut out,
+                )?;
                 Ok((out, report))
             }
+        }
+    }
+
+    /// Rebuilds the executor scratch at a different batch size — the
+    /// tuning/test surface for D4's measurement-owned constant. Allocation
+    /// happens here, outside any measured window. A no-op for guard probes.
+    pub fn set_batch_size(&mut self, batch: usize) {
+        if let ExecPlan::FreeJoin(plan) = &self.plan {
+            self.executor = Some(Executor::with_batch_size(plan, batch));
         }
     }
 
@@ -503,9 +559,11 @@ fn resolve_filters(
     Ok(true)
 }
 
-/// Builds views and COLT roots, then runs the join into the sink.
+/// Resets the owned COLT sources against this execution's images and
+/// views (buffer ping-pong: old survivor buffers recycle into the new
+/// views), then runs the join into the sink.
 #[allow(clippy::too_many_arguments)] // the prepared query's split borrows;
-                                     // bundling them into a struct would only rename the same nine things
+                                     // bundling them into a struct would only rename the same ten things
 fn run_join<C: crate::exec::run::Counters>(
     plan: &crate::plan::fj::ValidatedPlan,
     schema: &Schema,
@@ -515,74 +573,35 @@ fn run_join<C: crate::exec::run::Counters>(
     bindings: &mut Bindings,
     resolved_filters: &[Vec<FilterPredicate>],
     survivor_buffers: &mut [Vec<u32>],
+    colts: &mut [Colt],
     sink: &mut EitherSink,
     counters: &mut C,
 ) -> Result<()> {
-    let views: Vec<Arc<View>> = plan
-        .occurrences()
-        .iter()
-        .enumerate()
-        .map(|(occ_idx, occurrence)| {
-            let image = cache.get_or_build(txn, schema, occurrence.relation)?;
-            let buffer = std::mem::take(&mut survivor_buffers[occ_idx]);
-            Ok(Arc::new(apply(
-                &image,
-                &resolved_filters[occ_idx],
-                &[],
-                buffer,
-            )))
-        })
-        .collect::<Result<_>>()?;
-    let mut colts: Vec<Colt<'_>> = plan
-        .occurrences()
-        .iter()
-        .enumerate()
-        .map(|(occ_idx, occurrence)| {
-            let columns: Vec<Vec<usize>> = occurrence
-                .trie_schema
-                .iter()
-                .map(|level| {
-                    level
-                        .iter()
-                        .map(|var| {
-                            let (field, _) = occurrence
-                                .vars
-                                .iter()
-                                .find(|(_, v)| v == var)
-                                .expect("plan vars come from the occurrence");
-                            usize::from(field.0)
-                        })
-                        .collect()
-                })
-                .collect();
-            Colt::new(&views[occ_idx], columns)
-        })
-        .collect();
-    executor.execute(plan, &mut colts, bindings, sink, counters);
-    drop(colts);
-    // Recycle the survivor buffers for the next execution.
-    for (occ_idx, view) in views.into_iter().enumerate() {
-        if let Ok(view) = Arc::try_unwrap(view) {
-            survivor_buffers[occ_idx] = view.recycle();
-        }
+    for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
+        let image = cache.get_or_build(txn, schema, occurrence.relation)?;
+        let buffer = std::mem::take(&mut survivor_buffers[occ_idx]);
+        let view = apply(&image, &resolved_filters[occ_idx], &[], buffer);
+        let old = colts[occ_idx].reset(view);
+        survivor_buffers[occ_idx] = old.recycle();
     }
+    executor.execute(plan, colts, bindings, sink, counters);
     Ok(())
 }
 
 /// Builds the sink matching the find shape (the variant is fixed per
 /// prepared query — an enum, not `dyn`).
-fn make_sink(finds: &[(FindSpec, ValueType)], slot_count: usize, distinct: bool) -> SinkBox {
+fn make_sink(finds: &[(FindSpec, ValueType)], slot_count: usize, distinct: bool) -> EitherSink {
     let has_aggregates = finds
         .iter()
         .any(|(spec, _)| matches!(spec, FindSpec::Agg { .. }));
     if has_aggregates {
-        SinkBox(EitherSink::Aggregate(AggregateSink::new(
+        EitherSink::Aggregate(AggregateSink::new(
             finds.iter().map(|(spec, _)| *spec).collect(),
             slot_count,
             distinct,
-        )))
+        ))
     } else {
-        SinkBox(EitherSink::Projection(ProjectionSink::new(
+        EitherSink::Projection(ProjectionSink::new(
             finds
                 .iter()
                 .map(|(spec, _)| match spec {
@@ -590,7 +609,7 @@ fn make_sink(finds: &[(FindSpec, ValueType)], slot_count: usize, distinct: bool)
                     FindSpec::Agg { .. } => unreachable!("no aggregates here"),
                 })
                 .collect(),
-        )))
+        ))
     }
 }
 
@@ -601,7 +620,14 @@ enum EitherSink {
     Aggregate(AggregateSink),
 }
 
-struct SinkBox(EitherSink);
+impl EitherSink {
+    fn reset(&mut self) {
+        match self {
+            Self::Projection(sink) => sink.reset(),
+            Self::Aggregate(sink) => sink.reset(),
+        }
+    }
+}
 
 impl Sink for EitherSink {
     fn emit(&mut self, bindings: &Bindings) -> crate::exec::run::Flow {
@@ -679,12 +705,13 @@ fn resolve_filter(
 
 /// Drains the sink into the result buffer, decoding words by result type.
 fn finalize(
-    sink: SinkBox,
+    sink: &EitherSink,
+    row_scratch: &mut Vec<u64>,
     txn: &ReadTxn<'_>,
     finds: &[(FindSpec, ValueType)],
     out: &mut ResultBuffer,
 ) -> Result<()> {
-    match sink.0 {
+    match sink {
         EitherSink::Projection(sink) => {
             for row in sink.rows() {
                 for (column, (_, ty)) in finds.iter().enumerate() {
@@ -693,20 +720,19 @@ fn finalize(
             }
             Ok(())
         }
-        EitherSink::Aggregate(sink) => {
-            for row in sink.into_rows()? {
-                for (column, (_, ty)) in finds.iter().enumerate() {
-                    out.push_word(txn, ty, row[column])?;
-                }
+        EitherSink::Aggregate(sink) => sink.finalize_into(row_scratch, |row| {
+            for (column, (_, ty)) in finds.iter().enumerate() {
+                out.push_word(txn, ty, row[column])?;
             }
             Ok(())
-        }
+        }),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::encoding::{encode_fact, ValueRef};
     use crate::ir::{Atom, CmpOp, Comparison, FindTerm, Term, VarId};
     use crate::schema::{

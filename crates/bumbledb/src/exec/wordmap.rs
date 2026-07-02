@@ -41,6 +41,14 @@ impl<V> WordMap<V> {
         self.len
     }
 
+    /// Empties the map, retaining capacity (the zero-alloc reuse path).
+    pub fn clear(&mut self) {
+        for value in &mut self.values {
+            *value = None;
+        }
+        self.len = 0;
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0

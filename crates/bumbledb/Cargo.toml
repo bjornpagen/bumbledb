@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[features]
+# Test-support: global-allocator counting for the zero-warm-allocation
+# gate (PRD 26). Never enabled in production builds.
+alloc-counter = []
+
 [dependencies]
 blake3 = "1"
 heed = "0.22"
