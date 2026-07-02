@@ -169,6 +169,10 @@ pub struct PlanNode {
     pub residuals: Vec<PlacedComparison>,
     /// Variables first bound by this node.
     pub new_vars: Vec<VarId>,
+    /// Whether this node binds any sink-relevant (projected) variable —
+    /// the D2 subtree-skip unwind stops at the first `true` node
+    /// (precomputed here; the executor just reads the bit).
+    pub sink_relevant: bool,
 }
 
 /// The sealed plan witness execution trusts; validated once at
@@ -258,6 +262,7 @@ pub fn validate(
     normalized: &NormalizedQuery,
     schema: &Schema,
     estimates: Vec<u64>,
+    sink_vars: &BTreeSet<VarId>,
 ) -> Result<ValidatedPlan, PlanError> {
     // Partition property, per occurrence: subatom vars are disjoint and
     // union to the occurrence's var set.
@@ -283,6 +288,9 @@ pub fn validate(
     }
 
     let mut nodes = derive_nodes(plan)?;
+    for node in &mut nodes {
+        node.sink_relevant = node.new_vars.iter().any(|v| sink_vars.contains(v));
+    }
 
     // Residual placement: the earliest node at which both sides are bound.
     for (residual_idx, residual) in normalized.residuals.iter().enumerate() {
@@ -421,6 +429,7 @@ fn derive_nodes(plan: &FjPlan) -> Result<Vec<PlanNode>, PlanError> {
             covers,
             residuals: Vec::new(),
             new_vars,
+            sink_relevant: false, // filled by the caller from sink_vars
         });
     }
     Ok(nodes)
@@ -597,8 +606,14 @@ mod tests {
                 },
             ],
         };
-        let validated =
-            validate(&plan, &normalized, &schema(3, 3), vec![0, 0]).expect("valid plan");
+        let validated = validate(
+            &plan,
+            &normalized,
+            &schema(3, 3),
+            vec![0, 0],
+            &BTreeSet::new(),
+        )
+        .expect("valid plan");
         assert_eq!(validated.occurrence(OccId(0)).trie_schema, vec![vec![X, Y]]);
         assert_eq!(
             validated.occurrence(OccId(1)).trie_schema,
@@ -630,7 +645,14 @@ mod tests {
                 },
             ],
         };
-        let validated = validate(&plan, &clover(), &schema(3, 3), vec![0; 4]).expect("valid plan");
+        let validated = validate(
+            &plan,
+            &clover(),
+            &schema(3, 3),
+            vec![0; 4],
+            &BTreeSet::new(),
+        )
+        .expect("valid plan");
         assert_eq!(validated.nodes()[0].covers, vec![0, 1, 2]);
         assert_eq!(validated.nodes()[1].covers, vec![0]);
     }
@@ -646,8 +668,14 @@ mod tests {
             rhs: B,
         }];
         let plan = binary2fj(&normalized, &order(&[0, 1, 2]));
-        let validated =
-            validate(&plan, &normalized, &schema(3, 3), vec![0; 3]).expect("valid plan");
+        let validated = validate(
+            &plan,
+            &normalized,
+            &schema(3, 3),
+            vec![0; 3],
+            &BTreeSet::new(),
+        )
+        .expect("valid plan");
         assert!(validated.nodes()[0].residuals.is_empty());
         assert_eq!(validated.nodes()[1].residuals.len(), 1);
         assert!(validated.nodes()[2].residuals.is_empty());
@@ -665,8 +693,14 @@ mod tests {
         };
         let mut plan = binary2fj(&normalized, &order(&[0, 1]));
         factor(&mut plan);
-        let validated =
-            validate(&plan, &normalized, &schema(1, 3), vec![0, 0]).expect("self-joins validate");
+        let validated = validate(
+            &plan,
+            &normalized,
+            &schema(1, 3),
+            vec![0, 0],
+            &BTreeSet::new(),
+        )
+        .expect("self-joins validate");
         assert_eq!(validated.occurrences().len(), 2);
     }
 
@@ -679,7 +713,8 @@ mod tests {
         };
         let mut normalized = clover();
         normalized.occurrences.truncate(1);
-        let err = validate(&plan, &normalized, &schema(3, 3), vec![0]).unwrap_err();
+        let err =
+            validate(&plan, &normalized, &schema(3, 3), vec![0], &BTreeSet::new()).unwrap_err();
         assert_eq!(
             err,
             PlanError::DuplicateOccurrenceInNode {
@@ -701,8 +736,14 @@ mod tests {
             residuals: vec![],
         };
         let plan = binary2fj(&normalized, &order(&[0, 1]));
-        let validated =
-            validate(&plan, &normalized, &schema(2, 2), vec![0, 0]).expect("valid plan");
+        let validated = validate(
+            &plan,
+            &normalized,
+            &schema(2, 2),
+            vec![0, 0],
+            &BTreeSet::new(),
+        )
+        .expect("valid plan");
         assert!(validated.distinct_bindings());
 
         // Occurrence 1 binds only a non-unique field -> flag clear.
@@ -714,8 +755,14 @@ mod tests {
             residuals: vec![],
         };
         let plan = binary2fj(&normalized, &order(&[0, 1]));
-        let validated =
-            validate(&plan, &normalized, &schema(2, 2), vec![0, 0]).expect("valid plan");
+        let validated = validate(
+            &plan,
+            &normalized,
+            &schema(2, 2),
+            vec![0, 0],
+            &BTreeSet::new(),
+        )
+        .expect("valid plan");
         assert!(!validated.distinct_bindings());
     }
 
@@ -724,8 +771,14 @@ mod tests {
         let normalized = clover();
         let mut plan = binary2fj(&normalized, &order(&[0, 1, 2]));
         factor(&mut plan);
-        let validated =
-            validate(&plan, &normalized, &schema(3, 3), vec![0; 3]).expect("valid plan");
+        let validated = validate(
+            &plan,
+            &normalized,
+            &schema(3, 3),
+            vec![0; 3],
+            &BTreeSet::new(),
+        )
+        .expect("valid plan");
         // Factored clover: node 0 binds {x, a}, node 1 binds {b}, node 2
         // binds {c}. Slot order follows.
         assert_eq!(validated.slots(), &[X, A, B, C]);
