@@ -11,13 +11,24 @@ use crate::ir::CmpOp;
 use crate::schema::{FieldId, RelationId, Schema};
 use crate::storage::env::ReadTxn;
 
-/// The constant side of a lowered filter, in column form: the
-/// byte-order-normalized word for 8-byte columns, the raw byte for 1-byte
-/// columns. PRD 15 extends this with `Param` and `PendingIntern` variants.
+/// The constant side of a lowered filter. `Word`/`Byte` are column form —
+/// the byte-order-normalized word for 8-byte columns, the raw byte for
+/// 1-byte columns. `Param` resolves at bind time through the evaluator's
+/// param slice; `PendingIntern` is a raw String/Bytes literal resolved to
+/// an intern-id word per execution (PRD 25 — a dictionary miss means the
+/// query is empty on this snapshot, so the evaluator never sees one).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Const {
     Word(u64),
     Byte(u8),
+    /// Bind-time symbolic constant; the evaluator indexes the param slice.
+    Param(crate::ir::ParamId),
+    /// A raw String/Bytes literal awaiting per-execution intern resolution
+    /// (`tag` is the dictionary type tag).
+    PendingIntern {
+        tag: u8,
+        bytes: Box<[u8]>,
+    },
 }
 
 /// One lowered per-atom filter (produced by PRD 15's normalization).
@@ -102,16 +113,28 @@ impl View {
     }
 }
 
-/// Evaluates the conjunction against one image position.
-fn row_matches(image: &RelationImage, predicates: &[FilterPredicate], position: usize) -> bool {
+/// Evaluates the conjunction against one image position. `params` is the
+/// bind-time resolution slice, indexed by `ParamId`, holding `Word`/`Byte`
+/// constants only.
+fn row_matches(
+    image: &RelationImage,
+    predicates: &[FilterPredicate],
+    params: &[Const],
+    position: usize,
+) -> bool {
     predicates.iter().all(|predicate| match predicate {
         FilterPredicate::Compare { field, op, value } => {
+            let value = match value {
+                Const::Param(param) => &params[usize::from(param.0)],
+                other => other,
+            };
             match (image.column(usize::from(field.0)), value) {
                 (ColumnView::Words(words), Const::Word(c)) => op.compare(&words[position], c),
                 (ColumnView::Bytes(bytes), Const::Byte(c)) => op.compare(&bytes[position], c),
-                // Width mismatches are unrepresentable through validation
-                // (the witness types filters against the schema).
-                _ => unreachable!("validated filter constant matches its column width"),
+                // Width mismatches are unrepresentable through validation,
+                // and PendingIntern constants are resolved before execution
+                // (PRD 25) — a miss empties the query without reaching here.
+                _ => unreachable!("validated, resolved filter constant"),
             }
         }
         FilterPredicate::FieldsEqual { left, right } => {
@@ -139,6 +162,7 @@ fn row_matches(image: &RelationImage, predicates: &[FilterPredicate], position: 
 pub fn apply(
     image: &Arc<RelationImage>,
     predicates: &[FilterPredicate],
+    params: &[Const],
     mut buf: Vec<u32>,
 ) -> View {
     if predicates.is_empty() {
@@ -154,7 +178,7 @@ pub fn apply(
     // unconditional store, conditional cursor advance — no `if` in this
     // loop body.
     for position in 0..row_count {
-        let keep = row_matches(image, predicates, position);
+        let keep = row_matches(image, predicates, params, position);
         buf[cursor] = u32::try_from(position).expect("checked above");
         cursor += usize::from(keep);
     }
@@ -182,10 +206,11 @@ pub fn build_with_filters(
     schema: &Schema,
     rel: RelationId,
     predicates: &[FilterPredicate],
+    params: &[Const],
     buf: Vec<u32>,
 ) -> Result<(Arc<RelationImage>, View)> {
     let image = build(txn, schema, rel)?;
-    let view = apply(&image, predicates, buf);
+    let view = apply(&image, predicates, params, buf);
     Ok((image, view))
 }
 
@@ -338,7 +363,7 @@ mod tests {
                 value: Const::Word(u64::from_be_bytes(encode_i64(15))),
             },
         ];
-        let view = apply(&image, &predicates, Vec::new());
+        let view = apply(&image, &predicates, &[], Vec::new());
         let expected = oracle(&env, &schema, |_, flag, a, _| {
             flag && (-10..15).contains(&a)
         });
@@ -357,7 +382,7 @@ mod tests {
             left: FieldId(2),
             right: FieldId(3),
         }];
-        let view = apply(&image, &predicates, Vec::new());
+        let view = apply(&image, &predicates, &[], Vec::new());
         let expected = oracle(&env, &schema, |_, _, a, b| a == b);
         assert_eq!(survivor_ids(&view), expected);
         assert!(!expected.is_empty(), "fixture exercises the equality");
@@ -375,7 +400,7 @@ mod tests {
             op: CmpOp::Eq,
             value: Const::Word(u64::MAX),
         }];
-        let view = apply(&image, &predicates, Vec::new());
+        let view = apply(&image, &predicates, &[], Vec::new());
         assert_eq!(view.len(), 0);
         assert!(view.is_empty());
         assert_eq!(view.positions().count(), 0);
@@ -388,7 +413,7 @@ mod tests {
         let env = populated(&dir, &schema);
         let txn = env.read_txn().expect("txn");
         let image = build(&txn, &schema, R).expect("build");
-        let view = apply(&image, &[], Vec::new());
+        let view = apply(&image, &[], &[], Vec::new());
         assert!(matches!(view, View::All(_)));
         assert_eq!(view.len(), 50);
         let positions: Vec<u32> = view.positions().collect();
@@ -407,7 +432,7 @@ mod tests {
             value: Const::Word(u64::from_be_bytes(encode_u64(40))),
         }];
 
-        let (image, view) = build_with_filters(&txn, &schema, R, &predicates, Vec::new())?;
+        let (image, view) = build_with_filters(&txn, &schema, R, &predicates, &[], Vec::new())?;
         let reference = build(&txn, &schema, R)?;
         // Byte-identical columns (addresses differ; contents must not).
         assert_eq!(image.row_count(), reference.row_count());
@@ -415,7 +440,7 @@ mod tests {
             assert_eq!(image.column(field), reference.column(field));
         }
         // ...and the view equals apply() over that image.
-        let reapplied = apply(&image, &predicates, Vec::new());
+        let reapplied = apply(&image, &predicates, &[], Vec::new());
         assert_eq!(
             view.positions().collect::<Vec<_>>(),
             reapplied.positions().collect::<Vec<_>>()
