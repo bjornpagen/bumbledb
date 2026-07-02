@@ -7,34 +7,9 @@ use std::sync::Arc;
 
 use crate::error::Result;
 use crate::image::{build, ColumnView, RelationImage};
+use crate::ir::CmpOp;
 use crate::schema::{FieldId, RelationId, Schema};
 use crate::storage::env::ReadTxn;
-
-/// Comparison operators over one relation's columns. Order operators are
-/// only ever produced for integer columns (validation's comparison rules);
-/// the evaluator trusts that.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CmpOp {
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-}
-
-impl CmpOp {
-    fn compare<T: Ord>(self, left: &T, right: &T) -> bool {
-        match self {
-            Self::Eq => left == right,
-            Self::Ne => left != right,
-            Self::Lt => left < right,
-            Self::Le => left <= right,
-            Self::Gt => left > right,
-            Self::Ge => left >= right,
-        }
-    }
-}
 
 /// The constant side of a lowered filter, in column form: the
 /// byte-order-normalized word for 8-byte columns, the raw byte for 1-byte
