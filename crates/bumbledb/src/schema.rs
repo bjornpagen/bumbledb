@@ -4,6 +4,8 @@
 //! way to obtain a [`Schema`] is [`SchemaDescriptor::validate`], and everything
 //! downstream trusts the sealed witness without re-checking.
 
+pub mod fingerprint;
+
 use crate::encoding::{FactLayout, TypeDesc};
 
 /// Dense relation id: the relation's index in schema declaration order.
