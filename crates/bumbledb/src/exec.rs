@@ -2,6 +2,7 @@
 
 pub mod colt;
 pub mod dispatch;
+pub mod explain;
 pub mod kernel;
 pub mod run;
 pub mod sink;
