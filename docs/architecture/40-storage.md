@@ -58,34 +58,48 @@ keys make `F` keys wide and unbounded-ish, while dense-ordinal row storage wants
 compact monotonic key; and images need scan ordinals anyway. **Reverses if:** never
 likely; revisit only with the layout.
 
-## Write path
+## Write path: the transaction is a delta
 
-Per inserted fact: encode → `M` get (hit ⇒ idempotent no-op) → `F` put (row_id from the
-in-memory high-water) → `M` put → `U` puts per constraint (including serial
-auto-uniques) → `R` puts per outgoing FK → dict puts for novel strings. Counters —
-row_id high-waters, row counts, **serial `Q` sequences**, storage tx id — are maintained
-in memory during the write transaction and flushed once at commit. Serial `alloc` reads
-`Q` once at first use per (relation, field), then increments in memory (a transaction
-sees its own allocations; aborts leave `Q` untouched); explicit-value inserts advance
-the in-memory mark past the supplied value (mixed explicit/generated allocation tracks
-the running maximum). Failed transactions leave nothing: LMDB atomicity is the whole
-crash-consistency story — and it is *tested* (crash/reopen family, `50-validation.md`).
+A write transaction is an **in-memory delta** — a net insert-set and delete-set of
+canonical fact bytes (last disposition per fact wins), arena-backed. During the
+closure, `insert`/`delete` are pure set arithmetic: encode the fact, probe `M` (a
+read-only get) plus the delta to compute the `changed: bool` return value, record the
+disposition. `alloc` reads `Q` once at first use per (relation, field) and increments
+in memory (a transaction sees its own allocations); explicit-value inserts advance the
+in-memory mark past the supplied value; mixed explicit/generated allocation tracks the
+running maximum. **Nothing touches an LMDB data page until commit** — an abort (error
+or panic) drops the arena and LMDB was never written, making "failed writes leave
+nothing" true by construction, not by rollback.
 
-**Delete path, with the same specificity:** encode fact → `M` get → row_id (absent ⇒
-idempotent no-op) → **Restrict check**: for each unique constraint of this relation
-that any FK targets, prefix-scan `R | this_rel | constraint | key` — any entry is a
-restrict violation (in-transaction interaction with the deleting of referencing facts
-is part of the constraint-timing OPEN) → delete `F`, `M`, this fact's `U` entries
-(guard keys re-derived by slicing the constrained fields out of `fact_bytes` — never a
-scan), and this fact's outgoing `R` entries → decrement in-memory row count. Dictionary
-entries are never removed (accepted leak).
+**Commit applies the delta in one canonical order** — this is what makes constraint
+enforcement commit-time state-checking (`10-data-model.md`) with plain eager mechanics:
+
+1. **Deletes**: per deleted fact — `M` get → row_id → delete `F`, `M`, its `U` entries
+   (guard keys re-derived by slicing constrained fields out of `fact_bytes` — never a
+   scan), and its outgoing `R` entries.
+2. **Inserts**: per inserted fact — `F` put (row_id from the in-memory high-water),
+   `M` put, `U` puts, `R` puts, dict puts for novel strings. Because every delete has
+   already landed and the insert-set is deduplicated, **a `U` conflict here is a
+   genuine unique violation** → typed error, whole transaction aborts.
+3. **FK validation** (final-state probes; LMDB write txns read their own writes):
+   forward — every inserted fact's FK targets resolve via `U`; Restrict — every unique
+   key deleted in step 1 and not re-inserted has no remaining `R` entries. Any failure
+   → typed error, abort.
+4. **Counters flush**: row_id high-waters, row counts, `Q` sequences, storage tx id.
+5. **LMDB commit** (fsync).
+
+User operation order inside the closure is therefore semantically irrelevant; the
+delete-before-insert trap and FK insertion-ordering are unrepresentable. Crash
+consistency is LMDB atomicity — *tested* (crash/reopen family, `50-validation.md`).
+Dictionary entries are never removed (accepted leak).
 
 **Storage tx id:** advances **once per commit that changed logical state**; a commit
-consisting only of idempotent no-ops does not advance it and does not invalidate any
+whose delta is empty (all no-ops) does not advance it and does not invalidate any
 image. It lives in `_meta` and commits atomically with the data.
 
-Bulk load (`60-api.md` surface): sorts and uses append mode on fresh databases per the
-decision above; otherwise it is insert semantics in one transaction.
+Bulk load (`60-api.md` surface) is the same delta mechanism at scale — chunked into
+multiple transactions if the delta would exceed memory comfort; the fresh-database
+global-key-order path may use append mode per the decision above.
 
 **Corrupt data is a hard error, never a skip:** an `F` value whose length differs from
 the schema's fact width, a dangling intern id, an `M`/`F` disagreement, an out-of-range
@@ -99,6 +113,12 @@ The bridge to paper-faithful execution (`30-execution.md` D1):
 
 - A **relation image** is **all columns** of a relation, decoded from one sequential
   `F`-prefix scan into arena-backed, 128-byte-aligned SoA vectors, plus the row count.
+  At 60–120 GB/s of scan bandwidth this is single-digit milliseconds per 100 MB — the
+  number that makes the whole cache design sound. **Column bases are staggered**: the
+  image arena offsets successive column bases by odd multiples of the line size so no
+  two columns of one relation are congruent mod 16 KB (the L1D set stride) — lockstep
+  multi-column scans otherwise alias into one 8-way set, the documented 10–20×
+  pathological case (`docs/reference/apple-silicon-performance.md`, Category 5).
   Immutable once built. Positions in the image are **dense scan ordinals**; `row_id`s
   exist only in LMDB keys and never appear in images (COLT offsets are image positions;
   the guard-probe path reads `F` directly and never needs a translation).

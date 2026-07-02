@@ -22,8 +22,17 @@ sugar, never the contract (`20-query-ir.md`).
 - `db.write(|tx| ...)` — the single writer; commits on `Ok`, aborts on `Err`/panic.
   Write operations: `alloc(field) -> u64` (serial minting — insert new rows without
   reading a max, `10-data-model.md`), `insert(fact) -> bool` (changed-state report),
-  `delete(fact) -> bool`, `bulk_load(...)` (insert semantics in one transaction;
-  fresh-database fast path per `40-storage.md`).
+  `delete(fact) -> bool`, `bulk_load(...)` (the same delta mechanism at scale,
+  `40-storage.md`).
+- **The transaction is a delta** (`40-storage.md`): operations are in-memory set
+  arithmetic; operation order is semantically irrelevant; nothing touches LMDB until
+  commit, and an abort never wrote anything. `delete(old); insert(new)` in either
+  order is the blessed mutation idiom — a host-side `replace()` helper is optional
+  sugar, not an engine operation (closed decision).
+- **Constraints are checked at commit against the final state**
+  (`10-data-model.md`): `UniqueViolation`/`ForeignKeyViolation` errors surface from
+  the commit, not from the offending call site, carrying the constraint name, the
+  relation, and the offending fact. The whole transaction aborts.
 - **Queries inside a write transaction are forbidden in v0** (decision): constraint
   checks are internal to the write path; application read-modify-write is a read
   transaction followed by a write transaction. **Reverses if:** real app flows can't
@@ -50,9 +59,10 @@ sugar, never the contract (`20-query-ir.md`).
 - **Runtime query errors:** `Overflow` (aggregate range check), `Corruption` (hard
   error, never a skip — `40-storage.md`). They abort the query; the read transaction
   remains usable.
-- **Write errors:** `UniqueViolation`, `ForeignKeyViolation` (timing OPEN),
-  `SerialExhausted`, `Corruption`, `Io`/`Lmdb`. Any error aborts the whole write
-  transaction (atomicity is all-or-nothing; there is no partial commit).
+- **Write errors:** `UniqueViolation`, `ForeignKeyViolation` (both raised at commit,
+  against the final state), `SerialExhausted`, `Corruption`, `Io`/`Lmdb`. Any error
+  aborts the whole write transaction — and since the transaction is a delta, an
+  aborted transaction never touched LMDB at all.
 - Error payloads carry ids, not formatted strings, on hot paths (allocation contract).
 
 ## ETL / migration surface
@@ -73,8 +83,6 @@ preserving identity (high-water advances past them). Backup = quiesced file copy
 
 ## OPEN (this doc's honest list)
 
-- Constraint-enforcement timing and `replace` sugar (README; blocks the write-path
-  implementation).
 - Exact `ResultSet` memory layout and the caller-buffer trait.
 - Dynamic-fact ETL form details and the bulk-import surface.
 - Ordering/limit conveniences on results (host-side; shape undecided).

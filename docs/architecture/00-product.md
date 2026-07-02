@@ -58,28 +58,55 @@ language. **Reverses if:** never — owner axiom.
 - **One process.** Multi-process access to one database is out of the envelope in v0
   (neither supported nor guarded; LMDB would permit it, but the environment-scope image
   cache and counter batching are process-local). Recorded as closed.
-- Within the process: one writer at a time, many concurrent reader threads (LMDB MVCC).
-- **Query execution is single-threaded** per query; intra-query parallelism is a
-  non-goal (matches the paper's system). A prepared query is not shareable across
-  threads (`30-execution.md`).
+- **Threading doctrine: bumbledb owns zero threads.** The engine never spawns one — no
+  background writers, compactors, or build pools; all threads belong to the
+  application, extending the host-owns-composition principle to scheduling. Parallelism
+  is **inter-query**: many reader threads run their own prepared queries concurrently
+  (LMDB MVCC snapshots; immutable `Arc`-shared images make this free), while one thread
+  at a time writes. **Within a query, execution is single-threaded** — the parallelism
+  is one P-core's ~28 MLP lanes, which the batched executor exists to saturate. Why not
+  intra-query threads: at ≤10⁷ facts a single M-series core (3–4 IPC, 60–120 GB/s to
+  memory) fits the 10 ms budget with headroom, while partitioned WCOJ needs per-thread
+  sinks, dedup merges, and shared arenas — real complexity against the zero-allocation
+  contract, bought for latency we don't need. A prepared query is `!Sync`.
+  **Decision.** **Alternative:** partition the root cover across cores (per-core
+  bindings/sinks, merge at the end). **Why it lost:** above. **Reverses if:** the
+  latency budget is violated on real workloads after single-core optimization is
+  exhausted.
 - **Durability: fsync per commit** (LMDB defaults; no `NOSYNC`/`WRITEMAP`/`MAPASYNC`).
   A committed posting survives power loss — it's a ledger. SQLite is benchmarked at
   `synchronous=FULL` for fairness.
 
 ## Target hardware
 
-Apple Silicon M-series is the only performance target. Full research notes with sources:
-`docs/reference/apple-silicon-performance.md`. The relevant profile:
+Apple Silicon M-series is the only performance target; **64-bit only** (enforced at
+compile time — 32-bit targets are rejected, `usize` is 8 bytes everywhere, and no design
+decision accommodates narrower platforms). Full research notes with sources:
+`docs/reference/apple-silicon-performance.md`. The machine model the design exploits:
 
-- ~28 lanes of memory-level parallelism, ~630-entry ROB: the win is many *independent*
-  loads in flight. Batched execution over dependent pointer-chasing.
-- 128-bit NEON only (no SVE): SIMD is for filter scans and survivor compaction over
-  fixed-width columns, not the primary lever.
-- Columnar data is SoA, **128-byte aligned**. (The reference notes carry a flagged
-  internal contradiction on L1D line size, 64 B vs 128 B; 128-byte alignment is correct
-  under either reading since it implies 64-byte alignment, and matches L2/SLC lines.)
-- Explicit SIMD lives under `#[cfg(target_arch = "aarch64")]`; other platforms compile
-  and run scalar fallback correctly, with no performance promises. x86 SIMD is forbidden.
+- **~28 MLP lanes per core, ~630-entry ROB**: the win is many *independent* loads in
+  flight — batched execution over dependent pointer-chasing, everywhere.
+- **Scalar-ILP first**: the deep OoO engine sustains 3–4 IPC on simple, branch-light,
+  dependency-free loops; that beats clever vectorization. 128-bit NEON (no SVE) is a
+  supporting actor with exactly two kernel shapes — fixed-width predicate scans and
+  survivor compaction.
+- **60–120 GB/s memory bandwidth**: sequential scan+decode of a 100 MB relation is
+  single-digit milliseconds — the quantitative reason the image-cache design
+  (`30-execution.md` D1) is sound at this scale.
+- **Unaligned loads are near-free (16 KB pages)**: facts are stored dense, with no
+  intra-row padding; alignment is spent only where NEON reads column bases.
+- **Columnar data is SoA, 128-byte aligned, with staggered column bases**: L1D is 8-way
+  with a 16 KB set stride, so columns scanned in lockstep must not sit at bases
+  congruent mod 16 KB — the pathological aliasing case is a 10–20× slowdown
+  (`40-storage.md`). (The reference notes carry a flagged 64 B-vs-128 B L1D-line
+  contradiction; 128-byte alignment is correct under either reading.)
+- **TAGE branch prediction (>99%)**: the residual misprediction source is per-tuple
+  data-dependent branching — batching converts it into branchless compaction; and the
+  hot path contains no indirect dispatch (sinks/counters monomorphized,
+  `30-execution.md`).
+- Explicit SIMD lives under `#[cfg(target_arch = "aarch64")]`; other 64-bit platforms
+  compile and run scalar fallback correctly, with no performance promises. x86 SIMD is
+  forbidden.
 
 **Decision:** Apple-Silicon-only performance target. **Alternative:** portable
 performance posture. **Why it lost:** there are no other consumers; portability spends

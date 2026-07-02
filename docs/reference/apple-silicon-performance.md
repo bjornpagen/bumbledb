@@ -10,6 +10,18 @@ performance decisions in `docs/architecture/00-product.md` and `30-execution.md`
 > Resolve empirically with a stride microbenchmark before any decision leans on the
 > L1D-specific number.
 
+**Design derivations (what bumbledb exploits from each category):**
+Cat 1 (cache hierarchy) → per-query hot state L1-resident; COLT forced maps compact,
+open-addressed, L2-resident (`30-execution.md`). Cat 2 (unaligned loads, 16 KB pages) →
+dense facts, no intra-row padding (`10-data-model.md`). Cat 3 (~28 MLP lanes,
+60–120 GB/s) → two-phase batched probing; image-rebuild cost quantified, justifying the
+cache (`30-execution.md` D4/D1, `40-storage.md`). Cat 4 (deep OoO, NEON-only) →
+scalar-ILP-first doctrine; NEON limited to two kernel shapes (`00-product.md`,
+`30-execution.md`). Cat 5 (L1 set aliasing, 16 KB set stride) → staggered column bases
+in image arenas (`40-storage.md`). Cat 6 (TAGE) → branchless survivor compaction, no
+indirect dispatch in hot paths (`30-execution.md`). Threading: engine owns zero threads;
+inter-query parallelism only — MLP is the intra-query parallelism (`00-product.md`).
+
 - Owner
    - Bjorn Pagen
 - Purpose

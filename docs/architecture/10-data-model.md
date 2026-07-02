@@ -127,7 +127,9 @@ branch.
 
 This document owns fact equality. **Value equality ≡ `fact_bytes` equality**, where
 `fact_bytes` is the concatenation of each field's canonical encoding **in declaration
-order**. Canonical means injective and unique: Bool is strictly 0/1 (any other byte is
+order**, with **no padding between fields** — facts are dense (1-byte enums/bools sit
+flush against 8-byte fields; Apple Silicon's near-free unaligned loads make intra-row
+alignment a pure waste, `00-product.md`). Canonical means injective and unique: Bool is strictly 0/1 (any other byte is
 corruption, never a distinct "true"); Enum is the declaration-order ordinal; integers
 are their order-preserving encodings; String/Bytes are their intern ids (one byte
 sequence ⇒ exactly one id, ever). Storage (`40-storage.md`) implements membership as
@@ -166,10 +168,27 @@ text indexes, not de-interning).
 - `ForeignKey { name, fields, target_relation, target_constraint }` — targets a named
   unique constraint, positional structural-type equality, `Restrict` only.
 - Serial fields contribute their auto-materialized unique constraint (above).
-- Enforcement timing for unique and FK is **OPEN** (README) — note the entanglement:
-  per-operation unique checking imposes delete-before-insert ordering on the mutation
-  idiom; commit-time checking makes ordering irrelevant.
-- Check constraints, cascades, deferred constraints: not in the model. Cross-fact
+- **Constraints are invariants on committed states, enforced once at commit** against
+  the transaction's final state; a violation aborts the whole transaction with a typed
+  error naming the constraint and the offending fact. There is no per-operation
+  enforcement and no deferral opt-in — commit-time is the only semantics. This is the
+  strict option: since queries inside write transactions are forbidden, intermediate
+  states are unobservable by construction, so "every state anyone can ever see
+  satisfies every constraint, with no way out" is the total guarantee — stricter than
+  SQL's opt-in deferrable constraints. `Restrict` means precisely: *no committed state
+  contains a dangling reference* (deleting a target and all its referrers in one
+  transaction passes, as it should). Consequences: user operation order is
+  semantically irrelevant (the delete-before-insert ordering trap is unrepresentable —
+  see the delta write path, `40-storage.md`), and cyclic references insert without any
+  staging concept.
+  **Decision.** **Alternative:** per-operation checking with staged same-transaction
+  visibility (the day-1 design). **Why it lost:** it enforces invariants on states
+  nobody can observe, pushes ordering obligations onto the caller, makes cyclic inserts
+  need a preallocation dance, and fights the accumulate-then-commit write path.
+  Offering both would be a semantics-splitting mode. **Reverses if:** never —
+  semantics. (This also closes the `replace` question: with ordering irrelevant,
+  delete+insert is the blessed idiom and `replace` is at most host-side sugar.)
+- Check constraints, cascades, deferred-as-a-choice: not in the model. Cross-fact
   invariants are application logic.
 
 ## Schema

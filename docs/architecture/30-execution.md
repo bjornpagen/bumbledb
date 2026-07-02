@@ -143,11 +143,23 @@ above. **Reverses if:** never — no external SQL engine as infrastructure.
 and probes siblings per batch (§4.3), hardware-generic. We: same algorithm, batch sized
 to fill the M-series' ~28 MLP lanes — model: each probe is ~1–2 dependent loads, so
 ~28 lanes want ≥28 independent probes in flight and the batch amortizes bookkeeping
-across several waves: starting range 64–256, measured (OPEN, README). Probe keys and
-hashes are computed for the whole batch before any lookup so loads issue independently;
-NEON (`cfg(aarch64)`, 128-bit) kernels handle fixed-width predicate scans and survivor
-compaction; columns are 128-byte-aligned SoA. Scalar fallback everywhere, equal results
-by test across batch sizes. **Vectorized execution is the default and only path** — a
+across several waves: starting range 64–256, measured (OPEN, README). **Probing is
+two-phase**: phase one computes keys and hashes for the whole batch (pure ALU, no
+memory dependence); phase two issues all bucket loads — independent chains the OoO
+engine overlaps across the full MLP width. COLT's forced maps use **open addressing
+with inline keys** (one probe ≈ one or two cache lines, no node chasing) and are kept
+compact enough that a query's hot maps live in the 12–16 MB shared L2. **Batches are
+processed branchlessly**: probe misses and residual failures become survivor
+compaction (NEON compress or scalar cursor-write), never per-tuple conditional
+control flow — on a >99%-accurate TAGE predictor, the data-dependent per-tuple branch
+is the only misprediction source left, so we remove it representationally. **No
+indirect dispatch exists in the hot path**: sinks, counters, and kernels are
+monomorphized generics, never `dyn`. NEON (`cfg(aarch64)`, 128-bit = 2×u64) handles
+fixed-width predicate scans and survivor compaction and nothing else — the deep-OoO
+scalar path is the primary engine and simple dependency-free loops are preferred over
+clever vectorization (`00-product.md` machine model). Columns are 128-byte-aligned SoA
+with staggered bases (`40-storage.md`). Scalar fallback everywhere, equal results by
+test across batch sizes. **Vectorized execution is the default and only path** — a
 scalar "mode" exists solely as the degenerate batch size where useful for testing; v5's
 fake vectorized mode (post-mortem §31) is the cautionary tale. Honest caveat, stated:
 deep in the plan the batch source is the current subtrie, whose fanout on FK walks is
@@ -179,9 +191,13 @@ allocator hits, arena growth included (post-warmup growth is a failure), result 
 caller-provided. First-execution and post-commit rebuild allocations are sanctioned and
 outside the measured window.
 
-**Concurrency contract:** execution is single-threaded per query; `PreparedQuery` is
-`!Sync` and executes from one thread at a time; arenas imply exclusive access.
-Intra-query parallelism is a non-goal (`00-product.md`).
+**Concurrency contract:** the engine owns zero threads (`00-product.md` doctrine).
+Execution is single-threaded per query; `PreparedQuery` is `!Sync` and executes from
+one thread at a time; arenas imply exclusive access. **Inter-query parallelism is free
+and is the intended scaling axis**: reader threads each own their prepared queries and
+arenas and share immutable `Arc`'d images; nothing in the executor synchronizes.
+Intra-query parallelism is a non-goal with a recorded reversal trigger
+(`00-product.md`).
 
 **Resource limits: none in v0, stated.** Dedup sets, group maps, and result buffers
 grow with output; a pathological query can exceed the envelope and the OS is the

@@ -39,10 +39,6 @@ there are no PRD suites, work packets, or compliance gates. Git history is the c
 
 ## OPEN items
 
-- **Constraint enforcement timing** (unique *and* FK): per-operation vs commit-time,
-  and whether a `replace` convenience exists. Entangled with the delete+insert mutation
-  idiom (a per-operation unique check imposes delete-before-insert ordering).
-  *Trigger: must be decided before the write path is implemented.*
 - **Aggregate execution phasing**: aggregation is fully specified in the IR and sinks;
   when it lands relative to plain joins is unscheduled. The "beats SQLite" claim is void
   until it does. *Trigger: first benchmark milestone.*
@@ -67,4 +63,8 @@ Closed by ruling (2026-07-02, recorded in the owning docs): nominal typing of an
 attribute); i128 and narrow-integer types (rejected); field-scoped images (full-width
 won); plan invalidation by writes (pin-at-prepare won); queries inside write
 transactions (forbidden in v0); multi-process access (out of envelope); intra-query
-parallelism (non-goal).
+parallelism (non-goal — the engine owns zero threads; inter-query parallelism is the
+scaling axis); 32-bit targets (64-bit only); **constraint enforcement timing**
+(commit-time invariants on the final state, via the delta write path — `10-data-model`
+/ `40-storage`); **`replace`** (unnecessary: operation order is semantically
+irrelevant; at most host-side sugar).
