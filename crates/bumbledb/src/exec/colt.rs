@@ -103,6 +103,14 @@ pub struct Colt<'v> {
     scratch: Vec<u64>,
 }
 
+/// The probe hash for a key — exposed so the vectorized executor's phase 1
+/// can compute all hashes (pure ALU) before phase 2 issues any bucket load
+/// (D4's two-phase probing, PRD 21).
+#[must_use]
+pub fn hash_key(words: &[u64]) -> u64 {
+    hash_words(words)
+}
+
 fn hash_words(words: &[u64]) -> u64 {
     let mut h = 0x517C_C1B7_2722_0A95_u64;
     for w in words {
@@ -191,6 +199,18 @@ impl<'v> Colt<'v> {
     /// Probes for `key` at `cursor`'s level, forcing the node if needed.
     /// Returns the child cursor on a hit.
     pub fn get(&mut self, cursor: Cursor, level: usize, key: &[u64]) -> Option<Cursor> {
+        self.get_prehashed(cursor, level, key, hash_words(key))
+    }
+
+    /// Probe with a precomputed hash (phase 2 of the two-phase batched
+    /// probe): the load chain starts here; the hash was phase-1 ALU work.
+    pub fn get_prehashed(
+        &mut self,
+        cursor: Cursor,
+        level: usize,
+        key: &[u64],
+        hash: u64,
+    ) -> Option<Cursor> {
         debug_assert_eq!(key.len(), self.arity(level));
         match cursor {
             // A pinned row: the probe is a field-equality check, and the
@@ -201,7 +221,7 @@ impl<'v> Colt<'v> {
             Cursor::Node(node) => {
                 let map = self.force(node, level);
                 let m = self.maps[map as usize];
-                let (found, idx) = self.probe(&m, key);
+                let (found, idx) = self.probe_hashed(&m, key, hash);
                 if !found {
                     return None;
                 }
@@ -211,6 +231,14 @@ impl<'v> Colt<'v> {
                     Slot::Node(child) => Some(Cursor::Node(child)),
                 }
             }
+        }
+    }
+
+    /// Forces a node cursor ahead of a probe batch (no-op for pinned rows
+    /// and already-forced nodes): phase 2's loads then hit a ready map.
+    pub fn ensure_forced(&mut self, cursor: Cursor, level: usize) {
+        if let Cursor::Node(node) = cursor {
+            self.force(node, level);
         }
     }
 
@@ -360,8 +388,13 @@ impl<'v> Colt<'v> {
 
     /// Linear probe: returns (found, slot index within the map).
     fn probe(&self, m: &Map, key: &[u64]) -> (bool, usize) {
+        self.probe_hashed(m, key, hash_words(key))
+    }
+
+    /// Linear probe with a precomputed hash.
+    fn probe_hashed(&self, m: &Map, key: &[u64], hash: u64) -> (bool, usize) {
         let mask = m.capacity - 1;
-        let mut idx = usize::try_from(hash_words(key)).expect("64-bit usize") & mask;
+        let mut idx = usize::try_from(hash).expect("64-bit usize") & mask;
         loop {
             if matches!(self.slots[m.slots_start + idx], Slot::Empty) {
                 return (false, idx);

@@ -1,12 +1,20 @@
-//! The recursive Free Join executor (PRD 19), scalar form — the semantics
-//! reference PRD 21's vectorized path must match exactly
-//! (`docs/architecture/30-execution.md`, paper §3.3 Fig. 5).
+//! The recursive Free Join executor (PRDs 19 + 21) — vectorized execution
+//! is the default and only path; batch size 1 is merely its degenerate
+//! setting, never a mode (`docs/architecture/30-execution.md` D4,
+//! post-mortem §31; paper §3.3 Fig. 5, §4.3).
 //!
 //! Everything is a monomorphized generic — no `dyn` anywhere in the hot
-//! path. The node loop: choose the cover by labeled key count, iterate it,
-//! write binding slots, probe siblings, evaluate the node's residuals,
-//! recurse; an undo journal restores each occurrence's current trie on
-//! backtrack.
+//! path. Per node entry: choose the cover by labeled key count, iterate it
+//! in batches, two-phase-probe each sibling (phase 1 computes every hash —
+//! pure ALU; phase 2 issues all bucket loads — independent chains the
+//! out-of-order window overlaps), compact survivors branchlessly, evaluate residuals as
+//! batch compaction, then recurse per surviving element with the scalar
+//! journal discipline.
+//!
+//! Honest caveat, stated (D4): deep in the plan the batch source is the
+//! current subtrie, whose fanout on FK walks is often 1-10 — large batches
+//! are reliably available only at the root; cross-node-entry accumulation
+//! is future work, not assumed.
 
 use crate::exec::colt::{BatchToken, Colt, Cursor, KeyCount};
 use crate::ir::normalize::PlacedComparison;
@@ -35,6 +43,9 @@ pub trait Counters {
     fn node_entry(&mut self, node: usize);
     /// A cover was chosen: which subatom, and whether its count was Exact.
     fn cover_choice(&mut self, node: usize, subatom: usize, exact: bool);
+    /// Phase 1 computed one probe hash (ordering assertions: every hash of
+    /// a batch precedes its first probe).
+    fn probe_hash(&mut self, node: usize, subatom: usize);
     fn probe(&mut self, node: usize, subatom: usize, hit: bool);
     fn residual(&mut self, node: usize, pass: bool);
     fn emit(&mut self);
@@ -51,6 +62,8 @@ impl Counters for NoopCounters {
     fn node_entry(&mut self, _: usize) {}
     #[inline]
     fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+    #[inline]
+    fn probe_hash(&mut self, _: usize, _: usize) {}
     #[inline]
     fn probe(&mut self, _: usize, _: usize, _: bool) {}
     #[inline]
@@ -107,14 +120,42 @@ impl Bindings {
     }
 }
 
+/// The starting batch size: sized so ~28 MLP lanes see >=28 independent
+/// probes in flight with bookkeeping amortized over several waves (D4's
+/// model). The exact number is measurement-owned (OPEN, architecture
+/// README) — this is the one place it lives.
+pub const BATCH: usize = 128;
+
+/// Where a value read during batched probing comes from: a word of the
+/// current batch's cover keys (varying per element) or an already-bound
+/// outer slot (constant across the batch).
+#[derive(Debug, Clone, Copy)]
+enum Source {
+    Batch(usize),
+    Slot(usize),
+}
+
 /// Per-node reusable scratch: each node's frame is active at most once in
 /// the recursion (frames advance strictly by node index), so scratch is
 /// indexed by node and allocated once per executor construction.
 struct NodeScratch {
-    /// Cover-entry key words (batch of 1 in the scalar executor).
+    /// Cover-entry key words, entry-major (`entry * arity + word`).
     entry_keys: Vec<u64>,
-    /// Probe-key gather buffer.
-    probe_key: Vec<u64>,
+    /// Cover-entry child cursors.
+    children: Vec<Cursor>,
+    /// Surviving batch-entry indices (branchlessly compacted).
+    survivors: Vec<u32>,
+    /// Phase-1 gathered probe keys, entry-major per sibling pass.
+    probe_keys: Vec<u64>,
+    /// Phase-1 hashes, aligned with `survivors`.
+    hashes: Vec<u64>,
+    /// Per subatom, per entry: the probed child cursor.
+    sibling_children: Vec<Vec<Cursor>>,
+    /// Per sibling-var value sources, recomputed per node entry (the
+    /// runtime cover choice decides what comes from the batch).
+    sources: Vec<Vec<Source>>,
+    /// Residual operand sources, aligned with the node's residual list.
+    residual_sources: Vec<(Source, Source)>,
     /// Undo journal: (occurrence index, previous cursor, previous level).
     journal: Vec<(usize, Cursor, usize)>,
 }
@@ -123,6 +164,7 @@ struct NodeScratch {
 /// per-node scratch; borrows the COLT sources.
 pub struct Executor<'p> {
     plan: &'p ValidatedPlan,
+    batch: usize,
     /// Per occurrence: (current cursor, current trie level).
     cursors: Vec<(Cursor, usize)>,
     /// Per subatom slot maps, precomputed: `slot_map[node][subatom][i]` is
@@ -134,9 +176,22 @@ pub struct Executor<'p> {
 }
 
 impl<'p> Executor<'p> {
+    /// An executor with the default batch size ([`BATCH`]).
     #[must_use]
     pub fn new(plan: &'p ValidatedPlan) -> Self {
-        let slot_map = plan
+        Self::with_batch_size(plan, BATCH)
+    }
+
+    /// An executor with an explicit batch size — the scalar/vectorized
+    /// equality tests parameterize this; there is no mode, only the number.
+    ///
+    /// # Panics
+    ///
+    /// Only on a programmer-invariant violation: a zero batch size.
+    #[must_use]
+    pub fn with_batch_size(plan: &'p ValidatedPlan, batch: usize) -> Self {
+        assert!(batch > 0, "a batch has at least one element");
+        let slot_map: Vec<Vec<Vec<usize>>> = plan
             .nodes()
             .iter()
             .map(|node| {
@@ -146,7 +201,7 @@ impl<'p> Executor<'p> {
                     .collect()
             })
             .collect();
-        let residual_slots = plan
+        let residual_slots: Vec<Vec<(PlacedComparison, usize, usize)>> = plan
             .nodes()
             .iter()
             .map(|node| {
@@ -165,16 +220,28 @@ impl<'p> Executor<'p> {
                     .iter()
                     .map(|s| s.vars.len())
                     .max()
-                    .unwrap_or(0);
+                    .unwrap_or(0)
+                    .max(1);
                 NodeScratch {
-                    entry_keys: vec![0; max_arity.max(1)],
-                    probe_key: Vec::with_capacity(max_arity),
+                    entry_keys: vec![0; batch * max_arity],
+                    children: vec![Cursor::Row(0); batch],
+                    survivors: Vec::with_capacity(batch),
+                    probe_keys: vec![0; batch * max_arity],
+                    hashes: Vec::with_capacity(batch),
+                    sibling_children: node
+                        .subatoms
+                        .iter()
+                        .map(|_| vec![Cursor::Row(0); batch])
+                        .collect(),
+                    sources: node.subatoms.iter().map(|_| Vec::new()).collect(),
+                    residual_sources: Vec::new(),
                     journal: Vec::new(),
                 }
             })
             .collect();
         Self {
             plan,
+            batch,
             cursors: Vec::new(),
             slot_map,
             residual_slots,
@@ -204,6 +271,8 @@ impl<'p> Executor<'p> {
         self.run_node(0, colts, bindings, sink, counters);
     }
 
+    #[allow(clippy::too_many_lines)] // the one hot loop; splitting it would
+                                     // scatter the batch invariants the comments walk through in order
     fn run_node<S: Sink, C: Counters>(
         &mut self,
         node_idx: usize,
@@ -217,12 +286,12 @@ impl<'p> Executor<'p> {
             return sink.emit(bindings);
         }
         counters.node_entry(node_idx);
-        let node = &self.plan.nodes()[node_idx];
 
         // Dynamic cover choice (§4.4): prefer the smallest Exact, else the
         // smallest Estimate — the labels are load-bearing and never
         // compared as the same quantity (post-mortem §40).
         let cover_sub = self.choose_cover(node_idx, colts);
+        let node = &self.plan.nodes()[node_idx];
         let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
         let (cover_cursor, cover_level) = self.cursors[cover_occ];
         counters.cover_choice(
@@ -236,93 +305,181 @@ impl<'p> Executor<'p> {
             &mut self.scratch[node_idx],
             NodeScratch {
                 entry_keys: Vec::new(),
-                probe_key: Vec::new(),
+                children: Vec::new(),
+                survivors: Vec::new(),
+                probe_keys: Vec::new(),
+                hashes: Vec::new(),
+                sibling_children: Vec::new(),
+                sources: Vec::new(),
+                residual_sources: Vec::new(),
                 journal: Vec::new(),
             },
         );
+
+        // Resolve value sources against the runtime cover choice: a var
+        // bound by the chosen cover reads the batch key column; everything
+        // else reads its (already bound) outer slot.
+        let cover_vars = &self.plan.nodes()[node_idx].subatoms[cover_sub].vars;
+        for (sub_idx, subatom) in self.plan.nodes()[node_idx].subatoms.iter().enumerate() {
+            scratch.sources[sub_idx].clear();
+            for (i, var) in subatom.vars.iter().enumerate() {
+                let source = cover_vars.iter().position(|cv| cv == var).map_or(
+                    Source::Slot(self.slot_map[node_idx][sub_idx][i]),
+                    Source::Batch,
+                );
+                scratch.sources[sub_idx].push(source);
+            }
+        }
+        scratch.residual_sources.clear();
+        for (residual, lhs_slot, rhs_slot) in &self.residual_slots[node_idx] {
+            let resolve = |var: crate::ir::VarId, slot: usize| {
+                cover_vars
+                    .iter()
+                    .position(|cv| *cv == var)
+                    .map_or(Source::Slot(slot), Source::Batch)
+            };
+            scratch.residual_sources.push((
+                resolve(residual.lhs, *lhs_slot),
+                resolve(residual.rhs, *rhs_slot),
+            ));
+        }
+
         let mut token = BatchToken::default();
-        let mut child_buf = [Cursor::Row(0); 1];
         let mut flow = Flow::Continue;
 
-        loop {
+        'outer: loop {
             let (yielded, next_token) = colts[cover_occ].iter_batch(
                 cover_cursor,
                 cover_level,
                 token,
                 &mut scratch.entry_keys,
-                &mut child_buf,
-                1,
+                &mut scratch.children,
+                self.batch,
             );
             if yielded == 0 {
                 break;
             }
             token = next_token;
+            scratch.survivors.clear();
+            scratch
+                .survivors
+                .extend(0..u32::try_from(yielded).expect("batch fits u32"));
 
-            scratch.journal.clear();
-            // Bind the cover's variables and descend its trie.
-            for (i, slot) in self.slot_map[node_idx][cover_sub].iter().enumerate() {
-                bindings.set(*slot, scratch.entry_keys[i]);
-            }
-            debug_assert_eq!(self.slot_map[node_idx][cover_sub].len(), arity);
-            scratch.journal.push((cover_occ, cover_cursor, cover_level));
-            self.cursors[cover_occ] = (child_buf[0], cover_level + 1);
-
-            // Probe the sibling subatoms in order.
-            let mut alive = true;
-            for (sub_idx, subatom) in self.plan.nodes()[node_idx].subatoms.iter().enumerate() {
-                if sub_idx == cover_sub {
+            // Per sibling: the two-phase probe, then branchless compaction.
+            let value_of = |sources: &[Source],
+                            entry_keys: &[u64],
+                            bindings: &Bindings,
+                            entry: usize,
+                            i: usize| match sources[i] {
+                Source::Batch(word) => entry_keys[entry * arity + word],
+                Source::Slot(slot) => bindings.get(slot),
+            };
+            for sub_idx in 0..self.plan.nodes()[node_idx].subatoms.len() {
+                if sub_idx == cover_sub || scratch.survivors.is_empty() {
                     continue;
                 }
+                let subatom = &self.plan.nodes()[node_idx].subatoms[sub_idx];
+                let sub_arity = subatom.vars.len();
                 let occ = usize::from(subatom.occ.0);
-                scratch.probe_key.clear();
-                for slot in &self.slot_map[node_idx][sub_idx] {
-                    scratch.probe_key.push(bindings.get(*slot));
-                }
-                let (cursor, level) = self.cursors[occ];
-                let hit = colts[occ].get(cursor, level, &scratch.probe_key);
-                counters.probe(node_idx, sub_idx, hit.is_some());
-                if let Some(child) = hit {
-                    scratch.journal.push((occ, cursor, level));
-                    self.cursors[occ] = (child, level + 1);
-                } else {
-                    alive = false;
-                    break;
-                }
-            }
+                let (s_cursor, s_level) = self.cursors[occ];
+                colts[occ].ensure_forced(s_cursor, s_level);
 
-            // Evaluate the node's residual comparisons on the slots.
-            if alive {
-                for (residual, lhs_slot, rhs_slot) in &self.residual_slots[node_idx] {
-                    let pass = residual
-                        .op
-                        .compare(&bindings.get(*lhs_slot), &bindings.get(*rhs_slot));
-                    counters.residual(node_idx, pass);
-                    if !pass {
-                        alive = false;
-                        break;
+                // Phase 1: gather every probe key and compute every hash —
+                // pure ALU, no bucket loads.
+                scratch.hashes.clear();
+                for (k, &e) in scratch.survivors.iter().enumerate() {
+                    let entry = usize::try_from(e).expect("batch fits usize");
+                    for i in 0..sub_arity {
+                        scratch.probe_keys[k * sub_arity + i] = value_of(
+                            &scratch.sources[sub_idx],
+                            &scratch.entry_keys,
+                            bindings,
+                            entry,
+                            i,
+                        );
                     }
+                    counters.probe_hash(node_idx, sub_idx);
+                    scratch.hashes.push(crate::exec::colt::hash_key(
+                        &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
+                    ));
                 }
+
+                // Phase 2: all bucket loads — independent chains the OoO
+                // window overlaps — with branchless survivor compaction.
+                let mut write = 0usize;
+                for k in 0..scratch.survivors.len() {
+                    let e = scratch.survivors[k];
+                    let entry = usize::try_from(e).expect("batch fits usize");
+                    let hit = colts[occ].get_prehashed(
+                        s_cursor,
+                        s_level,
+                        &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
+                        scratch.hashes[k],
+                    );
+                    counters.probe(node_idx, sub_idx, hit.is_some());
+                    scratch.sibling_children[sub_idx][entry] = hit.unwrap_or(Cursor::Row(0));
+                    scratch.survivors[write] = e;
+                    write += usize::from(hit.is_some());
+                }
+                scratch.survivors.truncate(write);
             }
 
-            if alive {
+            // Residuals run as batch survivor compaction after the probes.
+            for (r_idx, (lhs_src, rhs_src)) in scratch.residual_sources.iter().enumerate() {
+                let op = self.residual_slots[node_idx][r_idx].0.op;
+                let mut write = 0usize;
+                for k in 0..scratch.survivors.len() {
+                    let e = scratch.survivors[k];
+                    let entry = usize::try_from(e).expect("batch fits usize");
+                    let value = |src: &Source| match *src {
+                        Source::Batch(word) => scratch.entry_keys[entry * arity + word],
+                        Source::Slot(slot) => bindings.get(slot),
+                    };
+                    let pass = op.compare(&value(lhs_src), &value(rhs_src));
+                    counters.residual(node_idx, pass);
+                    scratch.survivors[write] = e;
+                    write += usize::from(pass);
+                }
+                scratch.survivors.truncate(write);
+            }
+
+            // Recurse per surviving element (paper §4.3: batch within a
+            // node, recurse per tuple) with the scalar journal discipline.
+            for k in 0..scratch.survivors.len() {
+                let entry = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
+                for (i, slot) in self.slot_map[node_idx][cover_sub].iter().enumerate() {
+                    bindings.set(*slot, scratch.entry_keys[entry * arity + i]);
+                }
+                scratch.journal.clear();
+                scratch.journal.push((cover_occ, cover_cursor, cover_level));
+                self.cursors[cover_occ] = (scratch.children[entry], cover_level + 1);
+                for (sub_idx, subatom) in self.plan.nodes()[node_idx].subatoms.iter().enumerate() {
+                    if sub_idx == cover_sub {
+                        continue;
+                    }
+                    let occ = usize::from(subatom.occ.0);
+                    let (cursor, level) = self.cursors[occ];
+                    scratch.journal.push((occ, cursor, level));
+                    self.cursors[occ] = (scratch.sibling_children[sub_idx][entry], level + 1);
+                }
+
                 flow = self.run_node(node_idx + 1, colts, bindings, sink, counters);
-            }
 
-            // Backtrack: restore every occurrence this entry advanced.
-            for (occ, cursor, level) in scratch.journal.drain(..).rev() {
-                self.cursors[occ] = (cursor, level);
-            }
+                for (occ, cursor, level) in scratch.journal.drain(..).rev() {
+                    self.cursors[occ] = (cursor, level);
+                }
 
-            if flow == Flow::SkipSuffix {
-                if self.plan.nodes()[node_idx].sink_relevant {
-                    // This node binds a projected variable: absorb the skip
-                    // and keep iterating — later entries change the output.
-                    flow = Flow::Continue;
-                } else {
-                    // The suffix from here binds nothing sink-relevant:
-                    // propagate the unwind (D2).
-                    counters.skip(node_idx);
-                    break;
+                if flow == Flow::SkipSuffix {
+                    if self.plan.nodes()[node_idx].sink_relevant {
+                        // This node binds a projected variable: absorb the
+                        // skip — later entries change the output.
+                        flow = Flow::Continue;
+                    } else {
+                        // The suffix from here binds nothing sink-relevant:
+                        // propagate the unwind (D2).
+                        counters.skip(node_idx);
+                        break 'outer;
+                    }
                 }
             }
         }
@@ -402,6 +559,7 @@ mod tests {
         fn cover_choice(&mut self, node: usize, subatom: usize, exact: bool) {
             self.cover_choices.push((node, subatom, exact));
         }
+        fn probe_hash(&mut self, _: usize, _: usize) {}
         fn probe(&mut self, _: usize, _: usize, _: bool) {}
         fn residual(&mut self, _: usize, _: bool) {}
         fn emit(&mut self) {}
@@ -876,5 +1034,121 @@ mod tests {
         executor.execute(&mut colts, &mut bindings, &mut second, &mut NoopCounters);
         assert_eq!(first.rows, second.rows);
         assert!(!first.rows.is_empty());
+    }
+    // ---------- PRD 21: vectorized execution ----------
+
+    /// Runs a plan at a given batch size.
+    fn run_batched(plan: &ValidatedPlan, views: &[Arc<View>], batch: usize) -> BTreeSet<Vec<u64>> {
+        let mut colts = colts_for(plan, views);
+        let mut bindings = Bindings::new(plan.slots().len());
+        let mut sink = CollectSink::default();
+        let mut executor = Executor::with_batch_size(plan, batch);
+        executor.execute(&mut colts, &mut bindings, &mut sink, &mut NoopCounters);
+        sink.rows
+    }
+
+    #[test]
+    fn results_are_identical_across_batch_sizes() {
+        // Skew, empty relations, partial final batches, and batch > row
+        // count are all covered by these fixtures x sizes.
+        let dir = TempDir::new("run-batch-equality");
+        let schema = schema(3);
+        let r: Vec<(u64, u64)> = (0..150).map(|i| (i % 7, i % 11)).collect();
+        let s: Vec<(u64, u64)> = (0..90).map(|i| (i % 11, i % 5)).collect();
+        let t: Vec<(u64, u64)> = (0..40).map(|i| (i % 5, i)).collect();
+        let views = views_of(&dir, &schema, &[r, s, t]);
+        let normalized = NormalizedQuery {
+            occurrences: vec![
+                occurrence(0, 0, &[(0, 0), (1, 1)]),
+                occurrence(1, 1, &[(0, 1), (1, 2)]),
+                occurrence(2, 2, &[(0, 2), (1, 3)]),
+            ],
+            residuals: vec![PlacedComparison {
+                op: CmpOp::Ne,
+                lhs: VarId(0),
+                rhs: VarId(3),
+            }],
+        };
+        let plan = planned(&normalized, &schema, &[0, 1, 2]);
+        let reference = run_batched(&plan, &views, 1);
+        assert!(!reference.is_empty());
+        for batch in [2usize, 64, 128, 1024] {
+            assert_eq!(
+                run_batched(&plan, &views, batch),
+                reference,
+                "batch size {batch} must match the scalar degenerate case"
+            );
+        }
+
+        // An empty relation, every batch size.
+        let dir2 = TempDir::new("run-batch-empty");
+        let views = views_of(&dir2, &schema, &[vec![(1, 2)], vec![], vec![(0, 0)]]);
+        for batch in [1usize, 2, 64, 128, 1024] {
+            assert!(run_batched(&plan, &views, batch).is_empty());
+        }
+    }
+
+    /// Counters recording the phase-1/phase-2 event order.
+    #[derive(Default)]
+    struct PhaseOrderCounters {
+        events: Vec<(&'static str, usize, usize)>,
+    }
+
+    impl Counters for PhaseOrderCounters {
+        fn node_entry(&mut self, _: usize) {}
+        fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+        fn probe_hash(&mut self, node: usize, subatom: usize) {
+            self.events.push(("hash", node, subatom));
+        }
+        fn probe(&mut self, node: usize, subatom: usize, _: bool) {
+            self.events.push(("probe", node, subatom));
+        }
+        fn residual(&mut self, _: usize, _: bool) {}
+        fn emit(&mut self) {}
+        fn skip(&mut self, _: usize) {}
+    }
+
+    #[test]
+    fn phase_one_hashes_the_whole_batch_before_any_phase_two_probe() {
+        let dir = TempDir::new("run-two-phase");
+        let schema = schema(2);
+        let r: Vec<(u64, u64)> = (0..10).map(|i| (i, i)).collect();
+        let s: Vec<(u64, u64)> = (0..10).map(|i| (i, i * 2)).collect();
+        let views = views_of(&dir, &schema, &[r, s]);
+        let normalized = NormalizedQuery {
+            occurrences: vec![
+                occurrence(0, 0, &[(0, 0), (1, 1)]),
+                occurrence(1, 1, &[(0, 0), (1, 2)]),
+            ],
+            residuals: vec![],
+        };
+        let plan = planned(&normalized, &schema, &[0, 1]);
+        let mut colts = colts_for(&plan, &views);
+        let mut bindings = Bindings::new(plan.slots().len());
+        let mut sink = CollectSink::default();
+        let mut counters = PhaseOrderCounters::default();
+        Executor::with_batch_size(&plan, 128).execute(
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut counters,
+        );
+
+        // All 10 root entries fit one batch: every hash of node 0's sibling
+        // pass must precede its first probe.
+        let first_probe = counters
+            .events
+            .iter()
+            .position(|(kind, node, _)| *kind == "probe" && *node == 0)
+            .expect("probes happened");
+        let hashes_before = counters.events[..first_probe]
+            .iter()
+            .filter(|(kind, node, _)| *kind == "hash" && *node == 0)
+            .count();
+        assert_eq!(
+            hashes_before, 10,
+            "the entire batch is hashed before the first bucket load"
+        );
+        assert!(!sink.rows.is_empty());
     }
 }
