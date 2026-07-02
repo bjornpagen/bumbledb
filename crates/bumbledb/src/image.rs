@@ -6,6 +6,7 @@
 //! `40-storage.md`). Immutable once built; `Arc` is the sharing unit.
 
 pub mod cache;
+pub mod view;
 
 use std::sync::Arc;
 
