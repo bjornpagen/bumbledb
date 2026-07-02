@@ -30,6 +30,9 @@ pub enum CorruptionError {
         expected: usize,
         actual: usize,
     },
+    /// The `F` scan yielded a different number of rows than the stored `S`
+    /// row count — the derived counters have desynced from the facts.
+    RowCountMismatch { relation: RelationId, stored: u64 },
 }
 
 /// A schema declaration error (PRD 02's validation boundary). Every illegal
