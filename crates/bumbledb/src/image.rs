@@ -5,6 +5,8 @@
 //! to paper-faithful execution (`docs/architecture/30-execution.md` D1,
 //! `40-storage.md`). Immutable once built; `Arc` is the sharing unit.
 
+pub mod cache;
+
 use std::sync::Arc;
 
 use crate::encoding::{decode_bool, decode_enum, TypeDesc};

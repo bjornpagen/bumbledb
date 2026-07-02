@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use heed::types::Bytes;
-use heed::{AnyTls, Database, EnvOpenOptions, RoTxn, RwTxn, WithTls};
+use heed::{AnyTls, Database, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
 use crate::error::{CorruptionError, Error, Result};
 use crate::schema::fingerprint::{fingerprint, SchemaFingerprint};
@@ -28,7 +28,7 @@ const META_DICT_NEXT_ID: &[u8] = &[3];
 /// Durability is LMDB defaults — fsync per commit; `NOSYNC`/`WRITEMAP`/
 /// `MAPASYNC` are not expressible through this type.
 pub struct Environment {
-    env: heed::Env<WithTls>,
+    env: heed::Env<WithoutTls>,
     meta: Database<Bytes, Bytes>,
     data: Database<Bytes, Bytes>,
     dict: Database<Bytes, Bytes>,
@@ -46,16 +46,16 @@ impl std::fmt::Debug for Environment {
 /// (PRD 04 amendment): `heed 0.22` marks environment opening unsafe because
 /// opening one environment path twice in a process is LMDB UB.
 #[allow(unsafe_code)]
-fn open_env(path: &Path) -> Result<heed::Env<WithTls>> {
+fn open_env(path: &Path) -> Result<heed::Env<WithoutTls>> {
+    // MDB_NOTLS: reader slots belong to transaction objects, not threads —
+    // a thread may pin an old snapshot while opening new ones (long-lived
+    // readers across commits are a designed-for pattern, 40-storage).
+    let mut options = EnvOpenOptions::new().read_txn_without_tls();
+    options.map_size(MAP_SIZE).max_dbs(3);
     // SAFETY: bumbledb opens each environment through exactly this function,
     // and heed itself refuses (Error::EnvAlreadyOpened) to open a path that
     // is already open in this process, upholding LMDB's single-open rule.
-    let env = unsafe {
-        EnvOpenOptions::new()
-            .map_size(MAP_SIZE)
-            .max_dbs(3)
-            .open(path)?
-    };
+    let env = unsafe { options.open(path)? };
     Ok(env)
 }
 
@@ -204,7 +204,7 @@ fn read_u64(meta: &Database<Bytes, Bytes>, rtxn: &RoTxn<'_, AnyTls>, key: &[u8])
 /// A read snapshot over the environment.
 pub struct ReadTxn<'env> {
     env: &'env Environment,
-    txn: RoTxn<'env, WithTls>,
+    txn: RoTxn<'env, WithoutTls>,
 }
 
 impl ReadTxn<'_> {
