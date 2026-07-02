@@ -25,7 +25,8 @@ M | relation_id | fact_hash         -> row_id         membership        (reader:
 U | relation_id | constraint | key  -> row_id         unique guards     (reader: constraint checks, guard-probe lookups)
 R | target_rel  | constraint | key | source_rel | source_row -> ()      (reader: Restrict checks on delete)
 Q | relation_id | field_id          -> next_u64       serial sequences  (reader: alloc)
-S | relation_id | "rows"            -> u64            row count         (reader: the planner; S contains nothing else)
+S | relation_id | stat             -> u64            counters: stat 0 = row count (reader: the planner);
+                                                     stat 1 = row_id high-water (reader: commit's row-id assignment; noted per PRD 06)
 ```
 
 Plus `_meta` (format version, schema fingerprint, storage tx id) and `_dict` (forward

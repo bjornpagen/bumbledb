@@ -30,9 +30,8 @@ const META_DICT_NEXT_ID: &[u8] = &[3];
 pub struct Environment {
     env: heed::Env<WithTls>,
     meta: Database<Bytes, Bytes>,
+    data: Database<Bytes, Bytes>,
     dict: Database<Bytes, Bytes>,
-    // The `_data` handle joins this struct with its readers (PRDs 06-07);
-    // a field with no reader is dead code, not future-proofing.
 }
 
 impl std::fmt::Debug for Environment {
@@ -72,7 +71,7 @@ impl Environment {
         let env = open_env(path)?;
         let mut wtxn = env.write_txn()?;
         let meta = env.create_database(&mut wtxn, Some("_meta"))?;
-        let _data: Database<Bytes, Bytes> = env.create_database(&mut wtxn, Some("_data"))?;
+        let data = env.create_database(&mut wtxn, Some("_data"))?;
         let dict = env.create_database(&mut wtxn, Some("_dict"))?;
         meta.put(
             &mut wtxn,
@@ -87,7 +86,12 @@ impl Environment {
         meta.put(&mut wtxn, META_TX_ID, 0u64.to_le_bytes().as_slice())?;
         meta.put(&mut wtxn, META_DICT_NEXT_ID, 0u64.to_le_bytes().as_slice())?;
         wtxn.commit()?;
-        Ok(Self { env, meta, dict })
+        Ok(Self {
+            env,
+            meta,
+            data,
+            dict,
+        })
     }
 
     /// Opens an existing environment, verifying the storage format version
@@ -105,7 +109,7 @@ impl Environment {
         let meta: Database<Bytes, Bytes> = env
             .open_database(&rtxn, Some("_meta"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
-        let _data: Database<Bytes, Bytes> = env
+        let data: Database<Bytes, Bytes> = env
             .open_database(&rtxn, Some("_data"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
         let dict: Database<Bytes, Bytes> = env
@@ -131,7 +135,12 @@ impl Environment {
             });
         }
         drop(rtxn);
-        Ok(Self { env, meta, dict })
+        Ok(Self {
+            env,
+            meta,
+            data,
+            dict,
+        })
     }
 
     /// Begins a read snapshot.
@@ -163,6 +172,12 @@ impl Environment {
     /// The `_dict` database handle (reader: `storage::dict`).
     pub(crate) fn dict(&self) -> Database<Bytes, Bytes> {
         self.dict
+    }
+
+    /// The `_data` database handle (readers: `storage::delta` probes,
+    /// `storage::commit`).
+    pub(crate) fn data(&self) -> Database<Bytes, Bytes> {
+        self.data
     }
 }
 

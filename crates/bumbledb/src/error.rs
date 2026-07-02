@@ -127,6 +127,14 @@ pub enum Error {
     // --- Declaration / validation errors ---
     Schema(SchemaError),
 
+    // --- Write errors ---
+    /// A serial sequence reached `u64::MAX`; the generator can issue no
+    /// further values for this field.
+    SerialExhausted {
+        relation: RelationId,
+        field: FieldId,
+    },
+
     // --- Runtime errors ---
     /// Hard corruption error, never a skip.
     Corruption(CorruptionError),

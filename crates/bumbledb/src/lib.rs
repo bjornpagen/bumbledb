@@ -11,6 +11,7 @@
 compile_error!("bumbledb targets 64-bit platforms only (docs/architecture/00-product.md)");
 
 pub mod api;
+pub mod arena;
 pub mod encoding;
 pub mod error;
 pub mod exec;
