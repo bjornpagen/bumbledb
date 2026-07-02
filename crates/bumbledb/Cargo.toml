@@ -1,0 +1,12 @@
+[package]
+name = "bumbledb"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+blake3 = "1"
+heed = "0.22"
+
+[lints]
+workspace = true
