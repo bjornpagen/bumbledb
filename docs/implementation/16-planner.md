@@ -23,8 +23,11 @@ The join-order planner: real statistics in, one left-deep atom order out.
   est(P) × |R| (pessimism). Join vars J = shared vars between prefix and R. Unique
   coverage check: J ⊇ some unique constraint's field-set of R (schema lookup —
   translate constraint FieldIds to VarIds via the occurrence binding).
-- Exhaustive left-deep DP over subsets (bitmask u32 — ≤32 occurrences hard cap,
-  validation-rejected above 32 with a typed error; the doc says ≤~12 in practice):
+- Exhaustive left-deep DP over subsets (bitmask u32 — hard cap **20** occurrences,
+  rejected above with a typed error; amended 2026-07-02: the originally-written 32
+  is memory-infeasible for a 2ⁿ DP table (~170 GB of state at n=32) while 2²⁰ is
+  ~24 MB and instant, and the doc's own envelope is ≤~12 atoms. Raise only if a
+  real >20-atom query ever appears):
   `best[mask] = min over last ∈ mask of best[mask\last] extended by last`, cost = sum
   of intermediate estimates; deterministic tie-break by occ_id sequence. Disconnected
   joins (no shared vars) are legal — pessimism prices them.

@@ -203,6 +203,15 @@ pub enum ValidationError {
     AggregateOverGroupKey {
         find: usize,
     },
+    /// Planner cap: the exhaustive left-deep DP accepts at most
+    /// `plan::planner::MAX_OCCURRENCES` atom occurrences.
+    TooManyAtoms {
+        count: usize,
+    },
+    /// Planner cap: at most 128 distinct variables (dense bitset width).
+    TooManyVariables {
+        count: usize,
+    },
 }
 
 /// The one workspace error type, categorized per `docs/architecture/60-api.md`.
