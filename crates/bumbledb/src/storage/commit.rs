@@ -1,0 +1,662 @@
+//! Commit application (PRD 07): phases 1-2 of the canonical commit order —
+//! all deletes, then all inserts — maintaining F/M/U/R and detecting unique
+//! violations (`docs/architecture/40-storage.md`).
+//!
+//! Because every delete lands before any insert and the insert set is
+//! deduplicated by construction, a `U` conflict during inserts is a genuine
+//! unique violation; user operation order inside the transaction is
+//! semantically irrelevant. PRD 08 extends this into the full commit
+//! (FK validation, counters, tx id, LMDB commit).
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::encoding::field_bytes;
+use crate::error::{CorruptionError, Error, Result};
+use crate::schema::{ConstraintDescriptor, ConstraintId, Relation, RelationId, Schema};
+use crate::storage::delta::{Disposition, WriteDelta};
+use crate::storage::env::{Environment, WriteTxn};
+use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
+
+/// One forward-FK probe PRD 08 must run: collected at insert time so
+/// validation never re-derives key slices.
+#[derive(Debug)]
+pub struct FkProbe {
+    /// The referencing side, for the violation error.
+    pub source_relation: RelationId,
+    pub source_constraint: ConstraintId,
+    /// The `U` key components to probe.
+    pub target_relation: RelationId,
+    pub target_constraint: ConstraintId,
+    pub guard: Vec<u8>,
+    /// The offending fact, for the violation error.
+    pub fact_bytes: Vec<u8>,
+}
+
+/// The applied-but-uncommitted state after phases 1-2, carrying the open
+/// LMDB write transaction plus the bookkeeping PRD 08 consumes.
+pub struct Applied<'env, 's> {
+    /// The open, uncommitted LMDB write transaction.
+    pub txn: WriteTxn<'env>,
+    /// The source delta (its counters flush in PRD 08's phase 4).
+    pub delta: WriteDelta<'s>,
+    /// Whether any insert or delete actually applied (drives PRD 08's
+    /// tx-id-advances-iff-state-changed rule).
+    pub changed: bool,
+    /// Per-relation next row id after this apply (flushed to `S` by PRD 08).
+    pub row_id_next: BTreeMap<RelationId, u64>,
+    /// Unique keys deleted in phase 1, restricted to FK-targeted
+    /// constraints — the Restrict scan set.
+    pub deleted_guards: BTreeSet<(RelationId, ConstraintId, Vec<u8>)>,
+    /// Unique keys established in phase 2 for FK-targeted constraints —
+    /// subtracted from `deleted_guards` before Restrict scanning.
+    pub inserted_guards: BTreeSet<(RelationId, ConstraintId, Vec<u8>)>,
+    /// Forward-FK probes for every inserted fact.
+    pub fk_probes: Vec<FkProbe>,
+}
+
+/// Applies the delta to LMDB in canonical order: phase 1 all deletes, then
+/// phase 2 all inserts. Opens the LMDB write transaction here — nothing
+/// touched a data page before this call (PRD 06's lock-window rule).
+///
+/// # Errors
+///
+/// `UniqueViolation` when two live facts claim one unique key; `Lmdb` on
+/// storage failure; `Corruption` on malformed base state. On any error the
+/// transaction is dropped — nothing persists.
+///
+/// # Panics
+///
+/// Only on programmer-invariant violations (validated-schema id widths).
+pub fn apply<'env, 's>(delta: WriteDelta<'s>, env: &'env Environment) -> Result<Applied<'env, 's>> {
+    let txn = env.write_txn()?;
+    let mut applier = Applier {
+        txn,
+        data: env.data(),
+        changed: false,
+        row_id_next: BTreeMap::new(),
+        deleted_guards: BTreeSet::new(),
+        inserted_guards: BTreeSet::new(),
+        fk_probes: Vec::new(),
+        key: [0; MAX_KEY],
+        guard: Vec::new(),
+    };
+
+    // Phase 1: all deletes, then phase 2: all inserts — the canonical order
+    // that makes user operation order semantically irrelevant.
+    for (rel, fact_bytes, disposition) in delta.entries() {
+        if disposition == Disposition::Delete {
+            applier.delete_fact(delta.schema(), rel, fact_bytes)?;
+        }
+    }
+    for (rel, fact_bytes, disposition) in delta.entries() {
+        if disposition == Disposition::Insert {
+            applier.insert_fact(delta.schema(), rel, fact_bytes)?;
+        }
+    }
+
+    let Applier {
+        txn,
+        changed,
+        row_id_next,
+        deleted_guards,
+        inserted_guards,
+        fk_probes,
+        ..
+    } = applier;
+    Ok(Applied {
+        txn,
+        delta,
+        changed,
+        row_id_next,
+        deleted_guards,
+        inserted_guards,
+        fk_probes,
+    })
+}
+
+/// Working state threaded through phases 1-2.
+struct Applier<'env> {
+    txn: WriteTxn<'env>,
+    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+    changed: bool,
+    row_id_next: BTreeMap<RelationId, u64>,
+    deleted_guards: BTreeSet<(RelationId, ConstraintId, Vec<u8>)>,
+    inserted_guards: BTreeSet<(RelationId, ConstraintId, Vec<u8>)>,
+    fk_probes: Vec<FkProbe>,
+    key: KeyBuf,
+    guard: Vec<u8>,
+}
+
+impl Applier<'_> {
+    /// Phase-1 step: removes one fact's F/M/U/R entries if it exists in
+    /// base state (else the delete is a no-op by construction).
+    fn delete_fact(&mut self, schema: &Schema, rel: RelationId, fact_bytes: &[u8]) -> Result<()> {
+        let relation = schema.relation(rel);
+        let hash = crate::encoding::fact_hash(fact_bytes);
+        let m_len = keys::membership_key(&mut self.key, rel, &hash);
+        let Some(row_id_bytes) = self.data.get(self.txn.raw(), &self.key[..m_len])? else {
+            return Ok(());
+        };
+        let row_id = decode_row_id(row_id_bytes)?;
+        self.data.delete(self.txn.raw_mut(), &self.key[..m_len])?;
+        let f_len = keys::fact_key(&mut self.key, rel, row_id);
+        self.data.delete(self.txn.raw_mut(), &self.key[..f_len])?;
+
+        // Guard keys are re-derived by slicing constrained fields out of
+        // fact_bytes — never a scan.
+        for &cid in relation.unique_constraints() {
+            derive_guard(
+                relation,
+                relation.constraint(cid).fields(),
+                fact_bytes,
+                &mut self.guard,
+            );
+            let u_len = keys::unique_key(&mut self.key, rel, cid, &self.guard);
+            self.data.delete(self.txn.raw_mut(), &self.key[..u_len])?;
+            if relation.fk_targeted().contains(&cid) {
+                self.deleted_guards.insert((rel, cid, self.guard.clone()));
+            }
+        }
+        for constraint in relation.constraints() {
+            let ConstraintDescriptor::ForeignKey {
+                target_relation,
+                target_constraint,
+                fields,
+                ..
+            } = constraint
+            else {
+                continue;
+            };
+            derive_guard(relation, fields, fact_bytes, &mut self.guard);
+            let r_len = keys::restrict_key(
+                &mut self.key,
+                *target_relation,
+                *target_constraint,
+                &self.guard,
+                rel,
+                row_id,
+            );
+            self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;
+        }
+        self.changed = true;
+        Ok(())
+    }
+
+    /// Phase-2 step: lands one fact's F/M/U/R entries if it is not in base
+    /// state (else the insert is a no-op).
+    fn insert_fact(&mut self, schema: &Schema, rel: RelationId, fact_bytes: &[u8]) -> Result<()> {
+        let relation = schema.relation(rel);
+        let hash = crate::encoding::fact_hash(fact_bytes);
+        let m_len = keys::membership_key(&mut self.key, rel, &hash);
+        if self.data.get(self.txn.raw(), &self.key[..m_len])?.is_some() {
+            return Ok(());
+        }
+        let row_id = self.next_row_id(rel)?;
+        self.data.put(
+            self.txn.raw_mut(),
+            &self.key[..m_len],
+            row_id.to_le_bytes().as_slice(),
+        )?;
+        let f_len = keys::fact_key(&mut self.key, rel, row_id);
+        self.data
+            .put(self.txn.raw_mut(), &self.key[..f_len], fact_bytes)?;
+
+        for &cid in relation.unique_constraints() {
+            derive_guard(
+                relation,
+                relation.constraint(cid).fields(),
+                fact_bytes,
+                &mut self.guard,
+            );
+            let u_len = keys::unique_key(&mut self.key, rel, cid, &self.guard);
+            // Every delete already landed and the insert set is
+            // deduplicated, so an occupied guard here is a genuine
+            // violation of the commit-time invariant.
+            if self.data.get(self.txn.raw(), &self.key[..u_len])?.is_some() {
+                return Err(Error::UniqueViolation {
+                    relation: rel,
+                    constraint: cid,
+                    fact_bytes: fact_bytes.into(),
+                });
+            }
+            self.data.put(
+                self.txn.raw_mut(),
+                &self.key[..u_len],
+                row_id.to_le_bytes().as_slice(),
+            )?;
+            if relation.fk_targeted().contains(&cid) {
+                self.inserted_guards.insert((rel, cid, self.guard.clone()));
+            }
+        }
+        for (con_idx, constraint) in relation.constraints().iter().enumerate() {
+            let ConstraintDescriptor::ForeignKey {
+                target_relation,
+                target_constraint,
+                fields,
+                ..
+            } = constraint
+            else {
+                continue;
+            };
+            derive_guard(relation, fields, fact_bytes, &mut self.guard);
+            let r_len = keys::restrict_key(
+                &mut self.key,
+                *target_relation,
+                *target_constraint,
+                &self.guard,
+                rel,
+                row_id,
+            );
+            // R puts are unconditional; target validation is PRD 08's.
+            self.data
+                .put(self.txn.raw_mut(), &self.key[..r_len], [].as_slice())?;
+            self.fk_probes.push(FkProbe {
+                source_relation: rel,
+                source_constraint: ConstraintId(
+                    u16::try_from(con_idx).expect("validated schema: constraint ids fit u16"),
+                ),
+                target_relation: *target_relation,
+                target_constraint: *target_constraint,
+                guard: self.guard.clone(),
+                fact_bytes: fact_bytes.to_vec(),
+            });
+        }
+        self.changed = true;
+        Ok(())
+    }
+
+    /// Assigns the next row id for `rel`, lazily initializing from the
+    /// stored `S` high-water (the value is the next id to assign;
+    /// missing = 0).
+    fn next_row_id(&mut self, rel: RelationId) -> Result<u64> {
+        let next = match self.row_id_next.entry(rel) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                // Own scratch: `self.key` still holds the caller's pending
+                // membership key.
+                let mut key: KeyBuf = [0; MAX_KEY];
+                let len = keys::stat_key(&mut key, rel, StatKind::RowIdHighWater);
+                let stored = match self.data.get(self.txn.raw(), &key[..len])? {
+                    Some(bytes) => u64::from_le_bytes(
+                        bytes
+                            .try_into()
+                            .map_err(|_| Error::Corruption(CorruptionError::MetaMissing))?,
+                    ),
+                    None => 0,
+                };
+                entry.insert(stored)
+            }
+        };
+        let row_id = *next;
+        *next += 1;
+        Ok(row_id)
+    }
+}
+
+/// Concatenates the canonical encodings of the given constraint fields, in
+/// field order, into `out` — the guard key body for both `U` and `R` keys.
+fn derive_guard(
+    relation: &Relation,
+    fields: &[crate::schema::FieldId],
+    fact_bytes: &[u8],
+    out: &mut Vec<u8>,
+) {
+    out.clear();
+    for &field in fields {
+        out.extend_from_slice(field_bytes(
+            fact_bytes,
+            relation.layout(),
+            usize::from(field.0),
+        ));
+    }
+}
+
+fn decode_row_id(bytes: &[u8]) -> Result<u64> {
+    Ok(u64::from_le_bytes(bytes.try_into().map_err(|_| {
+        Error::Corruption(CorruptionError::MetaMissing)
+    })?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::encoding::{encode_fact, encode_u64, ValueRef};
+    use crate::schema::{
+        FieldDescriptor, FieldId, Generation, RelationDescriptor, Schema, SchemaDescriptor,
+        ValueType,
+    };
+    use crate::testutil::TempDir;
+
+    /// Target(id serial) + Source(id serial, t u64 fk -> Target.id) +
+    /// Keyed(x u64 unique, y i64).
+    fn schema() -> Schema {
+        SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    name: "Target".into(),
+                    fields: vec![FieldDescriptor {
+                        name: "id".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::Serial,
+                    }],
+                    constraints: vec![],
+                },
+                RelationDescriptor {
+                    name: "Source".into(),
+                    fields: vec![
+                        FieldDescriptor {
+                            name: "id".into(),
+                            value_type: ValueType::U64,
+                            generation: Generation::Serial,
+                        },
+                        FieldDescriptor {
+                            name: "t".into(),
+                            value_type: ValueType::U64,
+                            generation: Generation::None,
+                        },
+                    ],
+                    constraints: vec![ConstraintDescriptor::ForeignKey {
+                        name: "source_target".into(),
+                        fields: Box::new([FieldId(1)]),
+                        target_relation: RelationId(0),
+                        target_constraint: ConstraintId(0),
+                    }],
+                },
+                RelationDescriptor {
+                    name: "Keyed".into(),
+                    fields: vec![
+                        FieldDescriptor {
+                            name: "x".into(),
+                            value_type: ValueType::U64,
+                            generation: Generation::None,
+                        },
+                        FieldDescriptor {
+                            name: "y".into(),
+                            value_type: ValueType::I64,
+                            generation: Generation::None,
+                        },
+                    ],
+                    constraints: vec![ConstraintDescriptor::Unique {
+                        name: "x".into(),
+                        fields: Box::new([FieldId(0)]),
+                    }],
+                },
+            ],
+        }
+        .validate()
+        .expect("valid fixture")
+    }
+
+    const TARGET: RelationId = RelationId(0);
+    const SOURCE: RelationId = RelationId(1);
+    const KEYED: RelationId = RelationId(2);
+    const C0: ConstraintId = ConstraintId(0);
+
+    fn target_fact(schema: &Schema, id: u64) -> Vec<u8> {
+        let mut b = Vec::new();
+        encode_fact(
+            &[ValueRef::U64(id)],
+            schema.relation(TARGET).layout(),
+            &mut b,
+        );
+        b
+    }
+
+    fn source_fact(schema: &Schema, id: u64, t: u64) -> Vec<u8> {
+        let mut b = Vec::new();
+        encode_fact(
+            &[ValueRef::U64(id), ValueRef::U64(t)],
+            schema.relation(SOURCE).layout(),
+            &mut b,
+        );
+        b
+    }
+
+    fn keyed_fact(schema: &Schema, x: u64, y: i64) -> Vec<u8> {
+        let mut b = Vec::new();
+        encode_fact(
+            &[ValueRef::U64(x), ValueRef::I64(y)],
+            schema.relation(KEYED).layout(),
+            &mut b,
+        );
+        b
+    }
+
+    fn all_data_keys(txn: &WriteTxn<'_>, env: &Environment) -> BTreeSet<Vec<u8>> {
+        env.data()
+            .iter(txn.raw())
+            .expect("iter")
+            .map(|kv| kv.expect("kv").0.to_vec())
+            .collect()
+    }
+
+    fn committed_data(env: &Environment) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let rtxn = env.read_txn().expect("txn");
+        env.data()
+            .iter(rtxn.raw())
+            .expect("iter")
+            .map(|kv| {
+                let (k, v) = kv.expect("kv");
+                (k.to_vec(), v.to_vec())
+            })
+            .collect()
+    }
+
+    fn key(write: impl FnOnce(&mut KeyBuf) -> usize) -> Vec<u8> {
+        let mut buf: KeyBuf = [0; MAX_KEY];
+        let len = write(&mut buf);
+        buf[..len].to_vec()
+    }
+
+    #[test]
+    fn insert_lands_exactly_the_expected_key_set() {
+        let dir = TempDir::new("commit-insert-keys");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let t = target_fact(&schema, 5);
+        let s = source_fact(&schema, 9, 5);
+        {
+            let view = env.read_txn().expect("txn");
+            let mut delta = WriteDelta::new(&schema);
+            delta.insert(&view, TARGET, &t).expect("insert");
+            delta.insert(&view, SOURCE, &s).expect("insert");
+            drop(view);
+            let applied = apply(delta, &env).expect("apply");
+
+            let t_hash = crate::encoding::fact_hash(&t);
+            let s_hash = crate::encoding::fact_hash(&s);
+            let expected: BTreeSet<Vec<u8>> = [
+                key(|b| keys::fact_key(b, TARGET, 0)),
+                key(|b| keys::membership_key(b, TARGET, &t_hash)),
+                key(|b| keys::unique_key(b, TARGET, C0, &encode_u64(5))),
+                key(|b| keys::fact_key(b, SOURCE, 0)),
+                key(|b| keys::membership_key(b, SOURCE, &s_hash)),
+                key(|b| keys::unique_key(b, SOURCE, C0, &encode_u64(9))),
+                key(|b| keys::restrict_key(b, TARGET, C0, &encode_u64(5), SOURCE, 0)),
+            ]
+            .into_iter()
+            .collect();
+            assert_eq!(all_data_keys(&applied.txn, &env), expected);
+
+            // Bookkeeping: one forward probe for the FK, no deleted guards,
+            // the inserted target guard recorded for the FK-targeted
+            // constraint.
+            assert_eq!(applied.fk_probes.len(), 1);
+            assert_eq!(applied.fk_probes[0].guard, encode_u64(5));
+            assert!(applied.deleted_guards.is_empty());
+            assert!(applied
+                .inserted_guards
+                .contains(&(TARGET, C0, encode_u64(5).to_vec())));
+            assert!(applied.changed);
+            // Abort: drop the txn without committing.
+        }
+        assert!(committed_data(&env).is_empty());
+    }
+
+    #[test]
+    fn delete_removes_exactly_its_entries() {
+        let dir = TempDir::new("commit-delete-keys");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let t5 = target_fact(&schema, 5);
+        let t6 = target_fact(&schema, 6);
+        let s = source_fact(&schema, 9, 5);
+        // Commit a base state: two targets, one source referencing t5.
+        {
+            let view = env.read_txn().expect("txn");
+            let mut delta = WriteDelta::new(&schema);
+            delta.insert(&view, TARGET, &t5).expect("insert");
+            delta.insert(&view, TARGET, &t6).expect("insert");
+            delta.insert(&view, SOURCE, &s).expect("insert");
+            drop(view);
+            apply(delta, &env)
+                .expect("apply")
+                .txn
+                .commit()
+                .expect("commit");
+        }
+        let before = committed_data(&env);
+
+        // Delete the source fact: exactly its F/M/U/R entries disappear.
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.delete(&view, SOURCE, &s).expect("delete");
+        drop(view);
+        let applied = apply(delta, &env).expect("apply");
+
+        let s_hash = crate::encoding::fact_hash(&s);
+        let removed: BTreeSet<Vec<u8>> = [
+            key(|b| keys::fact_key(b, SOURCE, 0)),
+            key(|b| keys::membership_key(b, SOURCE, &s_hash)),
+            key(|b| keys::unique_key(b, SOURCE, C0, &encode_u64(9))),
+            key(|b| keys::restrict_key(b, TARGET, C0, &encode_u64(5), SOURCE, 0)),
+        ]
+        .into_iter()
+        .collect();
+        let expected: BTreeSet<Vec<u8>> = before
+            .iter()
+            .map(|(k, _)| k.clone())
+            .filter(|k| !removed.contains(k))
+            .collect();
+        assert_eq!(all_data_keys(&applied.txn, &env), expected);
+        // Source's own serial unique is not FK-targeted; nothing to scan.
+        assert!(applied.deleted_guards.is_empty());
+    }
+
+    #[test]
+    fn deleting_an_fk_targeted_fact_records_its_guard() {
+        let dir = TempDir::new("commit-deleted-guard");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let t5 = target_fact(&schema, 5);
+        {
+            let view = env.read_txn().expect("txn");
+            let mut delta = WriteDelta::new(&schema);
+            delta.insert(&view, TARGET, &t5).expect("insert");
+            drop(view);
+            apply(delta, &env)
+                .expect("apply")
+                .txn
+                .commit()
+                .expect("commit");
+        }
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.delete(&view, TARGET, &t5).expect("delete");
+        drop(view);
+        let applied = apply(delta, &env).expect("apply");
+        assert!(applied
+            .deleted_guards
+            .contains(&(TARGET, C0, encode_u64(5).to_vec())));
+    }
+
+    #[test]
+    fn delete_plus_insert_of_same_unique_key_succeeds_in_either_user_order() {
+        let dir = TempDir::new("commit-swap-order");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let old = keyed_fact(&schema, 1, 10);
+        {
+            let view = env.read_txn().expect("txn");
+            let mut delta = WriteDelta::new(&schema);
+            delta.insert(&view, KEYED, &old).expect("insert");
+            drop(view);
+            apply(delta, &env)
+                .expect("apply")
+                .txn
+                .commit()
+                .expect("commit");
+        }
+        // The "wrong" user order: insert the replacement before deleting the
+        // old fact. Commit-time semantics make order irrelevant.
+        let new = keyed_fact(&schema, 1, 20);
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, KEYED, &new).expect("insert");
+        delta.delete(&view, KEYED, &old).expect("delete");
+        drop(view);
+        let applied = apply(delta, &env).expect("apply");
+        // The guard key survives, now pointing at the new row.
+        let u = key(|b| keys::unique_key(b, KEYED, C0, &encode_u64(1)));
+        assert!(all_data_keys(&applied.txn, &env).contains(&u));
+    }
+
+    #[test]
+    fn two_facts_claiming_one_unique_key_is_a_violation_and_base_stays_intact() {
+        let dir = TempDir::new("commit-unique-violation");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let before = committed_data(&env);
+
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        let a = keyed_fact(&schema, 1, 10);
+        let b = keyed_fact(&schema, 1, 20);
+        delta.insert(&view, KEYED, &a).expect("insert");
+        delta.insert(&view, KEYED, &b).expect("insert");
+        drop(view);
+        let Err(err) = apply(delta, &env) else {
+            panic!("expected a unique violation");
+        };
+        assert!(
+            matches!(
+                err,
+                Error::UniqueViolation {
+                    relation: KEYED,
+                    constraint: C0,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        assert_eq!(committed_data(&env), before);
+    }
+
+    #[test]
+    fn rederived_guard_keys_match_independent_computation() {
+        let dir = TempDir::new("commit-guard-derivation");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let s = source_fact(&schema, 42, 7);
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, SOURCE, &s).expect("insert");
+        drop(view);
+        let applied = apply(delta, &env).expect("apply");
+
+        // The serial auto-unique guard is the canonical encoding of `id`,
+        // and the FK guard is the canonical encoding of `t` — computed here
+        // independently of `derive_guard`.
+        let keys_present = all_data_keys(&applied.txn, &env);
+        assert!(keys_present.contains(&key(|b| keys::unique_key(b, SOURCE, C0, &encode_u64(42)))));
+        assert!(keys_present.contains(&key(|b| keys::restrict_key(
+            b,
+            TARGET,
+            C0,
+            &encode_u64(7),
+            SOURCE,
+            0
+        ))));
+        assert_eq!(applied.fk_probes[0].guard, encode_u64(7).to_vec());
+    }
+}

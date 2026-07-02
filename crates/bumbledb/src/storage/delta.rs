@@ -141,6 +141,20 @@ impl<'s> WriteDelta<'s> {
         Ok(next)
     }
 
+    /// Iterates every recorded disposition in deterministic
+    /// `(relation, fact_hash)` order with its fact bytes (reader: PRD 07's
+    /// commit apply).
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (RelationId, &[u8], Disposition)> {
+        self.facts
+            .iter()
+            .map(|((rel, _), (slice, disposition))| (*rel, self.arena.get(*slice), *disposition))
+    }
+
+    /// The schema this delta was accumulated against (reader: commit).
+    pub(crate) fn schema(&self) -> &'s Schema {
+        self.schema
+    }
+
     /// The recorded disposition for a fact, if any (last one wins).
     #[must_use]
     pub fn disposition(&self, rel: RelationId, fact_bytes: &[u8]) -> Option<Disposition> {

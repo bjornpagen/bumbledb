@@ -128,6 +128,13 @@ pub enum Error {
     Schema(SchemaError),
 
     // --- Write errors ---
+    /// Two live facts claimed one unique key: the commit-time invariant is
+    /// violated and the whole transaction aborts.
+    UniqueViolation {
+        relation: RelationId,
+        constraint: ConstraintId,
+        fact_bytes: Box<[u8]>,
+    },
     /// A serial sequence reached `u64::MAX`; the generator can issue no
     /// further values for this field.
     SerialExhausted {
