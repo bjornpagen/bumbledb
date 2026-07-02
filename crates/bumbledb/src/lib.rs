@@ -23,6 +23,12 @@ pub mod plan;
 pub mod schema;
 pub mod storage;
 
+/// The declarative schema surface (PRD 27): see `schema::runtime` for the
+/// helpers the expansion calls. (The macro and the `schema` module share a
+/// name across disjoint namespaces — deliberate: `bumbledb::schema! {}`
+/// declares, `bumbledb::schema::…` are the descriptor types.)
+pub use bumbledb_macros::schema;
+
 #[cfg(test)]
 pub(crate) mod testutil {
     //! Shared test scaffolding: a self-cleaning temp directory (no external
