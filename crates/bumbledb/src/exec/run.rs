@@ -156,6 +156,8 @@ struct NodeScratch {
     sources: Vec<Vec<Source>>,
     /// Residual operand sources, aligned with the node's residual list.
     residual_sources: Vec<(Source, Source)>,
+    /// Per-entry survivor mask for the compaction kernel.
+    mask: Vec<u8>,
     /// Undo journal: (occurrence index, previous cursor, previous level).
     journal: Vec<(usize, Cursor, usize)>,
 }
@@ -235,6 +237,7 @@ impl<'p> Executor<'p> {
                         .collect(),
                     sources: node.subatoms.iter().map(|_| Vec::new()).collect(),
                     residual_sources: Vec::new(),
+                    mask: Vec::with_capacity(batch),
                     journal: Vec::new(),
                 }
             })
@@ -312,6 +315,7 @@ impl<'p> Executor<'p> {
                 sibling_children: Vec::new(),
                 sources: Vec::new(),
                 residual_sources: Vec::new(),
+                mask: Vec::new(),
                 journal: Vec::new(),
             },
         );
@@ -404,9 +408,9 @@ impl<'p> Executor<'p> {
                     ));
                 }
 
-                // Phase 2: all bucket loads — independent chains the OoO
-                // window overlaps — with branchless survivor compaction.
-                let mut write = 0usize;
+                // Phase 2: all bucket loads — independent chains the
+                // out-of-order window overlaps — then kernel compaction.
+                scratch.mask.clear();
                 for k in 0..scratch.survivors.len() {
                     let e = scratch.survivors[k];
                     let entry = usize::try_from(e).expect("batch fits usize");
@@ -418,16 +422,15 @@ impl<'p> Executor<'p> {
                     );
                     counters.probe(node_idx, sub_idx, hit.is_some());
                     scratch.sibling_children[sub_idx][entry] = hit.unwrap_or(Cursor::Row(0));
-                    scratch.survivors[write] = e;
-                    write += usize::from(hit.is_some());
+                    scratch.mask.push(u8::from(hit.is_some()));
                 }
-                scratch.survivors.truncate(write);
+                crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
 
             // Residuals run as batch survivor compaction after the probes.
             for (r_idx, (lhs_src, rhs_src)) in scratch.residual_sources.iter().enumerate() {
                 let op = self.residual_slots[node_idx][r_idx].0.op;
-                let mut write = 0usize;
+                scratch.mask.clear();
                 for k in 0..scratch.survivors.len() {
                     let e = scratch.survivors[k];
                     let entry = usize::try_from(e).expect("batch fits usize");
@@ -437,10 +440,9 @@ impl<'p> Executor<'p> {
                     };
                     let pass = op.compare(&value(lhs_src), &value(rhs_src));
                     counters.residual(node_idx, pass);
-                    scratch.survivors[write] = e;
-                    write += usize::from(pass);
+                    scratch.mask.push(u8::from(pass));
                 }
-                scratch.survivors.truncate(write);
+                crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
 
             // Recurse per surviving element (paper §4.3: batch within a

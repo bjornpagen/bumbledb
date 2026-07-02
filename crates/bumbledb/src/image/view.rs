@@ -185,14 +185,42 @@ pub fn apply(
     let row_count = image.row_count();
     debug_assert!(u32::try_from(row_count).is_ok(), "positions fit u32");
     buf.clear();
+
+    // Kernel fast path (PRD 22): when the first predicate is a fixed-width
+    // compare against a resolved constant, the NEON predicate scan produces
+    // the initial survivor set; the remaining predicates refine it below.
+    let mut rest = predicates;
+    if kernel_scan(image, &predicates[0], params, &mut buf) {
+        rest = &predicates[1..];
+        if rest.is_empty() {
+            return View::Survivors {
+                image: Arc::clone(image),
+                positions: buf,
+            };
+        }
+        // Refine in place: evaluate the remaining conjunction per survivor
+        // with the branchless cursor write.
+        let mut cursor = 0usize;
+        for read in 0..buf.len() {
+            let position = buf[read] as usize;
+            let keep = row_matches(image, rest, params, position);
+            buf[cursor] = buf[read];
+            cursor += usize::from(keep);
+        }
+        buf.truncate(cursor);
+        return View::Survivors {
+            image: Arc::clone(image),
+            positions: buf,
+        };
+    }
+
     buf.resize(row_count, 0);
     let mut cursor = 0usize;
-    // The scalar branchless survivor write (D4's compaction pattern; the
-    // NEON kernel replaces this loop in PRD 22 behind the same signature):
+    // The scalar branchless survivor write (D4's compaction pattern):
     // unconditional store, conditional cursor advance — no `if` in this
     // loop body.
     for position in 0..row_count {
-        let keep = row_matches(image, predicates, params, position);
+        let keep = row_matches(image, rest, params, position);
         buf[cursor] = u32::try_from(position).expect("checked above");
         cursor += usize::from(keep);
     }
@@ -200,6 +228,58 @@ pub fn apply(
     View::Survivors {
         image: Arc::clone(image),
         positions: buf,
+    }
+}
+
+/// Attempts the kernel fast path for one predicate: a compare against a
+/// resolved `Word`/`Byte` constant on a plain column lowers to a
+/// fixed-width predicate scan. Returns whether the scan ran.
+fn kernel_scan(
+    image: &RelationImage,
+    predicate: &FilterPredicate,
+    params: &[Const],
+    out: &mut Vec<u32>,
+) -> bool {
+    let FilterPredicate::Compare { field, op, value } = predicate else {
+        return false;
+    };
+    let value = match value {
+        Const::Param(param) => &params[usize::from(param.0)],
+        other => other,
+    };
+    match (image.column(usize::from(field.0)), value) {
+        (ColumnView::Words(words), Const::Word(c)) => {
+            let (lo, hi) = match op {
+                CmpOp::Eq => {
+                    crate::exec::kernel::filter_eq_u64(words, *c, out);
+                    return true;
+                }
+                CmpOp::Lt => {
+                    let Some(hi) = c.checked_sub(1) else {
+                        out.clear(); // x < 0 over unsigned words: empty
+                        return true;
+                    };
+                    (0, hi)
+                }
+                CmpOp::Le => (0, *c),
+                CmpOp::Gt => {
+                    let Some(lo) = c.checked_add(1) else {
+                        out.clear(); // x > MAX: empty
+                        return true;
+                    };
+                    (lo, u64::MAX)
+                }
+                CmpOp::Ge => (*c, u64::MAX),
+                CmpOp::Ne => return false, // no fixed-width scan shape
+            };
+            crate::exec::kernel::filter_range_u64(words, lo, hi, out);
+            true
+        }
+        (ColumnView::Bytes(bytes), Const::Byte(c)) if *op == CmpOp::Eq => {
+            crate::exec::kernel::filter_eq_u8(bytes, *c, out);
+            true
+        }
+        _ => false,
     }
 }
 
