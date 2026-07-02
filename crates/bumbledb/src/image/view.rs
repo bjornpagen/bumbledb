@@ -102,6 +102,20 @@ impl View {
         all.chain(survivors.copied())
     }
 
+    /// The image position at view index `idx` (reader: COLT root
+    /// iteration, PRD 18).
+    ///
+    /// # Panics
+    ///
+    /// On a programmer-invariant violation: `idx` out of the view's range.
+    #[must_use]
+    pub fn position_at(&self, idx: usize) -> u32 {
+        match self {
+            Self::All(_) => u32::try_from(idx).expect("positions fit u32"),
+            Self::Survivors { positions, .. } => positions[idx],
+        }
+    }
+
     /// Reclaims the survivor buffer for reuse (the caller-owned storage
     /// discipline: buffers belong to the prepared query, PRD 25).
     #[must_use]
