@@ -47,5 +47,10 @@ The delta/write path (PRDs 06–08). The dictionary DB's contents (PRD 05). The 
   is checked before the fingerprint; key codec round-trips per namespace and orders
   correctly (encoded keys sort by (namespace, components)); oversized-guard-key schema
   is rejected at construction; generation accessor returns 0 on a fresh database.
-- `unsafe_code` remains denied in these modules (heed is safe API).
+- `unsafe_code` remains denied in these modules, with one sanctioned exception
+  (amended 2026-07-02: heed ≥0.20 marks `EnvOpenOptions::open` unsafe because
+  double-opening one environment path in a process is LMDB UB): the single
+  `open_env` helper carries `#[allow(unsafe_code)]` and a `// SAFETY:` comment —
+  heed's own already-opened registry upholds the invariant. Miri does not apply
+  (FFI); the create/open round-trip tests are the module's soundness coverage.
 - Global commands green.

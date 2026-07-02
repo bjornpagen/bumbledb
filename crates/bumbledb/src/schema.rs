@@ -7,6 +7,8 @@
 pub mod fingerprint;
 
 use crate::encoding::{FactLayout, TypeDesc};
+use crate::error::SchemaError;
+use crate::storage::keys::MAX_GUARD_WIDTH;
 
 /// Dense relation id: the relation's index in schema declaration order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -130,79 +132,6 @@ pub struct RelationDescriptor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaDescriptor {
     pub relations: Vec<RelationDescriptor>,
-}
-
-/// A declaration error. Every illegal schema shape has a distinct variant;
-/// an invalid schema is unconstructible, not flagged.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SchemaError {
-    DuplicateRelationName {
-        name: Box<str>,
-    },
-    DuplicateFieldName {
-        relation: RelationId,
-        name: Box<str>,
-    },
-    DuplicateConstraintName {
-        relation: RelationId,
-        name: Box<str>,
-    },
-    EnumWithoutVariants {
-        relation: RelationId,
-        field: FieldId,
-    },
-    EnumTooManyVariants {
-        relation: RelationId,
-        field: FieldId,
-        count: usize,
-    },
-    DuplicateEnumVariant {
-        relation: RelationId,
-        field: FieldId,
-        variant: Box<str>,
-    },
-    SerialOnNonU64 {
-        relation: RelationId,
-        field: FieldId,
-    },
-    UnknownConstraintField {
-        relation: RelationId,
-        constraint: ConstraintId,
-        field: FieldId,
-    },
-    UniqueWithoutFields {
-        relation: RelationId,
-        constraint: ConstraintId,
-    },
-    UniqueDuplicateField {
-        relation: RelationId,
-        constraint: ConstraintId,
-        field: FieldId,
-    },
-    UnknownFkTargetRelation {
-        relation: RelationId,
-        constraint: ConstraintId,
-        target: RelationId,
-    },
-    UnknownFkTargetConstraint {
-        relation: RelationId,
-        constraint: ConstraintId,
-        target: ConstraintId,
-    },
-    FkTargetNotUnique {
-        relation: RelationId,
-        constraint: ConstraintId,
-        target: ConstraintId,
-    },
-    FkArityMismatch {
-        relation: RelationId,
-        constraint: ConstraintId,
-    },
-    FkFieldTypeMismatch {
-        relation: RelationId,
-        constraint: ConstraintId,
-        position: usize,
-    },
 }
 
 /// One relation of a validated schema.
@@ -503,6 +432,21 @@ fn validate_relation(
                         field: *field,
                     });
                 }
+            }
+            // Guard keys are fixed-width (every type encodes 1 or 8 bytes),
+            // so a constraint that would overflow LMDB's key ceiling once
+            // embedded in a Restrict key is rejected here, at declaration —
+            // never discovered at write time (PRD 04's construction hook).
+            let width: usize = cf
+                .iter()
+                .map(|f| fields[usize::from(f.0)].value_type.type_desc().width())
+                .sum();
+            if width > MAX_GUARD_WIDTH {
+                return Err(SchemaError::GuardKeyTooWide {
+                    relation: rel_id,
+                    constraint: con_id,
+                    width,
+                });
             }
         }
     }

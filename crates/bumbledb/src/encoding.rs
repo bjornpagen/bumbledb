@@ -55,18 +55,7 @@ pub enum ValueRef {
     Bytes(u64),
 }
 
-/// Corruption detected while decoding canonical bytes — a hard error, never
-/// a skip, never a default (`docs/architecture/40-storage.md`).
-///
-/// Local to this module until PRD 04 re-homes it into the workspace error
-/// enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CorruptionError {
-    /// A Bool byte other than `0x00`/`0x01` — there is no distinct "true".
-    InvalidBool(u8),
-    /// An Enum ordinal at or beyond the declared variant count.
-    EnumOrdinalOutOfRange { ordinal: u8, variant_count: u16 },
-}
+use crate::error::CorruptionError;
 
 const I64_SIGN_BIT: u64 = 1 << 63;
 
