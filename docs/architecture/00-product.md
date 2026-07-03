@@ -135,6 +135,16 @@ plan space is strictly larger for one kernel's complexity, and exploring that sp
 the stated point of the project. **Reverses if:** the ledger benchmark shows the FJ
 kernel measurably slower than a plain hash join on the same plans.
 
+## Dependencies
+
+The engine crates (`bumbledb`, `bumbledb-macros`) depend on exactly `heed` and
+`blake3` — nothing else, ever, without an owner decision. The benchmark/oracle
+member `bumbledb-bench` is the one quarantined exception: it may hold `rusqlite`
+(bundled — the system SQLite is irrelevant and the version pinned) and **nothing
+else**; argument parsing, JSON emission, statistics, and randomness are hand-rolled
+there. The quarantine is one-directional: nothing in the engine may ever depend on
+the bench crate.
+
 ## Non-goals
 
 SQL. Server mode. Network protocol. Text query language (OPEN). Nulls. Floats in

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/bumbledb", "crates/bumbledb-macros"]
+members = ["crates/bumbledb", "crates/bumbledb-bench", "crates/bumbledb-macros"]
 
 [workspace.lints.rust]
 unsafe_code = "deny"

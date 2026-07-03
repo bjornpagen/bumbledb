@@ -1,0 +1,15 @@
+[package]
+name = "bumbledb-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The quarantined member (docs/architecture/00-product.md, Dependencies):
+# rusqlite (bundled) and nothing else. Argument parsing, JSON, statistics,
+# and randomness are hand-rolled.
+[dependencies]
+bumbledb = { path = "../bumbledb" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[lints]
+workspace = true
