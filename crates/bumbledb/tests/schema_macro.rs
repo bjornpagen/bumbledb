@@ -7,9 +7,7 @@ use bumbledb::schema::{
     ConstraintDescriptor, ConstraintId, FieldDescriptor, FieldId, Generation, RelationDescriptor,
     RelationId, SchemaDescriptor, ValueType,
 };
-use bumbledb::storage::commit::commit;
-use bumbledb::storage::delta::WriteDelta;
-use bumbledb::storage::env::Environment;
+use bumbledb::{Db, Fact};
 
 bumbledb::schema! {
     relation Holder {
@@ -188,8 +186,7 @@ fn typed_round_trip_through_fact_bytes() {
     let dir = std::env::temp_dir().join("bumbledb-macro-round-trip");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("test dir");
-    let schema = schema();
-    let env = Environment::create(&dir, schema).expect("create");
+    let db = Db::create(&dir, schema()).expect("create");
 
     let original = Account {
         id: AccountId(7),
@@ -200,53 +197,38 @@ fn typed_round_trip_through_fact_bytes() {
         balance: -12_345,
         memo: vec![0xDE, 0xAD, 0xBE, 0xEF],
     };
-    // Encode against a write context (interning the memo), commit the
-    // holder + account, then decode back.
-    {
-        let view = env.read_txn().expect("txn");
-        let mut delta = WriteDelta::new(schema);
-        let holder = Holder {
+    // Write the holder + account (interning the strings and the memo
+    // through the delta), then decode back through a snapshot.
+    db.write(|tx| {
+        tx.insert(&Holder {
             id: HolderId(3),
             region: 2,
             name: "alice".to_owned(),
+        })?;
+        tx.insert(&original)?;
+        Ok(())
+    })
+    .expect("write");
+
+    db.read(|snap| {
+        // encode_read finds the committed interned values now.
+        let mut bytes = Vec::new();
+        assert!(original.encode_read(snap, &mut bytes).expect("encode"));
+        let decoded = Account::decode(snap, &bytes).expect("decode");
+        assert_eq!(decoded, original);
+
+        // A never-interned value reports itself instead of encoding.
+        let ghost = Holder {
+            id: HolderId(9),
+            region: 2,
+            name: "nobody".to_owned(),
         };
         let mut bytes = Vec::new();
-        holder
-            .encode_write(schema, &view, &mut delta, &mut bytes)
-            .expect("encode");
-        delta
-            .insert(&view, Holder::RELATION, &bytes)
-            .expect("insert");
-        let mut bytes = Vec::new();
-        original
-            .encode_write(schema, &view, &mut delta, &mut bytes)
-            .expect("encode");
-        delta
-            .insert(&view, Account::RELATION, &bytes)
-            .expect("insert");
-        drop(view);
-        commit(delta, &env).expect("commit");
-    }
+        assert!(!ghost.encode_read(snap, &mut bytes).expect("encode"));
+        Ok(())
+    })
+    .expect("read");
 
-    let txn = env.read_txn().expect("txn");
-    // encode_read finds the committed interned values now.
-    let mut bytes = Vec::new();
-    assert!(original
-        .encode_read(schema, &txn, &mut bytes)
-        .expect("encode"));
-    let decoded = Account::decode(schema, &txn, &bytes).expect("decode");
-    assert_eq!(decoded, original);
-
-    // A never-interned value reports itself instead of encoding.
-    let ghost = Holder {
-        id: HolderId(9),
-        region: 2,
-        name: "nobody".to_owned(),
-    };
-    let mut bytes = Vec::new();
-    assert!(!ghost.encode_read(schema, &txn, &mut bytes).expect("encode"));
-
-    drop(txn);
-    drop(env);
+    drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }

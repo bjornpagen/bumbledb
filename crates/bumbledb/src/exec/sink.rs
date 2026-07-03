@@ -70,16 +70,6 @@ impl ProjectionSink {
         self.seen.iter().map(|(key, ())| key)
     }
 
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.seen.len()
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.seen.is_empty()
-    }
-
     /// Empties the sink for the next execution, retaining capacity.
     pub fn reset(&mut self) {
         self.seen.clear();
@@ -211,6 +201,7 @@ impl AggregateSink {
     /// # Errors
     ///
     /// As [`Self::finalize_into`].
+    #[cfg(test)]
     pub fn into_rows(self) -> Result<Vec<Vec<u64>>> {
         let mut rows = Vec::with_capacity(self.groups.len());
         let mut scratch = Vec::new();

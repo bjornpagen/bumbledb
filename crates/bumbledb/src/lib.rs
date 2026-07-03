@@ -1,7 +1,45 @@
-//! bumbledb: an embedded, typed, set-semantic relational database over LMDB.
+//! bumbledb: an embedded, typed, set-semantic relational database over
+//! LMDB, executing conjunctive queries with Free Join.
 //!
-//! The normative design lives in `docs/architecture/`; the build plan in
-//! `docs/implementation/`.
+//! The surface is plain data in, plain data out (`docs/architecture/`, the
+//! normative design):
+//!
+//! - Declare a schema with the [`schema!`] macro — it expands to a
+//!   `schema()` constructor, host newtypes, and one typed [`Fact`] struct
+//!   per relation. The macro is sugar; [`schema::SchemaDescriptor`] is the
+//!   contract.
+//! - Open a handle with [`Db::create`] / [`Db::open`] and share it across
+//!   threads (`Send + Sync`; the engine owns zero threads).
+//! - Write through [`Db::write`]: the transaction is an in-memory delta —
+//!   set arithmetic, constraints checked at commit against the final
+//!   state, an abort never touched disk. `delete(old); insert(new)` in
+//!   either order is the blessed mutation idiom.
+//! - Query through [`Db::prepare`] ([`ir::Query`] is the IR) and execute
+//!   inside [`Db::read`] snapshots into a reusable [`ResultBuffer`] —
+//!   results are sets; the host sorts.
+//! - Migrate by ETL: [`Snapshot::scan`] exports, [`Db::bulk_load`] imports
+//!   (schema change = a new database, never in place).
+//!
+//! Newtypes are the nominal safety layer — mixing two of them is a host
+//! compile error:
+//!
+//! ```compile_fail
+//! bumbledb::schema! {
+//!     relation Holder { id: u64 as HolderId, serial }
+//!     relation Account { id: u64 as AccountId, serial }
+//! }
+//! let account = AccountId(1);
+//! let _holder: HolderId = account; // mismatched types: rustc refuses
+//! ```
+//!
+//! The workspace holds the three-command contract — green after every
+//! change:
+//!
+//! ```text
+//! cargo fmt --all --check
+//! cargo clippy --workspace --all-targets -- -D warnings
+//! cargo test --workspace
+//! ```
 
 // 64-bit only (docs/architecture/00-product.md): `usize` is 8 bytes everywhere
 // and no design decision accommodates narrower platforms. Building for a
@@ -13,21 +51,39 @@ compile_error!("bumbledb targets 64-bit platforms only (docs/architecture/00-pro
 #[cfg(feature = "alloc-counter")]
 pub mod alloc_counter;
 pub mod api;
-pub mod arena;
-pub mod encoding;
+pub(crate) mod arena;
+pub(crate) mod encoding;
 pub mod error;
-pub mod exec;
-pub mod image;
+pub(crate) mod exec;
+pub(crate) mod image;
 pub mod ir;
-pub mod plan;
+pub(crate) mod plan;
 pub mod schema;
-pub mod storage;
+pub(crate) mod storage;
 
-/// The declarative schema surface (PRD 27): see `schema::runtime` for the
-/// helpers the expansion calls. (The macro and the `schema` module share a
-/// name across disjoint namespaces — deliberate: `bumbledb::schema! {}`
-/// declares, `bumbledb::schema::…` are the descriptor types.)
+pub use api::db::{Db, Fact, Serial, Snapshot, WriteTx};
+pub use api::prepared::{PreparedQuery, ResultBuffer, ResultValue};
+pub use error::{Error, Result};
+pub use ir::Query;
+pub use schema::Schema;
+
+/// The declarative schema surface (PRD 27). (The macro and the `schema`
+/// module share a name across disjoint namespaces — deliberate:
+/// `bumbledb::schema! {}` declares, `bumbledb::schema::…` are the
+/// descriptor types.)
 pub use bumbledb_macros::schema;
+
+/// `schema!` expansion plumbing. Not API: no stability promises, nothing
+/// here is part of the documented surface — the macro is the only caller.
+#[doc(hidden)]
+pub mod __private {
+    pub use crate::api::db::plumbing::{
+        decode, encode_read_fact, encode_write_fact, intern_bytes_read, intern_bytes_write,
+        intern_str_read, intern_str_write, resolve_bytes, resolve_string,
+    };
+    pub use crate::encoding::ValueRef;
+    pub use crate::schema::runtime::{build_schema, FieldDecl, FieldTy, RelationDecl};
+}
 
 #[cfg(test)]
 pub(crate) mod testutil {

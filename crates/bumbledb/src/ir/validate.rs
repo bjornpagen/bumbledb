@@ -38,8 +38,6 @@ pub struct ValidatedQuery {
     param_types: BTreeMap<ParamId, ValueType>,
     /// Non-aggregated find variables — the group key under aggregation.
     group_key: BTreeSet<VarId>,
-    /// Whether any find term is an aggregate.
-    has_aggregates: bool,
 }
 
 impl ValidatedQuery {
@@ -60,11 +58,6 @@ impl ValidatedQuery {
         &self.var_types[&var]
     }
 
-    /// Every variable with its resolved type, in id order.
-    pub fn var_types(&self) -> impl Iterator<Item = (VarId, &ValueType)> {
-        self.var_types.iter().map(|(v, t)| (*v, t))
-    }
-
     /// Every param with its resolved type, in id order (bind-time checking,
     /// PRD 25).
     pub fn param_types(&self) -> impl Iterator<Item = (ParamId, &ValueType)> {
@@ -75,12 +68,6 @@ impl ValidatedQuery {
     #[must_use]
     pub fn group_key(&self) -> &BTreeSet<VarId> {
         &self.group_key
-    }
-
-    /// Whether the query aggregates.
-    #[must_use]
-    pub fn has_aggregates(&self) -> bool {
-        self.has_aggregates
     }
 }
 
@@ -152,17 +139,12 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
             FindTerm::Aggregate { .. } => None,
         })
         .collect();
-    let has_aggregates = query
-        .finds
-        .iter()
-        .any(|t| matches!(t, FindTerm::Aggregate { .. }));
 
     Ok(ValidatedQuery {
         query: query.clone(),
         var_types: ctx.var_types,
         param_types: ctx.param_types,
         group_key,
-        has_aggregates,
     })
 }
 
@@ -460,7 +442,6 @@ mod tests {
         assert_eq!(witness.var_type(VarId(0)), &ValueType::U64);
         assert_eq!(witness.var_type(VarId(2)), &ValueType::I64);
         assert_eq!(witness.group_key().len(), 1);
-        assert!(!witness.has_aggregates());
     }
 
     #[test]
@@ -501,7 +482,6 @@ mod tests {
         );
         let witness = validate(&schema(), &query).expect("valid");
         assert!(witness.group_key().is_empty());
-        assert!(witness.has_aggregates());
     }
 
     #[test]

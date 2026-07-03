@@ -191,7 +191,7 @@ pub struct PreparedQuery<'s> {
 ///
 /// Only on programmer-invariant violations (`binary2fj` + `factor`
 /// construct valid plans by construction).
-pub fn prepare<'s>(
+pub(crate) fn prepare<'s>(
     txn: &ReadTxn<'_>,
     schema: &'s Schema,
     query: &Query,
@@ -371,7 +371,7 @@ impl PreparedQuery<'_> {
     ///
     /// Only on programmer-invariant violations (plan/executor pairing,
     /// validated id widths).
-    pub fn execute(
+    pub(crate) fn execute(
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
@@ -425,7 +425,7 @@ impl PreparedQuery<'_> {
     /// # Errors
     ///
     /// As [`Self::execute`].
-    pub fn execute_collect(
+    pub(crate) fn execute_collect(
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
@@ -447,7 +447,7 @@ impl PreparedQuery<'_> {
     /// # Panics
     ///
     /// Only on programmer-invariant violations (plan/executor pairing).
-    pub fn explain(
+    pub(crate) fn explain(
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,

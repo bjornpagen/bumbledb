@@ -39,8 +39,11 @@ structs, newtypes, and the encode boundary.
 - Interning at the encode boundary: generated structs hold `&str`/`String` fields;
   encoding against a write context interns; against a read context looks up (miss ⇒
   the caller's concern). Provide both entry points; keep the generated code thin —
-  all real logic lives in the library crate (`bumbledb::schema::runtime` helpers), the
-  macro emits calls, not logic.
+  all real logic lives in the library crate (declaration resolution in
+  `schema::runtime`, context helpers in `api::db::plumbing`, both re-exported for the
+  expansion through the `#[doc(hidden)] bumbledb::__private` module — PRD 28's surface
+  trim leaves nothing else public for generated code to call), the macro emits calls,
+  not logic.
 
 ## Non-goals
 

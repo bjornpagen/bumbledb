@@ -20,8 +20,9 @@ path, export, and the final error taxonomy.
   resolved) in row_id order (a stream, not a set — per `60-api.md`).
 - `db.write(|tx| ...)`: takes the writer mutex, builds a `WriteDelta` (PRD 06) over a
   read view; the closure gets typed ops — `tx.alloc::<AccountId-ish>()` via generated
-  helpers (PRD 27) plus untyped `alloc(rel, field)`, `tx.insert(fact-struct)` /
-  `insert_dyn(rel, &[Value])`, `delete` symmetric; `Ok` → commit (PRDs 07–08) →
+  helpers (PRD 27) plus untyped `alloc_dyn(rel, field)` (the `_dyn` suffix keeps the
+  typed/untyped naming symmetric across all three operations), `tx.insert(fact-struct)`
+  / `insert_dyn(rel, &[Value])`, `delete`/`delete_dyn` symmetric; `Ok` → commit (PRDs 07–08) →
   on `changed`, evict the cache (PRD 11) — the one wiring point; `Err`/panic → drop
   delta, LMDB untouched. Queries are not reachable from the write closure (the type
   simply offers none — forbidden by representation).

@@ -272,7 +272,7 @@ impl Executor {
         bindings.reset();
         self.cursors.clear();
         self.cursors
-            .extend(colts.iter().map(|colt| (colt.root(), 0usize)));
+            .extend(std::iter::repeat_n((Colt::root(), 0usize), colts.len()));
         self.run_node(plan, 0, colts, bindings, sink, counters);
     }
 
@@ -1015,7 +1015,7 @@ mod tests {
 
         // Pre-force S's root so its Exact(2) beats R's Estimate(500).
         let mut colts = colts_for(&plan, &views);
-        let s_root = colts[1].root();
+        let s_root = Colt::root();
         colts[1].get(s_root, 0, &[0]);
         let mut bindings = Bindings::new(plan.slots().len());
         let mut sink = CollectSink::default();

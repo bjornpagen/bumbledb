@@ -5,7 +5,7 @@
 //! downstream trusts the sealed witness without re-checking.
 
 pub mod fingerprint;
-pub mod runtime;
+pub(crate) mod runtime;
 
 use crate::encoding::{FactLayout, TypeDesc};
 use crate::error::SchemaError;

@@ -5,10 +5,16 @@
 
 use std::sync::Arc;
 
+#[cfg(test)]
 use crate::error::Result;
-use crate::image::{build, ColumnView, RelationImage};
+#[cfg(test)]
+use crate::image::build;
+use crate::image::{ColumnView, RelationImage};
 use crate::ir::CmpOp;
-use crate::schema::{FieldId, RelationId, Schema};
+use crate::schema::FieldId;
+#[cfg(test)]
+use crate::schema::{RelationId, Schema};
+#[cfg(test)]
 use crate::storage::env::ReadTxn;
 
 /// The constant side of a lowered filter. `Word`/`Byte` are column form —
@@ -78,6 +84,7 @@ impl View {
         }
     }
 
+    #[cfg(test)]
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -89,6 +96,7 @@ impl View {
     ///
     /// Only on a programmer-invariant violation: an image beyond the u32
     /// position space (the scale axiom sits orders of magnitude below).
+    #[cfg(test)]
     pub fn positions(&self) -> impl Iterator<Item = u32> + '_ {
         // Chained empty arms keep one concrete iterator type without
         // boxing: exactly one arm is nonempty.
@@ -295,6 +303,7 @@ fn kernel_scan(
 /// # Errors
 ///
 /// Build errors (`Lmdb`, `Corruption`) propagate.
+#[cfg(test)]
 pub fn build_with_filters(
     txn: &ReadTxn<'_>,
     schema: &Schema,

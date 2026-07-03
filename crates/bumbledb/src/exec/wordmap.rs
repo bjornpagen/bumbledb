@@ -49,11 +49,6 @@ impl<V> WordMap<V> {
         self.len = 0;
     }
 
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
     /// Gets the value for `key`, inserting `make()` when absent. Returns
     /// `(value, inserted)`.
     ///

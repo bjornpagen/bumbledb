@@ -296,18 +296,18 @@ pub fn schema(input: TokenStream) -> TokenStream {
 
 fn ty_decl(ty: &FieldTy) -> String {
     match ty {
-        FieldTy::Bool => "::bumbledb::schema::runtime::FieldTy::Bool".to_owned(),
-        FieldTy::U64 => "::bumbledb::schema::runtime::FieldTy::U64".to_owned(),
-        FieldTy::I64 => "::bumbledb::schema::runtime::FieldTy::I64".to_owned(),
-        FieldTy::Str => "::bumbledb::schema::runtime::FieldTy::Str".to_owned(),
-        FieldTy::Bytes => "::bumbledb::schema::runtime::FieldTy::Bytes".to_owned(),
+        FieldTy::Bool => "::bumbledb::__private::FieldTy::Bool".to_owned(),
+        FieldTy::U64 => "::bumbledb::__private::FieldTy::U64".to_owned(),
+        FieldTy::I64 => "::bumbledb::__private::FieldTy::I64".to_owned(),
+        FieldTy::Str => "::bumbledb::__private::FieldTy::Str".to_owned(),
+        FieldTy::Bytes => "::bumbledb::__private::FieldTy::Bytes".to_owned(),
         FieldTy::Enum { variants, .. } => {
             let list = variants
                 .iter()
                 .map(|v| format!("\"{v}\""))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("::bumbledb::schema::runtime::FieldTy::Enum(&[{list}])")
+            format!("::bumbledb::__private::FieldTy::Enum(&[{list}])")
         }
     }
 }
@@ -326,7 +326,7 @@ fn emit_schema_fn(out: &mut String, relations: &[Relation]) {
             let unique = field.unique && !field.serial;
             let _ = write!(
                 fields,
-                "::bumbledb::schema::runtime::FieldDecl {{ name: \"{}\", ty: {}, serial: {}, unique: {}, fk: {} }},",
+                "::bumbledb::__private::FieldDecl {{ name: \"{}\", ty: {}, serial: {}, unique: {}, fk: {} }},",
                 field.name,
                 ty_decl(&field.ty),
                 field.serial,
@@ -354,7 +354,7 @@ fn emit_schema_fn(out: &mut String, relations: &[Relation]) {
         }
         let _ = write!(
             decls,
-            "::bumbledb::schema::runtime::RelationDecl {{ name: \"{}\", fields: &[{fields}], uniques: &[{uniques}], fks: &[{fks}] }},",
+            "::bumbledb::__private::RelationDecl {{ name: \"{}\", fields: &[{fields}], uniques: &[{uniques}], fks: &[{fks}] }},",
             relation.name,
         );
     }
@@ -365,7 +365,7 @@ fn emit_schema_fn(out: &mut String, relations: &[Relation]) {
          pub fn schema() -> &'static ::bumbledb::schema::Schema {{\n\
              static SCHEMA: ::std::sync::OnceLock<::bumbledb::schema::Schema> = ::std::sync::OnceLock::new();\n\
              SCHEMA.get_or_init(|| {{\n\
-                 ::bumbledb::schema::runtime::build_schema(&[{decls}])\n\
+                 ::bumbledb::__private::build_schema(&[{decls}])\n\
                      .expect(\"schema! declaration is invalid\")\n\
              }})\n\
          }}\n",
@@ -455,41 +455,41 @@ fn encode_exprs(field: &Field) -> (String, String) {
     };
     match &field.ty {
         FieldTy::Bool => {
-            let expr = format!("::bumbledb::encoding::ValueRef::Bool({access})");
+            let expr = format!("::bumbledb::__private::ValueRef::Bool({access})");
             (expr.clone(), expr)
         }
         FieldTy::U64 => {
-            let expr = format!("::bumbledb::encoding::ValueRef::U64({access})");
+            let expr = format!("::bumbledb::__private::ValueRef::U64({access})");
             (expr.clone(), expr)
         }
         FieldTy::I64 => {
-            let expr = format!("::bumbledb::encoding::ValueRef::I64({access})");
+            let expr = format!("::bumbledb::__private::ValueRef::I64({access})");
             (expr.clone(), expr)
         }
         FieldTy::Enum { .. } => {
             let expr = format!(
-                "::bumbledb::encoding::ValueRef::Enum(self.{}.ordinal())",
+                "::bumbledb::__private::ValueRef::Enum(self.{}.ordinal())",
                 field.name
             );
             (expr.clone(), expr)
         }
         FieldTy::Str => (
             format!(
-                "::bumbledb::encoding::ValueRef::String(::bumbledb::schema::runtime::intern_str_write(view, delta, &self.{})?)",
+                "::bumbledb::__private::ValueRef::String(::bumbledb::__private::intern_str_write(tx, &self.{})?)",
                 field.name
             ),
             format!(
-                "match ::bumbledb::schema::runtime::intern_str_read(txn, &self.{})? {{ Some(id) => ::bumbledb::encoding::ValueRef::String(id), None => return Ok(false) }}",
+                "match ::bumbledb::__private::intern_str_read(snap, &self.{})? {{ Some(id) => ::bumbledb::__private::ValueRef::String(id), None => return Ok(false) }}",
                 field.name
             ),
         ),
         FieldTy::Bytes => (
             format!(
-                "::bumbledb::encoding::ValueRef::Bytes(::bumbledb::schema::runtime::intern_bytes_write(view, delta, &self.{})?)",
+                "::bumbledb::__private::ValueRef::Bytes(::bumbledb::__private::intern_bytes_write(tx, &self.{})?)",
                 field.name
             ),
             format!(
-                "match ::bumbledb::schema::runtime::intern_bytes_read(txn, &self.{})? {{ Some(id) => ::bumbledb::encoding::ValueRef::Bytes(id), None => return Ok(false) }}",
+                "match ::bumbledb::__private::intern_bytes_read(snap, &self.{})? {{ Some(id) => ::bumbledb::__private::ValueRef::Bytes(id), None => return Ok(false) }}",
                 field.name
             ),
         ),
@@ -506,29 +506,29 @@ fn decode_arm(field: &Field, idx: usize) -> String {
     };
     match &field.ty {
         FieldTy::Bool => format!(
-            "{}: match ::bumbledb::encoding::decode_field(fact, layout, {idx})? {{ ::bumbledb::encoding::ValueRef::Bool(v) => v, _ => unreachable!(\"schema-typed\") }},",
+            "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::Bool(v) => v, _ => unreachable!(\"schema-typed\") }},",
             field.name
         ),
         FieldTy::U64 => format!(
-            "{}: match ::bumbledb::encoding::decode_field(fact, layout, {idx})? {{ ::bumbledb::encoding::ValueRef::U64(v) => {}, _ => unreachable!(\"schema-typed\") }},",
+            "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::U64(v) => {}, _ => unreachable!(\"schema-typed\") }},",
             field.name,
             wrap("v")
         ),
         FieldTy::I64 => format!(
-            "{}: match ::bumbledb::encoding::decode_field(fact, layout, {idx})? {{ ::bumbledb::encoding::ValueRef::I64(v) => {}, _ => unreachable!(\"schema-typed\") }},",
+            "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::I64(v) => {}, _ => unreachable!(\"schema-typed\") }},",
             field.name,
             wrap("v")
         ),
         FieldTy::Enum { name: enum_name, .. } => format!(
-            "{}: match ::bumbledb::encoding::decode_field(fact, layout, {idx})? {{ ::bumbledb::encoding::ValueRef::Enum(o) => {enum_name}::from_ordinal(o).expect(\"decode_field range-checked the ordinal\"), _ => unreachable!(\"schema-typed\") }},",
+            "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::Enum(o) => {enum_name}::from_ordinal(o).expect(\"decode_field range-checked the ordinal\"), _ => unreachable!(\"schema-typed\") }},",
             field.name
         ),
         FieldTy::Str => format!(
-            "{}: match ::bumbledb::encoding::decode_field(fact, layout, {idx})? {{ ::bumbledb::encoding::ValueRef::String(id) => ::bumbledb::schema::runtime::resolve_string(txn, id)?, _ => unreachable!(\"schema-typed\") }},",
+            "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::String(id) => ::bumbledb::__private::resolve_string(snap, id)?, _ => unreachable!(\"schema-typed\") }},",
             field.name
         ),
         FieldTy::Bytes => format!(
-            "{}: match ::bumbledb::encoding::decode_field(fact, layout, {idx})? {{ ::bumbledb::encoding::ValueRef::Bytes(id) => ::bumbledb::schema::runtime::resolve_bytes(txn, id)?, _ => unreachable!(\"schema-typed\") }},",
+            "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::Bytes(id) => ::bumbledb::__private::resolve_bytes(snap, id)?, _ => unreachable!(\"schema-typed\") }},",
             field.name
         ),
     }
@@ -560,35 +560,36 @@ fn emit_fact_struct(out: &mut String, index: usize, relation: &Relation) {
         out,
         "#[derive(Debug, Clone, PartialEq)]\n\
          pub struct {name} {{ {struct_fields} }}\n\
-         impl {name} {{\n\
-             pub const RELATION: ::bumbledb::schema::RelationId = ::bumbledb::schema::RelationId({index});\n\
-             /// Encodes against a write context, interning novel strings.\n\
-             /// # Errors\n\
-             /// Storage errors from the intern path.\n\
-             pub fn encode_write(&self, schema: &::bumbledb::schema::Schema, view: &::bumbledb::storage::env::ReadTxn<'_>, delta: &mut ::bumbledb::storage::delta::WriteDelta<'_>, out: &mut Vec<u8>) -> ::bumbledb::error::Result<()> {{\n\
-                 let layout = schema.relation(Self::RELATION).layout();\n\
-                 ::bumbledb::encoding::encode_fact(&[{write_values}], layout, out);\n\
+         impl ::bumbledb::Fact for {name} {{\n\
+             const RELATION: ::bumbledb::schema::RelationId = ::bumbledb::schema::RelationId({index});\n\
+             fn encode_write(&self, tx: &mut ::bumbledb::WriteTx<'_>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<()> {{\n\
+                 let values = [{write_values}];\n\
+                 ::bumbledb::__private::encode_write_fact(tx, Self::RELATION, &values, out);\n\
                  Ok(())\n\
              }}\n\
-             /// Encodes against a read context; `Ok(false)` when a string or\n\
-             /// bytes value was never interned (the fact cannot exist).\n\
-             /// # Errors\n\
-             /// Storage errors from the lookup path.\n\
-             pub fn encode_read(&self, schema: &::bumbledb::schema::Schema, txn: &::bumbledb::storage::env::ReadTxn<'_>, out: &mut Vec<u8>) -> ::bumbledb::error::Result<bool> {{\n\
-                 let layout = schema.relation(Self::RELATION).layout();\n\
-                 ::bumbledb::encoding::encode_fact(&[{read_values}], layout, out);\n\
+             fn encode_read(&self, snap: &::bumbledb::Snapshot<'_>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
+                 let values = [{read_values}];\n\
+                 ::bumbledb::__private::encode_read_fact(snap, Self::RELATION, &values, out);\n\
                  Ok(true)\n\
              }}\n\
-             /// Decodes canonical fact bytes back into the typed struct.\n\
-             /// # Errors\n\
-             /// `Corruption` on undecodable bytes or dangling intern ids.\n\
-             /// # Panics\n\
-             /// Only on programmer-invariant violations (schema-typed\n\
-             /// variants).\n\
-             pub fn decode(schema: &::bumbledb::schema::Schema, txn: &::bumbledb::storage::env::ReadTxn<'_>, fact: &[u8]) -> ::bumbledb::error::Result<Self> {{\n\
-                 let layout = schema.relation(Self::RELATION).layout();\n\
+             fn decode(snap: &::bumbledb::Snapshot<'_>, fact: &[u8]) -> ::bumbledb::Result<Self> {{\n\
                  Ok(Self {{ {decode_fields} }})\n\
              }}\n\
          }}\n",
     );
+
+    // Serial-minting newtypes: `tx.alloc::<NewType>()` knows its field.
+    for (field_idx, field) in relation.fields.iter().enumerate() {
+        let (true, Some(newtype)) = (field.serial, &field.newtype) else {
+            continue;
+        };
+        let _ = write!(
+            out,
+            "impl ::bumbledb::Serial for {newtype} {{\n\
+                 const RELATION: ::bumbledb::schema::RelationId = ::bumbledb::schema::RelationId({index});\n\
+                 const FIELD: ::bumbledb::schema::FieldId = ::bumbledb::schema::FieldId({field_idx});\n\
+                 fn from_serial(raw: u64) -> Self {{ Self(raw) }}\n\
+             }}\n",
+        );
+    }
 }

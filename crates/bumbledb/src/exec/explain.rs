@@ -59,6 +59,7 @@ impl CountingCounters {
 
     /// Bindings emitted to the sink (the measured cardinality after the
     /// last node).
+    #[cfg(test)]
     #[must_use]
     pub fn emits(&self) -> u64 {
         self.emits
@@ -416,7 +417,7 @@ mod tests {
             .expect("valid plan");
         let mut colts = colts_for(&plan, &views);
         // Pre-force the tiny side so its Exact(2) beats Estimate(500).
-        let s_root = colts[1].root();
+        let s_root = Colt::root();
         colts[1].get(s_root, 0, &[0]);
         let mut bindings = Bindings::new(plan.slots().len());
         let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(0))]);

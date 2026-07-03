@@ -6,8 +6,8 @@
 //! to something" is unwritable. Variables carry dense ids only; names are a
 //! debugging sidecar the engine never stores.
 
-pub mod normalize;
-pub mod validate;
+pub(crate) mod normalize;
+pub(crate) mod validate;
 
 use crate::schema::{FieldId, RelationId};
 

@@ -1,25 +1,20 @@
-//! The allocation gate (PRD 26): the doc's protocol as a unit-level
-//! contract of `PreparedQuery::execute` — single-threaded harness (one
-//! test function, its own binary), N=8 warmups over a fixed param set,
-//! then M=8 measured runs asserting **zero** allocator hits, arena growth
-//! included, result buffer caller-provided.
+//! The allocation gate (PRD 26): the doc's protocol as a contract of warm
+//! prepared-query execution through the public surface — single-threaded
+//! harness (one test function, its own binary), N=8 warmups over a fixed
+//! param set, then M=8 measured runs asserting **zero** allocator hits,
+//! arena growth included, result buffer caller-provided.
 //!
 //! Run with `cargo test --features alloc-counter --test alloc_gate`.
 
 #![cfg(feature = "alloc-counter")]
 
 use bumbledb::alloc_counter;
-use bumbledb::api::prepared::{prepare, PreparedQuery, ResultBuffer};
-use bumbledb::encoding::{encode_fact, ValueRef};
-use bumbledb::image::cache::ImageCache;
 use bumbledb::ir::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
 use bumbledb::schema::{
     ConstraintDescriptor, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId,
     Schema, SchemaDescriptor, ValueType,
 };
-use bumbledb::storage::commit::commit;
-use bumbledb::storage::delta::WriteDelta;
-use bumbledb::storage::env::Environment;
+use bumbledb::{Db, PreparedQuery, ResultBuffer, Snapshot};
 
 /// Posting(id serial, account u64, amount i64) +
 /// Account(id serial, holder u64).
@@ -77,33 +72,24 @@ fn schema() -> Schema {
 const POSTING: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
 
-fn populate(env: &Environment, schema: &Schema) {
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for account in 0..20u64 {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[ValueRef::U64(account), ValueRef::U64(account % 5)],
-            schema.relation(ACCOUNT).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, ACCOUNT, &bytes).expect("insert");
-    }
-    for id in 0..500u64 {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[
-                ValueRef::U64(id),
-                ValueRef::U64(id % 20),
-                ValueRef::I64((id.cast_signed() % 100) - 50),
-            ],
-            schema.relation(POSTING).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, POSTING, &bytes).expect("insert");
-    }
-    drop(view);
-    commit(delta, env).expect("commit");
+fn populate(db: &Db<'_>) {
+    db.write(|tx| {
+        for account in 0..20u64 {
+            tx.insert_dyn(ACCOUNT, &[Value::U64(account), Value::U64(account % 5)])?;
+        }
+        for id in 0..500u64 {
+            tx.insert_dyn(
+                POSTING,
+                &[
+                    Value::U64(id),
+                    Value::U64(id % 20),
+                    Value::I64((id.cast_signed() % 100) - 50),
+                ],
+            )?;
+        }
+        Ok(())
+    })
+    .expect("populate");
 }
 
 /// Q(holder, amount) :- Posting(account = a, amount), Account(id = a,
@@ -193,22 +179,21 @@ fn guard_query() -> Query {
 fn gate(
     label: &str,
     prepared: &mut PreparedQuery<'_>,
-    txn: &bumbledb::storage::env::ReadTxn<'_>,
-    cache: &ImageCache,
+    snap: &Snapshot<'_>,
     param_set: &[Vec<Value>],
 ) {
     let mut out = ResultBuffer::new();
     // N = 8 warmup runs over the fixed param set.
     for _ in 0..8 {
         for params in param_set {
-            prepared.execute(txn, cache, params, &mut out).expect(label);
+            snap.execute(prepared, params, &mut out).expect(label);
         }
     }
     // M = 8 measured runs: zero allocations, arena growth included.
     alloc_counter::reset();
     for _ in 0..8 {
         for params in param_set {
-            prepared.execute(txn, cache, params, &mut out).expect(label);
+            snap.execute(prepared, params, &mut out).expect(label);
         }
     }
     assert_eq!(
@@ -226,10 +211,8 @@ fn zero_warm_allocation_gate() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("test dir");
     let schema = schema();
-    let env = Environment::create(&dir, &schema).expect("create");
-    populate(&env, &schema);
-    let cache = ImageCache::new();
-    let txn = env.read_txn().expect("txn");
+    let db = Db::create(&dir, &schema).expect("create");
+    populate(&db);
 
     let join_params = vec![
         vec![Value::I64(-10)],
@@ -243,51 +226,45 @@ fn zero_warm_allocation_gate() {
         vec![Value::U64(499)],
     ];
 
-    // The three shapes, across batch sizes (1 = the degenerate scalar).
-    for batch in [1usize, 2, 64, 128] {
-        let mut join = prepare(&txn, &schema, &join_query()).expect("prepare");
-        join.set_batch_size(batch);
-        gate(
-            &format!("join/batch{batch}"),
-            &mut join,
-            &txn,
-            &cache,
-            &join_params,
-        );
+    db.read(|snap| {
+        // The three shapes, across batch sizes (1 = the degenerate scalar).
+        for batch in [1usize, 2, 64, 128] {
+            let mut join = db.prepare(&join_query())?;
+            join.set_batch_size(batch);
+            gate(&format!("join/batch{batch}"), &mut join, snap, &join_params);
 
-        let mut aggregate = prepare(&txn, &schema, &aggregate_query()).expect("prepare");
-        aggregate.set_batch_size(batch);
-        gate(
-            &format!("aggregate/batch{batch}"),
-            &mut aggregate,
-            &txn,
-            &cache,
-            &join_params,
-        );
-    }
-    let mut guard = prepare(&txn, &schema, &guard_query()).expect("prepare");
-    gate("guard", &mut guard, &txn, &cache, &guard_params);
-
-    // Warmup convergence: allocation is finite — by the third warmup round
-    // a run allocates nothing.
-    let mut fresh = prepare(&txn, &schema, &join_query()).expect("prepare");
-    let mut out = ResultBuffer::new();
-    let mut per_round = Vec::new();
-    for _ in 0..3 {
-        alloc_counter::reset();
-        for params in &join_params {
-            fresh
-                .execute(&txn, &cache, params, &mut out)
-                .expect("execute");
+            let mut aggregate = db.prepare(&aggregate_query())?;
+            aggregate.set_batch_size(batch);
+            gate(
+                &format!("aggregate/batch{batch}"),
+                &mut aggregate,
+                snap,
+                &join_params,
+            );
         }
-        per_round.push(alloc_counter::count());
-    }
-    assert_eq!(
-        per_round[2], 0,
-        "third warmup round must be silent: {per_round:?}"
-    );
+        let mut guard = db.prepare(&guard_query())?;
+        gate("guard", &mut guard, snap, &guard_params);
 
-    drop(txn);
-    drop(env);
+        // Warmup convergence: allocation is finite — by the third warmup
+        // round a run allocates nothing.
+        let mut fresh = db.prepare(&join_query())?;
+        let mut out = ResultBuffer::new();
+        let mut per_round = Vec::new();
+        for _ in 0..3 {
+            alloc_counter::reset();
+            for params in &join_params {
+                snap.execute(&mut fresh, params, &mut out)?;
+            }
+            per_round.push(alloc_counter::count());
+        }
+        assert_eq!(
+            per_round[2], 0,
+            "third warmup round must be silent: {per_round:?}"
+        );
+        Ok(())
+    })
+    .expect("gate");
+
+    drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }

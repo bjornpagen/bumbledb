@@ -270,8 +270,10 @@ impl<'env> WriteTxn<'env> {
         Ok(())
     }
 
-    /// Reads the dictionary next-id counter (reader: `storage::dict`;
-    /// re-homed into the delta's pending-intern set by PRD 08).
+    /// Reads the dictionary next-id counter (reader: `storage::dict`'s
+    /// direct-write intern, test-only since the delta's pending-intern set
+    /// re-homed the live path in PRD 08).
+    #[cfg(test)]
     pub(crate) fn dict_next_id(&self) -> Result<u64> {
         read_u64(&self.env.meta, &self.txn, META_DICT_NEXT_ID)
     }

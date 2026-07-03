@@ -1,29 +1,16 @@
-//! Runtime helpers for the `schema!` macro (PRD 27): the macro emits data
-//! and calls; every piece of real logic lives here. The generated
-//! `schema()` resolves the name-based declaration into id-based
+//! Runtime resolution for the `schema!` macro (PRD 27): the macro emits
+//! name-based declaration data plus calls; every piece of real logic lives
+//! here. The generated `schema()` resolves the declaration into id-based
 //! descriptors and runs PRD 02's validated constructor — the macro output
-//! is *exactly* sugar.
-//!
-//! Newtypes are the nominal safety layer — mixing them is a host compile
-//! error:
-//!
-//! ```compile_fail
-//! bumbledb::schema! {
-//!     relation Holder { id: u64 as HolderId, serial }
-//!     relation Account { id: u64 as AccountId, serial }
-//! }
-//! let account = AccountId(1);
-//! let _holder: HolderId = account; // mismatched types: rustc refuses
-//! ```
+//! is *exactly* sugar. (The intern/resolve helpers the generated `Fact`
+//! impls call live in `api::db::plumbing`; both are re-exported through
+//! `crate::__private`.)
 
-use crate::error::{Result, SchemaError};
+use crate::error::SchemaError;
 use crate::schema::{
     ConstraintDescriptor, ConstraintId, FieldDescriptor, FieldId, Generation, RelationDescriptor,
     RelationId, Schema, SchemaDescriptor, ValueType,
 };
-use crate::storage::delta::WriteDelta;
-use crate::storage::dict;
-use crate::storage::env::ReadTxn;
 
 /// A field's declared type, name-based (macro-facing).
 #[derive(Debug, Clone, Copy)]
@@ -207,71 +194,4 @@ pub fn build_schema(declarations: &[RelationDecl]) -> std::result::Result<Schema
         })
         .collect();
     SchemaDescriptor { relations }.validate()
-}
-
-/// Write-context interning: novel values mint provisional ids flushed at
-/// commit (`WriteDelta::intern_str`).
-///
-/// # Errors
-///
-/// Storage errors from the dictionary reads.
-pub fn intern_str_write(
-    view: &ReadTxn<'_>,
-    delta: &mut WriteDelta<'_>,
-    value: &str,
-) -> Result<u64> {
-    delta.intern_str(view, value)
-}
-
-/// Write-context interning for bytes.
-///
-/// # Errors
-///
-/// Storage errors from the dictionary reads.
-pub fn intern_bytes_write(
-    view: &ReadTxn<'_>,
-    delta: &mut WriteDelta<'_>,
-    value: &[u8],
-) -> Result<u64> {
-    delta.intern_bytes(view, value)
-}
-
-/// Read-context lookup: `None` means the value was never interned — the
-/// fact cannot exist, and the miss is the caller's concern.
-///
-/// # Errors
-///
-/// Storage errors from the dictionary reads.
-pub fn intern_str_read(txn: &ReadTxn<'_>, value: &str) -> Result<Option<u64>> {
-    dict::lookup_str(txn, value)
-}
-
-/// Read-context lookup for bytes.
-///
-/// # Errors
-///
-/// Storage errors from the dictionary reads.
-pub fn intern_bytes_read(txn: &ReadTxn<'_>, value: &[u8]) -> Result<Option<u64>> {
-    dict::lookup_bytes(txn, value)
-}
-
-/// Resolves an intern id to an owned `String` (decode boundary).
-///
-/// # Errors
-///
-/// `Corruption` on a dangling id or non-UTF-8 stored bytes.
-pub fn resolve_string(txn: &ReadTxn<'_>, id: u64) -> Result<String> {
-    let raw = dict::resolve(txn, id)?;
-    String::from_utf8(raw.to_vec()).map_err(|_| {
-        crate::error::Error::Corruption(crate::error::CorruptionError::DanglingInternId(id))
-    })
-}
-
-/// Resolves an intern id to owned bytes (decode boundary).
-///
-/// # Errors
-///
-/// `Corruption` on a dangling id.
-pub fn resolve_bytes(txn: &ReadTxn<'_>, id: u64) -> Result<Vec<u8>> {
-    Ok(dict::resolve(txn, id)?.to_vec())
 }

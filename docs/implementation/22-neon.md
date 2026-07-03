@@ -13,8 +13,10 @@ compaction, NEON 128-bit, behind scalar-identical signatures.
 - `exec::kernel` module — **the one module where `unsafe` is sanctioned** (NEON
   intrinsics via `core::arch::aarch64`), every block `// SAFETY:`-commented; the whole
   module `#[cfg(target_arch = "aarch64")]` with the scalar implementations (from
-  PRDs 12/21) as the `#[cfg(not(...))]` fallback *and* as the always-compiled
-  reference the tests compare against on aarch64.
+  PRDs 12/21) as the `#[cfg(not(...))]` fallback *and* as the reference the tests
+  compare against on aarch64 (compiled wherever it has a reader —
+  `cfg(any(not(aarch64), test))` — since an aarch64 release build would hold it as
+  dead code, which this suite forbids).
 - Kernel 1 — predicate scan: `filter_eq_u64 / filter_range_u64(col: &[u64], lo, hi,
   out_positions: &mut ...)` over 2×u64 lanes (and a `u8` variant for enum/bool
   columns, 16 lanes); writes survivor positions branchlessly (compare → mask →

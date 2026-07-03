@@ -49,6 +49,7 @@ fn reverse_key(id: u64) -> [u8; 9] {
 /// # Errors
 ///
 /// `Lmdb` on storage failure, `Corruption` on a malformed id counter.
+#[cfg(test)]
 pub fn intern_str(txn: &mut WriteTxn<'_>, value: &str) -> Result<u64> {
     intern(txn, TAG_STRING, value.as_bytes())
 }
@@ -58,10 +59,12 @@ pub fn intern_str(txn: &mut WriteTxn<'_>, value: &str) -> Result<u64> {
 /// # Errors
 ///
 /// `Lmdb` on storage failure, `Corruption` on a malformed id counter.
+#[cfg(test)]
 pub fn intern_bytes(txn: &mut WriteTxn<'_>, value: &[u8]) -> Result<u64> {
     intern(txn, TAG_BYTES, value)
 }
 
+#[cfg(test)]
 fn intern(txn: &mut WriteTxn<'_>, tag: u8, raw: &[u8]) -> Result<u64> {
     let dict = txn.env().dict();
     let fwd = forward_key(tag, raw);

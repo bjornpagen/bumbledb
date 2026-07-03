@@ -29,16 +29,6 @@ pub enum ExecPlan {
 }
 
 impl ExecPlan {
-    /// The binding-slot order (shared vocabulary between both variants so
-    /// sinks are built identically).
-    #[must_use]
-    pub fn slots(&self) -> Vec<VarId> {
-        match self {
-            Self::GuardProbe(guard) => guard.vars.iter().map(|(_, v)| *v).collect(),
-            Self::FreeJoin(plan) => plan.slots().to_vec(),
-        }
-    }
-
     /// The slot index of a variable.
     ///
     /// # Panics

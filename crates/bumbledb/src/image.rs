@@ -91,6 +91,7 @@ impl RelationImage {
     ///
     /// On a programmer-invariant violation: `field_idx` is a 1-byte column
     /// (callers dispatch on the schema's `TypeDesc` width).
+    #[cfg(test)]
     #[must_use]
     pub fn column_words(&self, field_idx: usize) -> &[u64] {
         match self.column(field_idx) {
@@ -104,6 +105,7 @@ impl RelationImage {
     /// # Panics
     ///
     /// On a programmer-invariant violation: `field_idx` is an 8-byte column.
+    #[cfg(test)]
     #[must_use]
     pub fn column_bytes(&self, field_idx: usize) -> &[u8] {
         match self.column(field_idx) {

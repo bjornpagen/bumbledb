@@ -5,8 +5,10 @@
 //! This is the one module where `unsafe` is sanctioned. The NEON paths are
 //! `cfg(target_arch = "aarch64")`; every other 64-bit platform compiles and
 //! runs the scalar fallback correctly, with no performance promises. The
-//! scalar implementations are *always* compiled — they are the reference
-//! the property tests compare the kernels against, bit for bit.
+//! scalar implementations are compiled wherever they have a reader — the
+//! non-aarch64 live path and every target's test builds, where they are
+//! the reference the property tests compare the kernels against, bit for
+//! bit (an aarch64 release build omits them: dead code is disallowed).
 //!
 //! Survivor compaction is the scalar cursor-write on every target: NEON has
 //! no compress instruction (that is SVE, which Apple Silicon lacks), and
@@ -62,9 +64,11 @@ pub fn compact_u32_by_mask(items: &mut Vec<u32>, mask: &[u8]) {
     items.truncate(write);
 }
 
-/// The scalar reference implementations: always compiled — the fallback on
-/// non-aarch64 targets and the comparison oracle the aarch64 property tests
-/// assert bit-identity against.
+/// The scalar reference implementations: the fallback on non-aarch64
+/// targets and the comparison oracle the aarch64 property tests assert
+/// bit-identity against (absent only in aarch64 non-test builds, where
+/// they would be dead code).
+#[cfg(any(not(target_arch = "aarch64"), test))]
 pub mod reference {
     /// Scalar reference of [`super::filter_eq_u64`].
     pub fn filter_eq_u64(col: &[u64], value: u64, out: &mut Vec<u32>) {

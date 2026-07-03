@@ -233,6 +233,7 @@ impl<'s> WriteDelta<'s> {
     }
 
     /// The recorded disposition for a fact, if any (last one wins).
+    #[cfg(test)]
     #[must_use]
     pub fn disposition(&self, rel: RelationId, fact_bytes: &[u8]) -> Option<Disposition> {
         self.facts

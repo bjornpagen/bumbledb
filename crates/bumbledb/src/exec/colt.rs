@@ -157,14 +157,8 @@ impl Colt {
 
     /// The root cursor (level 0).
     #[must_use]
-    pub fn root(&self) -> Cursor {
+    pub fn root() -> Cursor {
         Cursor::Node(NodeRef(0))
-    }
-
-    /// Number of trie levels.
-    #[must_use]
-    pub fn levels(&self) -> usize {
-        self.schema_columns.len()
     }
 
     /// Key arity at a level.
@@ -175,6 +169,7 @@ impl Colt {
 
     /// Total pool footprint — the test observability for laziness
     /// (allocations only ever grow this).
+    #[cfg(test)]
     #[must_use]
     pub fn watermark(&self) -> usize {
         self.nodes.len() + self.chunks.len() + self.maps.len() + self.slots.len() + self.keys.len()
@@ -215,7 +210,9 @@ impl Colt {
     }
 
     /// Probes for `key` at `cursor`'s level, forcing the node if needed.
-    /// Returns the child cursor on a hit.
+    /// Returns the child cursor on a hit. (The executor probes through
+    /// [`Colt::get_prehashed`]; this convenience form serves the tests.)
+    #[cfg(test)]
     pub fn get(&mut self, cursor: Cursor, level: usize, key: &[u64]) -> Option<Cursor> {
         self.get_prehashed(cursor, level, key, hash_words(key))
     }
@@ -642,7 +639,7 @@ mod tests {
         let baseline = colt.watermark();
         assert_eq!(baseline, 1, "one root node, nothing else");
         // The first get forces exactly one level.
-        let root = colt.root();
+        let root = Colt::root();
         let child = colt.get(root, 0, &[7]).expect("key 7 exists");
         assert!(colt.watermark() > baseline);
         // The child is a real (chunked) node, still unforced.
@@ -659,7 +656,7 @@ mod tests {
         // Single-level schema: the root's remaining schema is a suffix.
         let mut colt = Colt::new(all(&view), vec![vec![0, 1]]);
         let before = colt.watermark();
-        let root = colt.root();
+        let root = Colt::root();
         let entries = drain(&mut colt, root, 0);
         assert_eq!(entries.len(), 500);
         assert_eq!(colt.watermark(), before, "no forcing, no allocation");
@@ -681,7 +678,7 @@ mod tests {
         }
 
         let mut colt = Colt::new(all(&view), vec![vec![0], vec![1]]);
-        let root = colt.root();
+        let root = Colt::root();
         // Root iteration (non-suffix -> forces): keys match the oracle's.
         let entries = drain(&mut colt, root, 0);
         assert_eq!(entries.len(), oracle.len());
@@ -716,7 +713,7 @@ mod tests {
         let rows: Vec<(u64, u64)> = (0..300).map(|i| (42, i)).collect();
         let view = view_of(&dir, &schema, &rows);
         let mut colt = Colt::new(all(&view), vec![vec![0], vec![1]]);
-        let child = colt.get(colt.root(), 0, &[42]).expect("hit");
+        let child = colt.get(Colt::root(), 0, &[42]).expect("hit");
         assert!(matches!(colt.key_count(child), KeyCount::Estimate(300)));
         let values = drain(&mut colt, child, 1);
         assert_eq!(values.len(), 300);
@@ -732,7 +729,7 @@ mod tests {
         let rows: Vec<(u64, u64)> = (0..100).map(|i| (i, i)).collect(); // all unique
         let view = view_of(&dir, &schema, &rows);
         let mut colt = Colt::new(all(&view), vec![vec![0], vec![1]]);
-        let child = colt.get(colt.root(), 0, &[5]).expect("hit");
+        let child = colt.get(Colt::root(), 0, &[5]).expect("hit");
         // Singletons pin rows inline: no chunk, no extra node.
         assert!(matches!(child, Cursor::Row(_)));
         assert_eq!(colt.chunks.len(), 0);
@@ -745,7 +742,7 @@ mod tests {
         let rows: Vec<(u64, u64)> = (0..60).map(|i| (i % 3, i)).collect();
         let view = view_of(&dir, &schema, &rows);
         let mut colt = Colt::new(all(&view), vec![vec![0], vec![1]]);
-        let root = colt.root();
+        let root = Colt::root();
         // Unforced: duplicate-inflated Estimate.
         assert_eq!(colt.key_count(root), KeyCount::Estimate(60));
         colt.get(root, 0, &[0]);
@@ -761,12 +758,12 @@ mod tests {
         let view = view_of(&dir, &schema, &rows);
         // A zero-binding occurrence: one empty level.
         let mut colt = Colt::new(all(&view), vec![vec![]]);
-        let root = colt.root();
+        let root = Colt::root();
         let entries = drain(&mut colt, root, 0);
         // Suffix iteration yields one entry per position (empty keys);
         // a probe with the empty key forces and hits iff nonempty.
         assert_eq!(entries.len(), 2);
         let mut colt = Colt::new(all(&view), vec![vec![]]);
-        assert!(colt.get(colt.root(), 0, &[]).is_some());
+        assert!(colt.get(Colt::root(), 0, &[]).is_some());
     }
 }
