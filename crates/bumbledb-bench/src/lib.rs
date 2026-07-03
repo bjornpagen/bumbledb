@@ -11,6 +11,7 @@ pub mod cli;
 pub mod compare;
 pub mod corpus;
 pub mod gen;
+pub mod querygen;
 pub mod schema;
 pub mod sqlmap;
 pub mod translate;
