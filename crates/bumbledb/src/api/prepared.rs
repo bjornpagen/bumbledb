@@ -205,8 +205,12 @@ pub struct PreparedQuery<'s> {
     /// (String/Bytes only). A missed value under `Eq` short-circuits to an
     /// empty result; under `Ne` the sentinel word matches everything.
     missed_params: Vec<bool>,
-    /// Per occurrence: filters with symbolic constants substituted, reused.
+    /// Per occurrence: residual filters with symbolic constants
+    /// substituted, reused.
     resolved_filters: Vec<Vec<FilterPredicate>>,
+    /// Per occurrence: this execution's resolved selection words, in
+    /// selection-level order (docs/perf/02), reused.
+    resolved_selections: Vec<Vec<u64>>,
     /// Recycled survivor buffers, one per occurrence.
     survivor_buffers: Vec<Vec<u32>>,
     /// Per occurrence: the generation whose image the COLT's current view
@@ -345,6 +349,7 @@ pub(crate) fn prepare<'s>(
         resolved_params: Vec::new(),
         missed_params: Vec::new(),
         resolved_filters: vec![Vec::new(); occurrence_count],
+        resolved_selections: vec![Vec::new(); occurrence_count],
         survivor_buffers: (0..occurrence_count).map(|_| Vec::new()).collect(),
         built_generation: vec![None; occurrence_count],
         built_filters: vec![Vec::new(); occurrence_count],
@@ -388,7 +393,12 @@ fn build_colts(
                             .collect()
                     })
                     .collect();
-                Ok(Colt::new(View::All(image), columns))
+                let selections: Vec<usize> = occurrence
+                    .selections
+                    .iter()
+                    .map(|s| usize::from(s.field.0))
+                    .collect();
+                Ok(Colt::new(View::All(image), &selections, columns))
             })
             .collect(),
     }
@@ -478,12 +488,13 @@ impl PreparedQuery<'_> {
             ExecPlan::FreeJoin(plan) => {
                 let resolved = {
                     let _s = obs::span(obs::names::RESOLVE_FILTERS, obs::Category::Execute);
-                    resolve_filters(
+                    resolve_predicates(
                         txn,
                         plan,
                         &self.resolved_params,
                         &self.missed_params,
                         &mut self.resolved_filters,
+                        &mut self.resolved_selections,
                     )?
                 };
                 if !resolved {
@@ -499,6 +510,7 @@ impl PreparedQuery<'_> {
                         .expect("free join plans carry executor scratch"),
                     &mut self.bindings,
                     &self.resolved_filters,
+                    &self.resolved_selections,
                     &mut self.survivor_buffers,
                     &mut self.built_generation,
                     &mut self.built_filters,
@@ -594,12 +606,13 @@ impl PreparedQuery<'_> {
             ExecPlan::GuardProbe(_) => unreachable!("handled above"),
             ExecPlan::FreeJoin(plan) => {
                 let mut counters = CountingCounters::new(plan);
-                let short_circuit = !resolve_filters(
+                let short_circuit = !resolve_predicates(
                     txn,
                     plan,
                     &self.resolved_params,
                     &self.missed_params,
                     &mut self.resolved_filters,
+                    &mut self.resolved_selections,
                 )?;
                 if short_circuit {
                     return Ok((out, counters.into_stats(plan)));
@@ -615,6 +628,7 @@ impl PreparedQuery<'_> {
                         .expect("free join plans carry executor scratch"),
                     &mut self.bindings,
                     &self.resolved_filters,
+                    &self.resolved_selections,
                     &mut self.survivor_buffers,
                     &mut self.built_generation,
                     &mut self.built_filters,
@@ -674,28 +688,66 @@ impl PreparedQuery<'_> {
     }
 }
 
-/// Resolves every occurrence's symbolic filter constants for this
-/// execution; `Ok(false)` = a dictionary miss under an `Eq` filter, which
-/// empties the whole conjunctive query (the short-circuit is sound for
-/// `Eq` only — a missed value under `Ne` resolves to the sentinel id and
-/// matches everything).
-fn resolve_filters(
+/// Resolves every occurrence's symbolic predicate constants for this
+/// execution — residual filters into `out_filters`, selection words into
+/// `out_selections`. `Ok(false)` = a dictionary miss under an `Eq`
+/// predicate (filter or selection), which empties the whole conjunctive
+/// query (the short-circuit is sound for `Eq` only — a missed value
+/// under `Ne` resolves to the sentinel id and matches everything).
+fn resolve_predicates(
     txn: &ReadTxn<'_>,
     plan: &crate::plan::fj::ValidatedPlan,
     params: &[Const],
     missed: &[bool],
-    out: &mut [Vec<FilterPredicate>],
+    out_filters: &mut [Vec<FilterPredicate>],
+    out_selections: &mut [Vec<u64>],
 ) -> Result<bool> {
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
-        out[occ_idx].clear();
+        out_filters[occ_idx].clear();
         for filter in &occurrence.filters {
             let Some(resolved) = resolve_filter(txn, filter, params, missed)? else {
                 return Ok(false);
             };
-            out[occ_idx].push(resolved);
+            out_filters[occ_idx].push(resolved);
+        }
+        out_selections[occ_idx].clear();
+        for selection in &occurrence.selections {
+            let Some(word) = resolve_selection(txn, selection, params, missed)? else {
+                return Ok(false);
+            };
+            out_selections[occ_idx].push(word);
         }
     }
     Ok(true)
+}
+
+/// Resolves one selection's constant to the column word its trie level
+/// probes with. `Ok(None)` = a dictionary miss — the Eq short-circuit.
+fn resolve_selection(
+    txn: &ReadTxn<'_>,
+    selection: &crate::plan::fj::Selection,
+    params: &[Const],
+    missed: &[bool],
+) -> Result<Option<u64>> {
+    let word_of = |constant: &Const| match constant {
+        Const::Word(w) => *w,
+        Const::Byte(b) => u64::from(*b),
+        Const::Param(_) | Const::PendingIntern { .. } => {
+            unreachable!("bind_param resolves params to column form")
+        }
+    };
+    Ok(match &selection.value {
+        Const::Word(w) => Some(*w),
+        Const::Byte(b) => Some(u64::from(*b)),
+        Const::Param(p) => {
+            if missed[usize::from(p.0)] {
+                None
+            } else {
+                Some(word_of(&params[usize::from(p.0)]))
+            }
+        }
+        Const::PendingIntern { tag, bytes } => dict::lookup_tagged(txn, *tag, bytes)?,
+    })
 }
 
 /// Resets the owned COLT sources against this execution's images and
@@ -711,6 +763,7 @@ fn run_join<C: crate::exec::run::Counters>(
     executor: &mut Executor,
     bindings: &mut Bindings,
     resolved_filters: &[Vec<FilterPredicate>],
+    resolved_selections: &[Vec<u64>],
     survivor_buffers: &mut [Vec<u32>],
     built_generation: &mut [Option<u64>],
     built_filters: &mut [Vec<FilterPredicate>],
@@ -720,10 +773,24 @@ fn run_join<C: crate::exec::run::Counters>(
 ) -> Result<()> {
     let views_span = obs::span(obs::names::VIEWS, obs::Category::Execute);
     let generation = txn.generation()?;
+    // Lowering routes every Eq-constant into selections; a leak here would
+    // silently resurrect the per-param view scan (docs/perf/02).
+    debug_assert!(
+        resolved_filters.iter().flatten().all(|f| !matches!(
+            f,
+            FilterPredicate::Compare {
+                op: crate::ir::CmpOp::Eq,
+                ..
+            }
+        )),
+        "Eq-constant predicates never reach view filters"
+    );
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
-        // Warm fast path: same generation, same resolved filters — the
-        // COLT's view is still exactly right, and so are its forced
-        // tries. No cache lock, no filter scan, no re-force.
+        // Warm fast path: same generation, same resolved residual
+        // filters — the COLT's view is still exactly right, and so are
+        // its forced tries (selections live in the trie, not the view,
+        // so param churn never lands here). No cache lock, no filter
+        // scan, no re-force.
         if built_generation[occ_idx] == Some(generation)
             && built_filters[occ_idx] == resolved_filters[occ_idx]
         {
@@ -751,6 +818,22 @@ fn run_join<C: crate::exec::run::Counters>(
         built_filters[occ_idx].clone_from(&resolved_filters[occ_idx]);
     }
     views_span.end();
+    // Selection probes (docs/perf/02): each occurrence's Eq constants
+    // resolve to trie keys probed once per execution — a miss means no
+    // fact matches, so the whole conjunctive query is empty and the join
+    // never runs (the sink stays reset: a zero-emit execution).
+    for (occ_idx, keys) in resolved_selections.iter().enumerate() {
+        let hit = colts[occ_idx].select(keys).is_some();
+        obs::event(
+            obs::names::SELECT_PROBE,
+            obs::Category::Execute,
+            occ_idx as u64,
+            u64::from(hit),
+        );
+        if !hit {
+            return Ok(());
+        }
+    }
     let _join = obs::span(obs::names::JOIN, obs::Category::Execute);
     // One match per execution: the executor monomorphizes per concrete
     // sink type — no per-emit enum branch on the hot path.
@@ -1340,6 +1423,197 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(report.contains("free join"));
         assert!(report.contains("emitted bindings: 2"));
+    }
+
+    /// Q(amount) :- Posting(memo = ?0, amount) — the selection shape
+    /// (docs/perf/02): a param-Eq on a non-unique field.
+    fn by_memo_query() -> Query {
+        Query {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                relation: POSTING,
+                bindings: vec![
+                    (FieldId(2), Term::Param(crate::ir::ParamId(0))),
+                    (FieldId(3), Term::Var(VarId(0))),
+                ],
+            }],
+            predicates: vec![],
+        }
+    }
+
+    fn memo_param(text: &str) -> Vec<Value> {
+        vec![Value::String(Box::from(text.as_bytes()))]
+    }
+
+    fn amounts_of(buffer: &ResultBuffer) -> Vec<i64> {
+        let mut amounts: Vec<i64> = (0..buffer.len())
+            .map(|row| {
+                let ResultValue::I64(amount) = buffer.get(row, 0) else {
+                    panic!("column 0 is an i64");
+                };
+                amount
+            })
+            .collect();
+        amounts.sort_unstable();
+        amounts
+    }
+
+    /// The differential pin for the selection cutover (docs/perf/02):
+    /// rotating Eq params across many executions, every result compared
+    /// against a nested-loop filter over the inserted rows.
+    #[test]
+    fn selection_params_rotate_differentially() {
+        let dir = TempDir::new("prepared-select-diff");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        // Seeded rows over 8 memo values, amounts unique per row.
+        let mut state = 0xDEAD_BEEF_u64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            state >> 33
+        };
+        let rows: Vec<(u64, u64, String, i64)> = (0..200)
+            .map(|id| {
+                let memo = format!("m{}", next() % 8);
+                let amount = i64::try_from(id).expect("fits") * 3 - 100;
+                (id, next() % 5, memo, amount)
+            })
+            .collect();
+        let borrowed: Vec<(u64, u64, &str, i64)> = rows
+            .iter()
+            .map(|(id, account, memo, amount)| (*id, *account, memo.as_str(), *amount))
+            .collect();
+        insert_postings(&env, &schema, &borrowed);
+        let cache = ImageCache::new();
+        let txn = env.read_txn().expect("txn");
+        let mut prepared = prepare(&txn, &cache, &schema, &by_memo_query()).expect("prepare");
+        for cycle in 0..3 {
+            for m in 0..8 {
+                let memo = format!("m{m}");
+                let out = prepared
+                    .execute_collect(&txn, &cache, &memo_param(&memo))
+                    .expect("execute");
+                let mut expected: Vec<i64> = rows
+                    .iter()
+                    .filter(|(_, _, row_memo, _)| *row_memo == memo)
+                    .map(|(_, _, _, amount)| *amount)
+                    .collect();
+                expected.sort_unstable();
+                expected.dedup();
+                assert_eq!(
+                    amounts_of(&out),
+                    expected,
+                    "cycle {cycle}, memo {memo} diverges from the nested loop"
+                );
+            }
+        }
+        // The never-interned miss stays the empty set.
+        let out = prepared
+            .execute_collect(&txn, &cache, &memo_param("never-stored"))
+            .expect("execute");
+        assert!(out.is_empty());
+    }
+
+    /// Counters pin (docs/perf/02): a selection's work is O(selected),
+    /// never O(relation).
+    #[test]
+    fn selection_work_is_o_selected() {
+        let dir = TempDir::new("prepared-select-counters");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        // 20 rows, exactly 4 carrying the hot memo, distinct amounts.
+        let rows: Vec<(u64, u64, String, i64)> = (0..20)
+            .map(|id| {
+                let memo = if id % 5 == 0 {
+                    "hot".to_owned()
+                } else {
+                    format!("cold-{id}")
+                };
+                (id, id % 3, memo, i64::try_from(id).expect("fits") * 7)
+            })
+            .collect();
+        let borrowed: Vec<(u64, u64, &str, i64)> = rows
+            .iter()
+            .map(|(id, account, memo, amount)| (*id, *account, memo.as_str(), *amount))
+            .collect();
+        insert_postings(&env, &schema, &borrowed);
+        let cache = ImageCache::new();
+        let txn = env.read_txn().expect("txn");
+        let mut prepared = prepare(&txn, &cache, &schema, &by_memo_query()).expect("prepare");
+        let (out, stats) = prepared
+            .profile(&txn, &cache, &memo_param("hot"))
+            .expect("profile");
+        assert_eq!(out.len(), 4);
+        let drawn: u64 = stats.nodes.iter().map(|n| n.batch_entries).sum();
+        assert_eq!(drawn, 4, "work is O(selected), not O(relation): {stats:?}");
+    }
+
+    /// The scan is dead (docs/perf/02): rotating Eq params build the view
+    /// once per generation; every later execution memo-hits and probes.
+    #[cfg(feature = "trace")]
+    #[test]
+    fn selection_params_rotate_without_view_rebuilds() {
+        use crate::obs;
+
+        let dir = TempDir::new("prepared-select-trace");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        insert_postings(
+            &env,
+            &schema,
+            &[
+                (1, 0, "m0", 10),
+                (2, 0, "m1", 20),
+                (3, 0, "m2", 30),
+                (4, 0, "m0", 40),
+            ],
+        );
+        let cache = ImageCache::new();
+        let txn = env.read_txn().expect("txn");
+        let mut prepared = prepare(&txn, &cache, &schema, &by_memo_query()).expect("prepare");
+
+        let mut view_builds = 0;
+        let mut memo_hits = 0;
+        for _cycle in 0..3 {
+            for m in ["m0", "m1", "m2"] {
+                obs::start_capture();
+                let out = prepared
+                    .execute_collect(&txn, &cache, &memo_param(m))
+                    .expect("execute");
+                let events = obs::finish_capture();
+                assert!(!out.is_empty());
+                view_builds += events
+                    .iter()
+                    .filter(|e| e.name == obs::names::VIEW_BUILD)
+                    .count();
+                memo_hits += events
+                    .iter()
+                    .filter(|e| e.name == obs::names::VIEW_MEMO_HIT)
+                    .count();
+                let probe = events
+                    .iter()
+                    .find(|e| e.name == obs::names::SELECT_PROBE)
+                    .expect("every execution probes");
+                assert_eq!(probe.a1, 1, "present keys hit");
+            }
+        }
+        assert_eq!(view_builds, 1, "one view build per generation");
+        assert_eq!(memo_hits, 8, "every later execution memo-hits");
+
+        // A never-interned param short-circuits at resolve: no view work,
+        // no probe, no join — the empty set.
+        obs::start_capture();
+        let out = prepared
+            .execute_collect(&txn, &cache, &memo_param("never-stored"))
+            .expect("execute");
+        let events = obs::finish_capture();
+        assert!(out.is_empty());
+        let names: Vec<&str> = events.iter().map(|e| e.name).collect();
+        assert!(!names.contains(&obs::names::VIEW_BUILD), "{names:?}");
+        assert!(!names.contains(&obs::names::SELECT_PROBE), "{names:?}");
+        assert!(!names.contains(&obs::names::JOIN), "{names:?}");
     }
 
     /// PRD 03's read-path capture contract (feature `trace`).

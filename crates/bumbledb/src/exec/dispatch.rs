@@ -577,7 +577,7 @@ mod tests {
                     .collect()
             })
             .collect();
-        let mut colts = vec![Colt::new(view, columns)];
+        let mut colts = vec![Colt::new(view, &[], columns)];
         let mut bindings = Bindings::new(plan.slots().len());
         let mut sink = ProjectionSink::new(
             [VarId(0), VarId(1)]

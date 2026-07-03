@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::normalize::{NormalizedQuery, OccId, PlacedComparison};
-use crate::ir::VarId;
+use crate::ir::{CmpOp, VarId};
 use crate::plan::planner::JoinOrder;
 use crate::schema::{RelationId, Schema};
 
@@ -139,6 +139,21 @@ pub enum PlanError {
     NoCover { node: usize },
     /// A residual comparison's variables are never both bound.
     UnplacedResidual { residual: usize },
+    /// An occurrence's `filters` still carries an Eq-constant compare —
+    /// lowering moves every one into `selections`, so its presence means
+    /// a hand-built occurrence bypassed the split (docs/perf/00).
+    SelectionOnFilteredField { occ: OccId },
+}
+
+/// One probeable equality: `field == value`, the value constant per
+/// execution (literal word/byte, param slot, or pending intern —
+/// literals and params are the same machine). Selections are the
+/// probe-not-scan half of an occurrence's predicates; `filters` keeps
+/// the scannable rest (docs/perf/00).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Selection {
+    pub field: crate::schema::FieldId,
+    pub value: Const,
 }
 
 /// One occurrence's execution-facing description.
@@ -148,7 +163,11 @@ pub struct PlanOccurrence {
     pub relation: RelationId,
     /// The field each variable reads from (field index = column index).
     pub vars: Vec<(crate::schema::FieldId, VarId)>,
-    /// Per-occurrence filters (evaluated at the source view).
+    /// Probeable equalities, ordered by field id (deterministic plans).
+    pub selections: Vec<Selection>,
+    /// Residual per-occurrence filters (evaluated at the source view):
+    /// non-Eq compares and every `FieldsCompare` — never an Eq-constant,
+    /// which lowering routes into `selections`.
     pub filters: Vec<FilterPredicate>,
     /// The trie schema: this occurrence's subatom var-lists in node order
     /// (§3.3). Under COLT laziness there is no trailing `[]` level — the
@@ -324,15 +343,18 @@ pub fn validate(
                 .filter(|s| s.occ == occurrence.occ_id)
                 .map(|s| s.vars.clone())
                 .collect();
+            let (selections, filters) = split_filters(&occurrence.filters);
             PlanOccurrence {
                 occ_id: occurrence.occ_id,
                 relation: occurrence.relation,
                 vars: occurrence.vars.clone(),
-                filters: occurrence.filters.clone(),
+                selections,
+                filters,
                 trie_schema,
             }
         })
         .collect();
+    check_selections(&occurrences)?;
 
     // Binding-slot layout: node order, then subatom order — dense.
     let mut slots: Vec<VarId> = Vec::new();
@@ -353,6 +375,55 @@ pub fn validate(
         distinct_bindings,
         estimates,
     })
+}
+
+/// Splits an occurrence's lowered predicates into probeable selections
+/// (every Eq-against-a-constant, literal or param alike) and the
+/// scannable residue (non-Eq compares and every `FieldsCompare` — a
+/// repeated in-atom variable is a row-shape constraint, not a constant
+/// probe). Selections are ordered by field id, stable within a field, so
+/// equal queries lower to equal plans.
+fn split_filters(filters: &[FilterPredicate]) -> (Vec<Selection>, Vec<FilterPredicate>) {
+    let mut selections: Vec<Selection> = filters
+        .iter()
+        .filter_map(|f| match f {
+            FilterPredicate::Compare {
+                field,
+                op: CmpOp::Eq,
+                value,
+            } => Some(Selection {
+                field: *field,
+                value: value.clone(),
+            }),
+            _ => None,
+        })
+        .collect();
+    selections.sort_by_key(|s| s.field);
+    let residuals: Vec<FilterPredicate> = filters
+        .iter()
+        .filter(|f| !matches!(f, FilterPredicate::Compare { op: CmpOp::Eq, .. }))
+        .cloned()
+        .collect();
+    (selections, residuals)
+}
+
+/// The selection invariant, asserted at the boundary because
+/// [`PlanOccurrence`] is plain data anyone can construct: `filters` may
+/// never carry an Eq-constant compare — [`split_filters`] routes every
+/// one into `selections`.
+pub(crate) fn check_selections(occurrences: &[PlanOccurrence]) -> Result<(), PlanError> {
+    for occurrence in occurrences {
+        let leaked = occurrence
+            .filters
+            .iter()
+            .any(|f| matches!(f, FilterPredicate::Compare { op: CmpOp::Eq, .. }));
+        if leaked {
+            return Err(PlanError::SelectionOnFilteredField {
+                occ: occurrence.occ_id,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// The distinct-bindings elision check (30-execution): every occurrence's
@@ -512,6 +583,128 @@ mod tests {
             occ: OccId(occ),
             vars: vars.to_vec(),
         }
+    }
+
+    /// The string shape (docs/perf/00): one occurrence, `memo = ?0`
+    /// lowered as a filter by normalize, split into a selection here.
+    #[test]
+    fn lowering_splits_eq_constants_into_selections() {
+        let mut occ = occurrence(0, 0, &[(1, X)]);
+        occ.filters = vec![FilterPredicate::Compare {
+            field: FieldId(2),
+            op: CmpOp::Eq,
+            value: Const::Param(crate::ir::ParamId(0)),
+        }];
+        let normalized = NormalizedQuery {
+            occurrences: vec![occ],
+            residuals: vec![],
+        };
+        let plan = binary2fj(&normalized, &order(&[0]));
+        let validated = validate(&plan, &normalized, &schema(1, 3), vec![0], &BTreeSet::new())
+            .expect("valid plan");
+        let lowered = validated.occurrence(OccId(0));
+        assert_eq!(
+            lowered.selections,
+            vec![Selection {
+                field: FieldId(2),
+                value: Const::Param(crate::ir::ParamId(0)),
+            }]
+        );
+        assert!(lowered.filters.is_empty());
+    }
+
+    /// Range/Ne compares and every `FieldsCompare` stay filters; selections
+    /// come out ordered by field id whatever the filter order was.
+    #[test]
+    fn residuals_and_field_compares_stay_filters() {
+        let mut occ = occurrence(0, 0, &[(1, X)]);
+        occ.filters = vec![
+            FilterPredicate::Compare {
+                field: FieldId(2),
+                op: CmpOp::Ge,
+                value: Const::Word(9),
+            },
+            FilterPredicate::Compare {
+                field: FieldId(2),
+                op: CmpOp::Eq,
+                value: Const::Word(5),
+            },
+            FilterPredicate::FieldsCompare {
+                left: FieldId(1),
+                right: FieldId(2),
+                op: CmpOp::Eq,
+            },
+            FilterPredicate::Compare {
+                field: FieldId(0),
+                op: CmpOp::Eq,
+                value: Const::Byte(1),
+            },
+        ];
+        let normalized = NormalizedQuery {
+            occurrences: vec![occ],
+            residuals: vec![],
+        };
+        let plan = binary2fj(&normalized, &order(&[0]));
+        let validated = validate(&plan, &normalized, &schema(1, 3), vec![0], &BTreeSet::new())
+            .expect("valid plan");
+        let lowered = validated.occurrence(OccId(0));
+        assert_eq!(
+            lowered.selections,
+            vec![
+                Selection {
+                    field: FieldId(0),
+                    value: Const::Byte(1),
+                },
+                Selection {
+                    field: FieldId(2),
+                    value: Const::Word(5),
+                },
+            ],
+            "selections ordered by field id"
+        );
+        assert_eq!(
+            lowered.filters,
+            vec![
+                FilterPredicate::Compare {
+                    field: FieldId(2),
+                    op: CmpOp::Ge,
+                    value: Const::Word(9),
+                },
+                FilterPredicate::FieldsCompare {
+                    left: FieldId(1),
+                    right: FieldId(2),
+                    op: CmpOp::Eq,
+                },
+            ],
+            "residuals keep their order"
+        );
+
+        // Determinism: the same query lowers to the same plan.
+        let again = validate(&plan, &normalized, &schema(1, 3), vec![0], &BTreeSet::new())
+            .expect("valid plan");
+        assert_eq!(validated.occurrences(), again.occurrences());
+    }
+
+    /// The boundary check: a hand-built occurrence that bypassed the split
+    /// (an Eq-constant still in `filters`) is rejected by name.
+    #[test]
+    fn a_leaked_eq_filter_fails_selection_validation() {
+        let bad = PlanOccurrence {
+            occ_id: OccId(3),
+            relation: RelationId(0),
+            vars: vec![],
+            selections: vec![],
+            filters: vec![FilterPredicate::Compare {
+                field: FieldId(0),
+                op: CmpOp::Eq,
+                value: Const::Word(1),
+            }],
+            trie_schema: vec![],
+        };
+        assert_eq!(
+            check_selections(std::slice::from_ref(&bad)),
+            Err(PlanError::SelectionOnFilteredField { occ: OccId(3) })
+        );
     }
 
     /// The clover query: R(x,a), S(x,b), T(x,c).

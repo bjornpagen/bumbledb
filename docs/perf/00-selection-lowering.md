@@ -9,8 +9,10 @@ Give equality-against-a-constant its own name in the plan. Today an
 `account = ?0` and an `at >= ?0` are the same thing — a `FilterPredicate` in
 `PlanOccurrence::filters`, destined for a scan. After this PRD they are
 different things at the type level: **selections** (probeable) and **residual
-filters** (scannable). This PRD is representation only; execution behavior is
-bit-identical via a shim that PRD 02 deletes.
+filters** (scannable). PRDs 00–02 land as one
+cutover — no transitional shims, no intermediate compatibility state
+(owner ruling: PRDs are work-organization units, not atomic passing
+states).
 
 ## Technical direction
 
@@ -48,19 +50,6 @@ bit-identical via a shim that PRD 02 deletes.
   existing `PlanError` style with a new variant, e.g.
   `SelectionOnFilteredField { occ }` for a field appearing in both lists with
   `Eq`).
-- **The shim (deleted by PRD 02):** one function next to `run_join` in
-  `api/prepared.rs`,
-
-  ```rust
-  /// PRD 00 transitional shim — PRD 02 deletes this: selections rejoin
-  /// the filter list so views behave exactly as before the split.
-  fn selections_as_filters(occ: &PlanOccurrence, out: &mut Vec<FilterPredicate>)
-  ```
-
-  invoked wherever `occurrence.filters` feeds `resolve_filters`/`apply`, so the
-  resolved filter vectors are byte-identical to pre-split. Mark it with a
-  comment naming `docs/perf/02-execution-cutover.md`.
-
 ## Non-goals
 
 Any behavior change (this PRD's diff must not move a single benchmark number).
@@ -80,6 +69,6 @@ scan by nature and the range family exists to measure exactly that).
   invalid plan.
 - Selection ordering determinism: lowering the same query twice yields equal
   plans (`assert_eq!` on the plan).
-- The full existing test suite passes unchanged — including the engine's
-  differential family, the bench crate's `verify` full-S test, and the eight
-  family golden tests. `scripts/check.sh` green (both feature configs).
+- The full suite is green once the 00–02 cutover completes (PRD 02's
+  criteria are the integration gate). `scripts/check.sh` green (both feature
+  configs).

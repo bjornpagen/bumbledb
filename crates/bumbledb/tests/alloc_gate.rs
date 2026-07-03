@@ -232,6 +232,24 @@ fn minmax_query() -> Query {
     }
 }
 
+/// Q(amount) :- Posting(memo = ?0, amount) — the selection shape
+/// (docs/perf/02): a rotating Eq param on a non-unique field probes the
+/// COLT's selection level; after the rotation's first cycle forces every
+/// probed subtrie, further rotation must not touch the allocator.
+fn selection_query() -> Query {
+    Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: POSTING,
+            bindings: vec![
+                (FieldId(3), Term::Param(ParamId(0))),
+                (FieldId(2), Term::Var(VarId(0))),
+            ],
+        }],
+        predicates: vec![],
+    }
+}
+
 /// Q(amount) :- Posting(id = ?0, amount) — the guard-probe shape.
 fn guard_query() -> Query {
     Query {
@@ -336,6 +354,16 @@ fn zero_warm_allocation_gate() {
 
         let mut guard = db.prepare(&guard_query())?;
         gate("guard", &mut guard, snap, &guard_params);
+
+        // The selection shape (docs/perf/02): four rotating Eq params on
+        // a non-unique string field — the gate's warmups cover two full
+        // rotation cycles, so every probed subtrie is forced and the
+        // measured rotations must not touch the allocator.
+        let selection_params: Vec<Vec<Value>> = (0..4)
+            .map(|m| vec![Value::String(format!("memo-{m}").into_bytes().into())])
+            .collect();
+        let mut selection = db.prepare(&selection_query())?;
+        gate("selection", &mut selection, snap, &selection_params);
 
         // Warmup convergence: allocation is finite — by the third warmup
         // round a run allocates nothing.

@@ -444,6 +444,7 @@ mod tests {
                         &[],
                         Vec::new(),
                     ),
+                    &[],
                     columns,
                 )
             })

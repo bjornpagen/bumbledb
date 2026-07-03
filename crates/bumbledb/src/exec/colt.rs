@@ -95,7 +95,20 @@ struct Map {
 /// every capacity retained (the 30-execution doc's zero-alloc discipline).
 pub struct Colt {
     view: View,
-    /// Per trie level, the image column index of each key variable.
+    /// Prepended selection levels (docs/perf/01): one single-column trie
+    /// level per Eq-constant, probed once per execution with the resolved
+    /// words. Everything below a successful probe is exactly the filtered
+    /// subtrie a view scan used to produce — built lazily, only for keys
+    /// actually asked about.
+    selection_levels: usize,
+    /// The post-selection start cursor for the current execution.
+    start: Cursor,
+    /// Whether [`Colt::select`] ran since the last reset (always true for
+    /// selection-free tries).
+    selected: bool,
+    /// Per trie level — selection levels first, then join levels — the
+    /// image column index of each key variable. Public APIs take *join*
+    /// levels; internal code indexes this directly.
     schema_columns: Vec<Vec<usize>>,
     nodes: Vec<NodeState>,
     chunks: Vec<Chunk>,
@@ -126,10 +139,21 @@ fn hash_words(words: &[u64]) -> u64 {
 
 impl Colt {
     /// Builds the root over a view: O(1) — nothing decodes until a force.
+    /// `selections` are the image columns of the occurrence's Eq-constant
+    /// predicates, in plan order; `join_schema` the join levels below them.
     #[must_use]
-    pub fn new(view: View, schema_columns: Vec<Vec<usize>>) -> Self {
+    pub fn new(view: View, selections: &[usize], join_schema: Vec<Vec<usize>>) -> Self {
+        let selection_levels = selections.len();
+        let schema_columns: Vec<Vec<usize>> = selections
+            .iter()
+            .map(|column| vec![*column])
+            .chain(join_schema)
+            .collect();
         Self {
             view,
+            selection_levels,
+            start: Cursor::Node(NodeRef(0)),
+            selected: selection_levels == 0,
             schema_columns,
             nodes: vec![NodeState::Unforced(Positions::Root)],
             chunks: Vec::new(),
@@ -152,7 +176,40 @@ impl Colt {
         self.maps.clear();
         self.slots.clear();
         self.keys.clear();
+        self.start = Cursor::Node(NodeRef(0));
+        self.selected = self.selection_levels == 0;
         old
+    }
+
+    /// Probes the selection levels with this execution's resolved words,
+    /// in level order, forcing lazily exactly like join-level probes.
+    /// The amortization contract: forcing selection level 0 walks the
+    /// view once per generation; every subsequent param value is O(1)
+    /// probes. `Some` sits at the first join level; `None` = no fact
+    /// matches — the occurrence, and with it the whole conjunctive
+    /// query, is empty on this snapshot.
+    pub fn select(&mut self, keys: &[u64]) -> Option<Cursor> {
+        debug_assert_eq!(
+            keys.len(),
+            self.selection_levels,
+            "one resolved word per selection level"
+        );
+        let mut cursor = Self::root();
+        for (level, key) in keys.iter().enumerate() {
+            let key = std::slice::from_ref(key);
+            cursor = self.probe_child_at(cursor, level, key, hash_words(key))?;
+        }
+        self.start = cursor;
+        self.selected = true;
+        Some(cursor)
+    }
+
+    /// The executor's per-execution start cursor: the root, or the
+    /// post-selection cursor once [`Colt::select`] ran this execution.
+    #[must_use]
+    pub fn start(&self) -> Cursor {
+        debug_assert!(self.selected, "select() runs before the join");
+        self.start
     }
 
     /// The root cursor (level 0).
@@ -161,9 +218,17 @@ impl Colt {
         Cursor::Node(NodeRef(0))
     }
 
-    /// Key arity at a level.
+    /// Key arity at a *join* level (public APIs speak join levels; the
+    /// selection prefix is internal). Production callers derive arity
+    /// from the plan; this is the test-facing accessor.
+    #[cfg(test)]
     #[must_use]
     pub fn arity(&self, level: usize) -> usize {
+        self.arity_at(self.selection_levels + level)
+    }
+
+    /// Key arity at an internal (selection-inclusive) level.
+    fn arity_at(&self, level: usize) -> usize {
         self.schema_columns[level].len()
     }
 
@@ -219,6 +284,7 @@ impl Colt {
 
     /// Probe with a precomputed hash (phase 2 of the two-phase batched
     /// probe): the load chain starts here; the hash was phase-1 ALU work.
+    /// `level` is a join level.
     pub fn get_prehashed(
         &mut self,
         cursor: Cursor,
@@ -226,7 +292,19 @@ impl Colt {
         key: &[u64],
         hash: u64,
     ) -> Option<Cursor> {
-        debug_assert_eq!(key.len(), self.arity(level));
+        self.probe_child_at(cursor, self.selection_levels + level, key, hash)
+    }
+
+    /// [`Colt::get_prehashed`] over an internal (selection-inclusive)
+    /// level — the shared body selection probes also walk.
+    fn probe_child_at(
+        &mut self,
+        cursor: Cursor,
+        level: usize,
+        key: &[u64],
+        hash: u64,
+    ) -> Option<Cursor> {
+        debug_assert_eq!(key.len(), self.arity_at(level));
         match cursor {
             // A pinned row: the probe is a field-equality check, and the
             // child stays pinned to the same position.
@@ -253,7 +331,7 @@ impl Colt {
     /// and already-forced nodes): phase 2's loads then hit a ready map.
     pub fn ensure_forced(&mut self, cursor: Cursor, level: usize) {
         if let Cursor::Node(node) = cursor {
-            self.force(node, level);
+            self.force(node, self.selection_levels + level);
         }
     }
 
@@ -276,7 +354,27 @@ impl Colt {
         children_out: &mut [Cursor],
         max: usize,
     ) -> (usize, BatchToken) {
-        let arity = self.arity(level);
+        self.iter_batch_at(
+            cursor,
+            self.selection_levels + level,
+            token,
+            keys_out,
+            children_out,
+            max,
+        )
+    }
+
+    /// [`Colt::iter_batch`] over an internal (selection-inclusive) level.
+    fn iter_batch_at(
+        &mut self,
+        cursor: Cursor,
+        level: usize,
+        token: BatchToken,
+        keys_out: &mut [u64],
+        children_out: &mut [Cursor],
+        max: usize,
+    ) -> (usize, BatchToken) {
+        let arity = self.arity_at(level);
         assert!(keys_out.len() >= max * arity && children_out.len() >= max);
         match cursor {
             Cursor::Row(position) => {
@@ -323,7 +421,7 @@ impl Colt {
         children_out: &mut [Cursor],
         max: usize,
     ) -> (usize, BatchToken) {
-        let arity = self.arity(level);
+        let arity = self.arity_at(level);
         let mut yielded = 0;
         match self.nodes[node.0 as usize] {
             NodeState::Forced { .. } => unreachable!("caller checked unforced"),
@@ -391,7 +489,7 @@ impl Colt {
         max: usize,
     ) -> (usize, BatchToken) {
         let m = self.maps[map as usize];
-        let arity = self.arity(level);
+        let arity = self.arity_at(level);
         debug_assert_eq!(arity, m.arity);
         let mut slot_idx = usize::try_from(token.0).expect("64-bit usize");
         let mut yielded = 0;
@@ -446,7 +544,7 @@ impl Colt {
         if let NodeState::Forced { map } = self.nodes[node.0 as usize] {
             return map;
         }
-        let arity = self.arity(level);
+        let arity = self.arity_at(level);
         let count = match self.nodes[node.0 as usize] {
             NodeState::Unforced(Positions::Root) => self.view.len() as u64,
             NodeState::Unforced(Positions::Chunks { count, .. }) => u64::from(count),
@@ -677,13 +775,105 @@ mod tests {
         out
     }
 
+    /// Selection levels (docs/perf/01): probing lands exactly on the
+    /// filtered subtrie a view scan used to produce.
+    #[test]
+    fn selection_levels_probe_to_the_filtered_subtrie() {
+        let dir = TempDir::new("colt-select");
+        let schema = schema();
+        let rows: Vec<(u64, u64)> = (0..1000).map(|i| (i % 10, i)).collect();
+        let view = view_of(&dir, &schema, &rows);
+        // Selection on k (column 0); one join level on v (column 1).
+        let mut colt = Colt::new(all(&view), &[0], vec![vec![1]]);
+        let cursor = colt.select(&[7]).expect("key 7 exists");
+        assert_eq!(colt.start(), cursor);
+        let entries = drain(&mut colt, cursor, 0);
+        assert_eq!(entries.len(), 100, "exactly k = 7's positions");
+        assert!(entries.iter().all(|(key, _)| key[0] % 10 == 7));
+        // An absent key: the occurrence is empty on this snapshot.
+        assert!(colt.select(&[42]).is_none());
+    }
+
+    /// Two selections chain; a contradictory pair yields `None` with no
+    /// special casing.
+    #[test]
+    fn chained_selections_intersect_and_contradict() {
+        let dir = TempDir::new("colt-select-chain");
+        let schema = schema();
+        let rows: Vec<(u64, u64)> = (0..100).map(|i| (i % 10, i)).collect();
+        let view = view_of(&dir, &schema, &rows);
+        // Selections on k then v; the join level is 0-arity (a constant
+        // atom's shape: trie_schema = [[]]).
+        let mut colt = Colt::new(all(&view), &[0, 1], vec![vec![]]);
+        let cursor = colt.select(&[3, 13]).expect("(3, 13) exists");
+        let entries = drain(&mut colt, cursor, 0);
+        assert_eq!(entries.len(), 1, "one fact carries (3, 13)");
+        // 14 % 10 == 4, so (k = 3, v = 14) contradicts at level 1.
+        assert!(colt.select(&[3, 14]).is_none());
+    }
+
+    /// A selection-free trie is the old trie: `select(&[])` is the root
+    /// and iteration is identical.
+    #[test]
+    fn zero_selection_tries_are_the_old_tries() {
+        let dir = TempDir::new("colt-select-zero");
+        let schema = schema();
+        let rows: Vec<(u64, u64)> = (0..200).map(|i| (i % 20, i)).collect();
+        let view = view_of(&dir, &schema, &rows);
+        let mut plain = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+        let mut selected = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+        assert_eq!(selected.start(), Colt::root());
+        let cursor = selected.select(&[]).expect("no selections always hit");
+        assert_eq!(cursor, Colt::root());
+        let a = drain(&mut plain, Colt::root(), 0);
+        let b = drain(&mut selected, cursor, 0);
+        assert_eq!(a.len(), b.len());
+        assert_eq!(
+            a.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>(),
+            b.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    /// `key_count` labels stay honest below a selection probe.
+    #[test]
+    fn key_count_labels_below_selections() {
+        let dir = TempDir::new("colt-select-count");
+        let schema = schema();
+        let rows: Vec<(u64, u64)> = (0..1000).map(|i| (i % 10, i)).collect();
+        let view = view_of(&dir, &schema, &rows);
+        let mut colt = Colt::new(all(&view), &[0], vec![vec![1]]);
+        let cursor = colt.select(&[7]).expect("key 7 exists");
+        // Unforced below the selection: a position-count Estimate.
+        assert_eq!(colt.key_count(cursor), KeyCount::Estimate(100));
+        // Forcing the join level turns it Exact (v values are distinct).
+        colt.ensure_forced(cursor, 0);
+        assert_eq!(colt.key_count(cursor), KeyCount::Exact(100));
+    }
+
+    /// Two reset + select rounds land on the same pool shape — slabs are
+    /// recycled, not regrown.
+    #[test]
+    fn reset_retains_selection_capacity() {
+        let dir = TempDir::new("colt-select-reset");
+        let schema = schema();
+        let rows: Vec<(u64, u64)> = (0..500).map(|i| (i % 5, i)).collect();
+        let image = view_of(&dir, &schema, &rows);
+        let mut colt = Colt::new(all(&image), &[0], vec![vec![1]]);
+        colt.select(&[3]).expect("key 3 exists");
+        let first = colt.watermark();
+        colt.reset(apply(&image, &[], &[], Vec::new()));
+        assert_eq!(colt.watermark(), 1, "reset empties the pools");
+        colt.select(&[3]).expect("key 3 exists");
+        assert_eq!(colt.watermark(), first, "same shape, same footprint");
+    }
+
     #[test]
     fn construction_is_lazy_until_the_first_get() {
         let dir = TempDir::new("colt-lazy");
         let schema = schema();
         let rows: Vec<(u64, u64)> = (0..10_000).map(|i| (i % 100, i)).collect();
         let view = view_of(&dir, &schema, &rows);
-        let mut colt = Colt::new(all(&view), vec![vec![0], vec![1]]);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
         let baseline = colt.watermark();
         assert_eq!(baseline, 1, "one root node, nothing else");
         // The first get forces exactly one level.
@@ -702,7 +892,7 @@ mod tests {
         let rows: Vec<(u64, u64)> = (0..500).map(|i| (i, i * 2)).collect();
         let view = view_of(&dir, &schema, &rows);
         // Single-level schema: the root's remaining schema is a suffix.
-        let mut colt = Colt::new(all(&view), vec![vec![0, 1]]);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![0, 1]]);
         let before = colt.watermark();
         let root = Colt::root();
         let entries = drain(&mut colt, root, 0);
@@ -725,7 +915,7 @@ mod tests {
             oracle.entry(*k).or_default().push(*v);
         }
 
-        let mut colt = Colt::new(all(&view), vec![vec![0], vec![1]]);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
         let root = Colt::root();
         // Root iteration (non-suffix -> forces): keys match the oracle's.
         let entries = drain(&mut colt, root, 0);
@@ -760,7 +950,7 @@ mod tests {
         // 300 duplicates of one key: 64-position chunks must chain.
         let rows: Vec<(u64, u64)> = (0..300).map(|i| (42, i)).collect();
         let view = view_of(&dir, &schema, &rows);
-        let mut colt = Colt::new(all(&view), vec![vec![0], vec![1]]);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
         let child = colt.get(Colt::root(), 0, &[42]).expect("hit");
         assert!(matches!(colt.key_count(child), KeyCount::Estimate(300)));
         let values = drain(&mut colt, child, 1);
@@ -776,7 +966,7 @@ mod tests {
         let schema = schema();
         let rows: Vec<(u64, u64)> = (0..100).map(|i| (i, i)).collect(); // all unique
         let view = view_of(&dir, &schema, &rows);
-        let mut colt = Colt::new(all(&view), vec![vec![0], vec![1]]);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
         let child = colt.get(Colt::root(), 0, &[5]).expect("hit");
         // Singletons pin rows inline: no chunk, no extra node.
         assert!(matches!(child, Cursor::Row(_)));
@@ -789,7 +979,7 @@ mod tests {
         let schema = schema();
         let rows: Vec<(u64, u64)> = (0..60).map(|i| (i % 3, i)).collect();
         let view = view_of(&dir, &schema, &rows);
-        let mut colt = Colt::new(all(&view), vec![vec![0], vec![1]]);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
         let root = Colt::root();
         // Unforced: duplicate-inflated Estimate.
         assert_eq!(colt.key_count(root), KeyCount::Estimate(60));
@@ -805,13 +995,13 @@ mod tests {
         let rows: Vec<(u64, u64)> = vec![(1, 2), (3, 4)];
         let view = view_of(&dir, &schema, &rows);
         // A zero-binding occurrence: one empty level.
-        let mut colt = Colt::new(all(&view), vec![vec![]]);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![]]);
         let root = Colt::root();
         let entries = drain(&mut colt, root, 0);
         // Suffix iteration yields one entry per position (empty keys);
         // a probe with the empty key forces and hits iff nonempty.
         assert_eq!(entries.len(), 2);
-        let mut colt = Colt::new(all(&view), vec![vec![]]);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![]]);
         assert!(colt.get(Colt::root(), 0, &[]).is_some());
     }
 }

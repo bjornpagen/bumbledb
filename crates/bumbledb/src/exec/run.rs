@@ -295,8 +295,11 @@ impl Executor {
         debug_assert_eq!(plan.nodes().len(), self.scratch.len(), "same plan shape");
         bindings.reset();
         self.cursors.clear();
+        // Each occurrence starts below its selection levels — the root
+        // when it has none, the post-`select` cursor otherwise
+        // (docs/perf/02).
         self.cursors
-            .extend(std::iter::repeat_n((Colt::root(), 0usize), colts.len()));
+            .extend(colts.iter().map(|colt| (colt.start(), 0usize)));
         self.run_node(plan, 0, colts, bindings, sink, counters);
     }
 
@@ -684,6 +687,7 @@ mod tests {
                         &[],
                         Vec::new(),
                     ),
+                    &[],
                     columns,
                 )
             })

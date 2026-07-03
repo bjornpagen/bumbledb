@@ -8,9 +8,9 @@ suite README finding 1. Depends on PRD 00 (selections in the plan) and PRD 01
 
 The cutover itself: equality constants stop being view filters and become
 selection-level probes. After this PRD, a param change on an Eq field costs a
-probe, not a scan; the view memo hits across param rotation; and the shim from
-PRD 00 is deleted. string's 51.7 µs `view_build`-per-execution becomes one
-`view_build` per generation.
+probe, not a scan; the view memo hits across param rotation; and string's 51.7 µs `view_build`-per-execution becomes one
+`view_build` per generation. (No shim ever existed — 00–02 landed as one
+cutover per the no-transitional-states ruling.)
 
 ## Technical direction
 
@@ -26,8 +26,7 @@ PRD 00 is deleted. string's 51.7 µs `view_build`-per-execution becomes one
   - `Const::PendingIntern` looks up the dictionary per execution; miss ⇒ empty.
   - `Const::Word`/`Byte` pass through (bytes widen to words).
 - **Views.** `run_join` builds views from `occurrence.filters` only — which,
-  post-PRD 00, contain no Eq-constant predicates. Delete
-  `selections_as_filters` (the PRD 00 shim) and add a
+  post-PRD 00, contain no Eq-constant predicates. Add a
   `debug_assert!` in `run_join` that no resolved filter is
   `Compare { op: Eq, .. }` (unrepresentable by lowering; asserted because the
   plan is constructible by hand).
@@ -94,5 +93,4 @@ two must not be merged here).
   hand-built corpus.
 - The extended alloc gate passes in release
   (`cargo test --features alloc-counter --test alloc_gate --release`).
-- `selections_as_filters` no longer exists (grep-clean).
 - `scripts/check.sh` green.

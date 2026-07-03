@@ -94,6 +94,9 @@ pub mod names {
     pub const FINALIZE: &str = "finalize";
     /// The guard-probe access path. (1 hit / 0 miss, -)
     pub const GUARD_PROBE: &str = "guard_probe";
+    /// One occurrence's selection-level probe (docs/perf/02).
+    /// (occurrence index, 1 hit / 0 miss)
+    pub const SELECT_PROBE: &str = "select_probe";
 
     /// Image found in the shared cache. (relation id, -)
     pub const CACHE_HIT: &str = "cache_hit";
