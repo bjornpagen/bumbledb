@@ -7,23 +7,31 @@ sugar, never the contract (`20-query-ir.md`).
 
 ## Environment lifecycle
 
-- `Db::open(path)` — path-only public surface; map size, max readers, and LMDB flags
-  are internal (fsync durability per `00-product.md`). Open verifies format version,
-  then schema fingerprint; each mismatch is a typed hard failure. `Db::create(path)`
-  initializes a fresh environment with the compiled schema's fingerprint.
+- `Db::open(path, &Schema)` — no tuning parameters: map size, max readers, and LMDB
+  flags are internal (fsync durability per `00-product.md`); the schema argument is
+  what gets fingerprint-verified. Open verifies format version, then schema
+  fingerprint; each mismatch is a typed hard failure. `Db::create(path, &Schema)`
+  initializes a fresh environment with the schema's fingerprint — and **refuses a
+  directory that already holds an environment** (`AlreadyInitialized`): re-writing
+  `_meta` counters over live data would be silent corruption, so create is exactly as
+  non-destructive as open.
 - One process (`00-product.md`); the handle is shareable across threads; drop closes.
 - Dev-reset conveniences (delete + recreate) are host-side; production open never
   destroys data.
 
 ## Transactions
 
-- `db.read(|snap| ...)` — one LMDB read snapshot; executes queries and prepared
-  queries; sees a consistent generation (the snapshot-sourced tx id, `40-storage.md`).
+- `db.read(|snap| ...)` — one LMDB read snapshot; executes *prepared* queries
+  (`db.prepare(&Query)` is the sole entry — pin-at-prepare, `30-execution.md`); sees
+  a consistent generation (the snapshot-sourced tx id, `40-storage.md`).
 - `db.write(|tx| ...)` — the single writer; commits on `Ok`, aborts on `Err`/panic.
-  Write operations: `alloc(field) -> u64` (serial minting — insert new rows without
-  reading a max, `10-data-model.md`), `insert(fact) -> bool` (changed-state report),
-  `delete(fact) -> bool`, `bulk_load(...)` (the same delta mechanism at scale,
-  `40-storage.md`).
+  Write operations: typed `alloc::<NewType>()` via the generated `Serial` newtypes
+  (untyped: `alloc_dyn(relation, field) -> u64`) — serial minting, insert new rows
+  without reading a max (`10-data-model.md`); `insert(&fact) -> bool` (changed-state
+  report); `delete(&fact) -> bool`; `_dyn` forms of both for ETL tooling.
+  `SerialExhausted` raises eagerly at the `alloc` call (the sequence state is knowable
+  immediately), not at commit. Bulk import is `Db::bulk_load` — a `Db`-level method,
+  not a write-closure operation (see the ETL section).
 - **The transaction is a delta** (`40-storage.md`): operations are in-memory set
   arithmetic; operation order is semantically irrelevant; nothing touches LMDB until
   commit, and an abort never wrote anything. `delete(old); insert(new)` in either
@@ -43,11 +51,13 @@ sugar, never the contract (`20-query-ir.md`).
 - The write-side fact representation is the schema-macro-generated struct per relation
   (`Account { id, holder, status }`), carrying host newtypes; the boundary encodes to
   canonical `fact_bytes`. A dynamic (untyped) fact form exists for ETL tooling.
-- Query results: a `ResultSet` — column metadata (find terms, in `finds` order) plus
-  rows of decoded values (String/Bytes decoded from intern ids at materialization,
-  inside the caller's buffer). Results are **sets**: unordered; the host sorts.
-  Zero-alloc path: caller-provided reusable buffer (`30-execution.md`); convenience
-  path allocates a fresh buffer.
+- Query results: one concrete `ResultBuffer` (decided: columnar cells + a byte heap,
+  no caller-buffer trait) — rows of decoded values (String/Bytes decoded from intern
+  ids at materialization, into the buffer's byte heap), a `rows()` iterator, and
+  column metadata via `PreparedQuery::column_types()` (the buffer itself stays
+  typeless: stamping owned types per execution would allocate on the warm path).
+  Results are **sets**: unordered; the host sorts. Zero-alloc path: caller-provided
+  reusable buffer (`30-execution.md`); convenience path allocates a fresh buffer.
 - Params are supplied positionally by `ParamId` at execution; count and structural
   types checked at bind time (`20-query-ir.md`).
 
@@ -67,11 +77,16 @@ sugar, never the contract (`20-query-ir.md`).
 
 ## ETL / migration surface
 
-Schema change = ETL into a new database (`10-data-model.md`). The **export surface is a
-full-relation scan**: `snap.scan(relation) -> impl Iterator<Item = Fact>` over `F` in
-row_id order (a storage iteration, not a query — results here are streams, not sets).
-The old binary exports; the new binary `bulk_load`s, with explicit serial values
-preserving identity (high-water advances past them). Backup = quiesced file copy
+Schema change = ETL into a new database (`10-data-model.md`). The **export surface is
+a full-relation scan**: `snap.scan(relation)` yields *dynamic* facts
+(`Result<Vec<Value>>` — per-item corruption is a hard error and the stream fuses) over
+`F` in row_id order (a storage iteration, not a query — streams, not sets); the typed
+sibling `snap.scan_facts::<F>()` decodes into the generated structs. The dynamic form
+pairs with `Db::bulk_load(relation, facts)`: chunks of 4096 per transaction, each
+chunk atomic, prior chunks committed on failure with the committed count carried on
+`BulkLoadError`. Mis-shaped dynamic facts are typed `FactShape` errors (decided: ETL
+input is data, not code — no panics on the import path). Explicit serial values
+preserve identity (high-water advances past them). Backup = quiesced file copy
 (`40-storage.md`).
 
 ## Host-side sugar (blessed patterns, never the contract)
@@ -83,8 +98,12 @@ preserving identity (high-water advances past them). Backup = quiesced file copy
 
 ## OPEN (this doc's honest list)
 
-- Exact `ResultSet` memory layout and the caller-buffer trait.
-- Dynamic-fact ETL form details and the bulk-import surface.
+Resolved by implementation (recorded above): the `ResultBuffer` shape (concrete type,
+no trait), the dynamic-fact ETL form (`Vec<Value>` + chunked `bulk_load` with typed
+shape errors), and EXPLAIN's surface (`snap.explain(&mut prepared, params) ->
+(ResultBuffer, String)` — ANALYZE semantics, rendered-text report).
+
+Still open:
+
 - Ordering/limit conveniences on results (host-side; shape undecided).
-- EXPLAIN's output surface (`30-execution.md` owns the mechanism).
 - Multi-process story (closed as out-of-envelope for v0; future item lives here).

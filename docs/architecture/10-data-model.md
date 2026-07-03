@@ -66,11 +66,14 @@ a **storage behavior, not a type**:
 
   ```rust
   db.write(|tx| {
-      let id = tx.alloc(Account::ID)?;            // mints the next AccountId value
-      tx.insert(Account { id, holder, status })?; // insert always takes complete facts
+      let id: AccountId = tx.alloc()?;             // mints the next AccountId value
+      tx.insert(&Account { id, holder, status })?; // insert always takes complete facts
       Ok(id)
   })?
   ```
+
+  (The typed surface infers the field from the `Serial` newtype; the untyped form is
+  `tx.alloc_dyn(relation, field)`.)
 
   `alloc` is the only generator; `insert` is always full-fact and stays idempotent —
   one insert semantics, no generative variant.
@@ -112,8 +115,8 @@ ergonomic contract.
 **Decision: no primary keys.** **Alternative:** v1's entity relations with PKs and
 whole-row `replace`. **Why it lost:** one identity concept (the fact), one mutation
 algebra (insert/delete), no PK-vs-unique duality. Consequences now explicit: mutating a
-referenced fact needs constraint-timing rules (OPEN, README) and serial re-supply
-(specified above). **Reverses if:** the delete+insert idiom proves unlivable in real
+referenced fact needs constraint-timing rules (decided below: commit-time, against the
+final state) and serial re-supply (specified above). **Reverses if:** the delete+insert idiom proves unlivable in real
 app code.
 
 ## No nulls
@@ -170,7 +173,9 @@ text indexes, not de-interning).
 - Serial fields contribute their auto-materialized unique constraint (above).
 - **Constraints are invariants on committed states, enforced once at commit** against
   the transaction's final state; a violation aborts the whole transaction with a typed
-  error naming the constraint and the offending fact. There is no per-operation
+  error carrying the relation and constraint ids (names resolvable through the schema)
+  and the offending fact's bytes — the Restrict arm names the surviving *referrer* by
+  its fact, since storage row ids never surface. There is no per-operation
   enforcement and no deferral opt-in — commit-time is the only semantics. This is the
   strict option: since queries inside write transactions are forbidden, intermediate
   states are unobservable by construction, so "every state anyone can ever see

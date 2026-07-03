@@ -25,12 +25,17 @@ M | relation_id | fact_hash         -> row_id         membership        (reader:
 U | relation_id | constraint | key  -> row_id         unique guards     (reader: constraint checks, guard-probe lookups)
 R | target_rel  | constraint | key | source_rel | source_row -> ()      (reader: Restrict checks on delete)
 Q | relation_id | field_id          -> next_u64       serial sequences  (reader: alloc)
-S | relation_id | stat             -> u64            counters: stat 0 = row count (reader: the planner);
-                                                     stat 1 = row_id high-water (reader: commit's row-id assignment; noted per PRD 06)
+S | relation_id | stat             -> u64            counters: stat 0 = row count (readers: the planner,
+                                                     and image build's cross-check against the F scan);
+                                                     stat 1 = row_id high-water (reader: commit's row-id assignment)
 ```
 
-Plus `_meta` (format version, schema fingerprint, storage tx id) and `_dict` (forward
-`blake3(tag‖bytes) → id`, reverse `id → bytes`; collision axiom in `10-data-model.md`).
+Plus `_meta` (format version, schema fingerprint, storage tx id, and the dictionary
+next-id counter — the delta's pending-intern design mints provisional ids against it
+from read snapshots) and `_dict` (forward `blake3(tag‖bytes) → id`, reverse
+`id → bytes`; collision axiom in `10-data-model.md`). Key components are big-endian
+(order-sensitive); stored values are not order-sensitive and are little-endian
+(dictionary ids big-endian) — pinned here for the offline checker this doc defers.
 
 - Every namespace names its reader above (README rule 3). The v5 namespaces with no
   reader (`H`, `P`, `C`, always-on `A`) stay deleted; declared opt-in accelerators may
@@ -79,14 +84,18 @@ enforcement commit-time state-checking (`10-data-model.md`) with plain eager mec
    (guard keys re-derived by slicing constrained fields out of `fact_bytes` — never a
    scan), and its outgoing `R` entries.
 2. **Inserts**: per inserted fact — `F` put (row_id from the in-memory high-water),
-   `M` put, `U` puts, `R` puts, dict puts for novel strings. Because every delete has
-   already landed and the insert-set is deduplicated, **a `U` conflict here is a
-   genuine unique violation** → typed error, whole transaction aborts.
+   `M` put, `U` puts, `R` puts. Because every delete has already landed and the
+   insert-set is deduplicated, **a `U` conflict here is a genuine unique violation** →
+   typed error, whole transaction aborts. Deletes and inserts both check what they
+   touch: a live `M` entry whose `F` row or `U` guard is missing is the
+   membership-desync corruption, a hard error — never silently scrubbed.
 3. **FK validation** (final-state probes; LMDB write txns read their own writes):
    forward — every inserted fact's FK targets resolve via `U`; Restrict — every unique
    key deleted in step 1 and not re-inserted has no remaining `R` entries. Any failure
    → typed error, abort.
-4. **Counters flush**: row_id high-waters, row counts, `Q` sequences, storage tx id.
+4. **Counters flush**: row_id high-waters, row counts, `Q` sequences, the pending
+   dictionary entries and next-id (moved here from step 2 — equivalent inside one
+   atomic txn, since nothing between the phases reads `_dict`), storage tx id.
 5. **LMDB commit** (fsync).
 
 User operation order inside the closure is therefore semantically irrelevant; the
@@ -99,8 +108,11 @@ whose delta is empty (all no-ops) does not advance it and does not invalidate an
 image. It lives in `_meta` and commits atomically with the data.
 
 Bulk load (`60-api.md` surface) is the same delta mechanism at scale — chunked into
-multiple transactions if the delta would exceed memory comfort; the fresh-database
-global-key-order path may use append mode per the decision above.
+multiple transactions (4096 facts each; a failing chunk aborts whole, prior chunks
+stay committed, and the error carries the committed count). The fresh-database
+append-order fast path was deliberately not built (decision: it saves only the
+membership probes on an empty database, and the normal insert path is the one with
+the invariants); it may return with a benchmark that demands it.
 
 **Corrupt data is a hard error, never a skip:** an `F` value whose length differs from
 the schema's fact width, a dangling intern id, an `M`/`F` disagreement, an out-of-range
@@ -113,10 +125,12 @@ integrity checker (M↔F↔U↔R sweep) is out of scope for v0, stated.
 The bridge to paper-faithful execution (`30-execution.md` D1):
 
 - A **relation image** is **all columns** of a relation, decoded from one sequential
-  `F`-prefix scan into arena-backed, 128-byte-aligned SoA vectors, plus the row count.
+  `F`-prefix scan into whole-slab, 128-byte-aligned SoA vectors (one allocation per
+  store, freed as a whole — the arena discipline without the arena type), plus the
+  row count.
   At 60–120 GB/s of scan bandwidth this is single-digit milliseconds per 100 MB — the
   number that makes the whole cache design sound. **Column bases are staggered**: the
-  image arena offsets successive column bases by odd multiples of the line size so no
+  image staggers successive column slab bases by odd multiples of the line size so no
   two columns of one relation are congruent mod 16 KB (the L1D set stride) — lockstep
   multi-column scans otherwise alias into one 8-way set, the documented 10–20×
   pathological case (`docs/reference/apple-silicon-performance.md`, Category 5).
@@ -131,30 +145,35 @@ The bridge to paper-faithful execution (`30-execution.md` D1):
 - **Generation correctness:** a reader's generation T is the storage tx id read from
   `_meta` **inside its own snapshot** — never an in-process counter. This closes the
   open-snapshot/read-counter race that could poison the shared cache.
-- The cache is owned by the environment handle, shared by reader threads via `Arc`
-  clones. Two readers at the same T racing to build the same image: both may build;
-  insert-if-absent, the loser adopts the winner's `Arc` and drops its own (accepted
-  waste, no latch).
+- The cache is a field of the `Db` handle, shared by reader threads through `&Db`
+  (the handle is `Send + Sync`; no `Arc` of the cache itself is needed since one
+  handle exists per path). Two readers at the same T racing to build the same image:
+  both may build; insert-if-absent, the loser adopts the winner's `Arc` and drops its
+  own (accepted waste, no latch). The insert re-checks the newest generation under
+  the lock, so a reader racing a commit cannot re-insert an evicted generation.
 - **Eviction:** at each state-changing commit, the writer drops all entries older than
   the new generation from the map. Readers still pinned at older generations keep their
   `Arc`s alive until their transactions end; a long-lived old-generation reader that
   needs an *unbuilt* image builds it query-locally without caching (accepted — writes
   are bursty and rare). There is **no memory-pressure eviction, ever** — the scale
   axiom, stated.
-- **Filters:** on a cold relation with a filtered query, one scan produces both the
-  cached unfiltered image and the query-local survivor view; on a warm relation the
-  view is computed by scanning the cached image (NEON filter kernels). Views are
-  survivor-position vectors, arena-backed, never cached.
+- **Filters:** on a cold relation with a filtered query, one *storage* scan produces
+  both the cached unfiltered image and the query-local survivor view (the filter is a
+  second pass over the decoded in-memory columns — the storage scan is the expensive
+  part); on a warm relation the view is computed by scanning the cached image (NEON
+  filter kernels). Views are survivor-position vectors in retained-capacity buffers,
+  never cached; the prepared query additionally memoizes its views per (generation,
+  resolved filters), so a warm re-execution skips even the in-memory re-scan.
 - Invariant test (from the v5 regression, post-mortem §26): two sequential read
   transactions with no intervening write share identical image instances; plus the
   concurrent families in `50-validation.md`.
 
 ## Memory discipline
 
-Images are arena-allocated and freed as wholes; no per-value heap objects in storage or
-images. Query scratch belongs to prepared queries (`30-execution.md`). Steady-state
-process heap = LMDB's mmap + the newest generation's images + per-prepared-query arenas
-+ a constant.
+Images are whole-slab allocations freed as wholes; no per-value heap objects in
+storage or images. Query scratch belongs to prepared queries (`30-execution.md`).
+Steady-state process heap = LMDB's mmap + the newest generation's images +
+per-prepared-query pools + a constant.
 
 ## Operations
 

@@ -1,5 +1,15 @@
 # 50 — Validation
 
+**Status ledger (2026-07-03).** In-repo today: the negative-validation corpus, the
+deterministic property/golden content as unit tests, the randomized
+executor-vs-nested-loop differential family, kill-during-commit crash injection, the
+concurrent reader/writer families (incl. the pinned-at-T reads), the ETL family, the
+allocation gate (allocations *and* deallocations), and the EXPLAIN family (cover
+choice + batching engaged). Still external and unbuilt: the SQLite oracle, the IR→SQL
+translator, the reference engine and 3-way agreement, the versioned golden corpus
+artifact, the ledger benchmark, and fuzz targets proper — the deferred half; no
+correctness-vs-SQLite or performance claim is made until they exist.
+
 The old repo's best asset was its correctness discipline; the worst was its gate
 theater. We keep the former and refuse the latter.
 
@@ -100,10 +110,13 @@ not a CI gate. JOB and friends may be run for curiosity; they gate nothing.
   to build one image (single shared instance or benign duplicate — per 40's rule);
   rapid write/read interleaving (a reader never sees a mismatched generation — the
   snapshot-sourced tx-id rule under test).
-- **ETL family:** bulk-load ≡ sequential-insert equivalence; append-mode misuse
-  rejected loudly; explicit-serial/high-water property tests; full round-trip (export →
-  fresh database → import → oracle-equal results). ETL is the migration story; an ETL
-  bug is a data-loss bug.
+- **ETL family:** bulk-load ≡ sequential-insert equivalence (full-relation set
+  equality); explicit-serial/high-water property tests; chunk-boundary and mid-stream
+  failure semantics (prior chunks committed, count carried on the error); full
+  round-trip (export → fresh database → import → oracle-equal results). Append mode
+  no longer exists to misuse (`40-storage.md` records the decision not to build the
+  fast path); the misuse-rejection item is closed with it. ETL is the migration
+  story; an ETL bug is a data-loss bug.
 - **Encoding round-trip fuzzing is retained** (decision: the one fuzz target that
   earns its place — order-preserving encodings and composite guard keys are where a
   boundary bug corrupts sort order silently; i64::MIN, empty bytes, max-length values).

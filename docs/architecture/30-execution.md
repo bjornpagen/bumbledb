@@ -48,7 +48,16 @@ no residual concept; we own filter placement because there is no external optimi
 - **Plan** (§3.2): a list of nodes, each a list of subatoms; the plan partitions every
   atom occurrence's variables; per node, no two subatoms share an atom occurrence
   (validity quantifies over **occurrences** — self-joins are ordinary), and the cover
-  set is every subatom containing all variables new to the node.
+  set is every subatom whose variables are **exactly** the node's new variables.
+  **Deviation from the paper's Definition** ("containing all new variables"): a
+  subatom that also carries an already-bound variable is iterable per the paper, but
+  under dynamic cover choice the executor would *rebind* the bound variable without
+  re-checking the occurrence that bound it — wrong results on skewed data (found by
+  audit, demonstrated with a triangle query, pinned by a regression test). Restricting
+  covers to exactly-the-new-variables loses nothing: every `binary2fj` node's opening
+  subatom qualifies (its variables are exactly the remainder), and GJ-style
+  single-variable covers all qualify. The alternative — equality-checking a mixed
+  cover's old variables per iterated entry — buys generality no plan shape here needs.
 - **Execution** (§3.3): recurse node by node — choose a cover, iterate it, extend the
   binding, probe siblings, replace each occurrence's current trie, recurse; backtrack
   restores.
@@ -110,20 +119,29 @@ check), Count→U64, Min/Max→input type. **Reverses if:** never structurally.
 **Statistics** (all real, nothing else exists): exact per-relation row counts
 (maintained on write, stored in `S`); schema constraint knowledge (unique/FK); filter
 survivor counts — *measured, not estimated*: filtered views are built before planning
-completes for the atoms that have filters, so the planner uses the view's actual length.
-No NDV fields, no histograms, no magic selectivity constants.
+completes for the atoms whose filter constants are all concrete, so the planner uses
+the view's actual length. **Carve-out:** an atom whose filters involve params or
+not-yet-interned literals cannot be measured at prepare time — it plans on the base
+row count and resolves per execution. No NDV fields, no histograms, no magic
+selectivity constants.
 
 **Join cardinality estimator, written down:** for `L ⋈ R` on join variables J —
 - J covers a unique constraint of R (incl. serial auto-unique): estimate = |L| (FK walk;
   exact upper bound).
-- J covers a unique constraint of L: estimate = |R|.
+- J covers a unique constraint of L: estimate = min(est(P), |R|) — each R row matches
+  at most one prefix row, and each prefix row matches at most |R|; the min is the
+  correct bound (the earlier "|R|" alone was looser).
 - Neither: estimate = |L| × |R| — **no estimate exists, so pessimism**, which pushes
   non-key joins last; that is the correct behavior, not a modeling failure.
 |X| is the row count or the filtered-view survivor count.
 
 **Search:** exhaustive DP over atom occurrences, **left-deep only**, minimizing the sum
-of intermediate-result estimates; ≤ ~12 atoms makes DP exact and effectively free. Then
-`binary2fj`, then `factor()`, then plan validation into the witness.
+of prefix estimates *including the base relation's rows* (counting the root iteration
+breaks ties toward iterating the small side). The cap is 20 occurrences (a 2²⁰-state
+table, ~24 MB transient — amended down from an earlier 32, whose table would not fit
+memory; the cap is enforced at the validation boundary as a roster item, alongside the
+128-distinct-variable bitset cap). Then `binary2fj`, then `factor()`, then plan
+validation into the witness.
 **Decision: left-deep-only.** **Alternative:** bushy plans + materialized intermediates
 (the paper decomposes bushy input into several left-deep plans and names
 materialization its main bottleneck, §5/§6). **Why it lost:** materialized intermediates
@@ -179,10 +197,12 @@ winning end-to-end.
 
 **A warm prepared-query execution performs zero heap allocations**, excluding a
 caller-provided result buffer. All scratch — binding slots, probe keys, batch buffers,
-COLT arenas, filtered views, sink state (dedup sets, group maps) — comes from arenas
-owned by the `PreparedQuery`. Retained arena size is O(touched data + output) per
-prepared query and is documented as such (an app holding N prepared queries retains N
-scratch sets); arenas reach a fixpoint for a given data generation.
+COLT pools, filtered views, sink state (dedup sets, group maps) — is retained-capacity
+pools owned by the `PreparedQuery` (index-addressed `Vec`s that reset without
+freeing; the `Arena` type proper serves only the write delta). Retained scratch is
+O(touched data + output) per prepared query and is documented as such (an app holding
+N prepared queries retains N scratch sets); pools reach a fixpoint for a given data
+generation.
 
 **CI gate protocol (the definition of "steady state"):** single-threaded harness; the
 prepared query executes N warmup runs with parameters drawn from a fixed set and no
@@ -195,7 +215,9 @@ outside the measured window.
 Execution is single-threaded per query; `PreparedQuery` is `!Sync` and executes from
 one thread at a time; arenas imply exclusive access. **Inter-query parallelism is free
 and is the intended scaling axis**: reader threads each own their prepared queries and
-arenas and share immutable `Arc`'d images; nothing in the executor synchronizes.
+pools and share immutable `Arc`'d images; nothing in the executor synchronizes (the
+prepared query memoizes its views per (generation, resolved filters), so a warm
+execution does not even touch the shared image-cache mutex).
 Intra-query parallelism is a non-goal with a recorded reversal trigger
 (`00-product.md`).
 

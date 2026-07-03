@@ -39,9 +39,9 @@ there are no PRD suites, work packets, or compliance gates. Git history is the c
 
 ## OPEN items
 
-- **Aggregate execution phasing**: aggregation is fully specified in the IR and sinks;
-  when it lands relative to plain joins is unscheduled. The "beats SQLite" claim is void
-  until it does. *Trigger: first benchmark milestone.*
+- **Aggregate execution** is built (sinks, i128/u128 accumulators, elision) and
+  unit-tested; the "beats SQLite" claim stays void until the *benchmark suite* exists
+  with aggregate families in it. *Trigger: first benchmark milestone.*
 - **Negation** (anti-join atoms) and **recursion** (fixpoint): not in v0; no IR decision
   may assume they never come. *Trigger: first real query that needs one.*
 - **Ordering/limit conveniences and ArgMax-style aggregates**: presentation-layer;
@@ -51,8 +51,9 @@ there are no PRD suites, work packets, or compliance gates. Git history is the c
   violation on the time-range family.*
 - **Text query language**: none; if one returns it is pure sugar lowering to the IR.
   *Trigger: owner want.*
-- **EXPLAIN output format**: mechanism decided (30), surface shape not. *Trigger: first
-  debugging session.*
+- **EXPLAIN surface**: shipped as `snap.explain(&mut prepared, params) ->
+  (ResultBuffer, String)` — ANALYZE semantics, plain-text report (stability of the
+  text is not promised). *Remaining open: nothing structural.*
 - **Vectorized batch size**: 64–256 starting range decided; the number is
   measurement-owned. *Trigger: the ledger benchmark.*
 - **`60-api.md` open sub-items**: see that doc's own OPEN list (bulk-import surface

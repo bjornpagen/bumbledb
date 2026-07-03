@@ -155,10 +155,13 @@ Encryption/access control. Compatibility with v1–v5 formats.
    owner's. The claim is **void until the aggregate families are in the suite**. The
    "ratchet" is a manually re-run report per meaningful change — not a CI gate.
 3. **Allocation:** a warm prepared-query execution performs **zero heap allocations**
-   excluding a caller-provided result buffer, enforced in CI by a counting allocator
-   under the protocol defined in `30-execution.md`.
-4. **Docs stay true** (stated intent, mechanized as rules 3/5 in the README: mechanisms
-   name readers; code that contradicts a doc amends the doc in the same change).
+   (and zero deallocations) excluding a caller-provided result buffer, asserted by a
+   counting allocator under the protocol defined in `30-execution.md`. Enforcement
+   today is `scripts/check.sh` (the checked-in gate suite, run before every commit);
+   it becomes a CI gate verbatim when CI exists.
+4. **Docs stay true** (stated intent, mechanized as rules 3/5 in
+   `docs/architecture/README.md`: mechanisms name readers; code that contradicts a doc
+   amends the doc in the same change).
 
 **Decision: the primary benchmark is ledger-shaped.** **Alternative:** JOB, as v2–v5
 used. **Why it lost:** chasing JOB dragged the old architecture toward analytics
