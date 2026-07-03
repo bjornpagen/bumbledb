@@ -382,7 +382,11 @@ fn markdown_diagnostics(out: &mut String, report: &RunReport) {
     let _ = writeln!(out);
 
     let _ = writeln!(out, "## Store\n");
-    let _ = writeln!(out, "- bumbledb file: {} bytes", report.store.db_bytes);
+    let _ = writeln!(
+        out,
+        "- bumbledb file (compacted): {} bytes",
+        report.store.db_bytes
+    );
     let _ = writeln!(out, "- sqlite file: {} bytes", report.store.sqlite_bytes);
     let _ = writeln!(
         out,
@@ -679,7 +683,7 @@ p99 budget (<= 10 ms warm): PASS (informational below scale L).
 
 ## Store
 
-- bumbledb file: 1024 bytes
+- bumbledb file (compacted): 1024 bytes
 - sqlite file: 2048 bytes
 - image cache: 3 images, 4096 bytes
 

@@ -181,3 +181,25 @@ Backup = file copy of the environment (or `mdb_copy`) while the writer is quiesc
 Compaction and space reclamation = ETL into a fresh database (`60-api.md` export/import
 surfaces). The LMDB file never shrinks; the dictionary leaks by accepted design. That
 is the entire operational story, deliberately.
+
+## Store-size anatomy and compaction (docs/perf/09, measured 2026-07-03)
+
+The S-scale corpus store measured 101 MB against SQLite's 13.6 MB for the same
+logical content. `mdb_stat` anatomy, so nobody re-derives it:
+
+- **~39 % freelist churn**: 2,529 of 6,463 pages were free — CoW residue from
+  the ~43 chunked bulk-load commits. LMDB never shrinks its file; length
+  reflects peak usage.
+- **~5–6 `_data` entries per fact by design**: fact (`F`) + membership hash
+  (`M`) + unique guard (`U`) + one back-reference (`R`) per FK — 761,786
+  entries for ~152,700 facts. This is deliberate rent for O(1) commit-time
+  constraint checks and stays.
+- **16 KB pages** on Apple Silicon (LMDB uses the OS page size) — chunkier
+  B-tree overhead than SQLite's 4 KB pages with varint-packed rows.
+
+The churn half is recoverable: `Db::compact(dest)` writes a live-pages-only
+sequential copy through LMDB's `mdb_env_copy2(MDB_CP_COMPACT)` (copy-and-swap,
+never in-place; refuses an existing destination; the copy is a first-class
+writable store). The bench corpus cache loads into a scratch sibling and
+compacts into place, so cached corpora ship live-sized. Auto-compaction of
+live stores stays a non-goal — the door is tool-driven.

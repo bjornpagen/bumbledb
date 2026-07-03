@@ -202,6 +202,37 @@ impl<'s> Db<'s> {
         self.cache.resident()
     }
 
+    /// Writes a compacted copy of the store to `dest` (a directory that
+    /// must not exist): live pages only, freelist dropped, sequential
+    /// layout (docs/perf/09). The source stays open and untouched —
+    /// compaction is a copy, never in-place, so the source remains the
+    /// fallback until the caller swaps directories. The copy is a
+    /// first-class store: open it, read it, write to it.
+    ///
+    /// # Errors
+    ///
+    /// `Io` when `dest` exists or cannot be created (never clobbers);
+    /// `Lmdb` from the copy itself.
+    pub fn compact(&self, dest: &Path) -> Result<()> {
+        if dest.exists() {
+            return Err(crate::error::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("compact refuses to clobber {}", dest.display()),
+            )));
+        }
+        std::fs::create_dir_all(dest).map_err(crate::error::Error::Io)?;
+        let data = dest.join("data.mdb");
+        let mut file = std::fs::File::create(&data).map_err(crate::error::Error::Io)?;
+        self.env.copy_compacted(&mut file)?;
+        // Durable before the caller swaps directories: the file, then
+        // its directory entry.
+        file.sync_all().map_err(crate::error::Error::Io)?;
+        std::fs::File::open(dest)
+            .and_then(|dir| dir.sync_all())
+            .map_err(crate::error::Error::Io)?;
+        Ok(())
+    }
+
     /// The database file's real on-disk size in bytes (a store-level
     /// observability number for the benchmark report).
     ///

@@ -86,8 +86,17 @@ pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> 
             cfg.scale.label(),
             paths.root.display()
         );
-        let db = Db::create(&paths.db, schema()).map_err(|e| format!("create db: {e:?}"))?;
+        // Load into a scratch sibling, then compact into place
+        // (docs/perf/09): a bulk load is exactly the CoW-churn-heavy
+        // case — ~40% of the loaded file is freelist — and the cached
+        // corpus is write-once, so it ships live-sized.
+        let load_dir = paths.root.join("db-load");
+        let db = Db::create(&load_dir, schema()).map_err(|e| format!("create db: {e:?}"))?;
         corpus::load_bumbledb(&db, cfg).map_err(|e| format!("load bumbledb: {e:?}"))?;
+        db.compact(&paths.db)
+            .map_err(|e| format!("compact: {e:?}"))?;
+        drop(db);
+        std::fs::remove_dir_all(&load_dir).map_err(|e| format!("remove db-load: {e}"))?;
         corpus::load_sqlite(&paths.oracle, cfg).map_err(|e| format!("load sqlite: {e}"))?;
         Ok(())
     })
@@ -698,6 +707,12 @@ mod tests {
             dir: dir.clone(),
         };
         cmd_gen(&corpus).expect("gen");
+        let paths = corpus_paths(&dir, CFG);
+        assert!(paths.db.join("data.mdb").exists(), "compacted store");
+        assert!(
+            !paths.root.join("db-load").exists(),
+            "no load-scratch residue (docs/perf/09)"
+        );
         assert_eq!(cmd_verify(&corpus, 25).expect("verify"), 0);
 
         let out = dir.join("out");
@@ -735,7 +750,6 @@ mod tests {
             ..args.clone()
         };
         // Invalidate the stamp by changing the recorded case count.
-        let paths = corpus_paths(&dir, CFG);
         std::fs::write(paths.root.join(super::CASES_FILE), "26").expect("tamper");
         cmd_bench(&lying).expect("bench --i-am-lying");
         let md = std::fs::read_to_string(dir.join("lying-out").join("report.md")).expect("read");

@@ -809,3 +809,71 @@ fn cover_choice_iterates_the_selected_side() {
     let total: u64 = batch_entries.iter().sum();
     assert_eq!(total, 147, "7 holder keys + 140 account entries: {stats:?}");
 }
+
+/// Compaction (docs/perf/09): a chunk-churned store copies to a
+/// substantially smaller, byte-identical, fully writable sibling — and
+/// never clobbers an existing destination.
+#[test]
+fn compaction_drops_the_freelist_and_preserves_content() {
+    use bumbledb::ir::Value;
+
+    let dir = test_dir("compact");
+    let source_dir = dir.join("source");
+    let db = Db::create(&source_dir, schema()).expect("create");
+    // Many small commits grow a real freelist through CoW churn.
+    for round in 0..40u64 {
+        db.write(|tx| {
+            for i in 0..250u64 {
+                let id: HolderId = tx.alloc()?;
+                tx.insert(&Holder {
+                    id,
+                    name: format!("h{round}-{i}"),
+                })?;
+            }
+            Ok(())
+        })
+        .expect("commit");
+    }
+    let source_size = db.disk_size().expect("size");
+    let generation = db.generation().expect("generation");
+    let scan_digest = |db: &Db<'_>| -> Vec<Vec<Value>> {
+        let mut rows: Vec<Vec<Value>> = db
+            .read(|snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
+            .expect("scan");
+        rows.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+        rows
+    };
+    let source_rows = scan_digest(&db);
+
+    let compact_dir = dir.join("compacted");
+    db.compact(&compact_dir).expect("compact");
+    // Never clobbers.
+    let err = db.compact(&compact_dir).expect_err("must refuse");
+    assert!(matches!(err, bumbledb::Error::Io(_)), "{err:?}");
+    drop(db);
+
+    let compacted = Db::open(&compact_dir, schema()).expect("open compacted");
+    let compact_size = compacted.disk_size().expect("size");
+    assert!(
+        compact_size * 10 <= source_size * 8,
+        "compaction reclaims the churn: {compact_size} vs {source_size}"
+    );
+    assert_eq!(compacted.generation().expect("generation"), generation);
+    assert_eq!(scan_digest(&compacted), source_rows, "byte-identical facts");
+
+    // A first-class store: writes commit and read back.
+    compacted
+        .write(|tx| {
+            let id: HolderId = tx.alloc()?;
+            tx.insert(&Holder {
+                id,
+                name: "post-compaction".to_owned(),
+            })
+        })
+        .expect("write");
+    assert_eq!(
+        scan_digest(&compacted).len(),
+        source_rows.len() + 1,
+        "the compacted store keeps living"
+    );
+}
