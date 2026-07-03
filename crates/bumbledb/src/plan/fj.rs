@@ -383,7 +383,7 @@ pub fn validate(
 /// repeated in-atom variable is a row-shape constraint, not a constant
 /// probe). Selections are ordered by field id, stable within a field, so
 /// equal queries lower to equal plans.
-fn split_filters(filters: &[FilterPredicate]) -> (Vec<Selection>, Vec<FilterPredicate>) {
+pub(crate) fn split_filters(filters: &[FilterPredicate]) -> (Vec<Selection>, Vec<FilterPredicate>) {
     let mut selections: Vec<Selection> = filters
         .iter()
         .filter_map(|f| match f {

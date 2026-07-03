@@ -57,6 +57,9 @@ pub enum ColumnView<'a> {
 #[derive(Debug)]
 pub struct RelationImage {
     row_count: usize,
+    /// Per-column exact distinct-value counts, computed once at build —
+    /// the planner's selection-selectivity source (docs/perf/07).
+    distincts: Box<[u64]>,
     columns: Box<[Column]>,
     /// Backing store for 8-byte columns; column bases are 128-byte aligned
     /// with staggered set-stride residues (see [`SET_STRIDE`]).
@@ -78,6 +81,15 @@ impl RelationImage {
     #[must_use]
     pub const fn row_count(&self) -> usize {
         self.row_count
+    }
+
+    /// The exact distinct-value count of one column (docs/perf/07):
+    /// word columns counted through a scratch hash set at build, byte
+    /// columns through a 256-slot table. Intern ids are injective, so a
+    /// String/Bytes column's word distincts are its value distincts.
+    #[must_use]
+    pub fn distinct(&self, field_idx: usize) -> u64 {
+        self.distincts[field_idx]
     }
 
     /// The column for field `field_idx`, in declaration order.
@@ -259,12 +271,84 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
         }));
     }
 
+    // Exact per-column distinct counts (docs/perf/07): one extra pass per
+    // column inside the build window — word columns through one reused
+    // open-addressed scratch set, byte columns through a 256-slot table.
+    let mut counter = DistinctCounter::new(row_count);
+    let distincts: Vec<u64> = columns
+        .iter()
+        .map(|column| match *column {
+            Column::Words { start } => counter.count_words(&words[start..start + row_count]),
+            Column::Bytes { start } => {
+                DistinctCounter::count_bytes(&bytes[start..start + row_count])
+            }
+        })
+        .collect();
+
     Ok(Arc::new(RelationImage {
         row_count,
+        distincts: distincts.into_boxed_slice(),
         columns: columns.into_boxed_slice(),
         words,
         bytes,
     }))
+}
+
+/// The build-time distinct counter: a power-of-two open-addressed word
+/// set sized once for the row count and memset-cleared per column.
+struct DistinctCounter {
+    slots: Vec<u64>,
+    occupied: Vec<bool>,
+}
+
+impl DistinctCounter {
+    fn new(row_count: usize) -> Self {
+        let capacity = (row_count.max(1) * 2).next_power_of_two();
+        Self {
+            slots: vec![0; capacity],
+            occupied: vec![false; capacity],
+        }
+    }
+
+    fn count_words(&mut self, column: &[u64]) -> u64 {
+        for flag in &mut self.occupied {
+            *flag = false;
+        }
+        let mask = self.slots.len() - 1;
+        let mut distinct = 0u64;
+        for &word in column {
+            // The COLT's word hash — one avalanche, linear probe.
+            let mut h = 0x517C_C1B7_2722_0A95_u64 ^ word;
+            h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            h ^= h >> 29;
+            let mut idx = usize::try_from(h).expect("64-bit usize") & mask;
+            loop {
+                if !self.occupied[idx] {
+                    self.occupied[idx] = true;
+                    self.slots[idx] = word;
+                    distinct += 1;
+                    break;
+                }
+                if self.slots[idx] == word {
+                    break;
+                }
+                idx = (idx + 1) & mask;
+            }
+        }
+        distinct
+    }
+
+    fn count_bytes(column: &[u8]) -> u64 {
+        let mut seen = [false; 256];
+        let mut distinct = 0u64;
+        for &byte in column {
+            if !seen[usize::from(byte)] {
+                seen[usize::from(byte)] = true;
+                distinct += 1;
+            }
+        }
+        distinct
+    }
 }
 
 #[cfg(test)]
@@ -350,6 +434,44 @@ mod tests {
         drop(view);
         commit(delta, &env).expect("commit");
         env
+    }
+
+    /// Build-time distinct counts are exact per column type
+    /// (docs/perf/07): serial ids all-distinct, bools 2, enums 3, and a
+    /// skewed i64 column counted through the word set.
+    #[test]
+    fn distinct_counts_are_exact() {
+        let dir = TempDir::new("image-distincts");
+        let schema = schema();
+        let env = populated(&dir, &schema);
+        let txn = env.read_txn().expect("txn");
+        let image = build(&txn, &schema, R).expect("build");
+        // populated(): ids 0..10, flag i % 2, kind i % 3, amount i*7-30.
+        assert_eq!(image.distinct(0), 10, "serial ids all distinct");
+        assert_eq!(image.distinct(1), 2, "bools");
+        assert_eq!(image.distinct(2), 3, "enum ordinals");
+        assert_eq!(image.distinct(3), 10, "amounts all distinct");
+
+        // A skewed refresh: 100 more rows sharing 5 amounts.
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        for i in 10..110u64 {
+            let amount = i64::try_from(i % 5).expect("small");
+            delta
+                .insert(&view, R, &fact(&schema, i, true, 0, amount))
+                .expect("insert");
+        }
+        drop(view);
+        commit(delta, &env).expect("commit");
+        let txn = env.read_txn().expect("txn");
+        let image = build(&txn, &schema, R).expect("build");
+        assert_eq!(image.row_count(), 110);
+        assert_eq!(image.distinct(0), 110);
+        // Old 10 distinct amounts + {0..5}, minus the overlaps: the old
+        // amounts are 7i - 30 (…-30, -23, …, 33); {0..5} intersects at
+        // nothing except… 7i-30 ∈ {0,1,2,3,4} ⇔ i has no integer
+        // solution except none (7i = 30..34 has none). 10 + 5 = 15.
+        assert_eq!(image.distinct(3), 15);
     }
 
     #[test]

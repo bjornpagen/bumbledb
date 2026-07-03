@@ -625,6 +625,66 @@ mod tests {
         }
     }
 
+    /// Estimate honesty over the pinned S corpus (docs/perf/07): with
+    /// images resident, every family's worst per-node est/actual factor
+    /// sits under its pin — the "for good" tripwire for the 114,679x
+    /// dishonesty the first benchmark run measured.
+    #[test]
+    fn estimates_are_honest_over_the_pinned_corpus() {
+        let dir = std::env::temp_dir().join("bumbledb-bench-honesty");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let db = bumbledb::Db::create(&dir, schema()).expect("create");
+        crate::corpus::load_bumbledb(&db, CFG).expect("load");
+
+        let pin = |name: &str| -> f64 {
+            match name {
+                "point" | "string" | "fk_walk" | "balance" => 16.0,
+                _ => 64.0,
+            }
+        };
+        // Estimates are per-plan statics: honesty is judged on each
+        // family's *typical* param set — an unskewed hit. The hot sets
+        // (balance 0, skew 0/1) and the misses measure execution
+        // behavior under skew, which no static estimate can or should
+        // match.
+        let typical = |name: &str| -> usize {
+            match name {
+                "balance" => 1,
+                "skew" => 2,
+                _ => 0,
+            }
+        };
+        for family in all() {
+            let query = (family.query)();
+            let mut prepared = db.prepare(&query).expect("prepare");
+            let sets = (family.params)(&CFG);
+            // Warm: images + views resident before the measured profile.
+            for params in &sets {
+                db.read(|snap| snap.execute_collect(&mut prepared, params).map(|_| ()))
+                    .expect("warm");
+            }
+            let (_, stats) = db
+                .read(|snap| snap.profile(&mut prepared, &sets[typical(family.name)]))
+                .expect("profile");
+            let mut worst = 1.0_f64;
+            #[allow(clippy::cast_precision_loss)]
+            for node in &stats.nodes {
+                let (est, act) = (node.estimate.max(1) as f64, node.actual.max(1) as f64);
+                worst = worst.max((est / act).max(act / est));
+            }
+            eprintln!("honesty {}: worst factor {worst:.1}", family.name);
+            assert!(
+                worst <= pin(family.name),
+                "{}: worst est/actual factor {worst:.1} exceeds the pin {}\n{stats:?}",
+                family.name,
+                pin(family.name),
+            );
+        }
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The generator attaches the skew params' tags to hot accounts at S.
     #[test]
     fn skew_tags_are_hot_attached() {

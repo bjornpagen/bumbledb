@@ -25,7 +25,7 @@ use crate::ir::validate::validate;
 use crate::ir::{AggOp, FindTerm, ParamId, Query, Value};
 use crate::obs;
 use crate::plan::fj::{binary2fj, factor};
-use crate::plan::planner::{plan as plan_order, OccStats};
+use crate::plan::planner::plan as plan_order;
 use crate::schema::{Schema, ValueType};
 use crate::storage::dict;
 use crate::storage::env::ReadTxn;
@@ -328,33 +328,19 @@ pub(crate) fn prepare<'s>(
     let exec_plan = if let Some(guard) = classified {
         ExecPlan::GuardProbe(guard)
     } else {
-        // Filtered-view statistics: measured survivor counts for
-        // occurrences whose filters are fully concrete; base row counts
-        // otherwise (symbolic filters resolve per execution).
+        // Per-occurrence input estimates (docs/perf/07): row counters
+        // shaped by the selectivity ladder — schema-exact uniques,
+        // resident-image distinct counts (peek only: prepare never
+        // builds an image for statistics), documented bounds and floors.
         let mut stats_span = obs::span(obs::names::STATS, obs::Category::Prepare);
-        let mut measured = 0u64;
         let mut stats = Vec::with_capacity(normalized.occurrences.len());
         for occurrence in &normalized.occurrences {
-            let concrete = !occurrence.filters.is_empty()
-                && occurrence.filters.iter().all(|f| match f {
-                    FilterPredicate::Compare { value, .. } => {
-                        matches!(value, Const::Word(_) | Const::Byte(_))
-                    }
-                    FilterPredicate::FieldsCompare { .. } => true,
-                });
-            let rows = if concrete {
-                measured += 1;
-                let image = cache.get_or_build(txn, schema, occurrence.relation)?;
-                apply(&image, &occurrence.filters, &[], Vec::new()).len() as u64
-            } else {
-                read::row_count(txn, occurrence.relation)?
-            };
-            stats.push(OccStats {
-                occ_id: occurrence.occ_id,
-                rows,
-            });
+            let rows = read::row_count(txn, occurrence.relation)?;
+            stats.push(crate::plan::selectivity::occurrence_stats(
+                txn, cache, schema, occurrence, rows,
+            )?);
         }
-        stats_span.set_args(measured, 0);
+        stats_span.set_args(stats.len() as u64, 0);
         stats_span.end();
         let order = {
             let _s = obs::span(obs::names::PLAN_DP, obs::Category::Prepare);

@@ -2,3 +2,4 @@
 
 pub mod fj;
 pub mod planner;
+pub(crate) mod selectivity;

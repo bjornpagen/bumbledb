@@ -19,13 +19,18 @@ pub const MAX_OCCURRENCES: usize = 20;
 /// Distinct-variable cap for the planner's dense var bitsets.
 pub(crate) const MAX_DISTINCT_VARS: usize = 128;
 
-/// The planner's per-occurrence statistic: the base row count, or the
-/// measured filtered-view survivor count when the occurrence has filters
-/// (built before planning — measured, not estimated).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The planner's per-occurrence statistics (docs/perf/07): the
+/// selectivity-shaped cardinality estimate, plus the base-relation
+/// distinct count of every bound variable's field (from the same
+/// ladder — unique-exact, image-exact, schema bounds, floor). The
+/// distincts drive the join-step fanout model.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OccStats {
     pub occ_id: OccId,
+    /// Estimated cardinality after this occurrence's own predicates.
     pub rows: u64,
+    /// `(var, distinct count of its field over the base relation)`.
+    pub var_distincts: Vec<(VarId, u64)>,
 }
 
 /// The chosen left-deep join order, with per-step estimates retained for
@@ -52,48 +57,44 @@ struct OccInfo {
     rows: u64,
     /// This occurrence's variables as a dense bitset.
     vars: u128,
+    /// `(var bit, base-relation distinct count of its field)` — the
+    /// join-step fanout inputs (docs/perf/07).
+    var_distincts: Vec<(u128, u64)>,
     /// Var bitsets of unique constraints whose every field is var-bound in
     /// this occurrence (constraints with literal-bound fields are skipped —
     /// simple and faithful to the doc's estimator).
     unique_var_sets: Vec<u128>,
 }
 
-/// The estimator, transcribed from the doc: joining prefix P with
-/// occurrence R on shared vars J —
-/// - J covers a unique constraint of R (incl. serial auto-unique):
-///   estimate = est(P) (FK walk; exact upper bound);
-/// - J covers a unique constraint of some prefix occurrence:
-///   estimate = min(est(P), |R|);
-/// - neither: estimate = est(P) x |R| — no estimate exists, so pessimism,
-///   which pushes non-key joins last. That is the correct behavior, not a
-///   modeling failure.
-fn estimate(
-    prefix_est: u64,
-    prefix_vars: u128,
-    prefix_mask: u32,
-    occs: &[OccInfo],
-    last: usize,
-) -> u64 {
+/// One join step's cardinality: the prefix estimate times the new
+/// occurrence's per-binding **fanout** (docs/perf/07). A disconnected
+/// occurrence is a cross product. A connected one contributes
+/// `rows / distinct(field of v)` for its most selective join variable —
+/// FK walks fan out by rows-per-key instead of the old
+/// `min(prefix, rows)` rule, which priced a 200-postings-per-account
+/// walk as 1 and misled EXPLAIN by 12,703x on the balance family. A
+/// unique constraint covered by the join variables pins the fanout to 1
+/// (compound uniques included — per-var distincts cannot see those).
+fn estimate(prefix_est: u64, prefix_vars: u128, occs: &[OccInfo], last: usize) -> u64 {
     let r = &occs[last];
     let join_vars = r.vars & prefix_vars;
-    if join_vars != 0 {
-        if r.unique_var_sets.iter().any(|set| set & join_vars == *set) {
-            return prefix_est;
-        }
-        let prefix_side_covered =
-            (0..occs.len())
-                .filter(|i| prefix_mask & (1 << i) != 0)
-                .any(|i| {
-                    occs[i]
-                        .unique_var_sets
-                        .iter()
-                        .any(|set| set & join_vars == *set)
-                });
-        if prefix_side_covered {
-            return prefix_est.min(r.rows);
-        }
+    if join_vars == 0 {
+        return prefix_est.saturating_mul(r.rows);
     }
-    prefix_est.saturating_mul(r.rows)
+    if r.unique_var_sets.iter().any(|set| set & join_vars == *set) {
+        return prefix_est;
+    }
+    let fanout = r
+        .var_distincts
+        .iter()
+        .filter(|(bit, _)| bit & join_vars != 0)
+        .map(|(_, distinct)| (r.rows / (*distinct).clamp(1, r.rows.max(1))).max(1))
+        .min()
+        // A join var with no recorded distinct (hand-built stats): the
+        // pessimistic product, exactly as before this model existed —
+        // optimism without evidence is how plans go wrong.
+        .unwrap_or_else(|| r.rows.max(1));
+    prefix_est.saturating_mul(fanout)
 }
 
 /// Plans a left-deep join order by exhaustive DP over occurrence subsets,
@@ -144,7 +145,7 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
             let prefix_vars = (0..n)
                 .filter(|i| prev_mask & (1 << i) != 0)
                 .fold(0u128, |acc, i| acc | occs[i].vars);
-            let est = estimate(prev.est, prefix_vars, prev_mask, &occs, last);
+            let est = estimate(prev.est, prefix_vars, &occs, last);
             let cost = prev.cost.saturating_add(est);
             let better = match candidate {
                 None => true,
@@ -193,15 +194,20 @@ fn densify(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) ->
         .occurrences
         .iter()
         .map(|occurrence| {
-            let rows = stats
+            let stat = stats
                 .iter()
                 .find(|s| s.occ_id == occurrence.occ_id)
-                .expect("stats cover every occurrence")
-                .rows;
+                .expect("stats cover every occurrence");
+            let rows = stat.rows;
             let mut vars = 0u128;
             for (_, var) in &occurrence.vars {
                 vars |= 1 << var_index[var];
             }
+            let var_distincts: Vec<(u128, u64)> = stat
+                .var_distincts
+                .iter()
+                .map(|(var, distinct)| (1u128 << var_index[var], *distinct))
+                .collect();
             // Translate each unique constraint's field set to a var bitset;
             // skip constraints with any non-var-bound field.
             let relation = schema.relation(occurrence.relation);
@@ -220,6 +226,7 @@ fn densify(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) ->
             OccInfo {
                 rows,
                 vars,
+                var_distincts,
                 unique_var_sets,
             }
         })
@@ -281,6 +288,8 @@ mod tests {
             .map(|(i, r)| OccStats {
                 occ_id: OccId(u16::try_from(i).expect("small")),
                 rows: *r,
+                // Hand-built stats: unit fanout (no distinct info).
+                var_distincts: Vec::new(),
             })
             .collect()
     }
@@ -334,24 +343,20 @@ mod tests {
         let mut est = rows(order[0]);
         let mut cost = est;
         let mut prefix_vars = var_set(order[0]);
-        let mut prefix: Vec<usize> = vec![order[0]];
         for &next in &order[1..] {
+            // Mirror of the production estimator (docs/perf/07): unique
+            // coverage pins the fanout to 1; hand-built stats carry no
+            // distinct counts, so everything else is the pessimistic
+            // product.
             let join_vars = var_set(next) & prefix_vars;
             let step = if join_vars != 0 && unique_sets(next).iter().any(|s| s & join_vars == *s) {
                 est
-            } else if join_vars != 0
-                && prefix
-                    .iter()
-                    .any(|&p| unique_sets(p).iter().any(|s| s & join_vars == *s))
-            {
-                est.min(rows(next))
             } else {
                 est.saturating_mul(rows(next))
             };
             cost = cost.saturating_add(step);
             est = step;
             prefix_vars |= var_set(next);
-            prefix.push(next);
         }
         cost
     }
@@ -372,12 +377,16 @@ mod tests {
             occurrences: vec![occurrence(0, 0, vec![(1, 0), (0, 1)]), occ1],
             residuals: vec![],
         };
-        let order = plan(&normalized, &schema, &stats(&[10_000, 1]));
+        // The Posting-like side records its join field's distinct count
+        // (5_000 accounts over 10_000 postings — a fanout of 2); the old
+        // prefix-side-covered rule priced this walk at min(1, 10_000) = 1,
+        // exactly the dishonesty docs/perf/07 killed.
+        let mut occ_stats = stats(&[10_000, 1]);
+        occ_stats[0].var_distincts = vec![(VarId(0), 5_000), (VarId(1), 10_000)];
+        let order = plan(&normalized, &schema, &occ_stats);
         assert_eq!(order.order, vec![OccId(1), OccId(0)]);
-        // Step estimates: 1 survivor, then the FK walk stays keyed... occ 0
-        // joins on its own non-key field: prefix side (occ 1) is unique-
-        // covered on var 0, so est = min(1, 10_000) = 1.
-        assert_eq!(order.estimates, vec![1, 1]);
+        // Step estimates: 1 survivor, then 1 x fanout(10_000 / 5_000) = 2.
+        assert_eq!(order.estimates, vec![1, 2]);
     }
 
     #[test]
@@ -550,6 +559,7 @@ mod tests {
             .map(|o| OccStats {
                 occ_id: o.occ_id,
                 rows: 1,
+                var_distincts: Vec::new(),
             })
             .collect();
         let normalized = NormalizedQuery {

@@ -98,6 +98,23 @@ impl ImageCache {
     /// # Panics
     ///
     /// Only on a poisoned cache mutex (a prior panic while holding it).
+    /// The resident image for `(rel, current generation)` — **never
+    /// builds** (docs/perf/07: prepare-time statistics peek; a cold
+    /// cache falls back to schema-derived bounds and floors).
+    ///
+    /// # Errors
+    ///
+    /// `Lmdb` from the generation read.
+    ///
+    /// # Panics
+    ///
+    /// Only on a poisoned cache mutex (a prior panic while holding it).
+    pub fn peek(&self, txn: &ReadTxn<'_>, rel: RelationId) -> Result<Option<Arc<RelationImage>>> {
+        let generation = txn.generation()?;
+        let inner = self.inner.lock().expect("cache mutex");
+        Ok(inner.map.get(&(rel, generation)).map(Arc::clone))
+    }
+
     pub fn get_or_build(
         &self,
         txn: &ReadTxn<'_>,
