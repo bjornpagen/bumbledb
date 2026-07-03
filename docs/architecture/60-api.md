@@ -89,6 +89,17 @@ input is data, not code — no panics on the import path). Explicit serial value
 preserve identity (high-water advances past them). Backup = quiesced file copy
 (`40-storage.md`).
 
+## Observability
+
+Two feature-gated surfaces, both compiling to nothing under default features
+(`00-product.md`: no always-on instrumentation in release paths): the `alloc-counter`
+feature registers the counting allocator (events + bytes + live/peak, the gate's and
+the benchmark's memory truth), and the `trace` feature enables `bumbledb::obs` —
+explicit per-thread capture of nanosecond spans and point events over every prepare/
+execute/commit phase, drained by tooling into Chrome-trace artifacts. Always
+available: `snap.explain(..)` (rendered report) and the structured execution-stats
+surface it is built from.
+
 ## Host-side sugar (blessed patterns, never the contract)
 
 - Newtype wrappers per schema type (`AccountId(u64)`, `Cents(i64)`) — the nominal

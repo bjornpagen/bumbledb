@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [features]
+trace = []
 # Test-support: global-allocator counting for the zero-warm-allocation
 # gate (PRD 26). Never enabled in production builds.
 alloc-counter = []

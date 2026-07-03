@@ -57,6 +57,7 @@ pub mod error;
 pub(crate) mod exec;
 pub(crate) mod image;
 pub mod ir;
+pub mod obs;
 pub(crate) mod plan;
 pub mod schema;
 pub(crate) mod storage;
