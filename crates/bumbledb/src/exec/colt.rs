@@ -79,7 +79,9 @@ enum Slot {
 
 /// One forced level's open-addressed map: power-of-two capacity, inline
 /// key words, linear probing, no tombstones (build-once, never deleted
-/// from). Capacity is sized once from the position count — no rehash.
+/// from). Capacity starts from the position-count guess and
+/// rehash-doubles at 75% load (docs/perf/05); iteration never touches
+/// the slot array — it walks the dense occupied list.
 #[derive(Debug, Clone, Copy)]
 struct Map {
     arity: usize,
@@ -87,6 +89,9 @@ struct Map {
     len: u32,
     keys_start: usize,
     slots_start: usize,
+    /// Start of this map's occupied-slot list in the dense slab —
+    /// `len` entries, insertion-ordered, O(keys) to walk.
+    dense_start: usize,
 }
 
 /// The lazy trie over one occurrence's view. Owns the view (a cheap
@@ -115,6 +120,11 @@ pub struct Colt {
     maps: Vec<Map>,
     slots: Vec<Slot>,
     keys: Vec<u64>,
+    /// The dense occupied-slot lists, one contiguous range per map
+    /// (docs/perf/05). A rehash abandons its old range at the slab's
+    /// interior — reclaimed by [`Colt::reset`], a documented ≤2× slab
+    /// transient within a generation.
+    dense: Vec<u32>,
     /// Reused key-decoding scratch.
     scratch: Vec<u64>,
 }
@@ -160,6 +170,7 @@ impl Colt {
             maps: Vec::new(),
             slots: Vec::new(),
             keys: Vec::new(),
+            dense: Vec::new(),
             scratch: Vec::new(),
         }
     }
@@ -176,6 +187,7 @@ impl Colt {
         self.maps.clear();
         self.slots.clear();
         self.keys.clear();
+        self.dense.clear();
         self.start = Cursor::Node(NodeRef(0));
         self.selected = self.selection_levels == 0;
         old
@@ -232,12 +244,31 @@ impl Colt {
         self.schema_columns[level].len()
     }
 
+    /// A forced node's map capacity (`None` when unforced) — the test
+    /// observability for the sizing formula (docs/perf/05).
+    #[cfg(test)]
+    #[must_use]
+    pub fn forced_capacity(&self, cursor: Cursor) -> Option<usize> {
+        match cursor {
+            Cursor::Row(_) => None,
+            Cursor::Node(node) => match self.nodes[node.0 as usize] {
+                NodeState::Forced { map } => Some(self.maps[map as usize].capacity),
+                NodeState::Unforced(_) => None,
+            },
+        }
+    }
+
     /// Total pool footprint — the test observability for laziness
     /// (allocations only ever grow this).
     #[cfg(test)]
     #[must_use]
     pub fn watermark(&self) -> usize {
-        self.nodes.len() + self.chunks.len() + self.maps.len() + self.slots.len() + self.keys.len()
+        self.nodes.len()
+            + self.chunks.len()
+            + self.maps.len()
+            + self.slots.len()
+            + self.keys.len()
+            + self.dense.len()
     }
 
     /// The labeled key count at a cursor (never forces).
@@ -491,29 +522,24 @@ impl Colt {
         let m = self.maps[map as usize];
         let arity = self.arity_at(level);
         debug_assert_eq!(arity, m.arity);
-        let mut slot_idx = usize::try_from(token.0).expect("64-bit usize");
+        // Walk the dense occupied list — O(keys), never O(capacity)
+        // (docs/perf/05). The token is a dense index.
+        let mut dense_idx = usize::try_from(token.0).expect("64-bit usize");
         let mut yielded = 0;
-        while yielded < max && slot_idx < m.capacity {
-            match self.slots[m.slots_start + slot_idx] {
-                Slot::Empty => {}
-                Slot::Single(position) => {
-                    let key = &self.keys[m.keys_start + slot_idx * arity..];
-                    keys_out[yielded * arity..yielded * arity + arity]
-                        .copy_from_slice(&key[..arity]);
-                    children_out[yielded] = Cursor::Row(position);
-                    yielded += 1;
-                }
-                Slot::Node(child) => {
-                    let key = &self.keys[m.keys_start + slot_idx * arity..];
-                    keys_out[yielded * arity..yielded * arity + arity]
-                        .copy_from_slice(&key[..arity]);
-                    children_out[yielded] = Cursor::Node(child);
-                    yielded += 1;
-                }
-            }
-            slot_idx += 1;
+        while yielded < max && dense_idx < usize::try_from(m.len).expect("64-bit usize") {
+            let slot_idx =
+                usize::try_from(self.dense[m.dense_start + dense_idx]).expect("64-bit usize");
+            let key = &self.keys[m.keys_start + slot_idx * arity..];
+            keys_out[yielded * arity..yielded * arity + arity].copy_from_slice(&key[..arity]);
+            children_out[yielded] = match self.slots[m.slots_start + slot_idx] {
+                Slot::Empty => unreachable!("dense entries are occupied"),
+                Slot::Single(position) => Cursor::Row(position),
+                Slot::Node(child) => Cursor::Node(child),
+            };
+            yielded += 1;
+            dense_idx += 1;
         }
-        (yielded, BatchToken(slot_idx as u64))
+        (yielded, BatchToken(dense_idx as u64))
     }
 
     /// Linear probe: returns (found, slot index within the map).
@@ -550,13 +576,21 @@ impl Colt {
             NodeState::Unforced(Positions::Chunks { count, .. }) => u64::from(count),
             NodeState::Forced { .. } => unreachable!("checked above"),
         };
-        // Capacity sized once for <=50% load: no rehash, ever.
-        let capacity = usize::try_from(count.max(1) * 2)
-            .expect("64-bit usize")
+        // Initial capacity (docs/perf/05): distinct keys are unknown
+        // before the pass, so start from the deterministic guess
+        // `next_pow2(clamp(count/8, 16, 2*count))` — tiny nodes keep
+        // their old tight sizing, big skewed levels start 16x smaller
+        // than the old 2x-positions rule — and rehash-double at 75%
+        // load when the guess was short.
+        let count_usize = usize::try_from(count).expect("64-bit usize");
+        let capacity = (count_usize / 8)
+            .max(16)
+            .min(count_usize.max(1) * 2)
             .next_power_of_two();
         let map_idx = u32::try_from(self.maps.len()).expect("map count fits u32");
         let slots_start = self.slots.len();
         let keys_start = self.keys.len();
+        let dense_start = self.dense.len();
         self.slots.resize(slots_start + capacity, Slot::Empty);
         self.keys.resize(keys_start + capacity * arity, 0);
         let mut m = Map {
@@ -565,6 +599,7 @@ impl Colt {
             len: 0,
             keys_start,
             slots_start,
+            dense_start,
         };
 
         // Single pass, O(1) advance per position: the root walks the view
@@ -603,8 +638,12 @@ impl Colt {
     }
 
     /// One position of a [`Colt::force`] pass: decode its key words, probe,
-    /// and land it (new slot or appended child).
+    /// and land it (new slot or appended child), rehash-doubling first
+    /// when the next insert would cross 75% load.
     fn force_ingest(&mut self, m: &mut Map, level: usize, position: u32) {
+        if (usize::try_from(m.len).expect("64-bit usize") + 1) * 4 >= m.capacity * 3 {
+            self.grow_map(m);
+        }
         let arity = m.arity;
         self.scratch.clear();
         for col in &self.schema_columns[level] {
@@ -619,9 +658,46 @@ impl Colt {
             self.keys[m.keys_start + idx * arity..m.keys_start + idx * arity + arity]
                 .copy_from_slice(&key);
             self.slots[m.slots_start + idx] = Slot::Single(position);
+            self.dense
+                .push(u32::try_from(idx).expect("slot index fits u32"));
             m.len += 1;
         }
         self.scratch = key;
+    }
+
+    /// Rehash-doubles a map mid-force: fresh slot/key/dense ranges at
+    /// the slab tails (the old ranges are abandoned until `reset` — the
+    /// documented ≤2× transient), keys re-probed in dense (insertion)
+    /// order so iteration order survives growth. All keys are distinct
+    /// by construction, so the re-probe never compares keys — it takes
+    /// the first empty slot.
+    fn grow_map(&mut self, m: &mut Map) {
+        let arity = m.arity;
+        let new_capacity = m.capacity * 2;
+        let slots_start = self.slots.len();
+        let keys_start = self.keys.len();
+        let dense_start = self.dense.len();
+        self.slots.resize(slots_start + new_capacity, Slot::Empty);
+        self.keys.resize(keys_start + new_capacity * arity, 0);
+        let mask = new_capacity - 1;
+        for i in 0..usize::try_from(m.len).expect("64-bit usize") {
+            let old_slot = usize::try_from(self.dense[m.dense_start + i]).expect("64-bit usize");
+            let old_key_at = m.keys_start + old_slot * arity;
+            let hash = hash_words(&self.keys[old_key_at..old_key_at + arity]);
+            let mut idx = usize::try_from(hash).expect("64-bit usize") & mask;
+            while !matches!(self.slots[slots_start + idx], Slot::Empty) {
+                idx = (idx + 1) & mask;
+            }
+            self.keys
+                .copy_within(old_key_at..old_key_at + arity, keys_start + idx * arity);
+            self.slots[slots_start + idx] = self.slots[m.slots_start + old_slot];
+            self.dense
+                .push(u32::try_from(idx).expect("slot index fits u32"));
+        }
+        m.capacity = new_capacity;
+        m.slots_start = slots_start;
+        m.keys_start = keys_start;
+        m.dense_start = dense_start;
     }
 
     /// Appends a position to an occupied slot's child: singleton inline
@@ -773,6 +849,107 @@ mod tests {
             token = next;
         }
         out
+    }
+
+    /// Dense iteration (docs/perf/05): draining a forced map costs
+    /// O(keys) batches, never O(capacity), and capacity follows the
+    /// documented sizing formula exactly.
+    #[test]
+    fn skewed_maps_size_by_the_formula_and_iterate_densely() {
+        let dir = TempDir::new("colt-dense-skew");
+        let schema = schema();
+        // 100k positions, 500 distinct keys — the balance-family shape
+        // that used to force a 2x-positions map and walk every slot.
+        let rows: Vec<(u64, u64)> = (0..100_000).map(|i| (i % 500, i)).collect();
+        let view = view_of(&dir, &schema, &rows);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+        let root = Colt::root();
+        colt.ensure_forced(root, 0);
+        // next_pow2(clamp(100_000 / 8, 16, 200_000)) = 16_384; 500 keys
+        // never cross 75% load, so no growth.
+        assert_eq!(colt.forced_capacity(root), Some(16_384));
+
+        // ceil(500 / 64) batches of 64 (last: the remainder), by count.
+        let mut keys = vec![0u64; 64];
+        let mut children = vec![Cursor::Row(0); 64];
+        let mut token = BatchToken::default();
+        let mut calls = 0;
+        let mut total = 0;
+        loop {
+            let (n, next) = colt.iter_batch(root, 0, token, &mut keys, &mut children, 64);
+            if n == 0 {
+                break;
+            }
+            calls += 1;
+            total += n;
+            assert_eq!(n, if calls <= 7 { 64 } else { 500 - 7 * 64 });
+            token = next;
+        }
+        assert_eq!((calls, total), (8, 500), "O(keys) drain");
+    }
+
+    /// Near-unique keys rehash-double to the pinned final capacity and
+    /// iterate each key exactly once, in dense (insertion) order.
+    #[test]
+    fn near_unique_maps_grow_to_the_pinned_capacity() {
+        let dir = TempDir::new("colt-dense-grow");
+        let schema = schema();
+        let rows: Vec<(u64, u64)> = (0..10_000).map(|i| (i, i * 2)).collect();
+        let view = view_of(&dir, &schema, &rows);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+        let root = Colt::root();
+        colt.ensure_forced(root, 0);
+        // Init next_pow2(clamp(1250, 16, 20_000)) = 2048, then doubles
+        // at 75% load: 4096, 8192, 16384 (10_000 < 12_288 stops there).
+        assert_eq!(colt.forced_capacity(root), Some(16_384));
+        let entries = drain(&mut colt, root, 0);
+        assert_eq!(entries.len(), 10_000);
+        let keys: Vec<u64> = entries.iter().map(|(k, _)| k[0]).collect();
+        let mut seen = keys.clone();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), 10_000, "each key exactly once");
+        // Dense order is ingestion order — deterministic: a second force
+        // over the same view drains identically, growth included.
+        let mut again = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+        let repeat: Vec<u64> = drain(&mut again, root, 0)
+            .iter()
+            .map(|(k, _)| k[0])
+            .collect();
+        assert_eq!(keys, repeat, "ingestion order survives growth");
+    }
+
+    /// The resume token survives growth and interleaved probes: max = 1
+    /// stepping equals a single-shot drain.
+    #[test]
+    fn dense_tokens_resume_across_interleaved_probes() {
+        let dir = TempDir::new("colt-dense-token");
+        let schema = schema();
+        let rows: Vec<(u64, u64)> = (0..300).map(|i| (i % 40, i)).collect();
+        let view = view_of(&dir, &schema, &rows);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+        let root = Colt::root();
+        let single_shot = drain(&mut colt, root, 0);
+
+        let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+        let mut keys = vec![0u64; 1];
+        let mut children = vec![Cursor::Row(0); 1];
+        let mut token = BatchToken::default();
+        let mut stepped = Vec::new();
+        loop {
+            let (n, next) = colt.iter_batch(root, 0, token, &mut keys, &mut children, 1);
+            if n == 0 {
+                break;
+            }
+            stepped.push((keys.clone(), children[0]));
+            // An interleaved probe must not disturb the resume token.
+            let _ = colt.get(root, 0, &[stepped.len() as u64 % 40]);
+            token = next;
+        }
+        assert_eq!(stepped.len(), single_shot.len());
+        for (a, b) in stepped.iter().zip(single_shot.iter()) {
+            assert_eq!((&a.0, a.1), (&b.0, b.1));
+        }
     }
 
     /// Selection levels (docs/perf/01): probing lands exactly on the

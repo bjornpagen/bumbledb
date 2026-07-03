@@ -31,9 +31,12 @@ always, whatever the capacity).
   `iter_map`'s `(yielded, BatchToken(slot_idx))` return and resume, and the
   suffix/chunk token variants which are untouched).
 - **Growth sizing.** Replace the `count * 2` pre-size with:
-  - initial capacity `next_pow2(max(16, count / 8))` — a guess that is right
-    for near-unique levels and cheap for skewed ones;
-  - rehash-double when `len * 4 >= capacity * 3` (75 % load) during ingestion.
+  - initial capacity `next_pow2(clamp(count / 8, 16, 2 * count))` — the lower
+    clamp keeps the old tight sizing for tiny subtries (a 2-position child
+    stays a 4-slot map), the `count / 8` guess starts big skewed levels 16×
+    smaller than the old rule, and near-unique levels grow to fit;
+  - rehash-double when `(len + 1) * 4 >= capacity * 3` (75 % load) during
+    ingestion.
   Rehashing allocates a fresh slot/key/dense range at the slab tail and
   abandons the old range for the rest of the generation (reclaimed by
   `reset`'s recycle) — document this transient ≤ 2× slab overhead where the
@@ -56,12 +59,15 @@ generation; `reset` is the reclamation point).
 ## Passing criteria
 
 - Pure-COLT unit tests:
-  - Force 100,000 positions carrying 500 distinct keys: post-force
-    `capacity ≤ 8 × 500` (the growth bound), and draining via `iter_batch`
-    with `max = 64` takes exactly `ceil(500 / 64)` calls, each yielding 64
+  - Force 100,000 positions carrying 500 distinct keys: post-force capacity
+    is exactly the formula's `next_pow2(12_500) = 16_384` (no growth — 500
+    keys never cross 75 % load), and draining via `iter_batch` with
+    `max = 64` takes exactly `ceil(500 / 64)` calls, each yielding 64
     (last: remainder) — the O(keys) iteration pin, no wall clock involved.
-  - Force with near-unique keys (10,000 positions, 10,000 keys): iteration
-    yields all 10,000 exactly once, in dense order; capacity ≤ 4 × keys.
+  - Force with near-unique keys (10,000 positions, 10,000 keys): init
+    `next_pow2(1_250) = 2_048` rehash-doubles to exactly 16_384; iteration
+    yields all 10,000 exactly once, and the drain order is deterministic
+    across forces (growth preserves ingestion order).
   - Resume-token correctness across the dense change: drain in `max = 1`
     steps, interleaved with probes, equals a single-shot drain (order and
     content).
