@@ -28,6 +28,43 @@ struct CacheInner {
 /// covers map operations only — never a build.
 pub struct ImageCache {
     inner: Mutex<CacheInner>,
+    #[cfg(feature = "trace")]
+    counters: stats::CacheCounters,
+}
+
+/// Cache observability (feature `trace` only — per-op atomics are a cost
+/// the default build must not carry). Reader: the benchmark report.
+#[cfg(feature = "trace")]
+pub mod stats {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[derive(Debug, Default)]
+    pub(super) struct CacheCounters {
+        pub hits: AtomicU64,
+        pub misses: AtomicU64,
+        pub builds: AtomicU64,
+        pub evicted: AtomicU64,
+    }
+
+    /// One reading of the cache counters.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct CacheStats {
+        pub hits: u64,
+        pub misses: u64,
+        pub builds: u64,
+        pub evicted: u64,
+    }
+
+    impl CacheCounters {
+        pub(super) fn read(&self) -> CacheStats {
+            CacheStats {
+                hits: self.hits.load(Ordering::Relaxed),
+                misses: self.misses.load(Ordering::Relaxed),
+                builds: self.builds.load(Ordering::Relaxed),
+                evicted: self.evicted.load(Ordering::Relaxed),
+            }
+        }
+    }
 }
 
 impl Default for ImageCache {
@@ -44,6 +81,8 @@ impl ImageCache {
                 map: HashMap::new(),
                 newest: 0,
             }),
+            #[cfg(feature = "trace")]
+            counters: stats::CacheCounters::default(),
         }
     }
 
@@ -70,6 +109,10 @@ impl ImageCache {
         let newest = {
             let inner = self.inner.lock().expect("cache mutex");
             if let Some(image) = inner.map.get(&key) {
+                #[cfg(feature = "trace")]
+                self.counters
+                    .hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 crate::obs::event(
                     crate::obs::names::CACHE_HIT,
                     crate::obs::Category::Cache,
@@ -80,6 +123,10 @@ impl ImageCache {
             }
             inner.newest
         };
+        #[cfg(feature = "trace")]
+        self.counters
+            .misses
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Build outside the lock.
         let image = {
@@ -89,8 +136,12 @@ impl ImageCache {
                 u64::from(rel.0),
                 0,
             );
+            #[cfg(feature = "trace")]
+            self.counters
+                .builds
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let image = build(txn, schema, rel)?;
-            span.set_args(u64::from(rel.0), image.row_count() as u64);
+            span.set_args(u64::from(rel.0), image.byte_size() as u64);
             image
         };
 
@@ -141,8 +192,41 @@ impl ImageCache {
     /// Only on a poisoned cache mutex.
     pub fn evict_older_than(&self, generation: u64) {
         let mut inner = self.inner.lock().expect("cache mutex");
+        #[cfg(feature = "trace")]
+        {
+            let before = inner.map.len();
+            inner.map.retain(|(_, gen), _| *gen >= generation);
+            let evicted = before - inner.map.len();
+            self.counters
+                .evicted
+                .fetch_add(evicted as u64, std::sync::atomic::Ordering::Relaxed);
+        }
+        #[cfg(not(feature = "trace"))]
         inner.map.retain(|(_, gen), _| *gen >= generation);
         inner.newest = inner.newest.max(generation);
+    }
+
+    /// The cache counters (feature `trace`): hits, misses, builds, and
+    /// evicted entries since construction.
+    #[cfg(feature = "trace")]
+    #[must_use]
+    pub fn stats(&self) -> stats::CacheStats {
+        self.counters.read()
+    }
+
+    /// Resident images and their total slab bytes, right now (feature
+    /// `trace`; computed under the map lock).
+    #[cfg(feature = "trace")]
+    #[must_use]
+    pub fn resident(&self) -> (u64, u64) {
+        let inner = self.inner.lock().expect("cache mutex");
+        let images = inner.map.len() as u64;
+        let bytes = inner
+            .map
+            .values()
+            .map(|image| image.byte_size() as u64)
+            .sum();
+        (images, bytes)
     }
 
     /// The set of `(relation, generation)` keys currently cached
@@ -317,5 +401,33 @@ mod tests {
         let txn = env.read_txn().expect("txn");
         let after = cache.get_or_build(&txn, &schema, R).expect("build");
         assert!(Arc::ptr_eq(&before, &after), "the cache stayed warm");
+    }
+
+    #[cfg(feature = "trace")]
+    #[test]
+    fn counters_track_hit_miss_build_evict_exactly() {
+        let dir = TempDir::new("cache-stats");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        assert!(insert_one(&env, &schema, 1));
+        let cache = ImageCache::new();
+        let txn = env.read_txn().expect("txn");
+
+        let base = cache.stats();
+        cache.get_or_build(&txn, &schema, R).expect("build"); // miss + build
+        cache.get_or_build(&txn, &schema, R).expect("hit"); // hit
+        let after = cache.stats();
+        assert_eq!(after.misses - base.misses, 1);
+        assert_eq!(after.builds - base.builds, 1);
+        assert_eq!(after.hits - base.hits, 1);
+
+        let (images, bytes) = cache.resident();
+        assert_eq!(images, 1);
+        assert!(bytes > 0);
+
+        cache.evict_older_than(u64::MAX);
+        let evicted = cache.stats();
+        assert_eq!(evicted.evicted - after.evicted, 1);
+        assert_eq!(cache.resident(), (0, 0));
     }
 }

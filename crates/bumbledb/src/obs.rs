@@ -97,7 +97,7 @@ pub mod names {
 
     /// Image found in the shared cache. (relation id, -)
     pub const CACHE_HIT: &str = "cache_hit";
-    /// A full image decode. (relation id, rows)
+    /// A full image decode. (relation id, slab bytes)
     pub const IMAGE_BUILD: &str = "image_build";
     /// Lost the insert race; adopted the winner's image. (relation id, -)
     pub const CACHE_ADOPT: &str = "cache_adopt";

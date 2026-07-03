@@ -64,6 +64,7 @@ pub(crate) mod storage;
 
 pub use api::db::{BulkLoadError, Db, Fact, Serial, Snapshot, WriteTx};
 pub use api::prepared::{PreparedQuery, ResultBuffer, ResultValue, Row};
+pub use api::stats::{CoverStats, ExecutionStats, GuardStats, NodeStats};
 pub use error::{Error, Result};
 // The IR vocabulary a host needs to build a `Query`, and the id types that
 // appear in `Db`'s own signatures — importable from the root, no

@@ -186,6 +186,42 @@ impl<'s> Db<'s> {
         Ok(out)
     }
 
+    /// The image cache's counters (feature `trace`; reader: the
+    /// benchmark report).
+    #[cfg(feature = "trace")]
+    #[must_use]
+    pub fn cache_stats(&self) -> crate::image::cache::stats::CacheStats {
+        self.cache.stats()
+    }
+
+    /// Resident cached images and their total slab bytes (feature
+    /// `trace`).
+    #[cfg(feature = "trace")]
+    #[must_use]
+    pub fn cache_resident(&self) -> (u64, u64) {
+        self.cache.resident()
+    }
+
+    /// The database file's real on-disk size in bytes (a store-level
+    /// observability number for the benchmark report).
+    ///
+    /// # Errors
+    ///
+    /// `Io` via heed on a failed stat.
+    pub fn disk_size(&self) -> Result<u64> {
+        self.env.disk_size()
+    }
+
+    /// The current committed generation (storage tx id), read through a
+    /// fresh snapshot.
+    ///
+    /// # Errors
+    ///
+    /// `Lmdb` on snapshot open; `Corruption` on a malformed tx id.
+    pub fn generation(&self) -> Result<u64> {
+        self.env.read_txn()?.generation()
+    }
+
     /// Prepares a query against current statistics (pin-at-prepare). The
     /// prepared query outlives the internal snapshot and is reusable
     /// across [`Db::read`] closures.
@@ -342,6 +378,21 @@ impl Snapshot<'_> {
         params: &[Value],
     ) -> Result<(ResultBuffer, String)> {
         prepared.explain(&self.txn, self.cache, params)
+    }
+
+    /// ANALYZE with structured output: the rows alongside
+    /// [`crate::api::stats::ExecutionStats`] — what `explain` renders,
+    /// as data.
+    ///
+    /// # Errors
+    ///
+    /// As [`Snapshot::execute`].
+    pub fn profile(
+        &self,
+        prepared: &mut PreparedQuery<'_>,
+        params: &[Value],
+    ) -> Result<(ResultBuffer, crate::api::stats::ExecutionStats)> {
+        prepared.profile(&self.txn, self.cache, params)
     }
 
     /// The export surface (`60-api.md` ETL story): a full-relation scan

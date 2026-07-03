@@ -700,3 +700,30 @@ fn bulk_load_equals_sequential_inserts_and_survives_chunks() {
         let _ = std::fs::remove_dir_all(&d);
     }
 }
+
+#[test]
+fn disk_size_and_generation_report_store_state() {
+    let dir = test_dir("disk-size");
+    let db = Db::create(&dir, schema()).expect("create");
+    let empty = db.disk_size().expect("size");
+    assert!(empty > 0, "a fresh environment still has pages");
+    assert_eq!(db.generation().expect("gen"), 0);
+
+    db.write(|tx| {
+        for _ in 0..10_000u64 {
+            let id: HolderId = tx.alloc()?;
+            tx.insert(&Holder {
+                id,
+                name: format!("holder-{}", id.0),
+            })?;
+        }
+        Ok(())
+    })
+    .expect("bulk write");
+    let grown = db.disk_size().expect("size");
+    assert!(grown > empty, "10k facts grow the file: {empty} -> {grown}");
+    assert_eq!(db.generation().expect("gen"), 1);
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -66,6 +66,14 @@ pub struct RelationImage {
 }
 
 impl RelationImage {
+    /// The image's heap footprint: both slab capacities in bytes (a
+    /// store-level observability number — the benchmark report and the
+    /// `image_build` trace span's byte arg read it).
+    #[must_use]
+    pub fn byte_size(&self) -> usize {
+        self.words.capacity() * std::mem::size_of::<u64>() + self.bytes.capacity()
+    }
+
     /// Number of facts in the image (dense positions `0..row_count`).
     #[must_use]
     pub const fn row_count(&self) -> usize {
@@ -540,6 +548,26 @@ mod tests {
                 Error::Corruption(CorruptionError::WrongFactWidth { .. })
             ),
             "{err:?}"
+        );
+    }
+
+    #[test]
+    fn byte_size_covers_rows_and_slab_slack() {
+        let dir = TempDir::new("image-byte-size");
+        let schema = schema();
+        let env = populated(&dir, &schema);
+        let txn = env.read_txn().expect("txn");
+        let image = build(&txn, &schema, R).expect("build");
+        // The fixture: 10 rows over 2 word columns (id, amount) and 2 byte
+        // columns (flag, kind). Lower bound: the raw payload; upper bound:
+        // payload plus per-column alignment/stagger slack.
+        let payload = 10 * (2 * 8 + 2);
+        assert!(image.byte_size() >= payload, "{}", image.byte_size());
+        let slack = 4 * (SET_STRIDE + LINE);
+        assert!(
+            image.byte_size() <= payload + slack,
+            "{}",
+            image.byte_size()
         );
     }
 }

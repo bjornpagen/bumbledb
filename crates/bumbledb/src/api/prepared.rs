@@ -11,6 +11,7 @@
 //! error, and a value interned by a later write is picked up on the next
 //! execution.
 
+use crate::api::stats::ExecutionStats;
 use crate::error::{Error, Result};
 use crate::exec::colt::Colt;
 use crate::exec::dispatch::{classify, execute_guard, ExecPlan};
@@ -548,12 +549,44 @@ impl PreparedQuery<'_> {
         cache: &ImageCache,
         params: &[Value],
     ) -> Result<(ResultBuffer, String)> {
+        let (out, stats) = self.profile(txn, cache, params)?;
+        let report = match &self.plan {
+            ExecPlan::GuardProbe(guard) => format!("{}", Report::GuardProbe { plan: guard }),
+            ExecPlan::FreeJoin(plan) => format!("{}", Report::FreeJoin { plan, stats }),
+        };
+        Ok((out, report))
+    }
+
+    /// ANALYZE with structured output: executes with counting
+    /// instrumentation and returns the rows alongside [`ExecutionStats`]
+    /// — the data `explain` renders. Allocation-sanctioned exactly like
+    /// `explain`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::execute`].
+    ///
+    /// # Panics
+    ///
+    /// Only on programmer-invariant violations (plan/executor pairing).
+    pub(crate) fn profile(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        cache: &ImageCache,
+        params: &[Value],
+    ) -> Result<(ResultBuffer, ExecutionStats)> {
         let mut out = ResultBuffer::new();
         out.arity = self.finds.len();
-        if let ExecPlan::GuardProbe(guard) = &self.plan {
-            let report = format!("{}", Report::GuardProbe { plan: guard });
+        if matches!(&self.plan, ExecPlan::GuardProbe(_)) {
             self.execute(txn, cache, params, &mut out)?;
-            return Ok((out, report));
+            let stats = ExecutionStats {
+                nodes: Vec::new(),
+                emits: out.len() as u64,
+                guard: Some(crate::api::stats::GuardStats {
+                    hit: !out.is_empty(),
+                }),
+            };
+            return Ok((out, stats));
         }
         // Bind before borrowing the plan (bind_params takes &mut self).
         self.bind_params(txn, params)?;
@@ -569,8 +602,7 @@ impl PreparedQuery<'_> {
                     &mut self.resolved_filters,
                 )?;
                 if short_circuit {
-                    let report = format!("{}", Report::FreeJoin { plan, counters });
-                    return Ok((out, report));
+                    return Ok((out, counters.into_stats(plan)));
                 }
                 self.sink.reset();
                 run_join(
@@ -590,7 +622,6 @@ impl PreparedQuery<'_> {
                     &mut self.sink,
                     &mut counters,
                 )?;
-                let report = format!("{}", Report::FreeJoin { plan, counters });
                 finalize(
                     &self.sink,
                     &mut self.row_scratch,
@@ -598,7 +629,7 @@ impl PreparedQuery<'_> {
                     &self.finds,
                     &mut out,
                 )?;
-                Ok((out, report))
+                Ok((out, counters.into_stats(plan)))
             }
         }
     }
@@ -1424,5 +1455,76 @@ mod tests {
             .expect("execute");
         obs::start_capture();
         assert!(obs::finish_capture().is_empty());
+    }
+
+    #[test]
+    fn profile_returns_structured_stats_matching_the_execution() {
+        let dir = TempDir::new("prepared-profile");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        insert_postings(
+            &env,
+            &schema,
+            &[
+                (1, 7, "rent", -1200),
+                (2, 7, "food", -55),
+                (3, 9, "gym", -80),
+            ],
+        );
+        let cache = ImageCache::new();
+        let txn = env.read_txn().expect("txn");
+
+        let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
+        let (rows, stats) = prepared
+            .profile(&txn, &cache, &[Value::U64(7), Value::I64(-100_000)])
+            .expect("profile");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(stats.emits, 2);
+        assert!(stats.guard.is_none());
+        assert!(!stats.nodes.is_empty());
+        let last = stats.nodes.last().expect("nodes");
+        assert_eq!(last.actual, stats.emits, "last node's actual = emits");
+        assert!(
+            stats.nodes[0].batches >= 1 && stats.nodes[0].batch_entries >= stats.nodes[0].batches,
+            "batching counters populated: {stats:?}"
+        );
+
+        // The rendered explain is built from the same struct — spot-pin
+        // the format so the golden contract holds.
+        let (_, report) = prepared
+            .explain(&txn, &cache, &[Value::U64(7), Value::I64(-100_000)])
+            .expect("explain");
+        assert!(report.contains("access path: free join"), "{report}");
+        assert!(report.contains("emitted bindings: 2"), "{report}");
+
+        // Guard profile: no nodes, a hit flag.
+        let guard_query = Query {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                relation: POSTING,
+                bindings: vec![
+                    (FieldId(0), Term::Param(crate::ir::ParamId(0))),
+                    (FieldId(3), Term::Var(VarId(0))),
+                ],
+            }],
+            predicates: vec![],
+        };
+        let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
+        let (rows, stats) = guard
+            .profile(&txn, &cache, &[Value::U64(1)])
+            .expect("profile");
+        assert_eq!(rows.len(), 1);
+        assert!(stats.nodes.is_empty());
+        assert_eq!(
+            stats.guard,
+            Some(crate::api::stats::GuardStats { hit: true })
+        );
+        let (_, stats) = guard
+            .profile(&txn, &cache, &[Value::U64(999)])
+            .expect("profile");
+        assert_eq!(
+            stats.guard,
+            Some(crate::api::stats::GuardStats { hit: false })
+        );
     }
 }

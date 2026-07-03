@@ -124,6 +124,55 @@ impl Counters for CountingCounters {
     }
 }
 
+impl CountingCounters {
+    /// Converts the counted execution into the stable stats surface —
+    /// the one source of truth `Report` renders from and
+    /// `Snapshot::profile` returns.
+    #[must_use]
+    pub fn into_stats(self, plan: &ValidatedPlan) -> crate::api::stats::ExecutionStats {
+        use crate::api::stats::{CoverStats, ExecutionStats, NodeStats};
+        let nodes = plan
+            .nodes()
+            .iter()
+            .enumerate()
+            .map(|(node_idx, node)| {
+                let covers = (0..node.subatoms.len())
+                    .map(|sub_idx| {
+                        let [hit, miss] = self.probes[node_idx * self.stride + sub_idx];
+                        let [exact, estimate] = self.cover_histogram(node_idx, sub_idx);
+                        CoverStats {
+                            subatom: sub_idx,
+                            chosen_exact: exact,
+                            chosen_estimate: estimate,
+                            probes_hit: hit,
+                            probes_miss: miss,
+                            hashes: self.hashes[node_idx * self.stride + sub_idx],
+                        }
+                    })
+                    .collect();
+                let [pass, fail] = self.residuals[node_idx];
+                let [batches, batch_entries] = self.batches[node_idx];
+                NodeStats {
+                    entries: self.node_entries[node_idx],
+                    batches,
+                    batch_entries,
+                    estimate: plan.estimates().get(node_idx).copied().unwrap_or(0),
+                    actual: self.actual_after(node_idx),
+                    covers,
+                    residual_pass: pass,
+                    residual_fail: fail,
+                    skips: self.skips[node_idx],
+                }
+            })
+            .collect();
+        ExecutionStats {
+            nodes,
+            emits: self.emits,
+            guard: None,
+        }
+    }
+}
+
 /// The EXPLAIN report: the plan rendering plus (for the join engine) the
 /// counted execution. `Display` formats lazily — nothing here ran inside
 /// the hot loops.
@@ -134,7 +183,7 @@ pub enum Report<'p> {
     /// The Free Join engine, with its counted execution.
     FreeJoin {
         plan: &'p ValidatedPlan,
-        counters: CountingCounters,
+        stats: crate::api::stats::ExecutionStats,
     },
 }
 
@@ -159,7 +208,7 @@ impl fmt::Display for Report<'_> {
                 writeln!(f, "  remaining filters: {}", plan.remaining_filters.len())?;
                 Ok(())
             }
-            Self::FreeJoin { plan, counters } => {
+            Self::FreeJoin { plan, stats } => {
                 writeln!(f, "access path: free join ({} nodes)", plan.nodes().len())?;
                 for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
                     writeln!(
@@ -175,37 +224,42 @@ impl fmt::Display for Report<'_> {
                     )?;
                 }
                 for (node_idx, node) in plan.nodes().iter().enumerate() {
+                    let node_stats = &stats.nodes[node_idx];
                     writeln!(f, "  node {node_idx}:")?;
                     for (sub_idx, subatom) in node.subatoms.iter().enumerate() {
-                        let [hit, miss] = counters.probes[node_idx * counters.stride + sub_idx];
-                        let [exact, estimate] = counters.cover_histogram(node_idx, sub_idx);
+                        let cover = &node_stats.covers[sub_idx];
                         writeln!(
                             f,
                             "    subatom {sub_idx}: occ {} vars {:?} cover({}) chosen \
-                             exact={exact} estimate={estimate} probes hit={hit} miss={miss}",
+                             exact={} estimate={} probes hit={} miss={}",
                             subatom.occ.0,
                             subatom.vars.iter().map(|v| v.0).collect::<Vec<_>>(),
                             node.covers.contains(
                                 &u8::try_from(sub_idx).expect("subatoms per node fit u8")
                             ),
+                            cover.chosen_exact,
+                            cover.chosen_estimate,
+                            cover.probes_hit,
+                            cover.probes_miss,
                         )?;
                     }
-                    let [pass, fail] = counters.residuals[node_idx];
                     writeln!(
                         f,
-                        "    residuals: {} placed, pass={pass} fail={fail}",
-                        node.residuals.len()
+                        "    residuals: {} placed, pass={} fail={}",
+                        node.residuals.len(),
+                        node_stats.residual_pass,
+                        node_stats.residual_fail,
                     )?;
                     writeln!(
                         f,
                         "    estimated={} actual={} entries={} skips={}",
-                        plan.estimates().get(node_idx).copied().unwrap_or(0),
-                        counters.actual_after(node_idx),
-                        counters.node_entries[node_idx],
-                        counters.skips[node_idx],
+                        node_stats.estimate,
+                        node_stats.actual,
+                        node_stats.entries,
+                        node_stats.skips,
                     )?;
                 }
-                writeln!(f, "  emitted bindings: {}", counters.emits)?;
+                writeln!(f, "  emitted bindings: {}", stats.emits)?;
                 Ok(())
             }
         }
@@ -381,7 +435,7 @@ mod tests {
         assert!(counters.actual_after(0) > 0);
         let report = Report::FreeJoin {
             plan: &plan,
-            counters,
+            stats: counters.into_stats(&plan),
         };
         let text = format!("{report}");
         assert!(text.contains("estimated=5"));
@@ -450,7 +504,7 @@ mod tests {
         assert_eq!(counters.cover_histogram(0, 0), [0, 0]);
         let report = Report::FreeJoin {
             plan: &plan,
-            counters,
+            stats: counters.into_stats(&plan),
         };
         assert!(format!("{report}").contains("exact=1"));
     }
