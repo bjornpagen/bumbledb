@@ -1,4 +1,4 @@
-//! The single validation boundary (PRD 14): IR in, [`ValidatedQuery`]
+//! The single validation boundary (docs/architecture/20-query-ir.md): IR in, [`ValidatedQuery`]
 //! witness out. Everything downstream trusts the witness and re-checks
 //! nothing (post-mortem §38: v5 validated one plan four times).
 //!
@@ -64,7 +64,7 @@ impl ValidatedQuery {
     }
 
     /// Every param with its resolved type, in id order (bind-time checking,
-    /// PRD 25).
+    /// The 30-execution doc).
     pub fn param_types(&self) -> impl Iterator<Item = (ParamId, &ValueType)> {
         self.param_types.iter().map(|(p, t)| (*p, t))
     }
@@ -123,13 +123,8 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
     let mut ctx = Context::default();
     ctx.check_atoms(schema, query)?;
     ctx.check_comparisons(query)?;
-    ctx.check_finds(query)?;
-    if ctx.var_types.len() > crate::plan::planner::MAX_DISTINCT_VARS {
-        return Err(ValidationError::TooManyVariables {
-            count: ctx.var_types.len(),
-        });
-    }
-
+    // The group key (non-aggregated find variables) is computed once and
+    // shared between the find checks and the witness.
     let group_key: BTreeSet<VarId> = query
         .finds
         .iter()
@@ -138,6 +133,12 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
             FindTerm::Aggregate { .. } => None,
         })
         .collect();
+    ctx.check_finds(query, &group_key)?;
+    if ctx.var_types.len() > crate::plan::planner::MAX_DISTINCT_VARS {
+        return Err(ValidationError::TooManyVariables {
+            count: ctx.var_types.len(),
+        });
+    }
 
     Ok(ValidatedQuery {
         query: query.clone(),
@@ -245,6 +246,14 @@ impl Context {
 
     fn check_comparisons(&mut self, query: &Query) -> Result<(), ValidationError> {
         for (index, Comparison { op, lhs, rhs }) in query.predicates.iter().enumerate() {
+            // A comparison of a variable with itself is constant-valued —
+            // the "write the query you mean" rule applies exactly as it
+            // does to literal-vs-literal.
+            if let (Term::Var(l), Term::Var(r)) = (lhs, rhs) {
+                if l == r {
+                    return Err(ValidationError::SelfComparison { index });
+                }
+            }
             // A comparison with no variable side is a constant comparison —
             // write the query you mean.
             let (var_side, other) = match (lhs, rhs) {
@@ -269,7 +278,18 @@ impl Context {
                 Term::Param(param) => self.anchor_param(*param, &var_type)?,
                 Term::Literal(value) => match literal_matches(value, &var_type) {
                     Ok(()) => {}
-                    Err(_) => return Err(ValidationError::IllegalComparison { index }),
+                    // The precise diagnosis, exactly as the atom-binding
+                    // path reports it (atom = usize::MAX is unavailable
+                    // here: the ordinal names the comparison instead).
+                    Err(LiteralMismatch::EnumOrdinal(ordinal)) => {
+                        return Err(ValidationError::ComparisonEnumOrdinalOutOfRange {
+                            index,
+                            ordinal,
+                        });
+                    }
+                    Err(LiteralMismatch::Type | LiteralMismatch::Utf8) => {
+                        return Err(ValidationError::IllegalComparison { index });
+                    }
                 },
             }
         }
@@ -292,15 +312,11 @@ impl Context {
         Ok(())
     }
 
-    fn check_finds(&self, query: &Query) -> Result<(), ValidationError> {
-        let group_key: BTreeSet<VarId> = query
-            .finds
-            .iter()
-            .filter_map(|term| match term {
-                FindTerm::Var(var) => Some(*var),
-                FindTerm::Aggregate { .. } => None,
-            })
-            .collect();
+    fn check_finds(
+        &self,
+        query: &Query,
+        group_key: &BTreeSet<VarId>,
+    ) -> Result<(), ValidationError> {
         for (find_idx, term) in query.finds.iter().enumerate() {
             match term {
                 FindTerm::Var(var) => {

@@ -1,4 +1,5 @@
-//! PRD 27 integration tests: the `schema!` macro is *exactly* sugar — its
+//! Schema-macro integration tests (docs/architecture/60-api.md): the
+//! `schema!` macro is *exactly* sugar — its
 //! expansion constructs and fingerprints identically to a hand-built
 //! descriptor of the same declaration.
 
@@ -29,7 +30,7 @@ bumbledb::schema! {
     }
 }
 
-/// The same declaration, hand-built through PRD 02's descriptors.
+/// The same declaration, hand-built through the descriptor contract.
 fn hand_built() -> bumbledb::schema::Schema {
     SchemaDescriptor {
         relations: vec![

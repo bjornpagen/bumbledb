@@ -1,5 +1,5 @@
 //! LMDB environment lifecycle, `_meta` contents, and transaction wrappers
-//! (PRD 04). Authority: `docs/architecture/40-storage.md`, `60-api.md`.
+//! (docs/architecture/40-storage.md). Authority: `docs/architecture/40-storage.md`, `60-api.md`.
 
 use std::path::Path;
 
@@ -43,7 +43,7 @@ impl std::fmt::Debug for Environment {
 /// Opens the raw LMDB environment at `path`.
 ///
 /// This is the single sanctioned `unsafe` block outside `exec::kernel`
-/// (PRD 04 amendment): `heed 0.22` marks environment opening unsafe because
+/// (the 40-storage doc amendment): `heed 0.22` marks environment opening unsafe because
 /// opening one environment path twice in a process is LMDB UB.
 #[allow(unsafe_code)]
 fn open_env(path: &Path) -> Result<heed::Env<WithoutTls>> {
@@ -225,7 +225,7 @@ pub struct ReadTxn<'env> {
 impl ReadTxn<'_> {
     /// The reader's generation: the storage tx id read from `_meta` *inside
     /// this snapshot* — never an in-process counter. This is the
-    /// race-closing rule of `docs/architecture/40-storage.md`; PRD 11 keys
+    /// race-closing rule of `docs/architecture/40-storage.md`; the 40-storage doc keys
     /// the image cache on it.
     ///
     /// # Errors
@@ -278,7 +278,7 @@ impl<'env> WriteTxn<'env> {
         drop(self.txn);
     }
 
-    /// Advances the storage tx id (reader: PRD 08's commit step 4; the id
+    /// Advances the storage tx id (reader: the 40-storage doc's commit step 4; the id
     /// advances iff the delta changed logical state).
     pub(crate) fn put_generation(&mut self, generation: u64) -> Result<()> {
         self.env.meta.put(
@@ -291,7 +291,7 @@ impl<'env> WriteTxn<'env> {
 
     /// Reads the dictionary next-id counter (reader: `storage::dict`'s
     /// direct-write intern, test-only since the delta's pending-intern set
-    /// re-homed the live path in PRD 08).
+    /// re-homed the live path in the 40-storage doc).
     #[cfg(test)]
     pub(crate) fn dict_next_id(&self) -> Result<u64> {
         read_u64(&self.env.meta, &self.txn, META_DICT_NEXT_ID)

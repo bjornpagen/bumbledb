@@ -1,4 +1,4 @@
-//! Canonical schema serialization and the blake3 fingerprint (PRD 03).
+//! Canonical schema serialization and the blake3 fingerprint (docs/architecture/10-data-model.md).
 //!
 //! The fingerprint inputs are enumerated exhaustively in
 //! `docs/architecture/10-data-model.md`; that list is the contract. Every
@@ -13,7 +13,7 @@ const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v0";
 
 /// Deterministic schema identity: blake3 of the canonical bytes. Stored at
 /// database creation; open compares fingerprints and mismatches are hard
-/// failures (PRD 04).
+/// failures (docs/architecture/40-storage.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SchemaFingerprint(pub [u8; 32]);
 
@@ -33,7 +33,7 @@ pub fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
             });
         }
         // Auto-materialized serial uniques are ordinary constraints in the
-        // descriptor (PRD 02), so they are serialized with no special case —
+        // descriptor (docs/architecture/10-data-model.md), so they are serialized with no special case —
         // which is the point.
         put_len(out, relation.constraints().len());
         for constraint in relation.constraints() {

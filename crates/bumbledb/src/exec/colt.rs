@@ -1,4 +1,4 @@
-//! COLT — the Column-Oriented Lazy Trie (PRD 18), per paper §4.2 with the
+//! COLT — the Column-Oriented Lazy Trie (docs/architecture/30-execution.md), per paper §4.2 with the
 //! chunked-child-list deviation (`docs/architecture/30-execution.md`).
 //!
 //! No `unsafe` anywhere: nodes, chunks, map slots, and key words live in
@@ -92,7 +92,7 @@ struct Map {
 /// The lazy trie over one occurrence's view. Owns the view (a cheap
 /// enum over an `Arc`'d image plus survivor positions) and its pools, so a
 /// prepared query can hold and [`Colt::reset`] it across executions with
-/// every capacity retained (PRD 26's zero-alloc discipline).
+/// every capacity retained (the 30-execution doc's zero-alloc discipline).
 pub struct Colt {
     view: View,
     /// Per trie level, the image column index of each key variable.
@@ -108,7 +108,7 @@ pub struct Colt {
 
 /// The probe hash for a key — exposed so the vectorized executor's phase 1
 /// can compute all hashes (pure ALU) before phase 2 issues any bucket load
-/// (D4's two-phase probing, PRD 21).
+/// (D4's two-phase probing, the 30-execution doc).
 #[must_use]
 pub fn hash_key(words: &[u64]) -> u64 {
     hash_words(words)

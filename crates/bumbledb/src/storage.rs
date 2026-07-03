@@ -1,4 +1,4 @@
-//! LMDB environment, keys, dictionary, delta write path, and reads (PRDs 04-09).
+//! LMDB environment, keys, dictionary, delta write path, and reads (docs/architecture).
 
 pub mod commit;
 pub mod delta;

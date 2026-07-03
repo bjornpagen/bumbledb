@@ -1,4 +1,4 @@
-//! The counting allocator (PRD 26): test-support machinery for the
+//! The counting allocator (docs/architecture/30-execution.md): test-support machinery for the
 //! zero-warm-allocation gate (`docs/architecture/30-execution.md`,
 //! success criterion 3 of `00-product.md`).
 //!

@@ -1,4 +1,4 @@
-//! The environment image cache (PRD 11) — the mechanism whose absence was
+//! The environment image cache (docs/architecture/40-storage.md) — the mechanism whose absence was
 //! v5's quietest failure (post-mortem §26).
 //!
 //! Keyed by `(relation, generation)` where generation is the reader's
@@ -102,7 +102,7 @@ impl ImageCache {
     }
 
     /// Retains only entries at or above `generation`; called by the write
-    /// path after each state-changing commit (PRD 28 wires `CommitReport`
+    /// path after each state-changing commit (the 60-api doc wires `CommitReport`
     /// here). The map drop only releases the map's reference — pinned
     /// readers keep their images alive.
     ///
@@ -281,7 +281,7 @@ mod tests {
         drop(txn);
 
         // Re-inserting an existing fact: changed == false, no eviction runs
-        // (PRD 28 only wires eviction for changed commits), tx id unmoved.
+        // (the 60-api doc only wires eviction for changed commits), tx id unmoved.
         assert!(!insert_one(&env, &schema, 1));
 
         let txn = env.read_txn().expect("txn");

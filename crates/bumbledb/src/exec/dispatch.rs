@@ -1,4 +1,4 @@
-//! Guard-probe access path dispatch (PRD 23): the point-lookup fast path
+//! Guard-probe access path dispatch (docs/architecture/30-execution.md): the point-lookup fast path
 //! that routes qualifying queries around the join machinery entirely
 //! (`docs/architecture/30-execution.md` — access paths; `40-storage.md`'s
 //! `U`/`M` read-side readers).
@@ -252,9 +252,10 @@ pub fn execute_guard<S: Sink>(
                 let expected = const_word(txn, value, params)?;
                 op.compare(&fact_word(schema, plan, fact, *field), &expected)
             }
-            FilterPredicate::FieldsEqual { left, right } => {
-                fact_word(schema, plan, fact, *left) == fact_word(schema, plan, fact, *right)
-            }
+            FilterPredicate::FieldsCompare { left, right, op } => op.compare(
+                &fact_word(schema, plan, fact, *left),
+                &fact_word(schema, plan, fact, *right),
+            ),
         };
         if !pass {
             return Ok(());

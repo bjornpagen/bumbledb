@@ -1,8 +1,8 @@
-//! Runtime resolution for the `schema!` macro (PRD 27): the macro emits
-//! name-based declaration data plus calls; every piece of real logic lives
-//! here. The generated `schema()` resolves the declaration into id-based
-//! descriptors and runs PRD 02's validated constructor — the macro output
-//! is *exactly* sugar. (The intern/resolve helpers the generated `Fact`
+//! Runtime resolution for the `schema!` macro
+//! (docs/architecture/60-api.md): the macro emits name-based declaration
+//! data plus calls; every piece of real logic lives here. The generated
+//! `schema()` resolves the declaration into id-based descriptors and runs
+//! the validated constructor — the macro output is *exactly* sugar. (The intern/resolve helpers the generated `Fact`
 //! impls call live in `api::db::plumbing`; both are re-exported through
 //! `crate::__private`.)
 
@@ -80,7 +80,7 @@ fn field_id(decl: &RelationDecl, name: &str) -> FieldId {
     FieldId(u16::try_from(index).expect("field count fits u16"))
 }
 
-/// Constraint ids follow PRD 02's numbering: auto-uniques (serial fields in
+/// Constraint ids follow the schema's numbering rule: auto-uniques (serial fields in
 /// declaration order) first, then declared constraints in order. The
 /// declared order here is: per-field uniques, per-field fks, compound
 /// uniques, compound fks.
@@ -165,7 +165,7 @@ fn declared_constraints(
 ///
 /// # Errors
 ///
-/// PRD 02's typed [`SchemaError`]s, unchanged.
+/// The declaration validator's typed [`SchemaError`]s, unchanged.
 ///
 /// # Panics
 ///

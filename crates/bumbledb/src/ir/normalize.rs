@@ -1,4 +1,4 @@
-//! Normalization (PRD 15): lowers a [`ValidatedQuery`] into the paper-form
+//! Normalization (docs/architecture/20-query-ir.md): lowers a [`ValidatedQuery`] into the paper-form
 //! conjunctive query execution consumes — distinct-variable atom
 //! occurrences, per-atom filters, and residual comparisons
 //! (`docs/architecture/20-query-ir.md`, Deviation vs paper §2: the paper's
@@ -34,7 +34,7 @@ pub struct Occurrence {
 }
 
 /// A comparison whose sides are variables — evaluated inside the join at
-/// the earliest plan node where both are bound (placement is PRD 17's job).
+/// the earliest plan node where both are bound (placement is the 30-execution doc's job).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlacedComparison {
     pub op: CmpOp,
@@ -82,71 +82,45 @@ fn flip(op: CmpOp) -> CmpOp {
     }
 }
 
-/// Lowers the witness into paper form.
-///
-/// # Panics
-///
-/// Only on programmer-invariant violations already excluded by validation
-/// (e.g. a comparison variable bound by no atom).
-#[must_use]
-pub fn normalize(query: &ValidatedQuery) -> NormalizedQuery {
-    let mut occurrences: Vec<Occurrence> = query
-        .query()
-        .atoms
-        .iter()
-        .enumerate()
-        .map(|(idx, atom)| {
-            let occ_id = OccId(u16::try_from(idx).expect("validated: atom count fits u16"));
-            let mut vars: Vec<(FieldId, VarId)> = Vec::new();
-            let mut filters = Vec::new();
-            for (field, term) in &atom.bindings {
-                match term {
-                    Term::Var(var) => {
-                        // A repeated variable keeps its first field binding
-                        // as the variable position; subsequent positions
-                        // lower to same-fact equality filters.
-                        if let Some((first_field, _)) = vars.iter().find(|(_, v)| v == var) {
-                            filters.push(FilterPredicate::FieldsEqual {
-                                left: *first_field,
-                                right: *field,
-                            });
-                        } else {
-                            vars.push((*field, *var));
-                        }
-                    }
-                    Term::Param(param) => filters.push(FilterPredicate::Compare {
-                        field: *field,
-                        op: CmpOp::Eq,
-                        value: Const::Param(*param),
-                    }),
-                    Term::Literal(value) => filters.push(FilterPredicate::Compare {
-                        field: *field,
-                        op: CmpOp::Eq,
-                        value: lower_literal(value),
-                    }),
-                }
-            }
-            Occurrence {
-                occ_id,
-                relation: atom.relation,
-                vars,
-                filters,
-            }
-        })
-        .collect();
-
-    // Comparisons: var-vs-constant pushes down as a filter on the
-    // variable's first occurrence (sound for multi-occurrence variables —
-    // join equality propagates the restriction); var-vs-var goes to the
-    // residual list.
+/// Places each comparison. Var-vs-constant pushes down as a filter on the
+/// variable's first occurrence (sound for multi-occurrence variables —
+/// join equality propagates the restriction); same-atom var-vs-var lowers
+/// to a per-atom `FieldsCompare` filter; only cross-atom var-vs-var pairs
+/// become residuals (docs/architecture/20-query-ir.md).
+fn place_comparisons(
+    query: &ValidatedQuery,
+    occurrences: &mut [Occurrence],
+) -> Vec<PlacedComparison> {
     let mut residuals = Vec::new();
     for comparison in &query.query().predicates {
         match (&comparison.lhs, &comparison.rhs) {
-            (Term::Var(lhs), Term::Var(rhs)) => residuals.push(PlacedComparison {
-                op: comparison.op,
-                lhs: *lhs,
-                rhs: *rhs,
-            }),
+            (Term::Var(lhs), Term::Var(rhs)) => {
+                let same_atom = occurrences.iter().find_map(|occ| {
+                    let left = occ.vars.iter().find(|(_, v)| v == lhs);
+                    let right = occ.vars.iter().find(|(_, v)| v == rhs);
+                    match (left, right) {
+                        (Some((lf, _)), Some((rf, _))) => Some((occ.occ_id, *lf, *rf)),
+                        _ => None,
+                    }
+                });
+                if let Some((occ_id, left, right)) = same_atom {
+                    let occ = occurrences
+                        .iter_mut()
+                        .find(|o| o.occ_id == occ_id)
+                        .expect("just found");
+                    occ.filters.push(FilterPredicate::FieldsCompare {
+                        left,
+                        right,
+                        op: comparison.op,
+                    });
+                } else {
+                    residuals.push(PlacedComparison {
+                        op: comparison.op,
+                        lhs: *lhs,
+                        rhs: *rhs,
+                    });
+                }
+            }
             (Term::Var(var), constant) | (constant, Term::Var(var)) => {
                 let var_on_left = matches!(&comparison.lhs, Term::Var(v) if v == var);
                 let op = if var_on_left {
@@ -176,6 +150,64 @@ pub fn normalize(query: &ValidatedQuery) -> NormalizedQuery {
             _ => unreachable!("validated: constant comparisons are rejected"),
         }
     }
+    residuals
+}
+
+/// Lowers the witness into paper form.
+///
+/// # Panics
+///
+/// Only on programmer-invariant violations already excluded by validation
+/// (e.g. a comparison variable bound by no atom).
+#[must_use]
+pub fn normalize(query: &ValidatedQuery) -> NormalizedQuery {
+    let mut occurrences: Vec<Occurrence> = query
+        .query()
+        .atoms
+        .iter()
+        .enumerate()
+        .map(|(idx, atom)| {
+            let occ_id = OccId(u16::try_from(idx).expect("validated: atom count fits u16"));
+            let mut vars: Vec<(FieldId, VarId)> = Vec::new();
+            let mut filters = Vec::new();
+            for (field, term) in &atom.bindings {
+                match term {
+                    Term::Var(var) => {
+                        // A repeated variable keeps its first field binding
+                        // as the variable position; subsequent positions
+                        // lower to same-fact equality filters.
+                        if let Some((first_field, _)) = vars.iter().find(|(_, v)| v == var) {
+                            filters.push(FilterPredicate::FieldsCompare {
+                                left: *first_field,
+                                right: *field,
+                                op: CmpOp::Eq,
+                            });
+                        } else {
+                            vars.push((*field, *var));
+                        }
+                    }
+                    Term::Param(param) => filters.push(FilterPredicate::Compare {
+                        field: *field,
+                        op: CmpOp::Eq,
+                        value: Const::Param(*param),
+                    }),
+                    Term::Literal(value) => filters.push(FilterPredicate::Compare {
+                        field: *field,
+                        op: CmpOp::Eq,
+                        value: lower_literal(value),
+                    }),
+                }
+            }
+            Occurrence {
+                occ_id,
+                relation: atom.relation,
+                vars,
+                filters,
+            }
+        })
+        .collect();
+
+    let residuals = place_comparisons(query, &mut occurrences);
 
     NormalizedQuery {
         occurrences,
@@ -256,9 +288,10 @@ mod tests {
         assert_eq!(norm.occurrences[0].vars, vec![(FieldId(1), VarId(0))]);
         assert_eq!(
             norm.occurrences[0].filters,
-            vec![FilterPredicate::FieldsEqual {
+            vec![FilterPredicate::FieldsCompare {
                 left: FieldId(1),
                 right: FieldId(2),
+                op: CmpOp::Eq,
             }]
         );
 

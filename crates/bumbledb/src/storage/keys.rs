@@ -1,4 +1,4 @@
-//! The `_data` key codec (PRD 04): first-byte namespaces, big-endian
+//! The `_data` key codec (docs/architecture/40-storage.md): first-byte namespaces, big-endian
 //! components (`docs/architecture/40-storage.md`).
 //!
 //! ```text
@@ -42,7 +42,7 @@ pub const NS_STAT: u8 = b'S';
 /// Which per-relation counter an `S` key addresses.
 ///
 /// `RowCount` is the planner's statistic (`40-storage.md`); `RowIdHighWater`
-/// is the delta core's row-id allocator (PRD 06 extends the `S` codec, noted
+/// is the delta core's row-id allocator (the 40-storage doc extends the `S` codec, noted
 /// in the doc).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatKind {

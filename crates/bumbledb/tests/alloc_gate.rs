@@ -1,4 +1,4 @@
-//! The allocation gate (PRD 26): the doc's protocol as a contract of warm
+//! The allocation gate (docs/architecture/30-execution.md): the doc's protocol as a contract of warm
 //! prepared-query execution through the public surface — single-threaded
 //! harness (one test function, its own binary), N=8 warmups over a fixed
 //! param set, then M=8 measured runs asserting **zero** allocator hits,

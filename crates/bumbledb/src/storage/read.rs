@@ -1,4 +1,4 @@
-//! Storage read primitives (PRD 09): membership probe, unique-guard probe,
+//! Storage read primitives (docs/architecture/40-storage.md): membership probe, unique-guard probe,
 //! fact fetch, the sequential relation scan that feeds images and export,
 //! and the planner's row count. All allocation-free with borrowed returns.
 //!
@@ -112,16 +112,27 @@ pub fn scan<'txn>(
     let mut key: KeyBuf = [0; MAX_KEY];
     let len = keys::fact_prefix(&mut key, rel);
     let iter = txn.env().data().prefix_iter(txn.raw(), &key[..len])?;
-    Ok(iter.map(move |entry| {
-        let (raw_key, bytes) = entry?;
-        // F | relation(4) | row_id(8): the row id is the last 8 bytes.
-        let row_id = u64::from_be_bytes(
-            raw_key[raw_key.len() - 8..]
-                .try_into()
-                .expect("F keys end in an 8-byte row id"),
-        );
-        check_width(schema, rel, row_id, bytes)?;
-        Ok((row_id, bytes))
+    // Fused on error: after the first corruption the iterator yields
+    // nothing more — "never a skip" is structural, not a caller
+    // obligation (a caller ignoring an Err cannot resume past it).
+    let mut dead = false;
+    Ok(iter.map_while(move |entry| {
+        if dead {
+            return None;
+        }
+        let item = (|| {
+            let (raw_key, bytes) = entry?;
+            // F | relation(4) | row_id(8): the row id is the last 8 bytes.
+            let row_id = u64::from_be_bytes(
+                raw_key[raw_key.len() - 8..]
+                    .try_into()
+                    .expect("F keys end in an 8-byte row id"),
+            );
+            check_width(schema, rel, row_id, bytes)?;
+            Ok((row_id, bytes))
+        })();
+        dead = item.is_err();
+        Some(item)
     }))
 }
 

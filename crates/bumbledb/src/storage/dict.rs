@@ -1,4 +1,4 @@
-//! The interning dictionary (PRD 05): one global dictionary for String and
+//! The interning dictionary (docs/architecture/40-storage.md): one global dictionary for String and
 //! Bytes, segregated by a type-tag byte inside the hashed key
 //! (`docs/architecture/10-data-model.md`).
 //!
@@ -78,7 +78,7 @@ fn intern(txn: &mut WriteTxn<'_>, tag: u8, raw: &[u8]) -> Result<u64> {
         return Ok(u64::from_be_bytes(id));
     }
     // Mint the next id. This read-modify-writes the `_meta` counter directly;
-    // PRD 06 re-homes it into the delta's in-memory-then-flush counter set.
+    // the 40-storage doc re-homes it into the delta's in-memory-then-flush counter set.
     let id = txn.dict_next_id()?;
     assert!(
         id != SENTINEL_ID,
@@ -141,7 +141,7 @@ fn lookup(txn: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<Option<u64>> {
     }
 }
 
-/// Writes one pending intern entry minted by the delta (reader: PRD 08's
+/// Writes one pending intern entry minted by the delta (reader: the 40-storage doc's
 /// commit counter flush). The provisional id was assigned from the same
 /// counter this commit flushes, under the single-writer discipline.
 pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, tag: u8, raw: &[u8], id: u64) -> Result<()> {

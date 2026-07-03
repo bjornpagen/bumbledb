@@ -1,4 +1,4 @@
-//! The two consumers of bindings (PRD 20): set-projection with dedup and
+//! The two consumers of bindings (docs/architecture/30-execution.md): set-projection with dedup and
 //! the D2 subtree-skip signal, and aggregate folds with binding dedup
 //! (`docs/architecture/30-execution.md` D2/D3; semantics normative in
 //! `20-query-ir.md`).
@@ -100,7 +100,7 @@ enum Acc {
     SumSigned(i128),
     SumUnsigned(u128),
     /// Min/Max compare column words — correct because words are
-    /// order-preserving (PRD 10).
+    /// order-preserving (docs/architecture/30-execution.md).
     Min(u64),
     Max(u64),
     Count(u64),

@@ -1,4 +1,4 @@
-//! Free Join plan lowering (PRD 17): `binary2fj` (paper Fig. 7), the
+//! Free Join plan lowering (docs/architecture/30-execution.md): `binary2fj` (paper Fig. 7), the
 //! conservative `factor()` hoist (Fig. 8), cover enumeration (§4.4),
 //! residual placement, trie schemas (§3.3), and the sealed
 //! [`ValidatedPlan`] witness (`docs/architecture/30-execution.md`).
@@ -188,7 +188,7 @@ pub struct ValidatedPlan {
     /// unique constraint, so distinct facts imply distinct bindings and the
     /// aggregate sink may skip its seen-set (30-execution, elision).
     distinct_bindings: bool,
-    /// The planner's per-step estimates (EXPLAIN's reader, PRD 24).
+    /// The planner's per-step estimates (EXPLAIN's reader, the 30-execution doc).
     estimates: Vec<u64>,
 }
 

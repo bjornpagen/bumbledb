@@ -1,6 +1,6 @@
-//! An open-addressed map over inline u64 word tuples (PRD 20): the sink
+//! An open-addressed map over inline u64 word tuples (docs/architecture/30-execution.md): the sink
 //! machinery's seen-sets and group maps — the same open-addressing/
-//! linear-probing/pow2 pattern as COLT's forced maps (PRD 18), grown by
+//! linear-probing/pow2 pattern as COLT's forced maps (docs/architecture/30-execution.md), grown by
 //! rehash because sink state scales with output, which is unknown upfront.
 
 /// Fixed-arity word-tuple keys mapping to `V`. No tombstones (insert-only).

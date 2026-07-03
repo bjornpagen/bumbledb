@@ -1,4 +1,4 @@
-//! The `schema!` proc-macro (PRD 27): bumbledb's declarative schema
+//! The `schema!` proc-macro (docs/architecture/60-api.md): bumbledb's declarative schema
 //! surface. A small, rigid grammar — this is Rust-side declaration, not a
 //! query language — hand-parsed over the raw token stream (no `syn`, no
 //! `quote`: the grammar is not Rust syntax and the dependency would buy
@@ -25,10 +25,11 @@
 //! names a unique constraint (a serial field's auto-unique shares its
 //! field's name).
 //!
-//! The macro does **no** validation of its own: expansion emits data plus
-//! calls into `bumbledb::schema::runtime`, and every schema error surfaces
-//! as PRD 02's typed errors at the first `schema()` call (memoized in a
-//! `OnceLock`).
+//! The macro validates only its own grammar (parse errors at the call
+//! site): expansion emits data plus calls into the library's runtime
+//! resolution, and every schema error surfaces at the first `schema()`
+//! call (memoized in a `OnceLock`) as a panic carrying the typed
+//! `SchemaError`'s rendering.
 
 use proc_macro::{Delimiter, TokenStream, TokenTree};
 use std::collections::BTreeMap;
@@ -238,7 +239,16 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
                     tokens.next(); // comma
                     tokens.next(); // the modifier word
                     match word.as_str() {
-                        "serial" => field.serial = true,
+                        "serial" => {
+                            assert!(
+                                field.newtype.is_some(),
+                                "schema!: serial field `{}` needs `as NewType` — without it \
+                                 there is no typed alloc path (use the descriptor API for a \
+                                 raw-u64 serial)",
+                                field.name
+                            );
+                            field.serial = true;
+                        }
                         "unique" => field.unique = true,
                         _ => unreachable!(),
                     }
@@ -366,7 +376,7 @@ fn emit_schema_fn(out: &mut String, relations: &[Relation]) {
              static SCHEMA: ::std::sync::OnceLock<::bumbledb::schema::Schema> = ::std::sync::OnceLock::new();\n\
              SCHEMA.get_or_init(|| {{\n\
                  ::bumbledb::__private::build_schema(&[{decls}])\n\
-                     .expect(\"schema! declaration is invalid\")\n\
+                     .unwrap_or_else(|e| panic!(\"schema! declaration is invalid: {{e}}\"))\n\
              }})\n\
          }}\n",
     );

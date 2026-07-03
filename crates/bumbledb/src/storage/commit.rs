@@ -1,11 +1,11 @@
-//! Commit application (PRD 07): phases 1-2 of the canonical commit order —
+//! Commit application (docs/architecture/40-storage.md): phases 1-2 of the canonical commit order —
 //! all deletes, then all inserts — maintaining F/M/U/R and detecting unique
 //! violations (`docs/architecture/40-storage.md`).
 //!
 //! Because every delete lands before any insert and the insert set is
 //! deduplicated by construction, a `U` conflict during inserts is a genuine
 //! unique violation; user operation order inside the transaction is
-//! semantically irrelevant. PRD 08 extends this into the full commit
+//! semantically irrelevant. The 40-storage doc extends this into the full commit
 //! (FK validation, counters, tx id, LMDB commit).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,7 +17,7 @@ use crate::storage::delta::{Disposition, WriteDelta};
 use crate::storage::env::{Environment, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
 
-/// One forward-FK probe PRD 08 must run: collected at insert time so
+/// One forward-FK probe the 40-storage doc must run: collected at insert time so
 /// validation never re-derives key slices.
 #[derive(Debug)]
 pub struct FkProbe {
@@ -35,16 +35,16 @@ pub struct FkProbe {
 pub type FkProbes = BTreeMap<(RelationId, ConstraintId, Vec<u8>), FkProbe>;
 
 /// The applied-but-uncommitted state after phases 1-2, carrying the open
-/// LMDB write transaction plus the bookkeeping PRD 08 consumes.
+/// LMDB write transaction plus the bookkeeping the 40-storage doc consumes.
 pub struct Applied<'env, 's> {
     /// The open, uncommitted LMDB write transaction.
     pub txn: WriteTxn<'env>,
-    /// The source delta (its counters flush in PRD 08's phase 4).
+    /// The source delta (its counters flush in the 40-storage doc's phase 4).
     pub delta: WriteDelta<'s>,
-    /// Whether any insert or delete actually applied (drives PRD 08's
+    /// Whether any insert or delete actually applied (drives the 40-storage doc's
     /// tx-id-advances-iff-state-changed rule).
     pub changed: bool,
-    /// Per-relation next row id after this apply (flushed to `S` by PRD 08).
+    /// Per-relation next row id after this apply (flushed to `S` by the 40-storage doc).
     pub row_id_next: BTreeMap<RelationId, u64>,
     /// Unique keys deleted in phase 1, restricted to FK-targeted
     /// constraints — the Restrict scan set.
@@ -58,7 +58,7 @@ pub struct Applied<'env, 's> {
 
 /// Applies the delta to LMDB in canonical order: phase 1 all deletes, then
 /// phase 2 all inserts. Opens the LMDB write transaction here — nothing
-/// touched a data page before this call (PRD 06's lock-window rule).
+/// touched a data page before this call (the 40-storage doc's lock-window rule).
 ///
 /// # Errors
 ///
@@ -117,14 +117,14 @@ pub fn apply<'env, 's>(delta: WriteDelta<'s>, env: &'env Environment) -> Result<
 }
 
 /// The commit outcome: whether logical state changed, and the resulting
-/// storage generation (PRD 11's cache-eviction subscriber; PRD 28 wires it).
+/// storage generation (the 40-storage doc's cache-eviction subscriber; the 60-api doc wires it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommitReport {
     pub changed: bool,
     pub new_generation: u64,
 }
 
-/// The full commit (PRD 08): apply (phases 1-2), FK validation against the
+/// The full commit (docs/architecture/40-storage.md): apply (phases 1-2), FK validation against the
 /// final state (phase 3), counter flush (phase 4), LMDB commit (phase 5).
 /// Any error anywhere aborts — nothing persists.
 ///
@@ -440,7 +440,7 @@ impl Applier<'_> {
                 rel,
                 row_id,
             );
-            // R puts are unconditional; target validation is PRD 08's.
+            // R puts are unconditional; target validation is the 40-storage doc's.
             self.data
                 .put(self.txn.raw_mut(), &self.key[..r_len], [].as_slice())?;
             self.fk_probes
@@ -904,7 +904,7 @@ mod tests {
             encode_u64(7).to_vec()
         );
     }
-    // ---------- PRD 08: full commit ----------
+    // ---------- the 40-storage doc: full commit ----------
 
     fn commit_facts(env: &Environment, schema: &Schema, facts: &[(RelationId, Vec<u8>)]) {
         let view = env.read_txn().expect("txn");

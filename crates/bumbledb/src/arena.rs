@@ -1,5 +1,7 @@
-//! A minimal bump arena over `Vec<u8>` chunks (PRD 06; reused by the
-//! execution engine from PRD 12 on). No external crate, no `unsafe`:
+//! A minimal bump arena over `Vec<u8>` chunks. Its one consumer is the
+//! write delta (fact bytes accumulate here and free as a whole at commit
+//! or abort); the executor's scratch is retained-capacity `Vec` pools,
+//! not this type. No external crate, no `unsafe`:
 //! allocations hand out index-based [`ArenaSlice`] handles, never pointers,
 //! so chunk storage may move without invalidating anything.
 

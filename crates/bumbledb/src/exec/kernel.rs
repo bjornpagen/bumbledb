@@ -1,4 +1,4 @@
-//! The only explicit SIMD in the system (PRD 22): fixed-width predicate
+//! The only explicit SIMD in the system (docs/architecture/30-execution.md): fixed-width predicate
 //! scans and survivor compaction, NEON 128-bit, behind scalar-identical
 //! signatures (`docs/architecture/30-execution.md` D4, `00-product.md`).
 //!
@@ -100,7 +100,7 @@ pub mod reference {
 
 /// The NEON kernels (128-bit: 2 x u64 or 16 x u8 lanes).
 #[cfg(target_arch = "aarch64")]
-#[allow(unsafe_code)] // PRD 22: the one sanctioned unsafe module
+#[allow(unsafe_code)] // the 30-execution doc: the one sanctioned unsafe module
 mod neon {
     use std::arch::aarch64::{
         vceqq_u64, vceqq_u8, vcgeq_u64, vcleq_u64, vdupq_n_u64, vdupq_n_u8, vgetq_lane_u64,

@@ -1,4 +1,4 @@
-//! The recursive Free Join executor (PRDs 19 + 21) — vectorized execution
+//! The recursive Free Join executor (the architecture docs + 21) — vectorized execution
 //! is the default and only path; batch size 1 is merely its degenerate
 //! setting, never a mode (`docs/architecture/30-execution.md` D4,
 //! post-mortem §31; paper §3.3 Fig. 5, §4.3).
@@ -38,7 +38,7 @@ pub trait Sink {
 
 /// Execution observability seam (30-execution): the normal path
 /// instantiates [`NoopCounters`] — zero-sized, compiled to nothing; the
-/// EXPLAIN entry point (PRD 24) instantiates the counting variant.
+/// EXPLAIN entry point (docs/architecture/30-execution.md) instantiates the counting variant.
 pub trait Counters {
     fn node_entry(&mut self, node: usize);
     /// A cover was chosen: which subatom, and whether its count was Exact.
@@ -152,6 +152,7 @@ enum Source {
 /// Per-node reusable scratch: each node's frame is active at most once in
 /// the recursion (frames advance strictly by node index), so scratch is
 /// indexed by node and allocated once per executor construction.
+#[derive(Default)]
 struct NodeScratch {
     /// Cover-entry key words, entry-major (`entry * arity + word`).
     entry_keys: Vec<u64>,
@@ -179,7 +180,7 @@ struct NodeScratch {
 /// The executor scratch for one plan shape: per-execution cursor state and
 /// per-node buffers, sized once at construction. It does not borrow the
 /// plan — the same `&ValidatedPlan` is passed to [`Executor::execute`]
-/// (the prepared query owns both, PRD 25).
+/// (the prepared query owns both, the 30-execution doc).
 pub struct Executor {
     batch: usize,
     /// Per occurrence: (current cursor, current trie level).
@@ -207,7 +208,10 @@ impl Executor {
     /// Only on a programmer-invariant violation: a zero batch size.
     #[must_use]
     pub fn with_batch_size(plan: &ValidatedPlan, batch: usize) -> Self {
-        assert!(batch > 0, "a batch has at least one element");
+        assert!(
+            batch > 0,
+            "a batch has at least one element (set_batch_size is the caller-facing knob)"
+        );
         let slot_map: Vec<Vec<Vec<usize>>> = plan
             .nodes()
             .iter()
@@ -321,21 +325,7 @@ impl Executor {
         );
 
         let arity = node.subatoms[cover_sub].vars.len();
-        let mut scratch = std::mem::replace(
-            &mut self.scratch[node_idx],
-            NodeScratch {
-                entry_keys: Vec::new(),
-                children: Vec::new(),
-                survivors: Vec::new(),
-                probe_keys: Vec::new(),
-                hashes: Vec::new(),
-                sibling_children: Vec::new(),
-                sources: Vec::new(),
-                residual_sources: Vec::new(),
-                mask: Vec::new(),
-                journal: Vec::new(),
-            },
-        );
+        let mut scratch = std::mem::take(&mut self.scratch[node_idx]);
 
         // Resolve value sources against the runtime cover choice: a var
         // bound by the chosen cover reads the batch key column; everything
@@ -1140,7 +1130,7 @@ mod tests {
         assert_eq!(first.rows, second.rows);
         assert!(!first.rows.is_empty());
     }
-    // ---------- PRD 21: vectorized execution ----------
+    // ---------- the 30-execution doc: vectorized execution ----------
 
     /// Runs a plan at a given batch size.
     fn run_batched(

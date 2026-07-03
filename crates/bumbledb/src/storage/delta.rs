@@ -1,4 +1,4 @@
-//! The write transaction delta core (PRD 06): a write transaction is an
+//! The write transaction delta core (docs/architecture/40-storage.md): a write transaction is an
 //! in-memory net insert-set and delete-set of canonical fact bytes — last
 //! disposition per fact wins — plus in-memory counters
 //! (`docs/architecture/40-storage.md`).
@@ -6,7 +6,7 @@
 //! During accumulation, `insert`/`delete` are pure set arithmetic: encode is
 //! the caller's job; membership is the delta's own disposition if present,
 //! else an `M` probe against the borrowed read view. **Nothing touches an
-//! LMDB data page until commit** (PRDs 07-08) — the LMDB write transaction
+//! LMDB data page until commit** (docs/architecture) — the LMDB write transaction
 //! opens at commit, keeping the write-lock window to the commit step; an
 //! abort (error or panic) just drops this struct and LMDB was never written.
 
@@ -20,7 +20,7 @@ use crate::storage::env::ReadTxn;
 use crate::storage::keys;
 
 /// The net effect recorded for one fact. Last disposition wins; whether it
-/// actually applies is decided against base state at commit (PRD 07).
+/// actually applies is decided against base state at commit (docs/architecture/40-storage.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Disposition {
     Insert,
@@ -34,14 +34,14 @@ pub struct WriteDelta<'s> {
     /// `(relation, fact_hash) → (fact bytes, last disposition)`. Keyed by the
     /// full 32-byte blake3 of `fact_bytes` — hash equality *is* fact equality
     /// (collision axiom, `10-data-model.md`), and the `BTreeMap` gives the
-    /// deterministic commit order PRD 07 requires.
+    /// deterministic commit order the 40-storage doc requires.
     facts: BTreeMap<(RelationId, [u8; 32]), (ArenaSlice, Disposition)>,
     /// Serial next-values, lazily initialized from `Q` once per
     /// `(relation, field)` per transaction; a transaction sees its own
     /// allocations. The stored value is the *next* value to issue.
     serial_next: BTreeMap<(RelationId, FieldId), u64>,
     /// Net row-count change per relation, maintained alongside the
-    /// changed-state reports (flushed to `S` by PRD 08).
+    /// changed-state reports (flushed to `S` by the 40-storage doc).
     row_count_delta: BTreeMap<RelationId, i64>,
     /// Novel strings/bytes interned by this transaction: provisional ids
     /// assigned from the committed dictionary counter (the counter is
@@ -198,7 +198,7 @@ impl<'s> WriteDelta<'s> {
     }
 
     /// Iterates every recorded disposition in deterministic
-    /// `(relation, fact_hash)` order with its fact bytes (reader: PRD 07's
+    /// `(relation, fact_hash)` order with its fact bytes (reader: the 40-storage doc's
     /// commit apply).
     pub(crate) fn entries(&self) -> impl Iterator<Item = (RelationId, &[u8], Disposition)> {
         self.facts
@@ -211,26 +211,26 @@ impl<'s> WriteDelta<'s> {
         self.schema
     }
 
-    /// Whether the delta records no dispositions at all (reader: PRD 08's
+    /// Whether the delta records no dispositions at all (reader: the 40-storage doc's
     /// skip-empty-commit rule; pending allocations and interns of an empty
     /// delta are deliberately dropped — none of them are observable).
     pub(crate) fn is_empty(&self) -> bool {
         self.facts.is_empty()
     }
 
-    /// Serial next-values to flush to `Q` (reader: PRD 08 phase 4).
+    /// Serial next-values to flush to `Q` (reader: the 40-storage doc phase 4).
     pub(crate) fn serial_marks(&self) -> impl Iterator<Item = (RelationId, FieldId, u64)> + '_ {
         self.serial_next
             .iter()
             .map(|((rel, field), next)| (*rel, *field, *next))
     }
 
-    /// Net row-count changes to fold into `S` (reader: PRD 08 phase 4).
+    /// Net row-count changes to fold into `S` (reader: the 40-storage doc phase 4).
     pub(crate) fn row_count_deltas(&self) -> impl Iterator<Item = (RelationId, i64)> + '_ {
         self.row_count_delta.iter().map(|(rel, d)| (*rel, *d))
     }
 
-    /// Pending intern entries to flush to `_dict` (reader: PRD 08 phase 4).
+    /// Pending intern entries to flush to `_dict` (reader: the 40-storage doc phase 4).
     pub(crate) fn pending_interns(&self) -> impl Iterator<Item = (u8, &[u8], u64)> + '_ {
         self.pending_interns
             .iter()
@@ -242,7 +242,7 @@ impl<'s> WriteDelta<'s> {
     }
 
     /// The dictionary next-id to flush, if this transaction minted any
-    /// provisional ids (reader: PRD 08 phase 4).
+    /// provisional ids (reader: the 40-storage doc phase 4).
     pub(crate) fn dict_next(&self) -> Option<u64> {
         self.dict_next
     }
@@ -379,7 +379,7 @@ mod tests {
         assert!(delta.insert(&view, R, &f).expect("insert"));
         assert!(delta.delete(&view, R, &f).expect("delete"));
         // Net disposition is Delete for a fact not in base: apply's base
-        // check makes it a no-op (PRD 07).
+        // check makes it a no-op (docs/architecture/40-storage.md).
         assert_eq!(delta.disposition(R, &f), Some(Disposition::Delete));
     }
 

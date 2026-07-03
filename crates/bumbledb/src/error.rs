@@ -1,4 +1,4 @@
-//! The workspace error taxonomy (PRD 04; categories per
+//! The workspace error taxonomy (the 40-storage doc; categories per
 //! `docs/architecture/60-api.md`).
 //!
 //! Everything reachable from user input or disk returns these typed errors;
@@ -55,7 +55,7 @@ pub enum CorruptionError {
     InternTagMismatch(u64),
 }
 
-/// A schema declaration error (PRD 02's validation boundary). Every illegal
+/// A schema declaration error (the 10-data-model doc's validation boundary). Every illegal
 /// schema shape has a distinct variant; an invalid schema is
 /// unconstructible, not flagged.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +102,12 @@ pub enum SchemaError {
         relation: RelationId,
         constraint: ConstraintId,
         field: FieldId,
+    },
+    /// Two unique constraints over the identical ordered field list —
+    /// double guard maintenance with no added meaning.
+    DuplicateConstraintFields {
+        relation: RelationId,
+        constraint: ConstraintId,
     },
     /// The constraint's guard key would exceed LMDB's key ceiling
     /// (`storage::keys::MAX_GUARD_WIDTH`) once embedded in a Restrict key.
@@ -215,7 +221,7 @@ impl fmt::Display for FactShapeError {
     }
 }
 
-/// A query validation error (the IR boundary, PRD 14): one variant per
+/// A query validation error (the IR boundary, the 20-query-ir doc): one variant per
 /// roster item in `docs/architecture/20-query-ir.md`, returned at prepare
 /// time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,6 +267,17 @@ pub enum ValidationError {
     ConstantComparison {
         index: usize,
     },
+    /// Both sides are the same variable — constant-valued; write the
+    /// query you mean.
+    SelfComparison {
+        index: usize,
+    },
+    /// An enum literal in a comparison carries an ordinal beyond the
+    /// variable's variant list.
+    ComparisonEnumOrdinalOutOfRange {
+        index: usize,
+        ordinal: u8,
+    },
     /// Datalog safety: a find (or aggregate-input) variable bound by no atom.
     UnboundFindVariable {
         var: VarId,
@@ -299,10 +316,8 @@ pub enum ValidationError {
     },
 }
 
-/// The one workspace error type, categorized per `docs/architecture/60-api.md`.
-///
-/// The Validation (IR boundary, PRD 14) and Write (PRDs 07-08) categories
-/// gain their variants in the PRDs that raise them.
+/// The one workspace error type, categorized per
+/// `docs/architecture/60-api.md`.
 #[derive(Debug)]
 pub enum Error {
     // --- Open errors ---
@@ -497,6 +512,11 @@ impl fmt::Display for SchemaError {
                 "relation {}, constraint {}: field {} listed twice",
                 r.0, c.0, fd.0
             ),
+            Self::DuplicateConstraintFields { relation: r, constraint: c } => write!(
+                f,
+                "relation {}, constraint {}: another unique constraint covers the same fields",
+                r.0, c.0
+            ),
             Self::GuardKeyTooWide { relation: r, constraint: c, width } => write!(
                 f,
                 "relation {}, constraint {}: {width}-byte guard key exceeds the LMDB ceiling",
@@ -590,6 +610,12 @@ impl fmt::Display for ValidationError {
             }
             Self::ConstantComparison { index } => {
                 write!(f, "comparison {index}: neither side is a variable")
+            }
+            Self::SelfComparison { index } => {
+                write!(f, "comparison {index}: a variable compared with itself")
+            }
+            Self::ComparisonEnumOrdinalOutOfRange { index, ordinal } => {
+                write!(f, "comparison {index}: enum ordinal {ordinal} out of range")
             }
             Self::UnboundFindVariable { var } => {
                 write!(f, "find variable {} bound by no atom", var.0)

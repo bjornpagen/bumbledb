@@ -1,4 +1,4 @@
-//! Schema descriptors, declaration validation, and the fingerprint (PRDs 02-03).
+//! Schema descriptors, declaration validation, and the fingerprint (docs/architecture).
 //!
 //! Construction is the validation boundary (parse, don't validate): the only
 //! way to obtain a [`Schema`] is [`SchemaDescriptor::validate`], and everything
@@ -146,7 +146,7 @@ pub struct Relation {
     /// Ids of this relation's `Unique` constraints.
     unique_constraints: Box<[ConstraintId]>,
     /// Unique constraints of *this* relation targeted by some FK anywhere in
-    /// the schema — the delete-side Restrict scan set (PRD 08's reader).
+    /// the schema — the delete-side Restrict scan set (the 40-storage doc's reader).
     fk_targeted: Box<[ConstraintId]>,
 }
 
@@ -418,6 +418,19 @@ fn validate_relation(
                 });
             }
         }
+        // A duplicated field within any constraint's list is a typo, not a
+        // meaning: `unique(a, a)` guards nothing extra and `fk(a, a -> ..)`
+        // references keys with equal components — reject both.
+        let field_list = constraint.fields();
+        for (f_idx, field) in field_list.iter().enumerate() {
+            if field_list[..f_idx].contains(field) {
+                return Err(SchemaError::UniqueDuplicateField {
+                    relation: rel_id,
+                    constraint: con_id,
+                    field: *field,
+                });
+            }
+        }
         if let ConstraintDescriptor::Unique { fields: cf, .. } = constraint {
             if cf.is_empty() {
                 return Err(SchemaError::UniqueWithoutFields {
@@ -425,19 +438,25 @@ fn validate_relation(
                     constraint: con_id,
                 });
             }
-            for (f_idx, field) in cf.iter().enumerate() {
-                if cf[..f_idx].contains(field) {
-                    return Err(SchemaError::UniqueDuplicateField {
-                        relation: rel_id,
-                        constraint: con_id,
-                        field: *field,
-                    });
+            // Two unique constraints over one ordered field list are pure
+            // write amplification: every insert/delete maintains two `U`
+            // guards that can never disagree. Names are per-relation
+            // scoped already; field sets are too.
+            for (other_idx, other) in constraints[..idx].iter().enumerate() {
+                if let ConstraintDescriptor::Unique { fields: of, .. } = other {
+                    if of == cf {
+                        let _ = other_idx;
+                        return Err(SchemaError::DuplicateConstraintFields {
+                            relation: rel_id,
+                            constraint: con_id,
+                        });
+                    }
                 }
             }
             // Guard keys are fixed-width (every type encodes 1 or 8 bytes),
             // so a constraint that would overflow LMDB's key ceiling once
             // embedded in a Restrict key is rejected here, at declaration —
-            // never discovered at write time (PRD 04's construction hook).
+            // never discovered at write time (the 40-storage doc's construction hook).
             let width: usize = cf
                 .iter()
                 .map(|f| fields[usize::from(f.0)].value_type.type_desc().width())

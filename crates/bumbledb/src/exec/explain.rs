@@ -1,4 +1,4 @@
-//! EXPLAIN (PRD 24): the debugging surface — an instrumented execution of
+//! EXPLAIN (docs/architecture/30-execution.md): the debugging surface — an instrumented execution of
 //! the same plan through the `Counters` seam, never a runtime mode
 //! (`docs/architecture/30-execution.md`, observability).
 //!
@@ -112,7 +112,7 @@ impl Counters for CountingCounters {
 /// the hot loops.
 #[derive(Debug)]
 pub enum Report<'p> {
-    /// The query classified as a point lookup (PRD 23).
+    /// The query classified as a point lookup (docs/architecture/30-execution.md).
     GuardProbe { plan: &'p GuardPlan },
     /// The Free Join engine, with its counted execution.
     FreeJoin {

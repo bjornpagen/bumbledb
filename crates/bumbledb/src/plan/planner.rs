@@ -1,4 +1,4 @@
-//! Statistics and the DP planner (PRD 16): real statistics in, one
+//! Statistics and the DP planner (docs/architecture/30-execution.md): real statistics in, one
 //! left-deep atom order out (`docs/architecture/30-execution.md`).
 //!
 //! Statistics are exact row counts (or measured filtered-view survivor
@@ -10,10 +10,10 @@ use crate::ir::normalize::{NormalizedQuery, OccId};
 use crate::ir::VarId;
 use crate::schema::Schema;
 
-/// Hard cap on occurrences the exhaustive subset DP accepts. PRD 16 named
+/// Hard cap on occurrences the exhaustive subset DP accepts. The 30-execution doc named
 /// 32 (the bitmask width), but 2³² DP states is ~170 GB of table — memory-
 /// infeasible; 2²⁰ is ~24 MB and instant, and the doc's own envelope is
-/// "≤ ~12 atoms" (PRD amendment recorded in the PRD, same change).
+/// "≤ ~12 atoms" (amendment recorded in docs/architecture/30-execution.md).
 pub const MAX_OCCURRENCES: usize = 20;
 
 /// Distinct-variable cap for the planner's dense var bitsets.
@@ -29,7 +29,7 @@ pub struct OccStats {
 }
 
 /// The chosen left-deep join order, with per-step estimates retained for
-/// EXPLAIN (PRD 24).
+/// EXPLAIN (docs/architecture/30-execution.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinOrder {
     /// Occurrences in join order (first = the iterated relation).

@@ -70,7 +70,7 @@ pub use error::{Error, Result};
 pub use ir::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
 pub use schema::{FieldId, RelationId, Schema};
 
-/// The declarative schema surface (PRD 27). (The macro and the `schema`
+/// The declarative schema surface (docs/architecture/60-api.md). (The macro and the `schema`
 /// module share a name across disjoint namespaces — deliberate:
 /// `bumbledb::schema! {}` declares, `bumbledb::schema::…` are the
 /// descriptor types.)

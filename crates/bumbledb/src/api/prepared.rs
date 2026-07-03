@@ -1,4 +1,4 @@
-//! Prepared queries, parameters, and results (PRD 25) — the reusable
+//! Prepared queries, parameters, and results (docs/architecture/30-execution.md) — the reusable
 //! execution object the allocation contract is written against
 //! (`docs/architecture/20-query-ir.md`, `30-execution.md`, `60-api.md`).
 //!
@@ -125,7 +125,11 @@ impl ResultBuffer {
     fn push_word(&mut self, txn: &ReadTxn<'_>, ty: &ValueType, word: u64) -> Result<()> {
         let cell = match ty {
             ValueType::Bool => Cell::Bool(word != 0),
-            ValueType::Enum { .. } => Cell::Enum(u8::try_from(word).expect("enum words fit u8")),
+            ValueType::Enum { .. } => Cell::Enum(
+                // Programmer invariant, not corruption: image build
+                // range-checked every stored ordinal against the schema.
+                u8::try_from(word).expect("enum words fit u8"),
+            ),
             ValueType::U64 => Cell::U64(word),
             ValueType::I64 => Cell::I64((word ^ (1 << 63)).cast_signed()),
             ValueType::String => {
@@ -259,7 +263,7 @@ pub(crate) fn prepare<'s>(
                     FilterPredicate::Compare { value, .. } => {
                         matches!(value, Const::Word(_) | Const::Byte(_))
                     }
-                    FilterPredicate::FieldsEqual { .. } => true,
+                    FilterPredicate::FieldsCompare { .. } => true,
                 });
             let rows = if concrete {
                 let image = cache.get_or_build(txn, schema, occurrence.relation)?;
@@ -489,7 +493,7 @@ impl PreparedQuery<'_> {
         Ok(out)
     }
 
-    /// EXPLAIN (PRD 24): executes the query with counting instrumentation
+    /// EXPLAIN (docs/architecture/30-execution.md): executes the query with counting instrumentation
     /// (ANALYZE semantics) and returns the rows alongside the rendered
     /// report.
     ///

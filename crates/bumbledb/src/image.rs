@@ -1,4 +1,4 @@
-//! Columnar relation images, the image cache, and filtered views (PRDs 10-12).
+//! Columnar relation images, the image cache, and filtered views (docs/architecture).
 //!
 //! A relation image is **all columns** of a relation, decoded once from one
 //! sequential `F`-prefix scan into structure-of-arrays vectors — the bridge

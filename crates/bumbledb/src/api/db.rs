@@ -1,4 +1,4 @@
-//! The embedding surface (PRD 28, `docs/architecture/60-api.md`): [`Db`],
+//! The embedding surface (the 60-api doc, `docs/architecture/60-api.md`): [`Db`],
 //! the read/write transaction closures, the typed write path, and export.
 //!
 //! Threading doctrine (`00-product.md`): the engine owns zero threads. The
@@ -188,7 +188,7 @@ impl<'s> Db<'s> {
     ///
     /// # Errors
     ///
-    /// The PRD 14 [`crate::error::ValidationError`] roster, at prepare
+    /// The the 20-query-ir doc [`crate::error::ValidationError`] roster, at prepare
     /// time; `Lmdb` from the statistics reads.
     pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<'s>> {
         let txn = self.env.read_txn()?;
@@ -316,7 +316,7 @@ impl Snapshot<'_> {
         prepared.execute_collect(&self.txn, self.cache, params)
     }
 
-    /// EXPLAIN ANALYZE (PRD 24): executes with counting instrumentation
+    /// EXPLAIN ANALYZE (docs/architecture/30-execution.md): executes with counting instrumentation
     /// and returns the rows alongside the rendered report.
     ///
     /// # Errors

@@ -1,4 +1,4 @@
-//! Filtered views (PRD 12): per-atom filter evaluation producing
+//! Filtered views (docs/architecture/30-execution.md): per-atom filter evaluation producing
 //! survivor-position vectors over images. Views are query-local and never
 //! cached (`docs/architecture/40-storage.md`); COLT roots iterate the view,
 //! and view positions index the image.
@@ -21,7 +21,7 @@ use crate::storage::env::ReadTxn;
 /// the byte-order-normalized word for 8-byte columns, the raw byte for
 /// 1-byte columns. `Param` resolves at bind time through the evaluator's
 /// param slice; `PendingIntern` is a raw String/Bytes literal resolved to
-/// an intern-id word per execution (PRD 25 — a dictionary miss means the
+/// an intern-id word per execution (the 30-execution doc — a dictionary miss means the
 /// query is empty on this snapshot, so the evaluator never sees one).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Const {
@@ -37,7 +37,7 @@ pub enum Const {
     },
 }
 
-/// One lowered per-atom filter (produced by PRD 15's normalization).
+/// One lowered per-atom filter (produced by the 20-query-ir doc's normalization).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilterPredicate {
     /// `field <op> constant`.
@@ -46,10 +46,18 @@ pub enum FilterPredicate {
         op: CmpOp,
         value: Const,
     },
-    /// Same-fact equality between two fields of one atom (the lowering of a
-    /// repeated in-atom variable). Both fields have the same structural
-    /// type by validation, hence the same column kind.
-    FieldsEqual { left: FieldId, right: FieldId },
+    /// Same-fact comparison between two fields of one atom: `Eq` is the
+    /// lowering of a repeated in-atom variable; any operator is the
+    /// lowering of a same-atom var-vs-var comparison (residuals are
+    /// cross-atom only — `docs/architecture/20-query-ir.md`). Both fields
+    /// have the same structural type by validation, hence the same column
+    /// kind, and word comparison is value-faithful (biased I64, ordinal
+    /// bytes, injective intern ids).
+    FieldsCompare {
+        left: FieldId,
+        right: FieldId,
+        op: CmpOp,
+    },
 }
 
 /// A query-local view over an image: either every position (unfiltered) or
@@ -111,7 +119,7 @@ impl View {
     }
 
     /// The image position at view index `idx` (reader: COLT root
-    /// iteration, PRD 18).
+    /// iteration, the 30-execution doc).
     ///
     /// # Panics
     ///
@@ -125,7 +133,7 @@ impl View {
     }
 
     /// Reclaims the survivor buffer for reuse (the caller-owned storage
-    /// discipline: buffers belong to the prepared query, PRD 25).
+    /// discipline: buffers belong to the prepared query, the 30-execution doc).
     #[must_use]
     pub fn recycle(self) -> Vec<u32> {
         match self {
@@ -155,18 +163,22 @@ fn row_matches(
                 (ColumnView::Bytes(bytes), Const::Byte(c)) => op.compare(&bytes[position], c),
                 // Width mismatches are unrepresentable through validation,
                 // and PendingIntern constants are resolved before execution
-                // (PRD 25) — a miss empties the query without reaching here.
+                // (docs/architecture/30-execution.md) — a miss empties the query without reaching here.
                 _ => unreachable!("validated, resolved filter constant"),
             }
         }
-        FilterPredicate::FieldsEqual { left, right } => {
+        FilterPredicate::FieldsCompare { left, right, op } => {
             match (
                 image.column(usize::from(left.0)),
                 image.column(usize::from(right.0)),
             ) {
-                (ColumnView::Words(a), ColumnView::Words(b)) => a[position] == b[position],
-                (ColumnView::Bytes(a), ColumnView::Bytes(b)) => a[position] == b[position],
-                _ => unreachable!("same-fact equality joins same-typed fields"),
+                (ColumnView::Words(a), ColumnView::Words(b)) => {
+                    op.compare(&a[position], &b[position])
+                }
+                (ColumnView::Bytes(a), ColumnView::Bytes(b)) => {
+                    op.compare(&a[position], &b[position])
+                }
+                _ => unreachable!("same-fact comparison joins same-typed fields"),
             }
         }
     })
@@ -307,7 +319,7 @@ fn kernel_scan(
 /// The filter pass runs over the freshly decoded columns rather than being
 /// interleaved into the decode loop — the one storage scan is the expensive
 /// part, and sharing `apply`'s evaluator beats duplicating it inside the
-/// builder (deliberate simplification of PRD 12's parenthetical).
+/// builder (deliberate simplification of the 30-execution doc's parenthetical).
 ///
 /// # Errors
 ///
@@ -490,9 +502,10 @@ mod tests {
         let env = populated(&dir, &schema);
         let txn = env.read_txn().expect("txn");
         let image = build(&txn, &schema, R).expect("build");
-        let predicates = vec![FilterPredicate::FieldsEqual {
+        let predicates = vec![FilterPredicate::FieldsCompare {
             left: FieldId(2),
             right: FieldId(3),
+            op: CmpOp::Eq,
         }];
         let view = apply(&image, &predicates, &[], Vec::new());
         let expected = oracle(&env, &schema, |_, _, a, b| a == b);

@@ -1,4 +1,4 @@
-//! PRD 28 integration tests: the `60-api.md` usage shapes end to end
+//! The 60-api doc integration tests: the `60-api.md` usage shapes end to end
 //! through the public surface — create → write{alloc+insert} → read{point
 //! lookup, join, aggregate} → mutate via delete+insert → read again; the
 //! write-closure abort contracts; the threading contract; and the export →

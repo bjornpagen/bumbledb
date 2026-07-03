@@ -1,4 +1,4 @@
-//! The pure-data query IR, validation, and normalization (PRDs 13-15).
+//! The pure-data query IR, validation, and normalization (docs/architecture).
 //!
 //! Queries are plain data — serializable, inspectable, no behavior
 //! (`docs/architecture/20-query-ir.md`, normative). No wildcard variant

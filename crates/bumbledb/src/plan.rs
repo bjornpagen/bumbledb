@@ -1,4 +1,4 @@
-//! Statistics, the DP planner, and Free Join plan lowering (PRDs 16-17).
+//! Statistics, the DP planner, and Free Join plan lowering (docs/architecture).
 
 pub mod fj;
 pub mod planner;
