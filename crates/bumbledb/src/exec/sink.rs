@@ -502,6 +502,7 @@ mod tests {
     }
 
     impl Counters for SkipCounter {
+        fn batch(&mut self, _: usize, _: usize) {}
         fn node_entry(&mut self, _: usize) {}
         fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
         fn probe_hash(&mut self, _: usize, _: usize) {}

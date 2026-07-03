@@ -32,6 +32,9 @@ pub struct CountingCounters {
     residuals: Vec<[u64; 2]>,
     /// Per node: D2 subtree skips propagated through it.
     skips: Vec<u64>,
+    /// Per node: `[batches drawn, entries yielded]` — batching engaged
+    /// means batches ≪ entries at batch sizes > 1.
+    batches: Vec<[u64; 2]>,
     emits: u64,
 }
 
@@ -53,8 +56,18 @@ impl CountingCounters {
             hashes: vec![0; nodes * stride],
             residuals: vec![[0; 2]; nodes],
             skips: vec![0; nodes],
+            batches: vec![[0; 2]; nodes],
             emits: 0,
         }
+    }
+
+    /// `(batches drawn, entries yielded)` for one node — the "batching
+    /// engaged" observable (docs/architecture/50-validation.md).
+    #[cfg(test)]
+    #[must_use]
+    pub fn batches(&self, node: usize) -> (u64, u64) {
+        let [b, e] = self.batches[node];
+        (b, e)
     }
 
     /// Bindings emitted to the sink (the measured cardinality after the
@@ -86,6 +99,10 @@ impl CountingCounters {
 impl Counters for CountingCounters {
     fn node_entry(&mut self, node: usize) {
         self.node_entries[node] += 1;
+    }
+    fn batch(&mut self, node: usize, len: usize) {
+        self.batches[node][0] += 1;
+        self.batches[node][1] += u64::try_from(len).expect("batch fits u64");
     }
     fn cover_choice(&mut self, node: usize, subatom: usize, exact: bool) {
         self.cover_choices[node * self.stride + subatom][usize::from(!exact)] += 1;
@@ -467,5 +484,65 @@ mod tests {
         // type occupies no memory and the executor stores no counter field
         // (counters are a call-site parameter, monomorphized away).
         assert_eq!(std::mem::size_of::<NoopCounters>(), 0);
+    }
+
+    /// "Batching engaged" (docs/architecture/50-validation.md): at batch
+    /// size 64 over hundreds of root tuples, the cover draws batches, not
+    /// per-tuple iterations — the counted execution proves the vectorized
+    /// path is live, not silently degenerate.
+    #[test]
+    fn the_counted_execution_shows_batching_engaged() {
+        let dir = TempDir::new("explain-batching");
+        let schema = schema(2);
+        let r0: Vec<(u64, u64)> = (0..300).map(|i| (i, i % 7)).collect();
+        let r1: Vec<(u64, u64)> = (0..7).map(|i| (i, i)).collect();
+        let views = views_of(&dir, &schema, &[r0, r1]);
+        let normalized = NormalizedQuery {
+            occurrences: vec![
+                occurrence(0, 0, &[(0, 0), (1, 1)]),
+                occurrence(1, 1, &[(0, 1), (1, 2)]),
+            ],
+            residuals: vec![],
+        };
+        let order = JoinOrder {
+            order: vec![OccId(0), OccId(1)],
+            estimates: vec![300, 300],
+        };
+        let mut fj = binary2fj(&normalized, &order);
+        factor(&mut fj);
+        let sink_vars = BTreeSet::from([VarId(0), VarId(1), VarId(2)]);
+        let plan = validate(
+            &fj,
+            &normalized,
+            &schema,
+            order.estimates.clone(),
+            &sink_vars,
+        )
+        .expect("valid plan");
+
+        let mut colts = colts_for(&plan, &views);
+        let mut bindings = Bindings::new(plan.slots().len());
+        let mut sink = ProjectionSink::new(vec![
+            plan.slot_of(VarId(0)),
+            plan.slot_of(VarId(1)),
+            plan.slot_of(VarId(2)),
+        ]);
+        let mut counters = CountingCounters::new(&plan);
+        Executor::with_batch_size(&plan, 64).execute(
+            &plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut counters,
+        );
+
+        let (batches, entries) = counters.batches(0);
+        assert_eq!(entries, 300, "the root drains every tuple");
+        assert_eq!(
+            batches,
+            300 / 64 + 1,
+            "64-wide batches, not per-tuple draws"
+        );
+        assert!(counters.emits() > 0);
     }
 }

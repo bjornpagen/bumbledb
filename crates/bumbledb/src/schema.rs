@@ -981,4 +981,98 @@ mod tests {
     // `Relation`'s fields are private, and no public constructor exists —
     // the only path in is `SchemaDescriptor::validate`. (Compile-time
     // property; recorded here as the sealing contract.)
+
+    #[test]
+    fn rejects_two_uniques_over_one_field_set() {
+        let err = SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "R".into(),
+                fields: vec![FieldDescriptor {
+                    name: "a".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                }],
+                constraints: vec![
+                    ConstraintDescriptor::Unique {
+                        name: "first".into(),
+                        fields: Box::new([FieldId(0)]),
+                    },
+                    ConstraintDescriptor::Unique {
+                        name: "second".into(),
+                        fields: Box::new([FieldId(0)]),
+                    },
+                ],
+            }],
+        }
+        .validate()
+        .unwrap_err();
+        assert!(matches!(err, SchemaError::DuplicateConstraintFields { .. }));
+    }
+
+    #[test]
+    fn a_declared_unique_duplicating_a_serial_auto_unique_is_rejected() {
+        // The auto-unique on the serial field covers [FieldId(0)]; a
+        // declared unique over the same set is double guard maintenance.
+        let err = SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "R".into(),
+                fields: vec![FieldDescriptor {
+                    name: "id".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::Serial,
+                }],
+                constraints: vec![ConstraintDescriptor::Unique {
+                    name: "extra".into(),
+                    fields: Box::new([FieldId(0)]),
+                }],
+            }],
+        }
+        .validate()
+        .unwrap_err();
+        assert!(matches!(err, SchemaError::DuplicateConstraintFields { .. }));
+    }
+
+    #[test]
+    fn rejects_duplicate_fields_in_an_fk_list() {
+        let err = SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    name: "T".into(),
+                    fields: vec![
+                        FieldDescriptor {
+                            name: "x".into(),
+                            value_type: ValueType::U64,
+                            generation: Generation::None,
+                        },
+                        FieldDescriptor {
+                            name: "y".into(),
+                            value_type: ValueType::U64,
+                            generation: Generation::None,
+                        },
+                    ],
+                    constraints: vec![ConstraintDescriptor::Unique {
+                        name: "xy".into(),
+                        fields: Box::new([FieldId(0), FieldId(1)]),
+                    }],
+                },
+                RelationDescriptor {
+                    name: "S".into(),
+                    fields: vec![FieldDescriptor {
+                        name: "a".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    }],
+                    constraints: vec![ConstraintDescriptor::ForeignKey {
+                        name: "typo".into(),
+                        fields: Box::new([FieldId(0), FieldId(0)]),
+                        target_relation: RelationId(0),
+                        target_constraint: ConstraintId(0),
+                    }],
+                },
+            ],
+        }
+        .validate()
+        .unwrap_err();
+        assert!(matches!(err, SchemaError::UniqueDuplicateField { .. }));
+    }
 }

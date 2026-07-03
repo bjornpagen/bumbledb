@@ -529,4 +529,36 @@ mod tests {
         assert!(norm.occurrences[1].vars.is_empty());
         assert!(norm.occurrences[1].filters.is_empty());
     }
+
+    #[test]
+    fn same_atom_var_var_comparison_lowers_to_a_filter() {
+        // R(a = x, b = y), x < y — one atom, both sides: a per-atom
+        // FieldsCompare filter, never a residual (residuals are cross-atom
+        // only, docs/architecture/20-query-ir.md).
+        let query = Query {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                relation: R,
+                bindings: vec![(FieldId(1), var(0)), (FieldId(2), var(1))],
+            }],
+            predicates: vec![Comparison {
+                op: CmpOp::Lt,
+                lhs: var(0),
+                rhs: var(1),
+            }],
+        };
+        let norm = normalized(&query);
+        assert!(
+            norm.residuals.is_empty(),
+            "same-atom pairs never residualize"
+        );
+        assert_eq!(
+            norm.occurrences[0].filters,
+            vec![FilterPredicate::FieldsCompare {
+                left: FieldId(1),
+                right: FieldId(2),
+                op: CmpOp::Lt,
+            }]
+        );
+    }
 }

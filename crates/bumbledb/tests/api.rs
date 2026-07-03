@@ -426,3 +426,277 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
     let _ = std::fs::remove_dir_all(&dir_old);
     let _ = std::fs::remove_dir_all(&dir_new);
 }
+
+#[test]
+fn constraint_violations_surface_from_commit_through_the_public_api() {
+    let dir = test_dir("violations");
+    let db = Db::create(&dir, schema()).expect("create");
+    let holder = db
+        .write(|tx| {
+            let id: HolderId = tx.alloc()?;
+            tx.insert(&Holder {
+                id,
+                name: "alice".to_owned(),
+            })?;
+            Ok(id)
+        })
+        .expect("seed");
+
+    // Unique violation: two live accounts claiming one serial id. The
+    // error carries relation + constraint ids and the offending fact
+    // bytes, and the WHOLE transaction aborts (the good insert too).
+    let err = db
+        .write(|tx| {
+            tx.insert(&Account {
+                id: AccountId(7),
+                holder,
+                balance: 1,
+            })?;
+            tx.insert(&Account {
+                id: AccountId(7),
+                holder,
+                balance: 2,
+            })?;
+            Ok(())
+        })
+        .unwrap_err();
+    let bumbledb::Error::UniqueViolation {
+        relation,
+        fact_bytes,
+        ..
+    } = err
+    else {
+        panic!("expected UniqueViolation, got {err}");
+    };
+    assert_eq!(relation, Account::RELATION);
+    assert!(!fact_bytes.is_empty());
+    let count = db
+        .read(|snap| Ok(snap.scan_facts::<Account>()?.count()))
+        .expect("scan");
+    assert_eq!(count, 0, "the aborted transaction left nothing");
+
+    // Forward FK violation: the fact bytes name the offender.
+    let err = db
+        .write(|tx| {
+            tx.insert(&Account {
+                id: AccountId(1),
+                holder: HolderId(404),
+                balance: 5,
+            })
+        })
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        bumbledb::Error::ForeignKeyViolation {
+            violation: bumbledb::error::FkViolation::MissingTarget { .. },
+            ..
+        }
+    ));
+
+    // Restrict: deleting a referenced holder names the referrer by fact.
+    db.write(|tx| {
+        tx.insert(&Account {
+            id: AccountId(1),
+            holder,
+            balance: 5,
+        })
+    })
+    .expect("reference the holder");
+    let err = db
+        .write(|tx| {
+            tx.delete(&Holder {
+                id: holder,
+                name: "alice".to_owned(),
+            })
+        })
+        .unwrap_err();
+    let bumbledb::Error::ForeignKeyViolation {
+        violation: bumbledb::error::FkViolation::RemainingReference { fact_bytes, .. },
+        ..
+    } = err
+    else {
+        panic!("expected RemainingReference, got {err}");
+    };
+    assert!(!fact_bytes.is_empty(), "the referrer is named by its fact");
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn open_mismatches_and_snapshot_usability() {
+    let dir = test_dir("open-mismatch");
+    drop(Db::create(&dir, schema()).expect("create"));
+
+    // Db-level mismatch: a different schema refuses to open.
+    let other = bumbledb::schema::SchemaDescriptor {
+        relations: vec![bumbledb::schema::RelationDescriptor {
+            name: "Other".into(),
+            fields: vec![bumbledb::schema::FieldDescriptor {
+                name: "x".into(),
+                value_type: bumbledb::schema::ValueType::U64,
+                generation: bumbledb::schema::Generation::None,
+            }],
+            constraints: vec![],
+        }],
+    }
+    .validate()
+    .expect("valid");
+    let Err(err) = Db::open(&dir, &other).map(|_| ()) else {
+        panic!("a different schema must refuse to open");
+    };
+    assert!(matches!(err, bumbledb::Error::SchemaMismatch { .. }));
+
+    // Create-over-existing refuses at the Db level too.
+    let Err(err) = Db::create(&dir, schema()).map(|_| ()) else {
+        panic!("create over an existing environment must refuse");
+    };
+    assert!(matches!(err, bumbledb::Error::AlreadyInitialized));
+
+    // A failed execute leaves the snapshot usable, and the caller-buffer
+    // path works through the public surface.
+    let db = Db::open(&dir, schema()).expect("open");
+    db.write(|tx| {
+        let id: HolderId = tx.alloc()?;
+        tx.insert(&Holder {
+            id,
+            name: "bo".to_owned(),
+        })
+    })
+    .expect("seed");
+    let mut join = db.prepare(&join_query()).expect("prepare");
+    db.read(|snap| {
+        let mut out = ResultBuffer::new();
+        // Wrong param count: a typed error...
+        let err = snap
+            .execute(&mut join, &[Value::U64(1)], &mut out)
+            .unwrap_err();
+        assert!(matches!(err, bumbledb::Error::ParamCountMismatch { .. }));
+        // ...and the same snapshot executes fine afterwards.
+        snap.execute(&mut join, &[], &mut out)?;
+        assert_eq!(out.len(), 0, "no accounts yet");
+        Ok(())
+    })
+    .expect("snapshot stays usable");
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn pinned_snapshot_reads_its_generation_across_later_commits() {
+    let dir = test_dir("pinned");
+    let db = Db::create(&dir, schema()).expect("create");
+    db.write(|tx| {
+        let id: HolderId = tx.alloc()?;
+        tx.insert(&Holder {
+            id,
+            name: "first".to_owned(),
+        })
+    })
+    .expect("seed");
+
+    let mut join = db.prepare(&join_query()).expect("prepare");
+    db.read(|snap| {
+        let before = snap.scan_facts::<Holder>()?.count();
+        assert_eq!(before, 1);
+        // Two commits land while this snapshot stays open (LMDB readers
+        // never block the writer; MDB_NOTLS reader slots).
+        for round in 0..2 {
+            db.write(|tx| {
+                let id: HolderId = tx.alloc()?;
+                tx.insert(&Holder {
+                    id,
+                    name: format!("later-{round}"),
+                })
+            })?;
+        }
+        // The pinned snapshot still answers at its own generation.
+        assert_eq!(snap.scan_facts::<Holder>()?.count(), 1);
+        let rows = snap.execute_collect(&mut join, &[])?;
+        assert_eq!(rows.len(), 0);
+        Ok(())
+    })
+    .expect("pinned read");
+
+    // A fresh snapshot sees all three.
+    let after = db
+        .read(|snap| Ok(snap.scan_facts::<Holder>()?.count()))
+        .expect("fresh read");
+    assert_eq!(after, 3);
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn bulk_load_equals_sequential_inserts_and_survives_chunks() {
+    let dir_bulk = test_dir("bulk-a");
+    let dir_seq = test_dir("bulk-b");
+    let bulk = Db::create(&dir_bulk, schema()).expect("create");
+    let seq = Db::create(&dir_seq, schema()).expect("create");
+
+    // > one chunk of holders (chunk = 4096).
+    let n = 4_100u64;
+    let facts: Vec<Vec<Value>> = (0..n)
+        .map(|i| {
+            vec![
+                Value::U64(i),
+                Value::String(format!("h{}", i % 97).into_bytes().into()),
+            ]
+        })
+        .collect();
+    let loaded = bulk
+        .bulk_load(Holder::RELATION, facts.clone())
+        .expect("bulk load");
+    assert_eq!(loaded, n);
+    for chunk in facts.chunks(512) {
+        seq.write(|tx| {
+            for f in chunk {
+                tx.insert_dyn(Holder::RELATION, f)?;
+            }
+            Ok(())
+        })
+        .expect("sequential insert");
+    }
+
+    // Set equality of the full export: an ETL bug is a data-loss bug.
+    // (Scan order is row-id order, and row ids depend on chunk boundaries
+    // — relations are sets, so the comparison sorts by the serial id.)
+    let by_id = |mut rows: Vec<Vec<Value>>| {
+        rows.sort_by_key(|f| match f[0] {
+            Value::U64(id) => id,
+            _ => unreachable!("id column"),
+        });
+        rows
+    };
+    let a = by_id(
+        bulk.read(|snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
+            .expect("scan bulk"),
+    );
+    let b = by_id(
+        seq.read(|snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
+            .expect("scan seq"),
+    );
+    assert_eq!(a, b);
+    assert_eq!(a.len(), usize::try_from(n).expect("64-bit"));
+
+    // Mid-stream failure: prior chunks stay committed and the error
+    // carries the committed count.
+    let dir_fail = test_dir("bulk-fail");
+    let fail = Db::create(&dir_fail, schema()).expect("create");
+    let mut bad = facts;
+    bad[4_099] = vec![Value::U64(0)]; // arity mismatch in the second chunk
+    let err = fail.bulk_load(Holder::RELATION, bad).unwrap_err();
+    assert_eq!(err.committed, 4_096, "the complete first chunk persisted");
+    assert!(matches!(err.error, bumbledb::Error::FactShape(_)));
+    let persisted = fail
+        .read(|snap| Ok(snap.scan_facts::<Holder>()?.count()))
+        .expect("scan");
+    assert_eq!(persisted, 4_096);
+
+    drop((bulk, seq, fail));
+    for d in [dir_bulk, dir_seq, dir_fail] {
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}

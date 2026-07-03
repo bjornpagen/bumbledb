@@ -220,6 +220,9 @@ impl<'s> Db<'s> {
         let mut total = 0u64;
         loop {
             let mut exhausted = false;
+            // Folded into `total` only after the chunk commits: a failing
+            // chunk aborts whole, so its partial successes never happened.
+            let mut chunk = 0u64;
             self.write(|tx| {
                 for _ in 0..BULK_CHUNK {
                     let Some(values) = iter.next() else {
@@ -227,7 +230,7 @@ impl<'s> Db<'s> {
                         break;
                     };
                     if tx.insert_dyn(rel, &values)? {
-                        total += 1;
+                        chunk += 1;
                     }
                 }
                 Ok(())
@@ -236,6 +239,7 @@ impl<'s> Db<'s> {
                 committed: total,
                 error,
             })?;
+            total += chunk;
             if exhausted {
                 return Ok(total);
             }

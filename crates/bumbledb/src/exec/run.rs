@@ -41,6 +41,10 @@ pub trait Sink {
 /// EXPLAIN entry point (docs/architecture/30-execution.md) instantiates the counting variant.
 pub trait Counters {
     fn node_entry(&mut self, node: usize);
+    /// One cover batch was drawn (`len` entries) — EXPLAIN's "batching
+    /// engaged" observable: at batch size B over N tuples this fires
+    /// ~N/B times, not N times.
+    fn batch(&mut self, node: usize, len: usize);
     /// A cover was chosen: which subatom, and whether its count was Exact.
     fn cover_choice(&mut self, node: usize, subatom: usize, exact: bool);
     /// Phase 1 computed one probe hash (ordering assertions: every hash of
@@ -60,6 +64,8 @@ pub struct NoopCounters;
 impl Counters for NoopCounters {
     #[inline]
     fn node_entry(&mut self, _: usize) {}
+    #[inline]
+    fn batch(&mut self, _: usize, _: usize) {}
     #[inline]
     fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
     #[inline]
@@ -370,6 +376,7 @@ impl Executor {
             if yielded == 0 {
                 break;
             }
+            counters.batch(node_idx, yielded);
             token = next_token;
             scratch.survivors.clear();
             scratch
@@ -578,6 +585,7 @@ mod tests {
 
     impl Counters for RecordingCounters {
         fn node_entry(&mut self, _: usize) {}
+        fn batch(&mut self, _: usize, _: usize) {}
         fn cover_choice(&mut self, node: usize, subatom: usize, exact: bool) {
             self.cover_choices.push((node, subatom, exact));
         }
@@ -1188,7 +1196,7 @@ mod tests {
         // An empty relation, every batch size.
         let dir2 = TempDir::new("run-batch-empty");
         let views = views_of(&dir2, &schema, &[vec![(1, 2)], vec![], vec![(0, 0)]]);
-        for batch in [1usize, 2, 64, 128, 1024] {
+        for batch in [1usize, 2, 64, 128, 256, 1024] {
             assert!(run_batched(&plan, &views, batch).is_empty());
         }
     }
@@ -1200,6 +1208,7 @@ mod tests {
     }
 
     impl Counters for PhaseOrderCounters {
+        fn batch(&mut self, _: usize, _: usize) {}
         fn node_entry(&mut self, _: usize) {}
         fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
         fn probe_hash(&mut self, node: usize, subatom: usize) {
@@ -1256,5 +1265,147 @@ mod tests {
             "the entire batch is hashed before the first bucket load"
         );
         assert!(!sink.rows.is_empty());
+    }
+
+    /// Runs a plan at a given batch size, collecting the full binding set.
+    fn run_at(
+        plan: &ValidatedPlan,
+        views: &[Arc<crate::image::RelationImage>],
+        batch: usize,
+    ) -> BTreeSet<Vec<u64>> {
+        let mut colts = colts_for(plan, views);
+        let mut bindings = Bindings::new(plan.slots().len());
+        let mut sink = CollectSink::default();
+        let mut executor = Executor::with_batch_size(plan, batch);
+        executor.execute(
+            plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut NoopCounters,
+        );
+        sink.rows
+    }
+
+    /// The randomized differential family (docs/architecture/50-validation.md):
+    /// random instances and join orders over three query shapes, the whole
+    /// production lowering (binary2fj + factor + validate), compared against
+    /// a brute-force nested-loop oracle at batch sizes {1, 7, 128}. This is
+    /// the harness that catches plan/executor bugs hand-picked fixtures
+    /// miss — the cover-rebind bug needed only mild skew.
+    #[test]
+    fn randomized_differential_against_the_nested_loop_oracle() {
+        // Deterministic LCG (no rand dependency; reproducible failures).
+        let mut state = 0x1234_5678_9ABC_DEF0_u64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            state >> 33
+        };
+
+        let schema = schema(3);
+        for case in 0..60u32 {
+            // Random small instances with skew: values in 0..=domain where
+            // a small domain forces duplicates and multi-position chunks.
+            let domain = 1 + next() % 8;
+            let mut data: Vec<Vec<(u64, u64)>> = Vec::new();
+            for _ in 0..3 {
+                let rows = 1 + next() % 40;
+                let mut rel = Vec::new();
+                for _ in 0..rows {
+                    rel.push((next() % domain, next() % domain));
+                }
+                rel.sort_unstable();
+                rel.dedup();
+                data.push(rel);
+            }
+            let dir = TempDir::new(&format!("run-differential-{case}"));
+            let views = views_of(&dir, &schema, &data);
+
+            // Three shapes over vars x=0, y=1, z=2:
+            //   chain:    R0(x,y), R1(y,z)
+            //   triangle: R0(x,y), R1(y,z), R2(x,z)
+            //   clover:   R0(x,y), R1(x,z) (self-shaped star)
+            let shape = case % 3;
+            let occurrences = match shape {
+                0 => vec![
+                    occurrence(0, 0, &[(0, 0), (1, 1)]),
+                    occurrence(1, 1, &[(0, 1), (1, 2)]),
+                ],
+                1 => vec![
+                    occurrence(0, 0, &[(0, 0), (1, 1)]),
+                    occurrence(1, 1, &[(0, 1), (1, 2)]),
+                    occurrence(2, 2, &[(0, 0), (1, 2)]),
+                ],
+                _ => vec![
+                    occurrence(0, 0, &[(0, 0), (1, 1)]),
+                    occurrence(1, 1, &[(0, 0), (1, 2)]),
+                ],
+            };
+            let n = occurrences.len();
+            let normalized = NormalizedQuery {
+                occurrences,
+                residuals: vec![],
+            };
+            // Random join order (a permutation drawn by rejection).
+            let mut order: Vec<u16> = (0..u16::try_from(n).expect("small")).collect();
+            for i in (1..order.len()).rev() {
+                let j = usize::try_from(next()).expect("64-bit") % (i + 1);
+                order.swap(i, j);
+            }
+            let plan = planned(&normalized, &schema, &order);
+
+            // The oracle: brute-force nested loops over the shape.
+            let mut expected = BTreeSet::new();
+            match shape {
+                0 => {
+                    for (a, b) in &data[0] {
+                        for (c, d) in &data[1] {
+                            if b == c {
+                                expected.insert(vec![*a, *b, *d]);
+                            }
+                        }
+                    }
+                }
+                1 => {
+                    for (a, b) in &data[0] {
+                        for (c, d) in &data[1] {
+                            for (e, g) in &data[2] {
+                                if b == c && a == e && d == g {
+                                    expected.insert(vec![*a, *b, *d]);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    for (a, b) in &data[0] {
+                        for (c, d) in &data[1] {
+                            if a == c {
+                                expected.insert(vec![*a, *b, *d]);
+                            }
+                        }
+                    }
+                }
+            }
+
+            for batch in [1usize, 7, 128] {
+                // Slot order follows the join order; reorder each row into
+                // VarId order before comparing with the oracle.
+                let got: BTreeSet<Vec<u64>> = run_at(&plan, &views, batch)
+                    .into_iter()
+                    .map(|row| {
+                        (0..3u16)
+                            .map(|v| row[plan.slot_of(VarId(v))])
+                            .collect::<Vec<u64>>()
+                    })
+                    .collect();
+                assert_eq!(
+                    got, expected,
+                    "case {case} shape {shape} order {order:?} batch {batch} domain {domain}"
+                );
+            }
+        }
     }
 }

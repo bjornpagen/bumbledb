@@ -665,6 +665,91 @@ mod tests {
     }
 
     #[test]
+    fn rejects_self_comparison() {
+        // x < x is constant-valued: write the query you mean.
+        let query = Query {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![atom(HOLDER, vec![(0, var(0))])],
+            predicates: vec![Comparison {
+                op: CmpOp::Lt,
+                lhs: var(0),
+                rhs: var(0),
+            }],
+        };
+        let err = validate(&schema(), &query).unwrap_err();
+        assert!(matches!(err, ValidationError::SelfComparison { index: 0 }));
+    }
+
+    #[test]
+    fn rejects_order_operators_on_bool_and_enum() {
+        // Posting.flag is Bool (field 5); Account.status is Enum (field 2).
+        for (rel, field) in [(POSTING, 5u16), (ACCOUNT, 2u16)] {
+            let query = Query {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![
+                    atom(rel, vec![(field, var(0)), (0, var(1))]),
+                    atom(rel, vec![(field, var(2)), (0, var(3))]),
+                ],
+                predicates: vec![Comparison {
+                    op: CmpOp::Lt,
+                    lhs: var(0),
+                    rhs: var(2),
+                }],
+            };
+            let err = validate(&schema(), &query).unwrap_err();
+            assert!(
+                matches!(err, ValidationError::IllegalComparison { index: 0 }),
+                "order ops are integer-only; got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn enum_ordinal_in_a_comparison_reports_the_precise_variant() {
+        // Account.status has 3 variants; ordinal 9 is out of range.
+        let query = Query {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![atom(ACCOUNT, vec![(2, var(0))])],
+            predicates: vec![Comparison {
+                op: CmpOp::Eq,
+                lhs: var(0),
+                rhs: Term::Literal(Value::Enum(9)),
+            }],
+        };
+        let err = validate(&schema(), &query).unwrap_err();
+        assert!(matches!(
+            err,
+            ValidationError::ComparisonEnumOrdinalOutOfRange {
+                index: 0,
+                ordinal: 9
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_aggregate_find_terms() {
+        let query = Query {
+            finds: vec![
+                FindTerm::Aggregate {
+                    op: AggOp::Count,
+                    over: None,
+                },
+                FindTerm::Aggregate {
+                    op: AggOp::Count,
+                    over: None,
+                },
+            ],
+            atoms: vec![atom(HOLDER, vec![(0, var(0))])],
+            predicates: vec![],
+        };
+        let err = validate(&schema(), &query).unwrap_err();
+        assert!(matches!(
+            err,
+            ValidationError::DuplicateFindTerm { index: 1 }
+        ));
+    }
+
+    #[test]
     fn rejects_cross_type_comparison() {
         // U64 var vs I64 var: no silent coercion, ever.
         let query = Query {

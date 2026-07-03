@@ -39,6 +39,11 @@ fn schema() -> Schema {
                         value_type: ValueType::I64,
                         generation: Generation::None,
                     },
+                    FieldDescriptor {
+                        name: "memo".into(),
+                        value_type: ValueType::String,
+                        generation: Generation::None,
+                    },
                 ],
                 constraints: vec![ConstraintDescriptor::ForeignKey {
                     name: "posting_account".into(),
@@ -84,6 +89,7 @@ fn populate(db: &Db<'_>) {
                     Value::U64(id),
                     Value::U64(id % 20),
                     Value::I64((id.cast_signed() % 100) - 50),
+                    Value::String(format!("memo-{}", id % 4).into_bytes().into()),
                 ],
             )?;
         }
@@ -160,6 +166,72 @@ fn aggregate_query() -> Query {
     }
 }
 
+/// Q(holder, memo) :- Posting(account = a, memo), Account(id = a, holder),
+/// memo != "memo-0" — string results through the byte heap, a PendingIntern
+/// literal under Ne, and a projection narrower than the join (the D2
+/// SkipSuffix path live on every duplicate (holder, memo) pair).
+fn string_query() -> Query {
+    Query {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(3))],
+        atoms: vec![
+            Atom {
+                relation: POSTING,
+                bindings: vec![
+                    (FieldId(1), Term::Var(VarId(2))),
+                    (FieldId(3), Term::Var(VarId(3))),
+                ],
+            },
+            Atom {
+                relation: ACCOUNT,
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(2))),
+                    (FieldId(1), Term::Var(VarId(0))),
+                ],
+            },
+        ],
+        predicates: vec![Comparison {
+            op: CmpOp::Ne,
+            lhs: Term::Var(VarId(3)),
+            rhs: Term::Literal(Value::String(Box::from(&b"memo-0"[..]))),
+        }],
+    }
+}
+
+/// Q(holder, Min(amount), Max(amount)) :- ... — the Min/Max aggregate shape.
+fn minmax_query() -> Query {
+    Query {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Min,
+                over: Some(VarId(1)),
+            },
+            FindTerm::Aggregate {
+                op: AggOp::Max,
+                over: Some(VarId(1)),
+            },
+        ],
+        atoms: vec![
+            Atom {
+                relation: POSTING,
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(3))),
+                    (FieldId(1), Term::Var(VarId(2))),
+                    (FieldId(2), Term::Var(VarId(1))),
+                ],
+            },
+            Atom {
+                relation: ACCOUNT,
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(2))),
+                    (FieldId(1), Term::Var(VarId(0))),
+                ],
+            },
+        ],
+        predicates: vec![],
+    }
+}
+
 /// Q(amount) :- Posting(id = ?0, amount) — the guard-probe shape.
 fn guard_query() -> Query {
     Query {
@@ -200,6 +272,11 @@ fn gate(
         alloc_counter::count(),
         0,
         "{label}: a warm execution allocated"
+    );
+    assert_eq!(
+        alloc_counter::dealloc_count(),
+        0,
+        "{label}: a warm execution freed retained capacity"
     );
     assert!(!out.is_empty(), "{label}: the fixture produced rows");
 }
@@ -242,6 +319,15 @@ fn zero_warm_allocation_gate() {
                 &join_params,
             );
         }
+        // String columns, PendingIntern-under-Ne, and the narrow
+        // projection (SkipSuffix live); Min/Max aggregates. Params are
+        // empty: these gate the literal-resolution and byte-heap paths.
+        let no_params = vec![vec![]];
+        let mut strings = db.prepare(&string_query())?;
+        gate("string", &mut strings, snap, &no_params);
+        let mut minmax = db.prepare(&minmax_query())?;
+        gate("minmax", &mut minmax, snap, &no_params);
+
         let mut guard = db.prepare(&guard_query())?;
         gate("guard", &mut guard, snap, &guard_params);
 
