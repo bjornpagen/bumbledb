@@ -181,7 +181,7 @@ pub struct PlanNode {
     pub subatoms: Vec<Subatom>,
     /// Indices into `subatoms` of the valid covers (every subatom
     /// containing all variables new to this node) — the runtime chooses
-    /// among them by key count (§4.4).
+    /// among them magnitude-first by key count (§4.4, docs/perf/06).
     pub covers: Vec<u8>,
     /// Residual comparisons evaluated at this node (both sides bound here
     /// for the first time).

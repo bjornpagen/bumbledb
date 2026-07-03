@@ -529,12 +529,9 @@ impl Executor {
             let sub_idx = usize::from(cover);
             let occ = usize::from(node.subatoms[sub_idx].occ.0);
             let count = colts[occ].key_count(self.cursors[occ].0);
-            let better = match (&best, count) {
-                // An Exact always displaces an Estimate; never vice versa.
-                (None, _) | (Some((_, KeyCount::Estimate(_))), KeyCount::Exact(_)) => true,
-                (Some((_, KeyCount::Exact(_))), KeyCount::Estimate(_)) => false,
-                (Some((_, KeyCount::Exact(b))), KeyCount::Exact(n))
-                | (Some((_, KeyCount::Estimate(b))), KeyCount::Estimate(n)) => n < *b,
+            let better = match &best {
+                None => true,
+                Some((_, incumbent)) => better_cover(count, *incumbent),
             };
             if better {
                 best = Some((sub_idx, count));
@@ -542,6 +539,24 @@ impl Executor {
         }
         best.expect("validated plans have non-empty cover sets").0
     }
+}
+
+/// The magnitude-first cover rule (docs/perf/06): iterating a cover
+/// costs O(its keys) plus a probe into every other subatom per key, and
+/// both labels are admissible bounds on that cost — an `Estimate`
+/// (unforced position count) is exact iteration cost pre-force and an
+/// upper bound on post-force keys. So the smaller magnitude wins
+/// regardless of label; on a tie, `Exact` wins (it cannot shrink); a
+/// full tie keeps the incumbent (lowest subatom index — deterministic).
+/// The old rule — "an Exact always displaces an Estimate" — iterated a
+/// 500-key forced map while a 7-row param-filtered view sat unforced
+/// beside it: the measured wrong-cover in the balance family.
+fn better_cover(candidate: KeyCount, incumbent: KeyCount) -> bool {
+    let (n, b) = (candidate.magnitude(), incumbent.magnitude());
+    n < b
+        || (n == b
+            && matches!(candidate, KeyCount::Exact(_))
+            && matches!(incumbent, KeyCount::Estimate(_)))
 }
 
 #[cfg(test)]
@@ -1289,6 +1304,27 @@ mod tests {
             &mut NoopCounters,
         );
         sink.rows
+    }
+
+    /// The magnitude-first cover rule (docs/perf/06), table-tested: the
+    /// smaller side wins whatever its label; Exact breaks ties; a full
+    /// tie keeps the incumbent.
+    #[test]
+    fn cover_choice_is_magnitude_first() {
+        use KeyCount::{Estimate, Exact};
+        // The measured bug: a 7-row unforced view must beat a 500-key
+        // forced map.
+        assert!(better_cover(Estimate(7), Exact(500)));
+        assert!(!better_cover(Exact(500), Estimate(7)));
+        // Magnitude wins in both label directions.
+        assert!(better_cover(Exact(7), Estimate(500)));
+        assert!(!better_cover(Estimate(500), Exact(7)));
+        // Equal magnitudes: Exact displaces Estimate, never vice versa,
+        // and same-label ties keep the incumbent (deterministic order).
+        assert!(better_cover(Exact(9), Estimate(9)));
+        assert!(!better_cover(Estimate(9), Exact(9)));
+        assert!(!better_cover(Exact(9), Exact(9)));
+        assert!(!better_cover(Estimate(9), Estimate(9)));
     }
 
     /// The randomized differential family (docs/architecture/50-validation.md):

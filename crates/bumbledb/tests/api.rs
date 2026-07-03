@@ -727,3 +727,85 @@ fn disk_size_and_generation_report_store_state() {
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The magnitude-first cover choice (docs/perf/06), end to end: the
+/// balance shape — a big relation joined to a param-selected small side
+/// — must iterate the selected side (7 keys) and probe the big one,
+/// never the reverse. Work is pinned by counters, not wall clock.
+#[test]
+fn cover_choice_iterates_the_selected_side() {
+    use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Term, Value, VarId};
+
+    let dir = test_dir("cover-choice");
+    let db = Db::create(&dir, schema()).expect("create");
+    // 500 holders (ids 0..7 share the name "target"), 20 accounts each.
+    db.write(|tx| {
+        let mut holders = Vec::new();
+        for i in 0..500u64 {
+            let id: HolderId = tx.alloc()?;
+            let name = if i < 7 {
+                "target".to_owned()
+            } else {
+                format!("h{i}")
+            };
+            tx.insert(&Holder { id, name })?;
+            holders.push(id);
+        }
+        for i in 0..10_000u64 {
+            let id: AccountId = tx.alloc()?;
+            tx.insert(&Account {
+                id,
+                holder: holders[usize::try_from(i % 500).expect("small")],
+                balance: i64::try_from(i).expect("fits"),
+            })?;
+        }
+        Ok(())
+    })
+    .expect("populate");
+
+    // Q(h, Sum(balance)) :- Account(holder = h, balance),
+    //                       Holder(id = h, name = ?0).
+    let query = Query {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Sum,
+                over: Some(VarId(1)),
+            },
+        ],
+        atoms: vec![
+            Atom {
+                relation: Account::RELATION,
+                bindings: vec![
+                    (FieldId(1), Term::Var(VarId(0))),
+                    (FieldId(2), Term::Var(VarId(1))),
+                ],
+            },
+            Atom {
+                relation: Holder::RELATION,
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Param(ParamId(0))),
+                ],
+            },
+        ],
+        predicates: vec![],
+    };
+    let mut prepared = db.prepare(&query).expect("prepare");
+    let params = vec![Value::String(Box::from(&b"target"[..]))];
+    let (out, stats) = db
+        .read(|snap| snap.profile(&mut prepared, &params))
+        .expect("profile");
+    assert_eq!(out.len(), 7, "one group per target holder");
+    assert_eq!(stats.emits, 140, "20 accounts x 7 holders reach the sink");
+
+    // The join-variable node iterates the 7-key selected side...
+    let batch_entries: Vec<u64> = stats.nodes.iter().map(|n| n.batch_entries).collect();
+    assert!(
+        batch_entries.contains(&7),
+        "the cover is the selected side: {stats:?}"
+    );
+    // ...and total drawn entries are O(selected), never O(relation).
+    let total: u64 = batch_entries.iter().sum();
+    assert_eq!(total, 147, "7 holder keys + 140 account entries: {stats:?}");
+}

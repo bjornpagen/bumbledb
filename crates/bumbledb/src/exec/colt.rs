@@ -19,14 +19,30 @@ use crate::image::ColumnView;
 /// chunk (the deviation from the paper's growable per-key vectors).
 const CHUNK_LEN: usize = 64;
 
-/// Labeled key count (post-mortem §40: an `Estimate` is duplicate-inflated
-/// by construction; the two must never be compared as the same quantity).
+/// Labeled key count. The label records *what kind* of number this is —
+/// `Exact` counts a forced map's distinct keys; `Estimate` counts an
+/// unforced vector's positions, an **upper bound** on its distinct keys
+/// (duplicate-inflated) and simultaneously the exact cost of iterating
+/// it unforced. Both are admissible iteration-cost bounds, so cover
+/// choice compares magnitudes first and uses the label only to break
+/// ties (docs/perf/06) — label-first preference is exactly the bug that
+/// iterated a 500-key forced map instead of a 7-row view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyCount {
     /// Distinct keys of a forced map.
     Exact(u64),
     /// Position count of an unforced vector (duplicate-inflated).
     Estimate(u64),
+}
+
+impl KeyCount {
+    /// The iteration-cost bound the label qualifies.
+    #[must_use]
+    pub fn magnitude(self) -> u64 {
+        match self {
+            Self::Exact(n) | Self::Estimate(n) => n,
+        }
+    }
 }
 
 /// A reference into the trie: either a real node or a single image
