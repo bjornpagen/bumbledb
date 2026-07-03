@@ -315,10 +315,13 @@ fn zero_warm_allocation_gate() {
     let db = Db::create(&dir, &schema).expect("create");
     populate(&db);
 
+    // Four rotating residual windows: exactly the view memo's capacity
+    // (docs/perf/03) — steady-state rotation must stay allocation-free.
     let join_params = vec![
         vec![Value::I64(-10)],
         vec![Value::I64(0)],
         vec![Value::I64(25)],
+        vec![Value::I64(40)],
     ];
     // The miss (9999) runs first so the last measured execution leaves rows.
     let guard_params = vec![

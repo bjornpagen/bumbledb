@@ -211,20 +211,9 @@ pub struct PreparedQuery<'s> {
     /// Per occurrence: this execution's resolved selection words, in
     /// selection-level order (docs/perf/02), reused.
     resolved_selections: Vec<Vec<u64>>,
-    /// Recycled survivor buffers, one per occurrence.
-    survivor_buffers: Vec<Vec<u32>>,
-    /// Per occurrence: the generation whose image the COLT's current view
-    /// was built from — when it matches the snapshot and the filters are
-    /// unchanged, the view rebuild *and* the COLT reset are skipped
-    /// entirely (forced tries are pure functions of the view).
-    built_generation: Vec<Option<u64>>,
-    /// Per occurrence: the resolved filters the current view was built
-    /// with (capacity-retained; resolved filters carry no boxed constants).
-    built_filters: Vec<Vec<FilterPredicate>>,
-    /// COLT sources, one per occurrence, reset per execution with every
-    /// pool capacity retained (self-joins rebuild their own views from the
-    /// shared image — a duplicated filter pass, no shared buffer).
-    colts: Vec<Colt>,
+    /// The view memo (docs/perf/03): per occurrence, the active binding
+    /// (whose COLT the executor consumes) plus parked bindings under LRU.
+    memo: ViewMemo,
     /// The sink, reset per execution with capacities retained.
     sink: EitherSink,
     /// Aggregate-finalization row scratch.
@@ -333,9 +322,9 @@ pub(crate) fn prepare<'s>(
         ExecPlan::GuardProbe(guard) => (None, guard.vars.len(), 1),
     };
 
-    let colts = {
+    let memo = {
         let _s = obs::span(obs::names::BUILD_COLTS, obs::Category::Prepare);
-        build_colts(txn, cache, schema, &exec_plan)?
+        build_view_memo(txn, cache, schema, &exec_plan)?
     };
     let sink = make_sink(&finds, slot_count, exec_plan.distinct_bindings());
 
@@ -350,10 +339,7 @@ pub(crate) fn prepare<'s>(
         missed_params: Vec::new(),
         resolved_filters: vec![Vec::new(); occurrence_count],
         resolved_selections: vec![Vec::new(); occurrence_count],
-        survivor_buffers: (0..occurrence_count).map(|_| Vec::new()).collect(),
-        built_generation: vec![None; occurrence_count],
-        built_filters: vec![Vec::new(); occurrence_count],
-        colts,
+        memo,
         sink,
         row_scratch: Vec::new(),
         guard_key: Vec::new(),
@@ -363,45 +349,71 @@ pub(crate) fn prepare<'s>(
 
 /// COLT sources with their fixed column schemas; the initial views are
 /// placeholders — every execution resets them against fresh images.
-fn build_colts(
+fn build_view_memo(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
     schema: &Schema,
     exec_plan: &ExecPlan,
-) -> Result<Vec<Colt>> {
-    match exec_plan {
-        ExecPlan::GuardProbe(_) => Ok(Vec::new()),
-        ExecPlan::FreeJoin(plan) => plan
-            .occurrences()
+) -> Result<ViewMemo> {
+    let mut memo = ViewMemo {
+        colts: Vec::new(),
+        generation: Vec::new(),
+        filters: Vec::new(),
+        parked: Vec::new(),
+        spare_buffers: Vec::new(),
+        tick: 0,
+    };
+    let ExecPlan::FreeJoin(plan) = exec_plan else {
+        return Ok(memo); // guard probes never touch views
+    };
+    for occurrence in plan.occurrences() {
+        let image = cache.get_or_build(txn, schema, occurrence.relation)?;
+        let columns: Vec<Vec<usize>> = occurrence
+            .trie_schema
             .iter()
-            .map(|occurrence| {
-                let image = cache.get_or_build(txn, schema, occurrence.relation)?;
-                let columns: Vec<Vec<usize>> = occurrence
-                    .trie_schema
+            .map(|level| {
+                level
                     .iter()
-                    .map(|level| {
-                        level
+                    .map(|var| {
+                        let (field, _) = occurrence
+                            .vars
                             .iter()
-                            .map(|var| {
-                                let (field, _) = occurrence
-                                    .vars
-                                    .iter()
-                                    .find(|(_, v)| v == var)
-                                    .expect("plan vars come from the occurrence");
-                                usize::from(field.0)
-                            })
-                            .collect()
+                            .find(|(_, v)| v == var)
+                            .expect("plan vars come from the occurrence");
+                        usize::from(field.0)
                     })
-                    .collect();
-                let selections: Vec<usize> = occurrence
-                    .selections
-                    .iter()
-                    .map(|s| usize::from(s.field.0))
-                    .collect();
-                Ok(Colt::new(View::All(image), &selections, columns))
+                    .collect()
             })
-            .collect(),
+            .collect();
+        let selections: Vec<usize> = occurrence
+            .selections
+            .iter()
+            .map(|s| usize::from(s.field.0))
+            .collect();
+        memo.colts.push(Colt::new(
+            View::All(std::sync::Arc::clone(&image)),
+            &selections,
+            columns.clone(),
+        ));
+        memo.generation.push(None);
+        memo.filters.push(Vec::new());
+        memo.parked.push(
+            (0..PARKED_SLOTS)
+                .map(|_| ParkedView {
+                    generation: None,
+                    filters: Vec::new(),
+                    colt: Colt::new(
+                        View::All(std::sync::Arc::clone(&image)),
+                        &selections,
+                        columns.clone(),
+                    ),
+                    last_used: 0,
+                })
+                .collect(),
+        );
+        memo.spare_buffers.push(Vec::new());
     }
+    Ok(memo)
 }
 
 /// Derives per-find output specs (slots + result types) from the witness
@@ -511,10 +523,7 @@ impl PreparedQuery<'_> {
                     &mut self.bindings,
                     &self.resolved_filters,
                     &self.resolved_selections,
-                    &mut self.survivor_buffers,
-                    &mut self.built_generation,
-                    &mut self.built_filters,
-                    &mut self.colts,
+                    &mut self.memo,
                     &mut self.sink,
                     &mut NoopCounters,
                 )?;
@@ -629,10 +638,7 @@ impl PreparedQuery<'_> {
                     &mut self.bindings,
                     &self.resolved_filters,
                     &self.resolved_selections,
-                    &mut self.survivor_buffers,
-                    &mut self.built_generation,
-                    &mut self.built_filters,
-                    &mut self.colts,
+                    &mut self.memo,
                     &mut self.sink,
                     &mut counters,
                 )?;
@@ -750,6 +756,85 @@ fn resolve_selection(
     })
 }
 
+/// How many (generation, resolved residual filters) bindings each
+/// occurrence memoizes: the active one plus [`PARKED_SLOTS`] parked.
+/// Four covers the bench rotation and the handful of bindings real
+/// workloads repeat; memory is bounded by four COLT high-waters per
+/// occurrence per prepared query — the explicit trade (docs/perf/03).
+const MEMO_SLOTS: usize = 4;
+const PARKED_SLOTS: usize = MEMO_SLOTS - 1;
+
+/// One parked view binding: a COLT (with its view and forced tries)
+/// keyed by the (generation, resolved residual filters) it was built
+/// for. Swapped — never cloned — with the active binding on a hit.
+struct ParkedView {
+    generation: Option<u64>,
+    filters: Vec<FilterPredicate>,
+    colt: Colt,
+    last_used: u64,
+}
+
+/// The per-occurrence view memo (docs/perf/03): generational
+/// immutability makes a memoized view provably valid for its whole
+/// generation, so repeated residual bindings (range windows, Ne
+/// constants) skip the rebuild scan entirely. Occurrences whose only
+/// predicates are selections never park — their single binding hits on
+/// generation alone (docs/perf/02).
+struct ViewMemo {
+    /// The executor-facing COLTs: each occurrence's *active* binding.
+    colts: Vec<Colt>,
+    /// The active binding's generation, per occurrence.
+    generation: Vec<Option<u64>>,
+    /// The active binding's resolved residual filters, per occurrence.
+    filters: Vec<Vec<FilterPredicate>>,
+    /// Parked bindings, [`PARKED_SLOTS`] per occurrence, LRU-evicted
+    /// (stale generations first — they can never hit again).
+    parked: Vec<Vec<ParkedView>>,
+    /// Spare survivor buffers recycled through rebuilds.
+    spare_buffers: Vec<Vec<u32>>,
+    /// The LRU clock, ticked once per execution.
+    tick: u64,
+}
+
+impl ViewMemo {
+    /// Binds `occ`'s active slot to `(generation, filters)`: an active
+    /// hit is free, a parked hit swaps in, and a miss parks the active
+    /// binding (stale-first, then LRU victim) and reports `false` so the
+    /// caller rebuilds in place.
+    fn bind(&mut self, occ: usize, generation: u64, filters: &[FilterPredicate]) -> bool {
+        if self.generation[occ] == Some(generation) && self.filters[occ] == filters {
+            return true;
+        }
+        if let Some(slot) = self.parked[occ]
+            .iter()
+            .position(|s| s.generation == Some(generation) && s.filters == filters)
+        {
+            let parked = &mut self.parked[occ][slot];
+            std::mem::swap(&mut self.colts[occ], &mut parked.colt);
+            std::mem::swap(&mut self.generation[occ], &mut parked.generation);
+            std::mem::swap(&mut self.filters[occ], &mut parked.filters);
+            parked.last_used = self.tick;
+            return true;
+        }
+        // A current-generation active binding is still hittable — park it
+        // over the best victim. A stale one can never hit again: rebuild
+        // it in place (zero-residual occurrences always land here, so
+        // their parked slots stay untouched forever).
+        if self.generation[occ] == Some(generation) {
+            if let Some(victim) = self.parked[occ]
+                .iter_mut()
+                .min_by_key(|s| (s.generation == Some(generation), s.last_used))
+            {
+                std::mem::swap(&mut self.colts[occ], &mut victim.colt);
+                std::mem::swap(&mut self.generation[occ], &mut victim.generation);
+                std::mem::swap(&mut self.filters[occ], &mut victim.filters);
+                victim.last_used = self.tick;
+            }
+        }
+        false
+    }
+}
+
 /// Resets the owned COLT sources against this execution's images and
 /// views (buffer ping-pong: old survivor buffers recycle into the new
 /// views), then runs the join into the sink.
@@ -764,15 +849,13 @@ fn run_join<C: crate::exec::run::Counters>(
     bindings: &mut Bindings,
     resolved_filters: &[Vec<FilterPredicate>],
     resolved_selections: &[Vec<u64>],
-    survivor_buffers: &mut [Vec<u32>],
-    built_generation: &mut [Option<u64>],
-    built_filters: &mut [Vec<FilterPredicate>],
-    colts: &mut [Colt],
+    memo: &mut ViewMemo,
     sink: &mut EitherSink,
     counters: &mut C,
 ) -> Result<()> {
     let views_span = obs::span(obs::names::VIEWS, obs::Category::Execute);
     let generation = txn.generation()?;
+    memo.tick += 1;
     // Lowering routes every Eq-constant into selections; a leak here would
     // silently resurrect the per-param view scan (docs/perf/02).
     debug_assert!(
@@ -786,14 +869,12 @@ fn run_join<C: crate::exec::run::Counters>(
         "Eq-constant predicates never reach view filters"
     );
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
-        // Warm fast path: same generation, same resolved residual
-        // filters — the COLT's view is still exactly right, and so are
-        // its forced tries (selections live in the trie, not the view,
-        // so param churn never lands here). No cache lock, no filter
-        // scan, no re-force.
-        if built_generation[occ_idx] == Some(generation)
-            && built_filters[occ_idx] == resolved_filters[occ_idx]
-        {
+        // Warm fast path: an active or parked binding for this exact
+        // (generation, resolved residual filters) pair — the COLT's view
+        // is still exactly right, and so are its forced tries (selections
+        // live in the trie, not the view, so param churn never lands
+        // here). No cache lock, no filter scan, no re-force.
+        if memo.bind(occ_idx, generation, &resolved_filters[occ_idx]) {
             obs::event(
                 obs::names::VIEW_MEMO_HIT,
                 obs::Category::Execute,
@@ -809,13 +890,13 @@ fn run_join<C: crate::exec::run::Counters>(
             0,
         );
         let image = cache.get_or_build(txn, schema, occurrence.relation)?;
-        let buffer = std::mem::take(&mut survivor_buffers[occ_idx]);
+        let buffer = std::mem::take(&mut memo.spare_buffers[occ_idx]);
         let view = apply(&image, &resolved_filters[occ_idx], &[], buffer);
         build_span.set_args(occ_idx as u64, view.len() as u64);
-        let old = colts[occ_idx].reset(view);
-        survivor_buffers[occ_idx] = old.recycle();
-        built_generation[occ_idx] = Some(generation);
-        built_filters[occ_idx].clone_from(&resolved_filters[occ_idx]);
+        let old = memo.colts[occ_idx].reset(view);
+        memo.spare_buffers[occ_idx] = old.recycle();
+        memo.generation[occ_idx] = Some(generation);
+        memo.filters[occ_idx].clone_from(&resolved_filters[occ_idx]);
     }
     views_span.end();
     // Selection probes (docs/perf/02): each occurrence's Eq constants
@@ -823,7 +904,7 @@ fn run_join<C: crate::exec::run::Counters>(
     // fact matches, so the whole conjunctive query is empty and the join
     // never runs (the sink stays reset: a zero-emit execution).
     for (occ_idx, keys) in resolved_selections.iter().enumerate() {
-        let hit = colts[occ_idx].select(keys).is_some();
+        let hit = memo.colts[occ_idx].select(keys).is_some();
         obs::event(
             obs::names::SELECT_PROBE,
             obs::Category::Execute,
@@ -838,8 +919,8 @@ fn run_join<C: crate::exec::run::Counters>(
     // One match per execution: the executor monomorphizes per concrete
     // sink type — no per-emit enum branch on the hot path.
     match sink {
-        EitherSink::Projection(s) => executor.execute(plan, colts, bindings, s, counters),
-        EitherSink::Aggregate(s) => executor.execute(plan, colts, bindings, s, counters),
+        EitherSink::Projection(s) => executor.execute(plan, &mut memo.colts, bindings, s, counters),
+        EitherSink::Aggregate(s) => executor.execute(plan, &mut memo.colts, bindings, s, counters),
     }
     Ok(())
 }
@@ -1548,6 +1629,133 @@ mod tests {
         assert_eq!(out.len(), 4);
         let drawn: u64 = stats.nodes.iter().map(|n| n.batch_entries).sum();
         assert_eq!(drawn, 4, "work is O(selected), not O(relation): {stats:?}");
+    }
+
+    /// The view-memo LRU (docs/perf/03): four rotating residual bindings
+    /// all memoize; a fifth evicts exactly the least recently used.
+    #[cfg(feature = "trace")]
+    #[test]
+    fn residual_bindings_memoize_under_lru() {
+        use crate::obs;
+
+        let dir = TempDir::new("prepared-lru-trace");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        insert_postings(
+            &env,
+            &schema,
+            &[
+                (1, 7, "a", 10),
+                (2, 7, "b", 20),
+                (3, 7, "c", 30),
+                (4, 7, "d", 40),
+                (5, 7, "e", 50),
+                (6, 7, "f", 60),
+            ],
+        );
+        let cache = ImageCache::new();
+        let txn = env.read_txn().expect("txn");
+        let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
+        let params = |floor: i64| vec![Value::U64(7), Value::I64(floor)];
+        let windows = [-100, 15, 25, 35];
+
+        let mut run = |floor: i64| -> (usize, usize, Vec<(String, i64)>) {
+            obs::start_capture();
+            let out = prepared
+                .execute_collect(&txn, &cache, &params(floor))
+                .expect("execute");
+            let events = obs::finish_capture();
+            let builds = events
+                .iter()
+                .filter(|e| e.name == obs::names::VIEW_BUILD)
+                .count();
+            let hits = events
+                .iter()
+                .filter(|e| e.name == obs::names::VIEW_MEMO_HIT)
+                .count();
+            (builds, hits, rows_of(&out))
+        };
+        let expected = |floor: i64| -> Vec<(String, i64)> {
+            let rows = [
+                ("a", 10),
+                ("b", 20),
+                ("c", 30),
+                ("d", 40),
+                ("e", 50),
+                ("f", 60),
+            ];
+            let mut expected: Vec<(String, i64)> = rows
+                .iter()
+                .filter(|(_, amount)| *amount >= floor)
+                .map(|(memo, amount)| ((*memo).to_owned(), *amount))
+                .collect();
+            expected.sort_unstable();
+            expected
+        };
+
+        // First cycle: every window builds once (differentially checked).
+        for floor in windows {
+            let (builds, _, rows) = run(floor);
+            assert_eq!(builds, 1, "first sight of window {floor} builds");
+            assert_eq!(rows, expected(floor));
+        }
+        // Second cycle: every window hits — active or parked.
+        for floor in windows {
+            let (builds, hits, rows) = run(floor);
+            assert_eq!(builds, 0, "window {floor} memoized");
+            assert_eq!(hits, 1);
+            assert_eq!(rows, expected(floor));
+        }
+        // A fifth window evicts the least recently used (floor -100).
+        let (builds, _, rows) = run(45);
+        assert_eq!(builds, 1, "the fifth binding builds");
+        assert_eq!(rows, expected(45));
+        // The most recent of the old four still hits...
+        let (builds, hits, _) = run(35);
+        assert_eq!((builds, hits), (0, 1), "most recent old binding kept");
+        // ...and the least recent was the eviction victim.
+        let (builds, _, rows) = run(-100);
+        assert_eq!(builds, 1, "least recent binding was evicted");
+        assert_eq!(rows, expected(-100));
+    }
+
+    /// A generation bump invalidates every memoized binding, and the
+    /// rebuilt view reflects the new fact.
+    #[cfg(feature = "trace")]
+    #[test]
+    fn a_generation_bump_invalidates_the_memo() {
+        use crate::obs;
+
+        let dir = TempDir::new("prepared-lru-generation");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        insert_postings(&env, &schema, &[(1, 7, "old", 10)]);
+        let cache = ImageCache::new();
+        let txn = env.read_txn().expect("txn");
+        let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
+        let params = vec![Value::U64(7), Value::I64(0)];
+        let out = prepared
+            .execute_collect(&txn, &cache, &params)
+            .expect("execute");
+        assert_eq!(out.len(), 1);
+        drop(txn);
+
+        insert_postings(&env, &schema, &[(2, 7, "new", 20)]);
+        let txn = env.read_txn().expect("txn");
+        obs::start_capture();
+        let out = prepared
+            .execute_collect(&txn, &cache, &params)
+            .expect("execute");
+        let events = obs::finish_capture();
+        assert!(
+            events.iter().any(|e| e.name == obs::names::VIEW_BUILD),
+            "the stale binding rebuilds in place"
+        );
+        assert_eq!(
+            rows_of(&out),
+            vec![("new".to_owned(), 20), ("old".to_owned(), 10)],
+            "the rebuilt view carries the new fact"
+        );
     }
 
     /// The scan is dead (docs/perf/02): rotating Eq params build the view
