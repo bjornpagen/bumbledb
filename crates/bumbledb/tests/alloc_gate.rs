@@ -278,6 +278,12 @@ fn gate(
         0,
         "{label}: a warm execution freed retained capacity"
     );
+    let bytes = alloc_counter::snapshot();
+    assert_eq!(
+        (bytes.alloc_bytes, bytes.dealloc_bytes),
+        (0, 0),
+        "{label}: warm byte totals must be zero too"
+    );
     assert!(!out.is_empty(), "{label}: the fixture produced rows");
 }
 
