@@ -8,5 +8,7 @@
 //! statistics, argument parsing, and randomness are hand-rolled.
 
 pub mod cli;
+pub mod corpus;
 pub mod gen;
 pub mod schema;
+pub mod sqlmap;
