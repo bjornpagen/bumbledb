@@ -122,9 +122,9 @@ impl ResultBuffer {
             ValueType::U64 => Cell::U64(word),
             ValueType::I64 => Cell::I64((word ^ (1 << 63)).cast_signed()),
             ValueType::String => {
-                let raw = dict::resolve(txn, word)?;
+                let raw = dict::resolve(txn, word, dict::TAG_STRING)?;
                 std::str::from_utf8(raw).map_err(|_| {
-                    Error::Corruption(crate::error::CorruptionError::DanglingInternId(word))
+                    Error::Corruption(crate::error::CorruptionError::NonUtf8Intern(word))
                 })?;
                 let start = self.bytes.len();
                 self.bytes.extend_from_slice(raw);
@@ -134,7 +134,7 @@ impl ResultBuffer {
                 }
             }
             ValueType::Bytes => {
-                let raw = dict::resolve(txn, word)?;
+                let raw = dict::resolve(txn, word, dict::TAG_BYTES)?;
                 let start = self.bytes.len();
                 self.bytes.extend_from_slice(raw);
                 Cell::Bytes {
@@ -158,10 +158,14 @@ pub struct PreparedQuery<'s> {
     bindings: Bindings,
     /// Per find term: the output spec and its result type.
     finds: Vec<(FindSpec, ValueType)>,
-    /// Dense per-param expected types (`None` = the id never appears).
-    param_types: Vec<Option<ValueType>>,
+    /// Dense per-param expected types (validation rejects id gaps).
+    param_types: Vec<ValueType>,
     /// Bind-time resolved constants, reused across executions.
     resolved_params: Vec<Const>,
+    /// Per param: whether this execution's value missed the dictionary
+    /// (String/Bytes only). A missed value under `Eq` short-circuits to an
+    /// empty result; under `Ne` the sentinel word matches everything.
+    missed_params: Vec<bool>,
     /// Per occurrence: filters with symbolic constants substituted, reused.
     resolved_filters: Vec<Vec<FilterPredicate>>,
     /// Recycled survivor buffers, one per occurrence.
@@ -226,7 +230,7 @@ pub(crate) fn prepare<'s>(
                 rows,
             });
         }
-        let order = plan_order(&normalized, schema, &stats)?;
+        let order = plan_order(&normalized, schema, &stats);
         let mut fj = binary2fj(&normalized, &order);
         factor(&mut fj);
         let sink_vars = witness.group_key().clone();
@@ -243,16 +247,9 @@ pub(crate) fn prepare<'s>(
 
     let finds = find_specs(query, &witness, &exec_plan);
 
-    // Dense param typing for bind-time checks.
-    let max_param = witness
-        .param_types()
-        .map(|(p, _)| usize::from(p.0) + 1)
-        .max()
-        .unwrap_or(0);
-    let mut param_types: Vec<Option<ValueType>> = vec![None; max_param];
-    for (param, ty) in witness.param_types() {
-        param_types[usize::from(param.0)] = Some(ty.clone());
-    }
+    // Dense param typing for bind-time checks (validation rejected gaps,
+    // so the id-ordered iteration is positional).
+    let param_types: Vec<ValueType> = witness.param_types().map(|(_, ty)| ty.clone()).collect();
 
     let (executor, slot_count, occurrence_count) = match &exec_plan {
         ExecPlan::FreeJoin(plan) => (
@@ -274,6 +271,7 @@ pub(crate) fn prepare<'s>(
         finds,
         param_types,
         resolved_params: Vec::new(),
+        missed_params: Vec::new(),
         resolved_filters: vec![Vec::new(); occurrence_count],
         survivor_buffers: (0..occurrence_count).map(|_| Vec::new()).collect(),
         colts,
@@ -380,9 +378,7 @@ impl PreparedQuery<'_> {
     ) -> Result<()> {
         out.clear();
         out.arity = self.finds.len();
-        if !self.bind_params(txn, params)? {
-            return Ok(()); // dictionary miss: empty result
-        }
+        self.bind_params(txn, params)?;
         self.sink.reset();
         match &self.plan {
             ExecPlan::GuardProbe(guard) => {
@@ -397,8 +393,14 @@ impl PreparedQuery<'_> {
                 )?;
             }
             ExecPlan::FreeJoin(plan) => {
-                if !resolve_filters(txn, plan, &self.resolved_params, &mut self.resolved_filters)? {
-                    return Ok(()); // intern miss: empty result
+                if !resolve_filters(
+                    txn,
+                    plan,
+                    &self.resolved_params,
+                    &self.missed_params,
+                    &mut self.resolved_filters,
+                )? {
+                    return Ok(()); // Eq-anchored dictionary miss: empty result
                 }
                 run_join(
                     plan,
@@ -461,18 +463,18 @@ impl PreparedQuery<'_> {
             return Ok((out, report));
         }
         // Bind before borrowing the plan (bind_params takes &mut self).
-        let bound = self.bind_params(txn, params)?;
+        self.bind_params(txn, params)?;
         match &self.plan {
             ExecPlan::GuardProbe(_) => unreachable!("handled above"),
             ExecPlan::FreeJoin(plan) => {
                 let mut counters = CountingCounters::new(plan);
-                let short_circuit = !bound
-                    || !resolve_filters(
-                        txn,
-                        plan,
-                        &self.resolved_params,
-                        &mut self.resolved_filters,
-                    )?;
+                let short_circuit = !resolve_filters(
+                    txn,
+                    plan,
+                    &self.resolved_params,
+                    &self.missed_params,
+                    &mut self.resolved_filters,
+                )?;
                 if short_circuit {
                     let report = format!("{}", Report::FreeJoin { plan, counters });
                     return Ok((out, report));
@@ -517,7 +519,7 @@ impl PreparedQuery<'_> {
 
     /// Binds and converts parameters; `Ok(false)` = a String/Bytes value
     /// that was never interned (the query is empty on this snapshot).
-    fn bind_params(&mut self, txn: &ReadTxn<'_>, params: &[Value]) -> Result<bool> {
+    fn bind_params(&mut self, txn: &ReadTxn<'_>, params: &[Value]) -> Result<()> {
         if params.len() != self.param_types.len() {
             return Err(Error::ParamCountMismatch {
                 expected: self.param_types.len(),
@@ -525,32 +527,32 @@ impl PreparedQuery<'_> {
             });
         }
         self.resolved_params.clear();
+        self.missed_params.clear();
         for (idx, value) in params.iter().enumerate() {
-            let Some(expected) = &self.param_types[idx] else {
-                self.resolved_params.push(Const::Word(0)); // unused hole id
-                continue;
-            };
-            let Some(resolved) = bind_param(txn, idx, value, expected)? else {
-                return Ok(false);
-            };
+            let (resolved, missed) = bind_param(txn, idx, value, &self.param_types[idx])?;
             self.resolved_params.push(resolved);
+            self.missed_params.push(missed);
         }
-        Ok(true)
+        Ok(())
     }
 }
 
 /// Resolves every occurrence's symbolic filter constants for this
-/// execution; `Ok(false)` = a `PendingIntern` missed the dictionary.
+/// execution; `Ok(false)` = a dictionary miss under an `Eq` filter, which
+/// empties the whole conjunctive query (the short-circuit is sound for
+/// `Eq` only — a missed value under `Ne` resolves to the sentinel id and
+/// matches everything).
 fn resolve_filters(
     txn: &ReadTxn<'_>,
     plan: &crate::plan::fj::ValidatedPlan,
     params: &[Const],
+    missed: &[bool],
     out: &mut [Vec<FilterPredicate>],
 ) -> Result<bool> {
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
         out[occ_idx].clear();
         for filter in &occurrence.filters {
-            let Some(resolved) = resolve_filter(txn, filter, params)? else {
+            let Some(resolved) = resolve_filter(txn, filter, params, missed)? else {
                 return Ok(false);
             };
             out[occ_idx].push(resolved);
@@ -638,62 +640,69 @@ impl Sink for EitherSink {
     }
 }
 
-/// Converts a bound param value to column form. `Ok(None)` = a String or
-/// Bytes value that was never interned: the query is empty on this
-/// snapshot.
+/// Converts a bound param value to column form. A String or Bytes value
+/// that was never interned resolves to the sentinel intern id, flagged
+/// `missed` so `Eq` uses can short-circuit to the empty result.
 fn bind_param(
     txn: &ReadTxn<'_>,
     index: usize,
     value: &Value,
     expected: &ValueType,
-) -> Result<Option<Const>> {
-    let mismatch = || Error::ParamTypeMismatch {
-        param: ParamId(u16::try_from(index).expect("param ids fit u16")),
-    };
-    let resolved = match (value, expected) {
-        (Value::Bool(v), ValueType::Bool) => Const::Byte(u8::from(*v)),
-        (Value::Enum(ordinal), ValueType::Enum { variants }) => {
-            if usize::from(*ordinal) >= variants.len() {
-                return Err(mismatch());
-            }
-            Const::Byte(*ordinal)
-        }
-        (Value::U64(v), ValueType::U64) => Const::Word(*v),
-        (Value::I64(v), ValueType::I64) => {
-            Const::Word(u64::from_be_bytes(crate::encoding::encode_i64(*v)))
-        }
-        (Value::String(bytes), ValueType::String) => {
-            let text = std::str::from_utf8(bytes).map_err(|_| mismatch())?;
+) -> Result<(Const, bool)> {
+    // The shared compatibility check (kind, enum range, UTF-8) — one rule
+    // with validation and the dynamic write path.
+    if crate::ir::value_matches(value, expected).is_err() {
+        return Err(Error::ParamTypeMismatch {
+            param: ParamId(u16::try_from(index).expect("param ids fit u16")),
+            expected: expected.clone(),
+        });
+    }
+    let resolved = match value {
+        Value::Bool(v) => Const::Byte(u8::from(*v)),
+        Value::Enum(ordinal) => Const::Byte(*ordinal),
+        Value::U64(v) => Const::Word(*v),
+        Value::I64(v) => Const::Word(u64::from_be_bytes(crate::encoding::encode_i64(*v))),
+        Value::String(bytes) => {
+            let text = std::str::from_utf8(bytes).expect("value_matches validated UTF-8");
             match dict::lookup_str(txn, text)? {
                 Some(id) => Const::Word(id),
-                None => return Ok(None),
+                None => return Ok((Const::Word(dict::SENTINEL_ID), true)),
             }
         }
-        (Value::Bytes(bytes), ValueType::Bytes) => match dict::lookup_bytes(txn, bytes)? {
+        Value::Bytes(bytes) => match dict::lookup_bytes(txn, bytes)? {
             Some(id) => Const::Word(id),
-            None => return Ok(None),
+            None => return Ok((Const::Word(dict::SENTINEL_ID), true)),
         },
-        _ => return Err(mismatch()),
     };
-    Ok(Some(resolved))
+    Ok((resolved, false))
 }
 
 /// Substitutes symbolic constants into an executable filter. `Ok(None)` =
-/// a `PendingIntern` missed the dictionary.
+/// a dictionary miss under `Eq` (the whole-query empty short-circuit); a
+/// miss under any other operator resolves to the sentinel intern id, whose
+/// word comparison yields the correct per-operator semantics (`Ne` matches
+/// every stored value).
 fn resolve_filter(
     txn: &ReadTxn<'_>,
     filter: &FilterPredicate,
     params: &[Const],
+    missed: &[bool],
 ) -> Result<Option<FilterPredicate>> {
     let FilterPredicate::Compare { field, op, value } = filter else {
         return Ok(Some(filter.clone()));
     };
     let resolved = match value {
         Const::Word(_) | Const::Byte(_) => value.clone(),
-        Const::Param(p) => params[usize::from(p.0)].clone(),
+        Const::Param(p) => {
+            if missed[usize::from(p.0)] && *op == crate::ir::CmpOp::Eq {
+                return Ok(None);
+            }
+            params[usize::from(p.0)].clone()
+        }
         Const::PendingIntern { tag, bytes } => match dict::lookup_tagged(txn, *tag, bytes)? {
             Some(id) => Const::Word(id),
-            None => return Ok(None),
+            None if *op == crate::ir::CmpOp::Eq => return Ok(None),
+            None => Const::Word(dict::SENTINEL_ID),
         },
     };
     Ok(Some(FilterPredicate::Compare {
@@ -913,7 +922,7 @@ mod tests {
             .execute(&txn, &cache, &[Value::I64(7), Value::I64(0)], &mut out)
             .unwrap_err();
         assert!(
-            matches!(err, Error::ParamTypeMismatch { param } if param.0 == 0),
+            matches!(err, Error::ParamTypeMismatch { param, .. } if param.0 == 0),
             "{err:?}"
         );
     }
@@ -965,6 +974,71 @@ mod tests {
                 &[Value::String(Box::from(&b"groceries"[..]))],
                 &mut out,
             )
+            .expect("execute");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.get(0, 0), ResultValue::I64(-55));
+    }
+
+    /// Regression for the `Ne`-miss semantics
+    /// (docs/architecture/20-query-ir.md): a never-interned value under
+    /// `Ne` matches every stored row — the miss resolves to the sentinel
+    /// intern id, not to an empty result. The old blanket "miss ⇒ empty"
+    /// rule silently returned nothing here.
+    #[test]
+    fn ne_against_a_never_interned_string_matches_everything() {
+        let dir = TempDir::new("prepared-ne-miss");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        insert_postings(&env, &schema, &[(1, 7, "rent", -1200), (2, 9, "food", -55)]);
+        let cache = ImageCache::new();
+
+        // Literal path: Q(amount) :- Posting(memo = m, amount), m != "ghost".
+        let query = Query {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                relation: POSTING,
+                bindings: vec![
+                    (FieldId(2), Term::Var(VarId(1))),
+                    (FieldId(3), Term::Var(VarId(0))),
+                ],
+            }],
+            predicates: vec![Comparison {
+                op: CmpOp::Ne,
+                lhs: Term::Var(VarId(1)),
+                rhs: Term::Literal(Value::String(Box::from(&b"ghost"[..]))),
+            }],
+        };
+        let txn = env.read_txn().expect("txn");
+        let mut prepared = prepare(&txn, &schema, &query).expect("prepare");
+        let out = prepared
+            .execute_collect(&txn, &cache, &[])
+            .expect("execute");
+        assert_eq!(out.len(), 2, "no stored memo equals a never-interned value");
+
+        // Param path: Q(amount) :- Posting(memo = m, amount), m != ?0.
+        let query = Query {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                relation: POSTING,
+                bindings: vec![
+                    (FieldId(2), Term::Var(VarId(1))),
+                    (FieldId(3), Term::Var(VarId(0))),
+                ],
+            }],
+            predicates: vec![Comparison {
+                op: CmpOp::Ne,
+                lhs: Term::Var(VarId(1)),
+                rhs: Term::Param(crate::ir::ParamId(0)),
+            }],
+        };
+        let mut prepared = prepare(&txn, &schema, &query).expect("prepare");
+        let out = prepared
+            .execute_collect(&txn, &cache, &[Value::String(Box::from(&b"ghost"[..]))])
+            .expect("execute");
+        assert_eq!(out.len(), 2);
+        // An interned value under Ne excludes exactly its rows.
+        let out = prepared
+            .execute_collect(&txn, &cache, &[Value::String(Box::from(&b"rent"[..]))])
             .expect("execute");
         assert_eq!(out.len(), 1);
         assert_eq!(out.get(0, 0), ResultValue::I64(-55));

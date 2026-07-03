@@ -38,6 +38,50 @@ pub enum Value {
     Bytes(Box<[u8]>),
 }
 
+/// How a [`Value`] failed to match an expected [`crate::schema::ValueType`]
+/// — the shared vocabulary of the three checking boundaries (query
+/// literals, bound params, dynamic facts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ValueMismatch {
+    /// Wrong structural kind.
+    Type,
+    /// Enum ordinal at or beyond the variant count.
+    EnumOrdinal(u8),
+    /// `Value::String` bytes are not UTF-8 (the type's contract).
+    Utf8,
+}
+
+/// The one `Value` ↔ `ValueType` compatibility check (kind, enum ordinal
+/// range, String UTF-8) — validation, bind-time, and the dynamic write
+/// path all call this so the rules cannot drift apart.
+pub(crate) fn value_matches(
+    value: &Value,
+    expected: &crate::schema::ValueType,
+) -> Result<(), ValueMismatch> {
+    use crate::schema::ValueType;
+    match (value, expected) {
+        (Value::Bool(_), ValueType::Bool)
+        | (Value::U64(_), ValueType::U64)
+        | (Value::I64(_), ValueType::I64)
+        | (Value::Bytes(_), ValueType::Bytes) => Ok(()),
+        (Value::String(raw), ValueType::String) => {
+            if std::str::from_utf8(raw).is_ok() {
+                Ok(())
+            } else {
+                Err(ValueMismatch::Utf8)
+            }
+        }
+        (Value::Enum(ordinal), ValueType::Enum { variants }) => {
+            if usize::from(*ordinal) < variants.len() {
+                Ok(())
+            } else {
+                Err(ValueMismatch::EnumOrdinal(*ordinal))
+            }
+        }
+        _ => Err(ValueMismatch::Type),
+    }
+}
+
 /// One term of an atom binding or comparison.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Term {

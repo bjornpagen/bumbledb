@@ -11,7 +11,9 @@
 //!  4. variable type conflicts (structural)
 //!  5. literal-vs-field type mismatches
 //!  6. enum ordinal out of range for the field's variant list
-//!  7. param anchor conflicts / unanchored params
+//!  7. param anchor conflicts (an *unanchored* param is unwritable by
+//!     construction: every param position is itself an anchor) and
+//!     non-dense param ids
 //!  8. comparisons violating the type rules (Eq/Ne all types; order ops
 //!     U64/U64 and I64/I64 only; no cross-type, ever)
 //!  9. constant comparisons (no variable side)
@@ -22,11 +24,14 @@
 //! 14. no atoms
 //! 15. aggregate input types (Sum/Min/Max integers only; Count nullary)
 //! 16. aggregate over a group-key variable
+//! 17. planner caps: more than `MAX_OCCURRENCES` atoms or more than 128
+//!     distinct variables (rejected here so downstream id widths and
+//!     bitset sizes are true invariants)
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::ValidationError;
-use crate::ir::{AggOp, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
+use crate::ir::{AggOp, CmpOp, Comparison, FindTerm, ParamId, Query, Term, VarId};
 use crate::schema::{Schema, ValueType};
 
 /// The sealed witness: the query plus the derived tables downstream layers
@@ -72,30 +77,10 @@ impl ValidatedQuery {
 }
 
 /// The structural type of a literal, for matching against a field or
-/// variable type. Enum literals carry only an ordinal, so they match any
-/// enum type whose variant list covers the ordinal.
-fn literal_matches(value: &Value, expected: &ValueType) -> Result<(), LiteralMismatch> {
-    match (value, expected) {
-        (Value::Bool(_), ValueType::Bool)
-        | (Value::U64(_), ValueType::U64)
-        | (Value::I64(_), ValueType::I64)
-        | (Value::String(_), ValueType::String)
-        | (Value::Bytes(_), ValueType::Bytes) => Ok(()),
-        (Value::Enum(ordinal), ValueType::Enum { variants }) => {
-            if usize::from(*ordinal) < variants.len() {
-                Ok(())
-            } else {
-                Err(LiteralMismatch::EnumOrdinal(*ordinal))
-            }
-        }
-        _ => Err(LiteralMismatch::Type),
-    }
-}
-
-enum LiteralMismatch {
-    Type,
-    EnumOrdinal(u8),
-}
+/// variable type — the shared [`crate::ir::value_matches`] check, so a
+/// non-UTF-8 `String` literal is a type mismatch here exactly as it is at
+/// bind time and on the dynamic write path.
+use crate::ir::{value_matches as literal_matches, ValueMismatch as LiteralMismatch};
 
 /// Whether the operator is legal for the type: `Eq`/`Ne` everywhere, order
 /// operators only over the two integer types.
@@ -120,6 +105,15 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
     if query.atoms.is_empty() {
         return Err(ValidationError::NoAtoms);
     }
+    // The planner caps are roster items: rejected here, at the boundary,
+    // so nothing downstream (normalize's u16 occurrence ids, the DP's
+    // bitmask table, the 128-bit variable bitsets) ever sees an
+    // over-limit query.
+    if query.atoms.len() > crate::plan::planner::MAX_OCCURRENCES {
+        return Err(ValidationError::TooManyAtoms {
+            count: query.atoms.len(),
+        });
+    }
     for (index, term) in query.finds.iter().enumerate() {
         if query.finds[..index].contains(term) {
             return Err(ValidationError::DuplicateFindTerm { index });
@@ -130,6 +124,11 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
     ctx.check_atoms(schema, query)?;
     ctx.check_comparisons(query)?;
     ctx.check_finds(query)?;
+    if ctx.var_types.len() > crate::plan::planner::MAX_DISTINCT_VARS {
+        return Err(ValidationError::TooManyVariables {
+            count: ctx.var_types.len(),
+        });
+    }
 
     let group_key: BTreeSet<VarId> = query
         .finds
@@ -222,7 +221,9 @@ impl Context {
                     Term::Param(param) => self.anchor_param(*param, field_type)?,
                     Term::Literal(value) => match literal_matches(value, field_type) {
                         Ok(()) => {}
-                        Err(LiteralMismatch::Type) => {
+                        // A non-UTF-8 String literal is a type mismatch:
+                        // `Value::String` documents the UTF-8 contract.
+                        Err(LiteralMismatch::Type | LiteralMismatch::Utf8) => {
                             return Err(ValidationError::LiteralTypeMismatch {
                                 atom: atom_idx,
                                 field: *field,
@@ -272,12 +273,20 @@ impl Context {
                 },
             }
         }
-        // Every param must have found an anchor by now. (Anchors come from
-        // field bindings and comparisons against typed terms; a param only
-        // ever compared to another param was already a constant comparison.)
-        for param in &self.params_seen {
-            if !self.param_types.contains_key(param) {
-                return Err(ValidationError::ParamUnanchored { param: *param });
+        // A param with no anchor is unwritable by construction: every
+        // param position is itself an anchor (a field binding types it
+        // immediately; a comparison against a variable types it via the
+        // variable; param-only comparisons are already
+        // `ConstantComparison`) — the roster item is discharged by
+        // representation, not by a check.
+        //
+        // Param ids must be dense: a gap would be a positional slot at
+        // execution whose supplied value is never type-checked.
+        for (position, param) in self.params_seen.iter().enumerate() {
+            if usize::from(param.0) != position {
+                return Err(ValidationError::ParamIdGap {
+                    param: ParamId(u16::try_from(position).expect("param ids fit u16")),
+                });
             }
         }
         Ok(())
@@ -329,6 +338,7 @@ impl Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::Value;
     use crate::schema::{
         ConstraintDescriptor, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId,
         SchemaDescriptor,
@@ -790,13 +800,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unanchored_param() {
-        // A param whose only appearances give it no type. The one shape
-        // that reaches the unanchored check is a param never compared and
-        // never field-bound... which cannot appear in a query at all — so
-        // the closest reachable shape is a param anchored only through an
-        // illegal constant comparison, rejected earlier. Anchoring through
-        // a variable keeps this reachable:
+    fn param_anchoring_is_total_by_construction() {
+        // An unanchored param is unwritable: a param in an atom binding is
+        // typed by its field; a param in a comparison is typed by the
+        // variable side (a variable-free comparison is already
+        // `ConstantComparison`). This pins the anchored case; the roster
+        // item is discharged by representation, not by a check.
         let query = Query {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![atom(HOLDER, vec![(0, var(0))])],
@@ -806,11 +815,71 @@ mod tests {
                 rhs: Term::Param(ParamId(0)),
             }],
         };
-        // This one *is* anchored (against var 0's U64): accepted.
         let witness = validate(&schema(), &query).expect("valid");
         assert_eq!(
             witness.param_types().next(),
             Some((ParamId(0), &ValueType::U64))
         );
+    }
+
+    #[test]
+    fn rejects_sparse_param_ids() {
+        // ?1 without ?0: the gap would be an unchecked positional slot.
+        let query = Query {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![atom(
+                HOLDER,
+                vec![(0, var(0)), (1, Term::Param(ParamId(1)))],
+            )],
+            predicates: vec![],
+        };
+        let err = validate(&schema(), &query).unwrap_err();
+        assert!(matches!(err, ValidationError::ParamIdGap { param } if param.0 == 0));
+    }
+
+    #[test]
+    fn rejects_more_atoms_than_the_planner_cap_at_the_boundary() {
+        let over = crate::plan::planner::MAX_OCCURRENCES + 1;
+        let query = Query {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: (0..over).map(|_| atom(HOLDER, vec![(0, var(0))])).collect(),
+            predicates: vec![],
+        };
+        let err = validate(&schema(), &query).unwrap_err();
+        assert!(matches!(err, ValidationError::TooManyAtoms { count } if count == over));
+    }
+
+    #[test]
+    fn rejects_more_distinct_variables_than_the_bitset_at_the_boundary() {
+        // One 129-field relation binds 129 fresh variables in a single
+        // atom — past the executor's 128-bit variable bitsets.
+        let wide = SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "Wide".into(),
+                fields: (0..129)
+                    .map(|i| FieldDescriptor {
+                        name: format!("f{i}").into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    })
+                    .collect(),
+                constraints: vec![],
+            }],
+        }
+        .validate()
+        .expect("wide fixture");
+        let query = Query {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![crate::ir::Atom {
+                relation: RelationId(0),
+                bindings: (0..129u16).map(|i| (FieldId(i), var(i))).collect(),
+            }],
+            predicates: vec![],
+        };
+        let err = validate(&wide, &query).unwrap_err();
+        assert!(matches!(
+            err,
+            ValidationError::TooManyVariables { count: 129 }
+        ));
     }
 }

@@ -10,7 +10,7 @@ use std::fmt;
 
 use crate::ir::{ParamId, VarId};
 use crate::schema::fingerprint::SchemaFingerprint;
-use crate::schema::{ConstraintId, FieldId, RelationId};
+use crate::schema::{ConstraintId, FieldId, RelationId, ValueType};
 
 /// Corruption detected while decoding stored bytes — a hard error, never a
 /// skip, never a default (`docs/architecture/40-storage.md`).
@@ -28,6 +28,10 @@ pub enum CorruptionError {
     DanglingInternId(u64),
     /// A row id obtained from `M`/`U` has no `F` entry in the same snapshot.
     MissingFact { relation: RelationId, row_id: u64 },
+    /// A live `M` entry's `F` row or `U` guard was absent at delete time —
+    /// the write-side M/F disagreement (the read side raises
+    /// [`CorruptionError::MissingFact`]).
+    MembershipDesync { relation: RelationId, row_id: u64 },
     /// A stored fact's length differs from the schema's fact width.
     WrongFactWidth {
         relation: RelationId,
@@ -38,6 +42,17 @@ pub enum CorruptionError {
     /// The `F` scan yielded a different number of rows than the stored `S`
     /// row count — the derived counters have desynced from the facts.
     RowCountMismatch { relation: RelationId, stored: u64 },
+    /// A stored value (a counter, row id, or dictionary id) failed to
+    /// decode; the static string names which kind — a diagnosis, not a
+    /// formatted payload.
+    MalformedValue(&'static str),
+    /// A stored string's bytes are not UTF-8 — distinct from a dangling id
+    /// (the reverse entry exists; its content is mojibake).
+    NonUtf8Intern(u64),
+    /// The reverse dictionary entry's tag byte disagrees with the field
+    /// type that referenced it (a String field carrying a Bytes id, or
+    /// vice versa).
+    InternTagMismatch(u64),
 }
 
 /// A schema declaration error (PRD 02's validation boundary). Every illegal
@@ -129,11 +144,75 @@ pub enum FkViolation {
     MissingTarget { fact_bytes: Box<[u8]> },
     /// A deleted unique key still has a live referrer in the final state
     /// (Restrict check); `relation`/`constraint` on the error name the
-    /// *target* side, this names the referencing fact.
+    /// *target* side, this carries the referencing fact itself (storage row
+    /// ids never surface — `docs/architecture/10-data-model.md`).
     RemainingReference {
         source_relation: RelationId,
-        source_row: u64,
+        fact_bytes: Box<[u8]>,
     },
+}
+
+/// A mis-shaped dynamic fact on the untyped write surface
+/// (`insert_dyn`/`delete_dyn`/`bulk_load`): ETL input is data, so shape
+/// problems are typed errors, not panics (`docs/architecture/60-api.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FactShapeError {
+    ArityMismatch {
+        relation: RelationId,
+        expected: usize,
+        supplied: usize,
+    },
+    TypeMismatch {
+        relation: RelationId,
+        field: FieldId,
+    },
+    EnumOrdinalOutOfRange {
+        relation: RelationId,
+        field: FieldId,
+        ordinal: u8,
+    },
+    /// `Value::String` bytes are not UTF-8.
+    InvalidUtf8 {
+        relation: RelationId,
+        field: FieldId,
+    },
+}
+
+impl fmt::Display for FactShapeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ArityMismatch {
+                relation,
+                expected,
+                supplied,
+            } => write!(
+                f,
+                "relation {}: {supplied} values for {expected} fields",
+                relation.0
+            ),
+            Self::TypeMismatch { relation, field } => {
+                write!(
+                    f,
+                    "relation {}, field {}: wrong value kind",
+                    relation.0, field.0
+                )
+            }
+            Self::EnumOrdinalOutOfRange {
+                relation,
+                field,
+                ordinal,
+            } => write!(
+                f,
+                "relation {}, field {}: enum ordinal {ordinal} out of range",
+                relation.0, field.0
+            ),
+            Self::InvalidUtf8 { relation, field } => write!(
+                f,
+                "relation {}, field {}: string bytes are not UTF-8",
+                relation.0, field.0
+            ),
+        }
+    }
 }
 
 /// A query validation error (the IR boundary, PRD 14): one variant per
@@ -165,7 +244,9 @@ pub enum ValidationError {
         field: FieldId,
         ordinal: u8,
     },
-    ParamUnanchored {
+    /// Param ids must be dense (0..n): a gap would be a positional slot
+    /// whose supplied value is never type-checked.
+    ParamIdGap {
         param: ParamId,
     },
     ParamTypeConflict {
@@ -235,12 +316,18 @@ pub enum Error {
         found: SchemaFingerprint,
         expected: SchemaFingerprint,
     },
+    /// `create` refused a directory that already holds a bumbledb
+    /// environment — re-initializing `_meta` over live data would be
+    /// silent corruption; open it instead.
+    AlreadyInitialized,
     Io(std::io::Error),
     Lmdb(heed::Error),
 
     // --- Declaration / validation errors ---
     Schema(SchemaError),
     Validation(ValidationError),
+    /// A mis-shaped dynamic fact on the ETL surface (data, not code).
+    FactShape(FactShapeError),
 
     // --- Write errors ---
     /// A foreign-key invariant would be violated by the committed state:
@@ -274,6 +361,7 @@ pub enum Error {
     /// the anchor-inferred one.
     ParamTypeMismatch {
         param: ParamId,
+        expected: ValueType,
     },
     /// An aggregate's final value exceeds its result type (the once-at-
     /// finalization range check; deterministic under any fold order).
@@ -310,6 +398,12 @@ impl From<ValidationError> for Error {
     }
 }
 
+impl From<FactShapeError> for Error {
+    fn from(err: FactShapeError) -> Self {
+        Self::FactShape(err)
+    }
+}
+
 impl From<CorruptionError> for Error {
     fn from(err: CorruptionError) -> Self {
         Self::Corruption(err)
@@ -329,6 +423,11 @@ impl fmt::Display for CorruptionError {
             Self::MissingFact { relation, row_id } => {
                 write!(f, "relation {}: row {row_id} has no fact", relation.0)
             }
+            Self::MembershipDesync { relation, row_id } => write!(
+                f,
+                "relation {}: membership entry for row {row_id} desynced from its F/U entries",
+                relation.0
+            ),
             Self::WrongFactWidth {
                 relation,
                 row_id,
@@ -344,6 +443,14 @@ impl fmt::Display for CorruptionError {
                 "relation {}: stored row count {stored} desynced from the facts",
                 relation.0
             ),
+            Self::MalformedValue(kind) => write!(f, "malformed stored value: {kind}"),
+            Self::NonUtf8Intern(id) => write!(f, "intern id {id}: stored bytes are not UTF-8"),
+            Self::InternTagMismatch(id) => {
+                write!(
+                    f,
+                    "intern id {id}: reverse-entry tag disagrees with the field type"
+                )
+            }
         }
     }
 }
@@ -434,11 +541,12 @@ impl fmt::Display for FkViolation {
             ),
             Self::RemainingReference {
                 source_relation,
-                source_row,
+                fact_bytes,
             } => write!(
                 f,
-                "a deleted key is still referenced by relation {}, row {source_row}",
-                source_relation.0
+                "a deleted key is still referenced by a relation-{} fact ({} bytes)",
+                source_relation.0,
+                fact_bytes.len()
             ),
         }
     }
@@ -471,8 +579,8 @@ impl fmt::Display for ValidationError {
                 "atom {atom}: enum ordinal {ordinal} out of range at field {}",
                 field.0
             ),
-            Self::ParamUnanchored { param } => {
-                write!(f, "parameter {} appears in no atom binding", param.0)
+            Self::ParamIdGap { param } => {
+                write!(f, "parameter ids are not dense: {} is unused", param.0)
             }
             Self::ParamTypeConflict { param } => {
                 write!(f, "parameter {} anchored at conflicting types", param.0)
@@ -523,10 +631,14 @@ impl fmt::Display for Error {
             Self::SchemaMismatch { .. } => {
                 write!(f, "the compiled schema's fingerprint is not the stored one")
             }
+            Self::AlreadyInitialized => {
+                write!(f, "the directory already holds a bumbledb environment; open it instead")
+            }
             Self::Io(err) => write!(f, "io: {err}"),
             Self::Lmdb(err) => write!(f, "lmdb: {err}"),
             Self::Schema(err) => write!(f, "schema declaration: {err}"),
             Self::Validation(err) => write!(f, "query validation: {err}"),
+            Self::FactShape(err) => write!(f, "dynamic fact: {err}"),
             Self::ForeignKeyViolation {
                 relation,
                 constraint,
@@ -555,8 +667,8 @@ impl fmt::Display for Error {
             Self::ParamCountMismatch { expected, supplied } => {
                 write!(f, "{supplied} parameters supplied, the query takes {expected}")
             }
-            Self::ParamTypeMismatch { param } => {
-                write!(f, "parameter {}: structural type mismatch", param.0)
+            Self::ParamTypeMismatch { param, expected } => {
+                write!(f, "parameter {}: expected {expected:?}", param.0)
             }
             Self::Overflow { find } => {
                 write!(f, "find {find}: aggregate result exceeds its type")

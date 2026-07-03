@@ -11,10 +11,10 @@ use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
 use crate::encoding::{decode_field, encode_fact, ValueRef};
-use crate::error::Result;
+use crate::error::{FactShapeError, Result};
 use crate::image::cache::ImageCache;
 use crate::ir::{Query, Value};
-use crate::schema::{FieldId, RelationId, Schema, ValueType};
+use crate::schema::{FieldId, RelationId, Schema};
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::dict;
@@ -195,12 +195,8 @@ impl<'s> Db<'s> {
     /// # Errors
     ///
     /// As [`Db::write`]; a failing chunk aborts that chunk whole, leaving
-    /// prior chunks committed.
-    ///
-    /// # Panics
-    ///
-    /// As [`WriteTx::insert_dyn`]: mis-shaped values are a programmer
-    /// error.
+    /// prior chunks committed. Shape problems are typed `FactShape`
+    /// errors, as [`WriteTx::insert_dyn`].
     pub fn bulk_load<I>(&self, rel: RelationId, facts: I) -> Result<u64>
     where
         I: IntoIterator<Item = Vec<Value>>,
@@ -301,11 +297,13 @@ impl Snapshot<'_> {
                         ValueRef::U64(v) => Value::U64(v),
                         ValueRef::I64(v) => Value::I64(v),
                         ValueRef::Enum(ordinal) => Value::Enum(ordinal),
-                        ValueRef::String(id) => {
-                            Value::String(Box::from(dict::resolve(&self.txn, id)?))
-                        }
+                        ValueRef::String(id) => Value::String(Box::from(dict::resolve(
+                            &self.txn,
+                            id,
+                            dict::TAG_STRING,
+                        )?)),
                         ValueRef::Bytes(id) => {
-                            Value::Bytes(Box::from(dict::resolve(&self.txn, id)?))
+                            Value::Bytes(Box::from(dict::resolve(&self.txn, id, dict::TAG_BYTES)?))
                         }
                     })
                 })
@@ -393,13 +391,9 @@ impl WriteTx<'_> {
     ///
     /// # Errors
     ///
-    /// As [`WriteTx::insert`].
-    ///
-    /// # Panics
-    ///
-    /// On an arity or type mismatch between `values` and the relation's
-    /// declaration — mis-shaped dynamic facts are a programmer error, not
-    /// a runtime condition (`Value::String` must carry UTF-8).
+    /// `FactShape` on an arity/type/enum-range/UTF-8 mismatch between
+    /// `values` and the relation's declaration (ETL input is data, so
+    /// shape problems are typed); otherwise as [`WriteTx::insert`].
     pub fn insert_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
         self.encode_dyn(rel, values)?;
         self.delta.insert(&self.view, rel, &self.scratch)
@@ -410,10 +404,6 @@ impl WriteTx<'_> {
     ///
     /// # Errors
     ///
-    /// As [`WriteTx::insert`].
-    ///
-    /// # Panics
-    ///
     /// As [`WriteTx::insert_dyn`].
     pub fn delete_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
         self.encode_dyn(rel, values)?;
@@ -421,40 +411,53 @@ impl WriteTx<'_> {
     }
 
     /// Encodes a dynamic fact into `self.scratch`, interning through the
-    /// delta.
+    /// delta. Shape problems are typed errors — ETL input is data
+    /// (`docs/architecture/60-api.md`).
     fn encode_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<()> {
         let relation = self.schema.relation(rel);
         let fields = relation.fields();
-        assert_eq!(
-            values.len(),
-            fields.len(),
-            "dynamic fact arity mismatch: {} values for {} fields",
-            values.len(),
-            fields.len(),
-        );
+        if values.len() != fields.len() {
+            return Err(FactShapeError::ArityMismatch {
+                relation: rel,
+                expected: fields.len(),
+                supplied: values.len(),
+            }
+            .into());
+        }
         let mut refs = Vec::with_capacity(values.len());
         for (idx, (value, field)) in values.iter().zip(fields).enumerate() {
-            refs.push(match (value, &field.value_type) {
-                (Value::Bool(v), ValueType::Bool) => ValueRef::Bool(*v),
-                (Value::U64(v), ValueType::U64) => ValueRef::U64(*v),
-                (Value::I64(v), ValueType::I64) => ValueRef::I64(*v),
-                (Value::Enum(ordinal), ValueType::Enum { variants }) => {
-                    assert!(
-                        (*ordinal as usize) < variants.len(),
-                        "dynamic fact: enum ordinal {ordinal} out of range at field {idx}",
-                    );
-                    ValueRef::Enum(*ordinal)
+            let field_id = FieldId(u16::try_from(idx).expect("validated schema: fields fit u16"));
+            if let Err(mismatch) = crate::ir::value_matches(value, &field.value_type) {
+                return Err(match mismatch {
+                    crate::ir::ValueMismatch::Type => FactShapeError::TypeMismatch {
+                        relation: rel,
+                        field: field_id,
+                    },
+                    crate::ir::ValueMismatch::EnumOrdinal(ordinal) => {
+                        FactShapeError::EnumOrdinalOutOfRange {
+                            relation: rel,
+                            field: field_id,
+                            ordinal,
+                        }
+                    }
+                    crate::ir::ValueMismatch::Utf8 => FactShapeError::InvalidUtf8 {
+                        relation: rel,
+                        field: field_id,
+                    },
                 }
-                (Value::String(raw), ValueType::String) => {
-                    let text = std::str::from_utf8(raw).expect("Value::String carries UTF-8 bytes");
+                .into());
+            }
+            refs.push(match value {
+                Value::Bool(v) => ValueRef::Bool(*v),
+                Value::U64(v) => ValueRef::U64(*v),
+                Value::I64(v) => ValueRef::I64(*v),
+                Value::Enum(ordinal) => ValueRef::Enum(*ordinal),
+                Value::String(raw) => {
+                    let text =
+                        std::str::from_utf8(raw).expect("value_matches validated UTF-8 above");
                     ValueRef::String(self.delta.intern_str(&self.view, text)?)
                 }
-                (Value::Bytes(raw), ValueType::Bytes) => {
-                    ValueRef::Bytes(self.delta.intern_bytes(&self.view, raw)?)
-                }
-                (value, expected) => {
-                    panic!("dynamic fact: field {idx} expects {expected:?}, got {value:?}")
-                }
+                Value::Bytes(raw) => ValueRef::Bytes(self.delta.intern_bytes(&self.view, raw)?),
             });
         }
         self.scratch.clear();
@@ -515,9 +518,9 @@ pub mod plumbing {
     ///
     /// `Corruption` on a dangling id or non-UTF-8 stored bytes.
     pub fn resolve_string(snap: &Snapshot<'_>, id: u64) -> Result<String> {
-        let raw = dict::resolve(&snap.txn, id)?;
+        let raw = dict::resolve(&snap.txn, id, dict::TAG_STRING)?;
         String::from_utf8(raw.to_vec())
-            .map_err(|_| Error::Corruption(CorruptionError::DanglingInternId(id)))
+            .map_err(|_| Error::Corruption(CorruptionError::NonUtf8Intern(id)))
     }
 
     /// Resolves an intern id to owned bytes (decode boundary).
@@ -526,7 +529,7 @@ pub mod plumbing {
     ///
     /// `Corruption` on a dangling id.
     pub fn resolve_bytes(snap: &Snapshot<'_>, id: u64) -> Result<Vec<u8>> {
-        Ok(dict::resolve(&snap.txn, id)?.to_vec())
+        Ok(dict::resolve(&snap.txn, id, dict::TAG_BYTES)?.to_vec())
     }
 
     /// Appends the canonical fact bytes for a write-context encode.

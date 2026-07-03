@@ -210,16 +210,28 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
                     .try_into()
                     .expect("R keys carry an 8-byte source row"),
             );
+            // Fetch the referrer's fact bytes inside the still-open txn:
+            // errors name facts, never storage row ids
+            // (docs/architecture/10-data-model.md). Cold path — the fetch
+            // costs one get on an aborting commit.
+            drop(iter);
+            let f_len = keys::fact_key(&mut key, source_relation, source_row);
+            let fact_bytes: Box<[u8]> = data
+                .get(txn.raw(), &key[..f_len])?
+                .ok_or(Error::Corruption(CorruptionError::MissingFact {
+                    relation: source_relation,
+                    row_id: source_row,
+                }))?
+                .into();
             return Err(Error::ForeignKeyViolation {
                 relation: *rel,
                 constraint: *cid,
                 violation: FkViolation::RemainingReference {
                     source_relation,
-                    source_row,
+                    fact_bytes,
                 },
             });
         }
-        drop(iter);
     }
 
     // Phase 4: counters — row counts, row-id high-waters, serial sequences,
@@ -254,17 +266,18 @@ fn flush_counters(
             continue;
         }
         let len = keys::stat_key(&mut key, rel, StatKind::RowCount);
-        let current = match data.get(txn.raw(), &key[..len])? {
-            Some(bytes) => u64::from_le_bytes(
-                bytes
-                    .try_into()
-                    .map_err(|_| Error::Corruption(CorruptionError::MetaMissing))?,
-            ),
-            None => 0,
-        };
+        let current =
+            match data.get(txn.raw(), &key[..len])? {
+                Some(bytes) => u64::from_le_bytes(bytes.try_into().map_err(|_| {
+                    Error::Corruption(CorruptionError::MalformedValue("S row count"))
+                })?),
+                None => 0,
+            };
         let updated = current
             .checked_add_signed(count_delta)
-            .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
+            .ok_or(Error::Corruption(CorruptionError::MalformedValue(
+                "S row count underflow",
+            )))?;
         data.put(txn.raw_mut(), &key[..len], updated.to_le_bytes().as_slice())?;
     }
     for (rel, next) in row_id_next {
@@ -310,7 +323,15 @@ impl Applier<'_> {
         let row_id = decode_row_id(row_id_bytes)?;
         self.data.delete(self.txn.raw_mut(), &self.key[..m_len])?;
         let f_len = keys::fact_key(&mut self.key, rel, row_id);
-        self.data.delete(self.txn.raw_mut(), &self.key[..f_len])?;
+        // A live M entry MUST have its F row (and every U guard below):
+        // a miss is the M/F-disagreement corruption class, a hard error —
+        // never silently scrubbed (docs/architecture/40-storage.md).
+        if !self.data.delete(self.txn.raw_mut(), &self.key[..f_len])? {
+            return Err(Error::Corruption(CorruptionError::MembershipDesync {
+                relation: rel,
+                row_id,
+            }));
+        }
 
         // Guard keys are re-derived by slicing constrained fields out of
         // fact_bytes — never a scan.
@@ -322,7 +343,12 @@ impl Applier<'_> {
                 &mut self.guard,
             );
             let u_len = keys::unique_key(&mut self.key, rel, cid, &self.guard);
-            self.data.delete(self.txn.raw_mut(), &self.key[..u_len])?;
+            if !self.data.delete(self.txn.raw_mut(), &self.key[..u_len])? {
+                return Err(Error::Corruption(CorruptionError::MembershipDesync {
+                    relation: rel,
+                    row_id,
+                }));
+            }
             if relation.fk_targeted().contains(&cid) {
                 self.deleted_guards.insert((rel, cid, self.guard.clone()));
             }
@@ -447,11 +473,9 @@ impl Applier<'_> {
                 let mut key: KeyBuf = [0; MAX_KEY];
                 let len = keys::stat_key(&mut key, rel, StatKind::RowIdHighWater);
                 let stored = match self.data.get(self.txn.raw(), &key[..len])? {
-                    Some(bytes) => u64::from_le_bytes(
-                        bytes
-                            .try_into()
-                            .map_err(|_| Error::Corruption(CorruptionError::MetaMissing))?,
-                    ),
+                    Some(bytes) => u64::from_le_bytes(bytes.try_into().map_err(|_| {
+                        Error::Corruption(CorruptionError::MalformedValue("S row-id high water"))
+                    })?),
                     None => 0,
                 };
                 entry.insert(stored)
@@ -483,7 +507,7 @@ fn derive_guard(
 
 fn decode_row_id(bytes: &[u8]) -> Result<u64> {
     Ok(u64::from_le_bytes(bytes.try_into().map_err(|_| {
-        Error::Corruption(CorruptionError::MetaMissing)
+        Error::Corruption(CorruptionError::MalformedValue("M row id"))
     })?))
 }
 
@@ -662,6 +686,54 @@ mod tests {
             // Abort: drop the txn without committing.
         }
         assert!(committed_data(&env).is_empty());
+    }
+
+    #[test]
+    fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
+        // Craft the M/F disagreement: commit a fact, raw-delete its F row
+        // behind the codec's back, then delta-delete it. The write path
+        // must raise the hard corruption error, never silently scrub the
+        // M entry (docs/architecture/40-storage.md).
+        let dir = TempDir::new("commit-desync");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let t5 = target_fact(&schema, 5);
+        {
+            let view = env.read_txn().expect("txn");
+            let mut delta = WriteDelta::new(&schema);
+            delta.insert(&view, TARGET, &t5).expect("insert");
+            drop(view);
+            apply(delta, &env)
+                .expect("apply")
+                .txn
+                .commit()
+                .expect("commit");
+        }
+        // Scrub the F row (row id 0) directly.
+        {
+            let mut wtxn = env.write_txn().expect("wtxn");
+            let mut key: KeyBuf = [0; MAX_KEY];
+            let f_len = keys::fact_key(&mut key, TARGET, 0);
+            assert!(env
+                .data()
+                .delete(wtxn.raw_mut(), &key[..f_len])
+                .expect("del"));
+            wtxn.commit().expect("commit");
+        }
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.delete(&view, TARGET, &t5).expect("record delete");
+        drop(view);
+        let Err(err) = apply(delta, &env).map(|_| ()) else {
+            panic!("apply must fail on a scrubbed F row");
+        };
+        assert!(matches!(
+            err,
+            Error::Corruption(CorruptionError::MembershipDesync {
+                relation: TARGET,
+                row_id: 0
+            })
+        ));
     }
 
     #[test]
@@ -916,7 +988,7 @@ mod tests {
                     constraint: C0,
                     violation: FkViolation::RemainingReference {
                         source_relation: SOURCE,
-                        source_row: 0,
+                        ..
                     },
                 }
             ),
@@ -1128,7 +1200,8 @@ mod tests {
             Some(id)
         );
         assert_eq!(
-            crate::storage::dict::resolve(&rtxn, id).expect("resolve"),
+            crate::storage::dict::resolve(&rtxn, id, crate::storage::dict::TAG_STRING)
+                .expect("resolve"),
             b"holder-name"
         );
         drop(rtxn);

@@ -116,11 +116,9 @@ pub fn row_count(txn: &ReadTxn<'_>, rel: RelationId) -> Result<u64> {
     let mut key: KeyBuf = [0; MAX_KEY];
     let len = keys::stat_key(&mut key, rel, StatKind::RowCount);
     match txn.env().data().get(txn.raw(), &key[..len])? {
-        Some(bytes) => {
-            Ok(u64::from_le_bytes(bytes.try_into().map_err(|_| {
-                Error::Corruption(CorruptionError::MetaMissing)
-            })?))
-        }
+        Some(bytes) => Ok(u64::from_le_bytes(bytes.try_into().map_err(|_| {
+            Error::Corruption(CorruptionError::MalformedValue("S row count"))
+        })?)),
         None => Ok(0),
     }
 }
@@ -128,11 +126,9 @@ pub fn row_count(txn: &ReadTxn<'_>, rel: RelationId) -> Result<u64> {
 fn row_id_value(value: Option<&[u8]>) -> Result<Option<u64>> {
     match value {
         None => Ok(None),
-        Some(bytes) => {
-            Ok(Some(u64::from_le_bytes(bytes.try_into().map_err(
-                |_| Error::Corruption(CorruptionError::MetaMissing),
-            )?)))
-        }
+        Some(bytes) => Ok(Some(u64::from_le_bytes(bytes.try_into().map_err(
+            |_| Error::Corruption(CorruptionError::MalformedValue("M/U row id")),
+        )?))),
     }
 }
 

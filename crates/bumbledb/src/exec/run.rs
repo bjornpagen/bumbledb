@@ -1028,6 +1028,53 @@ mod tests {
         assert!(!sink.rows.is_empty());
     }
 
+    /// Regression for the cover-soundness deviation
+    /// (docs/architecture/30-execution.md): a subatom carrying an
+    /// already-bound variable must never be a runtime-eligible cover. In
+    /// the triangle below, node 1 = [S(z), T(x, z)]; with skew, T's tiny
+    /// key count would win the dynamic choice, and iterating T(x, z)
+    /// rebinds x over R's binding without re-probing R — producing a row
+    /// where the correct answer is empty.
+    #[test]
+    fn covers_never_rebind_an_already_bound_variable() {
+        let dir = TempDir::new("run-cover-rebind");
+        let schema = schema(3);
+        let r = vec![(1, 1)];
+        let s: Vec<(u64, u64)> = (0..100).map(|z| (1, z)).collect();
+        let t = vec![(2, 5)];
+        let views = views_of(&dir, &schema, &[r, s, t]);
+
+        // Q(x,y,z) :- R(x,y), S(y,z), T(x,z), order [R, S, T].
+        let normalized = NormalizedQuery {
+            occurrences: vec![
+                occurrence(0, 0, &[(0, 0), (1, 1)]),
+                occurrence(1, 1, &[(0, 1), (1, 2)]),
+                occurrence(2, 2, &[(0, 0), (1, 2)]),
+            ],
+            residuals: vec![],
+        };
+        let plan = planned(&normalized, &schema, &[0, 1, 2]);
+
+        // The mixed-var subatom T(x, z) must not be listed as a cover of
+        // its node (x is bound by node 0).
+        for node in plan.nodes() {
+            for &cover in &node.covers {
+                let vars = &node.subatoms[cover as usize].vars;
+                assert_eq!(
+                    vars.len(),
+                    node.new_vars.len(),
+                    "a cover must bind exactly the node's new vars"
+                );
+            }
+        }
+
+        let results = run(&plan, &views);
+        assert!(
+            results.is_empty(),
+            "T binds x=2, R binds x=1: joining them must be empty, got {results:?}"
+        );
+    }
+
     #[test]
     fn backtracking_restores_sources_across_sequential_executions() {
         let dir = TempDir::new("run-backtrack");

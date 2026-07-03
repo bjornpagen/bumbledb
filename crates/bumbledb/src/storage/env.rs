@@ -70,6 +70,16 @@ impl Environment {
         std::fs::create_dir_all(path)?;
         let env = open_env(path)?;
         let mut wtxn = env.write_txn()?;
+        // Refuse to re-initialize: rewriting `_meta` over live `_data`
+        // would reset the tx id and the dictionary counter — silent
+        // corruption from one wrong call. Production create never
+        // destroys data any more than production open does.
+        if env
+            .open_database::<Bytes, Bytes>(&wtxn, Some("_meta"))?
+            .is_some()
+        {
+            return Err(Error::AlreadyInitialized);
+        }
         let meta = env.create_database(&mut wtxn, Some("_meta"))?;
         let data = env.create_database(&mut wtxn, Some("_data"))?;
         let dict = env.create_database(&mut wtxn, Some("_dict"))?;
@@ -361,6 +371,18 @@ mod tests {
             drop(env);
         }
         Environment::open(dir.path(), &schema).expect("open after create");
+    }
+
+    #[test]
+    fn create_refuses_an_existing_environment() {
+        // Re-initializing `_meta` over live data would reset the tx id and
+        // dictionary counter — create must refuse, open must still work.
+        let dir = TempDir::new("env-create-refuses");
+        let schema = schema();
+        drop(Environment::create(dir.path(), &schema).expect("create"));
+        let err = Environment::create(dir.path(), &schema).unwrap_err();
+        assert!(matches!(err, Error::AlreadyInitialized));
+        Environment::open(dir.path(), &schema).expect("open still works");
     }
 
     #[test]

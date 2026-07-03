@@ -164,15 +164,16 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
     })
 }
 
-/// Resolves a constant to its canonical guard-key bytes. `None` means a
-/// `PendingIntern` missed the dictionary: the literal cannot match any
-/// fact — empty result, never an insert, never an error.
+/// Resolves a constant to its canonical guard-key bytes. A `PendingIntern`
+/// that missed the dictionary resolves to the never-minted sentinel id —
+/// the ensuing `U`/`M` probe then misses (empty result), never an insert,
+/// never an error.
 fn const_bytes(
     txn: &ReadTxn<'_>,
     value: &Const,
     params: &[Const],
     out: &mut Vec<u8>,
-) -> Result<bool> {
+) -> Result<()> {
     match value {
         Const::Word(w) => out.extend_from_slice(&w.to_be_bytes()),
         Const::Byte(b) => out.push(*b),
@@ -180,22 +181,24 @@ fn const_bytes(
             return const_bytes(txn, &params[usize::from(p.0)], params, out);
         }
         Const::PendingIntern { tag, bytes } => {
-            let Some(id) = dict::lookup_tagged(txn, *tag, bytes)? else {
-                return Ok(false);
-            };
+            let id = dict::lookup_tagged(txn, *tag, bytes)?.unwrap_or(dict::SENTINEL_ID);
             out.extend_from_slice(&encode_u64(id));
         }
     }
-    Ok(true)
+    Ok(())
 }
 
-/// The constant's column word (for filter checks on the fetched fact).
-fn const_word(txn: &ReadTxn<'_>, value: &Const, params: &[Const]) -> Result<Option<u64>> {
+/// The constant's column word (for filter checks on the fetched fact). A
+/// dictionary miss resolves to the sentinel id, so `Eq` filters fail and
+/// `Ne` filters pass — per-operator miss semantics with no special cases.
+fn const_word(txn: &ReadTxn<'_>, value: &Const, params: &[Const]) -> Result<u64> {
     match value {
-        Const::Word(w) => Ok(Some(*w)),
-        Const::Byte(b) => Ok(Some(u64::from(*b))),
+        Const::Word(w) => Ok(*w),
+        Const::Byte(b) => Ok(u64::from(*b)),
         Const::Param(p) => const_word(txn, &params[usize::from(p.0)], params),
-        Const::PendingIntern { tag, bytes } => Ok(dict::lookup_tagged(txn, *tag, bytes)?),
+        Const::PendingIntern { tag, bytes } => {
+            Ok(dict::lookup_tagged(txn, *tag, bytes)?.unwrap_or(dict::SENTINEL_ID))
+        }
     }
 }
 
@@ -226,13 +229,11 @@ pub fn execute_guard<S: Sink>(
     bindings: &mut Bindings,
     sink: &mut S,
 ) -> Result<()> {
-    // Build the guard key in the caller's reused scratch; a PendingIntern
-    // miss empties the query.
+    // Build the guard key in the caller's reused scratch; a dictionary
+    // miss lands the sentinel id in the key, and the probe below misses.
     key_scratch.clear();
     for (_, value) in &plan.key {
-        if !const_bytes(txn, value, params, key_scratch)? {
-            return Ok(());
-        }
+        const_bytes(txn, value, params, key_scratch)?;
     }
 
     let row_id = match plan.constraint {
@@ -248,9 +249,7 @@ pub fn execute_guard<S: Sink>(
     for filter in &plan.remaining_filters {
         let pass = match filter {
             FilterPredicate::Compare { field, op, value } => {
-                let Some(expected) = const_word(txn, value, params)? else {
-                    return Ok(()); // unresolvable intern: cannot match
-                };
+                let expected = const_word(txn, value, params)?;
                 op.compare(&fact_word(schema, plan, fact, *field), &expected)
             }
             FilterPredicate::FieldsEqual { left, right } => {

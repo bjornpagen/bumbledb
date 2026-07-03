@@ -6,7 +6,6 @@
 //! fields, no histograms, no magic selectivity constants (the post-mortem's
 //! central engine finding, §30).
 
-use crate::error::ValidationError;
 use crate::ir::normalize::{NormalizedQuery, OccId};
 use crate::ir::VarId;
 use crate::schema::Schema;
@@ -18,7 +17,7 @@ use crate::schema::Schema;
 pub const MAX_OCCURRENCES: usize = 20;
 
 /// Distinct-variable cap for the planner's dense var bitsets.
-const MAX_DISTINCT_VARS: usize = 128;
+pub(crate) const MAX_DISTINCT_VARS: usize = 128;
 
 /// The planner's per-occurrence statistic: the base row count, or the
 /// measured filtered-view survivor count when the occurrence has filters
@@ -111,16 +110,13 @@ fn estimate(
 ///
 /// Only on programmer-invariant violations: `stats` missing an occurrence
 /// the normalized query contains.
-pub fn plan(
-    normalized: &NormalizedQuery,
-    schema: &Schema,
-    stats: &[OccStats],
-) -> Result<JoinOrder, ValidationError> {
+pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -> JoinOrder {
     let n = normalized.occurrences.len();
-    if n > MAX_OCCURRENCES {
-        return Err(ValidationError::TooManyAtoms { count: n });
-    }
-    let occs = densify(normalized, schema, stats)?;
+    debug_assert!(
+        n <= MAX_OCCURRENCES,
+        "validation rejects over-cap queries at the boundary"
+    );
+    let occs = densify(normalized, schema, stats);
 
     // Exhaustive left-deep DP; the cost is the sum of every prefix estimate
     // including the base relation's rows (the root iteration is real work,
@@ -176,16 +172,12 @@ pub fn plan(
         estimates[step] = chosen.est;
         mask &= !(1 << chosen.last);
     }
-    Ok(JoinOrder { order, estimates })
+    JoinOrder { order, estimates }
 }
 
 /// Densifies occurrences into bitset form, resolving stats and translating
 /// unique-constraint field sets to variable sets.
-fn densify(
-    normalized: &NormalizedQuery,
-    schema: &Schema,
-    stats: &[OccStats],
-) -> Result<Vec<OccInfo>, ValidationError> {
+fn densify(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -> Vec<OccInfo> {
     let mut var_index: std::collections::BTreeMap<VarId, usize> = std::collections::BTreeMap::new();
     for occurrence in &normalized.occurrences {
         for (_, var) in &occurrence.vars {
@@ -193,12 +185,11 @@ fn densify(
             var_index.entry(*var).or_insert(next);
         }
     }
-    if var_index.len() > MAX_DISTINCT_VARS {
-        return Err(ValidationError::TooManyVariables {
-            count: var_index.len(),
-        });
-    }
-    Ok(normalized
+    debug_assert!(
+        var_index.len() <= MAX_DISTINCT_VARS,
+        "validation rejects over-cap queries at the boundary"
+    );
+    normalized
         .occurrences
         .iter()
         .map(|occurrence| {
@@ -232,7 +223,7 @@ fn densify(
                 unique_var_sets,
             }
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]
@@ -381,7 +372,7 @@ mod tests {
             occurrences: vec![occurrence(0, 0, vec![(1, 0), (0, 1)]), occ1],
             residuals: vec![],
         };
-        let order = plan(&normalized, &schema, &stats(&[10_000, 1])).expect("plan");
+        let order = plan(&normalized, &schema, &stats(&[10_000, 1]));
         assert_eq!(order.order, vec![OccId(1), OccId(0)]);
         // Step estimates: 1 survivor, then the FK walk stays keyed... occ 0
         // joins on its own non-key field: prefix side (occ 1) is unique-
@@ -415,7 +406,7 @@ mod tests {
             ],
             ..normalized
         };
-        let order = plan(&normalized, &schema, &stats(&[100, 50, 40])).expect("plan");
+        let order = plan(&normalized, &schema, &stats(&[100, 50, 40]));
         assert_eq!(*order.order.last().expect("nonempty"), OccId(2));
         // The last step is the pessimistic product.
         let last = *order.estimates.last().expect("nonempty");
@@ -436,7 +427,7 @@ mod tests {
             ],
             residuals: vec![],
         };
-        let order = plan(&normalized, &schema, &stats(&[70, 500])).expect("plan");
+        let order = plan(&normalized, &schema, &stats(&[70, 500]));
         assert_eq!(order.order, vec![OccId(0), OccId(1)]);
         assert_eq!(order.estimates, vec![70, 70]);
     }
@@ -458,7 +449,7 @@ mod tests {
         };
         let occ_stats = stats(&[10, 10, 2, 2]);
 
-        let planned = plan(&normalized, &schema, &occ_stats).expect("plan");
+        let planned = plan(&normalized, &schema, &occ_stats);
         let planned_order: Vec<usize> = planned.order.iter().map(|o| usize::from(o.0)).collect();
         let planned_cost = order_cost(&normalized, &schema, &occ_stats, &planned_order);
 
@@ -538,15 +529,20 @@ mod tests {
         let forward = stats(&[10, 10, 10]);
         let mut shuffled = forward.clone();
         shuffled.reverse();
-        let a = plan(&normalized, &schema, &forward).expect("plan");
-        let b = plan(&normalized, &schema, &shuffled).expect("plan");
+        let a = plan(&normalized, &schema, &forward);
+        let b = plan(&normalized, &schema, &shuffled);
         assert_eq!(a, b);
     }
 
     #[test]
-    fn rejects_more_occurrences_than_the_dp_cap() {
+    fn the_dp_accepts_large_inputs_under_the_cap() {
+        // The over-cap rejection lives at the validation boundary
+        // (ir::validate); the planner's contract is that anything under
+        // the cap plans. 16 occurrences (a 2^16-state table) keeps the
+        // debug-build suite fast; the full 2^20 cap is exercised by the
+        // same code path with a bigger constant.
         let schema = schema(1, 2);
-        let occurrences: Vec<Occurrence> = (0..=MAX_OCCURRENCES)
+        let occurrences: Vec<Occurrence> = (0..16)
             .map(|i| occurrence(u16::try_from(i).expect("small"), 0, vec![(0, 0)]))
             .collect();
         let occ_stats: Vec<OccStats> = occurrences
@@ -560,10 +556,7 @@ mod tests {
             occurrences,
             residuals: vec![],
         };
-        let err = plan(&normalized, &schema, &occ_stats).unwrap_err();
-        assert!(matches!(
-            err,
-            ValidationError::TooManyAtoms { count } if count == MAX_OCCURRENCES + 1
-        ));
+        let order = plan(&normalized, &schema, &occ_stats);
+        assert_eq!(order.order.len(), 16);
     }
 }

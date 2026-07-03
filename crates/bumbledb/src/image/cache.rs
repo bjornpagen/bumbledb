@@ -85,6 +85,13 @@ impl ImageCache {
         }
 
         let mut inner = self.inner.lock().expect("cache mutex");
+        // Re-check under the insert lock: a commit may have evicted this
+        // generation between the first lock and here — inserting against
+        // the stale `newest` would undo the eviction one entry at a time
+        // and leak the image until the next state-changing commit.
+        if generation < inner.newest {
+            return Ok(image);
+        }
         match inner.map.entry(key) {
             std::collections::hash_map::Entry::Occupied(winner) => Ok(Arc::clone(winner.get())),
             std::collections::hash_map::Entry::Vacant(slot) => {

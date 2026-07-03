@@ -97,6 +97,10 @@ impl<'s> WriteDelta<'s> {
             Some(next) => next,
             None => view.dict_next_id()?,
         };
+        assert!(
+            next != crate::storage::dict::SENTINEL_ID,
+            "dictionary id space exhausted (u64::MAX is the miss sentinel)"
+        );
         self.pending_interns.insert((tag, Box::from(raw)), next);
         self.dict_next = Some(next + 1);
         Ok(next)
@@ -293,7 +297,9 @@ fn read_serial_next(view: &ReadTxn<'_>, rel: RelationId, field: FieldId) -> Resu
     let len = keys::serial_key(&mut buf, rel, field);
     match view.env().data().get(view.raw(), &buf[..len])? {
         Some(bytes) => Ok(u64::from_le_bytes(bytes.try_into().map_err(|_| {
-            Error::Corruption(crate::error::CorruptionError::MetaMissing)
+            Error::Corruption(crate::error::CorruptionError::MalformedValue(
+                "Q serial next",
+            ))
         })?)),
         None => Ok(0),
     }

@@ -74,12 +74,16 @@ fn intern(txn: &mut WriteTxn<'_>, tag: u8, raw: &[u8]) -> Result<u64> {
     if let Some(existing) = dict.get(txn.raw(), &fwd)? {
         let id: [u8; 8] = existing
             .try_into()
-            .map_err(|_| Error::Corruption(CorruptionError::MetaMissing))?;
+            .map_err(|_| Error::Corruption(CorruptionError::MalformedValue("dict forward id")))?;
         return Ok(u64::from_be_bytes(id));
     }
     // Mint the next id. This read-modify-writes the `_meta` counter directly;
     // PRD 06 re-homes it into the delta's in-memory-then-flush counter set.
     let id = txn.dict_next_id()?;
+    assert!(
+        id != SENTINEL_ID,
+        "dictionary id space exhausted (u64::MAX is the miss sentinel)"
+    );
     txn.put_dict_next_id(id + 1)?;
 
     let mut reverse_value = Vec::with_capacity(1 + raw.len());
@@ -89,6 +93,14 @@ fn intern(txn: &mut WriteTxn<'_>, tag: u8, raw: &[u8]) -> Result<u64> {
     dict.put(txn.raw_mut(), &reverse_key(id), &reverse_value)?;
     Ok(id)
 }
+
+/// The never-minted intern id: dictionary ids allocate from 0 upward and
+/// the mint paths assert this value is never issued, so read paths may
+/// resolve a dictionary *miss* to it. An `Eq` filter against the sentinel
+/// matches nothing; an `Ne` filter matches everything — per-operator miss
+/// semantics fall out of ordinary word comparison
+/// (docs/architecture/20-query-ir.md).
+pub(crate) const SENTINEL_ID: u64 = u64::MAX;
 
 /// Read-only lookup of a string's id. `None` means the value was never
 /// interned — on the query path that means "cannot match any fact": an
@@ -121,9 +133,9 @@ fn lookup(txn: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<Option<u64>> {
     match dict.get(txn.raw(), &forward_key(tag, raw))? {
         None => Ok(None),
         Some(bytes) => {
-            let id: [u8; 8] = bytes
-                .try_into()
-                .map_err(|_| Error::Corruption(CorruptionError::MetaMissing))?;
+            let id: [u8; 8] = bytes.try_into().map_err(|_| {
+                Error::Corruption(CorruptionError::MalformedValue("dict forward id"))
+            })?;
             Ok(Some(u64::from_be_bytes(id)))
         }
     }
@@ -149,11 +161,19 @@ pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, tag: u8, raw: &[u8], id: u64) 
 /// # Errors
 ///
 /// `Corruption(DanglingInternId)` when the id has no reverse entry — a fact
-/// referencing it is corrupt; never a skip.
-pub fn resolve<'txn>(txn: &'txn ReadTxn<'_>, id: u64) -> Result<&'txn [u8]> {
+/// referencing it is corrupt; never a skip. `Corruption(InternTagMismatch)`
+/// when the entry's tag disagrees with the referencing field's type (a
+/// String field carrying a Bytes id): one byte compare on a page the read
+/// already touched.
+pub fn resolve<'txn>(txn: &'txn ReadTxn<'_>, id: u64, expected_tag: u8) -> Result<&'txn [u8]> {
     let dict = txn.env().dict();
     match dict.get(txn.raw(), &reverse_key(id))? {
-        Some([_tag, raw @ ..]) => Ok(raw),
+        Some([tag, raw @ ..]) => {
+            if *tag != expected_tag {
+                return Err(Error::Corruption(CorruptionError::InternTagMismatch(id)));
+            }
+            Ok(raw)
+        }
         Some([]) | None => Err(Error::Corruption(CorruptionError::DanglingInternId(id))),
     }
 }
@@ -220,8 +240,16 @@ mod tests {
 
         let rtxn = env.read_txn().expect("txn");
         assert_eq!(lookup_str(&rtxn, "posting").expect("lookup"), Some(s));
-        assert_eq!(resolve(&rtxn, s).expect("resolve"), b"posting");
-        assert_eq!(resolve(&rtxn, b).expect("resolve"), &[0xDE, 0xAD]);
+        assert_eq!(resolve(&rtxn, s, TAG_STRING).expect("resolve"), b"posting");
+        assert_eq!(
+            resolve(&rtxn, b, TAG_BYTES).expect("resolve"),
+            &[0xDE, 0xAD]
+        );
+        // Cross-tag resolution is the tag-mismatch corruption, not a value.
+        assert!(matches!(
+            resolve(&rtxn, s, TAG_BYTES),
+            Err(Error::Corruption(CorruptionError::InternTagMismatch(id))) if id == s
+        ));
     }
 
     #[test]
@@ -229,7 +257,7 @@ mod tests {
         let dir = TempDir::new("dict-dangling");
         let env = env(&dir);
         let rtxn = env.read_txn().expect("txn");
-        let err = resolve(&rtxn, 12345).unwrap_err();
+        let err = resolve(&rtxn, 12345, TAG_STRING).unwrap_err();
         assert!(
             matches!(
                 err,
@@ -268,7 +296,7 @@ mod tests {
 
         let rtxn = env.read_txn().expect("txn");
         assert_eq!(lookup_str(&rtxn, "phantom").expect("lookup"), None);
-        assert!(resolve(&rtxn, id).is_err());
+        assert!(resolve(&rtxn, id, TAG_STRING).is_err());
         drop(rtxn);
 
         // The counter did not advance either: the next intern re-issues the
