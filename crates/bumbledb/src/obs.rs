@@ -57,9 +57,54 @@ pub struct TraceEvent {
 /// here so call sites cannot typo-drift. Arg meanings are documented per
 /// constant; consumers (the trace exporter, tests) match on these.
 pub mod names {
-    // Names are added by the instrumentation PRDs (docs/benchmarks/03, 04)
-    // alongside their call sites; the registry starts empty on purpose —
-    // a name with no instrumentation site is a mechanism without a reader.
+    // Read path (docs/benchmarks/03). Args noted as (a0, a1); `-` = unused.
+
+    /// The whole prepare pipeline. (-, -)
+    pub const PREPARE: &str = "prepare";
+    /// IR validation. (-, -)
+    pub const VALIDATE: &str = "validate";
+    /// Normalization. (-, -)
+    pub const NORMALIZE: &str = "normalize";
+    /// Guard-vs-join classification. (-, -)
+    pub const CLASSIFY: &str = "classify";
+    /// Statistics reads. (occurrences measured concretely, -)
+    pub const STATS: &str = "stats";
+    /// The exhaustive left-deep DP. (-, -)
+    pub const PLAN_DP: &str = "plan_dp";
+    /// binary2fj + factor + plan validation. (-, -)
+    pub const LOWER: &str = "lower";
+    /// COLT construction at prepare. (-, -)
+    pub const BUILD_COLTS: &str = "build_colts";
+
+    /// One prepared execution. (result rows, -)
+    pub const EXECUTE: &str = "execute";
+    /// Parameter binding. (-, -)
+    pub const BIND_PARAMS: &str = "bind_params";
+    /// Filter-constant resolution. (-, -)
+    pub const RESOLVE_FILTERS: &str = "resolve_filters";
+    /// The per-occurrence view loop. (-, -)
+    pub const VIEWS: &str = "views";
+    /// One occurrence's view rebuild. (occurrence index, survivors)
+    pub const VIEW_BUILD: &str = "view_build";
+    /// The warm memo fast path fired. (occurrence index, -)
+    pub const VIEW_MEMO_HIT: &str = "view_memo_hit";
+    /// The Free Join executor. (-, -)
+    pub const JOIN: &str = "join";
+    /// Sink finalization into the result buffer. (-, -)
+    pub const FINALIZE: &str = "finalize";
+    /// The guard-probe access path. (1 hit / 0 miss, -)
+    pub const GUARD_PROBE: &str = "guard_probe";
+
+    /// Image found in the shared cache. (relation id, -)
+    pub const CACHE_HIT: &str = "cache_hit";
+    /// A full image decode. (relation id, rows)
+    pub const IMAGE_BUILD: &str = "image_build";
+    /// Lost the insert race; adopted the winner's image. (relation id, -)
+    pub const CACHE_ADOPT: &str = "cache_adopt";
+    /// Old-generation reader built without caching. (relation id, -)
+    pub const CACHE_QUERY_LOCAL: &str = "cache_query_local";
+    /// One COLT node forced. (positions ingested, distinct keys)
+    pub const COLT_FORCE: &str = "colt_force";
 }
 
 #[cfg(feature = "trace")]
@@ -127,6 +172,11 @@ mod imp {
                 live.a1 = a1;
             }
         }
+
+        /// Ends the span now (records the event). Equivalent to dropping,
+        /// spelled for call sites that would otherwise `drop()` a guard
+        /// that is a Drop-less ZST when the feature is off.
+        pub fn end(self) {}
     }
 
     impl Drop for SpanGuard {
@@ -225,6 +275,10 @@ impl SpanGuard {
     /// Sets the payload args (no-op: the `trace` feature is off).
     #[inline]
     pub fn set_args(&mut self, _a0: u64, _a1: u64) {}
+
+    /// Ends the span (no-op: the `trace` feature is off).
+    #[inline]
+    pub fn end(self) {}
 }
 
 /// Whether this thread is currently capturing (never, feature off).

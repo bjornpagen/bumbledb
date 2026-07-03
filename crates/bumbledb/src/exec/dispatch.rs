@@ -15,6 +15,7 @@ use crate::exec::run::{Bindings, Sink};
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::normalize::NormalizedQuery;
 use crate::ir::{CmpOp, VarId};
+use crate::obs;
 use crate::plan::fj::ValidatedPlan;
 use crate::schema::{ConstraintId, FieldId, RelationId, Schema};
 use crate::storage::env::ReadTxn;
@@ -236,10 +237,12 @@ pub fn execute_guard<S: Sink>(
         const_bytes(txn, value, params, key_scratch)?;
     }
 
+    let mut probe_span = obs::span(obs::names::GUARD_PROBE, obs::Category::Execute);
     let row_id = match plan.constraint {
         Some(constraint) => read::unique_row(txn, plan.relation, constraint, key_scratch)?,
         None => read::fact_row(txn, plan.relation, key_scratch)?,
     };
+    probe_span.set_args(u64::from(row_id.is_some()), 0);
     let Some(row_id) = row_id else {
         return Ok(()); // miss: empty result
     };

@@ -493,6 +493,12 @@ impl Colt {
             NodeState::Forced { .. } => unreachable!("checked above"),
         }
 
+        crate::obs::event(
+            crate::obs::names::COLT_FORCE,
+            crate::obs::Category::Execute,
+            count,
+            u64::from(m.len),
+        );
         self.maps.push(m);
         self.nodes[node.0 as usize] = NodeState::Forced { map: map_idx };
         map_idx

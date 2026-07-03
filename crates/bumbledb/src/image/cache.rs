@@ -70,17 +70,39 @@ impl ImageCache {
         let newest = {
             let inner = self.inner.lock().expect("cache mutex");
             if let Some(image) = inner.map.get(&key) {
+                crate::obs::event(
+                    crate::obs::names::CACHE_HIT,
+                    crate::obs::Category::Cache,
+                    u64::from(rel.0),
+                    0,
+                );
                 return Ok(Arc::clone(image));
             }
             inner.newest
         };
 
         // Build outside the lock.
-        let image = build(txn, schema, rel)?;
+        let image = {
+            let mut span = crate::obs::span_args(
+                crate::obs::names::IMAGE_BUILD,
+                crate::obs::Category::Image,
+                u64::from(rel.0),
+                0,
+            );
+            let image = build(txn, schema, rel)?;
+            span.set_args(u64::from(rel.0), image.row_count() as u64);
+            image
+        };
 
         // An old-generation reader keeps its image query-local: inserting it
         // would poison the map for nobody (its generation is already evicted).
         if generation < newest {
+            crate::obs::event(
+                crate::obs::names::CACHE_QUERY_LOCAL,
+                crate::obs::Category::Cache,
+                u64::from(rel.0),
+                0,
+            );
             return Ok(image);
         }
 
@@ -93,7 +115,15 @@ impl ImageCache {
             return Ok(image);
         }
         match inner.map.entry(key) {
-            std::collections::hash_map::Entry::Occupied(winner) => Ok(Arc::clone(winner.get())),
+            std::collections::hash_map::Entry::Occupied(winner) => {
+                crate::obs::event(
+                    crate::obs::names::CACHE_ADOPT,
+                    crate::obs::Category::Cache,
+                    u64::from(rel.0),
+                    0,
+                );
+                Ok(Arc::clone(winner.get()))
+            }
             std::collections::hash_map::Entry::Vacant(slot) => {
                 slot.insert(Arc::clone(&image));
                 Ok(image)

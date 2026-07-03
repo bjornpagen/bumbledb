@@ -22,6 +22,7 @@ use crate::image::view::{apply, Const, FilterPredicate, View};
 use crate::ir::normalize::normalize;
 use crate::ir::validate::validate;
 use crate::ir::{AggOp, FindTerm, ParamId, Query, Value};
+use crate::obs;
 use crate::plan::fj::{binary2fj, factor};
 use crate::plan::planner::{plan as plan_order, OccStats};
 use crate::schema::{Schema, ValueType};
@@ -246,16 +247,29 @@ pub(crate) fn prepare<'s>(
     schema: &'s Schema,
     query: &Query,
 ) -> Result<PreparedQuery<'s>> {
-    let witness = validate(schema, query)?;
-    let normalized = normalize(&witness);
+    let _prepare = obs::span(obs::names::PREPARE, obs::Category::Prepare);
+    let witness = {
+        let _s = obs::span(obs::names::VALIDATE, obs::Category::Prepare);
+        validate(schema, query)?
+    };
+    let normalized = {
+        let _s = obs::span(obs::names::NORMALIZE, obs::Category::Prepare);
+        normalize(&witness)
+    };
 
     // Classification first: a guard probe needs no statistics or planning.
-    let exec_plan = if let Some(guard) = classify(&normalized, schema) {
+    let classified = {
+        let _s = obs::span(obs::names::CLASSIFY, obs::Category::Prepare);
+        classify(&normalized, schema)
+    };
+    let exec_plan = if let Some(guard) = classified {
         ExecPlan::GuardProbe(guard)
     } else {
         // Filtered-view statistics: measured survivor counts for
         // occurrences whose filters are fully concrete; base row counts
         // otherwise (symbolic filters resolve per execution).
+        let mut stats_span = obs::span(obs::names::STATS, obs::Category::Prepare);
+        let mut measured = 0u64;
         let mut stats = Vec::with_capacity(normalized.occurrences.len());
         for occurrence in &normalized.occurrences {
             let concrete = !occurrence.filters.is_empty()
@@ -266,6 +280,7 @@ pub(crate) fn prepare<'s>(
                     FilterPredicate::FieldsCompare { .. } => true,
                 });
             let rows = if concrete {
+                measured += 1;
                 let image = cache.get_or_build(txn, schema, occurrence.relation)?;
                 apply(&image, &occurrence.filters, &[], Vec::new()).len() as u64
             } else {
@@ -276,7 +291,13 @@ pub(crate) fn prepare<'s>(
                 rows,
             });
         }
-        let order = plan_order(&normalized, schema, &stats);
+        stats_span.set_args(measured, 0);
+        stats_span.end();
+        let order = {
+            let _s = obs::span(obs::names::PLAN_DP, obs::Category::Prepare);
+            plan_order(&normalized, schema, &stats)
+        };
+        let lower_span = obs::span(obs::names::LOWER, obs::Category::Prepare);
         let mut fj = binary2fj(&normalized, &order);
         factor(&mut fj);
         let sink_vars = witness.group_key().clone();
@@ -288,6 +309,7 @@ pub(crate) fn prepare<'s>(
             &sink_vars,
         )
         .expect("binary2fj + factor construct valid plans");
+        lower_span.end();
         ExecPlan::FreeJoin(validated)
     };
 
@@ -306,7 +328,10 @@ pub(crate) fn prepare<'s>(
         ExecPlan::GuardProbe(guard) => (None, guard.vars.len(), 1),
     };
 
-    let colts = build_colts(txn, cache, schema, &exec_plan)?;
+    let colts = {
+        let _s = obs::span(obs::names::BUILD_COLTS, obs::Category::Prepare);
+        build_colts(txn, cache, schema, &exec_plan)?
+    };
     let sink = make_sink(&finds, slot_count, exec_plan.distinct_bindings());
 
     Ok(PreparedQuery {
@@ -429,9 +454,13 @@ impl PreparedQuery<'_> {
         params: &[Value],
         out: &mut ResultBuffer,
     ) -> Result<()> {
+        let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
         out.clear();
         out.arity = self.finds.len();
-        self.bind_params(txn, params)?;
+        {
+            let _s = obs::span(obs::names::BIND_PARAMS, obs::Category::Execute);
+            self.bind_params(txn, params)?;
+        }
         self.sink.reset();
         match &self.plan {
             ExecPlan::GuardProbe(guard) => {
@@ -446,13 +475,17 @@ impl PreparedQuery<'_> {
                 )?;
             }
             ExecPlan::FreeJoin(plan) => {
-                if !resolve_filters(
-                    txn,
-                    plan,
-                    &self.resolved_params,
-                    &self.missed_params,
-                    &mut self.resolved_filters,
-                )? {
+                let resolved = {
+                    let _s = obs::span(obs::names::RESOLVE_FILTERS, obs::Category::Execute);
+                    resolve_filters(
+                        txn,
+                        plan,
+                        &self.resolved_params,
+                        &self.missed_params,
+                        &mut self.resolved_filters,
+                    )?
+                };
+                if !resolved {
                     return Ok(()); // Eq-anchored dictionary miss: empty result
                 }
                 run_join(
@@ -474,7 +507,12 @@ impl PreparedQuery<'_> {
                 )?;
             }
         }
-        finalize(&self.sink, &mut self.row_scratch, txn, &self.finds, out)
+        let result = {
+            let _s = obs::span(obs::names::FINALIZE, obs::Category::Execute);
+            finalize(&self.sink, &mut self.row_scratch, txn, &self.finds, out)
+        };
+        execute_span.set_args(out.len() as u64, 0);
+        result
     }
 
     /// Convenience path: a fresh buffer per call.
@@ -649,6 +687,7 @@ fn run_join<C: crate::exec::run::Counters>(
     sink: &mut EitherSink,
     counters: &mut C,
 ) -> Result<()> {
+    let views_span = obs::span(obs::names::VIEWS, obs::Category::Execute);
     let generation = txn.generation()?;
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
         // Warm fast path: same generation, same resolved filters — the
@@ -657,16 +696,31 @@ fn run_join<C: crate::exec::run::Counters>(
         if built_generation[occ_idx] == Some(generation)
             && built_filters[occ_idx] == resolved_filters[occ_idx]
         {
+            obs::event(
+                obs::names::VIEW_MEMO_HIT,
+                obs::Category::Execute,
+                occ_idx as u64,
+                0,
+            );
             continue;
         }
+        let mut build_span = obs::span_args(
+            obs::names::VIEW_BUILD,
+            obs::Category::Execute,
+            occ_idx as u64,
+            0,
+        );
         let image = cache.get_or_build(txn, schema, occurrence.relation)?;
         let buffer = std::mem::take(&mut survivor_buffers[occ_idx]);
         let view = apply(&image, &resolved_filters[occ_idx], &[], buffer);
+        build_span.set_args(occ_idx as u64, view.len() as u64);
         let old = colts[occ_idx].reset(view);
         survivor_buffers[occ_idx] = old.recycle();
         built_generation[occ_idx] = Some(generation);
         built_filters[occ_idx].clone_from(&resolved_filters[occ_idx]);
     }
+    views_span.end();
+    let _join = obs::span(obs::names::JOIN, obs::Category::Execute);
     // One match per execution: the executor monomorphizes per concrete
     // sink type — no per-emit enum branch on the hot path.
     match sink {
@@ -1255,5 +1309,120 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(report.contains("free join"));
         assert!(report.contains("emitted bindings: 2"));
+    }
+
+    /// PRD 03's read-path capture contract (feature `trace`).
+    #[cfg(feature = "trace")]
+    #[test]
+    fn read_path_traces_phases_memo_hits_and_guard() {
+        use crate::obs;
+
+        let dir = TempDir::new("prepared-trace-read");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        insert_postings(&env, &schema, &[(1, 7, "rent", -1200), (2, 7, "food", -55)]);
+        let cache = ImageCache::new();
+        let txn = env.read_txn().expect("txn");
+
+        let names = |events: &[obs::TraceEvent]| -> Vec<&'static str> {
+            events.iter().map(|e| e.name).collect()
+        };
+
+        // Prepare: the phase spans, exactly.
+        obs::start_capture();
+        let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
+        let events = obs::finish_capture();
+        let got = names(&events);
+        for expected in [
+            obs::names::VALIDATE,
+            obs::names::NORMALIZE,
+            obs::names::CLASSIFY,
+            obs::names::STATS,
+            obs::names::PLAN_DP,
+            obs::names::LOWER,
+            obs::names::BUILD_COLTS,
+            obs::names::PREPARE,
+        ] {
+            assert!(got.contains(&expected), "missing {expected} in {got:?}");
+        }
+        // Containment: every phase inside the outer prepare span.
+        let outer = events
+            .iter()
+            .find(|e| e.name == obs::names::PREPARE)
+            .expect("outer");
+        for e in &events {
+            assert!(e.start_ns >= outer.start_ns);
+            assert!(e.start_ns + e.dur_ns <= outer.start_ns + outer.dur_ns);
+        }
+
+        // First execute: builds views, no memo hits, row count in a0.
+        obs::start_capture();
+        let out = prepared
+            .execute_collect(&txn, &cache, &[Value::U64(7), Value::I64(-100_000)])
+            .expect("execute");
+        let first = obs::finish_capture();
+        assert_eq!(out.len(), 2);
+        let first_names = names(&first);
+        assert!(
+            first_names.contains(&obs::names::VIEW_BUILD),
+            "{first_names:?}"
+        );
+        assert!(!first_names.contains(&obs::names::VIEW_MEMO_HIT));
+        let exec = first
+            .iter()
+            .find(|e| e.name == obs::names::EXECUTE)
+            .expect("execute span");
+        assert_eq!(exec.a0, 2, "execute a0 carries the row count");
+
+        // Second execute, same snapshot + params: memo hits only.
+        obs::start_capture();
+        prepared
+            .execute_collect(&txn, &cache, &[Value::U64(7), Value::I64(-100_000)])
+            .expect("execute");
+        let second = obs::finish_capture();
+        let second_names = names(&second);
+        assert!(
+            second_names.contains(&obs::names::VIEW_MEMO_HIT),
+            "{second_names:?}"
+        );
+        assert!(!second_names.contains(&obs::names::VIEW_BUILD));
+        assert!(!second_names.contains(&obs::names::IMAGE_BUILD));
+
+        // A guard-shaped query: guard_probe, never join.
+        let guard_query = Query {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                relation: POSTING,
+                bindings: vec![
+                    (FieldId(0), Term::Param(crate::ir::ParamId(0))),
+                    (FieldId(3), Term::Var(VarId(0))),
+                ],
+            }],
+            predicates: vec![],
+        };
+        let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
+        obs::start_capture();
+        guard
+            .execute_collect(&txn, &cache, &[Value::U64(1)])
+            .expect("execute");
+        let guard_events = obs::finish_capture();
+        let guard_names = names(&guard_events);
+        assert!(
+            guard_names.contains(&obs::names::GUARD_PROBE),
+            "{guard_names:?}"
+        );
+        assert!(!guard_names.contains(&obs::names::JOIN));
+        let probe = guard_events
+            .iter()
+            .find(|e| e.name == obs::names::GUARD_PROBE)
+            .expect("probe");
+        assert_eq!(probe.a0, 1, "hit flag");
+
+        // Nothing records without capture.
+        prepared
+            .execute_collect(&txn, &cache, &[Value::U64(7), Value::I64(-100_000)])
+            .expect("execute");
+        obs::start_capture();
+        assert!(obs::finish_capture().is_empty());
     }
 }
