@@ -81,12 +81,14 @@ impl Sink for ProjectionSink {
         for (i, slot) in self.slots.iter().enumerate() {
             self.scratch[i] = bindings.get(*slot);
         }
-        if self.seen.insert(&self.scratch) {
-            Flow::Continue
-        } else {
-            // Already emitted: the suffix can only multiply witnesses.
-            Flow::SkipSuffix
-        }
+        self.seen.insert(&self.scratch);
+        // The doc's first-emit signal (30-execution D2): once a projected
+        // tuple lands — new or duplicate — the current suffix can only
+        // multiply witnesses. The executor's sink_relevant gating decides
+        // how far the skip unwinds; signaling on the *first* emit (not the
+        // first duplicate) saves one full suffix descent per distinct
+        // output tuple.
+        Flow::SkipSuffix
     }
 }
 

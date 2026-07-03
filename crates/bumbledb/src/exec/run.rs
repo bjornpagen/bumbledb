@@ -80,7 +80,12 @@ impl Counters for NoopCounters {
 #[derive(Debug)]
 pub struct Bindings {
     slots: Vec<u64>,
+    /// Staleness tracking exists only to power the `debug_assert` in
+    /// [`Bindings::get`]; the release path pays no epoch store in the
+    /// innermost loop.
+    #[cfg(debug_assertions)]
     epochs: Vec<u64>,
+    #[cfg(debug_assertions)]
     current: u64,
 }
 
@@ -89,24 +94,33 @@ impl Bindings {
     pub fn new(slot_count: usize) -> Self {
         Self {
             slots: vec![0; slot_count],
+            #[cfg(debug_assertions)]
             epochs: vec![0; slot_count],
+            #[cfg(debug_assertions)]
             current: 0,
         }
     }
 
     /// Starts a fresh execution: every slot becomes stale at once.
     pub fn reset(&mut self) {
-        self.current += 1;
+        #[cfg(debug_assertions)]
+        {
+            self.current += 1;
+        }
     }
 
     pub fn set(&mut self, slot: usize, value: u64) {
         self.slots[slot] = value;
-        self.epochs[slot] = self.current;
+        #[cfg(debug_assertions)]
+        {
+            self.epochs[slot] = self.current;
+        }
     }
 
     /// Reads a bound slot.
     #[must_use]
     pub fn get(&self, slot: usize) -> u64 {
+        #[cfg(debug_assertions)]
         debug_assert_eq!(
             self.epochs[slot], self.current,
             "reads are plan-scoped: slot {slot} must be bound"
@@ -448,6 +462,21 @@ impl Executor {
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
 
+            // Save the node-entry cursors once per batch: every entry's
+            // recursion restores them, so they are identical for each
+            // surviving element — the old per-entry journal rebuild paid
+            // a push/drain cycle per tuple in the innermost loop.
+            scratch.journal.clear();
+            scratch.journal.push((cover_occ, cover_cursor, cover_level));
+            for (sub_idx, subatom) in plan.nodes()[node_idx].subatoms.iter().enumerate() {
+                if sub_idx == cover_sub {
+                    continue;
+                }
+                let occ = usize::from(subatom.occ.0);
+                let (cursor, level) = self.cursors[occ];
+                scratch.journal.push((occ, cursor, level));
+            }
+
             // Recurse per surviving element (paper §4.3: batch within a
             // node, recurse per tuple) with the scalar journal discipline.
             for k in 0..scratch.survivors.len() {
@@ -455,22 +484,20 @@ impl Executor {
                 for (i, slot) in self.slot_map[node_idx][cover_sub].iter().enumerate() {
                     bindings.set(*slot, scratch.entry_keys[entry * arity + i]);
                 }
-                scratch.journal.clear();
-                scratch.journal.push((cover_occ, cover_cursor, cover_level));
                 self.cursors[cover_occ] = (scratch.children[entry], cover_level + 1);
-                for (sub_idx, subatom) in plan.nodes()[node_idx].subatoms.iter().enumerate() {
+                let mut journal_idx = 1;
+                for (sub_idx, _) in plan.nodes()[node_idx].subatoms.iter().enumerate() {
                     if sub_idx == cover_sub {
                         continue;
                     }
-                    let occ = usize::from(subatom.occ.0);
-                    let (cursor, level) = self.cursors[occ];
-                    scratch.journal.push((occ, cursor, level));
+                    let (occ, _, level) = scratch.journal[journal_idx];
+                    journal_idx += 1;
                     self.cursors[occ] = (scratch.sibling_children[sub_idx][entry], level + 1);
                 }
 
                 flow = self.run_node(plan, node_idx + 1, colts, bindings, sink, counters);
 
-                for (occ, cursor, level) in scratch.journal.drain(..).rev() {
+                for &(occ, cursor, level) in scratch.journal.iter().rev() {
                     self.cursors[occ] = (cursor, level);
                 }
 

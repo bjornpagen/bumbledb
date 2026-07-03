@@ -339,12 +339,16 @@ mod tests {
         };
         let mut fj = binary2fj(&normalized, &order);
         factor(&mut fj);
+        // The sink projects var 2: sink_vars must say so (the production
+        // path passes the witness's group key) — with the D2 first-emit
+        // skip, an empty set would let the unwind prune real output.
+        let sink_vars = BTreeSet::from([VarId(2)]);
         let plan = validate(
             &fj,
             &normalized,
             &schema,
             order.estimates.clone(),
-            &BTreeSet::new(),
+            &sink_vars,
         )
         .expect("valid plan");
 

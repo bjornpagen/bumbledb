@@ -166,6 +166,7 @@ impl Environment {
         Ok(ReadTxn {
             env: self,
             txn: self.env.read_txn()?,
+            generation: std::cell::OnceCell::new(),
         })
     }
 
@@ -215,6 +216,10 @@ fn read_u64(meta: &Database<Bytes, Bytes>, rtxn: &RoTxn<'_, AnyTls>, key: &[u8])
 pub struct ReadTxn<'env> {
     env: &'env Environment,
     txn: RoTxn<'env, WithoutTls>,
+    /// Snapshot-constant by definition (the tx id is read *inside* this
+    /// snapshot), so one `_meta` get serves every `generation()` caller —
+    /// the cache asks once per occurrence per execution otherwise.
+    generation: std::cell::OnceCell<u64>,
 }
 
 impl ReadTxn<'_> {
@@ -227,7 +232,11 @@ impl ReadTxn<'_> {
     ///
     /// `Corruption(MetaMissing)` if the tx-id key is absent or malformed.
     pub fn generation(&self) -> Result<u64> {
-        read_u64(&self.env.meta, &self.txn, META_TX_ID)
+        if let Some(g) = self.generation.get() {
+            return Ok(*g);
+        }
+        let g = read_u64(&self.env.meta, &self.txn, META_TX_ID)?;
+        Ok(*self.generation.get_or_init(|| g))
     }
 
     /// The committed dictionary next-id as of this snapshot (reader: the

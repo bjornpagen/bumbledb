@@ -17,7 +17,7 @@ use crate::encoding::{decode_u64, fact_hash, field_bytes};
 use crate::error::{Error, Result};
 use crate::schema::{FieldId, Generation, RelationId, Schema};
 use crate::storage::env::ReadTxn;
-use crate::storage::keys::{self, KeyBuf, MAX_KEY};
+use crate::storage::keys;
 
 /// The net effect recorded for one fact. Last disposition wins; whether it
 /// actually applies is decided against base state at commit (PRD 07).
@@ -46,8 +46,10 @@ pub struct WriteDelta<'s> {
     /// Novel strings/bytes interned by this transaction: provisional ids
     /// assigned from the committed dictionary counter (the counter is
     /// in-memory-then-flush like every other counter; single-writer
-    /// discipline makes provisional = final).
-    pending_interns: BTreeMap<(u8, Box<[u8]>), u64>,
+    /// discipline makes provisional = final). One map per tag so probes
+    /// borrow the raw bytes (`BTreeMap<Box<[u8]>, _>` looks up by
+    /// `&[u8]`); the old `(u8, Box<[u8]>)` key boxed a copy per probe.
+    pending_interns: [BTreeMap<Box<[u8]>, u64>; 2],
     /// The next dictionary id, lazily read once per transaction.
     dict_next: Option<u64>,
 }
@@ -61,7 +63,7 @@ impl<'s> WriteDelta<'s> {
             facts: BTreeMap::new(),
             serial_next: BTreeMap::new(),
             row_count_delta: BTreeMap::new(),
-            pending_interns: BTreeMap::new(),
+            pending_interns: [BTreeMap::new(), BTreeMap::new()],
             dict_next: None,
         }
     }
@@ -87,11 +89,16 @@ impl<'s> WriteDelta<'s> {
     }
 
     fn intern(&mut self, view: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<u64> {
+        // Pending first: a pending value was proven absent from the
+        // committed dict at mint time, and the single-writer discipline
+        // freezes the committed dict for the transaction's lifetime — so
+        // a repeat intern costs one in-memory probe, not an LMDB get plus
+        // a blake3.
+        if let Some(id) = self.pending_interns[usize::from(tag)].get(raw) {
+            return Ok(*id);
+        }
         if let Some(id) = crate::storage::dict::lookup_tagged(view, tag, raw)? {
             return Ok(id);
-        }
-        if let Some(id) = self.pending_interns.get(&(tag, Box::from(raw))) {
-            return Ok(*id);
         }
         let next = match self.dict_next {
             Some(next) => next,
@@ -101,7 +108,7 @@ impl<'s> WriteDelta<'s> {
             next != crate::storage::dict::SENTINEL_ID,
             "dictionary id space exhausted (u64::MAX is the miss sentinel)"
         );
-        self.pending_interns.insert((tag, Box::from(raw)), next);
+        self.pending_interns[usize::from(tag)].insert(Box::from(raw), next);
         self.dict_next = Some(next + 1);
         Ok(next)
     }
@@ -125,7 +132,7 @@ impl<'s> WriteDelta<'s> {
     ) -> Result<bool> {
         self.advance_serial_marks(view, rel, fact_bytes)?;
         let hash = fact_hash(fact_bytes);
-        let changed = !self.present(view, rel, &hash, fact_bytes)?;
+        let changed = !self.present(view, rel, &hash)?;
         if changed {
             let slice = self.arena.alloc(fact_bytes);
             self.facts.insert((rel, hash), (slice, Disposition::Insert));
@@ -147,7 +154,7 @@ impl<'s> WriteDelta<'s> {
         fact_bytes: &[u8],
     ) -> Result<bool> {
         let hash = fact_hash(fact_bytes);
-        let changed = self.present(view, rel, &hash, fact_bytes)?;
+        let changed = self.present(view, rel, &hash)?;
         if changed {
             let slice = self.arena.alloc(fact_bytes);
             self.facts.insert((rel, hash), (slice, Disposition::Delete));
@@ -227,7 +234,11 @@ impl<'s> WriteDelta<'s> {
     pub(crate) fn pending_interns(&self) -> impl Iterator<Item = (u8, &[u8], u64)> + '_ {
         self.pending_interns
             .iter()
-            .map(|((tag, raw), id)| (*tag, raw.as_ref(), *id))
+            .enumerate()
+            .flat_map(|(tag, map)| {
+                map.iter()
+                    .map(move |(raw, id)| (u8::try_from(tag).expect("two tags"), raw.as_ref(), *id))
+            })
     }
 
     /// The dictionary next-id to flush, if this transaction minted any
@@ -247,17 +258,11 @@ impl<'s> WriteDelta<'s> {
 
     /// Effective membership: the delta's disposition if present, else an `M`
     /// probe against the read view (committed state).
-    fn present(
-        &self,
-        view: &ReadTxn<'_>,
-        rel: RelationId,
-        hash: &[u8; 32],
-        fact_bytes: &[u8],
-    ) -> Result<bool> {
+    fn present(&self, view: &ReadTxn<'_>, rel: RelationId, hash: &[u8; 32]) -> Result<bool> {
         if let Some((_, disposition)) = self.facts.get(&(rel, *hash)) {
             return Ok(*disposition == Disposition::Insert);
         }
-        Ok(crate::storage::read::fact_row(view, rel, fact_bytes)?.is_some())
+        Ok(crate::storage::read::fact_row_by_hash(view, rel, hash)?.is_some())
     }
 
     /// Advances serial marks past any serial-field values the fact carries
@@ -293,8 +298,9 @@ impl<'s> WriteDelta<'s> {
 /// Reads the committed `Q` next-value for `(relation, field)`; a missing
 /// entry means the sequence has never issued a value.
 fn read_serial_next(view: &ReadTxn<'_>, rel: RelationId, field: FieldId) -> Result<u64> {
-    let mut buf: KeyBuf = [0; MAX_KEY];
+    let mut buf = [0u8; keys::SERIAL_KEY_LEN];
     let len = keys::serial_key(&mut buf, rel, field);
+    debug_assert_eq!(len, buf.len());
     match view.env().data().get(view.raw(), &buf[..len])? {
         Some(bytes) => Ok(u64::from_le_bytes(bytes.try_into().map_err(|_| {
             Error::Corruption(crate::error::CorruptionError::MalformedValue(
@@ -422,7 +428,7 @@ mod tests {
         // in-memory next must win — Q is read once per (relation, field).
         {
             let mut wtxn = env.write_txn().expect("txn");
-            let mut buf: KeyBuf = [0; MAX_KEY];
+            let mut buf = [0u8; keys::SERIAL_KEY_LEN];
             let len = keys::serial_key(&mut buf, R, ID);
             env.data()
                 .put(wtxn.raw_mut(), &buf[..len], 100u64.to_le_bytes().as_slice())

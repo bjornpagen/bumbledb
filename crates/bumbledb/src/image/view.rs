@@ -194,13 +194,16 @@ pub fn apply(
     debug_assert!(u32::try_from(row_count).is_ok(), "positions fit u32");
     buf.clear();
 
-    // Kernel fast path (PRD 22): when the first predicate is a fixed-width
-    // compare against a resolved constant, the NEON predicate scan produces
-    // the initial survivor set; the remaining predicates refine it below.
-    let mut rest = predicates;
-    if kernel_scan(image, &predicates[0], params, &mut buf) {
-        rest = &predicates[1..];
-        if rest.is_empty() {
+    // Kernel fast path: the *first kernel-compatible* predicate (not
+    // blindly `predicates[0]` — a leading FieldsCompare or byte-column
+    // `Ne` must not hide the SIMD path) produces the initial survivor
+    // set; every other predicate refines it below.
+    if let Some(pivot) = predicates
+        .iter()
+        .position(|p| kernel_scan(image, p, params, &mut buf))
+    {
+        let survivors_only = predicates.len() == 1;
+        if survivors_only {
             return View::Survivors {
                 image: Arc::clone(image),
                 positions: buf,
@@ -211,7 +214,13 @@ pub fn apply(
         let mut cursor = 0usize;
         for read in 0..buf.len() {
             let position = buf[read] as usize;
-            let keep = row_matches(image, rest, params, position);
+            let mut keep = true;
+            for (idx, predicate) in predicates.iter().enumerate() {
+                if idx == pivot {
+                    continue;
+                }
+                keep &= row_matches(image, std::slice::from_ref(predicate), params, position);
+            }
             buf[cursor] = buf[read];
             cursor += usize::from(keep);
         }
@@ -228,7 +237,7 @@ pub fn apply(
     // unconditional store, conditional cursor advance — no `if` in this
     // loop body.
     for position in 0..row_count {
-        let keep = row_matches(image, rest, params, position);
+        let keep = row_matches(image, predicates, params, position);
         buf[cursor] = u32::try_from(position).expect("checked above");
         cursor += usize::from(keep);
     }

@@ -309,6 +309,11 @@ impl Colt {
 
     /// Suffix iteration: yield each position's key words with a pinned-row
     /// child — no forcing, no allocation.
+    ///
+    /// The resume token is O(1) to advance: the root token is a plain view
+    /// index; a chunked node's token packs `(chunk + 2, offset)` into the
+    /// u64 (0 = start, high half 1 = exhausted) so a drain is O(k), never
+    /// the O(k²/64) of re-walking the chain per position.
     fn iter_positions(
         &mut self,
         node: NodeRef,
@@ -320,44 +325,56 @@ impl Colt {
     ) -> (usize, BatchToken) {
         let arity = self.arity(level);
         let mut yielded = 0;
-        let mut index = token.0;
-        while yielded < max {
-            let Some(position) = self.nth_position(node, index) else {
-                break;
-            };
-            for (i, col) in self.schema_columns[level].iter().enumerate() {
-                keys_out[yielded * arity + i] = self.word_at(*col, position);
-            }
-            children_out[yielded] = Cursor::Row(position);
-            yielded += 1;
-            index += 1;
-        }
-        (yielded, BatchToken(index))
-    }
-
-    /// The `index`-th position of an unforced node's position source.
-    fn nth_position(&self, node: NodeRef, index: u64) -> Option<u32> {
         match self.nodes[node.0 as usize] {
             NodeState::Forced { .. } => unreachable!("caller checked unforced"),
             NodeState::Unforced(Positions::Root) => {
-                let idx = usize::try_from(index).expect("64-bit usize");
-                (idx < self.view.len()).then(|| self.view.position_at(idx))
-            }
-            NodeState::Unforced(Positions::Chunks { first, count, .. }) => {
-                if index >= u64::from(count) {
-                    return None;
-                }
-                // Bounded chain walk: index / CHUNK_LEN hops.
-                let mut chunk = first;
-                let mut remaining = index;
-                loop {
-                    let c = &self.chunks[chunk as usize];
-                    if remaining < u64::from(c.len) {
-                        return Some(c.positions[usize::try_from(remaining).expect("chunk-local")]);
+                let mut index = usize::try_from(token.0).expect("64-bit usize");
+                while yielded < max && index < self.view.len() {
+                    let position = self.view.position_at(index);
+                    for (i, col) in self.schema_columns[level].iter().enumerate() {
+                        keys_out[yielded * arity + i] = self.word_at(*col, position);
                     }
-                    remaining -= u64::from(c.len);
-                    chunk = c.next;
+                    children_out[yielded] = Cursor::Row(position);
+                    yielded += 1;
+                    index += 1;
                 }
+                (yielded, BatchToken(index as u64))
+            }
+            NodeState::Unforced(Positions::Chunks { first, .. }) => {
+                const EXHAUSTED: u64 = 1 << 32;
+                let (mut chunk, mut offset) = match token.0 {
+                    0 => (first, 0usize),
+                    EXHAUSTED => return (0, token),
+                    packed => (
+                        u32::try_from((packed >> 32) - 2).expect("packed chunk index"),
+                        usize::try_from(packed & 0xFFFF_FFFF).expect("64-bit usize"),
+                    ),
+                };
+                loop {
+                    if yielded >= max {
+                        break;
+                    }
+                    let c = self.chunks[chunk as usize];
+                    if offset >= usize::from(c.len) {
+                        if c.next == u32::MAX {
+                            return (yielded, BatchToken(EXHAUSTED));
+                        }
+                        chunk = c.next;
+                        offset = 0;
+                        continue;
+                    }
+                    let position = c.positions[offset];
+                    for (i, col) in self.schema_columns[level].iter().enumerate() {
+                        keys_out[yielded * arity + i] = self.word_at(*col, position);
+                    }
+                    children_out[yielded] = Cursor::Row(position);
+                    yielded += 1;
+                    offset += 1;
+                }
+                (
+                    yielded,
+                    BatchToken((u64::from(chunk) + 2) << 32 | offset as u64),
+                )
             }
         }
     }
@@ -452,30 +469,55 @@ impl Colt {
             slots_start,
         };
 
-        let mut index = 0u64;
-        while let Some(position) = self.nth_position(node, index) {
-            index += 1;
-            self.scratch.clear();
-            for col in &self.schema_columns[level] {
-                let w = self.word_at(*col, position);
-                self.scratch.push(w);
+        // Single pass, O(1) advance per position: the root walks the view
+        // by index (O(1) each); a chunked list walks its chain directly —
+        // never `nth_position`'s from-the-head re-walk, which made forcing
+        // a k-position child O(k²/64).
+        match self.nodes[node.0 as usize] {
+            NodeState::Unforced(Positions::Root) => {
+                for idx in 0..self.view.len() {
+                    let position = self.view.position_at(idx);
+                    self.force_ingest(&mut m, level, position);
+                }
             }
-            let key = std::mem::take(&mut self.scratch);
-            let (found, idx) = self.probe(&m, &key);
-            if found {
-                self.append_child(m.slots_start + idx, position);
-            } else {
-                self.keys[m.keys_start + idx * arity..m.keys_start + idx * arity + arity]
-                    .copy_from_slice(&key);
-                self.slots[m.slots_start + idx] = Slot::Single(position);
-                m.len += 1;
+            NodeState::Unforced(Positions::Chunks { first, .. }) => {
+                let mut chunk = first;
+                while chunk != u32::MAX {
+                    let c = self.chunks[chunk as usize];
+                    for i in 0..usize::from(c.len) {
+                        self.force_ingest(&mut m, level, c.positions[i]);
+                    }
+                    chunk = c.next;
+                }
             }
-            self.scratch = key;
+            NodeState::Forced { .. } => unreachable!("checked above"),
         }
 
         self.maps.push(m);
         self.nodes[node.0 as usize] = NodeState::Forced { map: map_idx };
         map_idx
+    }
+
+    /// One position of a [`Colt::force`] pass: decode its key words, probe,
+    /// and land it (new slot or appended child).
+    fn force_ingest(&mut self, m: &mut Map, level: usize, position: u32) {
+        let arity = m.arity;
+        self.scratch.clear();
+        for col in &self.schema_columns[level] {
+            let w = self.word_at(*col, position);
+            self.scratch.push(w);
+        }
+        let key = std::mem::take(&mut self.scratch);
+        let (found, idx) = self.probe(m, &key);
+        if found {
+            self.append_child(m.slots_start + idx, position);
+        } else {
+            self.keys[m.keys_start + idx * arity..m.keys_start + idx * arity + arity]
+                .copy_from_slice(&key);
+            self.slots[m.slots_start + idx] = Slot::Single(position);
+            m.len += 1;
+        }
+        self.scratch = key;
     }
 
     /// Appends a position to an occupied slot's child: singleton inline

@@ -21,16 +21,18 @@ use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
 /// validation never re-derives key slices.
 #[derive(Debug)]
 pub struct FkProbe {
-    /// The referencing side, for the violation error.
+    /// The referencing side, for the violation error — one exemplar per
+    /// distinct probed target key (a bulk load referencing one account
+    /// probes it once, not once per posting).
     pub source_relation: RelationId,
     pub source_constraint: ConstraintId,
-    /// The `U` key components to probe.
-    pub target_relation: RelationId,
-    pub target_constraint: ConstraintId,
-    pub guard: Vec<u8>,
     /// The offending fact, for the violation error.
     pub fact_bytes: Vec<u8>,
 }
+
+/// Forward-FK probes deduplicated by target key: `(target relation,
+/// target constraint, guard)` → the first referencing fact.
+pub type FkProbes = BTreeMap<(RelationId, ConstraintId, Vec<u8>), FkProbe>;
 
 /// The applied-but-uncommitted state after phases 1-2, carrying the open
 /// LMDB write transaction plus the bookkeeping PRD 08 consumes.
@@ -51,7 +53,7 @@ pub struct Applied<'env, 's> {
     /// subtracted from `deleted_guards` before Restrict scanning.
     pub inserted_guards: BTreeSet<(RelationId, ConstraintId, Vec<u8>)>,
     /// Forward-FK probes for every inserted fact.
-    pub fk_probes: Vec<FkProbe>,
+    pub fk_probes: FkProbes,
 }
 
 /// Applies the delta to LMDB in canonical order: phase 1 all deletes, then
@@ -76,7 +78,7 @@ pub fn apply<'env, 's>(delta: WriteDelta<'s>, env: &'env Environment) -> Result<
         row_id_next: BTreeMap::new(),
         deleted_guards: BTreeSet::new(),
         inserted_guards: BTreeSet::new(),
-        fk_probes: Vec::new(),
+        fk_probes: FkProbes::new(),
         key: [0; MAX_KEY],
         guard: Vec::new(),
     };
@@ -170,13 +172,8 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
 
     // Phase 3a: forward FK validation — every inserted fact's targets must
     // resolve in the final state (the write txn reads its own writes).
-    for probe in &fk_probes {
-        let u_len = keys::unique_key(
-            &mut key,
-            probe.target_relation,
-            probe.target_constraint,
-            &probe.guard,
-        );
+    for ((target_relation, target_constraint, guard), probe) in &fk_probes {
+        let u_len = keys::unique_key(&mut key, *target_relation, *target_constraint, guard);
         if data.get(txn.raw(), &key[..u_len])?.is_none() {
             return Err(Error::ForeignKeyViolation {
                 relation: probe.source_relation,
@@ -305,7 +302,7 @@ struct Applier<'env> {
     row_id_next: BTreeMap<RelationId, u64>,
     deleted_guards: BTreeSet<(RelationId, ConstraintId, Vec<u8>)>,
     inserted_guards: BTreeSet<(RelationId, ConstraintId, Vec<u8>)>,
-    fk_probes: Vec<FkProbe>,
+    fk_probes: FkProbes,
     key: KeyBuf,
     guard: Vec<u8>,
 }
@@ -446,16 +443,15 @@ impl Applier<'_> {
             // R puts are unconditional; target validation is PRD 08's.
             self.data
                 .put(self.txn.raw_mut(), &self.key[..r_len], [].as_slice())?;
-            self.fk_probes.push(FkProbe {
-                source_relation: rel,
-                source_constraint: ConstraintId(
-                    u16::try_from(con_idx).expect("validated schema: constraint ids fit u16"),
-                ),
-                target_relation: *target_relation,
-                target_constraint: *target_constraint,
-                guard: self.guard.clone(),
-                fact_bytes: fact_bytes.to_vec(),
-            });
+            self.fk_probes
+                .entry((*target_relation, *target_constraint, self.guard.clone()))
+                .or_insert_with(|| FkProbe {
+                    source_relation: rel,
+                    source_constraint: ConstraintId(
+                        u16::try_from(con_idx).expect("validated schema: constraint ids fit u16"),
+                    ),
+                    fact_bytes: fact_bytes.to_vec(),
+                });
         }
         self.changed = true;
         Ok(())
@@ -677,7 +673,10 @@ mod tests {
             // the inserted target guard recorded for the FK-targeted
             // constraint.
             assert_eq!(applied.fk_probes.len(), 1);
-            assert_eq!(applied.fk_probes[0].guard, encode_u64(5));
+            let (target_rel, target_cid, guard) =
+                applied.fk_probes.keys().next().expect("one probe");
+            assert_eq!((*target_rel, *target_cid), (TARGET, C0));
+            assert_eq!(guard.as_slice(), encode_u64(5));
             assert!(applied.deleted_guards.is_empty());
             assert!(applied
                 .inserted_guards
@@ -900,7 +899,10 @@ mod tests {
             SOURCE,
             0
         ))));
-        assert_eq!(applied.fk_probes[0].guard, encode_u64(7).to_vec());
+        assert_eq!(
+            applied.fk_probes.keys().next().expect("one probe").2,
+            encode_u64(7).to_vec()
+        );
     }
     // ---------- PRD 08: full commit ----------
 

@@ -203,6 +203,14 @@ pub struct PreparedQuery<'s> {
     resolved_filters: Vec<Vec<FilterPredicate>>,
     /// Recycled survivor buffers, one per occurrence.
     survivor_buffers: Vec<Vec<u32>>,
+    /// Per occurrence: the generation whose image the COLT's current view
+    /// was built from — when it matches the snapshot and the filters are
+    /// unchanged, the view rebuild *and* the COLT reset are skipped
+    /// entirely (forced tries are pure functions of the view).
+    built_generation: Vec<Option<u64>>,
+    /// Per occurrence: the resolved filters the current view was built
+    /// with (capacity-retained; resolved filters carry no boxed constants).
+    built_filters: Vec<Vec<FilterPredicate>>,
     /// COLT sources, one per occurrence, reset per execution with every
     /// pool capacity retained (self-joins rebuild their own views from the
     /// shared image — a duplicated filter pass, no shared buffer).
@@ -230,6 +238,7 @@ pub struct PreparedQuery<'s> {
 /// construct valid plans by construction).
 pub(crate) fn prepare<'s>(
     txn: &ReadTxn<'_>,
+    cache: &ImageCache,
     schema: &'s Schema,
     query: &Query,
 ) -> Result<PreparedQuery<'s>> {
@@ -253,7 +262,7 @@ pub(crate) fn prepare<'s>(
                     FilterPredicate::FieldsEqual { .. } => true,
                 });
             let rows = if concrete {
-                let image = crate::image::build(txn, schema, occurrence.relation)?;
+                let image = cache.get_or_build(txn, schema, occurrence.relation)?;
                 apply(&image, &occurrence.filters, &[], Vec::new()).len() as u64
             } else {
                 read::row_count(txn, occurrence.relation)?
@@ -293,7 +302,7 @@ pub(crate) fn prepare<'s>(
         ExecPlan::GuardProbe(guard) => (None, guard.vars.len(), 1),
     };
 
-    let colts = build_colts(txn, schema, &exec_plan)?;
+    let colts = build_colts(txn, cache, schema, &exec_plan)?;
     let sink = make_sink(&finds, slot_count, exec_plan.distinct_bindings());
 
     Ok(PreparedQuery {
@@ -307,6 +316,8 @@ pub(crate) fn prepare<'s>(
         missed_params: Vec::new(),
         resolved_filters: vec![Vec::new(); occurrence_count],
         survivor_buffers: (0..occurrence_count).map(|_| Vec::new()).collect(),
+        built_generation: vec![None; occurrence_count],
+        built_filters: vec![Vec::new(); occurrence_count],
         colts,
         sink,
         row_scratch: Vec::new(),
@@ -317,14 +328,19 @@ pub(crate) fn prepare<'s>(
 
 /// COLT sources with their fixed column schemas; the initial views are
 /// placeholders — every execution resets them against fresh images.
-fn build_colts(txn: &ReadTxn<'_>, schema: &Schema, exec_plan: &ExecPlan) -> Result<Vec<Colt>> {
+fn build_colts(
+    txn: &ReadTxn<'_>,
+    cache: &ImageCache,
+    schema: &Schema,
+    exec_plan: &ExecPlan,
+) -> Result<Vec<Colt>> {
     match exec_plan {
         ExecPlan::GuardProbe(_) => Ok(Vec::new()),
         ExecPlan::FreeJoin(plan) => plan
             .occurrences()
             .iter()
             .map(|occurrence| {
-                let image = crate::image::build(txn, schema, occurrence.relation)?;
+                let image = cache.get_or_build(txn, schema, occurrence.relation)?;
                 let columns: Vec<Vec<usize>> = occurrence
                     .trie_schema
                     .iter()
@@ -446,6 +462,8 @@ impl PreparedQuery<'_> {
                     &mut self.bindings,
                     &self.resolved_filters,
                     &mut self.survivor_buffers,
+                    &mut self.built_generation,
+                    &mut self.built_filters,
                     &mut self.colts,
                     &mut self.sink,
                     &mut NoopCounters,
@@ -524,6 +542,8 @@ impl PreparedQuery<'_> {
                     &mut self.bindings,
                     &self.resolved_filters,
                     &mut self.survivor_buffers,
+                    &mut self.built_generation,
+                    &mut self.built_filters,
                     &mut self.colts,
                     &mut self.sink,
                     &mut counters,
@@ -619,18 +639,36 @@ fn run_join<C: crate::exec::run::Counters>(
     bindings: &mut Bindings,
     resolved_filters: &[Vec<FilterPredicate>],
     survivor_buffers: &mut [Vec<u32>],
+    built_generation: &mut [Option<u64>],
+    built_filters: &mut [Vec<FilterPredicate>],
     colts: &mut [Colt],
     sink: &mut EitherSink,
     counters: &mut C,
 ) -> Result<()> {
+    let generation = txn.generation()?;
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
+        // Warm fast path: same generation, same resolved filters — the
+        // COLT's view is still exactly right, and so are its forced
+        // tries. No cache lock, no filter scan, no re-force.
+        if built_generation[occ_idx] == Some(generation)
+            && built_filters[occ_idx] == resolved_filters[occ_idx]
+        {
+            continue;
+        }
         let image = cache.get_or_build(txn, schema, occurrence.relation)?;
         let buffer = std::mem::take(&mut survivor_buffers[occ_idx]);
         let view = apply(&image, &resolved_filters[occ_idx], &[], buffer);
         let old = colts[occ_idx].reset(view);
         survivor_buffers[occ_idx] = old.recycle();
+        built_generation[occ_idx] = Some(generation);
+        built_filters[occ_idx].clone_from(&resolved_filters[occ_idx]);
     }
-    executor.execute(plan, colts, bindings, sink, counters);
+    // One match per execution: the executor monomorphizes per concrete
+    // sink type — no per-emit enum branch on the hot path.
+    match sink {
+        EitherSink::Projection(s) => executor.execute(plan, colts, bindings, s, counters),
+        EitherSink::Aggregate(s) => executor.execute(plan, colts, bindings, s, counters),
+    }
     Ok(())
 }
 
@@ -906,7 +944,7 @@ mod tests {
         );
         let cache = ImageCache::new();
         let txn = env.read_txn().expect("txn");
-        let mut prepared = prepare(&txn, &schema, &by_account_query()).expect("prepare");
+        let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
         let mut out = ResultBuffer::new();
 
         prepared
@@ -945,7 +983,7 @@ mod tests {
         let env = Environment::create(dir.path(), &schema).expect("create");
         let cache = ImageCache::new();
         let txn = env.read_txn().expect("txn");
-        let mut prepared = prepare(&txn, &schema, &by_account_query()).expect("prepare");
+        let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
         let mut out = ResultBuffer::new();
 
         let err = prepared
@@ -992,7 +1030,7 @@ mod tests {
             predicates: vec![],
         };
         let txn = env.read_txn().expect("txn");
-        let mut prepared = prepare(&txn, &schema, &query).expect("prepare");
+        let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
         let mut out = ResultBuffer::new();
 
         // Never-interned value: empty, not an error.
@@ -1053,7 +1091,7 @@ mod tests {
             }],
         };
         let txn = env.read_txn().expect("txn");
-        let mut prepared = prepare(&txn, &schema, &query).expect("prepare");
+        let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
         let out = prepared
             .execute_collect(&txn, &cache, &[])
             .expect("execute");
@@ -1075,7 +1113,7 @@ mod tests {
                 rhs: Term::Param(crate::ir::ParamId(0)),
             }],
         };
-        let mut prepared = prepare(&txn, &schema, &query).expect("prepare");
+        let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
         let out = prepared
             .execute_collect(&txn, &cache, &[Value::String(Box::from(&b"ghost"[..]))])
             .expect("execute");
@@ -1096,7 +1134,7 @@ mod tests {
         insert_postings(&env, &schema, &[(1, 7, "a rather long memo text", 10)]);
         let cache = ImageCache::new();
         let txn = env.read_txn().expect("txn");
-        let mut prepared = prepare(&txn, &schema, &by_account_query()).expect("prepare");
+        let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
         let out = prepared
             .execute_collect(&txn, &cache, &[Value::U64(7), Value::I64(0)])
             .expect("execute");
@@ -1118,7 +1156,7 @@ mod tests {
         );
         let cache = ImageCache::new();
         let txn = env.read_txn().expect("txn");
-        let mut prepared = prepare(&txn, &schema, &by_account_query()).expect("prepare");
+        let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
         let mut out = ResultBuffer::new();
         let params = [Value::U64(7), Value::I64(0)];
 
@@ -1147,7 +1185,7 @@ mod tests {
         insert_postings(&env, &schema, &[(1, 7, "old", 1)]);
         let cache = ImageCache::new();
         let txn = env.read_txn().expect("txn");
-        let mut prepared = prepare(&txn, &schema, &by_account_query()).expect("prepare");
+        let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
         let mut out = ResultBuffer::new();
         prepared
             .execute(&txn, &cache, &[Value::U64(7), Value::I64(0)], &mut out)
@@ -1184,7 +1222,7 @@ mod tests {
             predicates: vec![],
         };
         let txn = env.read_txn().expect("txn");
-        let mut prepared = prepare(&txn, &schema, &query).expect("prepare");
+        let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
         assert!(matches!(prepared.plan, ExecPlan::GuardProbe(_)));
         let out = prepared
             .execute_collect(&txn, &cache, &[])
@@ -1206,7 +1244,7 @@ mod tests {
         insert_postings(&env, &schema, &[(1, 7, "a", 1), (2, 7, "b", 2)]);
         let cache = ImageCache::new();
         let txn = env.read_txn().expect("txn");
-        let mut prepared = prepare(&txn, &schema, &by_account_query()).expect("prepare");
+        let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
         let (rows, report) = prepared
             .explain(&txn, &cache, &[Value::U64(7), Value::I64(0)])
             .expect("explain");

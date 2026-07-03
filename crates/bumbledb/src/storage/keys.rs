@@ -53,12 +53,12 @@ pub enum StatKind {
 /// Cursor over a key scratch buffer; every writer is a straight-line
 /// sequence of `put_*` calls returning the final length.
 struct KeyWriter<'a> {
-    buf: &'a mut KeyBuf,
+    buf: &'a mut [u8],
     len: usize,
 }
 
 impl<'a> KeyWriter<'a> {
-    fn new(buf: &'a mut KeyBuf, namespace: u8) -> Self {
+    fn new(buf: &'a mut [u8], namespace: u8) -> Self {
         buf[0] = namespace;
         Self { buf, len: 1 }
     }
@@ -83,7 +83,16 @@ impl<'a> KeyWriter<'a> {
 }
 
 /// `F | relation | row_id` — a stored fact's key.
-pub fn fact_key(buf: &mut KeyBuf, relation: RelationId, row_id: u64) -> usize {
+/// `F` key width: tag + relation + row id.
+pub const FACT_KEY_LEN: usize = 1 + 4 + 8;
+/// `M` key width: tag + relation + 32-byte hash.
+pub const MEMBERSHIP_KEY_LEN: usize = 1 + 4 + 32;
+/// `Q` key width: tag + relation + field.
+pub const SERIAL_KEY_LEN: usize = 1 + 4 + 2;
+/// `S` key width: tag + relation + stat kind.
+pub const STAT_KEY_LEN: usize = 1 + 4 + 1;
+
+pub fn fact_key(buf: &mut [u8], relation: RelationId, row_id: u64) -> usize {
     KeyWriter::new(buf, NS_FACT)
         .relation(relation)
         .put(&row_id.to_be_bytes())
@@ -96,7 +105,7 @@ pub fn fact_prefix(buf: &mut KeyBuf, relation: RelationId) -> usize {
 }
 
 /// `M | relation | fact_hash` — the membership key.
-pub fn membership_key(buf: &mut KeyBuf, relation: RelationId, fact_hash: &[u8; 32]) -> usize {
+pub fn membership_key(buf: &mut [u8], relation: RelationId, fact_hash: &[u8; 32]) -> usize {
     KeyWriter::new(buf, NS_MEMBERSHIP)
         .relation(relation)
         .put(fact_hash)
@@ -157,7 +166,7 @@ pub fn restrict_prefix(
 }
 
 /// `Q | relation | field` — a serial sequence's key.
-pub fn serial_key(buf: &mut KeyBuf, relation: RelationId, field: FieldId) -> usize {
+pub fn serial_key(buf: &mut [u8], relation: RelationId, field: FieldId) -> usize {
     KeyWriter::new(buf, NS_SERIAL)
         .relation(relation)
         .put(&field.0.to_be_bytes())
@@ -165,7 +174,7 @@ pub fn serial_key(buf: &mut KeyBuf, relation: RelationId, field: FieldId) -> usi
 }
 
 /// `S | relation | stat` — a per-relation counter's key.
-pub fn stat_key(buf: &mut KeyBuf, relation: RelationId, stat: StatKind) -> usize {
+pub fn stat_key(buf: &mut [u8], relation: RelationId, stat: StatKind) -> usize {
     KeyWriter::new(buf, NS_STAT)
         .relation(relation)
         .put(&[stat as u8])

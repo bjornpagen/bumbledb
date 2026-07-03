@@ -167,6 +167,7 @@ impl<'s> Db<'s> {
             delta: WriteDelta::new(self.schema),
             schema: self.schema,
             scratch: Vec::new(),
+            refs: Vec::new(),
         };
         let out = f(&mut tx)?;
         let WriteTx { view, delta, .. } = tx;
@@ -191,7 +192,7 @@ impl<'s> Db<'s> {
     /// time; `Lmdb` from the statistics reads.
     pub fn prepare(&self, query: &Query) -> Result<PreparedQuery<'s>> {
         let txn = self.env.read_txn()?;
-        prepare(&txn, self.schema, query)
+        prepare(&txn, &self.cache, self.schema, query)
     }
 
     /// Imports dynamic facts in chunks of 4096 per write
@@ -391,6 +392,9 @@ pub struct WriteTx<'a> {
     delta: WriteDelta<'a>,
     schema: &'a Schema,
     scratch: Vec<u8>,
+    /// Reused per dynamic fact: `bulk_load` must not allocate a value
+    /// buffer per imported row.
+    refs: Vec<ValueRef>,
 }
 
 impl WriteTx<'_> {
@@ -494,10 +498,12 @@ impl WriteTx<'_> {
             }
             .into());
         }
-        let mut refs = Vec::with_capacity(values.len());
+        let mut refs = std::mem::take(&mut self.refs);
+        refs.clear();
         for (idx, (value, field)) in values.iter().zip(fields).enumerate() {
             let field_id = FieldId(u16::try_from(idx).expect("validated schema: fields fit u16"));
             if let Err(mismatch) = crate::ir::value_matches(value, &field.value_type) {
+                self.refs = refs; // restore the scratch before erroring
                 return Err(match mismatch {
                     crate::ir::ValueMismatch::Type => FactShapeError::TypeMismatch {
                         relation: rel,
@@ -517,7 +523,7 @@ impl WriteTx<'_> {
                 }
                 .into());
             }
-            refs.push(match value {
+            let value_ref = match value {
                 Value::Bool(v) => ValueRef::Bool(*v),
                 Value::U64(v) => ValueRef::U64(*v),
                 Value::I64(v) => ValueRef::I64(*v),
@@ -525,13 +531,27 @@ impl WriteTx<'_> {
                 Value::String(raw) => {
                     let text =
                         std::str::from_utf8(raw).expect("value_matches validated UTF-8 above");
-                    ValueRef::String(self.delta.intern_str(&self.view, text)?)
+                    match self.delta.intern_str(&self.view, text) {
+                        Ok(id) => ValueRef::String(id),
+                        Err(err) => {
+                            self.refs = refs;
+                            return Err(err);
+                        }
+                    }
                 }
-                Value::Bytes(raw) => ValueRef::Bytes(self.delta.intern_bytes(&self.view, raw)?),
-            });
+                Value::Bytes(raw) => match self.delta.intern_bytes(&self.view, raw) {
+                    Ok(id) => ValueRef::Bytes(id),
+                    Err(err) => {
+                        self.refs = refs;
+                        return Err(err);
+                    }
+                },
+            };
+            refs.push(value_ref);
         }
         self.scratch.clear();
         encode_fact(&refs, relation.layout(), &mut self.scratch);
+        self.refs = refs;
         Ok(())
     }
 }

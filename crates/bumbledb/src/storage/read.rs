@@ -19,10 +19,28 @@ use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
 ///
 /// `Lmdb` on storage failure, `Corruption` on a malformed row-id value.
 pub fn fact_row(txn: &ReadTxn<'_>, rel: RelationId, fact_bytes: &[u8]) -> Result<Option<u64>> {
-    let hash = fact_hash(fact_bytes);
-    let mut key: KeyBuf = [0; MAX_KEY];
-    let len = keys::membership_key(&mut key, rel, &hash);
-    row_id_value(txn.env().data().get(txn.raw(), &key[..len])?)
+    fact_row_by_hash(txn, rel, &fact_hash(fact_bytes))
+}
+
+/// `M` probe by a caller-computed hash — the delta already hashed the fact
+/// for its own map key; blake3 is the record path's most expensive CPU
+/// step and must not run twice.
+///
+/// # Errors
+///
+/// As [`fact_row`].
+pub fn fact_row_by_hash(
+    txn: &ReadTxn<'_>,
+    rel: RelationId,
+    hash: &[u8; 32],
+) -> Result<Option<u64>> {
+    // Right-sized stack buffer: this probe runs once per user write
+    // operation — zeroing 511 bytes for a 37-byte key was measurable
+    // waste (the codec header promises no oversized zeroing).
+    let mut key = [0u8; keys::MEMBERSHIP_KEY_LEN];
+    let len = keys::membership_key(&mut key, rel, hash);
+    debug_assert_eq!(len, key.len());
+    row_id_value(txn.env().data().get(txn.raw(), &key)?)
 }
 
 /// `U` probe: the row id holding a unique key, if any. `key_bytes` is the
@@ -58,8 +76,9 @@ pub fn fetch<'txn>(
     rel: RelationId,
     row_id: u64,
 ) -> Result<&'txn [u8]> {
-    let mut key: KeyBuf = [0; MAX_KEY];
+    let mut key = [0u8; keys::FACT_KEY_LEN];
     let len = keys::fact_key(&mut key, rel, row_id);
+    debug_assert_eq!(len, key.len());
     let bytes = txn
         .env()
         .data()
@@ -113,9 +132,10 @@ pub fn scan<'txn>(
 ///
 /// `Lmdb` on storage failure, `Corruption` on a malformed counter value.
 pub fn row_count(txn: &ReadTxn<'_>, rel: RelationId) -> Result<u64> {
-    let mut key: KeyBuf = [0; MAX_KEY];
+    let mut key = [0u8; keys::STAT_KEY_LEN];
     let len = keys::stat_key(&mut key, rel, StatKind::RowCount);
-    match txn.env().data().get(txn.raw(), &key[..len])? {
+    debug_assert_eq!(len, key.len());
+    match txn.env().data().get(txn.raw(), &key)? {
         Some(bytes) => Ok(u64::from_le_bytes(bytes.try_into().map_err(|_| {
             Error::Corruption(CorruptionError::MalformedValue("S row count"))
         })?)),
