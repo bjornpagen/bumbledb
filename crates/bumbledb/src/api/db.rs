@@ -77,6 +77,18 @@ pub trait Serial: Sized {
 /// The database handle: the LMDB environment, the image cache, and the
 /// writer mutex. Shareable across threads (`Send + Sync`); dropping the
 /// handle closes the environment.
+///
+/// `'s` borrows the schema. The `schema!` macro's generated `schema()`
+/// returns `&'static Schema` (a `OnceLock`), so macro-declared hosts get
+/// `Db<'static>` and cross thread bounds freely; a hand-built
+/// [`crate::schema::SchemaDescriptor`] schema can be promoted with
+/// `Box::leak` when `'static` is needed.
+///
+/// Transaction closures return [`crate::Result`]; host code with its own
+/// error type wraps the transaction instead of threading the type
+/// through: run the closure for the engine work, then convert — a
+/// generic error parameter here would force turbofish annotations on
+/// every plain `Ok(())` closure.
 pub struct Db<'s> {
     env: Environment,
     cache: ImageCache,
@@ -122,13 +134,13 @@ impl<'s> Db<'s> {
     /// # Errors
     ///
     /// `Lmdb` on snapshot open; otherwise whatever `f` returns.
-    pub fn read<R>(&self, f: impl FnOnce(&mut Snapshot<'_>) -> Result<R>) -> Result<R> {
-        let mut snap = Snapshot {
+    pub fn read<R>(&self, f: impl FnOnce(&Snapshot<'_>) -> Result<R>) -> Result<R> {
+        let snap = Snapshot {
             txn: self.env.read_txn()?,
             cache: &self.cache,
             schema: self.schema,
         };
-        f(&mut snap)
+        f(&snap)
     }
 
     /// Runs `f` as the single writer: takes the writer mutex, hands `f` a
@@ -182,7 +194,7 @@ impl<'s> Db<'s> {
         prepare(&txn, self.schema, query)
     }
 
-    /// Imports dynamic facts in chunks of [`BULK_CHUNK`] per write
+    /// Imports dynamic facts in chunks of 4096 per write
     /// transaction — the same delta mechanism at scale. Explicit serial
     /// values preserve identity: the high-water mark advances past them.
     /// Returns the number of facts that changed state.
@@ -194,10 +206,12 @@ impl<'s> Db<'s> {
     ///
     /// # Errors
     ///
-    /// As [`Db::write`]; a failing chunk aborts that chunk whole, leaving
-    /// prior chunks committed. Shape problems are typed `FactShape`
+    /// [`BulkLoadError`]: the underlying error plus how many facts had
+    /// already committed — a failing chunk aborts that chunk whole,
+    /// leaving prior chunks committed, and the count makes the partial
+    /// import sizable and resumable. Shape problems are typed `FactShape`
     /// errors, as [`WriteTx::insert_dyn`].
-    pub fn bulk_load<I>(&self, rel: RelationId, facts: I) -> Result<u64>
+    pub fn bulk_load<I>(&self, rel: RelationId, facts: I) -> std::result::Result<u64, BulkLoadError>
     where
         I: IntoIterator<Item = Vec<Value>>,
     {
@@ -216,11 +230,49 @@ impl<'s> Db<'s> {
                     }
                 }
                 Ok(())
+            })
+            .map_err(|error| BulkLoadError {
+                committed: total,
+                error,
             })?;
             if exhausted {
                 return Ok(total);
             }
         }
+    }
+}
+
+/// A failed [`Db::bulk_load`]: the underlying error plus the number of
+/// facts committed by the complete chunks before it — every fact of a
+/// committed chunk is durable; nothing of the failing chunk is.
+#[derive(Debug)]
+pub struct BulkLoadError {
+    /// Facts that changed state in the chunks committed before the error.
+    pub committed: u64,
+    /// What stopped the import.
+    pub error: crate::error::Error,
+}
+
+impl std::fmt::Display for BulkLoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "bulk load failed after {} committed facts: {}",
+            self.committed, self.error
+        )
+    }
+}
+
+impl std::error::Error for BulkLoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+/// Dropping the count keeps `?` working in `crate::Result` contexts.
+impl From<BulkLoadError> for crate::error::Error {
+    fn from(err: BulkLoadError) -> Self {
+        err.error
     }
 }
 
@@ -312,7 +364,25 @@ impl Snapshot<'_> {
     }
 }
 
-/// One write transaction: a [`WriteDelta`] over a read view. Operations
+impl Snapshot<'_> {
+    /// The typed sibling of [`Snapshot::scan`]: decodes each fact into its
+    /// `schema!`-generated struct via [`Fact::decode`]. The dynamic form
+    /// remains the ETL pairing for [`Db::bulk_load`]; this one is for
+    /// hosts that want their own types back.
+    ///
+    /// # Errors
+    ///
+    /// As [`Snapshot::scan`].
+    pub fn scan_facts<F: Fact>(&self) -> Result<impl Iterator<Item = Result<F>> + '_> {
+        let iter = read::scan(&self.txn, self.schema, F::RELATION)?;
+        Ok(iter.map(move |entry| {
+            let (_, bytes) = entry?;
+            F::decode(self, bytes)
+        }))
+    }
+}
+
+/// One write transaction: an in-memory write delta over a read view. Operations
 /// are in-memory set arithmetic — order is semantically irrelevant, and
 /// `delete(old); insert(new)` in either order is the blessed mutation
 /// idiom. Handed to [`Db::write`] closures; offers no queries.

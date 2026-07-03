@@ -115,6 +115,13 @@ impl ResultBuffer {
         }
     }
 
+    /// Iterates the rows. Order is arbitrary (results are sets — the
+    /// host sorts); the iterator exists so consumers stop hand-writing
+    /// the index arithmetic around [`ResultBuffer::get`].
+    pub fn rows(&self) -> impl Iterator<Item = Row<'_>> {
+        (0..self.len()).map(move |row| Row { buffer: self, row })
+    }
+
     fn push_word(&mut self, txn: &ReadTxn<'_>, ty: &ValueType, word: u64) -> Result<()> {
         let cell = match ty {
             ValueType::Bool => Cell::Bool(word != 0),
@@ -148,8 +155,34 @@ impl ResultBuffer {
     }
 }
 
+/// One result row, borrowed from a [`ResultBuffer`].
+#[derive(Clone, Copy)]
+pub struct Row<'a> {
+    buffer: &'a ResultBuffer,
+    row: usize,
+}
+
+impl<'a> Row<'a> {
+    /// The value in `column` (a find-term index).
+    ///
+    /// # Panics
+    ///
+    /// On an out-of-range column.
+    #[must_use]
+    pub fn get(&self, column: usize) -> ResultValue<'a> {
+        self.buffer.get(self.row, column)
+    }
+}
+
 /// The reusable execution object. `!Sync` by construction (interior
 /// scratch); executes from one thread at a time; owns its scratch.
+///
+/// Not shareable across threads:
+///
+/// ```compile_fail
+/// fn require_sync<T: Sync>() {}
+/// require_sync::<bumbledb::PreparedQuery<'static>>();
+/// ```
 pub struct PreparedQuery<'s> {
     schema: &'s Schema,
     plan: ExecPlan,
@@ -508,9 +541,20 @@ impl PreparedQuery<'_> {
         }
     }
 
+    /// The result column types, one per find term in `finds` order — the
+    /// metadata a generic host needs to type an (even empty) result. The
+    /// buffer itself stays typeless: stamping owned types per execution
+    /// would allocate on the warm path.
+    pub fn column_types(&self) -> impl Iterator<Item = &ValueType> {
+        self.finds.iter().map(|(_, ty)| ty)
+    }
+
     /// Rebuilds the executor scratch at a different batch size — the
     /// tuning/test surface for D4's measurement-owned constant. Allocation
-    /// happens here, outside any measured window. A no-op for guard probes.
+    /// happens here, outside any measured window. A no-op for guard
+    /// probes. Hidden: a measurement affordance, not a knob on the
+    /// no-knobs surface (`docs/architecture/00-product.md`).
+    #[doc(hidden)]
     pub fn set_batch_size(&mut self, batch: usize) {
         if let ExecPlan::FreeJoin(plan) = &self.plan {
             self.executor = Some(Executor::with_batch_size(plan, batch));

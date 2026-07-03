@@ -50,7 +50,7 @@ compile_error!("bumbledb targets 64-bit platforms only (docs/architecture/00-pro
 
 #[cfg(feature = "alloc-counter")]
 pub mod alloc_counter;
-pub mod api;
+pub(crate) mod api;
 pub(crate) mod arena;
 pub(crate) mod encoding;
 pub mod error;
@@ -61,11 +61,14 @@ pub(crate) mod plan;
 pub mod schema;
 pub(crate) mod storage;
 
-pub use api::db::{Db, Fact, Serial, Snapshot, WriteTx};
-pub use api::prepared::{PreparedQuery, ResultBuffer, ResultValue};
+pub use api::db::{BulkLoadError, Db, Fact, Serial, Snapshot, WriteTx};
+pub use api::prepared::{PreparedQuery, ResultBuffer, ResultValue, Row};
 pub use error::{Error, Result};
-pub use ir::Query;
-pub use schema::Schema;
+// The IR vocabulary a host needs to build a `Query`, and the id types that
+// appear in `Db`'s own signatures — importable from the root, no
+// module-path scavenger hunt.
+pub use ir::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
+pub use schema::{FieldId, RelationId, Schema};
 
 /// The declarative schema surface (PRD 27). (The macro and the `schema`
 /// module share a name across disjoint namespaces — deliberate:
