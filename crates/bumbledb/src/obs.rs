@@ -105,6 +105,29 @@ pub mod names {
     pub const CACHE_QUERY_LOCAL: &str = "cache_query_local";
     /// One COLT node forced. (positions ingested, distinct keys)
     pub const COLT_FORCE: &str = "colt_force";
+
+    // Write path (docs/benchmarks/04).
+
+    /// One state-changing commit. (1 changed / 0 no-op, -)
+    pub const COMMIT: &str = "commit";
+    /// A commit that netted to nothing. (-, -)
+    pub const COMMIT_NOOP: &str = "commit_noop";
+    /// Phase 1. (facts deleted, -)
+    pub const APPLY_DELETES: &str = "apply_deletes";
+    /// Phase 2. (facts inserted, -)
+    pub const APPLY_INSERTS: &str = "apply_inserts";
+    /// Phase 3a. (deduped forward probes, -)
+    pub const FK_FORWARD: &str = "fk_forward";
+    /// Phase 3b. (guards scanned, -)
+    pub const FK_RESTRICT: &str = "fk_restrict";
+    /// Phase 4. (pending interns flushed, -)
+    pub const COUNTERS_FLUSH: &str = "counters_flush";
+    /// Phase 5: the LMDB commit alone — the fsync-bound number. (-, -)
+    pub const LMDB_COMMIT: &str = "lmdb_commit";
+    /// One `bulk_load` chunk. (facts submitted, facts changed)
+    pub const BULK_CHUNK: &str = "bulk_chunk";
+    /// One `Db::write`, closure plus commit. (1 committed / 0 aborted, -)
+    pub const WRITE_TXN: &str = "write_txn";
 }
 
 #[cfg(feature = "trace")]

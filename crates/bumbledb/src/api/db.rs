@@ -162,6 +162,8 @@ impl<'s> Db<'s> {
         // unwind and LMDB was never touched, so the flag is cleared rather
         // than propagated.
         let _guard = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut txn_span =
+            crate::obs::span(crate::obs::names::WRITE_TXN, crate::obs::Category::Commit);
         let mut tx = WriteTx {
             view: self.env.read_txn()?,
             delta: WriteDelta::new(self.schema),
@@ -173,6 +175,8 @@ impl<'s> Db<'s> {
         let WriteTx { view, delta, .. } = tx;
         drop(view);
         let report = commit(delta, &self.env)?;
+        txn_span.set_args(1, 0);
+        txn_span.end();
         if report.changed {
             // The one commit → cache wiring point (`40-storage.md`):
             // images of older generations are stale the moment the new
@@ -223,12 +227,16 @@ impl<'s> Db<'s> {
             // Folded into `total` only after the chunk commits: a failing
             // chunk aborts whole, so its partial successes never happened.
             let mut chunk = 0u64;
+            let mut submitted = 0u64;
+            let mut chunk_span =
+                crate::obs::span(crate::obs::names::BULK_CHUNK, crate::obs::Category::Commit);
             self.write(|tx| {
                 for _ in 0..BULK_CHUNK {
                     let Some(values) = iter.next() else {
                         exhausted = true;
                         break;
                     };
+                    submitted += 1;
                     if tx.insert_dyn(rel, &values)? {
                         chunk += 1;
                     }
@@ -239,6 +247,8 @@ impl<'s> Db<'s> {
                 committed: total,
                 error,
             })?;
+            chunk_span.set_args(submitted, chunk);
+            chunk_span.end();
             total += chunk;
             if exhausted {
                 return Ok(total);
@@ -658,5 +668,154 @@ pub mod plumbing {
         idx: usize,
     ) -> Result<ValueRef> {
         Ok(decode_field(fact, snap.schema.relation(rel).layout(), idx)?)
+    }
+}
+
+#[cfg(all(test, feature = "trace"))]
+mod trace_tests {
+    use super::*;
+    use crate::obs;
+    use crate::schema::{
+        FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
+    };
+    use crate::testutil::TempDir;
+
+    fn schema() -> Schema {
+        SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "R".into(),
+                fields: vec![FieldDescriptor {
+                    name: "v".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                }],
+                constraints: vec![],
+            }],
+        }
+        .validate()
+        .expect("fixture")
+    }
+
+    const R: RelationId = RelationId(0);
+
+    fn names(events: &[obs::TraceEvent]) -> Vec<&'static str> {
+        events.iter().map(|e| e.name).collect()
+    }
+
+    /// PRD 04's write-path capture contract.
+    #[test]
+    fn write_path_traces_phases_with_counts() {
+        let dir = TempDir::new("db-trace-write");
+        let schema = schema();
+        let db = Db::create(dir.path(), &schema).expect("create");
+        db.write(|tx| {
+            tx.insert_dyn(R, &[Value::U64(99)])?;
+            Ok(())
+        })
+        .expect("seed");
+
+        // Three inserts + one delete: the six phase spans, in order, with
+        // the counts from the delta's own entries.
+        obs::start_capture();
+        db.write(|tx| {
+            for v in 0..3 {
+                tx.insert_dyn(R, &[Value::U64(v)])?;
+            }
+            tx.delete_dyn(R, &[Value::U64(99)])?;
+            Ok(())
+        })
+        .expect("write");
+        let events = obs::finish_capture();
+        let phase_order: Vec<&str> = events
+            .iter()
+            .filter(|e| {
+                [
+                    obs::names::APPLY_DELETES,
+                    obs::names::APPLY_INSERTS,
+                    obs::names::FK_FORWARD,
+                    obs::names::FK_RESTRICT,
+                    obs::names::COUNTERS_FLUSH,
+                    obs::names::LMDB_COMMIT,
+                ]
+                .contains(&e.name)
+            })
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(
+            phase_order,
+            vec![
+                obs::names::APPLY_DELETES,
+                obs::names::APPLY_INSERTS,
+                obs::names::FK_FORWARD,
+                obs::names::FK_RESTRICT,
+                obs::names::COUNTERS_FLUSH,
+                obs::names::LMDB_COMMIT,
+            ],
+            "the canonical order, recorded in drop order per phase"
+        );
+        let by_name = |n: &str| events.iter().find(|e| e.name == n).expect("phase");
+        assert_eq!(by_name(obs::names::APPLY_DELETES).a0, 1);
+        assert_eq!(by_name(obs::names::APPLY_INSERTS).a0, 3);
+        assert_eq!(by_name(obs::names::COMMIT).a0, 1, "commit changed flag");
+        assert_eq!(by_name(obs::names::WRITE_TXN).a0, 1, "committed flag");
+
+        // A net-no-op write: commit_noop, no phase spans.
+        obs::start_capture();
+        db.write(|tx| {
+            tx.insert_dyn(R, &[Value::U64(0)])?; // already present
+            Ok(())
+        })
+        .expect("noop write");
+        let noop = obs::finish_capture();
+        let noop_names = names(&noop);
+        assert!(
+            noop_names.contains(&obs::names::COMMIT_NOOP),
+            "{noop_names:?}"
+        );
+        assert!(!noop_names.contains(&obs::names::LMDB_COMMIT));
+        assert!(!noop_names.contains(&obs::names::APPLY_DELETES));
+    }
+
+    #[test]
+    fn bulk_load_traces_one_span_per_chunk() {
+        let dir = TempDir::new("db-trace-bulk");
+        let schema = schema();
+        let db = Db::create(dir.path(), &schema).expect("create");
+        // 2.5 chunks: 4096 + 4096 + 2048.
+        let n = 4096 * 2 + 2048;
+        obs::start_capture();
+        let loaded = db
+            .bulk_load(R, (0..n).map(|v| vec![Value::U64(v)]))
+            .expect("bulk");
+        let events = obs::finish_capture();
+        assert_eq!(loaded, n);
+        let chunks: Vec<&obs::TraceEvent> = events
+            .iter()
+            .filter(|e| e.name == obs::names::BULK_CHUNK)
+            .collect();
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks.iter().map(|c| c.a0).sum::<u64>(), n);
+        assert_eq!(chunks.iter().map(|c| c.a1).sum::<u64>(), n);
+    }
+
+    #[test]
+    fn an_aborting_write_records_no_lmdb_commit() {
+        let dir = TempDir::new("db-trace-abort");
+        let schema = schema();
+        let db = Db::create(dir.path(), &schema).expect("create");
+        obs::start_capture();
+        let result: Result<()> = db.write(|tx| {
+            tx.insert_dyn(R, &[Value::U64(1)])?;
+            Err(crate::error::Error::Overflow { find: 0 })
+        });
+        let events = obs::finish_capture();
+        assert!(result.is_err());
+        let ns = names(&events);
+        assert!(!ns.contains(&obs::names::LMDB_COMMIT), "{ns:?}");
+        let write_txn = events
+            .iter()
+            .find(|e| e.name == obs::names::WRITE_TXN)
+            .expect("write_txn span");
+        assert_eq!(write_txn.a0, 0, "aborted flag");
     }
 }

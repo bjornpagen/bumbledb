@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::encoding::field_bytes;
 use crate::error::{CorruptionError, Error, FkViolation, Result};
+use crate::obs;
 use crate::schema::{ConstraintDescriptor, ConstraintId, Relation, RelationId, Schema};
 use crate::storage::delta::{Disposition, WriteDelta};
 use crate::storage::env::{Environment, WriteTxn};
@@ -84,16 +85,29 @@ pub fn apply<'env, 's>(delta: WriteDelta<'s>, env: &'env Environment) -> Result<
     };
 
     // Phase 1: all deletes, then phase 2: all inserts — the canonical order
-    // that makes user operation order semantically irrelevant.
-    for (rel, fact_bytes, disposition) in delta.entries() {
-        if disposition == Disposition::Delete {
-            applier.delete_fact(delta.schema(), rel, fact_bytes)?;
+    // that makes user operation order semantically irrelevant. Counts read
+    // from the delta's own disposition entries — no new tallies.
+    {
+        let mut deletes = 0u64;
+        let mut span = obs::span(obs::names::APPLY_DELETES, obs::Category::Commit);
+        for (rel, fact_bytes, disposition) in delta.entries() {
+            if disposition == Disposition::Delete {
+                deletes += 1;
+                applier.delete_fact(delta.schema(), rel, fact_bytes)?;
+            }
         }
+        span.set_args(deletes, 0);
     }
-    for (rel, fact_bytes, disposition) in delta.entries() {
-        if disposition == Disposition::Insert {
-            applier.insert_fact(delta.schema(), rel, fact_bytes)?;
+    {
+        let mut inserts = 0u64;
+        let mut span = obs::span(obs::names::APPLY_INSERTS, obs::Category::Commit);
+        for (rel, fact_bytes, disposition) in delta.entries() {
+            if disposition == Disposition::Insert {
+                inserts += 1;
+                applier.insert_fact(delta.schema(), rel, fact_bytes)?;
+            }
         }
+        span.set_args(inserts, 0);
     }
 
     let Applier {
@@ -124,73 +138,22 @@ pub struct CommitReport {
     pub new_generation: u64,
 }
 
-/// The full commit (docs/architecture/40-storage.md): apply (phases 1-2), FK validation against the
-/// final state (phase 3), counter flush (phase 4), LMDB commit (phase 5).
-/// Any error anywhere aborts — nothing persists.
-///
-/// # Errors
-///
-/// `UniqueViolation`/`ForeignKeyViolation` on constraint violations in the
-/// final state; `Lmdb`/`Corruption` on storage failure.
-///
-/// # Panics
-///
-/// Only on programmer-invariant violations (validated-schema id widths,
-/// well-formed R keys this same commit wrote).
-pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> {
-    // An all-no-op delta commits without touching LMDB at all: the tx id
-    // does not advance and no cached image is invalidated. Pending serial
-    // allocations and interns are dropped — none are observable.
-    if delta.is_empty() {
-        let rtxn = env.read_txn()?;
-        return Ok(CommitReport {
-            changed: false,
-            new_generation: rtxn.generation()?,
-        });
-    }
-
-    let applied = apply(delta, env)?;
-    if !applied.changed {
-        let generation = applied.txn.generation()?;
-        applied.txn.abort(); // nothing was written; equivalent to commit
-        return Ok(CommitReport {
-            changed: false,
-            new_generation: generation,
-        });
-    }
-    let Applied {
-        mut txn,
-        delta,
-        row_id_next,
-        deleted_guards,
-        inserted_guards,
-        fk_probes,
-        ..
-    } = applied;
-    let data = env.data();
-    let mut key: KeyBuf = [0; MAX_KEY];
-
-    // Phase 3a: forward FK validation — every inserted fact's targets must
-    // resolve in the final state (the write txn reads its own writes).
-    for ((target_relation, target_constraint, guard), probe) in &fk_probes {
-        let u_len = keys::unique_key(&mut key, *target_relation, *target_constraint, guard);
-        if data.get(txn.raw(), &key[..u_len])?.is_none() {
-            return Err(Error::ForeignKeyViolation {
-                relation: probe.source_relation,
-                constraint: probe.source_constraint,
-                violation: FkViolation::MissingTarget {
-                    fact_bytes: probe.fact_bytes.clone().into_boxed_slice(),
-                },
-            });
-        }
-    }
-
-    // Phase 3b: Restrict — every unique key deleted in phase 1 and not
-    // re-established in phase 2 must have no remaining referrer. "No
-    // committed state contains a dangling reference": deleting a target and
-    // all its referrers in one transaction passes, as it should.
-    for (rel, cid, guard) in deleted_guards.difference(&inserted_guards) {
-        let p_len = keys::restrict_prefix(&mut key, *rel, *cid, guard);
+/// Phase 3b: Restrict — every unique key deleted in phase 1 and not
+/// re-established in phase 2 must have no remaining referrer. "No committed
+/// state contains a dangling reference": deleting a target and all its
+/// referrers in one transaction passes, as it should.
+fn check_restrict(
+    txn: &WriteTxn<'_>,
+    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+    key: &mut KeyBuf,
+    deleted_guards: &BTreeSet<(RelationId, ConstraintId, Vec<u8>)>,
+    inserted_guards: &BTreeSet<(RelationId, ConstraintId, Vec<u8>)>,
+) -> Result<()> {
+    let mut scanned = 0u64;
+    let mut restrict_span = obs::span(obs::names::FK_RESTRICT, obs::Category::Commit);
+    for (rel, cid, guard) in deleted_guards.difference(inserted_guards) {
+        scanned += 1;
+        let p_len = keys::restrict_prefix(key, *rel, *cid, guard);
         let mut iter = data.prefix_iter(txn.raw(), &key[..p_len])?;
         if let Some(entry) = iter.next() {
             let (surviving_key, ()) = entry.map(|(k, _)| (k, ()))?;
@@ -212,7 +175,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
             // (docs/architecture/10-data-model.md). Cold path — the fetch
             // costs one get on an aborting commit.
             drop(iter);
-            let f_len = keys::fact_key(&mut key, source_relation, source_row);
+            let f_len = keys::fact_key(key, source_relation, source_row);
             let fact_bytes: Box<[u8]> = data
                 .get(txn.raw(), &key[..f_len])?
                 .ok_or(Error::Corruption(CorruptionError::MissingFact {
@@ -230,17 +193,105 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
             });
         }
     }
+    restrict_span.set_args(scanned, 0);
+    restrict_span.end();
+    Ok(())
+}
+
+/// The full commit (docs/architecture/40-storage.md): apply (phases 1-2), FK validation against the
+/// final state (phase 3), counter flush (phase 4), LMDB commit (phase 5).
+/// Any error anywhere aborts — nothing persists.
+///
+/// # Errors
+///
+/// `UniqueViolation`/`ForeignKeyViolation` on constraint violations in the
+/// final state; `Lmdb`/`Corruption` on storage failure.
+///
+/// # Panics
+///
+/// Only on programmer-invariant violations (validated-schema id widths,
+/// well-formed R keys this same commit wrote).
+pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> {
+    // An all-no-op delta commits without touching LMDB at all: the tx id
+    // does not advance and no cached image is invalidated. Pending serial
+    // allocations and interns are dropped — none are observable.
+    if delta.is_empty() {
+        obs::event(obs::names::COMMIT_NOOP, obs::Category::Commit, 0, 0);
+        let rtxn = env.read_txn()?;
+        return Ok(CommitReport {
+            changed: false,
+            new_generation: rtxn.generation()?,
+        });
+    }
+
+    let mut commit_span = obs::span(obs::names::COMMIT, obs::Category::Commit);
+    let applied = apply(delta, env)?;
+    if !applied.changed {
+        obs::event(obs::names::COMMIT_NOOP, obs::Category::Commit, 0, 0);
+        let generation = applied.txn.generation()?;
+        applied.txn.abort(); // nothing was written; equivalent to commit
+        return Ok(CommitReport {
+            changed: false,
+            new_generation: generation,
+        });
+    }
+    let Applied {
+        mut txn,
+        delta,
+        row_id_next,
+        deleted_guards,
+        inserted_guards,
+        fk_probes,
+        ..
+    } = applied;
+    let data = env.data();
+    let mut key: KeyBuf = [0; MAX_KEY];
+
+    // Phase 3a: forward FK validation — every inserted fact's targets must
+    // resolve in the final state (the write txn reads its own writes).
+    let forward_span = obs::span_args(
+        obs::names::FK_FORWARD,
+        obs::Category::Commit,
+        fk_probes.len() as u64,
+        0,
+    );
+    for ((target_relation, target_constraint, guard), probe) in &fk_probes {
+        let u_len = keys::unique_key(&mut key, *target_relation, *target_constraint, guard);
+        if data.get(txn.raw(), &key[..u_len])?.is_none() {
+            return Err(Error::ForeignKeyViolation {
+                relation: probe.source_relation,
+                constraint: probe.source_constraint,
+                violation: FkViolation::MissingTarget {
+                    fact_bytes: probe.fact_bytes.clone().into_boxed_slice(),
+                },
+            });
+        }
+    }
+
+    forward_span.end();
+
+    check_restrict(&txn, data, &mut key, &deleted_guards, &inserted_guards)?;
 
     // Phase 4: counters — row counts, row-id high-waters, serial sequences,
     // pending dictionary entries and the dictionary next-id.
-    flush_counters(&mut txn, env, &delta, &row_id_next)?;
+    {
+        let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
+        let interns = delta.pending_interns().count() as u64;
+        flush_counters(&mut txn, env, &delta, &row_id_next)?;
+        span.set_args(interns, 0);
+    }
 
     // The storage tx id advances exactly once per state-changing commit.
     let new_generation = txn.generation()? + 1;
     txn.put_generation(new_generation)?;
 
-    // Phase 5: LMDB commit (fsync per environment defaults).
-    txn.commit()?;
+    // Phase 5: LMDB commit (fsync per environment defaults) — the
+    // fsync-bound number, isolated.
+    {
+        let _s = obs::span(obs::names::LMDB_COMMIT, obs::Category::Commit);
+        txn.commit()?;
+    }
+    commit_span.set_args(1, 0);
     Ok(CommitReport {
         changed: true,
         new_generation,
