@@ -19,37 +19,30 @@ pub fn split_harness(events: Vec<TraceEvent>) -> (Vec<TraceEvent>, Vec<TraceEven
 }
 
 fn write_event(out: &mut impl Write, event: &TraceEvent, tid: u32) -> std::io::Result<()> {
-    // Names are `&'static str` constants from `obs::names` — ASCII by
-    // registry discipline (asserted in tests), so no escaping machinery.
-    debug_assert!(
-        !event.name.contains('"') && !event.name.contains('\\'),
-        "trace names never need escaping"
-    );
-    #[allow(clippy::cast_precision_loss)] // ns fit f64 exactly for ~104 days
-    let ts = event.start_ns as f64 / 1000.0;
+    use std::fmt::Write as _;
+    // Names and labels are `&'static str` registry constants (ASCII,
+    // asserted in tests); the shared json helpers escape regardless.
+    let mut line = String::new();
+    line.push_str("{\"name\":");
+    crate::json::push_str_lit(&mut line, event.name);
+    line.push_str(",\"cat\":");
+    crate::json::push_str_lit(&mut line, event.cat.label());
     if event.dur_ns == 0 {
-        write!(
-            out,
-            "{{\"name\":\"{}\",\"cat\":\"{}\",\"ph\":\"i\",\"ts\":{ts:.3},\"s\":\"t\",\
-             \"pid\":1,\"tid\":{tid},\"args\":{{\"a0\":{},\"a1\":{}}}}}",
-            event.name,
-            event.cat.label(),
-            event.a0,
-            event.a1,
-        )
+        line.push_str(",\"ph\":\"i\",\"ts\":");
+        crate::json::push_us(&mut line, event.start_ns);
+        line.push_str(",\"s\":\"t\"");
     } else {
-        #[allow(clippy::cast_precision_loss)]
-        let dur = event.dur_ns as f64 / 1000.0;
-        write!(
-            out,
-            "{{\"name\":\"{}\",\"cat\":\"{}\",\"ph\":\"X\",\"ts\":{ts:.3},\"dur\":{dur:.3},\
-             \"pid\":1,\"tid\":{tid},\"args\":{{\"a0\":{},\"a1\":{}}}}}",
-            event.name,
-            event.cat.label(),
-            event.a0,
-            event.a1,
-        )
+        line.push_str(",\"ph\":\"X\",\"ts\":");
+        crate::json::push_us(&mut line, event.start_ns);
+        line.push_str(",\"dur\":");
+        crate::json::push_us(&mut line, event.dur_ns);
     }
+    let _ = write!(
+        line,
+        ",\"pid\":1,\"tid\":{tid},\"args\":{{\"a0\":{},\"a1\":{}}}}}",
+        event.a0, event.a1
+    );
+    out.write_all(line.as_bytes())
 }
 
 /// Emits the Chrome Trace Event Format: one JSON array of complete
