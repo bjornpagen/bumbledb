@@ -22,5 +22,6 @@ pub mod sqlite_run;
 pub mod sqlmap;
 pub mod trace_out;
 pub mod translate;
+pub mod tripwires;
 pub mod verify;
 pub mod writebench;

@@ -17,7 +17,14 @@ executor. The deviation stands until a disagreement the goldens cannot arbitrate
 appears; then the reference engine gets built. Still external and unbuilt: the
 reference engine, the versioned golden corpus artifact, and fuzz targets proper.
 The benchmark is built; **the performance claim is pending a human L-scale ALL-WIN
-run** — nothing here makes it.
+run** — nothing here makes it. The first S-scale report (2026-07-03, FAIL:
+fk_walk/balance/string lost) drove the perf suite (docs/perf/00–10, landed the
+same week): selection-level probes, the view-memo LRU, the finalize intern
+memo, dense COLT iteration, magnitude-first covers, honest planner
+cardinalities, fullfsync parity, and store compaction — each enforced by the
+structural tripwires in `crates/bumbledb-bench/src/tripwires.rs`, never by
+wall clock. The old report is stale evidence; the claim is re-earned by a
+human re-run of `scripts/bench.sh`.
 
 The old repo's best asset was its correctness discipline; the worst was its gate
 theater. We keep the former and refuse the latter.

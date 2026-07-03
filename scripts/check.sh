@@ -25,7 +25,7 @@ cargo test --features alloc-counter --test alloc_gate --release
 # (docs/benchmarks/13); the harness tests run under both configs.
 echo "==> bumbledb-bench with the obs feature (clippy + harness tests)"
 cargo clippy -p bumbledb-bench --features obs --all-targets -- -D warnings
-cargo test -p bumbledb-bench --features obs -- harness trace_out
+cargo test -p bumbledb-bench --features obs -- harness trace_out tripwires
 
 # The x86-64 scalar-fallback check (docs/architecture/00-product.md): needs
 # a cross std for the pinned toolchain; report skip-vs-pass honestly. The

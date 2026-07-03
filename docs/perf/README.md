@@ -50,19 +50,27 @@ estimate-vs-actual factors of 114,679× (fk_walk), 4,762× (string), 102× (bala
 
 ## The fixes, in order
 
-| PRD | Title | Kills |
-|---|---|---|
-| 00 | Selection lowering (plan-level Eq extraction) | groundwork for 1 |
-| 01 | COLT selection levels | groundwork for 1 |
-| 02 | Execution cutover: probe, don't scan | finding 1 |
-| 03 | View memo LRU for residual filters | finding 1 (range/chain tail) |
-| 04 | Finalize intern memo + buffer dedup | finding 2 |
-| 05 | COLT dense iteration + honest map sizing | finding 3 (iteration) |
-| 06 | Magnitude-first cover cost model | finding 3 (choice) |
-| 07 | Distinct-count statistics and planner honesty | estimate dishonesty |
-| 08 | Fsync fairness | finding 4 |
-| 09 | Store compaction and size honesty | finding 5 |
-| 10 | Perf tripwires and doc reconciliation | regressions, forever |
+| PRD | Title | Kills | Status |
+|---|---|---|---|
+| 00 | Selection lowering (plan-level Eq extraction) | groundwork for 1 | landed |
+| 01 | COLT selection levels | groundwork for 1 | landed |
+| 02 | Execution cutover: probe, don't scan | finding 1 | landed |
+| 03 | View memo LRU for residual filters | finding 1 (range/chain tail) | landed |
+| 04 | Finalize intern memo + buffer dedup | finding 2 | landed |
+| 05 | COLT dense iteration + honest map sizing | finding 3 (iteration) | landed |
+| 06 | Magnitude-first cover cost model | finding 3 (choice) | landed |
+| 07 | Distinct-count statistics and planner honesty | estimate dishonesty | landed |
+| 08 | Fsync fairness | finding 4 | landed |
+| 09 | Store compaction and size honesty | finding 5 | landed |
+| 10 | Perf tripwires and doc reconciliation | regressions, forever | landed |
+
+**Status: the suite is fully landed.** Enforcement lives in
+`crates/bumbledb-bench/src/tripwires.rs` (plus the per-PRD unit tests named in
+each file); the measured outcomes: every read family's profiled work is
+bounded by its logical selectivity, no family rebuilds a view after one param
+rotation, finalize resolves each distinct string once, and worst est/actual
+fell from 114,679× to ≤ 3.3×. The re-run and the claim belong to the human
+owner (`scripts/bench.sh`, then `BENCH_SCALE=L`).
 
 ## Rules
 

@@ -247,3 +247,49 @@ histograms (choices aggregated per node, not per entry). Output shape: OPEN. Rel
 builds contain no other instrumentation: no per-tuple labels, no always-on counters,
 no diagnostics allocation anywhere in the join loops (post-mortem §32 is the reason
 this paragraph exists).
+
+## Perf-suite mechanisms (docs/perf, landed 2026-07-03)
+
+Five decisions from the first benchmark report's evidence, enforced forever by
+`crates/bumbledb-bench/src/tripwires.rs`:
+
+- **Selection levels.** Every Eq-against-a-constant (literal or param — the
+  same machine) lowers into `PlanOccurrence::selections` and becomes a
+  prepended single-column COLT trie level, probed per execution with the
+  resolved word (`Colt::select`). Force is O(view) once per generation, probes
+  O(1) per param; views carry only residuals (ranges, Ne, `FieldsCompare`).
+  **Alternative:** per-image secondary hash indexes — lost because the trie
+  already *is* the index and selections compose with join levels for free.
+  **Reverses if:** never; the per-param full scan it replaced was the
+  measured 6.35× string-family loss.
+- **The view-memo LRU.** Each occurrence memoizes `MEMO_SLOTS = 4`
+  (generation, resolved residual filters) bindings — one active whose COLT
+  the executor consumes, three parked and swapped in on hit; eviction is
+  stale-generation-first then LRU, and a stale active rebuilds in place so
+  selection-only occurrences never park. Sound because generational
+  immutability makes a view valid for its whole generation. Memory bound:
+  four COLT high-waters per occurrence per prepared query, documented on the
+  constant.
+- **Magnitude-first cover choice.** `KeyCount` labels mean keys-exact vs
+  positions-upper-bound; both are admissible iteration-cost bounds, so
+  `better_cover` compares magnitudes and uses the label only on ties. The
+  old "Exact displaces Estimate" rule iterated a 500-key forced map over a
+  7-row view — the measured balance wrong-cover.
+- **Dense map iteration and occupancy sizing.** Forced maps carry a dense
+  occupied-slot list (iteration is O(keys), never O(capacity); the map
+  `BatchToken` is a dense index) and size from
+  `next_pow2(clamp(count/8, 16, 2·count))` with rehash-doubling at 75 % load
+  (fresh slab ranges at the tail; old ranges reclaimed at reset — a ≤2×
+  transient).
+- **The finalize intern memo.** `ResolveMemo` maps `(intern word, tag)` to a
+  byte range per finalize: each distinct string resolves through LMDB once
+  and lands in the result buffer once (`dict_resolve` fires per miss, so the
+  trace count is the distinct count). Cross-execution caching stays out — an
+  unbounded-memory policy the measured problem never needed.
+
+Prepare-time statistics live in `plan/selectivity.rs` (the distinct ladder:
+unique-exact, resident-image exact via `ImageCache::peek` — prepare never
+builds — schema bounds, documented floors) and the DP's join steps multiply
+per-binding fanout `rows / distinct(join field)` with unique coverage pinning
+fanout to 1; measured worst est/actual across the eight families fell from
+114,679× to ≤ 3.3×.
