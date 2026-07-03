@@ -18,3 +18,4 @@ pub mod schema;
 pub mod sqlmap;
 pub mod translate;
 pub mod verify;
+pub mod writebench;

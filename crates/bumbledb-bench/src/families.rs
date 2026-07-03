@@ -436,6 +436,54 @@ pub fn all() -> &'static [Family] {
     ]
 }
 
+/// One write/cold family (docs/benchmarks/15): a name, its report-only
+/// classification, and its write-appropriate protocol. The runners live
+/// in `writebench` — these are identities, not closures.
+pub struct WriteFamily {
+    pub name: &'static str,
+    pub kind: Kind,
+    pub protocol: crate::harness::Protocol,
+}
+
+/// The write and cold families — all `Kind::Report` (the suite ruling:
+/// "every family must win" is the read set; writes and cold are
+/// described honestly, never gated).
+#[must_use]
+pub fn write_families() -> &'static [WriteFamily] {
+    use crate::harness::Protocol;
+    &[
+        WriteFamily {
+            name: "commit_single",
+            kind: Kind::Report,
+            protocol: Protocol {
+                warmups: 8,
+                samples: 64,
+            },
+        },
+        WriteFamily {
+            name: "commit_batch",
+            kind: Kind::Report,
+            protocol: Protocol {
+                warmups: 4,
+                samples: 32,
+            },
+        },
+        WriteFamily {
+            name: "bulk",
+            kind: Kind::Report,
+            protocol: Protocol {
+                warmups: 1,
+                samples: 8,
+            },
+        },
+        WriteFamily {
+            name: "cold_fk_walk",
+            kind: Kind::Report,
+            protocol: Protocol::COLD,
+        },
+    ]
+}
+
 fn digest_over<'a>(items: impl Iterator<Item = (&'a str, String, &'a str)>) -> [u8; 32] {
     let mut digest = bumbledb::digest::Digest::new();
     for (name, query_debug, golden_sql) in items {

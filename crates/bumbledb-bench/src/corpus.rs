@@ -73,10 +73,54 @@ pub fn configure_sqlite(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Loads one relation's generator stream into the `SQLite` mirror:
+/// prepared-statement inserts in transactions of 4096 rows (mirroring the
+/// engine's chunk).
+///
+/// # Errors
+///
+/// `SQLite` errors verbatim.
+///
+/// # Panics
+///
+/// Only on a corpus value breaking the mapping axiom (a programmer
+/// error).
+pub fn load_sqlite_relation(
+    conn: &Connection,
+    cfg: GenConfig,
+    rel: RelationId,
+) -> rusqlite::Result<u64> {
+    let relation = schema().relation(rel);
+    let placeholders = (1..=relation.fields().len())
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let insert = format!(
+        "INSERT INTO \"{}\" VALUES ({placeholders})",
+        relation.name()
+    );
+
+    let mut facts = 0u64;
+    let mut rows = relation_rows(cfg, rel).peekable();
+    while rows.peek().is_some() {
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        {
+            let mut stmt = conn.prepare_cached(&insert)?;
+            for row in rows.by_ref().take(4096) {
+                let params: Vec<rusqlite::types::Value> =
+                    row.iter().map(sqlmap::to_sql_value).collect();
+                stmt.execute(rusqlite::params_from_iter(params))?;
+                facts += 1;
+            }
+        }
+        conn.execute_batch("COMMIT")?;
+    }
+    Ok(facts)
+}
+
 /// Creates, configures, and loads the `SQLite` mirror: DDL from the schema
-/// descriptors, prepared-statement inserts in transactions of 4096 rows
-/// (mirroring the engine's chunk), then `ANALYZE` and a truncating WAL
-/// checkpoint.
+/// descriptors, every relation via [`load_sqlite_relation`], then
+/// `ANALYZE` and a truncating WAL checkpoint.
 ///
 /// # Errors
 ///
@@ -95,33 +139,8 @@ pub fn load_sqlite(path: &Path, cfg: GenConfig) -> rusqlite::Result<(Connection,
 
     let start = Instant::now();
     let mut facts = 0u64;
-    let schema = schema();
     for rel in 0..ids::RELATIONS {
-        let rel = RelationId(rel);
-        let relation = schema.relation(rel);
-        let placeholders = (1..=relation.fields().len())
-            .map(|i| format!("?{i}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let insert = format!(
-            "INSERT INTO \"{}\" VALUES ({placeholders})",
-            relation.name()
-        );
-
-        let mut rows = relation_rows(cfg, rel).peekable();
-        while rows.peek().is_some() {
-            conn.execute_batch("BEGIN IMMEDIATE")?;
-            {
-                let mut stmt = conn.prepare_cached(&insert)?;
-                for row in rows.by_ref().take(4096) {
-                    let params: Vec<rusqlite::types::Value> =
-                        row.iter().map(sqlmap::to_sql_value).collect();
-                    stmt.execute(rusqlite::params_from_iter(params))?;
-                    facts += 1;
-                }
-            }
-            conn.execute_batch("COMMIT")?;
-        }
+        facts += load_sqlite_relation(&conn, cfg, RelationId(rel))?;
     }
     conn.execute_batch("ANALYZE")?;
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
