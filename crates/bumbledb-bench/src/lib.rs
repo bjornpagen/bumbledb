@@ -10,6 +10,7 @@
 pub mod cli;
 pub mod compare;
 pub mod corpus;
+pub mod families;
 pub mod gen;
 pub mod querygen;
 pub mod schema;

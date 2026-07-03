@@ -176,6 +176,34 @@ fn mix(seed: u64, rel: RelationId, row: u64) -> u64 {
     z ^ (z >> 31)
 }
 
+/// One `AccountTag` pair by index — shared by `AccountTag` and `TagNote`
+/// (the subset-by-construction compound FK). Two distinct pairs per
+/// account, without rejection: pair `k` of account `a` uses tag
+/// `(a + k*97) % tags` (97 coprime to 256) — except that hot accounts
+/// always carry **tag 0** as their `k = 0` pair (the skew family's
+/// guarantee, docs/benchmarks/14).
+///
+/// # Panics
+///
+/// Only on a programmer-invariant violation: a hot-account count reaching
+/// `tags - 97`, where a hot account's `k = 1` tag would collide with the
+/// pinned tag 0 (the scale table tops out at 50 hot accounts).
+#[must_use]
+pub fn account_tag_pair(sizes: &Sizes, i: u64) -> (u64, u64) {
+    let account = i / 2;
+    let k = i % 2;
+    assert!(
+        sizes.hot_accounts() < sizes.tags - 97,
+        "hot-account ids stay below the k = 1 collision point"
+    );
+    let tag = if k == 0 && account < sizes.hot_accounts() {
+        0
+    } else {
+        (account + k * 97) % sizes.tags
+    };
+    (account, tag)
+}
+
 fn memo(rng: &mut Rng, row: u64) -> Value {
     let text = if rng.chance(1, UNIQUE_MEMO_DEN) {
         format!("uniq-{row}")
@@ -274,20 +302,13 @@ pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value
             Value::String(format!("tag-{i:03}").into_bytes().into()),
         ],
         ids::ACCOUNT_TAG => {
-            // Two distinct pairs per account, without rejection: pair k of
-            // account a uses tag (a + k*97) % tags (97 coprime to 256).
-            let account = i / 2;
-            let k = i % 2;
-            let tag = (account + k * 97) % sizes.tags;
+            let (account, tag) = account_tag_pair(sizes, i);
             vec![Value::U64(account), Value::U64(tag)]
         }
         ids::TAG_NOTE => {
             // Every 4th AccountTag pair carries a note — a subset by
             // construction, so the compound FK always resolves.
-            let pair = i * 4;
-            let account = pair / 2;
-            let k = pair % 2;
-            let tag = (account + k * 97) % sizes.tags;
+            let (account, tag) = account_tag_pair(sizes, i * 4);
             vec![
                 Value::U64(account),
                 Value::U64(tag),
