@@ -92,9 +92,9 @@ struct Case<'a> {
 }
 
 /// Everything a run accumulates.
-struct Run<'s> {
-    db: Db<'s>,
-    conn: rusqlite::Connection,
+struct Run<'a> {
+    db: &'a Db<'a>,
+    conn: &'a rusqlite::Connection,
     out_dir: PathBuf,
     cases: u64,
     total: u64,
@@ -200,6 +200,35 @@ pub fn run_with_sql_override(
     corpus::load_bumbledb(&db, cfg.gen).expect("load bumbledb");
     let (conn, _) =
         corpus::load_sqlite(&cfg.out_dir.join("oracle.sqlite"), cfg.gen).expect("load oracle");
+    run_prepared(cfg, &db, &conn, override_sql)
+}
+
+/// The oracle against *pre-loaded* stores (the CLI's digest-keyed cache
+/// path): stale bundles and the stamp are cleared, the stores are left
+/// untouched, and bundles/stamp land in `cfg.out_dir`.
+///
+/// # Errors
+///
+/// As [`run`].
+///
+/// # Panics
+///
+/// As [`run`].
+pub fn run_prepared(
+    cfg: &VerifyConfig,
+    db: &Db<'_>,
+    conn: &rusqlite::Connection,
+    override_sql: impl Fn(&str) -> Option<String>,
+) -> Result<VerifyReport, VerifyFailure> {
+    std::fs::create_dir_all(&cfg.out_dir).expect("out_dir");
+    if let Ok(entries) = std::fs::read_dir(&cfg.out_dir) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with("mismatch-") {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    let _ = std::fs::remove_file(cfg.out_dir.join("verify.stamp"));
 
     let sizes = Sizes::of(cfg.gen.scale);
     let family_cases: u64 = families::all()

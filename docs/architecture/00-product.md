@@ -157,13 +157,19 @@ Encryption/access control. Compatibility with v1–v5 formats.
 
 1. **Exactness:** exact result-set equality with SQLite on the full validation suite,
    always, before any timing claim. The oracle construction — value mapping, aggregate
-   template, U64 rule — is normative in `50-validation.md`.
+   template, U64 rule — is normative in `50-validation.md`. **Mechanism:**
+   `bumbledb-bench verify` (docs/benchmarks/12) — every family and N randomized
+   queries compared as multisets, a stamp on success, arbitration bundles on failure;
+   `bench` refuses to time without the stamp.
 2. **Performance:** beats SQLite on the ledger benchmark under the protocol in
    `50-validation.md`: per-family median, **every family must win**, warm timing gates
    (cold reported, not gated), SQLite fully indexed + prepared + `ANALYZE`d,
    `synchronous=FULL`, `SELECT DISTINCT` included in timed SQL, canonical machine = the
    owner's. The claim is **void until the aggregate families are in the suite**. The
    "ratchet" is a manually re-run report per meaningful change — not a CI gate.
+   **Mechanism:** `bumbledb-bench bench` (docs/benchmarks/18–19) — the gate verdict,
+   budget lines, and artifacts; the aggregate families (balance, stats) are in the
+   suite, so the claim awaits only the human L-scale ALL-WIN run.
 3. **Allocation:** a warm prepared-query execution performs **zero heap allocations**
    (and zero deallocations) excluding a caller-provided result buffer, asserted by a
    counting allocator under the protocol defined in `30-execution.md`. Enforcement

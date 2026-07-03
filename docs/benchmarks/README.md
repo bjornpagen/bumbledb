@@ -68,3 +68,21 @@ The bench crate:
 Humans own after 19: running `verify` + `bench` at the L scale on the canonical
 machine, reading the report, making (or refusing) the performance claim, and every
 end-to-end/e2e/smoke concern.
+
+## How to run
+
+The suite is built; three commands (or `scripts/bench.sh`, which runs the last two):
+
+```sh
+cargo run -p bumbledb-bench --release -- gen    --scale S --dir bench-data
+cargo run -p bumbledb-bench --release -- verify --scale S --dir bench-data
+cargo run -p bumbledb-bench --release -- bench  --scale S --dir bench-data
+```
+
+S is the human smoke scale; **the claim runs at L** (`--scale L`, same three
+commands, canonical machine) and needs the report's gate verdict to read ALL-WIN
+with the p99 budget passing. `bench` refuses without a fresh `verify` stamp for
+the exact corpus; traces come from `bench --trace` or the quick-look
+`trace --family NAME`; allocation windows need the obs build
+(`--features obs`). Artifacts land in `bench-out/<timestamp>/` — publishing a
+report into the repo is a deliberate human copy, never the tool's doing.

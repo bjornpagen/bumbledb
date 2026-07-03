@@ -187,6 +187,13 @@ impl FlameSummary {
     /// microseconds with three decimals, plus the total-wall line.
     #[must_use]
     pub fn render(&self) -> String {
+        self.render_top(RENDER_ROWS)
+    }
+
+    /// [`FlameSummary::render`] with a caller-chosen row cap (the report
+    /// embeds top 10).
+    #[must_use]
+    pub fn render_top(&self, rows: usize) -> String {
         use std::fmt::Write as _;
         #[allow(clippy::cast_precision_loss)]
         let us = |ns: u64| ns as f64 / 1000.0;
@@ -196,7 +203,7 @@ impl FlameSummary {
             "{:<24} {:>7} {:>12} {:>12} {:>12} {:>12}",
             "span", "calls", "total_us", "self_us", "p50_us", "max_us"
         );
-        for row in self.rows.iter().take(RENDER_ROWS) {
+        for row in self.rows.iter().take(rows) {
             let _ = writeln!(
                 out,
                 "{:<24} {:>7} {:>12.3} {:>12.3} {:>12.3} {:>12.3}",

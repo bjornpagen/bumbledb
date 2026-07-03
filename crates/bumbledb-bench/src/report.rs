@@ -217,6 +217,9 @@ pub struct RunReport {
     pub verify_stamp: String,
     /// The budget gates at scale L; at S/M it prints as informational.
     pub budget_gates: bool,
+    /// A `--families`-filtered run: the overall verdict is PARTIAL —
+    /// never ALL-WIN, whatever the filtered families did.
+    pub partial: bool,
     pub reads: Vec<ReadFamilyReport>,
     pub writes: Vec<WriteFamilyReport>,
     pub store: StoreNumbers,
@@ -264,7 +267,12 @@ fn markdown_header(out: &mut String, report: &RunReport) {
     let _ = writeln!(out, "- verify stamp: `{}`\n", report.verify_stamp);
 
     let _ = writeln!(out, "## Gate verdict\n");
-    if report.all_win() {
+    if report.partial {
+        let _ = writeln!(
+            out,
+            "PARTIAL — filtered run; the ALL-WIN claim needs every family."
+        );
+    } else if report.all_win() {
         let _ = writeln!(
             out,
             "ALL-WIN — every gated read family beats SQLite on p50."
@@ -495,8 +503,9 @@ pub fn to_json(report: &RunReport) -> String {
     json::push_str_lit(&mut out, &report.verify_stamp);
     let _ = write!(
         out,
-        ",\"budget_gates\":{},\"all_win\":{},\"budget_ok\":{}",
+        ",\"budget_gates\":{},\"partial\":{},\"all_win\":{},\"budget_ok\":{}",
         report.budget_gates,
+        report.partial,
         report.all_win(),
         report.budget_ok()
     );
@@ -588,6 +597,7 @@ mod tests {
             corpus_digest: "cafe".to_owned(),
             verify_stamp: "beef".to_owned(),
             budget_gates: false,
+            partial: false,
             reads: vec![ReadFamilyReport {
                 name: "point".to_owned(),
                 ours: stats(10_000),
@@ -685,6 +695,13 @@ p99 budget (<= 10 ms warm): PASS (informational below scale L).
         let md = to_markdown(&failing);
         assert!(md.contains("FAIL — losing families: point."), "{md}");
         assert!(!failing.all_win());
+
+        // A filtered run withholds the claim, whatever the families did.
+        let mut filtered = fixture();
+        filtered.partial = true;
+        let md = to_markdown(&filtered);
+        assert!(md.contains("PARTIAL — filtered run"), "{md}");
+        assert!(!md.contains("ALL-WIN — every gated"), "{md}");
     }
 
     #[test]
@@ -699,6 +716,7 @@ p99 budget (<= 10 ms warm): PASS (informational below scale L).
             "\"verify_stamp\":\"beef\"",
             "\"all_win\":true",
             "\"budget_ok\":true",
+            "\"partial\":false",
             "\"reads\":[",
             "\"writes\":[",
             "\"ratio_p50\":0.5000",

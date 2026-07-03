@@ -5,10 +5,19 @@ deterministic property/golden content as unit tests, the randomized
 executor-vs-nested-loop differential family, kill-during-commit crash injection, the
 concurrent reader/writer families (incl. the pinned-at-T reads), the ETL family, the
 allocation gate (allocations *and* deallocations), and the EXPLAIN family (cover
-choice + batching engaged). Still external and unbuilt: the SQLite oracle, the IR→SQL
-translator, the reference engine and 3-way agreement, the versioned golden corpus
-artifact, the ledger benchmark, and fuzz targets proper — the deferred half; no
-correctness-vs-SQLite or performance claim is made until they exist.
+choice + batching engaged). Also in-repo now (`crates/bumbledb-bench`,
+docs/benchmarks/): the SQLite oracle (`bumbledb-bench verify`), the IR→SQL
+translator, and the ledger benchmark (`bumbledb-bench bench`). **The oracle was
+built as 2-way agreement plus hand-written goldens, not the 3-way reference-engine
+design below:** the translator's output is pinned byte-for-byte against
+hand-written SQL for every family, and those goldens arbitrate engine-vs-SQLite
+disagreements — the reference engine's tie-breaking role is filled by a human
+reading the semantics docs against the golden, at the cost of a third independent
+executor. The deviation stands until a disagreement the goldens cannot arbitrate
+appears; then the reference engine gets built. Still external and unbuilt: the
+reference engine, the versioned golden corpus artifact, and fuzz targets proper.
+The benchmark is built; **the performance claim is pending a human L-scale ALL-WIN
+run** — nothing here makes it.
 
 The old repo's best asset was its correctness discipline; the worst was its gate
 theater. We keep the former and refuse the latter.
