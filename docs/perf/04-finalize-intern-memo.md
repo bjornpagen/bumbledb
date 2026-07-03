@@ -65,12 +65,11 @@ surface is a stream, not a hot path).
 - Dedup is real: after the K-rows/1-string execution,
   `ResultBuffer` byte length == the one string's length (test via the public
   buffer API: sum the distinct strings' lengths and compare).
-- Correctness: existing result-content tests pass unchanged; add one test
-  where two *different* intern words decode to equal byte content (two
-  distinct dictionary entries with identical bytes cannot exist by interning's
-  injectivity — instead test the adjacent trap: interleaved String and Bytes
-  columns sharing the memo must not collide across type tags; key the memo on
-  `(word, tag)` or verify words are tag-disjoint by construction and document
-  which).
+- Correctness: existing result-content tests pass unchanged. The cross-tag
+  trap was resolved by BOTH available means and documented on `ResolveMemo`:
+  intern ids mint from one shared counter (`dict::intern` reads
+  `dict_next_id` for strings and bytes alike), so words are tag-disjoint by
+  construction — and the memo keys on `(word, tag)` anyway, so tag
+  disambiguation never depends on that allocation detail.
 - The extended alloc gate passes in release. Full `verify` S test green.
   `scripts/check.sh` green.

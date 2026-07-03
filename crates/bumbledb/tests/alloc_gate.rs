@@ -250,6 +250,24 @@ fn selection_query() -> Query {
     }
 }
 
+/// Q(memo, amount) :- Posting(account = ?0, memo, amount) — string
+/// results across rotating params (docs/perf/04): the finalize memo and
+/// the buffer byte heap must both sit at their high-water after warmup.
+fn string_rotation_query() -> Query {
+    Query {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![Atom {
+            relation: POSTING,
+            bindings: vec![
+                (FieldId(1), Term::Param(ParamId(0))),
+                (FieldId(3), Term::Var(VarId(0))),
+                (FieldId(2), Term::Var(VarId(1))),
+            ],
+        }],
+        predicates: vec![],
+    }
+}
+
 /// Q(amount) :- Posting(id = ?0, amount) — the guard-probe shape.
 fn guard_query() -> Query {
     Query {
@@ -367,6 +385,17 @@ fn zero_warm_allocation_gate() {
             .collect();
         let mut selection = db.prepare(&selection_query())?;
         gate("selection", &mut selection, snap, &selection_params);
+
+        // String projections across rotating params (docs/perf/04): the
+        // intern-resolution memo joins the zero-alloc steady state.
+        let account_params: Vec<Vec<Value>> = (0..4).map(|a| vec![Value::U64(a)]).collect();
+        let mut string_rotation = db.prepare(&string_rotation_query())?;
+        gate(
+            "string-rotation",
+            &mut string_rotation,
+            snap,
+            &account_params,
+        );
 
         // Warmup convergence: allocation is finite — by the third warmup
         // round a run allocates nothing.

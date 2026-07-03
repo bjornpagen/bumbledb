@@ -108,6 +108,9 @@ pub mod names {
     pub const CACHE_QUERY_LOCAL: &str = "cache_query_local";
     /// One COLT node forced. (positions ingested, distinct keys)
     pub const COLT_FORCE: &str = "colt_force";
+    /// One dictionary resolution in finalize — fires per *distinct*
+    /// intern per finalize (docs/perf/04). (intern word, byte length)
+    pub const DICT_RESOLVE: &str = "dict_resolve";
 
     // Write path (docs/benchmarks/04).
 

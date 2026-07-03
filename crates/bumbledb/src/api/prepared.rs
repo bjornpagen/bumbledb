@@ -95,6 +95,13 @@ impl ResultBuffer {
         self.arity
     }
 
+    /// The byte heap's length — memory observability (each distinct
+    /// String/Bytes value is stored once per buffer, docs/perf/04).
+    #[must_use]
+    pub fn byte_len(&self) -> usize {
+        self.bytes.len()
+    }
+
     /// The value at `(row, column)`.
     ///
     /// # Panics
@@ -124,7 +131,13 @@ impl ResultBuffer {
         (0..self.len()).map(move |row| Row { buffer: self, row })
     }
 
-    fn push_word(&mut self, txn: &ReadTxn<'_>, ty: &ValueType, word: u64) -> Result<()> {
+    fn push_word(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        ty: &ValueType,
+        word: u64,
+        memo: &mut ResolveMemo,
+    ) -> Result<()> {
         let cell = match ty {
             ValueType::Bool => Cell::Bool(word != 0),
             ValueType::Enum { .. } => Cell::Enum(
@@ -135,29 +148,83 @@ impl ResultBuffer {
             ValueType::U64 => Cell::U64(word),
             ValueType::I64 => Cell::I64((word ^ (1 << 63)).cast_signed()),
             ValueType::String => {
-                let raw = dict::resolve(txn, word, dict::TAG_STRING)?;
-                std::str::from_utf8(raw).map_err(|_| {
-                    Error::Corruption(crate::error::CorruptionError::NonUtf8Intern(word))
-                })?;
-                let start = self.bytes.len();
-                self.bytes.extend_from_slice(raw);
-                Cell::String {
-                    start,
-                    len: raw.len(),
-                }
+                let (start, len) = memo.resolve(txn, word, dict::TAG_STRING, self, true)?;
+                Cell::String { start, len }
             }
             ValueType::Bytes => {
-                let raw = dict::resolve(txn, word, dict::TAG_BYTES)?;
-                let start = self.bytes.len();
-                self.bytes.extend_from_slice(raw);
-                Cell::Bytes {
-                    start,
-                    len: raw.len(),
-                }
+                let (start, len) = memo.resolve(txn, word, dict::TAG_BYTES, self, false)?;
+                Cell::Bytes { start, len }
             }
         };
         self.cells.push(cell);
         Ok(())
+    }
+}
+
+/// The per-finalize intern-resolution memo (docs/perf/04): each
+/// distinct `(intern word, dictionary tag)` pair is resolved through
+/// LMDB exactly once per finalize, and its bytes land in the output
+/// buffer exactly once — K rows sharing one memo string cost one B-tree
+/// lookup and one byte copy, not K. Cleared per finalize (the ranges
+/// point into that call's buffer); capacity is retained, growing to the
+/// distinct-string high-water like every other execution scratch.
+///
+/// The key carries the tag even though intern ids mint from one shared
+/// counter (string and bytes words are numerically disjoint today) —
+/// tag disambiguation must not depend on that allocation detail.
+#[derive(Debug)]
+struct ResolveMemo {
+    /// `(word, tag)` → packed `(start, len)` into the buffer's bytes.
+    ranges: crate::exec::wordmap::WordMap<(u32, u32)>,
+}
+
+impl ResolveMemo {
+    fn new() -> Self {
+        Self {
+            ranges: crate::exec::wordmap::WordMap::new(2),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.ranges.clear();
+    }
+
+    /// The byte range for one intern word: memoized, or resolved through
+    /// the dictionary (emitting `dict_resolve`), UTF-8-checked for
+    /// strings, and appended to the buffer once.
+    fn resolve(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        word: u64,
+        tag: u8,
+        buffer: &mut ResultBuffer,
+        utf8: bool,
+    ) -> Result<(usize, usize)> {
+        let key = [word, u64::from(tag)];
+        if let (range, false) = self.ranges.get_or_insert_with(&key, || (0, 0)) {
+            return Ok((range.0 as usize, range.1 as usize));
+        }
+        let raw = dict::resolve(txn, word, tag)?;
+        obs::event(
+            obs::names::DICT_RESOLVE,
+            obs::Category::Storage,
+            word,
+            raw.len() as u64,
+        );
+        if utf8 {
+            std::str::from_utf8(raw).map_err(|_| {
+                Error::Corruption(crate::error::CorruptionError::NonUtf8Intern(word))
+            })?;
+        }
+        let start = buffer.bytes.len();
+        buffer.bytes.extend_from_slice(raw);
+        let range = (
+            u32::try_from(start).expect("buffer bytes fit u32 offsets"),
+            u32::try_from(raw.len()).expect("intern lengths fit u32"),
+        );
+        let (slot, _) = self.ranges.get_or_insert_with(&key, || range);
+        *slot = range;
+        Ok((start, raw.len()))
     }
 }
 
@@ -218,6 +285,8 @@ pub struct PreparedQuery<'s> {
     sink: EitherSink,
     /// Aggregate-finalization row scratch.
     row_scratch: Vec<u64>,
+    /// The per-finalize intern-resolution memo (docs/perf/04).
+    resolve_memo: ResolveMemo,
     /// Guard-key byte scratch.
     guard_key: Vec<u8>,
     /// Marker: a prepared query is single-threaded scratch.
@@ -342,6 +411,7 @@ pub(crate) fn prepare<'s>(
         memo,
         sink,
         row_scratch: Vec::new(),
+        resolve_memo: ResolveMemo::new(),
         guard_key: Vec::new(),
         _not_sync: std::marker::PhantomData,
     })
@@ -531,7 +601,14 @@ impl PreparedQuery<'_> {
         }
         let result = {
             let _s = obs::span(obs::names::FINALIZE, obs::Category::Execute);
-            finalize(&self.sink, &mut self.row_scratch, txn, &self.finds, out)
+            finalize(
+                &self.sink,
+                &mut self.row_scratch,
+                &mut self.resolve_memo,
+                txn,
+                &self.finds,
+                out,
+            )
         };
         execute_span.set_args(out.len() as u64, 0);
         result
@@ -645,6 +722,7 @@ impl PreparedQuery<'_> {
                 finalize(
                     &self.sink,
                     &mut self.row_scratch,
+                    &mut self.resolve_memo,
                     txn,
                     &self.finds,
                     &mut out,
@@ -1047,26 +1125,29 @@ fn resolve_filter(
     }))
 }
 
-/// Drains the sink into the result buffer, decoding words by result type.
+/// Drains the sink into the result buffer, decoding words by result type
+/// (each distinct intern resolved once, docs/perf/04).
 fn finalize(
     sink: &EitherSink,
     row_scratch: &mut Vec<u64>,
+    memo: &mut ResolveMemo,
     txn: &ReadTxn<'_>,
     finds: &[(FindSpec, ValueType)],
     out: &mut ResultBuffer,
 ) -> Result<()> {
+    memo.clear();
     match sink {
         EitherSink::Projection(sink) => {
             for row in sink.rows() {
                 for (column, (_, ty)) in finds.iter().enumerate() {
-                    out.push_word(txn, ty, row[column])?;
+                    out.push_word(txn, ty, row[column], memo)?;
                 }
             }
             Ok(())
         }
         EitherSink::Aggregate(sink) => sink.finalize_into(row_scratch, |row| {
             for (column, (_, ty)) in finds.iter().enumerate() {
-                out.push_word(txn, ty, row[column])?;
+                out.push_word(txn, ty, row[column], memo)?;
             }
             Ok(())
         }),
@@ -1629,6 +1710,66 @@ mod tests {
         assert_eq!(out.len(), 4);
         let drawn: u64 = stats.nodes.iter().map(|n| n.batch_entries).sum();
         assert_eq!(drawn, 4, "work is O(selected), not O(relation): {stats:?}");
+    }
+
+    /// Finalize resolves each distinct intern once per finalize and
+    /// stores its bytes once per buffer (docs/perf/04).
+    #[cfg(feature = "trace")]
+    #[test]
+    fn finalize_resolves_each_distinct_intern_once() {
+        use crate::obs;
+
+        let dir = TempDir::new("prepared-resolve-memo");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        // 64 rows sharing one memo (distinct amounts keep the rows
+        // distinct under set semantics), plus 16 rows over 16 memos.
+        let rows: Vec<(u64, u64, String, i64)> = (0..64)
+            .map(|id| {
+                (
+                    id,
+                    1,
+                    "shared-memo".to_owned(),
+                    i64::try_from(id).expect("fits"),
+                )
+            })
+            .chain((0..16).map(|i| (64 + i, 2, format!("m{i}"), i64::try_from(i).expect("fits"))))
+            .collect();
+        let borrowed: Vec<(u64, u64, &str, i64)> = rows
+            .iter()
+            .map(|(id, account, memo, amount)| (*id, *account, memo.as_str(), *amount))
+            .collect();
+        insert_postings(&env, &schema, &borrowed);
+        let cache = ImageCache::new();
+        let txn = env.read_txn().expect("txn");
+        let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
+
+        let resolves = |prepared: &mut PreparedQuery<'_>, account: u64| {
+            obs::start_capture();
+            let out = prepared
+                .execute_collect(&txn, &cache, &[Value::U64(account), Value::I64(-1)])
+                .expect("execute");
+            let events = obs::finish_capture();
+            let count = events
+                .iter()
+                .filter(|e| e.name == obs::names::DICT_RESOLVE)
+                .count();
+            (out, count)
+        };
+
+        // 64 rows, one distinct memo: one resolution, one byte copy.
+        let (out, count) = resolves(&mut prepared, 1);
+        assert_eq!(out.len(), 64);
+        assert_eq!(count, 1, "one distinct intern, one resolution");
+        assert_eq!(out.byte_len(), "shared-memo".len(), "bytes stored once");
+
+        // 16 rows over 16 memos: sixteen resolutions.
+        let (out, count) = resolves(&mut prepared, 2);
+        assert_eq!(out.len(), 16);
+        assert_eq!(count, 16);
+        // A second execution memoizes per finalize, not across them.
+        let (_, count) = resolves(&mut prepared, 2);
+        assert_eq!(count, 16, "the memo clears per finalize");
     }
 
     /// The view-memo LRU (docs/perf/03): four rotating residual bindings
