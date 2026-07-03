@@ -48,10 +48,19 @@ pub fn load_bumbledb(db: &Db<'_>, cfg: GenConfig) -> Result<LoadStats, bumbledb:
 }
 
 /// The `SQLite` session PRAGMAs for loading and benching, with fairness
-/// rationale (docs/benchmarks/08):
+/// rationale (docs/benchmarks/08, docs/perf/08):
 /// - `journal_mode=WAL`: `SQLite`'s best self for a read-heavy profile.
 /// - `synchronous=FULL`: the durability level `00-product.md` pins for
 ///   the comparison (both engines pay the fsync bill).
+/// - `fullfsync=ON` + `checkpoint_fullfsync=ON`: under
+///   `synchronous=FULL` both engines must flush **to media**. LMDB does
+///   unconditionally on macOS (`lmdb-master-sys` `mdb.c:171`:
+///   `MDB_FDATASYNC(fd)` = `fcntl(fd, F_FULLFSYNC)` under `__APPLE__`);
+///   `SQLite`'s default `fullfsync=OFF` issues a plain `fsync(2)`
+///   instead, which macOS does not propagate through the drive cache
+///   (the amalgamation's `unixSync`: `F_FULLFSYNC` only `if(fullSync)`).
+///   Without parity the write comparison flatters `SQLite` ~40x while
+///   claiming the same durability. No-ops off macOS.
 /// - `cache_size=-262144` (256 MiB): generous page cache — the corpus
 ///   should be memory-resident on both sides, as it is for bumbledb.
 /// - `temp_store=MEMORY`: no accidental disk temp files.
@@ -68,6 +77,8 @@ pub fn configure_sqlite(conn: &Connection) -> rusqlite::Result<()> {
         conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
     assert_eq!(mode.to_lowercase(), "wal", "WAL must engage");
     conn.pragma_update(None, "synchronous", "FULL")?;
+    conn.pragma_update(None, "fullfsync", "ON")?;
+    conn.pragma_update(None, "checkpoint_fullfsync", "ON")?;
     conn.pragma_update(None, "cache_size", -262_144)?;
     conn.pragma_update(None, "temp_store", "MEMORY")?;
     Ok(())

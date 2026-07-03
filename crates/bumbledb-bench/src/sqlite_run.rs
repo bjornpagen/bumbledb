@@ -129,9 +129,10 @@ pub struct FairnessCheck;
 
 impl FairnessCheck {
     /// Asserts the session and store shape: WAL on, `synchronous=FULL`,
-    /// every expected index present (the [`sqlmap::expected_indexes`]
-    /// registry against `PRAGMA index_list`), and `ANALYZE` statistics
-    /// populated. Statement reuse needs no runtime check —
+    /// `fullfsync`/`checkpoint_fullfsync` ON (flush-to-media parity with
+    /// LMDB's macOS commits — docs/perf/08), every expected index
+    /// present (the [`sqlmap::expected_indexes`] registry against
+    /// `PRAGMA index_list`), and `ANALYZE` statistics populated. Statement reuse needs no runtime check —
     /// [`PreparedFamily`] owns the only construction site by type.
     ///
     /// # Errors
@@ -151,6 +152,17 @@ impl FairnessCheck {
             return Err(format!(
                 "fairness: synchronous is {synchronous}, not FULL (2)"
             ));
+        }
+        // Durability parity (docs/perf/08): LMDB flushes to media on
+        // every macOS commit; SQLite must too, or the write comparison
+        // is a lie told at the same synchronous level.
+        for pragma in ["fullfsync", "checkpoint_fullfsync"] {
+            let on: i64 = conn
+                .query_row(&format!("PRAGMA {pragma}"), [], |row| row.get(0))
+                .map_err(|e| format!("{pragma}: {e}"))?;
+            if on != 1 {
+                return Err(format!("fairness: {pragma} is OFF — flush to media"));
+            }
         }
         for (table, index) in sqlmap::expected_indexes(schema()) {
             let mut stmt = conn
@@ -393,6 +405,13 @@ mod tests {
             let set = &sets[round % sets.len()];
             sample(&mut prepared, set).expect("reused statement");
         }
+
+        // Clearing fullfsync fails the contract by name (docs/perf/08).
+        conn.pragma_update(None, "fullfsync", "OFF")
+            .expect("pragma");
+        let err = FairnessCheck::run(&conn).expect_err("must fail");
+        assert!(err.contains("fullfsync"), "{err}");
+        conn.pragma_update(None, "fullfsync", "ON").expect("pragma");
 
         // Drop an index: the contract fails naming it.
         conn.execute("DROP INDEX \"idx_posting_memo\"", [])

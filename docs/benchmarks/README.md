@@ -69,6 +69,14 @@ Humans own after 19: running `verify` + `bench` at the L scale on the canonical
 machine, reading the report, making (or refusing) the performance claim, and every
 end-to-end/e2e/smoke concern.
 
+## Fairness addendum (docs/perf/08)
+
+Under `synchronous=FULL`, both engines pay flush-to-media: the SQLite session
+pins `fullfsync=ON` / `checkpoint_fullfsync=ON` because LMDB's macOS commits
+issue `F_FULLFSYNC` unconditionally while SQLite's default lies to the drive
+cache. `FairnessCheck` enforces it; write numbers predating this rule
+under-priced SQLite's commits ~40×.
+
 ## How to run
 
 The suite is built; three commands (or `scripts/bench.sh`, which runs the last two):

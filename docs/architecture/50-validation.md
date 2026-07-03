@@ -31,6 +31,16 @@ SQLite's **exactly, by value**, before any timing claim.
 independent, battle-tested implementation catches whole bug classes a same-author
 reference shares. **Reverses if:** never.
 
+**Durability parity under `synchronous=FULL` (docs/perf/08).** Both engines
+flush **to media** on the timing machine: LMDB does unconditionally on macOS
+(`lmdb-master-sys` `mdb.c:171` — `MDB_FDATASYNC(fd)` is `fcntl(fd, F_FULLFSYNC)`
+under `__APPLE__`), while SQLite's default `fullfsync=OFF` issues a plain
+`fsync(2)` that macOS does not propagate through the drive cache (the bundled
+amalgamation's `unixSync` issues `F_FULLFSYNC` only when the pragma is on). The
+bench session therefore pins `PRAGMA fullfsync=ON` and
+`PRAGMA checkpoint_fullfsync=ON`, and `FairnessCheck` asserts both — the first
+benchmark run's 41× commit_single gap was this asymmetry, not engine work.
+
 **The value mapping is normative** (the v5 oracle parsed CLI text with
 `parse().unwrap_or(0)`, silently coercing everything — post-mortem-adjacent; never
 again). Comparison uses the **typed rusqlite API**, never CLI text:
