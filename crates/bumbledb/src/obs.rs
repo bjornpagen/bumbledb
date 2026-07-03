@@ -128,6 +128,14 @@ pub mod names {
     pub const BULK_CHUNK: &str = "bulk_chunk";
     /// One `Db::write`, closure plus commit. (1 committed / 0 aborted, -)
     pub const WRITE_TXN: &str = "write_txn";
+
+    // Harness (docs/benchmarks/13, 17): tool overhead, honestly visible
+    // inside the same trace, separated by tid at export.
+
+    /// One harness-timed sample around the runner closure. (-, -)
+    pub const SAMPLE: &str = "sample";
+    /// One cold-protocol touch commit. (-, -)
+    pub const TOUCH: &str = "touch";
 }
 
 #[cfg(feature = "trace")]

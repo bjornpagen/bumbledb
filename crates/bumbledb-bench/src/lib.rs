@@ -17,6 +17,7 @@ pub mod querygen;
 pub mod schema;
 pub mod sqlite_run;
 pub mod sqlmap;
+pub mod trace_out;
 pub mod translate;
 pub mod verify;
 pub mod writebench;
