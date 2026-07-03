@@ -15,6 +15,7 @@ pub mod gen;
 pub mod harness;
 pub mod querygen;
 pub mod schema;
+pub mod sqlite_run;
 pub mod sqlmap;
 pub mod translate;
 pub mod verify;

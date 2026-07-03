@@ -26,6 +26,55 @@ fn sql_type(ty: &ValueType) -> &'static str {
     }
 }
 
+/// The single-field auto-unique on a serial field that becomes the
+/// PRIMARY KEY (rowid alias — no separate index exists or is expected).
+fn serial_pk(relation: &bumbledb::schema::Relation) -> Option<Box<str>> {
+    relation.constraints().iter().find_map(|c| match c {
+        ConstraintDescriptor::Unique { fields, .. } if fields.len() == 1 => {
+            let field = &relation.fields()[usize::from(fields[0].0)];
+            (field.generation == bumbledb::schema::Generation::Serial).then(|| field.name.clone())
+        }
+        _ => None,
+    })
+}
+
+/// Every index the fairness contract requires, as `(table, index)` pairs
+/// — the same walk [`ddl`] emits, so the contract and the DDL cannot
+/// drift apart (`FairnessCheck`, docs/benchmarks/16).
+#[must_use]
+pub fn expected_indexes(schema: &Schema) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for relation in schema.relations() {
+        let pk = serial_pk(relation);
+        for constraint in relation.constraints() {
+            match constraint {
+                ConstraintDescriptor::Unique { name, fields } => {
+                    let covered_by_pk = match (&pk, fields.len()) {
+                        (Some(pk), 1) => **pk == *relation.fields()[usize::from(fields[0].0)].name,
+                        _ => false,
+                    };
+                    if !covered_by_pk {
+                        out.push((
+                            relation.name().to_owned(),
+                            format!("uq_{}_{name}", relation.name()),
+                        ));
+                    }
+                }
+                ConstraintDescriptor::ForeignKey { name, .. } => {
+                    out.push((
+                        relation.name().to_owned(),
+                        format!("ix_{}_{name}", relation.name()),
+                    ));
+                }
+            }
+        }
+    }
+    for (index, table, _) in EXTRA_INDEXES {
+        out.push(((*table).to_owned(), (*index).to_owned()));
+    }
+    out
+}
+
 /// The full DDL: one STRICT table per relation (NOT NULL everywhere — no
 /// nulls exist), a PRIMARY KEY on a lone serial auto-unique, UNIQUE
 /// indexes for every other unique constraint, an index per FK field
@@ -42,15 +91,7 @@ pub fn ddl(schema: &Schema) -> Vec<String> {
                 sql_type(&field.value_type)
             ));
         }
-        // A single-field auto-unique on a serial field becomes the PK.
-        let serial_pk = relation.constraints().iter().find_map(|c| match c {
-            ConstraintDescriptor::Unique { fields, .. } if fields.len() == 1 => {
-                let field = &relation.fields()[usize::from(fields[0].0)];
-                (field.generation == bumbledb::schema::Generation::Serial)
-                    .then(|| field.name.clone())
-            }
-            _ => None,
-        });
+        let serial_pk = serial_pk(relation);
         if let Some(pk) = &serial_pk {
             statements.push(format!(
                 "CREATE TABLE \"{}\" ({}, PRIMARY KEY (\"{pk}\")) STRICT",
