@@ -12,3 +12,4 @@ pub mod corpus;
 pub mod gen;
 pub mod schema;
 pub mod sqlmap;
+pub mod translate;
