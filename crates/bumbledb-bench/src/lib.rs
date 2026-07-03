@@ -12,6 +12,7 @@ pub mod compare;
 pub mod corpus;
 pub mod families;
 pub mod gen;
+pub mod harness;
 pub mod querygen;
 pub mod schema;
 pub mod sqlmap;

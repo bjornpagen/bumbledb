@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+# Observability passthrough (docs/benchmarks/13): the harness's alloc
+# windows and trace capture need the engine built with instrumentation
+# on. Off by default — plain timing runs measure the production build.
+[features]
+obs = ["bumbledb/trace", "bumbledb/alloc-counter"]
+
 # The quarantined member (docs/architecture/00-product.md, Dependencies):
 # rusqlite (bundled) and nothing else. Argument parsing, JSON, statistics,
 # and randomness are hand-rolled.
