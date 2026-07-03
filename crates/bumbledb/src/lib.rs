@@ -52,6 +52,7 @@ compile_error!("bumbledb targets 64-bit platforms only (docs/architecture/00-pro
 pub mod alloc_counter;
 pub(crate) mod api;
 pub(crate) mod arena;
+pub mod digest;
 pub(crate) mod encoding;
 pub mod error;
 pub(crate) mod exec;
