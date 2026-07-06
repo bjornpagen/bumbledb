@@ -310,9 +310,14 @@ impl BenchRun<'_> {
                 &harness_events,
             )
             .map_err(|e| format!("trace: {e}"))?;
+            let mut table = trace_out::FlameSummary::compute(&engine).render_top(10);
+            if let Some(phases) = trace_out::render_phase_table(&engine) {
+                table.push('\n');
+                table.push_str(&phases);
+            }
             self.flames.push(report::FlameEmbed {
                 name: family.name.to_owned(),
-                table: trace_out::FlameSummary::compute(&engine).render_top(10),
+                table,
             });
         }
         let (_, stats) = self
@@ -611,6 +616,9 @@ pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
     )
     .map_err(|e| format!("trace: {e}"))?;
     print!("{}", trace_out::FlameSummary::compute(&engine).render());
+    if let Some(phases) = trace_out::render_phase_table(&engine) {
+        print!("{phases}");
+    }
 
     let (_, events) = harness::traced_cold_sample(&mut harness::tag_touch(&db), &mut run)?;
     let (engine, harness_events) = trace_out::split_harness(events);

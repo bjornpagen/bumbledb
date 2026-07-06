@@ -46,6 +46,39 @@ pub trait Sink {
     }
 }
 
+/// One executor phase, for per-(node, phase) time attribution
+/// (docs/architecture/50-validation.md): the five sequential segments of
+/// a node entry's batch loop. `Descend` wraps the per-survivor recursion
+/// loop, so its exclusive time (total minus the next node's phases) is
+/// the per-row bookkeeping — binds, journal restores, and leaf emits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JoinPhase {
+    /// Drawing a cover batch (`iter_batch`).
+    Iter,
+    /// Phase 1: gather probe keys + compute hashes (pure ALU).
+    Hash,
+    /// Phase 2: bucket loads + survivor compaction.
+    Probe,
+    /// Residual comparisons + compaction.
+    Residual,
+    /// The per-survivor recursion loop (contains deeper nodes' phases).
+    Descend,
+}
+
+impl JoinPhase {
+    /// Index into per-phase tables (matches `obs::names::JOIN_PHASE`).
+    #[must_use]
+    pub fn index(self) -> usize {
+        match self {
+            Self::Iter => 0,
+            Self::Hash => 1,
+            Self::Probe => 2,
+            Self::Residual => 3,
+            Self::Descend => 4,
+        }
+    }
+}
+
 /// Execution observability seam (30-execution): the normal path
 /// instantiates [`NoopCounters`] — zero-sized, compiled to nothing; the
 /// EXPLAIN entry point (docs/architecture/30-execution.md) instantiates the counting variant.
@@ -65,6 +98,102 @@ pub trait Counters {
     fn emit(&mut self);
     /// A D2 subtree skip propagated through this node.
     fn skip(&mut self, node: usize);
+    /// A timed phase segment opens/closes (default no-op: only the trace
+    /// harness's [`PhaseTimers`] implements these; hot-path cost when
+    /// unimplemented is exactly zero after monomorphization).
+    #[inline]
+    fn phase_start(&mut self, node: usize, phase: JoinPhase) {
+        let _ = (node, phase);
+    }
+    #[inline]
+    fn phase_end(&mut self, node: usize, phase: JoinPhase) {
+        let _ = (node, phase);
+    }
+}
+
+/// Node-index cap for phase attribution tables: indices past the cap
+/// share the overflow bucket (`nX` names) — plans deeper than this are
+/// attributed coarsely, never dropped.
+pub const PHASE_NODE_CAP: usize = 8;
+
+/// The trace-mode phase accumulator (docs/architecture/50-validation.md):
+/// per (node, phase) tick totals via the obs fast clock, flushed as
+/// `Category::Phase` point events at capture end. Never in a timing
+/// path — the prepared-query execute path selects it only under an
+/// active obs capture.
+#[cfg(feature = "trace")]
+pub struct PhaseTimers {
+    /// `[node][phase] -> (accumulated ticks, calls)`.
+    acc: [[(u64, u64); 5]; PHASE_NODE_CAP + 1],
+    /// `[node][phase] -> open segment's start tick`.
+    open: [[u64; 5]; PHASE_NODE_CAP + 1],
+}
+
+#[cfg(feature = "trace")]
+impl PhaseTimers {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            acc: [[(0, 0); 5]; PHASE_NODE_CAP + 1],
+            open: [[0; 5]; PHASE_NODE_CAP + 1],
+        }
+    }
+
+    /// Emits one `Category::Phase` point event per touched (node, phase):
+    /// `a0` = accumulated nanoseconds, `a1` = calls.
+    pub fn flush(&self) {
+        for (node, phases) in self.acc.iter().enumerate() {
+            for (phase, &(ticks, calls)) in phases.iter().enumerate() {
+                if calls == 0 {
+                    continue;
+                }
+                crate::obs::event(
+                    crate::obs::names::JOIN_PHASE[phase][node],
+                    crate::obs::Category::Phase,
+                    crate::obs::fastclock::ticks_to_ns(ticks),
+                    calls,
+                );
+            }
+        }
+    }
+}
+
+#[cfg(feature = "trace")]
+impl Default for PhaseTimers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "trace")]
+impl Counters for PhaseTimers {
+    #[inline]
+    fn node_entry(&mut self, _: usize) {}
+    #[inline]
+    fn batch(&mut self, _: usize, _: usize) {}
+    #[inline]
+    fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+    #[inline]
+    fn probe_hash(&mut self, _: usize, _: usize) {}
+    #[inline]
+    fn probe(&mut self, _: usize, _: usize, _: bool) {}
+    #[inline]
+    fn residual(&mut self, _: usize, _: bool) {}
+    #[inline]
+    fn emit(&mut self) {}
+    #[inline]
+    fn skip(&mut self, _: usize) {}
+    #[inline]
+    fn phase_start(&mut self, node: usize, phase: JoinPhase) {
+        self.open[node.min(PHASE_NODE_CAP)][phase.index()] = crate::obs::fastclock::ticks();
+    }
+    #[inline]
+    fn phase_end(&mut self, node: usize, phase: JoinPhase) {
+        let (node, phase) = (node.min(PHASE_NODE_CAP), phase.index());
+        let cell = &mut self.acc[node][phase];
+        cell.0 += crate::obs::fastclock::ticks().wrapping_sub(self.open[node][phase]);
+        cell.1 += 1;
+    }
 }
 
 /// The release-path counters: every method compiles to nothing.
@@ -378,6 +507,7 @@ impl Executor {
         let mut flow = Flow::Continue;
 
         'outer: loop {
+            counters.phase_start(node_idx, JoinPhase::Iter);
             let (yielded, next_token) = colts[cover_occ].iter_batch(
                 cover_cursor,
                 cover_level,
@@ -386,6 +516,7 @@ impl Executor {
                 &mut scratch.children,
                 self.batch,
             );
+            counters.phase_end(node_idx, JoinPhase::Iter);
             if yielded == 0 {
                 break;
             }
@@ -422,6 +553,7 @@ impl Executor {
                 // `hashes` counts hashes actually computed for map
                 // probes (one branch per sibling per batch).
                 let pinned = matches!(s_cursor, Cursor::Row(_));
+                counters.phase_start(node_idx, JoinPhase::Hash);
                 scratch.hashes.clear();
                 for (k, &e) in scratch.survivors.iter().enumerate() {
                     let entry = usize::try_from(e).expect("batch fits usize");
@@ -444,8 +576,11 @@ impl Executor {
                     }
                 }
 
+                counters.phase_end(node_idx, JoinPhase::Hash);
+
                 // Phase 2: all bucket loads — independent chains the
                 // out-of-order window overlaps — then kernel compaction.
+                counters.phase_start(node_idx, JoinPhase::Probe);
                 scratch.mask.clear();
                 for k in 0..scratch.survivors.len() {
                     let e = scratch.survivors[k];
@@ -461,9 +596,11 @@ impl Executor {
                     scratch.mask.push(u8::from(hit.is_some()));
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+                counters.phase_end(node_idx, JoinPhase::Probe);
             }
 
             // Residuals run as batch survivor compaction after the probes.
+            counters.phase_start(node_idx, JoinPhase::Residual);
             for (r_idx, (lhs_src, rhs_src)) in scratch.residual_sources.iter().enumerate() {
                 let op = self.residual_slots[node_idx][r_idx].0.op;
                 scratch.mask.clear();
@@ -480,6 +617,7 @@ impl Executor {
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
+            counters.phase_end(node_idx, JoinPhase::Residual);
 
             // Save the node-entry cursors once per batch: every entry's
             // recursion restores them, so they are identical for each
@@ -498,6 +636,7 @@ impl Executor {
 
             // Recurse per surviving element (paper §4.3: batch within a
             // node, recurse per tuple) with the scalar journal discipline.
+            counters.phase_start(node_idx, JoinPhase::Descend);
             for k in 0..scratch.survivors.len() {
                 let entry = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
                 for (i, slot) in self.slot_map[node_idx][cover_sub].iter().enumerate() {
@@ -538,10 +677,12 @@ impl Executor {
                             "a SkipSuffix crossed a node under a non-skipping sink"
                         );
                         counters.skip(node_idx);
+                        counters.phase_end(node_idx, JoinPhase::Descend);
                         break 'outer;
                     }
                 }
             }
+            counters.phase_end(node_idx, JoinPhase::Descend);
         }
 
         self.scratch[node_idx] = scratch;

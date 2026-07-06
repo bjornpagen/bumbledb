@@ -128,7 +128,13 @@ impl FlameSummary {
     /// events count as calls with zero duration.
     #[must_use]
     pub fn compute(events: &[TraceEvent]) -> Self {
-        let mut spans: Vec<&TraceEvent> = events.iter().filter(|e| e.dur_ns > 0).collect();
+        // Phase accumulators are synthetic point events (their a0 is a
+        // duration total, not a timestamped span) — containment math and
+        // the flame rows must not see them; render_phase_table does.
+        let mut spans: Vec<&TraceEvent> = events
+            .iter()
+            .filter(|e| e.dur_ns > 0 && e.cat != Category::Phase)
+            .collect();
         spans.sort_by_key(|e| (e.start_ns, std::cmp::Reverse(e.start_ns + e.dur_ns)));
         let mut child_ns = vec![0u64; spans.len()];
         let mut stack: Vec<usize> = Vec::new();
@@ -153,7 +159,10 @@ impl FlameSummary {
             entry.0.push(event.dur_ns);
             entry.1 += event.dur_ns - child_ns[index];
         }
-        for event in events.iter().filter(|e| e.dur_ns == 0) {
+        for event in events
+            .iter()
+            .filter(|e| e.dur_ns == 0 && e.cat != Category::Phase)
+        {
             by_name.entry(event.name).or_default().0.push(0);
         }
 
@@ -218,6 +227,78 @@ impl FlameSummary {
         let _ = writeln!(out, "total wall {:.3} us", us(self.wall_ns));
         out
     }
+}
+
+/// Renders the executor phase table from `Category::Phase` accumulator
+/// events (docs/architecture/50-validation.md): one row per (node, phase)
+/// in node-major, phase-index order, with an `excl_us` column — the
+/// phase's time minus everything attributed one node deeper, meaningful
+/// for `descend` rows (per-row bookkeeping + leaf emits + the next
+/// node's un-phased entry setup). Returns `None` when the capture holds
+/// no phase events (non-join plans, pre-upgrade traces).
+#[must_use]
+pub fn render_phase_table(events: &[TraceEvent]) -> Option<String> {
+    use std::fmt::Write as _;
+
+    // (node, phase) -> (total_ns, calls); node 8 is the overflow bucket.
+    let mut cells: Vec<(usize, usize, u64, u64)> = Vec::new();
+    for event in events.iter().filter(|e| e.cat == Category::Phase) {
+        let (phase, node) = parse_phase_name(event.name)?;
+        cells.push((node, phase, event.a0, event.a1));
+    }
+    if cells.is_empty() {
+        return None;
+    }
+    cells.sort_unstable();
+
+    let node_total = |n: usize| -> u64 {
+        cells
+            .iter()
+            .filter(|(node, phase, ..)| *node == n && *phase != 4)
+            .map(|(.., ns, _)| ns)
+            .sum::<u64>()
+            + cells
+                .iter()
+                .find(|(node, phase, ..)| *node == n && *phase == 4)
+                .map_or(0, |(.., ns, _)| *ns)
+    };
+
+    #[allow(clippy::cast_precision_loss)]
+    let us = |ns: u64| ns as f64 / 1000.0;
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "{:<16} {:>10} {:>12} {:>10} {:>12}",
+        "phase", "calls", "total_us", "avg_ns", "excl_us"
+    );
+    for &(node, phase, ns, calls) in &cells {
+        // Descend's exclusive time subtracts the entire next node.
+        let excl = if phase == 4 {
+            ns.saturating_sub(node_total(node + 1))
+        } else {
+            ns
+        };
+        let _ = writeln!(
+            out,
+            "{:<16} {:>10} {:>12.3} {:>10} {:>12.3}",
+            bumbledb::obs::names::JOIN_PHASE[phase][node.min(8)],
+            calls,
+            us(ns),
+            ns / calls.max(1),
+            us(excl),
+        );
+    }
+    Some(out)
+}
+
+/// Recovers `(phase index, node index)` from a registry phase name.
+fn parse_phase_name(name: &str) -> Option<(usize, usize)> {
+    for (phase, nodes) in bumbledb::obs::names::JOIN_PHASE.iter().enumerate() {
+        if let Some(node) = nodes.iter().position(|n| *n == name) {
+            return Some((phase, node));
+        }
+    }
+    None
 }
 
 #[cfg(test)]

@@ -23,6 +23,11 @@ pub enum Category {
     Image,
     Cache,
     Harness,
+    /// Executor phase accumulators (docs/architecture/50-validation.md):
+    /// synthetic point events carrying `(total_ns, calls)` per
+    /// (node, phase), flushed once per traced execution — never real
+    /// spans, so flame containment math must exclude them.
+    Phase,
 }
 
 impl Category {
@@ -37,6 +42,7 @@ impl Category {
             Self::Image => "image",
             Self::Cache => "cache",
             Self::Harness => "harness",
+            Self::Phase => "phase",
         }
     }
 }
@@ -142,6 +148,137 @@ pub mod names {
     pub const SAMPLE: &str = "sample";
     /// One cold-protocol touch commit. (-, -)
     pub const TOUCH: &str = "touch";
+
+    // Executor phase accumulators (Category::Phase): per (node, phase)
+    // point events, (total_ns, calls). Node indices past the table cap
+    // share the overflow name — attribution, not identification.
+
+    /// Phase-name table: `JOIN_PHASE[phase][min(node, 8)]`. Phase order
+    /// matches `exec::run::JoinPhase`: iter, hash, probe, residual,
+    /// descend.
+    pub const JOIN_PHASE: [[&str; 9]; 5] = [
+        [
+            "jp_iter_n0",
+            "jp_iter_n1",
+            "jp_iter_n2",
+            "jp_iter_n3",
+            "jp_iter_n4",
+            "jp_iter_n5",
+            "jp_iter_n6",
+            "jp_iter_n7",
+            "jp_iter_nX",
+        ],
+        [
+            "jp_hash_n0",
+            "jp_hash_n1",
+            "jp_hash_n2",
+            "jp_hash_n3",
+            "jp_hash_n4",
+            "jp_hash_n5",
+            "jp_hash_n6",
+            "jp_hash_n7",
+            "jp_hash_nX",
+        ],
+        [
+            "jp_probe_n0",
+            "jp_probe_n1",
+            "jp_probe_n2",
+            "jp_probe_n3",
+            "jp_probe_n4",
+            "jp_probe_n5",
+            "jp_probe_n6",
+            "jp_probe_n7",
+            "jp_probe_nX",
+        ],
+        [
+            "jp_residual_n0",
+            "jp_residual_n1",
+            "jp_residual_n2",
+            "jp_residual_n3",
+            "jp_residual_n4",
+            "jp_residual_n5",
+            "jp_residual_n6",
+            "jp_residual_n7",
+            "jp_residual_nX",
+        ],
+        [
+            "jp_descend_n0",
+            "jp_descend_n1",
+            "jp_descend_n2",
+            "jp_descend_n3",
+            "jp_descend_n4",
+            "jp_descend_n5",
+            "jp_descend_n6",
+            "jp_descend_n7",
+            "jp_descend_nX",
+        ],
+    ];
+
+    /// One sink-map rehash inside a measured execution. (new capacity, arity)
+    pub const WORDMAP_GROW: &str = "wordmap_grow";
+}
+
+/// The trace-mode fast clock: raw `cntvct_el0` reads on aarch64 (~2 ns,
+/// no syscall, no `mach_absolute_time`), `Instant`-based elsewhere.
+/// Tick frequency comes from `cntfrq_el0` (24 MHz on Apple Silicon —
+/// 41.67 ns granularity; unbiased across many accumulated phases).
+/// No `isb` barrier: accumulated attribution tolerates OoO slop, and the
+/// barrier would cost more than the read.
+#[cfg(feature = "trace")]
+pub mod fastclock {
+    /// An opaque monotonic tick count.
+    #[cfg(target_arch = "aarch64")]
+    #[allow(unsafe_code)] // one mrs read; sanctioned for trace-only builds
+    #[inline]
+    #[must_use]
+    pub fn ticks() -> u64 {
+        let t: u64;
+        // SAFETY: cntvct_el0 is user-readable on aarch64 (Apple Silicon
+        // and Linux both expose it); the read has no memory effects.
+        unsafe {
+            core::arch::asm!("mrs {t}, cntvct_el0", t = out(reg) t, options(nomem, nostack));
+        }
+        t
+    }
+
+    /// Tick frequency in Hz (`cntfrq_el0`).
+    #[cfg(target_arch = "aarch64")]
+    #[allow(unsafe_code)]
+    #[must_use]
+    pub fn frequency() -> u64 {
+        // SAFETY: cntfrq_el0 is a user-readable constant register.
+        let f: u64;
+        unsafe {
+            core::arch::asm!("mrs {f}, cntfrq_el0", f = out(reg) f, options(nomem, nostack));
+        }
+        f
+    }
+
+    /// Portable fallback: nanoseconds from a process anchor.
+    #[cfg(not(target_arch = "aarch64"))]
+    #[must_use]
+    pub fn ticks() -> u64 {
+        use std::sync::OnceLock;
+        use std::time::Instant;
+        static ANCHOR: OnceLock<Instant> = OnceLock::new();
+        u64::try_from(ANCHOR.get_or_init(Instant::now).elapsed().as_nanos())
+            .expect("process uptime fits u64 ns")
+    }
+
+    /// Portable fallback frequency: the tick already is a nanosecond.
+    #[cfg(not(target_arch = "aarch64"))]
+    #[must_use]
+    pub fn frequency() -> u64 {
+        1_000_000_000
+    }
+
+    /// Converts accumulated ticks to nanoseconds (u128 interim: no
+    /// overflow below ~584 years of ticks).
+    #[must_use]
+    pub fn ticks_to_ns(ticks: u64) -> u64 {
+        u64::try_from(u128::from(ticks) * 1_000_000_000 / u128::from(frequency()))
+            .expect("accumulated phase time fits u64 ns")
+    }
 }
 
 #[cfg(feature = "trace")]

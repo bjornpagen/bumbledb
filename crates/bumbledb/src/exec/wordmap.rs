@@ -123,6 +123,15 @@ impl<V> WordMap<V> {
 
     fn grow(&mut self) {
         let new_capacity = (self.values.len() * 2).max(8);
+        // Rehash visibility (docs/architecture/50-validation.md): sink-map
+        // growth inside a measured execution is exactly the presizing
+        // opportunity the trace should surface.
+        crate::obs::event(
+            crate::obs::names::WORDMAP_GROW,
+            crate::obs::Category::Execute,
+            new_capacity as u64,
+            self.arity as u64,
+        );
         let old_keys = std::mem::replace(&mut self.keys, vec![0; new_capacity * self.arity]);
         let mut old_values = std::mem::replace(
             &mut self.values,

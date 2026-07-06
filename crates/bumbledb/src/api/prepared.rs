@@ -565,21 +565,39 @@ impl PreparedQuery<'_> {
                 if !resolved {
                     return Ok(()); // Eq-anchored dictionary miss: empty result
                 }
-                run_join(
-                    plan,
-                    self.schema,
-                    txn,
-                    cache,
-                    self.executor
-                        .as_mut()
-                        .expect("free join plans carry executor scratch"),
-                    &mut self.bindings,
-                    &self.resolved_filters,
-                    &self.resolved_selections,
-                    &mut self.memo,
-                    &mut self.sink,
-                    &mut NoopCounters,
-                )?;
+                // Phase attribution engages only under an active obs
+                // capture (docs/architecture/50-validation.md): timing
+                // runs — even obs builds — monomorphize NoopCounters and
+                // pay nothing.
+                macro_rules! run_join_with {
+                    ($counters:expr) => {
+                        run_join(
+                            plan,
+                            self.schema,
+                            txn,
+                            cache,
+                            self.executor
+                                .as_mut()
+                                .expect("free join plans carry executor scratch"),
+                            &mut self.bindings,
+                            &self.resolved_filters,
+                            &self.resolved_selections,
+                            &mut self.memo,
+                            &mut self.sink,
+                            $counters,
+                        )
+                    };
+                }
+                #[cfg(feature = "trace")]
+                if obs::capturing() {
+                    let mut timers = crate::exec::run::PhaseTimers::new();
+                    run_join_with!(&mut timers)?;
+                    timers.flush();
+                } else {
+                    run_join_with!(&mut NoopCounters)?;
+                }
+                #[cfg(not(feature = "trace"))]
+                run_join_with!(&mut NoopCounters)?;
             }
         }
         let result = {
