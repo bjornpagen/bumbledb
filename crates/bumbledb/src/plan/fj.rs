@@ -133,6 +133,13 @@ pub fn factor(plan: &mut FjPlan) {
 pub enum PlanError {
     /// An occurrence's subatoms do not partition its variable set.
     BrokenPartition { occ: OccId },
+    /// An occurrence of the query appears in no subatom of any node. A
+    /// zero-variable (gate) occurrence dropped this way would silently
+    /// skip its nonemptiness check — wrong results on a validated plan.
+    MissingOccurrence { occ: OccId },
+    /// A subatom references an occurrence outside the normalized query —
+    /// the executor would index past its COLT array.
+    UnknownOccurrence { node: usize, occ: OccId },
     /// Two subatoms of one node share an occurrence.
     DuplicateOccurrenceInNode { node: usize, occ: OccId },
     /// A node has no cover: no subatom contains all its new variables.
@@ -284,6 +291,7 @@ pub fn validate(
     estimates: Vec<u64>,
     sink_vars: &BTreeSet<VarId>,
 ) -> Result<ValidatedPlan, PlanError> {
+    check_occurrence_coverage(plan, normalized)?;
     // Partition property, per occurrence: subatom vars are disjoint and
     // union to the occurrence's var set.
     for occurrence in &normalized.occurrences {
@@ -354,9 +362,15 @@ pub fn validate(
             }
         })
         .collect();
-    check_selections(&occurrences)?;
+    // A tautology at this call site — `split_filters` just constructed
+    // these occurrences, so no Eq-constant can sit in `filters`. The real
+    // producers `check_selections` guards against are hand-built
+    // `PlanOccurrence`s (tests, future callers); the executor-side twin
+    // is a debug_assert too.
+    debug_assert!(check_selections(&occurrences).is_ok());
 
-    // Binding-slot layout: node order, then subatom order — dense.
+    // Binding-slot layout: node order, then `VarId` order within a node
+    // (`new_vars` comes off a `BTreeSet`) — dense.
     let mut slots: Vec<VarId> = Vec::new();
     for node in &nodes {
         for var in &node.new_vars {
@@ -375,6 +389,46 @@ pub fn validate(
         distinct_bindings,
         estimates,
     })
+}
+
+/// The occurrence-coverage half of the boundary: every subatom resolves
+/// to an occurrence of this query (an unknown `OccId` would reach the
+/// executor as an out-of-range COLT index), and every occurrence appears
+/// in at least one subatom. The partition check is vacuous for a
+/// zero-variable (gate) occurrence — empty seen == empty expected — so
+/// the appearance check is what keeps a dropped gate from silently
+/// skipping its nonemptiness test (wrong results on a validated plan).
+/// Gates are legal only as an empty-vars subatom in some node, exactly
+/// what `binary2fj` emits; the all-gates/empty-plan degenerate fails
+/// here too.
+fn check_occurrence_coverage(plan: &FjPlan, normalized: &NormalizedQuery) -> Result<(), PlanError> {
+    for (node_idx, node) in plan.nodes.iter().enumerate() {
+        for subatom in &node.subatoms {
+            if !normalized
+                .occurrences
+                .iter()
+                .any(|o| o.occ_id == subatom.occ)
+            {
+                return Err(PlanError::UnknownOccurrence {
+                    node: node_idx,
+                    occ: subatom.occ,
+                });
+            }
+        }
+    }
+    for occurrence in &normalized.occurrences {
+        let appears = plan
+            .nodes
+            .iter()
+            .flat_map(|n| &n.subatoms)
+            .any(|s| s.occ == occurrence.occ_id);
+        if !appears {
+            return Err(PlanError::MissingOccurrence {
+                occ: occurrence.occ_id,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Splits an occurrence's lowered predicates into probeable selections
@@ -704,6 +758,83 @@ mod tests {
         assert_eq!(
             check_selections(std::slice::from_ref(&bad)),
             Err(PlanError::SelectionOnFilteredField { occ: OccId(3) })
+        );
+    }
+
+    /// PRD 03 (docs/hardening): a plan that drops a zero-variable (gate)
+    /// occurrence must not validate — the executor would skip the
+    /// nonemptiness check and return all of R instead of the empty set.
+    #[test]
+    fn a_plan_dropping_a_gate_occurrence_is_rejected() {
+        // Q(x) :- R(x), Gate() — occurrence 1 binds nothing.
+        let normalized = NormalizedQuery {
+            occurrences: vec![occurrence(0, 0, &[(1, X)]), occurrence(1, 1, &[])],
+            residuals: vec![],
+        };
+        // The hand-built plan covers only the bound occurrence.
+        let plan = FjPlan {
+            nodes: vec![Node {
+                subatoms: vec![subatom(0, &[X])],
+            }],
+        };
+        assert_eq!(
+            validate(&plan, &normalized, &schema(2, 3), vec![0], &BTreeSet::new())
+                .map(|_| ())
+                .unwrap_err(),
+            PlanError::MissingOccurrence { occ: OccId(1) }
+        );
+
+        // The degenerate extreme: an all-gates query with an empty plan.
+        let all_gates = NormalizedQuery {
+            occurrences: vec![occurrence(0, 0, &[])],
+            residuals: vec![],
+        };
+        let empty = FjPlan { nodes: vec![] };
+        assert_eq!(
+            validate(&empty, &all_gates, &schema(1, 3), vec![], &BTreeSet::new())
+                .map(|_| ())
+                .unwrap_err(),
+            PlanError::MissingOccurrence { occ: OccId(0) }
+        );
+
+        // Positive control: the gate carried as an empty-vars subatom —
+        // exactly what binary2fj emits — validates.
+        let with_gate = FjPlan {
+            nodes: vec![Node {
+                subatoms: vec![subatom(0, &[X]), subatom(1, &[])],
+            }],
+        };
+        validate(
+            &with_gate,
+            &normalized,
+            &schema(2, 3),
+            vec![0],
+            &BTreeSet::new(),
+        )
+        .expect("a gate subatom is the legal form");
+    }
+
+    /// PRD 03: a subatom referencing an occurrence outside the query is a
+    /// typed rejection, not an executor index panic.
+    #[test]
+    fn a_subatom_with_an_unknown_occurrence_is_rejected() {
+        let normalized = NormalizedQuery {
+            occurrences: vec![occurrence(0, 0, &[(1, X)])],
+            residuals: vec![],
+        };
+        let plan = FjPlan {
+            nodes: vec![Node {
+                subatoms: vec![subatom(0, &[X]), subatom(99, &[])],
+            }],
+        };
+        assert_eq!(
+            validate(&plan, &normalized, &schema(1, 3), vec![0], &BTreeSet::new())
+                .map(|_| ())
+                .unwrap_err(),
+            PlanError::UnknownOccurrence {
+                node: 0,
+                occ: OccId(99)
+            }
         );
     }
 
