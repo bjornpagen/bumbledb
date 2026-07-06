@@ -114,3 +114,79 @@ fn kill_during_commit_leaves_a_consistent_database() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// The counters-only child (hardening PRD 01): every write is a no-op
+/// commit that flushes only dirty `Q` marks — one LMDB value in one
+/// transaction. Run only via the parent test below.
+#[test]
+#[ignore = "crash-child body; spawned by kill_during_counters_only_commit_leaves_q_consistent"]
+fn crash_child_alloc_loop() {
+    let Ok(dir) = std::env::var("BUMBLEDB_CRASH_ALLOC_DIR") else {
+        return; // ran directly (e.g. `--ignored` sweeps): nothing to do
+    };
+    let db = Db::open(std::path::Path::new(&dir), schema()).expect("child open");
+    for _ in 0..u64::MAX {
+        db.write(|tx| {
+            let _: ItemId = tx.alloc()?;
+            Ok(())
+        })
+        .expect("child alloc");
+    }
+}
+
+/// Hardening PRD 01: kill during the counters-only commit shape. The
+/// reopened `Q` mark is either an old or a new committed value, never
+/// torn — a torn 8-byte counter would surface as `Corruption` (or a
+/// non-monotonic allocation) on the very next alloc.
+#[test]
+#[allow(clippy::redundant_closure_for_method_calls)] // HRTB: the method path does not unify
+fn kill_during_counters_only_commit_leaves_q_consistent() {
+    let exe = std::env::current_exe().expect("test binary path");
+    for (round, delay_ms) in [10u64, 40].into_iter().enumerate() {
+        let dir = std::env::temp_dir().join(format!("bumbledb-crash-alloc-{round}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("test dir");
+        drop(Db::create(&dir, schema()).expect("create"));
+
+        let mut child = Command::new(&exe)
+            .args([
+                "crash_child_alloc_loop",
+                "--exact",
+                "--ignored",
+                "--test-threads=1",
+            ])
+            .env("BUMBLEDB_CRASH_ALLOC_DIR", &dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn child");
+        std::thread::sleep(Duration::from_millis(delay_ms));
+        child.kill().expect("SIGKILL");
+        let _ = child.wait();
+
+        let db = Db::open(&dir, schema()).expect("open after crash");
+        // No facts ever committed: the store is empty and the generation
+        // never moved — Q marks are not query-visible state.
+        let count = db
+            .read(|snap| Ok(snap.scan_facts::<Item>()?.count()))
+            .expect("scan after crash");
+        assert_eq!(count, 0, "round {round}: alloc-only child wrote a fact");
+        assert_eq!(
+            db.generation().expect("generation"),
+            0,
+            "round {round}: a counters-only commit moved the generation"
+        );
+        // Q is readable (not torn) and strictly monotonic across writes.
+        let a: ItemId = db.write(|tx| tx.alloc()).expect("alloc after crash");
+        let b: ItemId = db.write(|tx| tx.alloc()).expect("alloc after crash");
+        assert_eq!(b.0, a.0 + 1, "round {round}: Q mark torn or regressed");
+        // And a real insert with the minted id commits cleanly.
+        db.write(|tx| {
+            let id: ItemId = tx.alloc()?;
+            tx.insert(&item(id.0)).map(|_| ())
+        })
+        .expect("write after crash");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

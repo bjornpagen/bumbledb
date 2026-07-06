@@ -44,6 +44,18 @@ pub trait Fact: Sized {
     /// Storage errors from the dictionary reads.
     fn encode_write(&self, tx: &mut WriteTx<'_>, out: &mut Vec<u8>) -> Result<()>;
 
+    /// Encodes for the delete path: pending intern ids first (so an
+    /// insert-then-delete within one transaction cancels byte-exactly),
+    /// then the committed dictionary — never minting. `Ok(false)` means a
+    /// string or bytes value is known to neither: the fact provably
+    /// cannot exist in base or delta, the delete is a no-op, and the
+    /// dictionary stays untouched (`out` is left unusable in that case).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors from the dictionary reads.
+    fn encode_delete(&self, tx: &WriteTx<'_>, out: &mut Vec<u8>) -> Result<bool>;
+
     /// Encodes against a read context. `Ok(false)` means a string or bytes
     /// value was never interned — the fact cannot exist in the database
     /// (`out` is left untouched in that case; otherwise appended).
@@ -581,9 +593,12 @@ impl WriteTx<'_> {
     /// Records a typed delete. Returns whether the final state changes (an
     /// idempotent no-op if the fact is absent).
     ///
-    /// Encodes through the *write* context deliberately: a fact inserted
-    /// and deleted within one transaction must cancel exactly, so the
-    /// delete must see the same provisional intern ids the insert minted.
+    /// Encodes through the *delete* context: pending intern ids first, so
+    /// a fact inserted and deleted within one transaction cancels
+    /// exactly — but never minting. A string or bytes value known to
+    /// neither the delta nor the committed dictionary proves the fact
+    /// absent everywhere, so the delete short-circuits to `Ok(false)`
+    /// without growing the dictionary.
     ///
     /// # Errors
     ///
@@ -591,9 +606,11 @@ impl WriteTx<'_> {
     pub fn delete<F: Fact>(&mut self, fact: &F) -> Result<bool> {
         let mut bytes = std::mem::take(&mut self.scratch);
         bytes.clear();
-        let changed = fact
-            .encode_write(self, &mut bytes)
-            .and_then(|()| self.delta.delete(&self.view, F::RELATION, &bytes));
+        let changed = match fact.encode_delete(self, &mut bytes) {
+            Ok(true) => self.delta.delete(&self.view, F::RELATION, &bytes),
+            Ok(false) => Ok(false),
+            Err(err) => Err(err),
+        };
         self.scratch = bytes;
         changed
     }
@@ -607,25 +624,32 @@ impl WriteTx<'_> {
     /// `values` and the relation's declaration (ETL input is data, so
     /// shape problems are typed); otherwise as [`WriteTx::insert`].
     pub fn insert_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
-        self.encode_dyn(rel, values)?;
+        let encoded = self.encode_dyn(rel, values, InternMode::Mint)?;
+        debug_assert!(encoded, "the minting mode always encodes");
         self.delta.insert(&self.view, rel, &self.scratch)
     }
 
-    /// Records a dynamic delete, symmetric to [`WriteTx::insert_dyn`]
-    /// (write-context interning, as [`WriteTx::delete`]).
+    /// Records a dynamic delete, symmetric to [`WriteTx::insert_dyn`] but
+    /// never minting (as [`WriteTx::delete`]): a string or bytes value
+    /// known to neither the delta nor the committed dictionary proves the
+    /// fact absent, so the delete no-ops without growing the dictionary.
     ///
     /// # Errors
     ///
     /// As [`WriteTx::insert_dyn`].
     pub fn delete_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<bool> {
-        self.encode_dyn(rel, values)?;
+        if !self.encode_dyn(rel, values, InternMode::Resolve)? {
+            return Ok(false);
+        }
         self.delta.delete(&self.view, rel, &self.scratch)
     }
 
     /// Encodes a dynamic fact into `self.scratch`, interning through the
-    /// delta. Shape problems are typed errors — ETL input is data
-    /// (`docs/architecture/60-api.md`).
-    fn encode_dyn(&mut self, rel: RelationId, values: &[Value]) -> Result<()> {
+    /// delta ([`InternMode::Mint`]) or resolving without minting
+    /// ([`InternMode::Resolve`] — `Ok(false)` = a value was never
+    /// interned; the fact cannot exist). Shape problems are typed errors
+    /// — ETL input is data (`docs/architecture/60-api.md`).
+    fn encode_dyn(&mut self, rel: RelationId, values: &[Value], mode: InternMode) -> Result<bool> {
         let relation = self.schema.relation(rel);
         let fields = relation.fields();
         if values.len() != fields.len() {
@@ -669,29 +693,56 @@ impl WriteTx<'_> {
                 Value::String(raw) => {
                     let text =
                         std::str::from_utf8(raw).expect("value_matches validated UTF-8 above");
-                    match self.delta.intern_str(&self.view, text) {
-                        Ok(id) => ValueRef::String(id),
+                    let id = match mode {
+                        InternMode::Mint => self.delta.intern_str(&self.view, text).map(Some),
+                        InternMode::Resolve => self.delta.resolve_str(&self.view, text),
+                    };
+                    match id {
+                        Ok(Some(id)) => ValueRef::String(id),
+                        Ok(None) => {
+                            self.refs = refs;
+                            return Ok(false);
+                        }
                         Err(err) => {
                             self.refs = refs;
                             return Err(err);
                         }
                     }
                 }
-                Value::Bytes(raw) => match self.delta.intern_bytes(&self.view, raw) {
-                    Ok(id) => ValueRef::Bytes(id),
-                    Err(err) => {
-                        self.refs = refs;
-                        return Err(err);
+                Value::Bytes(raw) => {
+                    let id = match mode {
+                        InternMode::Mint => self.delta.intern_bytes(&self.view, raw).map(Some),
+                        InternMode::Resolve => self.delta.resolve_bytes(&self.view, raw),
+                    };
+                    match id {
+                        Ok(Some(id)) => ValueRef::Bytes(id),
+                        Ok(None) => {
+                            self.refs = refs;
+                            return Ok(false);
+                        }
+                        Err(err) => {
+                            self.refs = refs;
+                            return Err(err);
+                        }
                     }
-                },
+                }
             };
             refs.push(value_ref);
         }
         self.scratch.clear();
         encode_fact(&refs, relation.layout(), &mut self.scratch);
         self.refs = refs;
-        Ok(())
+        Ok(true)
     }
+}
+
+/// How [`WriteTx::encode_dyn`] treats novel strings and bytes: the insert
+/// path mints provisional intern ids; the delete path only resolves —
+/// a value neither pending nor committed proves its fact absent.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InternMode {
+    Mint,
+    Resolve,
 }
 
 /// `schema!` expansion plumbing: the generated `Fact` impls call these.
@@ -719,6 +770,25 @@ pub mod plumbing {
     /// Storage errors from the dictionary reads.
     pub fn intern_bytes_write(tx: &mut WriteTx<'_>, value: &[u8]) -> Result<u64> {
         tx.delta.intern_bytes(&tx.view, value)
+    }
+
+    /// Delete-context resolution: pending id, else committed id, else
+    /// `None` — the fact cannot exist; nothing minted.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors from the dictionary reads.
+    pub fn intern_str_delete(tx: &WriteTx<'_>, value: &str) -> Result<Option<u64>> {
+        tx.delta.resolve_str(&tx.view, value)
+    }
+
+    /// Delete-context resolution for bytes.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors from the dictionary reads.
+    pub fn intern_bytes_delete(tx: &WriteTx<'_>, value: &[u8]) -> Result<Option<u64>> {
+        tx.delta.resolve_bytes(&tx.view, value)
     }
 
     /// Read-context lookup: `None` means never interned — the fact cannot
@@ -792,6 +862,70 @@ pub mod plumbing {
         idx: usize,
     ) -> Result<ValueRef> {
         Ok(decode_field(fact, snap.schema.relation(rel).layout(), idx)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::{
+        FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
+    };
+    use crate::testutil::TempDir;
+
+    /// Named(name str) — a string-carrying relation for dictionary tests.
+    fn named_schema() -> Schema {
+        SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "Named".into(),
+                fields: vec![FieldDescriptor {
+                    name: "name".into(),
+                    value_type: ValueType::String,
+                    generation: Generation::None,
+                }],
+                constraints: vec![],
+            }],
+        }
+        .validate()
+        .expect("fixture")
+    }
+
+    fn dict_entries(db: &Db<'_>) -> u64 {
+        let rtxn = db.env.read_txn().expect("txn");
+        db.env.dict().len(rtxn.raw()).expect("len")
+    }
+
+    /// PRD 01 (docs/hardening): the delete path never mints — a typo'd
+    /// delete leaves `_dict` byte-identical, at the storage level.
+    #[test]
+    fn a_typo_delete_leaves_the_dictionary_unchanged() {
+        let dir = TempDir::new("db-mint-free-dict");
+        let schema = named_schema();
+        let db = Db::create(dir.path(), &schema).expect("create");
+        let named = RelationId(0);
+        db.write(|tx| {
+            tx.insert_dyn(named, &[Value::String("real".as_bytes().into())])
+                .map(|_| ())
+        })
+        .expect("seed");
+        let entries = dict_entries(&db);
+        assert_eq!(entries, 2, "one value: forward + reverse entries");
+
+        db.write(|tx| {
+            let changed = tx.delete_dyn(named, &[Value::String("ghost".as_bytes().into())])?;
+            assert!(!changed, "a never-interned value matches no fact");
+            Ok(())
+        })
+        .expect("typo delete");
+        assert_eq!(dict_entries(&db), entries, "the dictionary grew on a miss");
+
+        // Deleting the real fact still works — the committed-dict arm.
+        db.write(|tx| {
+            let changed = tx.delete_dyn(named, &[Value::String("real".as_bytes().into())])?;
+            assert!(changed);
+            Ok(())
+        })
+        .expect("real delete");
     }
 }
 
@@ -898,6 +1032,87 @@ mod trace_tests {
         );
         assert!(!noop_names.contains(&obs::names::LMDB_COMMIT));
         assert!(!noop_names.contains(&obs::names::APPLY_DELETES));
+    }
+
+    /// PRD 01 (docs/hardening): a serial-only no-op commit does not move
+    /// the generation, so a prepared query's next execution memo-hits —
+    /// the counters-only flush invalidated nothing.
+    #[test]
+    fn a_noop_serial_commit_keeps_the_view_memo_valid() {
+        let serial_schema = SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "S".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "id".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::Serial,
+                    },
+                    FieldDescriptor {
+                        name: "v".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                ],
+                constraints: vec![],
+            }],
+        }
+        .validate()
+        .expect("fixture");
+        let dir = TempDir::new("db-trace-noop-serial");
+        let db = Db::create(dir.path(), &serial_schema).expect("create");
+        let rel = RelationId(0);
+        db.write(|tx| {
+            let id = tx.alloc_dyn(rel, FieldId(0))?;
+            tx.insert_dyn(rel, &[Value::U64(id), Value::U64(42)])
+                .map(|_| ())
+        })
+        .expect("seed");
+        assert_eq!(db.generation().expect("generation"), 1);
+
+        // Q(id, v) :- S(id, v) — a full-scan free join that builds views.
+        let query = crate::ir::Query {
+            finds: vec![
+                crate::ir::FindTerm::Var(crate::ir::VarId(0)),
+                crate::ir::FindTerm::Var(crate::ir::VarId(1)),
+            ],
+            atoms: vec![crate::ir::Atom {
+                relation: rel,
+                bindings: vec![
+                    (FieldId(0), crate::ir::Term::Var(crate::ir::VarId(0))),
+                    (FieldId(1), crate::ir::Term::Var(crate::ir::VarId(1))),
+                ],
+            }],
+            predicates: vec![],
+        };
+        let mut prepared = db.prepare(&query).expect("prepare");
+        db.read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
+            .expect("first execute builds");
+
+        // The no-op commit: an escaped allocation, no facts.
+        let escaped = db
+            .write(|tx| tx.alloc_dyn(rel, FieldId(0)))
+            .expect("bare alloc");
+        assert_eq!(escaped, 1);
+        assert_eq!(
+            db.generation().expect("generation"),
+            1,
+            "a counters-only commit is not a state change"
+        );
+
+        // The next execution memo-hits: nothing was evicted or rebuilt.
+        obs::start_capture();
+        db.read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
+            .expect("second execute");
+        let events = obs::finish_capture();
+        let ns = names(&events);
+        assert!(ns.contains(&obs::names::VIEW_MEMO_HIT), "{ns:?}");
+        assert!(!ns.contains(&obs::names::VIEW_BUILD), "{ns:?}");
+        assert!(!ns.contains(&obs::names::IMAGE_BUILD), "{ns:?}");
+
+        // And the escaped id persisted: the next allocation continues.
+        let next = db.write(|tx| tx.alloc_dyn(rel, FieldId(0))).expect("alloc");
+        assert_eq!(next, 2);
     }
 
     #[test]

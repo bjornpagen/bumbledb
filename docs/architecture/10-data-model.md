@@ -83,6 +83,11 @@ a **storage behavior, not a type**:
   same id)`. "Never reused" constrains the *generator* only — it never re-issues a value
   that was ever committed; explicit re-supply of a deleted value is legal. Mixed
   explicit/generated allocation within one transaction tracks the running maximum.
+  A *successful* commit persists every serial value it issued, even when no facts
+  changed — the closure may have returned those ids to the host, and an observed id is
+  never re-issued (the counters-only commit writes exactly the dirty `Q` marks: no
+  generation bump, no cache eviction). Aborted transactions (`Err`/panic) still drop
+  their allocations; nothing they minted was observably returned.
 - **A Serial field auto-materializes an ordinary named unique constraint** on itself,
   visible in the relation's descriptor and FK-targetable like any declared constraint.
   Two Accounts sharing an AccountId is unrepresentable by construction, with zero

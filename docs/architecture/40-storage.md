@@ -105,7 +105,12 @@ Dictionary entries are never removed (accepted leak).
 
 **Storage tx id:** advances **once per commit that changed logical state**; a commit
 whose delta is empty (all no-ops) does not advance it and does not invalidate any
-image. It lives in `_meta` and commits atomically with the data.
+image. It lives in `_meta` and commits atomically with the data. A successful no-op
+commit still flushes any *dirty* serial marks (`Q` values that advanced past their
+committed base — allocations the closure may have returned to the host) in a
+counters-only LMDB transaction: the tx id identifies query-visible state (`F/M/U/R`),
+and `Q` marks are write-path bookkeeping no query reads, so every image and memo key
+stays valid. Pending interns of a no-op commit are dropped — intern ids never escape.
 
 Bulk load (`60-api.md` surface) is the same delta mechanism at scale — chunked into
 multiple transactions (4096 facts each; a failing chunk aborts whole, prior chunks

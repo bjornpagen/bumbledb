@@ -40,6 +40,12 @@ pub struct WriteDelta<'s> {
     /// `(relation, field)` per transaction; a transaction sees its own
     /// allocations. The stored value is the *next* value to issue.
     serial_next: BTreeMap<(RelationId, FieldId), u64>,
+    /// The committed `Q` value each sequence started from this
+    /// transaction (populated by the same lazy read): a mark is *dirty* —
+    /// it escaped as an allocation the closure may have returned — iff it
+    /// advanced past this base. Dirty marks persist even on a no-op
+    /// commit (`40-storage.md`).
+    serial_base: BTreeMap<(RelationId, FieldId), u64>,
     /// Net row-count change per relation, maintained alongside the
     /// changed-state reports (flushed to `S` by the 40-storage doc).
     row_count_delta: BTreeMap<RelationId, i64>,
@@ -62,6 +68,7 @@ impl<'s> WriteDelta<'s> {
             arena: Arena::new(),
             facts: BTreeMap::new(),
             serial_next: BTreeMap::new(),
+            serial_base: BTreeMap::new(),
             row_count_delta: BTreeMap::new(),
             pending_interns: [BTreeMap::new(), BTreeMap::new()],
             dict_next: None,
@@ -88,16 +95,45 @@ impl<'s> WriteDelta<'s> {
         self.intern(view, crate::storage::dict::TAG_BYTES, value)
     }
 
+    /// Delete-side intern resolution for a UTF-8 string: never mints.
+    /// `Ok(None)` proves the fact cannot exist — see [`Self::resolve`].
+    ///
+    /// # Errors
+    ///
+    /// `Lmdb` on a failed dictionary read.
+    pub fn resolve_str(&self, view: &ReadTxn<'_>, value: &str) -> Result<Option<u64>> {
+        self.resolve(view, crate::storage::dict::TAG_STRING, value.as_bytes())
+    }
+
+    /// Delete-side intern resolution for bytes; see [`Self::resolve_str`].
+    ///
+    /// # Errors
+    ///
+    /// `Lmdb` on a failed dictionary read.
+    pub fn resolve_bytes(&self, view: &ReadTxn<'_>, value: &[u8]) -> Result<Option<u64>> {
+        self.resolve(view, crate::storage::dict::TAG_BYTES, value)
+    }
+
+    /// The non-minting sibling of [`Self::intern`], for the delete path:
+    /// a pending-map hit returns the provisional id (insert-then-delete
+    /// cancels byte-exactly), a committed-dict hit returns the committed
+    /// id, and a double miss proves the fact absent from base *and*
+    /// delta — its bytes would embed an id that was never minted — so
+    /// the delete is a no-op and the dictionary stays untouched.
+    fn resolve(&self, view: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<Option<u64>> {
+        if let Some(id) = self.pending_interns[usize::from(tag)].get(raw) {
+            return Ok(Some(*id));
+        }
+        crate::storage::dict::lookup_tagged(view, tag, raw)
+    }
+
     fn intern(&mut self, view: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<u64> {
         // Pending first: a pending value was proven absent from the
         // committed dict at mint time, and the single-writer discipline
         // freezes the committed dict for the transaction's lifetime — so
         // a repeat intern costs one in-memory probe, not an LMDB get plus
         // a blake3.
-        if let Some(id) = self.pending_interns[usize::from(tag)].get(raw) {
-            return Ok(*id);
-        }
-        if let Some(id) = crate::storage::dict::lookup_tagged(view, tag, raw)? {
+        if let Some(id) = self.resolve(view, tag, raw)? {
             return Ok(id);
         }
         let next = match self.dict_next {
@@ -183,9 +219,9 @@ impl<'s> WriteDelta<'s> {
             Generation::Serial,
             "alloc on a non-serial field is a programmer error"
         );
-        let next = match self.serial_next.get(&(rel, field)) {
-            Some(next) => *next,
-            None => read_serial_next(view, rel, field)?,
+        let next = match self.serial_next.get(&(rel, field)).copied() {
+            Some(next) => next,
+            None => self.serial_base_of(view, rel, field)?,
         };
         if next == u64::MAX {
             return Err(Error::SerialExhausted {
@@ -212,8 +248,12 @@ impl<'s> WriteDelta<'s> {
     }
 
     /// Whether the delta records no dispositions at all (reader: the 40-storage doc's
-    /// skip-empty-commit rule; pending allocations and interns of an empty
-    /// delta are deliberately dropped — none of them are observable).
+    /// skip-empty-commit rule). A successful commit of an empty delta
+    /// still persists any *dirty* serial marks — the closure may have
+    /// returned those ids to the host, and a successful commit persists
+    /// every serial value it issued (`10-data-model.md`). Pending interns
+    /// of an empty delta are deliberately dropped: intern ids never
+    /// escape (hosts see values, not words).
     pub(crate) fn is_empty(&self) -> bool {
         self.facts.is_empty()
     }
@@ -223,6 +263,38 @@ impl<'s> WriteDelta<'s> {
         self.serial_next
             .iter()
             .map(|((rel, field), next)| (*rel, *field, *next))
+    }
+
+    /// The serial marks that advanced past their committed base — the
+    /// allocations this transaction actually issued. These persist even
+    /// when a commit nets to no fact change (reader: the commit's
+    /// counters-only path).
+    pub(crate) fn dirty_serial_marks(
+        &self,
+    ) -> impl Iterator<Item = (RelationId, FieldId, u64)> + '_ {
+        self.serial_next.iter().filter_map(|((rel, field), next)| {
+            let base = self
+                .serial_base
+                .get(&(*rel, *field))
+                .expect("every serial_next entry began with a base read");
+            (next > base).then_some((*rel, *field, *next))
+        })
+    }
+
+    /// The committed `Q` value for a sequence, read once per transaction
+    /// and remembered as the dirtiness baseline.
+    fn serial_base_of(
+        &mut self,
+        view: &ReadTxn<'_>,
+        rel: RelationId,
+        field: FieldId,
+    ) -> Result<u64> {
+        if let Some(base) = self.serial_base.get(&(rel, field)) {
+            return Ok(*base);
+        }
+        let base = read_serial_next(view, rel, field)?;
+        self.serial_base.insert((rel, field), base);
+        Ok(base)
     }
 
     /// Net row-count changes to fold into `S` (reader: the 40-storage doc phase 4).
@@ -282,9 +354,9 @@ impl<'s> WriteDelta<'s> {
                 FieldId(u16::try_from(idx).expect("validated schema: field ids fit u16"));
             let raw = field_bytes(fact_bytes, relation.layout(), idx);
             let value = decode_u64(raw.try_into().expect("serial fields are 8 bytes"));
-            let mark = match self.serial_next.get(&(rel, field_id)) {
-                Some(mark) => *mark,
-                None => read_serial_next(view, rel, field_id)?,
+            let mark = match self.serial_next.get(&(rel, field_id)).copied() {
+                Some(mark) => mark,
+                None => self.serial_base_of(view, rel, field_id)?,
             };
             // `saturating_add`: an explicit u64::MAX is legal to insert; the
             // sequence is then exhausted for the generator (alloc errors).
@@ -495,6 +567,78 @@ mod tests {
                 }
             ),
             "{err:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_never_mints_and_sees_both_id_sources() {
+        let dir = TempDir::new("delta-resolve");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let view = env.read_txn().expect("txn");
+        let delta = WriteDelta::new(&schema);
+
+        // A double miss proves the value unknown — and mints nothing.
+        assert_eq!(delta.resolve_str(&view, "ghost").expect("resolve"), None);
+        assert_eq!(delta.dict_next(), None, "resolve minted a provisional id");
+        assert_eq!(delta.pending_interns().count(), 0);
+
+        // A pending hit returns the provisional id (cancellation works).
+        let mut delta = delta;
+        let pending = delta.intern_str(&view, "novel").expect("intern");
+        assert_eq!(
+            delta.resolve_str(&view, "novel").expect("resolve"),
+            Some(pending)
+        );
+
+        // A committed hit returns the committed id.
+        drop(view);
+        {
+            let mut wtxn = env.write_txn().expect("txn");
+            crate::storage::dict::intern_str(&mut wtxn, "committed").expect("intern");
+            wtxn.commit().expect("commit");
+        }
+        let view = env.read_txn().expect("txn");
+        let fresh = WriteDelta::new(&schema);
+        assert!(fresh
+            .resolve_str(&view, "committed")
+            .expect("resolve")
+            .is_some());
+        assert_eq!(fresh.dict_next(), None);
+    }
+
+    #[test]
+    fn dirty_serial_marks_are_exactly_the_advanced_sequences() {
+        let dir = TempDir::new("delta-dirty-marks");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        // Committed base: Q = 6.
+        {
+            let mut wtxn = env.write_txn().expect("txn");
+            let mut buf = [0u8; keys::SERIAL_KEY_LEN];
+            let len = keys::serial_key(&mut buf, R, ID);
+            env.data()
+                .put(wtxn.raw_mut(), &buf[..len], 6u64.to_le_bytes().as_slice())
+                .expect("put");
+            wtxn.commit().expect("commit");
+        }
+        let view = env.read_txn().expect("txn");
+
+        // An explicit value below the base reads the mark but advances
+        // nothing: clean.
+        let mut clean = WriteDelta::new(&schema);
+        clean
+            .insert(&view, R, &fact(&schema, 3, 1))
+            .expect("insert");
+        assert_eq!(clean.serial_marks().count(), 1, "the mark was read");
+        assert_eq!(clean.dirty_serial_marks().count(), 0, "but never advanced");
+
+        // An allocation advances past the base: dirty.
+        let mut dirty = WriteDelta::new(&schema);
+        assert_eq!(dirty.alloc(&view, R, ID).expect("alloc"), 6);
+        assert_eq!(
+            dirty.dirty_serial_marks().collect::<Vec<_>>(),
+            vec![(R, ID, 7)]
         );
     }
 

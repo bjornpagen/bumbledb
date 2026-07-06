@@ -84,8 +84,9 @@ pub use bumbledb_macros::schema;
 #[doc(hidden)]
 pub mod __private {
     pub use crate::api::db::plumbing::{
-        decode, encode_read_fact, encode_write_fact, intern_bytes_read, intern_bytes_write,
-        intern_str_read, intern_str_write, resolve_bytes, resolve_string,
+        decode, encode_read_fact, encode_write_fact, intern_bytes_delete, intern_bytes_read,
+        intern_bytes_write, intern_str_delete, intern_str_read, intern_str_write, resolve_bytes,
+        resolve_string,
     };
     pub use crate::encoding::ValueRef;
     pub use crate::schema::runtime::{build_schema, FieldDecl, FieldTy, RelationDecl};

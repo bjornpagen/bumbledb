@@ -1186,3 +1186,141 @@ fn prepared_executions_observe_exactly_one_generation() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// PRD 01 (docs/hardening): a *successful* commit persists every serial
+/// value it issued, even when no facts changed — an id the closure
+/// returned to the host is never re-issued. Both no-op shapes: the
+/// empty delta (alloc, nothing else) and the nets-to-nothing delta
+/// (insert then delete of the same absent fact). The generation must
+/// not move for either — `Q` marks are not query-visible state.
+#[test]
+#[allow(clippy::redundant_closure_for_method_calls)] // HRTB: the method path does not unify
+fn escaped_serials_survive_noop_commits() {
+    let dir = test_dir("serial-escape");
+    let db = Db::create(&dir, schema()).expect("create");
+
+    // The empty-delta path.
+    let a: HolderId = db.write(|tx| tx.alloc()).expect("bare alloc");
+    let generation_after_a = db.generation().expect("generation");
+    let b: HolderId = db
+        .write(|tx| {
+            let id: HolderId = tx.alloc()?;
+            tx.insert(&Holder {
+                id,
+                name: "first real holder".to_owned(),
+            })?;
+            Ok(id)
+        })
+        .expect("real write");
+    assert!(b.0 > a.0, "escaped id {a:?} re-issued as {b:?}");
+
+    // The nets-to-nothing path (`changed: false`, non-empty delta).
+    let c: HolderId = db
+        .write(|tx| {
+            let id: HolderId = tx.alloc()?;
+            let ghost = Holder {
+                id,
+                name: "ghost".to_owned(),
+            };
+            tx.insert(&ghost)?;
+            tx.delete(&ghost)?;
+            Ok(id)
+        })
+        .expect("nets to nothing");
+    let generation_after_c = db.generation().expect("generation");
+    let d: HolderId = db
+        .write(|tx| {
+            let id: HolderId = tx.alloc()?;
+            tx.insert(&Holder {
+                id,
+                name: "second real holder".to_owned(),
+            })?;
+            Ok(id)
+        })
+        .expect("real write");
+    assert!(d.0 > c.0, "escaped id {c:?} re-issued as {d:?}");
+
+    // Neither no-op moved the generation: Q marks are write-path
+    // bookkeeping, not query-visible state.
+    assert_eq!(generation_after_a, 0, "a bare alloc is not a state change");
+    assert_eq!(
+        generation_after_c, 1,
+        "a nets-to-nothing write is not a state change"
+    );
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// PRD 01: deleting a fact whose string was never interned is a proven
+/// no-op — the fact's bytes would embed an id that was never minted —
+/// and the dictionary does not grow. A later insert of that value must
+/// still treat it as novel (both engine-visible effects of not minting).
+#[test]
+fn deleting_a_never_interned_string_is_a_mint_free_noop() {
+    let dir = test_dir("mint-free-delete");
+    let db = Db::create(&dir, schema()).expect("create");
+    let holder = db
+        .write(|tx| {
+            let id: HolderId = tx.alloc()?;
+            tx.insert(&Holder {
+                id,
+                name: "real".to_owned(),
+            })?;
+            Ok(id)
+        })
+        .expect("seed");
+
+    // Typed delete of a never-interned name: changed = false, and the
+    // whole write is a no-op commit (generation unmoved).
+    let generation = db.generation().expect("generation");
+    db.write(|tx| {
+        let changed = tx.delete(&Holder {
+            id: holder,
+            name: "never interned".to_owned(),
+        })?;
+        assert!(!changed, "a never-interned value matches no fact");
+        Ok(())
+    })
+    .expect("typed delete");
+    // Dynamic delete, same contract.
+    db.write(|tx| {
+        let changed = tx.delete_dyn(
+            Holder::RELATION,
+            &[
+                Value::U64(holder.0),
+                Value::String("also never interned".as_bytes().into()),
+            ],
+        )?;
+        assert!(!changed);
+        Ok(())
+    })
+    .expect("dynamic delete");
+    assert_eq!(db.generation().expect("generation"), generation);
+
+    // The real fact is untouched, and insert-then-delete in one
+    // transaction still cancels exactly (the pending map serves the
+    // delete path).
+    db.write(|tx| {
+        let id: HolderId = tx.alloc()?;
+        let transient = Holder {
+            id,
+            name: "transient".to_owned(),
+        };
+        assert!(tx.insert(&transient)?);
+        assert!(tx.delete(&transient)?);
+        Ok(())
+    })
+    .expect("cancel");
+    let names: Vec<String> = db
+        .read(|snap| {
+            snap.scan_facts::<Holder>()?
+                .map(|h| h.map(|h| h.name))
+                .collect::<bumbledb::Result<Vec<_>>>()
+        })
+        .expect("scan");
+    assert_eq!(names, vec!["real".to_owned()]);
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}

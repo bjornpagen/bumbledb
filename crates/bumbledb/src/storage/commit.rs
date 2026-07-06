@@ -212,15 +212,24 @@ fn check_restrict(
 /// Only on programmer-invariant violations (validated-schema id widths,
 /// well-formed R keys this same commit wrote).
 pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> {
-    // An all-no-op delta commits without touching LMDB at all: the tx id
-    // does not advance and no cached image is invalidated. Pending serial
-    // allocations and interns are dropped — none are observable.
+    // An all-no-op delta commits without touching query-visible state:
+    // the tx id does not advance and no cached image is invalidated. But
+    // a *successful* commit persists every serial value it issued — the
+    // closure may have returned those ids to the host — so dirty `Q`
+    // marks flush even here (`flush_escaped_serials`). Pending interns
+    // are still dropped: intern ids never escape (hosts see values, not
+    // words), and re-issuing an unflushed provisional id is the
+    // established abort semantics.
     if delta.is_empty() {
         obs::event(obs::names::COMMIT_NOOP, obs::Category::Commit, 0, 0);
-        let rtxn = env.read_txn()?;
+        let generation = {
+            let rtxn = env.read_txn()?;
+            rtxn.generation()?
+        };
+        flush_escaped_serials(env.write_txn()?, &delta)?;
         return Ok(CommitReport {
             changed: false,
-            new_generation: rtxn.generation()?,
+            new_generation: generation,
         });
     }
 
@@ -229,7 +238,10 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     if !applied.changed {
         obs::event(obs::names::COMMIT_NOOP, obs::Category::Commit, 0, 0);
         let generation = applied.txn.generation()?;
-        applied.txn.abort(); // nothing was written; equivalent to commit
+        // Nothing was applied (every disposition was a base no-op), so
+        // the open transaction is clean: reuse it for the escaped
+        // serials, or abort it if none are dirty.
+        flush_escaped_serials(applied.txn, &applied.delta)?;
         return Ok(CommitReport {
             changed: false,
             new_generation: generation,
@@ -296,6 +308,33 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         changed: true,
         new_generation,
     })
+}
+
+/// The counters-only commit of a successful no-op write: exactly the
+/// dirty `Q` marks — no generation bump, no image eviction, no intern
+/// flush, no dict next-id. Sound because the generation identifies
+/// *query-visible* state (`F`/`M`/`U`/`R`) and `Q` marks are write-path
+/// bookkeeping no query reads: every image, memo, and cache key stays
+/// valid, and the tx-id-advances-iff-data-changed rule is untouched.
+/// With no dirty marks the transaction aborts — LMDB sees nothing.
+fn flush_escaped_serials(mut txn: WriteTxn<'_>, delta: &WriteDelta<'_>) -> Result<()> {
+    if delta.dirty_serial_marks().next().is_none() {
+        txn.abort();
+        return Ok(());
+    }
+    let data = txn.env().data();
+    let mut key: KeyBuf = [0; MAX_KEY];
+    let mut marks = 0u64;
+    let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
+    for (rel, field, next) in delta.dirty_serial_marks() {
+        let len = keys::serial_key(&mut key, rel, field);
+        data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
+        marks += 1;
+    }
+    span.set_args(0, marks);
+    span.end();
+    let _s = obs::span(obs::names::LMDB_COMMIT, obs::Category::Commit);
+    txn.commit()
 }
 
 /// Phase 4: folds row-count deltas into `S`, writes row-id high-waters,
@@ -1198,6 +1237,62 @@ mod tests {
                 .expect("u64"),
         );
         assert_eq!(high_water, 4);
+    }
+
+    #[test]
+    fn a_noop_commit_flushes_escaped_serials_and_nothing_else() {
+        let dir = TempDir::new("commit-noop-serial-flush");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        commit_facts(&env, &schema, &[(TARGET, target_fact(&schema, 5))]);
+
+        // An empty delta that allocated (ids the closure could have
+        // returned) and interned (ids that never escape): the commit
+        // persists exactly the dirty Q marks — no generation bump, no
+        // intern flush, no dict counter.
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        assert_eq!(delta.alloc(&view, TARGET, FieldId(0)).expect("alloc"), 6);
+        assert_eq!(delta.alloc(&view, TARGET, FieldId(0)).expect("alloc"), 7);
+        delta.intern_str(&view, "ghost").expect("intern");
+        drop(view);
+        let report = commit(delta, &env).expect("commit");
+        assert!(!report.changed);
+        assert_eq!(report.new_generation, 1);
+
+        let rtxn = env.read_txn().expect("txn");
+        assert_eq!(rtxn.generation().expect("generation"), 1, "no bump");
+        // The escaped serials persisted: a fresh delta continues past them.
+        let mut fresh = WriteDelta::new(&schema);
+        assert_eq!(fresh.alloc(&rtxn, TARGET, FieldId(0)).expect("alloc"), 8);
+        // The pending intern was dropped, counter untouched.
+        assert_eq!(
+            crate::storage::dict::lookup_str(&rtxn, "ghost").expect("lookup"),
+            None
+        );
+        assert_eq!(rtxn.dict_next_id().expect("dict next"), 0);
+    }
+
+    #[test]
+    fn a_noop_commit_with_clean_serial_marks_touches_nothing() {
+        let dir = TempDir::new("commit-noop-clean-marks");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        commit_facts(&env, &schema, &[(TARGET, target_fact(&schema, 5))]);
+        let before = committed_data(&env);
+
+        // Re-inserting the existing fact reads the serial base (mark 6,
+        // base 6 — clean) and records no disposition: the commit must
+        // write nothing at all.
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        assert!(!delta
+            .insert(&view, TARGET, &target_fact(&schema, 5))
+            .expect("insert"));
+        drop(view);
+        let report = commit(delta, &env).expect("commit");
+        assert!(!report.changed);
+        assert_eq!(committed_data(&env), before);
     }
 
     #[test]

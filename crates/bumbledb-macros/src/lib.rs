@@ -457,7 +457,11 @@ fn rust_field_ty(field: &Field) -> String {
 
 /// The `ValueRef` expressions for one field in the write and read encode
 /// contexts (write interns novel values; read bails `Ok(false)` on a miss).
-fn encode_exprs(field: &Field) -> (String, String) {
+/// The per-field encode expressions for the three `Fact` boundaries:
+/// write (mints through the delta), delete (resolves pending-then-
+/// committed, never mints — a miss proves the fact absent), read
+/// (committed dictionary only).
+fn encode_exprs(field: &Field) -> (String, String, String) {
     let access = if field.newtype.is_some() {
         format!("self.{}.0", field.name)
     } else {
@@ -466,26 +470,30 @@ fn encode_exprs(field: &Field) -> (String, String) {
     match &field.ty {
         FieldTy::Bool => {
             let expr = format!("::bumbledb::__private::ValueRef::Bool({access})");
-            (expr.clone(), expr)
+            (expr.clone(), expr.clone(), expr)
         }
         FieldTy::U64 => {
             let expr = format!("::bumbledb::__private::ValueRef::U64({access})");
-            (expr.clone(), expr)
+            (expr.clone(), expr.clone(), expr)
         }
         FieldTy::I64 => {
             let expr = format!("::bumbledb::__private::ValueRef::I64({access})");
-            (expr.clone(), expr)
+            (expr.clone(), expr.clone(), expr)
         }
         FieldTy::Enum { .. } => {
             let expr = format!(
                 "::bumbledb::__private::ValueRef::Enum(self.{}.ordinal())",
                 field.name
             );
-            (expr.clone(), expr)
+            (expr.clone(), expr.clone(), expr)
         }
         FieldTy::Str => (
             format!(
                 "::bumbledb::__private::ValueRef::String(::bumbledb::__private::intern_str_write(tx, &self.{})?)",
+                field.name
+            ),
+            format!(
+                "match ::bumbledb::__private::intern_str_delete(tx, &self.{})? {{ Some(id) => ::bumbledb::__private::ValueRef::String(id), None => return Ok(false) }}",
                 field.name
             ),
             format!(
@@ -496,6 +504,10 @@ fn encode_exprs(field: &Field) -> (String, String) {
         FieldTy::Bytes => (
             format!(
                 "::bumbledb::__private::ValueRef::Bytes(::bumbledb::__private::intern_bytes_write(tx, &self.{})?)",
+                field.name
+            ),
+            format!(
+                "match ::bumbledb::__private::intern_bytes_delete(tx, &self.{})? {{ Some(id) => ::bumbledb::__private::ValueRef::Bytes(id), None => return Ok(false) }}",
                 field.name
             ),
             format!(
@@ -557,11 +569,13 @@ fn emit_fact_struct(out: &mut String, index: usize, relation: &Relation) {
     }
 
     let mut write_values = String::new();
+    let mut delete_values = String::new();
     let mut read_values = String::new();
     let mut decode_fields = String::new();
     for (idx, field) in relation.fields.iter().enumerate() {
-        let (write_expr, read_expr) = encode_exprs(field);
+        let (write_expr, delete_expr, read_expr) = encode_exprs(field);
         let _ = write!(write_values, "{write_expr},");
+        let _ = write!(delete_values, "{delete_expr},");
         let _ = write!(read_values, "{read_expr},");
         let _ = write!(decode_fields, "{}", decode_arm(field, idx));
     }
@@ -576,6 +590,11 @@ fn emit_fact_struct(out: &mut String, index: usize, relation: &Relation) {
                  let values = [{write_values}];\n\
                  ::bumbledb::__private::encode_write_fact(tx, Self::RELATION, &values, out);\n\
                  Ok(())\n\
+             }}\n\
+             fn encode_delete(&self, tx: &::bumbledb::WriteTx<'_>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
+                 let values = [{delete_values}];\n\
+                 ::bumbledb::__private::encode_write_fact(tx, Self::RELATION, &values, out);\n\
+                 Ok(true)\n\
              }}\n\
              fn encode_read(&self, snap: &::bumbledb::Snapshot<'_>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
                  let values = [{read_values}];\n\
