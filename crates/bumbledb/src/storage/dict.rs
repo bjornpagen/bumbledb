@@ -79,11 +79,9 @@ fn intern(txn: &mut WriteTxn<'_>, tag: u8, raw: &[u8]) -> Result<u64> {
     }
     // Mint the next id. This read-modify-writes the `_meta` counter directly;
     // the 40-storage doc re-homes it into the delta's in-memory-then-flush counter set.
+    // A stored u64::MAX counter is typed Corruption at the read above
+    // (the sentinel is never mintable), so `id` here is always valid.
     let id = txn.dict_next_id()?;
-    assert!(
-        id != SENTINEL_ID,
-        "dictionary id space exhausted (u64::MAX is the miss sentinel)"
-    );
     txn.put_dict_next_id(id + 1)?;
 
     let mut reverse_value = Vec::with_capacity(1 + raw.len());

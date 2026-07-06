@@ -218,9 +218,12 @@ impl ResolveMemo {
         }
         let start = buffer.bytes.len();
         buffer.bytes.extend_from_slice(raw);
+        // The byte heap's offsets are u32: a >4 GiB distinct-payload
+        // result is absurd under the scale axiom but valid input — a
+        // typed error, not a panic (finalize already threads Result).
         let range = (
-            u32::try_from(start).expect("buffer bytes fit u32 offsets"),
-            u32::try_from(raw.len()).expect("intern lengths fit u32"),
+            u32::try_from(start).map_err(|_| Error::ResultBytesOverflow)?,
+            u32::try_from(raw.len()).map_err(|_| Error::ResultBytesOverflow)?,
         );
         let (slot, _) = self.ranges.get_or_insert_with(&key, || range);
         *slot = range;

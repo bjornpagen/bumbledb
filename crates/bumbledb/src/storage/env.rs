@@ -316,9 +316,16 @@ impl ReadTxn<'_> {
     }
 
     /// The committed dictionary next-id as of this snapshot (reader: the
-    /// delta's lazy pending-intern counter).
+    /// delta's lazy pending-intern counter). A stored `u64::MAX` — the
+    /// miss sentinel, never mintable — is corrupt data, typed.
     pub(crate) fn dict_next_id(&self) -> Result<u64> {
-        read_u64(&self.env.meta, &self.txn, META_DICT_NEXT_ID)
+        let next = read_u64(&self.env.meta, &self.txn, META_DICT_NEXT_ID)?;
+        if next == u64::MAX {
+            return Err(Error::Corruption(CorruptionError::MalformedValue(
+                "dict next id",
+            )));
+        }
+        Ok(next)
     }
 
     /// The underlying heed transaction (reader: `storage::dict` lookups).
@@ -376,7 +383,13 @@ impl<'env> WriteTxn<'env> {
     /// re-homed the live path in the 40-storage doc).
     #[cfg(test)]
     pub(crate) fn dict_next_id(&self) -> Result<u64> {
-        read_u64(&self.env.meta, &self.txn, META_DICT_NEXT_ID)
+        let next = read_u64(&self.env.meta, &self.txn, META_DICT_NEXT_ID)?;
+        if next == u64::MAX {
+            return Err(Error::Corruption(CorruptionError::MalformedValue(
+                "dict next id",
+            )));
+        }
+        Ok(next)
     }
 
     /// Writes the dictionary next-id counter.
@@ -519,6 +532,44 @@ mod tests {
         let env = Environment::create(dir.path(), &schema).expect("create");
         let rtxn = env.read_txn().expect("read txn");
         assert_eq!(rtxn.generation().expect("generation"), 0);
+    }
+
+    /// PRD 06 (docs/hardening): a stored `u64::MAX` dictionary counter —
+    /// the miss sentinel, never mintable — is typed Corruption at the
+    /// read, not an assert.
+    #[test]
+    fn a_corrupt_dict_counter_is_typed_corruption() {
+        let dir = TempDir::new("env-corrupt-dict-counter");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        {
+            let mut wtxn = env.env.write_txn().expect("txn");
+            env.meta
+                .put(&mut wtxn, META_DICT_NEXT_ID, &u64::MAX.to_le_bytes())
+                .expect("plant");
+            wtxn.commit().expect("commit");
+        }
+        let rtxn = env.read_txn().expect("txn");
+        let err = rtxn.dict_next_id().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::Corruption(crate::error::CorruptionError::MalformedValue(
+                    "dict next id"
+                ))
+            ),
+            "{err:?}"
+        );
+        // The write path surfaces the same typed error on the next
+        // intern-bearing transaction.
+        let view = env.read_txn().expect("txn");
+        let mut delta = crate::storage::delta::WriteDelta::new(&schema);
+        assert!(matches!(
+            delta.intern_str(&view, "novel").unwrap_err(),
+            Error::Corruption(crate::error::CorruptionError::MalformedValue(
+                "dict next id"
+            ))
+        ));
     }
 
     #[test]

@@ -489,7 +489,10 @@ impl Snapshot<'_> {
     /// `Lmdb` on cursor open; per-item `Corruption` is a hard error — stop
     /// at the first.
     pub fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
-        let layout = self.schema.relation(rel).layout();
+        let Some(relation) = self.schema.relation_checked(rel) else {
+            return Err(FactShapeError::UnknownRelation { relation: rel }.into());
+        };
+        let layout = relation.layout();
         let iter = read::scan(&self.txn, self.schema, rel)?;
         Ok(iter.map(move |entry| {
             let (_, bytes) = entry?;
@@ -650,7 +653,9 @@ impl WriteTx<'_> {
     /// interned; the fact cannot exist). Shape problems are typed errors
     /// — ETL input is data (`docs/architecture/60-api.md`).
     fn encode_dyn(&mut self, rel: RelationId, values: &[Value], mode: InternMode) -> Result<bool> {
-        let relation = self.schema.relation(rel);
+        let Some(relation) = self.schema.relation_checked(rel) else {
+            return Err(FactShapeError::UnknownRelation { relation: rel }.into());
+        };
         let fields = relation.fields();
         if values.len() != fields.len() {
             return Err(FactShapeError::ArityMismatch {

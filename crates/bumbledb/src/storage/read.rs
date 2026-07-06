@@ -98,12 +98,9 @@ pub fn fetch<'txn>(
 ///
 /// # Errors
 ///
-/// `Lmdb` on cursor-open failure.
-///
-/// # Panics
-///
-/// Only on a programmer-invariant violation: an `F` key shorter than its
-/// fixed 13-byte shape (the codec writes every one).
+/// `Lmdb` on cursor-open failure; per-item `Corruption` on an `F` key
+/// that is not the codec's fixed 13-byte shape — a corrupt key is data,
+/// never a panic.
 pub fn scan<'txn>(
     txn: &'txn ReadTxn<'_>,
     schema: &'txn Schema,
@@ -122,12 +119,14 @@ pub fn scan<'txn>(
         }
         let item = (|| {
             let (raw_key, bytes) = entry?;
-            // F | relation(4) | row_id(8): the row id is the last 8 bytes.
-            let row_id = u64::from_be_bytes(
-                raw_key[raw_key.len() - 8..]
-                    .try_into()
-                    .expect("F keys end in an 8-byte row id"),
-            );
+            // F | relation(4) | row_id(8): fixed 13-byte shape, checked
+            // before slicing — a short key is corruption, typed.
+            if raw_key.len() != keys::FACT_KEY_LEN {
+                return Err(Error::Corruption(CorruptionError::MalformedValue(
+                    "F key length",
+                )));
+            }
+            let row_id = u64::from_be_bytes(raw_key[5..].try_into().expect("length checked above"));
             check_width(schema, rel, row_id, bytes)?;
             Ok((row_id, bytes))
         })();
@@ -403,6 +402,37 @@ mod tests {
         );
         // fetch reports the same corruption.
         assert!(fetch(&txn, &schema, R, victim).is_err());
+    }
+
+    /// PRD 06 (docs/hardening): a 5-byte F key — the bare prefix, the
+    /// audit's shape — is typed Corruption from `scan`, never a panic.
+    #[test]
+    fn a_short_f_key_is_typed_corruption_from_scan() {
+        let dir = TempDir::new("read-corrupt-f-key");
+        let schema = schema();
+        let env = fixture(&dir, &schema);
+        {
+            let mut wtxn = env.write_txn().expect("txn");
+            let mut key: keys::KeyBuf = [0; keys::MAX_KEY];
+            let p_len = keys::fact_prefix(&mut key, R);
+            assert_eq!(p_len, 5);
+            env.data()
+                .put(wtxn.raw_mut(), &key[..p_len], [0u8; 16].as_slice())
+                .expect("plant");
+            wtxn.commit().expect("commit");
+        }
+        let txn = env.read_txn().expect("txn");
+        let err = scan(&txn, &schema, R)
+            .expect("cursor opens")
+            .find_map(Result::err)
+            .expect("the corrupt key is a hard error");
+        assert!(
+            matches!(
+                err,
+                Error::Corruption(CorruptionError::MalformedValue("F key length"))
+            ),
+            "{err:?}"
+        );
     }
 
     #[test]

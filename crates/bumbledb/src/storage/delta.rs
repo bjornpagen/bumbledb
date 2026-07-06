@@ -138,6 +138,10 @@ impl<'s> WriteDelta<'s> {
         }
         let next = match self.dict_next {
             Some(next) => next,
+            // A corrupted stored counter (u64::MAX) is typed Corruption
+            // inside this read; the assert below can therefore fire only
+            // for genuine in-memory exhaustion — 2^64 mints in one
+            // transaction — which is a documented panic, not data.
             None => view.dict_next_id()?,
         };
         assert!(

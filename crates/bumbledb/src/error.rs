@@ -98,7 +98,9 @@ pub enum SchemaError {
         relation: RelationId,
         constraint: ConstraintId,
     },
-    UniqueDuplicateField {
+    /// A field listed twice in one constraint's field list — unique or
+    /// foreign-key alike.
+    ConstraintDuplicateField {
         relation: RelationId,
         constraint: ConstraintId,
         field: FieldId,
@@ -163,6 +165,10 @@ pub enum FkViolation {
 /// problems are typed errors, not panics (`docs/architecture/60-api.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FactShapeError {
+    /// The relation id is outside the schema — ETL input is data, so an
+    /// out-of-range id at the dynamic surface (`insert_dyn`/`delete_dyn`/
+    /// `bulk_load`/`scan`) is a typed error, never an index panic.
+    UnknownRelation { relation: RelationId },
     ArityMismatch {
         relation: RelationId,
         expected: usize,
@@ -187,6 +193,9 @@ pub enum FactShapeError {
 impl fmt::Display for FactShapeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UnknownRelation { relation } => {
+                write!(f, "relation {}: not in this schema", relation.0)
+            }
             Self::ArityMismatch {
                 relation,
                 expected,
@@ -393,6 +402,11 @@ pub enum Error {
     Overflow {
         find: usize,
     },
+    /// The result buffer's byte heap crossed the u32 offset space —
+    /// more than 4 GiB of distinct string/bytes payload in one result.
+    /// Absurd under the scale axiom, but it is valid input, so it
+    /// errors rather than panics.
+    ResultBytesOverflow,
     /// Hard corruption error, never a skip.
     Corruption(CorruptionError),
 }
@@ -517,7 +531,7 @@ impl fmt::Display for SchemaError {
                 "relation {}, constraint {}: unique over no fields",
                 r.0, c.0
             ),
-            Self::UniqueDuplicateField { relation: r, constraint: c, field: fd } => write!(
+            Self::ConstraintDuplicateField { relation: r, constraint: c, field: fd } => write!(
                 f,
                 "relation {}, constraint {}: field {} listed twice",
                 r.0, c.0, fd.0
@@ -717,6 +731,9 @@ impl fmt::Display for Error {
             }
             Self::Overflow { find } => {
                 write!(f, "find {find}: aggregate result exceeds its type")
+            }
+            Self::ResultBytesOverflow => {
+                write!(f, "the result buffer's byte heap exceeds u32 offsets (4 GiB)")
             }
             Self::Corruption(err) => write!(f, "corruption: {err}"),
         }

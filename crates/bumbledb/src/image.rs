@@ -173,6 +173,24 @@ impl ResidueStagger {
     }
 }
 
+/// Checked slab lengths (in words and bytes) for the stored row count.
+/// The `S` value is data: overflow in any size computation is typed
+/// Corruption before a single byte is allocated.
+fn slab_lengths(row_count: usize, word_cols: usize, byte_cols: usize) -> Result<(usize, usize)> {
+    let corrupt = || Error::Corruption(CorruptionError::MalformedValue("S row count"));
+    let word_len = row_count
+        .checked_add(SET_STRIDE / 8 + LINE / 8)
+        .and_then(|per_col| per_col.checked_mul(word_cols))
+        .and_then(|words| words.checked_mul(8))
+        .ok_or_else(corrupt)?
+        / 8;
+    let byte_len = row_count
+        .checked_add(SET_STRIDE + LINE)
+        .and_then(|per_col| per_col.checked_mul(byte_cols))
+        .ok_or_else(corrupt)?;
+    Ok((word_len, byte_len))
+}
+
 /// Builds the full-width image of `rel` from one sequential scan.
 ///
 /// # Errors
@@ -192,7 +210,11 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
     let row_count = usize::try_from(read::row_count(txn, rel)?).expect("64-bit usize");
 
     // One up-front allocation per backing store, sized from the row count
-    // plus per-column alignment/stagger slack.
+    // plus per-column alignment/stagger slack. The stored `S` count is
+    // data: every slab-size computation is checked, and overflow is
+    // typed Corruption *before* any allocation is attempted (the
+    // both-direction scan cross-check below stays the exactness
+    // guarantee).
     let field_types: Vec<TypeDesc> = relation
         .fields()
         .iter()
@@ -200,8 +222,9 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
         .collect();
     let word_cols = field_types.iter().filter(|t| t.width() == 8).count();
     let byte_cols = field_types.len() - word_cols;
-    let mut words = vec![0u64; word_cols * (row_count + SET_STRIDE / 8 + LINE / 8)];
-    let mut bytes = vec![0u8; byte_cols * (row_count + SET_STRIDE + LINE)];
+    let (word_len, byte_len) = slab_lengths(row_count, word_cols, byte_cols)?;
+    let mut words = vec![0u64; word_len];
+    let mut bytes = vec![0u8; byte_len];
 
     // Lay out column bases: 128-byte aligned, no two congruent mod 16 KiB.
     let words_addr = words.as_ptr().addr();
@@ -690,6 +713,38 @@ mod tests {
             image.byte_size() <= payload + slack,
             "{}",
             image.byte_size()
+        );
+    }
+
+    /// PRD 06 (docs/hardening): a corrupt (astronomical) stored `S` row
+    /// count is typed Corruption before any slab allocation is
+    /// attempted — never an OOM abort.
+    #[test]
+    fn a_corrupt_row_count_errors_before_allocating() {
+        let dir = TempDir::new("image-corrupt-row-count");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        {
+            let mut wtxn = env.write_txn().expect("txn");
+            let mut key: KeyBuf = [0; MAX_KEY];
+            let len = keys::stat_key(&mut key, R, keys::StatKind::RowCount);
+            env.data()
+                .put(
+                    wtxn.raw_mut(),
+                    &key[..len],
+                    u64::MAX.to_le_bytes().as_slice(),
+                )
+                .expect("plant");
+            wtxn.commit().expect("commit");
+        }
+        let txn = env.read_txn().expect("txn");
+        let err = build(&txn, &schema, R).map(|_| ()).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::Corruption(CorruptionError::MalformedValue("S row count"))
+            ),
+            "{err:?}"
         );
     }
 }

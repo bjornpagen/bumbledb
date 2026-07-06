@@ -1324,3 +1324,47 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// PRD 06 (docs/hardening): an out-of-range relation id at the dynamic
+/// (ETL) surface is a typed `FactShape` error at every public boundary —
+/// `insert_dyn`, `delete_dyn`, `bulk_load`, and `scan` — never a panic.
+#[test]
+fn out_of_range_relation_ids_are_typed_errors() {
+    let dir = test_dir("unknown-relation");
+    let db = Db::create(&dir, schema()).expect("create");
+    let bogus = bumbledb::RelationId(999);
+    let is_unknown = |err: &bumbledb::Error| {
+        matches!(
+            err,
+            bumbledb::Error::FactShape(bumbledb::error::FactShapeError::UnknownRelation {
+                relation
+            }) if relation.0 == 999
+        )
+    };
+
+    db.write(|tx| {
+        let err = tx.insert_dyn(bogus, &[Value::U64(1)]).unwrap_err();
+        assert!(is_unknown(&err), "{err:?}");
+        let err = tx.delete_dyn(bogus, &[Value::U64(1)]).unwrap_err();
+        assert!(is_unknown(&err), "{err:?}");
+        Ok(())
+    })
+    .expect("write closes cleanly");
+
+    let err = db
+        .bulk_load(bogus, vec![vec![Value::U64(1)]])
+        .map(|_| ())
+        .unwrap_err();
+    assert!(is_unknown(&err.error), "{:?}", err.error);
+    assert_eq!(err.committed, 0);
+
+    db.read(|snap| {
+        let err = snap.scan(bogus).map(|_| ()).unwrap_err();
+        assert!(is_unknown(&err), "{err:?}");
+        Ok(())
+    })
+    .expect("read closes cleanly");
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}

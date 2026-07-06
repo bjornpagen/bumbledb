@@ -158,18 +158,20 @@ fn check_restrict(
         if let Some(entry) = iter.next() {
             let (surviving_key, ()) = entry.map(|(k, _)| (k, ()))?;
             // R | target_rel | constraint | guard | source_rel | source_row:
-            // the referencing side is the last 12 bytes.
-            let tail = &surviving_key[surviving_key.len() - 12..];
+            // the referencing side is the 12 bytes after the prefix. A
+            // scanned key of any other length is corrupt data, not a
+            // programmer error — typed, so the commit aborts cleanly.
+            if surviving_key.len() != p_len + 12 {
+                return Err(Error::Corruption(CorruptionError::MalformedValue(
+                    "R key length",
+                )));
+            }
+            let tail = &surviving_key[p_len..];
             let source_relation = RelationId(u32::from_be_bytes(
-                tail[..4]
-                    .try_into()
-                    .expect("R keys carry a 4-byte source rel"),
+                tail[..4].try_into().expect("length checked above"),
             ));
-            let source_row = u64::from_be_bytes(
-                tail[4..]
-                    .try_into()
-                    .expect("R keys carry an 8-byte source row"),
-            );
+            let source_row =
+                u64::from_be_bytes(tail[4..].try_into().expect("length checked above"));
             // Fetch the referrer's fact bytes inside the still-open txn:
             // errors name facts, never storage row ids
             // (docs/architecture/10-data-model.md). Cold path — the fetch
@@ -1293,6 +1295,55 @@ mod tests {
         let report = commit(delta, &env).expect("commit");
         assert!(!report.changed);
         assert_eq!(committed_data(&env), before);
+    }
+
+    /// PRD 06 (docs/hardening): a bare-prefix R key (the audit's shape —
+    /// no 12-byte source tail) is typed Corruption from the delete's
+    /// commit, and the store stays reopenable — nothing torn.
+    #[test]
+    fn a_malformed_r_key_is_typed_corruption_at_delete() {
+        let dir = TempDir::new("commit-corrupt-r-key");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        commit_facts(&env, &schema, &[(TARGET, target_fact(&schema, 5))]);
+
+        // Plant an R key that is exactly the restrict prefix for the
+        // target's guard — a well-formed key carries 12 more bytes.
+        {
+            let mut wtxn = env.write_txn().expect("txn");
+            let mut key: KeyBuf = [0; MAX_KEY];
+            let p_len = keys::restrict_prefix(&mut key, TARGET, C0, &encode_u64(5));
+            env.data()
+                .put(wtxn.raw_mut(), &key[..p_len], [].as_slice())
+                .expect("plant");
+            wtxn.commit().expect("commit");
+        }
+
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta
+            .delete(&view, TARGET, &target_fact(&schema, 5))
+            .expect("record delete");
+        drop(view);
+        let err = commit(delta, &env).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::Corruption(CorruptionError::MalformedValue("R key length"))
+            ),
+            "{err:?}"
+        );
+        // The commit aborted cleanly: the fact is still live and the
+        // store keeps working.
+        let view = env.read_txn().expect("txn");
+        let delta = WriteDelta::new(&schema);
+        assert_eq!(
+            delta.disposition(TARGET, &target_fact(&schema, 5)),
+            None,
+            "nothing recorded"
+        );
+        drop(view);
+        commit_facts(&env, &schema, &[(TARGET, target_fact(&schema, 6))]);
     }
 
     #[test]

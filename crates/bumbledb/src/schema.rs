@@ -209,9 +209,23 @@ impl Schema {
         &self.relations
     }
 
+    /// The relation for a plan- or macro-derived id (every internal id
+    /// is dense and validated).
+    ///
+    /// # Panics
+    ///
+    /// On an out-of-range id — internal callers only; the dynamic (ETL)
+    /// surface bounds-checks through [`Schema::relation_checked`] first.
     #[must_use]
     pub fn relation(&self, id: RelationId) -> &Relation {
         &self.relations[id.0 as usize]
+    }
+
+    /// The bounds-checked sibling of [`Schema::relation`], for the
+    /// dynamic surface where the id is data (`60-api.md`).
+    #[must_use]
+    pub fn relation_checked(&self, id: RelationId) -> Option<&Relation> {
+        self.relations.get(id.0 as usize)
     }
 }
 
@@ -424,7 +438,7 @@ fn validate_relation(
         let field_list = constraint.fields();
         for (f_idx, field) in field_list.iter().enumerate() {
             if field_list[..f_idx].contains(field) {
-                return Err(SchemaError::UniqueDuplicateField {
+                return Err(SchemaError::ConstraintDuplicateField {
                     relation: rel_id,
                     constraint: con_id,
                     field: *field,
@@ -818,7 +832,7 @@ mod tests {
         );
         assert_eq!(
             decl.validate().unwrap_err(),
-            SchemaError::UniqueDuplicateField {
+            SchemaError::ConstraintDuplicateField {
                 relation: RelationId(0),
                 constraint: ConstraintId(0),
                 field: FieldId(0)
@@ -1073,6 +1087,6 @@ mod tests {
         }
         .validate()
         .unwrap_err();
-        assert!(matches!(err, SchemaError::UniqueDuplicateField { .. }));
+        assert!(matches!(err, SchemaError::ConstraintDuplicateField { .. }));
     }
 }
