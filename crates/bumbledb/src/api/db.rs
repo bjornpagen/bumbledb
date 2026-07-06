@@ -93,7 +93,33 @@ pub struct Db<'s> {
     env: Environment,
     cache: ImageCache,
     writer: Mutex<()>,
+    /// The thread currently inside [`Db::write`] (0 = none): a nested
+    /// `write` on the same thread would self-deadlock on the writer
+    /// mutex forever, so it panics loudly instead.
+    writer_thread: std::sync::atomic::AtomicU64,
     schema: &'s Schema,
+}
+
+/// A process-unique key for the calling thread (never 0). `ThreadId`
+/// itself has no stable integer form, so each thread mints one from a
+/// shared counter on first use.
+fn thread_key() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    thread_local! {
+        static KEY: u64 = NEXT.fetch_add(1, Ordering::Relaxed);
+    }
+    KEY.with(|key| *key)
+}
+
+/// Clears the owner mark when the write closure exits — normally, by
+/// error, or by unwind — so the next `write` on this thread proceeds.
+struct WriterThreadReset<'a>(&'a std::sync::atomic::AtomicU64);
+
+impl Drop for WriterThreadReset<'_> {
+    fn drop(&mut self) {
+        self.0.store(0, std::sync::atomic::Ordering::Release);
+    }
 }
 
 impl<'s> Db<'s> {
@@ -124,6 +150,7 @@ impl<'s> Db<'s> {
             env,
             cache: ImageCache::new(),
             writer: Mutex::new(()),
+            writer_thread: std::sync::atomic::AtomicU64::new(0),
             schema,
         }
     }
@@ -157,11 +184,26 @@ impl<'s> Db<'s> {
     ///
     /// `f`'s error, or commit-time `UniqueViolation` /
     /// `ForeignKeyViolation` / `SerialExhausted` / `Lmdb` / `Io`.
+    ///
+    /// # Panics
+    ///
+    /// On a nested call from within a write closure on the same thread —
+    /// `write` is non-reentrant, and a loud panic beats the silent
+    /// forever-deadlock the writer mutex would otherwise become.
     pub fn write<R>(&self, f: impl FnOnce(&mut WriteTx<'_>) -> Result<R>) -> Result<R> {
+        use std::sync::atomic::Ordering;
+        let caller = thread_key();
+        assert_ne!(
+            self.writer_thread.load(Ordering::Acquire),
+            caller,
+            "nested Db::write — re-entrant write transactions are forbidden"
+        );
         // A panicking closure poisons nothing real: the delta died in the
         // unwind and LMDB was never touched, so the flag is cleared rather
         // than propagated.
         let _guard = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        self.writer_thread.store(caller, Ordering::Release);
+        let _owner = WriterThreadReset(&self.writer_thread);
         let mut txn_span =
             crate::obs::span(crate::obs::names::WRITE_TXN, crate::obs::Category::Commit);
         let mut tx = WriteTx {

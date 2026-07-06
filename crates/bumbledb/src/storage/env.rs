@@ -2,6 +2,7 @@
 //! (docs/architecture/40-storage.md). Authority: `docs/architecture/40-storage.md`, `60-api.md`.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use heed::types::Bytes;
 use heed::{AnyTls, Database, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
@@ -9,6 +10,14 @@ use heed::{AnyTls, Database, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 use crate::error::{CorruptionError, Error, Result};
 use crate::schema::fingerprint::{fingerprint, SchemaFingerprint};
 use crate::schema::Schema;
+
+/// Process-unique environment instance ids, minted at `create`/`open`.
+/// Starts at 1 — 0 stays "no environment" forever. Per-process uniqueness
+/// is exactly sufficient: every piece of derived state keyed by an
+/// instance (the view memo, prepared queries) is process-local, and a
+/// wiped-and-recreated store necessarily passes through a new
+/// [`Environment`].
+static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 
 /// Storage format version, checked before the schema fingerprint on open.
 pub const FORMAT_VERSION: u32 = 0;
@@ -32,6 +41,33 @@ pub struct Environment {
     meta: Database<Bytes, Bytes>,
     data: Database<Bytes, Bytes>,
     dict: Database<Bytes, Bytes>,
+    /// This environment's process-unique identity (never 0). Prepared
+    /// queries record it and refuse to execute against any other
+    /// environment's snapshots — the generation clock knows whose clock
+    /// it is.
+    instance: u64,
+    /// The exclusive advisory lock on `<dir>/bumbledb.lock`, held for the
+    /// environment's lifetime. Dropping the handle releases it.
+    _lock: std::fs::File,
+}
+
+/// Takes the exclusive advisory lock guarding single-process (and
+/// single-handle) access to the environment at `path`. A held lock —
+/// another process, or another live `Environment` on the same path in
+/// this process — is `Error::EnvironmentLocked`, converting the silent
+/// derived-state corruption of a double-open into a loud open-time
+/// failure.
+fn acquire_lock(path: &Path) -> Result<std::fs::File> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path.join("bumbledb.lock"))?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => Err(Error::EnvironmentLocked),
+        Err(std::fs::TryLockError::Error(err)) => Err(Error::Io(err)),
+    }
 }
 
 impl std::fmt::Debug for Environment {
@@ -65,9 +101,13 @@ impl Environment {
     ///
     /// # Errors
     ///
-    /// `Io` on directory creation, `Lmdb` on any LMDB failure.
+    /// `Io` on directory creation, `EnvironmentLocked` if another handle
+    /// holds the environment, `AlreadyInitialized` on a directory that
+    /// already holds any LMDB environment (bumbledb's or anyone else's),
+    /// `Lmdb` on any LMDB failure.
     pub fn create(path: &Path, schema: &Schema) -> Result<Self> {
         std::fs::create_dir_all(path)?;
+        let lock = acquire_lock(path)?;
         let env = open_env(path)?;
         let mut wtxn = env.write_txn()?;
         // Refuse to re-initialize: rewriting `_meta` over live `_data`
@@ -79,6 +119,17 @@ impl Environment {
             .is_some()
         {
             return Err(Error::AlreadyInitialized);
+        }
+        // No `_meta`, but a non-empty unnamed root means the directory
+        // holds someone else's LMDB environment (named databases live as
+        // root entries, so this covers foreign named DBs too) — refuse
+        // rather than move in. A half-created bumbledb store (crash
+        // between directory creation and the meta commit) has an empty
+        // root and still proceeds.
+        if let Some(root) = env.open_database::<Bytes, Bytes>(&wtxn, None)? {
+            if !root.is_empty(&wtxn)? {
+                return Err(Error::AlreadyInitialized);
+            }
         }
         let meta = env.create_database(&mut wtxn, Some("_meta"))?;
         let data = env.create_database(&mut wtxn, Some("_data"))?;
@@ -101,6 +152,8 @@ impl Environment {
             meta,
             data,
             dict,
+            instance: NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed),
+            _lock: lock,
         })
     }
 
@@ -110,10 +163,12 @@ impl Environment {
     ///
     /// # Errors
     ///
+    /// `EnvironmentLocked` if another handle holds the environment;
     /// `FormatMismatch`, then `SchemaMismatch`; `Corruption(MetaMissing)` if
     /// the environment lacks bumbledb's databases or meta keys; `Lmdb`
     /// otherwise.
     pub fn open(path: &Path, schema: &Schema) -> Result<Self> {
+        let lock = acquire_lock(path)?;
         let env = open_env(path)?;
         // Database handles opened inside a transaction are private to it
         // until that transaction commits (LMDB dbi semantics): a read txn
@@ -154,6 +209,8 @@ impl Environment {
             meta,
             data,
             dict,
+            instance: NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed),
+            _lock: lock,
         })
     }
 
@@ -272,6 +329,12 @@ impl ReadTxn<'_> {
     /// The owning environment (reader: `storage::dict`).
     pub(crate) fn env(&self) -> &Environment {
         self.env
+    }
+
+    /// The owning environment's process-unique identity — the value a
+    /// prepared query records at prepare and checks at execute.
+    pub(crate) fn env_instance(&self) -> u64 {
+        self.env.instance
     }
 }
 

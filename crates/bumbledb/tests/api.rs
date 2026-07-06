@@ -877,3 +877,312 @@ fn compaction_drops_the_freelist_and_preserves_content() {
         "the compacted store keeps living"
     );
 }
+
+/// PRD 00 (docs/hardening): the audit's CRITICAL repro, verbatim — a
+/// prepared query executes only against snapshots of the database that
+/// prepared it. Before the environment-instance check, executing A's
+/// prepared query against B (same schema, same generation) returned B's
+/// data through A's memo keys.
+#[test]
+fn a_prepared_query_refuses_a_foreign_snapshot() {
+    let dir_a = test_dir("foreign-prepared-a");
+    let dir_b = test_dir("foreign-prepared-b");
+    let db_a = Db::create(&dir_a, schema()).expect("create a");
+    let db_b = Db::create(&dir_b, schema()).expect("create b");
+    for (db, name, balance) in [(&db_a, "alice", 10), (&db_b, "bob", 20)] {
+        db.write(|tx| {
+            let holder: HolderId = tx.alloc()?;
+            tx.insert(&Holder {
+                id: holder,
+                name: name.to_owned(),
+            })?;
+            let id: AccountId = tx.alloc()?;
+            tx.insert(&Account {
+                id,
+                holder,
+                balance,
+            })
+        })
+        .expect("seed one distinct fact pair");
+    }
+    assert_eq!(db_a.generation().expect("gen a"), 1);
+    assert_eq!(db_b.generation().expect("gen b"), 1, "both clocks read 1");
+
+    let mut prepared = db_a.prepare(&join_query()).expect("prepare on A");
+    db_a.read(|snap| {
+        let out = snap.execute_collect(&mut prepared, &[])?;
+        assert_eq!(name_amount_rows(&out), vec![("alice".to_owned(), 10)]);
+        Ok(())
+    })
+    .expect("execute on the preparing db");
+
+    // Step 4 of the audit repro: execute against B. Every execution entry
+    // refuses — never B-as-A's-data.
+    db_b.read(|snap| {
+        let err = snap.execute_collect(&mut prepared, &[]).unwrap_err();
+        assert!(
+            matches!(err, bumbledb::Error::ForeignPreparedQuery),
+            "{err:?}"
+        );
+        let mut out = ResultBuffer::new();
+        let err = snap.execute(&mut prepared, &[], &mut out).unwrap_err();
+        assert!(
+            matches!(err, bumbledb::Error::ForeignPreparedQuery),
+            "{err:?}"
+        );
+        let err = snap.explain(&mut prepared, &[]).unwrap_err();
+        assert!(
+            matches!(err, bumbledb::Error::ForeignPreparedQuery),
+            "{err:?}"
+        );
+        let err = snap.profile(&mut prepared, &[]).unwrap_err();
+        assert!(
+            matches!(err, bumbledb::Error::ForeignPreparedQuery),
+            "{err:?}"
+        );
+        Ok(())
+    })
+    .expect("read on b");
+
+    // The preparing db still executes fine afterward.
+    db_a.read(|snap| {
+        let out = snap.execute_collect(&mut prepared, &[])?;
+        assert_eq!(name_amount_rows(&out), vec![("alice".to_owned(), 10)]);
+        Ok(())
+    })
+    .expect("A unaffected");
+
+    drop(db_a);
+    drop(db_b);
+    let _ = std::fs::remove_dir_all(&dir_a);
+    let _ = std::fs::remove_dir_all(&dir_b);
+}
+
+/// PRD 00: the wipe-and-recreate variant — same path, new environment,
+/// new identity. The old prepared query is foreign to the recreated
+/// store even though every byte of the path matches.
+#[test]
+fn a_recreated_store_is_foreign_to_old_prepared_queries() {
+    let dir = test_dir("foreign-recreate");
+    let db = Db::create(&dir, schema()).expect("create");
+    db.write(|tx| {
+        let holder: HolderId = tx.alloc()?;
+        tx.insert(&Holder {
+            id: holder,
+            name: "original".to_owned(),
+        })?;
+        let id: AccountId = tx.alloc()?;
+        tx.insert(&Account {
+            id,
+            holder,
+            balance: 1,
+        })
+    })
+    .expect("seed");
+    let mut prepared = db.prepare(&join_query()).expect("prepare");
+    drop(db);
+
+    std::fs::remove_dir_all(&dir).expect("wipe");
+    let recreated = Db::create(&dir, schema()).expect("recreate at the same path");
+    recreated
+        .read(|snap| {
+            let err = snap.execute_collect(&mut prepared, &[]).unwrap_err();
+            assert!(
+                matches!(err, bumbledb::Error::ForeignPreparedQuery),
+                "{err:?}"
+            );
+            Ok(())
+        })
+        .expect("read");
+
+    drop(recreated);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// PRD 00: the advisory lock — a second live handle on the same path is
+/// a loud open-time error; dropping the first releases it.
+#[test]
+fn a_second_handle_on_a_live_path_is_locked_out() {
+    let dir = test_dir("env-lock");
+    let db = Db::create(&dir, schema()).expect("create");
+    let err = Db::open(&dir, schema()).map(|_| ()).unwrap_err();
+    assert!(matches!(err, bumbledb::Error::EnvironmentLocked), "{err:?}");
+    let err = Db::create(&dir, schema()).map(|_| ()).unwrap_err();
+    assert!(
+        matches!(err, bumbledb::Error::EnvironmentLocked),
+        "create is locked out before it can even refuse: {err:?}"
+    );
+    drop(db);
+    let reopened = Db::open(&dir, schema()).expect("the lock died with the handle");
+    drop(reopened);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// PRD 00: `create` refuses a directory holding someone else's LMDB
+/// environment (named databases, no `_meta`), while the half-created
+/// bumbledb recovery case — an empty root — still proceeds.
+#[test]
+#[allow(unsafe_code)]
+fn create_refuses_a_foreign_lmdb_environment() {
+    let dir = test_dir("env-foreign-lmdb");
+    {
+        // SAFETY: this test environment is opened once, in this scope.
+        let env = unsafe {
+            heed::EnvOpenOptions::new()
+                .max_dbs(2)
+                .open(&dir)
+                .expect("raw lmdb env")
+        };
+        let mut wtxn = env.write_txn().expect("txn");
+        let db: heed::Database<heed::types::Bytes, heed::types::Bytes> = env
+            .create_database(&mut wtxn, Some("someone_elses_table"))
+            .expect("foreign named db");
+        db.put(&mut wtxn, b"k", b"v").expect("put");
+        wtxn.commit().expect("commit");
+    }
+    let err = Db::create(&dir, schema()).map(|_| ()).unwrap_err();
+    assert!(
+        matches!(err, bumbledb::Error::AlreadyInitialized),
+        "{err:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // The recovery case: an LMDB file with an empty root (exactly what a
+    // crash between directory creation and the meta commit leaves).
+    let dir = test_dir("env-half-created");
+    {
+        // SAFETY: as above.
+        let env = unsafe {
+            heed::EnvOpenOptions::new()
+                .max_dbs(2)
+                .open(&dir)
+                .expect("raw lmdb env")
+        };
+        let wtxn = env.write_txn().expect("txn");
+        wtxn.commit().expect("commit nothing");
+    }
+    let db = Db::create(&dir, schema()).expect("an empty root is recoverable");
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// PRD 00: `Db::write` is non-reentrant — a nested call on the same
+/// thread panics with the named message instead of deadlocking forever,
+/// and the guard clears for the next (sequential) write.
+#[test]
+fn nested_write_panics_instead_of_deadlocking() {
+    let dir = test_dir("nested-write");
+    let db = Db::create(&dir, schema()).expect("create");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = db.write(|_| db.write(|_| Ok(())));
+    }));
+    let payload = result.expect_err("must panic");
+    let message = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .expect("string panic payload");
+    assert!(message.contains("nested Db::write"), "{message}");
+
+    // Sequential writes on the same thread still work: the guard cleared.
+    db.write(|tx| {
+        let id: HolderId = tx.alloc()?;
+        tx.insert(&Holder {
+            id,
+            name: "after the panic".to_owned(),
+        })
+    })
+    .expect("the writer survives");
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// PRD 00 (the audit's requested concurrency family): prepared queries on
+/// reader threads race a writer that moves two facts together every
+/// commit. Every execution must observe both rows at one generation —
+/// equal balances, always — never a torn mix of two generations.
+#[test]
+fn prepared_executions_observe_exactly_one_generation() {
+    let dir = test_dir("gen-atomic");
+    let db = Db::create(&dir, schema()).expect("create");
+    let (hx, hy, ax, ay) = db
+        .write(|tx| {
+            let hx: HolderId = tx.alloc()?;
+            tx.insert(&Holder {
+                id: hx,
+                name: "x".to_owned(),
+            })?;
+            let hy: HolderId = tx.alloc()?;
+            tx.insert(&Holder {
+                id: hy,
+                name: "y".to_owned(),
+            })?;
+            let ax: AccountId = tx.alloc()?;
+            tx.insert(&Account {
+                id: ax,
+                holder: hx,
+                balance: 0,
+            })?;
+            let ay: AccountId = tx.alloc()?;
+            tx.insert(&Account {
+                id: ay,
+                holder: hy,
+                balance: 0,
+            })?;
+            Ok((hx, hy, ax, ay))
+        })
+        .expect("seed");
+
+    let db = &db;
+    std::thread::scope(|scope| {
+        let writer = scope.spawn(move || {
+            for round in 1..=40i64 {
+                db.write(|tx| {
+                    tx.delete(&Account {
+                        id: ax,
+                        holder: hx,
+                        balance: round - 1,
+                    })?;
+                    tx.insert(&Account {
+                        id: ax,
+                        holder: hx,
+                        balance: round,
+                    })?;
+                    tx.delete(&Account {
+                        id: ay,
+                        holder: hy,
+                        balance: round - 1,
+                    })?;
+                    tx.insert(&Account {
+                        id: ay,
+                        holder: hy,
+                        balance: round,
+                    })
+                })
+                .expect("paired rewrite");
+            }
+        });
+        for _ in 0..3 {
+            scope.spawn(|| {
+                let mut prepared = db.prepare(&join_query()).expect("prepare");
+                let mut out = ResultBuffer::new();
+                for _ in 0..80 {
+                    db.read(|snap| {
+                        snap.execute(&mut prepared, &[], &mut out)?;
+                        let rows = name_amount_rows(&out);
+                        assert_eq!(rows.len(), 2, "both facts, always: {rows:?}");
+                        assert_eq!(
+                            rows[0].1, rows[1].1,
+                            "a torn read mixed two generations: {rows:?}"
+                        );
+                        Ok(())
+                    })
+                    .expect("consistent execution");
+                }
+            });
+        }
+        writer.join().expect("writer thread");
+    });
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

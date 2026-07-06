@@ -56,8 +56,12 @@ language. **Reverses if:** never — owner axiom.
 ## Concurrency, process, and durability model
 
 - **One process.** Multi-process access to one database is out of the envelope in v0
-  (neither supported nor guarded; LMDB would permit it, but the environment-scope image
-  cache and counter batching are process-local). Recorded as closed.
+  (LMDB would permit it, but the environment-scope image cache and counter batching are
+  process-local). Guarded: every open takes an exclusive advisory lock on
+  `<dir>/bumbledb.lock` for the handle's lifetime, so a second handle — another process,
+  or a second `Db` on the same path in this one — fails loudly at open time
+  (`EnvironmentLocked`) instead of corrupting derived state silently. Recorded as
+  closed.
 - **Threading doctrine: bumbledb owns zero threads.** The engine never spawns one — no
   background writers, compactors, or build pools; all threads belong to the
   application, extending the host-owns-composition principle to scheduling. Parallelism

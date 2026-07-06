@@ -258,6 +258,11 @@ impl<'a> Row<'a> {
 /// ```
 pub struct PreparedQuery<'s> {
     schema: &'s Schema,
+    /// The preparing environment's process-unique identity: plan,
+    /// statistics, and view memo all belong to it, so execution against
+    /// any other environment's snapshot is `Error::ForeignPreparedQuery`
+    /// — checked first at every execution entry.
+    env_instance: u64,
     plan: ExecPlan,
     /// The Free Join executor scratch (unused for guard probes).
     executor: Option<Executor>,
@@ -385,6 +390,7 @@ pub(crate) fn prepare<'s>(
 
     Ok(PreparedQuery {
         schema,
+        env_instance: txn.env_instance(),
         plan: exec_plan,
         executor,
         bindings: Bindings::new(slot_count),
@@ -533,6 +539,7 @@ impl PreparedQuery<'_> {
         params: &[Value],
         out: &mut ResultBuffer,
     ) -> Result<()> {
+        self.check_snapshot(txn)?;
         let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
         out.clear();
         out.arity = self.finds.len();
@@ -659,6 +666,7 @@ impl PreparedQuery<'_> {
         cache: &ImageCache,
         params: &[Value],
     ) -> Result<(ResultBuffer, ExecutionStats)> {
+        self.check_snapshot(txn)?;
         let mut out = ResultBuffer::new();
         out.arity = self.finds.len();
         if matches!(&self.plan, ExecPlan::GuardProbe(_)) {
@@ -735,6 +743,20 @@ impl PreparedQuery<'_> {
     pub fn set_batch_size(&mut self, batch: usize) {
         if let ExecPlan::FreeJoin(plan) = &self.plan {
             self.executor = Some(Executor::with_batch_size(plan, batch));
+        }
+    }
+
+    /// The identity check at every execution entry (`execute` and
+    /// `profile`; `execute_collect` and `explain` route through them):
+    /// a snapshot of any environment other than the preparing one is a
+    /// typed error before anything else runs. One u64 compare — with the
+    /// entry guarded, the view memo needs no environment epoch in its
+    /// generation keys.
+    fn check_snapshot(&self, txn: &ReadTxn<'_>) -> Result<()> {
+        if txn.env_instance() == self.env_instance {
+            Ok(())
+        } else {
+            Err(Error::ForeignPreparedQuery)
         }
     }
 

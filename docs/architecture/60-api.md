@@ -12,10 +12,16 @@ sugar, never the contract (`20-query-ir.md`).
   what gets fingerprint-verified. Open verifies format version, then schema
   fingerprint; each mismatch is a typed hard failure. `Db::create(path, &Schema)`
   initializes a fresh environment with the schema's fingerprint — and **refuses a
-  directory that already holds an environment** (`AlreadyInitialized`): re-writing
-  `_meta` counters over live data would be silent corruption, so create is exactly as
-  non-destructive as open.
-- One process (`00-product.md`); the handle is shareable across threads; drop closes.
+  directory that already holds any LMDB environment** (`AlreadyInitialized`): a
+  bumbledb one (re-writing `_meta` counters over live data would be silent corruption,
+  so create is exactly as non-destructive as open) or a foreign one (any other named
+  database, or a non-empty unnamed root). The one exception is a half-created bumbledb
+  store — a crash between directory creation and the meta commit leaves an empty root,
+  and create recovers it.
+- One process, one handle (`00-product.md`): every open holds an exclusive advisory
+  lock on `<dir>/bumbledb.lock`; a second live handle on the same path — in this
+  process or another — is `EnvironmentLocked` at open time. The handle is shareable
+  across threads; drop closes and releases the lock.
 - Dev-reset conveniences (delete + recreate) are host-side; production open never
   destroys data.
 
@@ -23,8 +29,15 @@ sugar, never the contract (`20-query-ir.md`).
 
 - `db.read(|snap| ...)` — one LMDB read snapshot; executes *prepared* queries
   (`db.prepare(&Query)` is the sole entry — pin-at-prepare, `30-execution.md`); sees
-  a consistent generation (the snapshot-sourced tx id, `40-storage.md`).
+  a consistent generation (the snapshot-sourced tx id, `40-storage.md`). A prepared
+  query executes only against snapshots of the database that prepared it — every
+  execution entry checks the environment's process-unique instance id first and
+  returns `ForeignPreparedQuery` on a foreign snapshot (plan, statistics, and view
+  memo all belong to the preparing environment).
 - `db.write(|tx| ...)` — the single writer; commits on `Ok`, aborts on `Err`/panic.
+  Non-reentrant: a nested `write` from within a write closure on the same thread
+  panics with a named message ("nested Db::write") rather than self-deadlocking on
+  the writer mutex forever.
   Write operations: typed `alloc::<NewType>()` via the generated `Serial` newtypes
   (untyped: `alloc_dyn(relation, field) -> u64`) — serial minting, insert new rows
   without reading a max (`10-data-model.md`); `insert(&fact) -> bool` (changed-state

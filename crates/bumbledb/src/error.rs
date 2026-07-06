@@ -331,10 +331,15 @@ pub enum Error {
         found: SchemaFingerprint,
         expected: SchemaFingerprint,
     },
-    /// `create` refused a directory that already holds a bumbledb
-    /// environment — re-initializing `_meta` over live data would be
-    /// silent corruption; open it instead.
+    /// `create` refused a directory that already holds an LMDB
+    /// environment — a bumbledb one (re-initializing `_meta` over live
+    /// data would be silent corruption; open it instead) or anyone
+    /// else's (a non-`_meta` environment is not ours to move into).
     AlreadyInitialized,
+    /// Another live handle — a second process, or a second `Db` in this
+    /// one — holds the environment's advisory lock. One writer, many
+    /// reader threads, one handle, one process (`00-product.md`).
+    EnvironmentLocked,
     Io(std::io::Error),
     Lmdb(heed::Error),
 
@@ -367,6 +372,11 @@ pub enum Error {
     },
 
     // --- Runtime errors ---
+    /// A prepared query executed against a snapshot of a different
+    /// database than the one that prepared it. A prepared query's plan,
+    /// statistics, and view memo all belong to one environment — it
+    /// executes only against snapshots of the database that prepared it.
+    ForeignPreparedQuery,
     /// Bind-time: the supplied parameter count does not match the query's.
     ParamCountMismatch {
         expected: usize,
@@ -658,7 +668,10 @@ impl fmt::Display for Error {
                 write!(f, "the compiled schema's fingerprint is not the stored one")
             }
             Self::AlreadyInitialized => {
-                write!(f, "the directory already holds a bumbledb environment; open it instead")
+                write!(f, "the directory already holds an LMDB environment; open it instead")
+            }
+            Self::EnvironmentLocked => {
+                write!(f, "another live handle holds this environment's lock")
             }
             Self::Io(err) => write!(f, "io: {err}"),
             Self::Lmdb(err) => write!(f, "lmdb: {err}"),
@@ -690,6 +703,12 @@ impl fmt::Display for Error {
                 "serial sequence exhausted (relation {}, field {})",
                 relation.0, field.0
             ),
+            Self::ForeignPreparedQuery => {
+                write!(
+                    f,
+                    "a prepared query executes only against snapshots of the database that prepared it"
+                )
+            }
             Self::ParamCountMismatch { expected, supplied } => {
                 write!(f, "{supplied} parameters supplied, the query takes {expected}")
             }
