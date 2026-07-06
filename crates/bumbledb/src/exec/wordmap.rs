@@ -130,17 +130,17 @@ impl<V> WordMap<V> {
         );
         // Re-probe in dense (insertion) order so iteration order — and
         // with it every downstream determinism property — survives
-        // growth. All keys are distinct; the probe lands on empties.
-        let old_dense = std::mem::take(&mut self.dense);
-        self.dense.reserve(old_dense.len());
-        for &old_idx in &old_dense {
-            let old_idx = old_idx as usize;
+        // growth. All keys are distinct; the probe lands on empties. The
+        // dense list is rewritten in place: a rehash never changes the
+        // entry count, so the buffer it has is the buffer it needs — no
+        // fresh allocation, ever.
+        for i in 0..self.dense.len() {
+            let old_idx = self.dense[i] as usize;
             let key = &old_keys[old_idx * self.arity..(old_idx + 1) * self.arity];
             let new_idx = self.probe(key);
             self.keys[new_idx * self.arity..(new_idx + 1) * self.arity].copy_from_slice(key);
             self.values[new_idx] = old_values[old_idx].take();
-            self.dense
-                .push(u32::try_from(new_idx).expect("slot index fits u32"));
+            self.dense[i] = u32::try_from(new_idx).expect("slot index fits u32");
         }
     }
 }
@@ -207,6 +207,34 @@ mod tests {
         totals.sort_unstable();
         // Sum of 0..30 split by i % 3.
         assert_eq!(totals, vec![(0, 135), (1, 145), (2, 155)]);
+    }
+
+    /// PRD 04 (docs/hardening): a rehash never changes the entry count,
+    /// so `grow` rewrites the dense list in place — same buffer, same
+    /// capacity, insertion order and values intact.
+    #[test]
+    fn grow_rewrites_the_dense_list_in_place() {
+        let mut map: WordMap<u64> = WordMap::new(1);
+        for i in 0..20u64 {
+            map.get_or_insert_with(&[i], || i * 3);
+        }
+        let ptr = map.dense.as_ptr();
+        let capacity = map.dense.capacity();
+        map.grow();
+        assert_eq!(map.dense.as_ptr(), ptr, "grow re-allocated the dense list");
+        assert_eq!(map.dense.capacity(), capacity);
+        assert_eq!(map.len(), 20);
+        let keys: Vec<u64> = map.iter().map(|(k, _)| k[0]).collect();
+        assert_eq!(
+            keys,
+            (0..20).collect::<Vec<u64>>(),
+            "insertion order survives"
+        );
+        for i in 0..20u64 {
+            let (value, inserted) = map.get_or_insert_with(&[i], || 0);
+            assert!(!inserted);
+            assert_eq!(*value, i * 3, "values survive the rehash");
+        }
     }
 
     #[test]

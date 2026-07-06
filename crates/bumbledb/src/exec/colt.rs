@@ -58,8 +58,26 @@ pub enum Cursor {
 pub struct NodeRef(u32);
 
 /// Opaque resume token for [`Colt::iter_batch`]; start at `default()`.
+///
+/// Bit 63 tags every nonzero token with the node state that minted it
+/// (clear = positions iteration, set = forced-map iteration), so a token
+/// that outlives a force of its node is caught by a release assert
+/// instead of being silently reinterpreted as a dense index — the
+/// silent-omission wrong-results class.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BatchToken(u64);
+
+/// The [`BatchToken`] state tag: set on forced-map (dense-index) tokens,
+/// clear on positions tokens. Positions tokens cannot collide with it:
+/// the root form is a view index (≤ u32 space) and the chunked form
+/// packs `(chunk + 2) << 32 | offset`, which reaches bit 63 only past
+/// 2³⁰ chunks (≈2³⁶ positions) — beyond the u32 position space itself;
+/// debug-checked at the mint site.
+const DENSE_TOKEN_TAG: u64 = 1 << 63;
+
+/// The token-kind mismatch message: fired when a resume token minted
+/// under one node state is presented after that state changed.
+const STALE_TOKEN: &str = "iteration token outlived a force — drain before probing this cursor";
 
 /// Where an unforced node's positions come from.
 #[derive(Debug, Clone, Copy)]
@@ -255,9 +273,15 @@ impl Colt {
 
     /// The executor's per-execution start cursor: the root, or the
     /// post-selection cursor once [`Colt::select`] ran this execution.
+    ///
+    /// # Panics
+    ///
+    /// A release assert: starting a selection-bearing colt before
+    /// `select()` would silently drop its selections — wrong results.
+    /// Once per occurrence per execution; noise against the join.
     #[must_use]
     pub fn start(&self) -> Cursor {
-        debug_assert!(self.selected, "select() runs before the join");
+        assert!(self.selected, "select() runs before the join");
         self.start
     }
 
@@ -336,6 +360,10 @@ impl Colt {
 
     /// Whether the position's key words at `level` equal `key`.
     fn position_matches(&self, level: usize, position: u32, key: &[u64]) -> bool {
+        // The zip truncates to the shorter side — correct only when the
+        // arities agree, so the invariant is asserted where the
+        // truncation lives.
+        debug_assert_eq!(key.len(), self.schema_columns[level].len());
         self.schema_columns[level]
             .iter()
             .zip(key)
@@ -446,7 +474,10 @@ impl Colt {
         assert!(keys_out.len() >= max * arity && children_out.len() >= max);
         match cursor {
             Cursor::Row(position) => {
-                if token.0 > 0 {
+                // `max == 0` yields nothing — the same contract every
+                // other arm honors (an over-yield here both violated the
+                // contract and wrote past a zero-sized buffer).
+                if token.0 > 0 || max == 0 {
                     return (0, token);
                 }
                 for (i, col) in self.schema_columns[level].iter().enumerate() {
@@ -489,6 +520,10 @@ impl Colt {
         children_out: &mut [Cursor],
         max: usize,
     ) -> (usize, BatchToken) {
+        // A dense-tagged token here means the node was un-forced under an
+        // outstanding iteration — impossible within a generation; a stale
+        // token from before a reset lands here too.
+        assert!(token.0 & DENSE_TOKEN_TAG == 0, "{STALE_TOKEN}");
         let arity = self.arity_at(level);
         let mut yielded = 0;
         match self.nodes[node.0 as usize] {
@@ -537,10 +572,12 @@ impl Colt {
                     yielded += 1;
                     offset += 1;
                 }
-                (
-                    yielded,
-                    BatchToken((u64::from(chunk) + 2) << 32 | offset as u64),
-                )
+                let packed = (u64::from(chunk) + 2) << 32 | offset as u64;
+                // Bit 63 (the dense tag) is unreachable below 2³⁰ chunks
+                // — the scale axiom sits orders of magnitude under it,
+                // and the u32 chunk space itself wraps first.
+                debug_assert_eq!(packed & DENSE_TOKEN_TAG, 0);
+                (yielded, BatchToken(packed))
             }
         }
     }
@@ -560,8 +597,16 @@ impl Colt {
         let arity = self.arity_at(level);
         debug_assert_eq!(arity, m.arity);
         // Walk the dense occupied list — O(keys), never O(capacity)
-        // (docs/architecture/30-execution.md). The token is a dense index.
-        let mut dense_idx = usize::try_from(token.0).expect("64-bit usize");
+        // (docs/architecture/30-execution.md). The token is a tagged
+        // dense index: an untagged nonzero token was minted by positions
+        // iteration before this node was forced — reinterpreting it as a
+        // dense index would silently omit entries (the audit's
+        // wrong-results scenario). Once per batch: noise.
+        assert!(
+            token.0 == 0 || token.0 & DENSE_TOKEN_TAG != 0,
+            "{STALE_TOKEN}"
+        );
+        let mut dense_idx = usize::try_from(token.0 & !DENSE_TOKEN_TAG).expect("64-bit usize");
         let mut yielded = 0;
         while yielded < max && dense_idx < usize::try_from(m.len).expect("64-bit usize") {
             let slot_idx =
@@ -576,7 +621,7 @@ impl Colt {
             yielded += 1;
             dense_idx += 1;
         }
-        (yielded, BatchToken(dense_idx as u64))
+        (yielded, BatchToken(dense_idx as u64 | DENSE_TOKEN_TAG))
     }
 
     /// Linear probe: returns (found, slot index within the map).
@@ -678,6 +723,11 @@ impl Colt {
     /// and land it (new slot or appended child), rehash-doubling first
     /// when the next insert would cross 75% load.
     fn force_ingest(&mut self, m: &mut Map, level: usize, position: u32) {
+        // Growth is checked before the probe, so a position that merely
+        // appends to an existing key can still trigger a double — an
+        // over-size by at most one doubling step, closed by audit as
+        // no-action: checking after the probe would probe the old table
+        // and insert into the new one.
         if (usize::try_from(m.len).expect("64-bit usize") + 1) * 4 >= m.capacity * 3 {
             self.grow_map(m);
         }
@@ -1217,5 +1267,93 @@ mod tests {
         assert_eq!(entries.len(), 2);
         let mut colt = Colt::new(all(&view), &[], vec![vec![]]);
         assert!(colt.get(Colt::root(), 0, &[]).is_some());
+    }
+
+    /// PRD 04 (docs/hardening): a resume token minted under positions
+    /// iteration is refused after its node is forced — the release
+    /// assert fires instead of silently reinterpreting the token as a
+    /// dense index (the omission wrong-results class). A fresh token
+    /// after the force drains the full, correct key set.
+    #[test]
+    fn a_token_that_outlives_a_force_is_refused() {
+        let dir = TempDir::new("colt-stale-token");
+        let schema = schema();
+        // One key, 200 duplicate positions: the level-1 child is a
+        // chunked node, and level 1 is the suffix — positions iteration.
+        let rows: Vec<(u64, u64)> = (0..200).map(|i| (7, i)).collect();
+        let view = view_of(&dir, &schema, &rows);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+        let child = colt.get(Colt::root(), 0, &[7]).expect("key 7 exists");
+        let mut keys = vec![0u64; 8];
+        let mut children = vec![Cursor::Row(0); 8];
+        let (n, token) =
+            colt.iter_batch(child, 1, BatchToken::default(), &mut keys, &mut children, 8);
+        assert_eq!(n, 8);
+        let (n, stale) = colt.iter_batch(child, 1, token, &mut keys, &mut children, 8);
+        assert_eq!(n, 8, "two positions batches drained");
+
+        // Force the node with the token still outstanding.
+        colt.ensure_forced(child, 1);
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut keys = vec![0u64; 8];
+            let mut children = vec![Cursor::Row(0); 8];
+            colt.iter_batch(child, 1, stale, &mut keys, &mut children, 8)
+        }))
+        .expect_err("the stale token must be refused");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("string panic payload");
+        assert!(message.contains("outlived a force"), "{message}");
+
+        // Recovery: a fresh default token drains everything, correctly.
+        let entries = drain(&mut colt, child, 1);
+        assert_eq!(entries.len(), 200);
+        let mut values: Vec<u64> = entries.iter().map(|(k, _)| k[0]).collect();
+        values.sort_unstable();
+        assert_eq!(values, (0..200).collect::<Vec<u64>>());
+    }
+
+    /// PRD 04: `Cursor::Row` iteration honors `max` — `max = 0` yields
+    /// nothing into zero-sized buffers (no panic, no over-yield).
+    #[test]
+    fn row_cursor_iteration_honors_max() {
+        let dir = TempDir::new("colt-row-max");
+        let schema = schema();
+        let view = view_of(&dir, &schema, &[(1, 5)]);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+        let child = colt.get(Colt::root(), 0, &[1]).expect("key 1 exists");
+        assert!(matches!(child, Cursor::Row(_)), "singleton pins a row");
+
+        let (n, token) = colt.iter_batch(child, 1, BatchToken::default(), &mut [], &mut [], 0);
+        assert_eq!(n, 0, "max = 0 yields nothing");
+        let mut keys = vec![0u64; 1];
+        let mut children = vec![Cursor::Row(0); 1];
+        let (n, token) = colt.iter_batch(child, 1, token, &mut keys, &mut children, 1);
+        assert_eq!((n, keys[0]), (1, 5), "max = 1 yields exactly the row");
+        let (n, _) = colt.iter_batch(child, 1, token, &mut keys, &mut children, 1);
+        assert_eq!(n, 0, "the row yields once");
+    }
+
+    /// PRD 04: starting a selection-bearing colt before `select()` is a
+    /// release panic — silently dropped selections are wrong results.
+    #[test]
+    fn start_before_select_panics() {
+        let dir = TempDir::new("colt-hard-start");
+        let schema = schema();
+        let view = view_of(&dir, &schema, &[(1, 5)]);
+        let colt = Colt::new(all(&view), &[0], vec![vec![1]]);
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| colt.start()))
+            .expect_err("unselected start must panic");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("string panic payload");
+        assert!(
+            message.contains("select() runs before the join"),
+            "{message}"
+        );
     }
 }
