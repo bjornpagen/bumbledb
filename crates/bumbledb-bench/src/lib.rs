@@ -17,6 +17,7 @@ pub mod harness;
 pub mod json;
 pub mod querygen;
 pub mod report;
+pub mod scenarios;
 pub mod schema;
 pub mod sqlite_run;
 pub mod sqlmap;

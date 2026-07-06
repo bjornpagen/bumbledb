@@ -81,6 +81,23 @@ pub fn expected_indexes(schema: &Schema) -> Vec<(String, String)> {
 /// list, plus [`EXTRA_INDEXES`].
 #[must_use]
 pub fn ddl(schema: &Schema) -> Vec<String> {
+    let mut statements = schema_ddl(schema);
+    for (index, table, columns) in EXTRA_INDEXES {
+        let cols = columns
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        statements.push(format!("CREATE INDEX \"{index}\" ON \"{table}\" ({cols})"));
+    }
+    statements
+}
+
+/// The schema-derived half of [`ddl`]: tables plus constraint indexes,
+/// no ledger-specific extras — the scenario loaders' entry (each
+/// scenario carries its own predicate-column indexes).
+#[must_use]
+pub fn schema_ddl(schema: &Schema) -> Vec<String> {
     let mut statements = Vec::new();
     for relation in schema.relations() {
         let mut columns: Vec<String> = Vec::new();
@@ -140,14 +157,6 @@ pub fn ddl(schema: &Schema) -> Vec<String> {
                 }
             }
         }
-    }
-    for (index, table, columns) in EXTRA_INDEXES {
-        let cols = columns
-            .iter()
-            .map(|c| format!("\"{c}\""))
-            .collect::<Vec<_>>()
-            .join(", ");
-        statements.push(format!("CREATE INDEX \"{index}\" ON \"{table}\" ({cols})"));
     }
     statements
 }

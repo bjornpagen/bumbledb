@@ -56,6 +56,33 @@ pub enum Cmd {
     Bench(BenchArgs),
     /// One traced warm+cold pair for one family.
     Trace { corpus: CorpusArgs, family: String },
+    /// The scenario suites: non-ledger worlds, oracle-gated then timed.
+    Scenarios(ScenarioArgs),
+}
+
+/// `scenarios`' knobs. Scenarios own their sizes (no scale flag): the
+/// corpus identity is (scenario, seed).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioArgs {
+    pub seed: u64,
+    pub dir: PathBuf,
+    /// Selected scenario names; `None` = the full registry.
+    pub only: Option<Vec<String>>,
+    /// Measured samples per query per engine.
+    pub samples: Option<u32>,
+    pub out: Option<PathBuf>,
+}
+
+impl Default for ScenarioArgs {
+    fn default() -> Self {
+        Self {
+            seed: 1,
+            dir: PathBuf::from("bench-data"),
+            only: None,
+            samples: None,
+            out: None,
+        }
+    }
 }
 
 /// The usage text.
@@ -74,6 +101,7 @@ pub fn help() -> String {
          \x20 verify   the oracle: families + randomized queries on both engines\n\
          \x20 bench    the timing run (requires a fresh verify stamp)\n\
          \x20 trace    one traced warm+cold pair for one family\n\
+         \x20 scenarios non-ledger worlds (joins/graph/olap/points), gated then timed\n\
          \x20 queries  print the versioned query list (QUERIES.md)\n\
          \x20 help     print this text\n\
          \n\
@@ -95,6 +123,13 @@ pub fn help() -> String {
          \n\
          TRACE:\n\
          \x20 --family NAME   the family to trace (required)\n\
+         \n\
+         SCENARIOS:\n\
+         \x20 --seed N        corpus seed              (default 1)\n\
+         \x20 --dir PATH      scratch root             (default bench-data)\n\
+         \x20 --only a,b      run only these scenarios (joins graph olap points)\n\
+         \x20 --samples N     measured samples/query   (default 64)\n\
+         \x20 --out PATH      artifact dir (default bench-out/<timestamp>-scenarios)\n\
          \n\
          EXIT CODES: 0 ok / gate won; 1 verify mismatch or gate loss; 2 usage.\n",
         env!("CARGO_PKG_VERSION"),
@@ -244,6 +279,29 @@ fn parse_trace(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
 /// # Errors
 ///
 /// A human-readable message naming the offending token.
+fn parse_scenarios(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+    let mut args = ScenarioArgs::default();
+    while let Some(flag) = tokens.next() {
+        let flag = flag.to_owned();
+        match flag.as_str() {
+            "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
+            "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
+            "--only" => {
+                args.only = Some(tokens.value(&flag)?.split(',').map(str::to_owned).collect());
+            }
+            "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
+            "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
+            _ => return Err(unknown("scenarios", &flag)),
+        }
+    }
+    Ok(Cmd::Scenarios(args))
+}
+
+/// Parses one invocation.
+///
+/// # Errors
+///
+/// A usage message naming the offending token.
 pub fn parse(args: &[String]) -> Result<Cmd, String> {
     let mut tokens = Tokens { args, index: 0 };
     let Some(command) = tokens.next() else {
@@ -262,6 +320,7 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         "verify" => parse_verify(&mut tokens),
         "bench" => parse_bench(&mut tokens),
         "trace" => parse_trace(&mut tokens),
+        "scenarios" => parse_scenarios(&mut tokens),
         other => Err(format!("unknown command `{other}`")),
     }
 }

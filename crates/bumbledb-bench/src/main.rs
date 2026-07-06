@@ -18,6 +18,7 @@ fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
         cli::Cmd::Verify { corpus, cases } => driver::cmd_verify(corpus, *cases),
         cli::Cmd::Bench(args) => driver::cmd_bench(args),
         cli::Cmd::Trace { corpus, family } => driver::cmd_trace(corpus, family).map(|()| 0),
+        cli::Cmd::Scenarios(args) => driver::cmd_scenarios(args),
     }
 }
 
