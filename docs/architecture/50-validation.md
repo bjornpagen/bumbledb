@@ -117,12 +117,26 @@ not a CI gate. JOB and friends may be run for curiosity; they gate nothing.
 - A tiny **in-memory reference engine** (naive loops + BTreeSets, obviously correct)
   executes the same IR; randomized queries over randomized ledger-shaped data must
   agree three ways (engine, reference, SQLite).
-- **The generator has a feature-coverage contract, itself asserted:** every IR
-  construct provably generated — repeated in-atom variables, self-joins, zero-binding
-  atoms, params re-bound across executions, empty relations, every comparison op on
-  every legal type, point lookups, the cyclic query, aggregates of every op, and
-  **duplicate-witness data that exercises the D2 subtree skip and the aggregate-sink
-  binding dedup** (the two places a set-semantics bug would hide).
+- **The generator has a feature-coverage contract, itself asserted** (the exact
+  form the coverage test pins at n = 1000): every shape within ±30% of its weight;
+  every *legal* cell of the per-(operator, type) comparison matrix nonzero (`Eq`/`Ne`
+  over all six types — u64, i64, enum, bool, string, bytes; order operators over the
+  two integer types) and every illegal cell zero; repeated in-atom variables;
+  self-joins with cross-atom ordered residuals; zero-binding gate atoms drawn from
+  more than one relation (including under aggregates); params re-bound across
+  executions with per-type miss policies (string and bytes out of vocabulary, u64
+  out of domain) and boundary sets alternating domain minima and maxima; aggregates
+  of every op over both integer types (u64 generators must bound reachable sums
+  below 2⁶³ — the Sum-range corollary, stated where the bound is derived);
+  multi-aggregate find lists; and **duplicate-witness data that exercises the D2
+  subtree skip and the aggregate-sink binding dedup** (the two places a
+  set-semantics bug would hide). Empty relations are covered by the verify run's
+  **empty-store pass**: every family plus a seeded randomized slice (with a
+  structurally-asserted gate-bearing query) runs against a zero-row store pair each
+  verify — every gate false, every scan empty, every aggregate folding nothing.
+  Out by decision, with reasons: three-plus occurrences of one relation in the
+  *generator* (the triangle family pins the cyclic class deterministically —
+  randomizing it buys planner fuzzing at real verify-time cost).
 - Operation-sequence property tests for the write path: random insert/delete/alloc
   interleavings with constraint checks, asserting idempotence, guard consistency, and
   serial monotonicity across commits and aborts.

@@ -52,8 +52,13 @@ struct Builder {
     next_var: u16,
     next_param: u16,
     bound: Vec<VarId>,
-    /// Whether dressing emitted an out-of-vocabulary string literal.
+    /// Whether dressing emitted an out-of-vocabulary string or bytes
+    /// literal.
     miss: bool,
+    /// Whether dressing emitted an in-vocabulary bytes literal (a
+    /// recomputed extref) / an out-of-vocabulary one.
+    bytes_hit: bool,
+    bytes_miss: bool,
 }
 
 impl Builder {
@@ -229,7 +234,10 @@ fn chain(b: &mut Builder, rng: &mut Rng) {
     repeat_var(b, rng, posting);
 }
 
-/// Two Posting occurrences equated on `transfer`, projecting both amounts.
+/// Two Posting occurrences equated on `transfer`, projecting both
+/// amounts — and, half the time, a cross-atom ordered residual between
+/// them (`x < y` and friends): the randomized twin of the spread
+/// family, exercising residual placement and survivor compaction.
 fn self_join(b: &mut Builder, rng: &mut Rng) {
     let first = b.atom(ids::POSTING);
     let transfer = b.bind_var(first, ids::posting::TRANSFER);
@@ -239,6 +247,13 @@ fn self_join(b: &mut Builder, rng: &mut Rng) {
     let y = b.bind_var(second, ids::posting::AMOUNT);
     b.find_var(x);
     b.find_var(y);
+    if rng.chance(1, 2) {
+        b.predicates.push(Comparison {
+            op: order_op(rng),
+            lhs: Term::Var(x),
+            rhs: Term::Var(y),
+        });
+    }
     repeat_var(b, rng, first);
 }
 
@@ -262,8 +277,14 @@ fn repeat_var(b: &mut Builder, rng: &mut Rng, posting: usize) {
     }
 }
 
-/// Any join shape re-projected as group-by + one aggregate; group key =
-/// 0–2 of the shape's bound variables.
+/// Any join shape re-projected as group-by + one aggregate (sometimes
+/// two); group key = 0–2 of the shape's bound variables. Aggregate
+/// targets cover both integer types: i64 (amount/at) and u64 (the
+/// posting's account id — Sum over it is provably bounded: the fold is
+/// over distinct bindings, so any group's sum is at most
+/// postings × accounts ≤ 10⁷ × 5 × 10⁴ = 5 × 10¹¹ ≪ 2⁶³ at every scale,
+/// satisfying the Sum-range rule). A fifth of the time the posting's
+/// bool field joins the group-key candidates.
 fn aggregate(b: &mut Builder, rng: &mut Rng) {
     if rng.chance(1, 2) {
         star(b, rng);
@@ -274,11 +295,19 @@ fn aggregate(b: &mut Builder, rng: &mut Rng) {
         .var_at(0, ids::posting::AMOUNT)
         .expect("shape binds amount");
     let at = b.var_at(0, ids::posting::AT).expect("var or fresh");
-    let (op, over) = match rng.range(4) {
+    if rng.chance(1, 5) {
+        // A bool group-key candidate (registered by bind_var).
+        let _ = b.var_at(0, ids::posting::RECONCILED);
+    }
+    let (op, over) = match rng.range(7) {
         0 => (AggOp::Sum, Some(amount)),
         1 => (AggOp::Count, None),
         2 => (AggOp::Min, Some(at)),
-        _ => (AggOp::Max, Some(amount)),
+        3 => (AggOp::Max, Some(amount)),
+        // The u64 targets (account: dense ids, bounded sums).
+        4 => (AggOp::Sum, b.var_at(0, ids::posting::ACCOUNT)),
+        5 => (AggOp::Min, b.var_at(0, ids::posting::ACCOUNT)),
+        _ => (AggOp::Max, b.var_at(0, ids::posting::ACCOUNT)),
     };
     let candidates: Vec<VarId> = b
         .bound
@@ -300,10 +329,30 @@ fn aggregate(b: &mut Builder, rng: &mut Rng) {
         .collect();
     key.sort_unstable();
     key.dedup();
-    for var in key {
-        b.find_var(var);
+    let in_key = |var: Option<VarId>| var.is_some_and(|v| key.contains(&v));
+    for var in &key {
+        b.find_var(*var);
     }
     b.finds.push(FindTerm::Aggregate { op, over });
+    // Multi-aggregate finds, a quarter of the time: Count beside any
+    // valued aggregate (always distinct), or Sum(amount) beside Count
+    // when amount stays off the group key.
+    if rng.chance(1, 4) {
+        let amount_term = FindTerm::Aggregate {
+            op: AggOp::Sum,
+            over: Some(amount),
+        };
+        if op == AggOp::Count {
+            if !in_key(Some(amount)) {
+                b.finds.push(amount_term);
+            }
+        } else {
+            b.finds.push(FindTerm::Aggregate {
+                op: AggOp::Count,
+                over: None,
+            });
+        }
+    }
 }
 
 /// One order operator, uniformly.
@@ -316,12 +365,25 @@ fn order_op(rng: &mut Rng) -> CmpOp {
     }
 }
 
-/// An i64 range predicate on the field: literal or param, 50/50.
-fn i64_range(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, lo: i64, hi: i64) {
+/// Any of the six operators, uniformly (integer dressing — every legal
+/// (op, integer-type) cell of the coverage matrix must be reachable).
+fn any_op(rng: &mut Rng) -> CmpOp {
+    match rng.range(6) {
+        0 => CmpOp::Eq,
+        1 => CmpOp::Ne,
+        2 => CmpOp::Lt,
+        3 => CmpOp::Le,
+        4 => CmpOp::Gt,
+        _ => CmpOp::Ge,
+    }
+}
+
+/// An i64 predicate on the field (any operator): literal or param, 50/50.
+fn i64_dress(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, lo: i64, hi: i64) {
     let Some(var) = b.var_at(atom, field) else {
         return;
     };
-    let op = order_op(rng);
+    let op = any_op(rng);
     let width = u64::try_from(hi - lo).expect("ordered window");
     let rhs = if rng.chance(1, 2) {
         Term::Literal(Value::I64(
@@ -337,14 +399,38 @@ fn i64_range(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, lo: i6
     });
 }
 
-/// An `Eq` predicate against an enum-ordinal literal.
-fn enum_eq(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, variants: u64) {
+/// A u64 predicate on a dense-id field (any operator): the literal or
+/// param draws in-domain, so ordered comparisons select real slices.
+fn u64_dress(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, domain: u64) {
     let Some(var) = b.var_at(atom, field) else {
         return;
     };
+    let op = any_op(rng);
+    let rhs = if rng.chance(1, 2) {
+        Term::Literal(Value::U64(rng.range(domain.max(1))))
+    } else {
+        Term::Param(b.fresh_param())
+    };
+    b.predicates.push(Comparison {
+        op,
+        lhs: Term::Var(var),
+        rhs,
+    });
+}
+
+/// An `Eq`/`Ne` predicate against an enum-ordinal literal.
+fn enum_cmp(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, variants: u64) {
+    let Some(var) = b.var_at(atom, field) else {
+        return;
+    };
+    let op = if rng.chance(1, 2) {
+        CmpOp::Eq
+    } else {
+        CmpOp::Ne
+    };
     let ordinal = u8::try_from(rng.range(variants)).expect("small");
     b.predicates.push(Comparison {
-        op: CmpOp::Eq,
+        op,
         lhs: Term::Var(var),
         rhs: Term::Literal(Value::Enum(ordinal)),
     });
@@ -359,11 +445,21 @@ fn posting_at_window(sizes: &Sizes) -> (i64, i64) {
 
 /// One dressing predicate on a Posting atom.
 fn dress_posting(b: &mut Builder, rng: &mut Rng, atom: usize, sizes: &Sizes) {
-    match rng.range(5) {
-        0 => i64_range(b, rng, atom, ids::posting::AMOUNT, -5_000_000, 5_000_000),
+    match rng.range(6) {
+        0 => i64_dress(b, rng, atom, ids::posting::AMOUNT, -5_000_000, 5_000_000),
+        5 => {
+            // U64 dressing on a dense-id FK field: ordered comparisons
+            // (and Eq/Ne) over real id slices.
+            let (field, domain) = match rng.range(3) {
+                0 => (ids::posting::ACCOUNT, sizes.accounts),
+                1 => (ids::posting::INSTRUMENT, sizes.instruments),
+                _ => (ids::posting::TRANSFER, sizes.transfers),
+            };
+            u64_dress(b, rng, atom, field, domain);
+        }
         1 => {
             let (lo, hi) = posting_at_window(sizes);
-            i64_range(b, rng, atom, ids::posting::AT, lo, hi);
+            i64_dress(b, rng, atom, ids::posting::AT, lo, hi);
         }
         2 => {
             // Eq/Ne on memo: in-vocabulary literal, out-of-vocabulary
@@ -400,8 +496,13 @@ fn dress_posting(b: &mut Builder, rng: &mut Rng, atom: usize, sizes: &Sizes) {
             let Some(var) = b.var_at(atom, ids::posting::RECONCILED) else {
                 return;
             };
+            let op = if rng.chance(1, 2) {
+                CmpOp::Eq
+            } else {
+                CmpOp::Ne
+            };
             b.predicates.push(Comparison {
-                op: CmpOp::Eq,
+                op,
                 lhs: Term::Var(var),
                 rhs: Term::Literal(Value::Bool(rng.chance(1, 2))),
             });
@@ -440,7 +541,7 @@ fn dress_posting(b: &mut Builder, rng: &mut Rng, atom: usize, sizes: &Sizes) {
 /// ops on amount/at, Eq/Ne on memo (hit, miss, or param), Eq on
 /// enums/bools, and same-typed var-vs-var — per the dressed atom's
 /// relation.
-fn dress(b: &mut Builder, rng: &mut Rng, sizes: &Sizes) {
+fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, sizes: &Sizes) {
     if !rng.chance(DRESS_PCT, 100) {
         return;
     }
@@ -458,9 +559,9 @@ fn dress(b: &mut Builder, rng: &mut Rng, sizes: &Sizes) {
             ids::POSTING => dress_posting(b, rng, atom, sizes),
             ids::ACCOUNT => {
                 if rng.chance(1, 2) {
-                    enum_eq(b, rng, atom, ids::account::STATUS, 3);
+                    enum_cmp(b, rng, atom, ids::account::STATUS, 3);
                 } else {
-                    i64_range(
+                    i64_dress(
                         b,
                         rng,
                         atom,
@@ -470,18 +571,54 @@ fn dress(b: &mut Builder, rng: &mut Rng, sizes: &Sizes) {
                     );
                 }
             }
-            ids::INSTRUMENT => enum_eq(b, rng, atom, ids::instrument::KIND, 4),
-            ids::HOLDER => enum_eq(b, rng, atom, ids::holder::REGION, 4),
+            ids::INSTRUMENT => enum_cmp(b, rng, atom, ids::instrument::KIND, 4),
+            ids::HOLDER => enum_cmp(b, rng, atom, ids::holder::REGION, 4),
             ids::TRANSFER => {
-                let span = i64::try_from(sizes.transfers).expect("fits") * gen::AT_STEP * 2;
-                i64_range(
-                    b,
-                    rng,
-                    atom,
-                    ids::transfer::AT,
-                    gen::AT_BASE,
-                    gen::AT_BASE + span,
-                );
+                if rng.chance(1, 2) {
+                    // Bytes Eq/Ne on extref: the hit literal is the
+                    // *actual* extref of a seeded row (recomputed via
+                    // gen::row — the corpus is a pure function of the
+                    // config); the miss is a fresh 16-byte value.
+                    let Some(var) = b.var_at(atom, ids::transfer::EXTREF) else {
+                        continue;
+                    };
+                    let op = if rng.chance(1, 2) {
+                        CmpOp::Eq
+                    } else {
+                        CmpOp::Ne
+                    };
+                    let rhs = match rng.range(3) {
+                        0 => {
+                            b.bytes_hit = true;
+                            Term::Literal(extref_of(cfg, sizes, rng.range(sizes.transfers)))
+                        }
+                        1 => {
+                            b.miss = true;
+                            b.bytes_miss = true;
+                            let mut raw = Vec::with_capacity(16);
+                            for _ in 0..2 {
+                                raw.extend_from_slice(&rng.u64().to_le_bytes());
+                            }
+                            Term::Literal(Value::Bytes(raw.into()))
+                        }
+                        _ => Term::Param(b.fresh_param()),
+                    };
+                    b.predicates.push(Comparison {
+                        op,
+                        lhs: Term::Var(var),
+                        rhs,
+                    });
+                } else {
+                    let span = i64::try_from(sizes.transfers).expect("fits") * gen::AT_STEP * 2;
+                    i64_dress(
+                        b,
+                        rng,
+                        atom,
+                        ids::transfer::AT,
+                        gen::AT_BASE,
+                        gen::AT_BASE + span,
+                    );
+                }
             }
             _ => {}
         }
@@ -500,7 +637,7 @@ fn shape_of(rng: &mut Rng) -> Shape {
     unreachable!("weights cover the draw")
 }
 
-fn build(rng: &mut Rng, shape: Shape, sizes: &Sizes) -> Builder {
+fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, sizes: &Sizes) -> Builder {
     let mut b = Builder::default();
     match shape {
         Shape::Guard => guard(&mut b, rng),
@@ -508,38 +645,106 @@ fn build(rng: &mut Rng, shape: Shape, sizes: &Sizes) -> Builder {
         Shape::Chain => chain(&mut b, rng),
         Shape::SelfJoin => self_join(&mut b, rng),
         Shape::Gated => {
-            match rng.range(4) {
+            match rng.range(5) {
                 0 => guard(&mut b, rng),
                 1 => star(&mut b, rng),
                 2 => chain(&mut b, rng),
+                3 => aggregate(&mut b, rng),
                 _ => self_join(&mut b, rng),
             }
-            // The zero-binding nonemptiness gate.
-            b.atom(ids::TAG);
+            // The zero-binding nonemptiness gate, over either non-empty
+            // relation (falsity is the empty-store pass's job; diversity
+            // here is about relation shape).
+            b.atom(if rng.chance(1, 2) {
+                ids::TAG
+            } else {
+                ids::TAG_NOTE
+            });
         }
         Shape::Aggregate => aggregate(&mut b, rng),
     }
-    dress(&mut b, rng, sizes);
+    dress(&mut b, rng, cfg, sizes);
     b
 }
 
-fn random_query_tagged(rng: &mut Rng, sizes: &Sizes) -> (Query, Shape, bool) {
+/// Generation facts the query alone cannot reveal (hit-vs-miss is a
+/// corpus-content property).
+#[derive(Debug, Clone, Copy, Default)]
+struct GenTags {
+    miss: bool,
+    bytes_hit: bool,
+    bytes_miss: bool,
+}
+
+fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shape, GenTags) {
+    let sizes = Sizes::of(cfg.scale);
     let shape = shape_of(rng);
-    let b = build(rng, shape, sizes);
-    let miss = b.miss;
-    (b.into_query(), shape, miss)
+    let b = build(rng, shape, cfg, &sizes);
+    let tags = GenTags {
+        miss: b.miss,
+        bytes_hit: b.bytes_hit,
+        bytes_miss: b.bytes_miss,
+    };
+    (b.into_query(), shape, tags)
+}
+
+/// The seeded extref of one Transfer row — corpus rows are a pure
+/// function of the config, so in-vocabulary Bytes literals recompute.
+fn extref_of(cfg: GenConfig, sizes: &Sizes, row: u64) -> Value {
+    gen::row(&cfg, sizes, ids::TRANSFER, row)
+        .into_iter()
+        .nth(usize::from(ids::transfer::EXTREF.0))
+        .expect("transfer rows carry extref")
 }
 
 /// One seeded random valid query over the ledger schema. The schema is
-/// the ledger (the grammar is schema-specific by design); `Sizes` bounds
-/// the dressing literals so they select real subsets.
+/// the ledger (the grammar is schema-specific by design); the config
+/// bounds dressing literals (and recomputes in-vocabulary Bytes hits)
+/// so predicates select real subsets.
 #[must_use]
-pub fn random_query(rng: &mut Rng, sizes: &Sizes) -> Query {
-    random_query_tagged(rng, sizes).0
+pub fn random_query(rng: &mut Rng, cfg: GenConfig) -> Query {
+    random_query_tagged(rng, cfg).0
+}
+
+/// The comparison-type axis of the coverage matrix.
+pub const CMP_TYPES: [&str; 6] = ["u64", "i64", "enum", "bool", "string", "bytes"];
+/// The operator axis, in `CmpOp` order.
+pub const CMP_OPS: [CmpOp; 6] = [
+    CmpOp::Eq,
+    CmpOp::Ne,
+    CmpOp::Lt,
+    CmpOp::Le,
+    CmpOp::Gt,
+    CmpOp::Ge,
+];
+
+/// Whether an (op, type) cell is legal under the roster: `Eq`/`Ne`
+/// everywhere, order operators over the two integer types only.
+#[must_use]
+pub fn cmp_cell_legal(op_idx: usize, type_idx: usize) -> bool {
+    op_idx < 2 || type_idx < 2
+}
+
+fn op_index(op: CmpOp) -> usize {
+    CMP_OPS.iter().position(|o| *o == op).expect("all six ops")
+}
+
+fn type_index(ty: &bumbledb::schema::ValueType) -> usize {
+    use bumbledb::schema::ValueType;
+    match ty {
+        ValueType::U64 => 0,
+        ValueType::I64 => 1,
+        ValueType::Enum { .. } => 2,
+        ValueType::Bool => 3,
+        ValueType::String => 4,
+        ValueType::Bytes => 5,
+    }
 }
 
 /// Construct counts over a generated batch — the coverage contract's
-/// evidence.
+/// evidence. `matrix[op][type]` counts comparisons per (operator,
+/// structural type): the asserted form of 50-validation's "every
+/// comparison op on every legal type".
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Coverage {
     pub guard: u64,
@@ -556,16 +761,22 @@ pub struct Coverage {
     pub agg_min: u64,
     pub agg_max: u64,
     pub agg_count: u64,
-    pub cmp_eq: u64,
-    pub cmp_ne: u64,
-    pub cmp_lt: u64,
-    pub cmp_le: u64,
-    pub cmp_gt: u64,
-    pub cmp_ge: u64,
+    /// Aggregates whose input variable is u64-typed.
+    pub agg_u64: u64,
+    /// Aggregate-bearing find lists with more than one aggregate.
+    pub multi_aggregate: u64,
+    /// Var-vs-var comparisons whose variables bind in different atoms.
+    pub cross_residuals: u64,
+    /// In-vocabulary / out-of-vocabulary bytes literals.
+    pub bytes_hits: u64,
+    pub bytes_misses: u64,
+    /// Comparison counts per `(CMP_OPS index, CMP_TYPES index)`.
+    pub matrix: [[u64; 6]; 6],
 }
 
 impl Coverage {
-    fn record(&mut self, query: &Query, shape: Shape, miss: bool) {
+    #[allow(clippy::too_many_lines)]
+    fn record(&mut self, query: &Query, shape: Shape, tags: GenTags) {
         match shape {
             Shape::Guard => self.guard += 1,
             Shape::Star => self.star += 1,
@@ -579,8 +790,15 @@ impl Coverage {
             .iter()
             .filter(|atom| atom.bindings.is_empty())
             .count() as u64;
-        self.misses += u64::from(miss);
-        for atom in &query.atoms {
+        self.misses += u64::from(tags.miss);
+        self.bytes_hits += u64::from(tags.bytes_hit);
+        self.bytes_misses += u64::from(tags.bytes_miss);
+        // Per-variable anchors: the (relation, field) that types each
+        // var, and the atom set it binds in (cross-residual detection).
+        let mut var_type = std::collections::HashMap::new();
+        let mut var_atoms: std::collections::HashMap<VarId, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (atom_idx, atom) in query.atoms.iter().enumerate() {
             let vars: Vec<&Term> = atom
                 .bindings
                 .iter()
@@ -594,15 +812,32 @@ impl Coverage {
             {
                 self.repeated_vars += 1;
             }
+            for (field, term) in &atom.bindings {
+                if let Term::Var(var) = term {
+                    var_type.entry(*var).or_insert_with(|| {
+                        crate::schema::schema()
+                            .relation(atom.relation)
+                            .field(*field)
+                            .value_type
+                            .clone()
+                    });
+                    var_atoms.entry(*var).or_default().push(atom_idx);
+                }
+            }
         }
         for comparison in &query.predicates {
-            match comparison.op {
-                CmpOp::Eq => self.cmp_eq += 1,
-                CmpOp::Ne => self.cmp_ne += 1,
-                CmpOp::Lt => self.cmp_lt += 1,
-                CmpOp::Le => self.cmp_le += 1,
-                CmpOp::Gt => self.cmp_gt += 1,
-                CmpOp::Ge => self.cmp_ge += 1,
+            let ty = match (&comparison.lhs, &comparison.rhs) {
+                (Term::Var(var), _) | (_, Term::Var(var)) => var_type
+                    .get(var)
+                    .expect("comparison variables are atom-bound"),
+                _ => unreachable!("the grammar never compares two constants"),
+            };
+            self.matrix[op_index(comparison.op)][type_index(ty)] += 1;
+            if let (Term::Var(lhs), Term::Var(rhs)) = (&comparison.lhs, &comparison.rhs) {
+                let shared = var_atoms[lhs].iter().any(|a| var_atoms[rhs].contains(a));
+                if !shared {
+                    self.cross_residuals += 1;
+                }
             }
             for term in [&comparison.lhs, &comparison.rhs] {
                 if matches!(term, Term::Param(_)) {
@@ -617,27 +852,35 @@ impl Coverage {
                 }
             }
         }
+        let mut aggregates = 0u64;
         for term in &query.finds {
-            if let FindTerm::Aggregate { op, .. } = term {
+            if let FindTerm::Aggregate { op, over } = term {
+                aggregates += 1;
                 match op {
                     AggOp::Sum => self.agg_sum += 1,
                     AggOp::Min => self.agg_min += 1,
                     AggOp::Max => self.agg_max += 1,
                     AggOp::Count => self.agg_count += 1,
                 }
+                if let Some(var) = over {
+                    if matches!(var_type.get(var), Some(bumbledb::schema::ValueType::U64)) {
+                        self.agg_u64 += 1;
+                    }
+                }
             }
         }
+        self.multi_aggregate += u64::from(aggregates > 1);
     }
 }
 
 /// Generates `n` queries at the seed and counts every construct.
 #[must_use]
-pub fn coverage(n: u64, seed: u64, sizes: &Sizes) -> Coverage {
+pub fn coverage(n: u64, seed: u64, cfg: GenConfig) -> Coverage {
     let mut rng = Rng::new(seed);
     let mut cov = Coverage::default();
     for _ in 0..n {
-        let (query, shape, miss) = random_query_tagged(&mut rng, sizes);
-        cov.record(&query, shape, miss);
+        let (query, shape, tags) = random_query_tagged(&mut rng, cfg);
+        cov.record(&query, shape, tags);
     }
     cov
 }
@@ -736,6 +979,7 @@ fn param_value(
     anchor: (RelationId, FieldId),
     kind: SetKind,
     rng: &mut Rng,
+    cfg: GenConfig,
     sizes: &Sizes,
 ) -> Value {
     use bumbledb::schema::ValueType;
@@ -746,10 +990,19 @@ fn param_value(
         .value_type;
     match ty {
         ValueType::U64 => {
-            let domain = u64_domain(rel, field, sizes);
+            let domain = u64_domain(rel, field, sizes).max(1);
             Value::U64(match kind {
-                SetKind::Hit | SetKind::Miss => rng.range(domain),
-                SetKind::Boundary => 0,
+                SetKind::Hit => rng.range(domain),
+                // Boundary alternates the domain's edges.
+                SetKind::Boundary => {
+                    if rng.chance(1, 2) {
+                        0
+                    } else {
+                        domain - 1
+                    }
+                }
+                // Out-of-domain, matching the family miss policies.
+                SetKind::Miss => domain + 1 + rng.range(domain),
             })
         }
         ValueType::I64 => {
@@ -763,7 +1016,13 @@ fn param_value(
                     lo + i64::try_from(rng.range(u64::try_from(hi - lo).expect("ordered")))
                         .expect("fits")
                 }
-                SetKind::Boundary => lo,
+                SetKind::Boundary => {
+                    if rng.chance(1, 2) {
+                        lo
+                    } else {
+                        hi
+                    }
+                }
             })
         }
         ValueType::String => Value::String(
@@ -775,29 +1034,41 @@ fn param_value(
             .into_bytes()
             .into(),
         ),
-        ValueType::Enum { variants } => Value::Enum(match kind {
-            SetKind::Hit | SetKind::Miss => {
-                u8::try_from(rng.range(variants.len() as u64)).expect("small")
-            }
-            SetKind::Boundary => 0,
-        }),
-        ValueType::Bool => Value::Bool(match kind {
-            SetKind::Hit | SetKind::Miss => rng.chance(1, 2),
-            SetKind::Boundary => false,
-        }),
-        ValueType::Bytes => {
-            let mut raw = Vec::with_capacity(16);
-            for _ in 0..2 {
-                raw.extend_from_slice(&rng.u64().to_le_bytes());
-            }
-            Value::Bytes(raw.into())
+        ValueType::Enum { variants } => {
+            let count = variants.len() as u64;
+            Value::Enum(match kind {
+                SetKind::Hit | SetKind::Miss => u8::try_from(rng.range(count)).expect("small"),
+                SetKind::Boundary => {
+                    if rng.chance(1, 2) {
+                        0
+                    } else {
+                        u8::try_from(count - 1).expect("small")
+                    }
+                }
+            })
         }
+        // Both bool values are boundary values; every set kind draws
+        // uniformly.
+        ValueType::Bool => Value::Bool(rng.chance(1, 2)),
+        ValueType::Bytes => match kind {
+            // The hit (and boundary) is a real seeded extref; the miss a
+            // fresh 16-byte value no corpus row carries.
+            SetKind::Hit | SetKind::Boundary => extref_of(cfg, sizes, rng.range(sizes.transfers)),
+            SetKind::Miss => {
+                let mut raw = Vec::with_capacity(16);
+                for _ in 0..2 {
+                    raw.extend_from_slice(&rng.u64().to_le_bytes());
+                }
+                Value::Bytes(raw.into())
+            }
+        },
     }
 }
 
 /// Four param sets per query: two in-range hits, one of boundary values
-/// (domain minima), and one where every string param is a guaranteed
-/// miss (non-string params stay in range).
+/// (domain edges — minima and maxima alternate), and one where every
+/// string, bytes, and u64 param is a guaranteed miss (out of vocabulary
+/// or out of domain; i64/enum/bool params stay in range).
 #[must_use]
 pub fn params_for(query: &Query, rng: &mut Rng, cfg: GenConfig) -> Vec<Vec<Value>> {
     let sizes = Sizes::of(cfg.scale);
@@ -811,7 +1082,7 @@ pub fn params_for(query: &Query, rng: &mut Rng, cfg: GenConfig) -> Vec<Vec<Value
             };
             anchors
                 .iter()
-                .map(|anchor| param_value(*anchor, kind, rng, &sizes))
+                .map(|anchor| param_value(*anchor, kind, rng, cfg, &sizes))
                 .collect()
         })
         .collect()
@@ -827,9 +1098,10 @@ mod tests {
     const SEED: u64 = 11;
     const N: u64 = 1000;
 
-    fn sizes() -> Sizes {
-        Sizes::of(Scale::S)
-    }
+    const CFG: GenConfig = GenConfig {
+        seed: 1,
+        scale: Scale::S,
+    };
 
     /// Every generated query passes the engine's validate (via prepare on
     /// an empty schema-loaded db) AND translates to SQL.
@@ -840,9 +1112,8 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("scratch dir");
         let db = bumbledb::Db::create(&dir, schema()).expect("create");
         let mut rng = Rng::new(SEED);
-        let s = sizes();
         for i in 0..N {
-            let query = random_query(&mut rng, &s);
+            let query = random_query(&mut rng, CFG);
             if let Err(error) = db.prepare(&query) {
                 panic!("query {i} fails validation: {error:?}\n{query:#?}");
             }
@@ -854,11 +1125,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Every construct appears at n = 1000, and shape counts sit within
-    /// ±30% of their weight expectations (weight regressions surface).
+    /// Every construct appears at n = 1000, every *legal* cell of the
+    /// per-(op, type) comparison matrix is nonzero, and shape counts sit
+    /// within ±30% of their weight expectations (weight regressions
+    /// surface). This is 50-validation's coverage contract, asserted.
     #[test]
     fn the_coverage_contract_holds_at_a_thousand() {
-        let cov = coverage(N, SEED, &sizes());
+        let cov = coverage(N, SEED, CFG);
         let band = |count: u64, weight: u64| {
             let expected = N * weight / 90;
             assert!(
@@ -881,14 +1154,23 @@ mod tests {
             ("agg_min", cov.agg_min),
             ("agg_max", cov.agg_max),
             ("agg_count", cov.agg_count),
-            ("cmp_eq", cov.cmp_eq),
-            ("cmp_ne", cov.cmp_ne),
-            ("cmp_lt", cov.cmp_lt),
-            ("cmp_le", cov.cmp_le),
-            ("cmp_gt", cov.cmp_gt),
-            ("cmp_ge", cov.cmp_ge),
+            ("agg_u64", cov.agg_u64),
+            ("multi_aggregate", cov.multi_aggregate),
+            ("cross_residuals", cov.cross_residuals),
+            ("bytes_hits", cov.bytes_hits),
+            ("bytes_misses", cov.bytes_misses),
         ] {
             assert!(count > 0, "{name} never generated");
+        }
+        for (op_idx, op) in CMP_OPS.iter().enumerate() {
+            for (type_idx, ty) in CMP_TYPES.iter().enumerate() {
+                let count = cov.matrix[op_idx][type_idx];
+                if cmp_cell_legal(op_idx, type_idx) {
+                    assert!(count > 0, "({op:?}, {ty}) never generated");
+                } else {
+                    assert_eq!(count, 0, "({op:?}, {ty}) is illegal by the roster");
+                }
+            }
         }
     }
 
@@ -898,9 +1180,8 @@ mod tests {
     #[test]
     fn generated_string_literals_are_nul_free() {
         let mut rng = Rng::new(SEED);
-        let s = sizes();
         for _ in 0..N {
-            let query = random_query(&mut rng, &s);
+            let query = random_query(&mut rng, CFG);
             for atom in &query.atoms {
                 for (_, term) in &atom.bindings {
                     if let bumbledb::Term::Literal(bumbledb::Value::String(raw)) = term {
@@ -923,10 +1204,9 @@ mod tests {
     fn generation_is_deterministic() {
         let query_500 = |seed| {
             let mut rng = Rng::new(seed);
-            let s = sizes();
             let mut last = None;
             for _ in 0..=500 {
-                last = Some(random_query(&mut rng, &s));
+                last = Some(random_query(&mut rng, CFG));
             }
             format!("{:?}", last.expect("generated"))
         };
@@ -934,34 +1214,45 @@ mod tests {
         assert_ne!(query_500(SEED), query_500(SEED + 1));
     }
 
-    /// Four sets, with every string param a guaranteed miss in the last.
+    /// Four sets, with every string, bytes, and u64 param a guaranteed
+    /// miss in the last (out of vocabulary or out of domain).
     #[test]
     fn params_for_produces_the_documented_sets() {
-        let cfg = GenConfig {
-            seed: SEED,
-            scale: Scale::S,
-        };
         let mut rng = Rng::new(SEED);
-        let s = sizes();
-        let mut saw_string_param = false;
+        let sizes = Sizes::of(CFG.scale);
+        let (mut saw_string, mut saw_u64, mut saw_bytes) = (false, false, false);
         for _ in 0..200 {
-            let query = random_query(&mut rng, &s);
-            let sets = params_for(&query, &mut rng, cfg);
+            let query = random_query(&mut rng, CFG);
+            let sets = params_for(&query, &mut rng, CFG);
             assert_eq!(sets.len(), 4);
             let anchors = param_anchors(&query);
             for set in &sets {
                 assert_eq!(set.len(), anchors.len());
             }
-            for value in &sets[3] {
-                if let Value::String(raw) = value {
-                    saw_string_param = true;
-                    assert!(
-                        raw.starts_with(b"missing-"),
-                        "set 3 string params are guaranteed misses"
-                    );
+            for (value, anchor) in sets[3].iter().zip(&anchors) {
+                match value {
+                    Value::String(raw) => {
+                        saw_string = true;
+                        assert!(
+                            raw.starts_with(b"missing-"),
+                            "set 3 string params are guaranteed misses"
+                        );
+                    }
+                    Value::U64(v) => {
+                        saw_u64 = true;
+                        let domain = u64_domain(anchor.0, anchor.1, &sizes);
+                        assert!(*v > domain, "set 3 u64 params are out of domain");
+                    }
+                    Value::Bytes(raw) => {
+                        saw_bytes = true;
+                        assert_eq!(raw.len(), 16, "a fresh 16-byte miss value");
+                    }
+                    _ => {}
                 }
             }
         }
-        assert!(saw_string_param, "the batch produced string params");
+        assert!(saw_string, "the batch produced string params");
+        assert!(saw_u64, "the batch produced u64 params");
+        assert!(saw_bytes, "the batch produced bytes params");
     }
 }
