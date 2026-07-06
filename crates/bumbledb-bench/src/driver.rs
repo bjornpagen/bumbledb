@@ -395,10 +395,11 @@ fn write_families(
         if cold_selected {
             eprintln!("bench: cold_fk_walk");
             let ours = writebench::cold_fk_walk(&db, cfg)?;
+            let theirs = sqlite_run::cold_fk_walk(&conn, cfg)?;
             out.push(report::WriteFamilyReport {
                 name: "cold_fk_walk".to_owned(),
                 ours: ours.stats,
-                theirs: None,
+                theirs: Some(theirs.stats),
                 facts_per_sec: None,
             });
         }

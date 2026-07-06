@@ -137,8 +137,11 @@ pub fn bulk_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurement, Stri
 
 /// `cold_fk_walk`: `measure_cold` over the `fk_walk` family — every sample
 /// pays a touch commit (generation bump, cache eviction), so the timed
-/// execution carries the image-rebuild spike. No `SQLite` mirror
-/// (`SQLite` has no comparable cache concept; cold is reported absolute).
+/// execution carries the image-rebuild spike. The `SQLite` mirror runs
+/// the identical protocol (`sqlite_run::cold_fk_walk`): it keeps no
+/// derived cache, so its number is the honest post-commit query cost —
+/// the comparison that prices our cold path instead of reporting it
+/// absolute.
 ///
 /// # Errors
 ///
