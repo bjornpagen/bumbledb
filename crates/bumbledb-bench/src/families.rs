@@ -1,4 +1,4 @@
-//! The eight gated read families (docs/benchmarks/14): exact IR, exact
+//! The eight gated read families (docs/architecture/50-validation.md): exact IR, exact
 //! param policy, hand-written SQL golden, gate classification. This file
 //! of queries **is** the benchmark's identity — `digest()` keys the
 //! verify stamp and every report on it.
@@ -26,7 +26,7 @@ pub struct Family {
     /// The seeded param sets — verify and bench call this with the same
     /// `GenConfig` and therefore see identical sets.
     pub params: fn(&GenConfig) -> Vec<Vec<Value>>,
-    /// Hand-written (docs/benchmarks/09) — never regenerated from the
+    /// Hand-written (docs/architecture/50-validation.md) — never regenerated from the
     /// translator; pinned equal to `translate` output by test.
     pub golden_sql: &'static str,
     /// The documented param policy, rendered into the versioned query
@@ -436,7 +436,7 @@ pub fn all() -> &'static [Family] {
     ]
 }
 
-/// One write/cold family (docs/benchmarks/15): a name, its report-only
+/// One write/cold family (docs/architecture/50-validation.md): a name, its report-only
 /// classification, and its write-appropriate protocol. The runners live
 /// in `writebench` — these are identities, not closures.
 pub struct WriteFamily {
@@ -625,7 +625,7 @@ mod tests {
         }
     }
 
-    /// Estimate honesty over the pinned S corpus (docs/perf/07): with
+    /// Estimate honesty over the pinned S corpus (docs/architecture/30-execution.md): with
     /// images resident, every family's worst per-node est/actual factor
     /// sits under its pin — the "for good" tripwire for the 114,679x
     /// dishonesty the first benchmark run measured.

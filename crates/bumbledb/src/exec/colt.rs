@@ -25,7 +25,7 @@ const CHUNK_LEN: usize = 64;
 /// (duplicate-inflated) and simultaneously the exact cost of iterating
 /// it unforced. Both are admissible iteration-cost bounds, so cover
 /// choice compares magnitudes first and uses the label only to break
-/// ties (docs/perf/06) — label-first preference is exactly the bug that
+/// ties (docs/architecture/30-execution.md) — label-first preference is exactly the bug that
 /// iterated a 500-key forced map instead of a 7-row view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyCount {
@@ -96,7 +96,7 @@ enum Slot {
 /// One forced level's open-addressed map: power-of-two capacity, inline
 /// key words, linear probing, no tombstones (build-once, never deleted
 /// from). Capacity starts from the position-count guess and
-/// rehash-doubles at 75% load (docs/perf/05); iteration never touches
+/// rehash-doubles at 75% load (docs/architecture/30-execution.md); iteration never touches
 /// the slot array — it walks the dense occupied list.
 #[derive(Debug, Clone, Copy)]
 struct Map {
@@ -116,7 +116,7 @@ struct Map {
 /// every capacity retained (the 30-execution doc's zero-alloc discipline).
 pub struct Colt {
     view: View,
-    /// Prepended selection levels (docs/perf/01): one single-column trie
+    /// Prepended selection levels (docs/architecture/30-execution.md): one single-column trie
     /// level per Eq-constant, probed once per execution with the resolved
     /// words. Everything below a successful probe is exactly the filtered
     /// subtrie a view scan used to produce — built lazily, only for keys
@@ -137,7 +137,7 @@ pub struct Colt {
     slots: Vec<Slot>,
     keys: Vec<u64>,
     /// The dense occupied-slot lists, one contiguous range per map
-    /// (docs/perf/05). A rehash abandons its old range at the slab's
+    /// (docs/architecture/30-execution.md). A rehash abandons its old range at the slab's
     /// interior — reclaimed by [`Colt::reset`], a documented ≤2× slab
     /// transient within a generation.
     dense: Vec<u32>,
@@ -261,7 +261,7 @@ impl Colt {
     }
 
     /// A forced node's map capacity (`None` when unforced) — the test
-    /// observability for the sizing formula (docs/perf/05).
+    /// observability for the sizing formula (docs/architecture/30-execution.md).
     #[cfg(test)]
     #[must_use]
     pub fn forced_capacity(&self, cursor: Cursor) -> Option<usize> {
@@ -539,7 +539,7 @@ impl Colt {
         let arity = self.arity_at(level);
         debug_assert_eq!(arity, m.arity);
         // Walk the dense occupied list — O(keys), never O(capacity)
-        // (docs/perf/05). The token is a dense index.
+        // (docs/architecture/30-execution.md). The token is a dense index.
         let mut dense_idx = usize::try_from(token.0).expect("64-bit usize");
         let mut yielded = 0;
         while yielded < max && dense_idx < usize::try_from(m.len).expect("64-bit usize") {
@@ -592,7 +592,7 @@ impl Colt {
             NodeState::Unforced(Positions::Chunks { count, .. }) => u64::from(count),
             NodeState::Forced { .. } => unreachable!("checked above"),
         };
-        // Initial capacity (docs/perf/05): distinct keys are unknown
+        // Initial capacity (docs/architecture/30-execution.md): distinct keys are unknown
         // before the pass, so start from the deterministic guess
         // `next_pow2(clamp(count/8, 16, 2*count))` — tiny nodes keep
         // their old tight sizing, big skewed levels start 16x smaller
@@ -867,7 +867,7 @@ mod tests {
         out
     }
 
-    /// Dense iteration (docs/perf/05): draining a forced map costs
+    /// Dense iteration (docs/architecture/30-execution.md): draining a forced map costs
     /// O(keys) batches, never O(capacity), and capacity follows the
     /// documented sizing formula exactly.
     #[test]
@@ -968,7 +968,7 @@ mod tests {
         }
     }
 
-    /// Selection levels (docs/perf/01): probing lands exactly on the
+    /// Selection levels (docs/architecture/30-execution.md): probing lands exactly on the
     /// filtered subtrie a view scan used to produce.
     #[test]
     fn selection_levels_probe_to_the_filtered_subtrie() {

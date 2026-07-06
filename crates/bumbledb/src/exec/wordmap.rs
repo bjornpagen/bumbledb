@@ -10,7 +10,7 @@ pub struct WordMap<V> {
     /// `capacity * arity` key words.
     keys: Vec<u64>,
     values: Vec<Option<V>>,
-    /// Occupied slot indices in insertion order — docs/perf/05's dense
+    /// Occupied slot indices in insertion order — docs/architecture/30-execution.md dense
     /// rule, extended to the sink maps: iteration *and clearing* walk
     /// O(len), never O(capacity), so one hot execution's high-water
     /// cannot tax every later execution's finalize and reset (the
@@ -149,7 +149,7 @@ impl<V> WordMap<V> {
 mod tests {
     use super::*;
 
-    /// The dense rule (docs/perf/05, extended to sink maps): after a hot
+    /// The dense rule (docs/architecture/30-execution.md, extended to sink maps): after a hot
     /// execution inflates capacity, iteration and clearing stay O(len) —
     /// pinned structurally by insertion-order iteration over a
     /// high-water map.

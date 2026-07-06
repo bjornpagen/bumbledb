@@ -182,7 +182,7 @@ Compaction and space reclamation = ETL into a fresh database (`60-api.md` export
 surfaces). The LMDB file never shrinks; the dictionary leaks by accepted design. That
 is the entire operational story, deliberately.
 
-## Store-size anatomy and compaction (docs/perf/09, measured 2026-07-03)
+## Store-size anatomy and compaction (docs/architecture/40-storage.md, measured 2026-07-03)
 
 The S-scale corpus store measured 101 MB against SQLite's 13.6 MB for the same
 logical content. `mdb_stat` anatomy, so nobody re-derives it:

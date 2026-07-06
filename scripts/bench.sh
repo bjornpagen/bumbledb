@@ -1,5 +1,5 @@
 #!/bin/sh
-# The two-step ritual as one command (docs/benchmarks/19): verify earns
+# The two-step ritual as one command (docs/architecture/50-validation.md): verify earns
 # the stamp, bench spends it. S by default; BENCH_SCALE=L for the claim.
 set -eu
 

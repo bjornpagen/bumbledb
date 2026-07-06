@@ -248,7 +248,7 @@ builds contain no other instrumentation: no per-tuple labels, no always-on count
 no diagnostics allocation anywhere in the join loops (post-mortem §32 is the reason
 this paragraph exists).
 
-## Perf-suite mechanisms (docs/perf, landed 2026-07-03)
+## Perf-suite mechanisms (docs/architecture/30-execution.md, landed 2026-07-03)
 
 Five decisions from the first benchmark report's evidence, enforced forever by
 `crates/bumbledb-bench/src/tripwires.rs`:

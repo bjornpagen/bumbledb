@@ -1,4 +1,4 @@
-//! The benchmark's ledger schema (docs/benchmarks/06-ledger-schema.md;
+//! The benchmark's ledger schema (docs/architecture/50-validation.md;
 //! `docs/architecture/50-validation.md` owns the ledger decision). Nine
 //! relations exercising every engine construct: all six value types,
 //! serials, single and compound uniques, single and compound FKs

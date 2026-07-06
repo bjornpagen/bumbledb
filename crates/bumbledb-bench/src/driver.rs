@@ -1,4 +1,4 @@
-//! Command orchestration (docs/benchmarks/19): the digest-keyed corpus
+//! Command orchestration (docs/architecture/50-validation.md): the digest-keyed corpus
 //! cache, verify-before-time enforcement, and the bench run that turns
 //! measurements into PRD 18 artifacts. Every failure message names the
 //! next action.
@@ -87,7 +87,7 @@ pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> 
             paths.root.display()
         );
         // Load into a scratch sibling, then compact into place
-        // (docs/perf/09): a bulk load is exactly the CoW-churn-heavy
+        // (docs/architecture/40-storage.md): a bulk load is exactly the CoW-churn-heavy
         // case — ~40% of the loaded file is freelist — and the cached
         // corpus is write-once, so it ships live-sized.
         let load_dir = paths.root.join("db-load");
@@ -711,7 +711,7 @@ mod tests {
         assert!(paths.db.join("data.mdb").exists(), "compacted store");
         assert!(
             !paths.root.join("db-load").exists(),
-            "no load-scratch residue (docs/perf/09)"
+            "no load-scratch residue (docs/architecture/40-storage.md)"
         );
         assert_eq!(cmd_verify(&corpus, 25).expect("verify"), 0);
 

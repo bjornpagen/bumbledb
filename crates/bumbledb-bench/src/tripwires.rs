@@ -1,4 +1,4 @@
-//! The performance tripwires (docs/perf/10): every fix in the perf
+//! The performance tripwires (docs/architecture/50-validation.md): every fix in the perf
 //! suite, encoded as a structural regression test over the pinned S
 //! corpus — trace-event counts and counter work bounds, never wall
 //! clock. If a finding from the 2026-07-03 report silently returns,

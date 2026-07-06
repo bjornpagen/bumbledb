@@ -1,4 +1,4 @@
-//! The `SQLite` runner and the fairness contract (docs/benchmarks/16):
+//! The `SQLite` runner and the fairness contract (docs/architecture/50-validation.md):
 //! `SQLite` measured under exactly the engine's protocol, with the
 //! fairness rules encoded as assertions — a benchmark nobody can dismiss
 //! as a strawman.
@@ -130,7 +130,7 @@ pub struct FairnessCheck;
 impl FairnessCheck {
     /// Asserts the session and store shape: WAL on, `synchronous=FULL`,
     /// `fullfsync`/`checkpoint_fullfsync` ON (flush-to-media parity with
-    /// LMDB's macOS commits — docs/perf/08), every expected index
+    /// LMDB's macOS commits — docs/architecture/50-validation.md), every expected index
     /// present (the [`sqlmap::expected_indexes`] registry against
     /// `PRAGMA index_list`), and `ANALYZE` statistics populated. Statement reuse needs no runtime check —
     /// [`PreparedFamily`] owns the only construction site by type.
@@ -153,7 +153,7 @@ impl FairnessCheck {
                 "fairness: synchronous is {synchronous}, not FULL (2)"
             ));
         }
-        // Durability parity (docs/perf/08): LMDB flushes to media on
+        // Durability parity (docs/architecture/50-validation.md): LMDB flushes to media on
         // every macOS commit; SQLite must too, or the write comparison
         // is a lie told at the same synchronous level.
         for pragma in ["fullfsync", "checkpoint_fullfsync"] {
@@ -406,7 +406,7 @@ mod tests {
             sample(&mut prepared, set).expect("reused statement");
         }
 
-        // Clearing fullfsync fails the contract by name (docs/perf/08).
+        // Clearing fullfsync fails the contract by name (docs/architecture/50-validation.md).
         conn.pragma_update(None, "fullfsync", "OFF")
             .expect("pragma");
         let err = FairnessCheck::run(&conn).expect_err("must fail");

@@ -1,4 +1,4 @@
-//! The report (docs/benchmarks/18): one run → one self-contained,
+//! The report (docs/architecture/50-validation.md): one run → one self-contained,
 //! versionable artifact — comparison tables, gate verdicts, budget
 //! checks, allocation and execution statistics, flame summaries, and
 //! full provenance. The thing a human reads before making (or refusing)

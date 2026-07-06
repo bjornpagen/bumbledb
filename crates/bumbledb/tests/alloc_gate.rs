@@ -233,7 +233,7 @@ fn minmax_query() -> Query {
 }
 
 /// Q(amount) :- Posting(memo = ?0, amount) — the selection shape
-/// (docs/perf/02): a rotating Eq param on a non-unique field probes the
+/// (docs/architecture/30-execution.md): a rotating Eq param on a non-unique field probes the
 /// COLT's selection level; after the rotation's first cycle forces every
 /// probed subtrie, further rotation must not touch the allocator.
 fn selection_query() -> Query {
@@ -251,7 +251,7 @@ fn selection_query() -> Query {
 }
 
 /// Q(memo, amount) :- Posting(account = ?0, memo, amount) — string
-/// results across rotating params (docs/perf/04): the finalize memo and
+/// results across rotating params (docs/architecture/30-execution.md): the finalize memo and
 /// the buffer byte heap must both sit at their high-water after warmup.
 fn string_rotation_query() -> Query {
     Query {
@@ -334,7 +334,7 @@ fn zero_warm_allocation_gate() {
     populate(&db);
 
     // Four rotating residual windows: exactly the view memo's capacity
-    // (docs/perf/03) — steady-state rotation must stay allocation-free.
+    // (docs/architecture/30-execution.md) — steady-state rotation must stay allocation-free.
     let join_params = vec![
         vec![Value::I64(-10)],
         vec![Value::I64(0)],
@@ -376,7 +376,7 @@ fn zero_warm_allocation_gate() {
         let mut guard = db.prepare(&guard_query())?;
         gate("guard", &mut guard, snap, &guard_params);
 
-        // The selection shape (docs/perf/02): four rotating Eq params on
+        // The selection shape (docs/architecture/30-execution.md): four rotating Eq params on
         // a non-unique string field — the gate's warmups cover two full
         // rotation cycles, so every probed subtrie is forced and the
         // measured rotations must not touch the allocator.
@@ -386,7 +386,7 @@ fn zero_warm_allocation_gate() {
         let mut selection = db.prepare(&selection_query())?;
         gate("selection", &mut selection, snap, &selection_params);
 
-        // String projections across rotating params (docs/perf/04): the
+        // String projections across rotating params (docs/architecture/30-execution.md): the
         // intern-resolution memo joins the zero-alloc steady state.
         let account_params: Vec<Vec<Value>> = (0..4).map(|a| vec![Value::U64(a)]).collect();
         let mut string_rotation = db.prepare(&string_rotation_query())?;

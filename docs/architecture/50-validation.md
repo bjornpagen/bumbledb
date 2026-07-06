@@ -6,7 +6,7 @@ executor-vs-nested-loop differential family, kill-during-commit crash injection,
 concurrent reader/writer families (incl. the pinned-at-T reads), the ETL family, the
 allocation gate (allocations *and* deallocations), and the EXPLAIN family (cover
 choice + batching engaged). Also in-repo now (`crates/bumbledb-bench`,
-docs/benchmarks/): the SQLite oracle (`bumbledb-bench verify`), the IR→SQL
+docs/architecture/50-validation.md): the SQLite oracle (`bumbledb-bench verify`), the IR→SQL
 translator, and the ledger benchmark (`bumbledb-bench bench`). **The oracle was
 built as 2-way agreement plus hand-written goldens, not the 3-way reference-engine
 design below:** the translator's output is pinned byte-for-byte against
@@ -18,8 +18,8 @@ appears; then the reference engine gets built. Still external and unbuilt: the
 reference engine, the versioned golden corpus artifact, and fuzz targets proper.
 The benchmark is built; **the performance claim is pending a human L-scale ALL-WIN
 run** — nothing here makes it. The first S-scale report (2026-07-03, FAIL:
-fk_walk/balance/string lost) drove the perf suite (docs/perf/00–10, landed the
-same week): selection-level probes, the view-memo LRU, the finalize intern
+fk_walk/balance/string lost) drove the perf work (landed the
+same week; the PRD process is retired — git history has it): selection-level probes, the view-memo LRU, the finalize intern
 memo, dense COLT iteration, magnitude-first covers, honest planner
 cardinalities, fullfsync parity, and store compaction — each enforced by the
 structural tripwires in `crates/bumbledb-bench/src/tripwires.rs`, never by
@@ -38,7 +38,7 @@ SQLite's **exactly, by value**, before any timing claim.
 independent, battle-tested implementation catches whole bug classes a same-author
 reference shares. **Reverses if:** never.
 
-**Durability parity under `synchronous=FULL` (docs/perf/08).** Both engines
+**Durability parity under `synchronous=FULL` (docs/architecture/50-validation.md).** Both engines
 flush **to media** on the timing machine: LMDB does unconditionally on macOS
 (`lmdb-master-sys` `mdb.c:171` — `MDB_FDATASYNC(fd)` is `fcntl(fd, F_FULLFSYNC)`
 under `__APPLE__`), while SQLite's default `fullfsync=OFF` issues a plain

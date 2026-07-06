@@ -1,10 +1,10 @@
-//! Prepare-time cardinality estimation (docs/perf/07): per-occurrence
+//! Prepare-time cardinality estimation (docs/architecture/30-execution.md): per-occurrence
 //! input estimates for the join-order DP and the EXPLAIN/report
 //! honesty numbers. Three sources, strongest first — schema structure
 //! (free and exact), resident-image exact distinct counts, documented
 //! constant floors. Prepare **never builds** an image for statistics
 //! (the cache is peeked); a cold prepare degrades to bounds and floors,
-//! and runtime cover choice (docs/perf/06) carries the load-bearing
+//! and runtime cover choice (docs/architecture/30-execution.md) carries the load-bearing
 //! decisions either way.
 
 use crate::image::cache::ImageCache;

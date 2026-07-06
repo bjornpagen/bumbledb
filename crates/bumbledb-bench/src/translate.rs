@@ -1,4 +1,4 @@
-//! The IR→SQL translator (docs/benchmarks/09-sql-translator.md;
+//! The IR→SQL translator (docs/architecture/50-validation.md;
 //! `docs/architecture/50-validation.md` names it infrastructure): total,
 //! mechanical `Query` → `SQLite` SQL, faithful to set semantics. Where the
 //! translator and the engine disagree, the hand-written goldens
@@ -263,7 +263,7 @@ pub fn translate(query: &Query, schema: &Schema) -> Result<Translated, String> {
 }
 
 /// The hand-written golden SQL per read family — the 3-way arbitration
-/// anchor (docs/benchmarks/09): when the engine and `SQLite` disagree,
+/// anchor (docs/architecture/50-validation.md): when the engine and `SQLite` disagree,
 /// compare the translator's output against these; golden ≠ translator ⇒
 /// translator bug, golden == translator ⇒ a human reads the semantics
 /// docs and rules which engine is wrong. Written BY HAND, never

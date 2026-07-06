@@ -19,7 +19,7 @@ pub const MAX_OCCURRENCES: usize = 20;
 /// Distinct-variable cap for the planner's dense var bitsets.
 pub(crate) const MAX_DISTINCT_VARS: usize = 128;
 
-/// The planner's per-occurrence statistics (docs/perf/07): the
+/// The planner's per-occurrence statistics (docs/architecture/30-execution.md): the
 /// selectivity-shaped cardinality estimate, plus the base-relation
 /// distinct count of every bound variable's field (from the same
 /// ladder — unique-exact, image-exact, schema bounds, floor). The
@@ -58,7 +58,7 @@ struct OccInfo {
     /// This occurrence's variables as a dense bitset.
     vars: u128,
     /// `(var bit, base-relation distinct count of its field)` — the
-    /// join-step fanout inputs (docs/perf/07).
+    /// join-step fanout inputs (docs/architecture/30-execution.md).
     var_distincts: Vec<(u128, u64)>,
     /// Var bitsets of unique constraints whose every field is var-bound in
     /// this occurrence (constraints with literal-bound fields are skipped —
@@ -67,7 +67,7 @@ struct OccInfo {
 }
 
 /// One join step's cardinality: the prefix estimate times the new
-/// occurrence's per-binding **fanout** (docs/perf/07). A disconnected
+/// occurrence's per-binding **fanout** (docs/architecture/30-execution.md). A disconnected
 /// occurrence is a cross product. A connected one contributes
 /// `rows / distinct(field of v)` for its most selective join variable —
 /// FK walks fan out by rows-per-key instead of the old
@@ -344,7 +344,7 @@ mod tests {
         let mut cost = est;
         let mut prefix_vars = var_set(order[0]);
         for &next in &order[1..] {
-            // Mirror of the production estimator (docs/perf/07): unique
+            // Mirror of the production estimator (docs/architecture/30-execution.md): unique
             // coverage pins the fanout to 1; hand-built stats carry no
             // distinct counts, so everything else is the pessimistic
             // product.
@@ -380,7 +380,7 @@ mod tests {
         // The Posting-like side records its join field's distinct count
         // (5_000 accounts over 10_000 postings — a fanout of 2); the old
         // prefix-side-covered rule priced this walk at min(1, 10_000) = 1,
-        // exactly the dishonesty docs/perf/07 killed.
+        // exactly the dishonesty docs/architecture/30-execution.md killed.
         let mut occ_stats = stats(&[10_000, 1]);
         occ_stats[0].var_distincts = vec![(VarId(0), 5_000), (VarId(1), 10_000)];
         let order = plan(&normalized, &schema, &occ_stats);

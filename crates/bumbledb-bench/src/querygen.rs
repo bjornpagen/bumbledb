@@ -1,4 +1,4 @@
-//! The randomized query generator (docs/benchmarks/11): seeded random
+//! The randomized query generator (docs/architecture/50-validation.md): seeded random
 //! valid queries over the ledger schema — the fuel for `verify`'s
 //! randomized half.
 //!

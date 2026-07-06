@@ -1,4 +1,4 @@
-//! The bumbledb ↔ `SQLite` mapping (docs/benchmarks/08, 09): DDL from the
+//! The bumbledb ↔ `SQLite` mapping (docs/architecture/50-validation.md, 09): DDL from the
 //! schema descriptors and the normative value mapping. One mapping, used
 //! by the loader, the translator, and the runner — it cannot drift apart.
 //!
@@ -10,7 +10,7 @@ use bumbledb::schema::{ConstraintDescriptor, ValueType};
 use bumbledb::{Schema, Value};
 
 /// The family composites beyond unique/FK indexes (fairness: `SQLite` gets
-/// every index the query families reward — see docs/benchmarks/16's
+/// every index the query families reward — see docs/architecture/50-validation.md
 /// `FairnessCheck`, which asserts their presence).
 pub const EXTRA_INDEXES: &[(&str, &str, &[&str])] = &[
     ("idx_posting_account_at", "Posting", &["account", "at"]),
@@ -40,7 +40,7 @@ fn serial_pk(relation: &bumbledb::schema::Relation) -> Option<Box<str>> {
 
 /// Every index the fairness contract requires, as `(table, index)` pairs
 /// — the same walk [`ddl`] emits, so the contract and the DDL cannot
-/// drift apart (`FairnessCheck`, docs/benchmarks/16).
+/// drift apart (`FairnessCheck`, docs/architecture/50-validation.md).
 #[must_use]
 pub fn expected_indexes(schema: &Schema) -> Vec<(String, String)> {
     let mut out = Vec::new();

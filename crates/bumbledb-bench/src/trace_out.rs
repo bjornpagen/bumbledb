@@ -1,4 +1,4 @@
-//! Trace export (docs/benchmarks/17): every captured run becomes a
+//! Trace export (docs/architecture/50-validation.md): every captured run becomes a
 //! Chrome Trace Format artifact (Perfetto / `chrome://tracing`) plus a
 //! terminal flame summary — where-the-time-goes without leaving the
 //! repo. Hand-rolled JSON, per the dependency quarantine.

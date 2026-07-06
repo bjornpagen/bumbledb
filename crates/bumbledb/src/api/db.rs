@@ -204,7 +204,7 @@ impl<'s> Db<'s> {
 
     /// Writes a compacted copy of the store to `dest` (a directory that
     /// must not exist): live pages only, freelist dropped, sequential
-    /// layout (docs/perf/09). The source stays open and untouched —
+    /// layout (docs/architecture/40-storage.md). The source stays open and untouched —
     /// compaction is a copy, never in-place, so the source remains the
     /// fallback until the caller swaps directories. The copy is a
     /// first-class store: open it, read it, write to it.

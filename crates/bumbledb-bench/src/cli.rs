@@ -64,7 +64,7 @@ pub fn help() -> String {
     format!(
         "bumbledb-bench {}\n\
          \n\
-         The benchmark and oracle suite (docs/benchmarks/).\n\
+         The benchmark and oracle suite (docs/architecture/50-validation.md).\n\
          \n\
          USAGE:\n\
          \x20 bumbledb-bench <COMMAND> [FLAGS]\n\

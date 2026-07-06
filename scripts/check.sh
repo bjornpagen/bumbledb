@@ -22,7 +22,7 @@ echo "==> allocation gate (release)"
 cargo test --features alloc-counter --test alloc_gate --release
 
 # The bench crate must build and lint with the engine's observability on
-# (docs/benchmarks/13); the harness tests run under both configs.
+# (docs/architecture/50-validation.md); the harness tests run under both configs.
 echo "==> bumbledb-bench with the obs feature (clippy + harness tests)"
 cargo clippy -p bumbledb-bench --features obs --all-targets -- -D warnings
 cargo test -p bumbledb-bench --features obs -- harness trace_out tripwires

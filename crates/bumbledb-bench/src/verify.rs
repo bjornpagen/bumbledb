@@ -1,4 +1,4 @@
-//! `verify` — the oracle command and the stamp (docs/benchmarks/12): the
+//! `verify` — the oracle command and the stamp (docs/architecture/50-validation.md): the
 //! command that earns the right to time anything. Every family query and
 //! N randomized queries must produce value-identical result multisets on
 //! bumbledb and `SQLite`, or the run fails loudly with arbitration
@@ -6,7 +6,7 @@
 //!
 //! Arbitration procedure (normative): an engine-vs-`SQLite` mismatch on a
 //! *family* ⇒ compare the translator's output against the hand-written
-//! golden (docs/benchmarks/09). Golden ≠ translator ⇒ translator bug;
+//! golden (docs/architecture/50-validation.md). Golden ≠ translator ⇒ translator bug;
 //! golden == translator ⇒ a human reads the semantics docs and rules
 //! which engine is wrong. Randomized mismatches: minimize by re-running
 //! the case's shape at smaller scales (manual; the bundle carries

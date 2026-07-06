@@ -1,4 +1,4 @@
-//! Tiny hand-rolled JSON emission helpers (docs/benchmarks/18; the
+//! Tiny hand-rolled JSON emission helpers (docs/architecture/50-validation.md; the
 //! dependency quarantine forbids serde). Shared by the trace writer and
 //! the report's JSON renderer — one escaping rule, one number format.
 

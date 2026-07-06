@@ -1,4 +1,4 @@
-//! Canonical results and multiset comparison (docs/benchmarks/10):
+//! Canonical results and multiset comparison (docs/architecture/50-validation.md):
 //! one owned row form both engines decode into, and one diff whose
 //! mismatches are undeniable and debuggable — the verify layer's core.
 

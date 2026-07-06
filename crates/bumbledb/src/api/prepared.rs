@@ -96,7 +96,7 @@ impl ResultBuffer {
     }
 
     /// The byte heap's length — memory observability (each distinct
-    /// String/Bytes value is stored once per buffer, docs/perf/04).
+    /// String/Bytes value is stored once per buffer, docs/architecture/30-execution.md).
     #[must_use]
     pub fn byte_len(&self) -> usize {
         self.bytes.len()
@@ -161,7 +161,7 @@ impl ResultBuffer {
     }
 }
 
-/// The per-finalize intern-resolution memo (docs/perf/04): each
+/// The per-finalize intern-resolution memo (docs/architecture/30-execution.md): each
 /// distinct `(intern word, dictionary tag)` pair is resolved through
 /// LMDB exactly once per finalize, and its bytes land in the output
 /// buffer exactly once — K rows sharing one memo string cost one B-tree
@@ -276,16 +276,16 @@ pub struct PreparedQuery<'s> {
     /// substituted, reused.
     resolved_filters: Vec<Vec<FilterPredicate>>,
     /// Per occurrence: this execution's resolved selection words, in
-    /// selection-level order (docs/perf/02), reused.
+    /// selection-level order (docs/architecture/30-execution.md), reused.
     resolved_selections: Vec<Vec<u64>>,
-    /// The view memo (docs/perf/03): per occurrence, the active binding
+    /// The view memo (docs/architecture/30-execution.md): per occurrence, the active binding
     /// (whose COLT the executor consumes) plus parked bindings under LRU.
     memo: ViewMemo,
     /// The sink, reset per execution with capacities retained.
     sink: EitherSink,
     /// Aggregate-finalization row scratch.
     row_scratch: Vec<u64>,
-    /// The per-finalize intern-resolution memo (docs/perf/04).
+    /// The per-finalize intern-resolution memo (docs/architecture/30-execution.md).
     resolve_memo: ResolveMemo,
     /// Guard-key byte scratch.
     guard_key: Vec<u8>,
@@ -328,7 +328,7 @@ pub(crate) fn prepare<'s>(
     let exec_plan = if let Some(guard) = classified {
         ExecPlan::GuardProbe(guard)
     } else {
-        // Per-occurrence input estimates (docs/perf/07): row counters
+        // Per-occurrence input estimates (docs/architecture/30-execution.md): row counters
         // shaped by the selectivity ladder — schema-exact uniques,
         // resident-image distinct counts (peek only: prepare never
         // builds an image for statistics), documented bounds and floors.
@@ -824,7 +824,7 @@ fn resolve_selection(
 /// occurrence memoizes: the active one plus [`PARKED_SLOTS`] parked.
 /// Four covers the bench rotation and the handful of bindings real
 /// workloads repeat; memory is bounded by four COLT high-waters per
-/// occurrence per prepared query — the explicit trade (docs/perf/03).
+/// occurrence per prepared query — the explicit trade (docs/architecture/30-execution.md).
 const MEMO_SLOTS: usize = 4;
 const PARKED_SLOTS: usize = MEMO_SLOTS - 1;
 
@@ -838,12 +838,12 @@ struct ParkedView {
     last_used: u64,
 }
 
-/// The per-occurrence view memo (docs/perf/03): generational
+/// The per-occurrence view memo (docs/architecture/30-execution.md): generational
 /// immutability makes a memoized view provably valid for its whole
 /// generation, so repeated residual bindings (range windows, Ne
 /// constants) skip the rebuild scan entirely. Occurrences whose only
 /// predicates are selections never park — their single binding hits on
-/// generation alone (docs/perf/02).
+/// generation alone (docs/architecture/30-execution.md).
 struct ViewMemo {
     /// The executor-facing COLTs: each occurrence's *active* binding.
     colts: Vec<Colt>,
@@ -921,7 +921,7 @@ fn run_join<C: crate::exec::run::Counters>(
     let generation = txn.generation()?;
     memo.tick += 1;
     // Lowering routes every Eq-constant into selections; a leak here would
-    // silently resurrect the per-param view scan (docs/perf/02).
+    // silently resurrect the per-param view scan (docs/architecture/30-execution.md).
     debug_assert!(
         resolved_filters.iter().flatten().all(|f| !matches!(
             f,
@@ -963,7 +963,7 @@ fn run_join<C: crate::exec::run::Counters>(
         memo.filters[occ_idx].clone_from(&resolved_filters[occ_idx]);
     }
     views_span.end();
-    // Selection probes (docs/perf/02): each occurrence's Eq constants
+    // Selection probes (docs/architecture/30-execution.md): each occurrence's Eq constants
     // resolve to trie keys probed once per execution — a miss means no
     // fact matches, so the whole conjunctive query is empty and the join
     // never runs (the sink stays reset: a zero-emit execution).
@@ -1112,7 +1112,7 @@ fn resolve_filter(
 }
 
 /// Drains the sink into the result buffer, decoding words by result type
-/// (each distinct intern resolved once, docs/perf/04).
+/// (each distinct intern resolved once, docs/architecture/30-execution.md).
 fn finalize(
     sink: &EitherSink,
     row_scratch: &mut Vec<u64>,
@@ -1574,7 +1574,7 @@ mod tests {
     }
 
     /// Q(amount) :- Posting(memo = ?0, amount) — the selection shape
-    /// (docs/perf/02): a param-Eq on a non-unique field.
+    /// (docs/architecture/30-execution.md): a param-Eq on a non-unique field.
     fn by_memo_query() -> Query {
         Query {
             finds: vec![FindTerm::Var(VarId(0))],
@@ -1606,7 +1606,7 @@ mod tests {
         amounts
     }
 
-    /// The differential pin for the selection cutover (docs/perf/02):
+    /// The differential pin for the selection cutover (docs/architecture/30-execution.md):
     /// rotating Eq params across many executions, every result compared
     /// against a nested-loop filter over the inserted rows.
     #[test]
@@ -1664,7 +1664,7 @@ mod tests {
         assert!(out.is_empty());
     }
 
-    /// Counters pin (docs/perf/02): a selection's work is O(selected),
+    /// Counters pin (docs/architecture/30-execution.md): a selection's work is O(selected),
     /// never O(relation).
     #[test]
     fn selection_work_is_o_selected() {
@@ -1699,7 +1699,7 @@ mod tests {
     }
 
     /// Finalize resolves each distinct intern once per finalize and
-    /// stores its bytes once per buffer (docs/perf/04).
+    /// stores its bytes once per buffer (docs/architecture/30-execution.md).
     #[cfg(feature = "trace")]
     #[test]
     fn finalize_resolves_each_distinct_intern_once() {
@@ -1758,7 +1758,7 @@ mod tests {
         assert_eq!(count, 16, "the memo clears per finalize");
     }
 
-    /// The view-memo LRU (docs/perf/03): four rotating residual bindings
+    /// The view-memo LRU (docs/architecture/30-execution.md): four rotating residual bindings
     /// all memoize; a fifth evicts exactly the least recently used.
     #[cfg(feature = "trace")]
     #[test]
@@ -1885,7 +1885,7 @@ mod tests {
         );
     }
 
-    /// The scan is dead (docs/perf/02): rotating Eq params build the view
+    /// The scan is dead (docs/architecture/30-execution.md): rotating Eq params build the view
     /// once per generation; every later execution memo-hits and probes.
     #[cfg(feature = "trace")]
     #[test]

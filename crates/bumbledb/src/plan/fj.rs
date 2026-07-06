@@ -141,7 +141,7 @@ pub enum PlanError {
     UnplacedResidual { residual: usize },
     /// An occurrence's `filters` still carries an Eq-constant compare —
     /// lowering moves every one into `selections`, so its presence means
-    /// a hand-built occurrence bypassed the split (docs/perf/00).
+    /// a hand-built occurrence bypassed the split (docs/architecture/30-execution.md).
     SelectionOnFilteredField { occ: OccId },
 }
 
@@ -149,7 +149,7 @@ pub enum PlanError {
 /// execution (literal word/byte, param slot, or pending intern —
 /// literals and params are the same machine). Selections are the
 /// probe-not-scan half of an occurrence's predicates; `filters` keeps
-/// the scannable rest (docs/perf/00).
+/// the scannable rest (docs/architecture/30-execution.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection {
     pub field: crate::schema::FieldId,
@@ -181,7 +181,7 @@ pub struct PlanNode {
     pub subatoms: Vec<Subatom>,
     /// Indices into `subatoms` of the valid covers (every subatom
     /// containing all variables new to this node) — the runtime chooses
-    /// among them magnitude-first by key count (§4.4, docs/perf/06).
+    /// among them magnitude-first by key count (§4.4, docs/architecture/30-execution.md).
     pub covers: Vec<u8>,
     /// Residual comparisons evaluated at this node (both sides bound here
     /// for the first time).
@@ -585,7 +585,7 @@ mod tests {
         }
     }
 
-    /// The string shape (docs/perf/00): one occurrence, `memo = ?0`
+    /// The string shape (docs/architecture/30-execution.md): one occurrence, `memo = ?0`
     /// lowered as a filter by normalize, split into a selection here.
     #[test]
     fn lowering_splits_eq_constants_into_selections() {

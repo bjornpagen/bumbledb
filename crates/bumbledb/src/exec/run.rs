@@ -297,7 +297,7 @@ impl Executor {
         self.cursors.clear();
         // Each occurrence starts below its selection levels — the root
         // when it has none, the post-`select` cursor otherwise
-        // (docs/perf/02).
+        // (docs/architecture/30-execution.md).
         self.cursors
             .extend(colts.iter().map(|colt| (colt.start(), 0usize)));
         self.run_node(plan, 0, colts, bindings, sink, counters);
@@ -541,7 +541,7 @@ impl Executor {
     }
 }
 
-/// The magnitude-first cover rule (docs/perf/06): iterating a cover
+/// The magnitude-first cover rule (docs/architecture/30-execution.md): iterating a cover
 /// costs O(its keys) plus a probe into every other subatom per key, and
 /// both labels are admissible bounds on that cost — an `Estimate`
 /// (unforced position count) is exact iteration cost pre-force and an
@@ -1306,7 +1306,7 @@ mod tests {
         sink.rows
     }
 
-    /// The magnitude-first cover rule (docs/perf/06), table-tested: the
+    /// The magnitude-first cover rule (docs/architecture/30-execution.md), table-tested: the
     /// smaller side wins whatever its label; Exact breaks ties; a full
     /// tie keeps the incumbent.
     #[test]

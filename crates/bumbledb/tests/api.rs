@@ -728,7 +728,7 @@ fn disk_size_and_generation_report_store_state() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The magnitude-first cover choice (docs/perf/06), end to end: the
+/// The magnitude-first cover choice (docs/architecture/30-execution.md), end to end: the
 /// balance shape — a big relation joined to a param-selected small side
 /// — must iterate the selected side (7 keys) and probe the big one,
 /// never the reverse. Work is pinned by counters, not wall clock.
@@ -810,7 +810,7 @@ fn cover_choice_iterates_the_selected_side() {
     assert_eq!(total, 147, "7 holder keys + 140 account entries: {stats:?}");
 }
 
-/// Compaction (docs/perf/09): a chunk-churned store copies to a
+/// Compaction (docs/architecture/40-storage.md): a chunk-churned store copies to a
 /// substantially smaller, byte-identical, fully writable sibling — and
 /// never clobbers an existing destination.
 #[test]

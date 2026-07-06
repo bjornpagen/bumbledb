@@ -58,7 +58,7 @@ pub enum ColumnView<'a> {
 pub struct RelationImage {
     row_count: usize,
     /// Per-column exact distinct-value counts, computed once at build —
-    /// the planner's selection-selectivity source (docs/perf/07).
+    /// the planner's selection-selectivity source (docs/architecture/30-execution.md).
     distincts: Box<[u64]>,
     columns: Box<[Column]>,
     /// Backing store for 8-byte columns; column bases are 128-byte aligned
@@ -83,7 +83,7 @@ impl RelationImage {
         self.row_count
     }
 
-    /// The exact distinct-value count of one column (docs/perf/07):
+    /// The exact distinct-value count of one column (docs/architecture/30-execution.md):
     /// word columns counted through a scratch hash set at build, byte
     /// columns through a 256-slot table. Intern ids are injective, so a
     /// String/Bytes column's word distincts are its value distincts.
@@ -271,7 +271,7 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
         }));
     }
 
-    // Exact per-column distinct counts (docs/perf/07): one extra pass per
+    // Exact per-column distinct counts (docs/architecture/30-execution.md): one extra pass per
     // column inside the build window — word columns through one reused
     // open-addressed scratch set, byte columns through a 256-slot table.
     let mut counter = DistinctCounter::new(row_count);
@@ -437,7 +437,7 @@ mod tests {
     }
 
     /// Build-time distinct counts are exact per column type
-    /// (docs/perf/07): serial ids all-distinct, bools 2, enums 3, and a
+    /// (docs/architecture/30-execution.md): serial ids all-distinct, bools 2, enums 3, and a
     /// skewed i64 column counted through the word set.
     #[test]
     fn distinct_counts_are_exact() {

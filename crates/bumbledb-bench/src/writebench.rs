@@ -1,4 +1,4 @@
-//! Write and cold benchmark runners (docs/benchmarks/15): single-commit
+//! Write and cold benchmark runners (docs/architecture/50-validation.md): single-commit
 //! latency (fsync-bound), batch commit, bulk throughput, and the cold
 //! first-execution spike. All `Kind::Report` — described honestly, never
 //! gated.

@@ -1,4 +1,4 @@
-//! The deterministic corpus generator (docs/benchmarks/07-generator.md):
+//! The deterministic corpus generator (docs/architecture/50-validation.md):
 //! seeded, streaming, skewed ledger data at three scales. Identical
 //! config ⇒ identical bytes, forever — corpora are never stored, always
 //! regenerated.
@@ -161,7 +161,7 @@ pub fn range_window(sizes: &Sizes) -> (i64, i64) {
     (start, start + span / 50)
 }
 
-/// The `SQLite` mapping axiom (docs/benchmarks/07): every `u64` stays below
+/// The `SQLite` mapping axiom (docs/architecture/50-validation.md): every `u64` stays below
 /// 2⁶³ so INTEGER columns compare correctly.
 fn checked_id(id: u64) -> u64 {
     assert!(id < 1 << 63, "the SQLite mapping axiom: u64 < 2^63");
@@ -181,7 +181,7 @@ fn mix(seed: u64, rel: RelationId, row: u64) -> u64 {
 /// account, without rejection: pair `k` of account `a` uses tag
 /// `(a + k*97) % tags` (97 coprime to 256) — except that hot accounts
 /// always carry **tag 0** as their `k = 0` pair (the skew family's
-/// guarantee, docs/benchmarks/14).
+/// guarantee, docs/architecture/50-validation.md).
 ///
 /// # Panics
 ///
