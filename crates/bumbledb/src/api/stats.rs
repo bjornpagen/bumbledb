@@ -54,7 +54,8 @@ pub struct CoverStats {
     pub probes_hit: u64,
     /// Sibling probes that missed.
     pub probes_miss: u64,
-    /// Phase-1 hash computations.
+    /// Hashes actually computed for map probes (phase 1). Pinned-row
+    /// siblings probe by field equality and compute none.
     pub hashes: u64,
 }
 

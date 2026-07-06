@@ -34,6 +34,16 @@ pub enum Flow {
 /// `output()`).
 pub trait Sink {
     fn emit(&mut self, bindings: &Bindings) -> Flow;
+
+    /// Whether this sink can ever signal [`Flow::SkipSuffix`]. D2 is
+    /// legal for projections only; aggregate plans additionally mark
+    /// every node sink-relevant (hardening PRD 05), so a skip under a
+    /// fold is absorbed at the node that produced it — this method
+    /// backs the debug tripwire that a skip never *crosses* a node
+    /// unless the sink is allowed to skip at all.
+    fn may_skip(&self) -> bool {
+        false
+    }
 }
 
 /// Execution observability seam (30-execution): the normal path
@@ -406,7 +416,12 @@ impl Executor {
                 colts[occ].ensure_forced(s_cursor, s_level);
 
                 // Phase 1: gather every probe key and compute every hash —
-                // pure ALU, no bucket loads.
+                // pure ALU, no bucket loads. A pinned sibling
+                // (`Cursor::Row`) probes by field equality, never by
+                // hash: skip the hash work and its counter, so EXPLAIN's
+                // `hashes` counts hashes actually computed for map
+                // probes (one branch per sibling per batch).
+                let pinned = matches!(s_cursor, Cursor::Row(_));
                 scratch.hashes.clear();
                 for (k, &e) in scratch.survivors.iter().enumerate() {
                     let entry = usize::try_from(e).expect("batch fits usize");
@@ -419,10 +434,14 @@ impl Executor {
                             i,
                         );
                     }
-                    counters.probe_hash(node_idx, sub_idx);
-                    scratch.hashes.push(crate::exec::colt::hash_key(
-                        &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
-                    ));
+                    if pinned {
+                        scratch.hashes.push(0);
+                    } else {
+                        counters.probe_hash(node_idx, sub_idx);
+                        scratch.hashes.push(crate::exec::colt::hash_key(
+                            &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
+                        ));
+                    }
                 }
 
                 // Phase 2: all bucket loads — independent chains the
@@ -503,12 +522,21 @@ impl Executor {
 
                 if flow == Flow::SkipSuffix {
                     if plan.nodes()[node_idx].sink_relevant {
-                        // This node binds a projected variable: absorb the
-                        // skip — later entries change the output.
+                        // This node binds a sink-relevant variable: absorb
+                        // the skip — later entries change the output.
+                        // Under an aggregate plan *every* variable is
+                        // sink-relevant (hardening PRD 05; sink.rs's
+                        // AggregateSink notes the same coupling), so a
+                        // skip can never travel past its producing node.
                         flow = Flow::Continue;
                     } else {
                         // The suffix from here binds nothing sink-relevant:
-                        // propagate the unwind (D2).
+                        // propagate the unwind (D2) — reachable only for
+                        // sinks that skip at all (the projection sink).
+                        debug_assert!(
+                            sink.may_skip(),
+                            "a SkipSuffix crossed a node under a non-skipping sink"
+                        );
                         counters.skip(node_idx);
                         break 'outer;
                     }
@@ -1284,6 +1312,92 @@ mod tests {
             "the entire batch is hashed before the first bucket load"
         );
         assert!(!sink.rows.is_empty());
+    }
+
+    /// PRD 05 (docs/hardening): a pinned sibling (`Cursor::Row`) probes
+    /// by field equality — phase 1 computes no hash for it, and EXPLAIN's
+    /// `hashes` counts only hashes computed for map probes. Probes still
+    /// count; results are unchanged.
+    #[test]
+    fn pinned_siblings_probe_without_hashing() {
+        let dir = TempDir::new("run-pinned-hash");
+        let schema = schema(3);
+        // A(a,b) drives; B and C each have exactly one row per probe key,
+        // so both pin to Cursor::Row after node 0. At node 1 both B(c)
+        // and C(c) are covers with count 1; the tie keeps the incumbent
+        // (B, the lower subatom index), leaving C as the pinned sibling.
+        let a_rows: Vec<(u64, u64)> = vec![(1, 10), (2, 20)];
+        let b_rows: Vec<(u64, u64)> = vec![(1, 100), (2, 200)];
+        let c_rows: Vec<(u64, u64)> = vec![(10, 100), (20, 200)];
+        let views = views_of(&dir, &schema, &[a_rows, b_rows, c_rows]);
+        let normalized = NormalizedQuery {
+            occurrences: vec![
+                occurrence(0, 0, &[(0, 0), (1, 1)]), // A(a, b)
+                occurrence(1, 1, &[(0, 0), (1, 2)]), // B(a, c)
+                occurrence(2, 2, &[(0, 1), (1, 2)]), // C(b, c)
+            ],
+            residuals: vec![],
+        };
+        // Hand-built: node 0 probes both B(a) and C(b) — C's second
+        // appearance at node 1 is then a probe against its pinned child.
+        let plan = crate::plan::fj::FjPlan {
+            nodes: vec![
+                crate::plan::fj::Node {
+                    subatoms: vec![
+                        crate::plan::fj::Subatom {
+                            occ: OccId(0),
+                            vars: vec![VarId(0), VarId(1)],
+                        },
+                        crate::plan::fj::Subatom {
+                            occ: OccId(1),
+                            vars: vec![VarId(0)],
+                        },
+                        crate::plan::fj::Subatom {
+                            occ: OccId(2),
+                            vars: vec![VarId(1)],
+                        },
+                    ],
+                },
+                crate::plan::fj::Node {
+                    subatoms: vec![
+                        crate::plan::fj::Subatom {
+                            occ: OccId(1),
+                            vars: vec![VarId(2)],
+                        },
+                        crate::plan::fj::Subatom {
+                            occ: OccId(2),
+                            vars: vec![VarId(2)],
+                        },
+                    ],
+                },
+            ],
+        };
+        let plan = validate(&plan, &normalized, &schema, vec![0; 2], &BTreeSet::new())
+            .expect("valid plan");
+        let mut colts = colts_for(&plan, &views);
+        let mut bindings = Bindings::new(plan.slots().len());
+        let mut sink = CollectSink::default();
+        let mut counters = PhaseOrderCounters::default();
+        Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
+
+        let count = |kind: &str, node: usize, subatom: usize| {
+            counters
+                .events
+                .iter()
+                .filter(|(k, n, s)| *k == kind && *n == node && *s == subatom)
+                .count()
+        };
+        // Node 0's siblings probe root nodes: hashed.
+        assert!(count("hash", 0, 1) > 0, "B's root probe hashes");
+        assert!(count("hash", 0, 2) > 0, "C's root probe hashes");
+        // Node 1's pinned sibling (C, subatom 1): probed, never hashed.
+        assert_eq!(count("hash", 1, 1), 0, "pinned probes compute no hash");
+        assert_eq!(count("probe", 1, 1), 2, "both entries still probe C");
+        // Results unchanged: the two consistent binding triples.
+        assert_eq!(
+            sink.rows,
+            BTreeSet::from([vec![1, 10, 100], vec![2, 20, 200]])
+        );
     }
 
     /// Runs a plan at a given batch size, collecting the full binding set.

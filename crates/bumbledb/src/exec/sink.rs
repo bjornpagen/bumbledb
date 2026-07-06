@@ -84,11 +84,17 @@ impl Sink for ProjectionSink {
         self.seen.insert(&self.scratch);
         // The doc's first-emit signal (30-execution D2): once a projected
         // tuple lands — new or duplicate — the current suffix can only
-        // multiply witnesses. The executor's sink_relevant gating decides
-        // how far the skip unwinds; signaling on the *first* emit (not the
+        // multiply witnesses. The executor's sink_relevant gating
+        // (run.rs's skip-absorption arm) decides how far the skip
+        // unwinds — for projections the bits come from the group key
+        // (hardening PRD 05); signaling on the *first* emit (not the
         // first duplicate) saves one full suffix descent per distinct
         // output tuple.
         Flow::SkipSuffix
+    }
+
+    fn may_skip(&self) -> bool {
+        true
     }
 }
 
@@ -109,7 +115,10 @@ enum Acc {
 /// The aggregate sink: group map keyed by the group-key words, folding each
 /// distinct full binding exactly once. Never returns `SkipSuffix` — the
 /// skip is illegal under aggregation (any new bound variable multiplies
-/// the binding set the fold is defined over).
+/// the binding set the fold is defined over). The illegality is also
+/// encoded structurally: aggregate plans mark every node sink-relevant
+/// (hardening PRD 05; run.rs's skip-absorption arm), so even a skip
+/// signaled by mistake would be absorbed at its producing node.
 #[derive(Debug)]
 pub struct AggregateSink {
     finds: Vec<FindSpec>,

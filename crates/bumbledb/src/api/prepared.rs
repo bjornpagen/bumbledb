@@ -354,7 +354,10 @@ pub(crate) fn prepare<'s>(
         let lower_span = obs::span(obs::names::LOWER, obs::Category::Prepare);
         let mut fj = binary2fj(&normalized, &order);
         factor(&mut fj);
-        let sink_vars = witness.group_key().clone();
+        // Group key for projections; every variable for aggregates —
+        // skip-illegality under a fold is encoded in the bits themselves
+        // (hardening PRD 05; `ValidatedQuery::sink_vars`).
+        let sink_vars = witness.sink_vars();
         let validated = crate::plan::fj::validate(
             &fj,
             &normalized,
@@ -1082,6 +1085,13 @@ impl Sink for EitherSink {
             Self::Aggregate(sink) => sink.emit(bindings),
         }
     }
+
+    fn may_skip(&self) -> bool {
+        match self {
+            Self::Projection(sink) => sink.may_skip(),
+            Self::Aggregate(sink) => sink.may_skip(),
+        }
+    }
 }
 
 /// Converts a bound param value to column form. A String or Bytes value
@@ -1291,6 +1301,91 @@ mod tests {
             .collect();
         rows.sort();
         rows
+    }
+
+    /// PRD 05 (docs/hardening): an aggregate whose body has a node
+    /// binding only existential (non-projected, non-aggregated)
+    /// variables folds every distinct full binding — pinned against an
+    /// independent nested-loop reference. The plan's sink-relevance bits
+    /// mark every variable-binding node relevant under aggregation, so
+    /// no suffix skip can ever starve the fold.
+    #[test]
+    fn aggregates_fold_every_binding_of_existential_suffixes() {
+        let dir = TempDir::new("prepared-agg-existential");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let rows: &[(u64, u64, &str, i64)] = &[
+            (1, 7, "a", 10),
+            (2, 7, "b", 10),
+            (3, 7, "c", 20),
+            (4, 8, "z", 5),
+        ];
+        insert_postings(&env, &schema, rows);
+
+        // Q(x, Sum(y)) :- Posting(account = x, amount = y),
+        //                 Posting(account = x, memo = m)
+        // — m is existential; the self-join's second occurrence opens a
+        // node binding only m.
+        let query = Query {
+            finds: vec![
+                FindTerm::Var(VarId(0)),
+                FindTerm::Aggregate {
+                    op: crate::ir::AggOp::Sum,
+                    over: Some(VarId(1)),
+                },
+            ],
+            atoms: vec![
+                Atom {
+                    relation: POSTING,
+                    bindings: vec![
+                        (FieldId(1), Term::Var(VarId(0))),
+                        (FieldId(3), Term::Var(VarId(1))),
+                    ],
+                },
+                Atom {
+                    relation: POSTING,
+                    bindings: vec![
+                        (FieldId(1), Term::Var(VarId(0))),
+                        (FieldId(2), Term::Var(VarId(2))),
+                    ],
+                },
+            ],
+            predicates: vec![],
+        };
+
+        // The nested-loop reference over distinct (x, y, m) bindings.
+        let mut bindings = std::collections::BTreeSet::new();
+        for p1 in rows {
+            for p2 in rows {
+                if p1.1 == p2.1 {
+                    bindings.insert((p1.1, p1.3, p2.2));
+                }
+            }
+        }
+        let mut expected = std::collections::BTreeMap::new();
+        for (x, y, _) in &bindings {
+            *expected.entry(*x).or_insert(0i64) += y;
+        }
+
+        let cache = ImageCache::new();
+        let txn = env.read_txn().expect("txn");
+        let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+        let out = prepared
+            .execute_collect(&txn, &cache, &[])
+            .expect("execute");
+        let mut got: Vec<(u64, i64)> = (0..out.len())
+            .map(|row| {
+                let ResultValue::U64(account) = out.get(row, 0) else {
+                    panic!("column 0 is u64");
+                };
+                let ResultValue::I64(sum) = out.get(row, 1) else {
+                    panic!("column 1 is i64");
+                };
+                (account, sum)
+            })
+            .collect();
+        got.sort_unstable();
+        assert_eq!(got, expected.into_iter().collect::<Vec<_>>());
     }
 
     #[test]

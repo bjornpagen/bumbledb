@@ -761,6 +761,40 @@ mod tests {
         );
     }
 
+    /// PRD 05 (docs/hardening): the sink-relevance bits encode aggregate
+    /// skip-illegality. A projection over one variable leaves deeper
+    /// nodes skippable (the D2 win); the all-variables sink set an
+    /// aggregate plan passes marks every variable-binding node relevant.
+    #[test]
+    fn aggregate_sink_vars_mark_every_node_relevant() {
+        let normalized = clover();
+        let mut plan = binary2fj(&normalized, &order(&[0, 1, 2]));
+        factor(&mut plan);
+
+        // Projection over x only: at least one node binds nothing
+        // projected — D2 has something to skip.
+        let projected: BTreeSet<VarId> = [X].into_iter().collect();
+        let narrow = validate(&plan, &normalized, &schema(3, 3), vec![0; 3], &projected)
+            .expect("valid plan");
+        assert!(
+            narrow.nodes().iter().any(|n| !n.sink_relevant),
+            "projections keep skippable nodes"
+        );
+
+        // The aggregate rule: every variable sink-relevant — every
+        // variable-binding node absorbs any skip that reaches it.
+        let all_vars: BTreeSet<VarId> = [X, A, B, C].into_iter().collect();
+        let full =
+            validate(&plan, &normalized, &schema(3, 3), vec![0; 3], &all_vars).expect("valid plan");
+        assert!(
+            full.nodes()
+                .iter()
+                .filter(|n| !n.new_vars.is_empty())
+                .all(|n| n.sink_relevant),
+            "every variable-binding node is relevant under aggregation"
+        );
+    }
+
     /// PRD 03 (docs/hardening): a plan that drops a zero-variable (gate)
     /// occurrence must not validate — the executor would skip the
     /// nonemptiness check and return all of R instead of the empty set.
