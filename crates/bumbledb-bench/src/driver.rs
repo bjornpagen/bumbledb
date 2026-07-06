@@ -503,8 +503,14 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         },
         corpus_digest: gen::digest_hex(&gen::corpus_digest(cfg)),
         verify_stamp: if verified {
-            std::fs::read_to_string(&paths.stamp)
-                .map_or_else(|_| "UNVERIFIED".to_owned(), |s| s.trim().to_owned())
+            // The provenance shows how much evidence earned the stamp:
+            // a --cases 0 run is legal (families-only verification is
+            // honest) but the report visibly says '0 randomized cases'.
+            let stamp = std::fs::read_to_string(&paths.stamp)
+                .map_or_else(|_| "UNVERIFIED".to_owned(), |s| s.trim().to_owned());
+            let cases = std::fs::read_to_string(paths.root.join(CASES_FILE))
+                .map_or_else(|_| "?".to_owned(), |s| s.trim().to_owned());
+            format!("{stamp} (families + {cases} randomized cases)")
         } else {
             "UNVERIFIED".to_owned()
         },
@@ -741,6 +747,10 @@ mod tests {
         let md = std::fs::read_to_string(out.join("report.md")).expect("read");
         assert!(md.contains("PARTIAL — filtered run"), "{md}");
         assert!(!md.contains("UNVERIFIED"), "verified run");
+        assert!(
+            md.contains("(families + 25 randomized cases)"),
+            "the provenance shows how much evidence earned the stamp: {md}"
+        );
 
         // The override path brands the report.
         let lying = BenchArgs {

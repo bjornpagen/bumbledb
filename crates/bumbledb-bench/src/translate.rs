@@ -32,6 +32,13 @@ pub struct Translated {
 
 fn sql_string_literal(raw: &[u8]) -> Result<String, String> {
     let text = std::str::from_utf8(raw).map_err(|_| "non-UTF-8 string literal".to_owned())?;
+    // A NUL truncates SQLite's tokenizer mid-statement — the rest of the
+    // SQL silently vanishes. The generator's grammar never emits NUL
+    // (asserted in querygen's coverage test), so this boundary stays loud
+    // instead of buying CAST(X'..' AS TEXT) generality nobody generates.
+    if text.contains('\0') {
+        return Err("NUL byte in string literal (would truncate the SQL statement)".to_owned());
+    }
     Ok(format!("'{}'", text.replace('\'', "''")))
 }
 
@@ -536,5 +543,28 @@ mod tests {
         };
         let err = translate(&gates_only, schema()).unwrap_err();
         assert!(err.contains("no bound atoms"), "{err}");
+    }
+
+    /// PRD 07 (docs/hardening): a NUL in a string literal would truncate
+    /// `SQLite`'s tokenizer mid-statement — the translator rejects it by
+    /// name instead of emitting silently-shortened SQL.
+    #[test]
+    fn a_nul_string_literal_is_a_named_error() {
+        let query = Query {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                relation: ids::POSTING,
+                bindings: vec![
+                    (ids::posting::ID, Term::Var(VarId(0))),
+                    (
+                        ids::posting::MEMO,
+                        Term::Literal(Value::String(b"before\0after".to_vec().into())),
+                    ),
+                ],
+            }],
+            predicates: vec![],
+        };
+        let err = translate(&query, schema()).unwrap_err();
+        assert!(err.contains("NUL byte in string literal"), "{err}");
     }
 }

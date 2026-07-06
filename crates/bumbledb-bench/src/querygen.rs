@@ -892,6 +892,32 @@ mod tests {
         }
     }
 
+    /// PRD 07 (docs/hardening): the grammar never emits a NUL — the
+    /// translator rejects NUL string literals by name, and this property
+    /// keeps that boundary unreachable from generated queries.
+    #[test]
+    fn generated_string_literals_are_nul_free() {
+        let mut rng = Rng::new(SEED);
+        let s = sizes();
+        for _ in 0..N {
+            let query = random_query(&mut rng, &s);
+            for atom in &query.atoms {
+                for (_, term) in &atom.bindings {
+                    if let bumbledb::Term::Literal(bumbledb::Value::String(raw)) = term {
+                        assert!(!raw.contains(&0), "a generated literal carries NUL");
+                    }
+                }
+            }
+            for comparison in &query.predicates {
+                for term in [&comparison.lhs, &comparison.rhs] {
+                    if let bumbledb::Term::Literal(bumbledb::Value::String(raw)) = term {
+                        assert!(!raw.contains(&0), "a generated literal carries NUL");
+                    }
+                }
+            }
+        }
+    }
+
     /// Same seed ⇒ identical query stream (pinned on #500's rendering).
     #[test]
     fn generation_is_deterministic() {

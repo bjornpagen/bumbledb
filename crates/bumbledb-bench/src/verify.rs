@@ -61,13 +61,44 @@ impl std::fmt::Display for VerifyFailure {
     }
 }
 
-/// The stamp value for a config: hex blake3 over the crate version, the
-/// corpus digest, the family-list digest, the randomized-case count, and
-/// the seed. Any ingredient change invalidates every stored stamp.
+/// The running binary's blake3 fingerprint, computed once per process.
+/// One hash covers the engine, the translator, the comparator, the
+/// generator, and every param policy at once — a stamp bound to it
+/// vouches for the exact code that earned it. Consequences, accepted:
+/// any rebuild re-keys the stamp (over-invalidation by embedded paths
+/// included — re-verification is the honest default), and
+/// [`stamp_matches`] fails for any binary other than the one that
+/// earned the stamp, which is precisely the contract.
+///
+/// # Panics
+///
+/// On tool-level I/O failure reading the running executable.
+#[must_use]
+pub fn binary_fingerprint() -> [u8; 32] {
+    static FINGERPRINT: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    *FINGERPRINT.get_or_init(|| {
+        let exe = std::env::current_exe().expect("current_exe");
+        let bytes = std::fs::read(exe).expect("read the running binary");
+        let mut digest = bumbledb::digest::Digest::new();
+        digest.update(&bytes);
+        digest.finalize()
+    })
+}
+
+/// The stamp value for a config: hex blake3 over the running binary's
+/// fingerprint, the corpus digest, the family-list digest, the
+/// randomized-case count, and the seed. Any ingredient change — any
+/// rebuild — invalidates every stored stamp.
 #[must_use]
 pub fn stamp_value(cfg: &VerifyConfig) -> String {
+    stamp_value_with(cfg, &binary_fingerprint())
+}
+
+/// [`stamp_value`] with an explicit binary fingerprint — the test seam
+/// proving the fingerprint is a live ingredient.
+fn stamp_value_with(cfg: &VerifyConfig, fingerprint: &[u8; 32]) -> String {
     let mut digest = bumbledb::digest::Digest::new();
-    digest.update(env!("CARGO_PKG_VERSION").as_bytes());
+    digest.update(fingerprint);
     digest.update(&gen::corpus_digest(cfg.gen));
     digest.update(&families::digest());
     digest.update(&cfg.random_cases.to_le_bytes());
@@ -107,33 +138,78 @@ const MAX_BUNDLES: usize = 8;
 impl Run<'_> {
     /// Executes one query × param set on both stores and compares. Returns
     /// `false` once the bundle budget is exhausted (stop the run).
+    ///
+    /// Divergence-by-error is a mismatch, not a panic: if either side
+    /// errors at prepare or execute where the other answers, that is an
+    /// arbitration bundle with the erring side's `ERROR: <text>` in
+    /// place of its rows — the audit confirmed a real divergence class
+    /// here (`SQLite`'s transient SUM overflow vs the i128 accumulator).
+    /// Both-sides-error is a bundle too: no case is *expected* to error
+    /// today, so agreement-in-error would hide a tool defect as
+    /// verification. Setup errors (store open, corpus load) stay panics.
     fn check(
         &mut self,
         case: &Case<'_>,
         param_order: &[bumbledb::ParamId],
         params: &[Value],
     ) -> bool {
-        let mut prepared = self
-            .db
-            .prepare(case.query)
-            .expect("verified queries prepare");
-        let types: Vec<ValueType> = prepared.column_types().cloned().collect();
-        let mut buffer = ResultBuffer::new();
-        self.db
-            .read(|snap| snap.execute(&mut prepared, params, &mut buffer))
-            .expect("engine executes");
-        let ours = compare::from_buffer(&buffer, &types);
-
-        let mut stmt = self.conn.prepare_cached(case.sql).expect("oracle prepares");
-        let theirs =
-            compare::from_sqlite(&mut stmt, param_order, params, &types).expect("oracle executes");
+        // Column types come from the engine's prepared query; without
+        // them the oracle's rows cannot even be decoded, so a prepare
+        // failure is an engine-side error and the oracle records "not
+        // executed" rather than a fabricated second error.
+        let (ours, theirs): (
+            Result<Vec<compare::Row>, String>,
+            Result<Vec<compare::Row>, String>,
+        ) = match self.db.prepare(case.query) {
+            Err(e) => (
+                Err(format!("{e}")),
+                Err("not executed: no column types without a prepared query".to_owned()),
+            ),
+            Ok(mut prepared) => {
+                let types: Vec<ValueType> = prepared.column_types().cloned().collect();
+                let mut buffer = ResultBuffer::new();
+                let ours = self
+                    .db
+                    .read(|snap| snap.execute(&mut prepared, params, &mut buffer))
+                    .map(|()| compare::from_buffer(&buffer, &types))
+                    .map_err(|e| format!("{e}"));
+                let theirs = self
+                    .conn
+                    .prepare_cached(case.sql)
+                    .map_err(|e| e.to_string())
+                    .and_then(|mut stmt| {
+                        compare::from_sqlite(&mut stmt, param_order, params, &types)
+                    });
+                (ours, theirs)
+            }
+        };
 
         self.cases += 1;
         if self.cases.is_multiple_of(100) {
             eprintln!("verify: {}/{} cases", self.cases, self.total);
         }
 
-        if let Err(mismatch) = compare::multisets(ours, theirs) {
+        let verdict: Result<(), (String, String, String)> = match (ours, theirs) {
+            (Ok(ours), Ok(theirs)) => compare::multisets(ours.clone(), theirs.clone())
+                .map_err(|m| (m.to_string(), render_rows(&ours), render_rows(&theirs))),
+            (Err(engine), Ok(theirs)) => Err((
+                "divergence by error: the engine errored where the oracle answered".to_owned(),
+                format!("ERROR: {engine}"),
+                render_rows(&theirs),
+            )),
+            (Ok(ours), Err(oracle)) => Err((
+                "divergence by error: the oracle errored where the engine answered".to_owned(),
+                render_rows(&ours),
+                format!("ERROR: {oracle}"),
+            )),
+            (Err(engine), Err(oracle)) => Err((
+                "both sides errored — a tool defect must not look like verification".to_owned(),
+                format!("ERROR: {engine}"),
+                format!("ERROR: {oracle}"),
+            )),
+        };
+
+        if let Err((mismatch, ours_text, theirs_text)) = verdict {
             let bundle = self
                 .out_dir
                 .join(format!("mismatch-{}", self.bundles.len()));
@@ -145,7 +221,9 @@ impl Run<'_> {
             .expect("bundle");
             std::fs::write(bundle.join("query.sql"), case.sql).expect("bundle");
             std::fs::write(bundle.join("params.txt"), format!("{params:#?}\n")).expect("bundle");
-            std::fs::write(bundle.join("mismatch.txt"), mismatch.to_string()).expect("bundle");
+            std::fs::write(bundle.join("mismatch.txt"), mismatch).expect("bundle");
+            std::fs::write(bundle.join("ours.txt"), ours_text).expect("bundle");
+            std::fs::write(bundle.join("theirs.txt"), theirs_text).expect("bundle");
             if let Some(golden) = case.golden_sql {
                 std::fs::write(bundle.join("golden.sql"), golden).expect("bundle");
             }
@@ -154,6 +232,17 @@ impl Run<'_> {
         }
         self.bundles.len() < MAX_BUNDLES
     }
+}
+
+/// Renders a comparison multiset for a bundle artifact.
+fn render_rows(rows: &[compare::Row]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(out, "{} row(s)", rows.len());
+    for row in rows {
+        let _ = writeln!(out, "{row:?}");
+    }
+    out
 }
 
 /// Runs the full oracle: load both stores, compare every family × its
@@ -324,6 +413,62 @@ mod tests {
         let mut cases = base.clone();
         cases.random_cases = 51;
         assert_ne!(stamp_value(&cases), baseline, "case count is an ingredient");
+    }
+
+    /// PRD 07 (docs/hardening): the stamp is bound to the binary that
+    /// earned it. The fingerprint ingredient is blake3 of the running
+    /// executable, and flipping it flips the stamp — a stamp computed
+    /// under any other fingerprint is rejected.
+    #[test]
+    fn the_stamp_is_bound_to_the_binary() {
+        let base = cfg("stamp-binary");
+        // The fingerprint is exactly blake3 of the running executable.
+        let exe = std::env::current_exe().expect("exe");
+        let bytes = std::fs::read(exe).expect("read");
+        let mut digest = bumbledb::digest::Digest::new();
+        digest.update(&bytes);
+        assert_eq!(binary_fingerprint(), digest.finalize());
+
+        // Flipping the fingerprint flips the stamp...
+        let mut foreign = binary_fingerprint();
+        foreign[0] ^= 0xFF;
+        let foreign_stamp = stamp_value_with(&base, &foreign);
+        assert_ne!(foreign_stamp, stamp_value(&base));
+
+        // ...and stamp_matches rejects a stamp another binary earned.
+        std::fs::create_dir_all(&base.out_dir).expect("dir");
+        let path = base.out_dir.join("verify.stamp");
+        std::fs::write(&path, &foreign_stamp).expect("write");
+        assert!(!stamp_matches(&base, &path));
+        std::fs::write(&path, stamp_value(&base)).expect("write");
+        assert!(stamp_matches(&base, &path), "this binary's stamp accepts");
+        let _ = std::fs::remove_dir_all(&base.out_dir);
+    }
+
+    /// PRD 07: one side erroring where the other answers is a mismatch
+    /// bundle with an `ERROR:` artifact — never a panic, never a stamp.
+    #[test]
+    fn divergence_by_error_is_a_bundle_not_a_panic() {
+        let mut config = cfg("error-divergence");
+        config.random_cases = 0;
+        let failure = run_with_sql_override(&config, |family| {
+            (family == "point").then(|| "SELECT this is not sql".to_owned())
+        })
+        .expect_err("must fail");
+        assert!(!failure.bundles.is_empty());
+        let theirs =
+            std::fs::read_to_string(failure.bundles[0].join("theirs.txt")).expect("artifact");
+        assert!(theirs.starts_with("ERROR:"), "{theirs}");
+        let ours = std::fs::read_to_string(failure.bundles[0].join("ours.txt")).expect("artifact");
+        assert!(ours.contains("row(s)"), "the engine's rows render: {ours}");
+        let mismatch =
+            std::fs::read_to_string(failure.bundles[0].join("mismatch.txt")).expect("artifact");
+        assert!(mismatch.contains("divergence by error"), "{mismatch}");
+        assert!(
+            !config.out_dir.join("verify.stamp").exists(),
+            "no stamp on failure"
+        );
+        let _ = std::fs::remove_dir_all(&config.out_dir);
     }
 
     #[test]
