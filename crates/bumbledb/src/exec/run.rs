@@ -63,6 +63,11 @@ pub enum JoinPhase {
     Residual,
     /// The per-survivor recursion loop (contains deeper nodes' phases).
     Descend,
+    /// Sibling map construction (`ensure_forced`) ahead of a probe pass —
+    /// separated because a force ingests every position under the
+    /// sibling's cursor: the single biggest non-amortized cost a node
+    /// entry can pay.
+    Force,
 }
 
 impl JoinPhase {
@@ -75,6 +80,7 @@ impl JoinPhase {
             Self::Probe => 2,
             Self::Residual => 3,
             Self::Descend => 4,
+            Self::Force => 5,
         }
     }
 }
@@ -124,9 +130,9 @@ pub const PHASE_NODE_CAP: usize = 8;
 #[cfg(feature = "trace")]
 pub struct PhaseTimers {
     /// `[node][phase] -> (accumulated ticks, calls)`.
-    acc: [[(u64, u64); 5]; PHASE_NODE_CAP + 1],
+    acc: [[(u64, u64); 6]; PHASE_NODE_CAP + 1],
     /// `[node][phase] -> open segment's start tick`.
-    open: [[u64; 5]; PHASE_NODE_CAP + 1],
+    open: [[u64; 6]; PHASE_NODE_CAP + 1],
 }
 
 #[cfg(feature = "trace")]
@@ -134,8 +140,8 @@ impl PhaseTimers {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            acc: [[(0, 0); 5]; PHASE_NODE_CAP + 1],
-            open: [[0; 5]; PHASE_NODE_CAP + 1],
+            acc: [[(0, 0); 6]; PHASE_NODE_CAP + 1],
+            open: [[0; 6]; PHASE_NODE_CAP + 1],
         }
     }
 
@@ -544,7 +550,9 @@ impl Executor {
                 let sub_arity = subatom.vars.len();
                 let occ = usize::from(subatom.occ.0);
                 let (s_cursor, s_level) = self.cursors[occ];
+                counters.phase_start(node_idx, JoinPhase::Force);
                 colts[occ].ensure_forced(s_cursor, s_level);
+                counters.phase_end(node_idx, JoinPhase::Force);
 
                 // Phase 1: gather every probe key and compute every hash —
                 // pure ALU, no bucket loads. A pinned sibling
@@ -622,7 +630,9 @@ impl Executor {
             // Save the node-entry cursors once per batch: every entry's
             // recursion restores them, so they are identical for each
             // surviving element — the old per-entry journal rebuild paid
-            // a push/drain cycle per tuple in the innermost loop.
+            // a push/drain cycle per tuple in the innermost loop. The
+            // journal save is descend bookkeeping: timed as Descend.
+            counters.phase_start(node_idx, JoinPhase::Descend);
             scratch.journal.clear();
             scratch.journal.push((cover_occ, cover_cursor, cover_level));
             for (sub_idx, subatom) in plan.nodes()[node_idx].subatoms.iter().enumerate() {
@@ -636,7 +646,6 @@ impl Executor {
 
             // Recurse per surviving element (paper §4.3: batch within a
             // node, recurse per tuple) with the scalar journal discipline.
-            counters.phase_start(node_idx, JoinPhase::Descend);
             for k in 0..scratch.survivors.len() {
                 let entry = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
                 for (i, slot) in self.slot_map[node_idx][cover_sub].iter().enumerate() {
