@@ -1107,6 +1107,17 @@ impl Sink for EitherSink {
         }
     }
 
+    fn emit_batch(
+        &mut self,
+        batch: &crate::exec::run::LeafBatch<'_>,
+        stop_on_skip: bool,
+    ) -> crate::exec::run::Flow {
+        match self {
+            Self::Projection(sink) => sink.emit_batch(batch, stop_on_skip),
+            Self::Aggregate(sink) => sink.emit_batch(batch, stop_on_skip),
+        }
+    }
+
     fn may_skip(&self) -> bool {
         match self {
             Self::Projection(sink) => sink.may_skip(),

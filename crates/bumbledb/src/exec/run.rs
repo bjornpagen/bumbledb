@@ -9,7 +9,9 @@
 //! pure ALU; phase 2 issues all bucket loads — independent chains the
 //! out-of-order window overlaps), compact survivors branchlessly, evaluate residuals as
 //! batch compaction, then recurse per surviving element with the scalar
-//! journal discipline.
+//! journal discipline — except at the last node, where the surviving
+//! batch goes to the sink whole (docs/perf/ PRD 01: no recursion, no
+//! journal, no per-row binding stores at the leaf).
 //!
 //! Honest caveat, stated (D4): deep in the plan the batch source is the
 //! current subtrie, whose fanout on FK walks is often 1-10 — large batches
@@ -30,10 +32,71 @@ pub enum Flow {
     SkipSuffix,
 }
 
+/// One leaf batch, borrowed from the executor (docs/perf/ PRD 01): the
+/// last plan node's surviving cover entries, handed to the sink whole —
+/// the per-row recursion that used to carry them one binding at a time
+/// is gone. A sink reads each output slot either from the batch's cover
+/// keys (slots in `key_slots`, varying per entry) or from `bindings`
+/// (everything else — bound by ancestor nodes, constant across the
+/// batch).
+pub struct LeafBatch<'a> {
+    /// Cover-entry key words, entry-major (`entry * arity + word`).
+    pub keys: &'a [u64],
+    pub arity: usize,
+    /// Surviving entry indices into `keys` (post probe/residual
+    /// compaction).
+    pub survivors: &'a [u32],
+    /// Binding slot of each cover key word, in word order.
+    pub key_slots: &'a [usize],
+    /// Outer bindings; slots not in `key_slots` are already bound.
+    pub bindings: &'a Bindings,
+}
+
+/// Where a leaf-batch output slot's value comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeafSource {
+    /// The batch's cover keys, at this word index.
+    Key(usize),
+    /// The outer bindings (constant across the batch).
+    Outer,
+}
+
+impl LeafBatch<'_> {
+    /// Resolves one slot's source — a linear scan over the (tiny) cover
+    /// arity; sinks call this once per batch per output slot, never per
+    /// row.
+    #[must_use]
+    pub fn source_of(&self, slot: usize) -> LeafSource {
+        self.key_slots
+            .iter()
+            .position(|s| *s == slot)
+            .map_or(LeafSource::Outer, LeafSource::Key)
+    }
+
+    /// The key word for a surviving entry at a word index.
+    #[must_use]
+    pub fn key(&self, entry: u32, word: usize) -> u64 {
+        self.keys[entry as usize * self.arity + word]
+    }
+}
+
 /// Consumes complete bindings (D3: the executor emits to a sink, never an
 /// `output()`).
 pub trait Sink {
+    /// Emits one complete binding — the guard-probe path (single row by
+    /// construction) and tests; the join executor's leaf path is
+    /// [`Sink::emit_batch`].
     fn emit(&mut self, bindings: &Bindings) -> Flow;
+
+    /// Emits every surviving element of a leaf batch. `stop_on_skip` is
+    /// the executor's translation of the leaf node's sink-relevance:
+    /// when true, the sink must stop at the first row whose per-row emit
+    /// would have signaled [`Flow::SkipSuffix`] and return `SkipSuffix`
+    /// (the executor unwinds — the batch's remaining rows bind nothing
+    /// sink-relevant, exactly the rows the recursive path never
+    /// visited); when false it must consume the entire batch and return
+    /// `Continue`. An empty batch returns `Continue`.
+    fn emit_batch(&mut self, batch: &LeafBatch<'_>, stop_on_skip: bool) -> Flow;
 
     /// Whether this sink can ever signal [`Flow::SkipSuffix`]. D2 is
     /// legal for projections only; aggregate plans additionally mark
@@ -70,6 +133,7 @@ pub enum JoinPhase {
     Force,
 }
 
+#[cfg(feature = "trace")]
 impl JoinPhase {
     /// Index into per-phase tables (matches `obs::names::JOIN_PHASE`).
     #[must_use]
@@ -120,6 +184,7 @@ pub trait Counters {
 /// Node-index cap for phase attribution tables: indices past the cap
 /// share the overflow bucket (`nX` names) — plans deeper than this are
 /// attributed coarsely, never dropped.
+#[cfg(feature = "trace")]
 pub const PHASE_NODE_CAP: usize = 8;
 
 /// The trace-mode phase accumulator (docs/architecture/50-validation.md):
@@ -459,10 +524,14 @@ impl Executor {
         sink: &mut S,
         counters: &mut C,
     ) -> Flow {
-        if node_idx == plan.nodes().len() {
-            counters.emit();
-            return sink.emit(bindings);
-        }
+        // Zero-node plans are unrepresentable (validation rule 14 rejects
+        // atom-less queries; binary2fj makes a node per occurrence), and
+        // the leaf batch path emits at the last real node — so every call
+        // lands on a real node.
+        assert!(
+            node_idx < plan.nodes().len(),
+            "the leaf batch path emits at the last node"
+        );
         counters.node_entry(node_idx);
 
         // Dynamic cover choice (§4.4): prefer the smallest Exact, else the
@@ -627,6 +696,52 @@ impl Executor {
             }
             counters.phase_end(node_idx, JoinPhase::Residual);
 
+            // The leaf (docs/perf/ PRD 01): the last plan node hands its
+            // surviving batch to the sink whole. No recursion, no journal,
+            // no cursor writes — nothing below reads them — and no
+            // binding stores for the leaf's own vars (the batch carries
+            // them). `stop_on_skip` folds this node's sink-relevance into
+            // the batch call: when the leaf binds nothing sink-relevant,
+            // the sink stops at its first emit and the skip unwinds here
+            // exactly as the recursive path's absorption arm did.
+            if node_idx + 1 == plan.nodes().len() {
+                if scratch.survivors.is_empty() {
+                    continue;
+                }
+                counters.phase_start(node_idx, JoinPhase::Descend);
+                let batch = LeafBatch {
+                    keys: &scratch.entry_keys,
+                    arity,
+                    survivors: &scratch.survivors,
+                    key_slots: &self.slot_map[node_idx][cover_sub],
+                    bindings,
+                };
+                let stop_on_skip = !plan.nodes()[node_idx].sink_relevant && sink.may_skip();
+                let batch_flow = sink.emit_batch(&batch, stop_on_skip);
+                // EXPLAIN's `emits` counts rows the sink consumed: the
+                // whole batch, or exactly one when the first emit's skip
+                // stopped it (identical to the recursive path's counts).
+                let emitted = if batch_flow == Flow::SkipSuffix {
+                    1
+                } else {
+                    scratch.survivors.len()
+                };
+                for _ in 0..emitted {
+                    counters.emit();
+                }
+                counters.phase_end(node_idx, JoinPhase::Descend);
+                if batch_flow == Flow::SkipSuffix {
+                    debug_assert!(
+                        sink.may_skip(),
+                        "a SkipSuffix crossed a node under a non-skipping sink"
+                    );
+                    counters.skip(node_idx);
+                    flow = Flow::SkipSuffix;
+                    break 'outer;
+                }
+                continue;
+            }
+
             // Save the node-entry cursors once per batch: every entry's
             // recursion restores them, so they are identical for each
             // surviving element — the old per-entry journal rebuild paid
@@ -769,6 +884,20 @@ mod tests {
                 .map(|s| bindings.get(s))
                 .collect();
             self.rows.insert(row);
+            Flow::Continue
+        }
+
+        fn emit_batch(&mut self, batch: &LeafBatch<'_>, stop_on_skip: bool) -> Flow {
+            debug_assert!(!stop_on_skip, "CollectSink never skips");
+            for &entry in batch.survivors {
+                let row: Vec<u64> = (0..batch.bindings.slot_count())
+                    .map(|slot| match batch.source_of(slot) {
+                        LeafSource::Key(word) => batch.key(entry, word),
+                        LeafSource::Outer => batch.bindings.get(slot),
+                    })
+                    .collect();
+                self.rows.insert(row);
+            }
             Flow::Continue
         }
     }

@@ -115,3 +115,34 @@ handoff: the sink receives the whole survivor batch at once.
 
 Fold vectorization (02/03), the group-key probe (02), pinned-row leaf
 elision and gather fusion (05), middle-node recursion (09/10).
+
+## Result (2026-07-06, run bench-out/2026-07-06T23-27-32Z)
+
+Landed: `LeafBatch` + `Sink::emit_batch` (native on ProjectionSink,
+AggregateSink, EitherSink, CollectSink), the executor leaf specialization
+(no recursion/journal/cursor/binding writes at the last node; per-row
+`sink.emit` unreachable from the join — the zero-node arm is now an
+assert), first-emit stop_on_skip semantics, and the D2-leaf + boundary
+equality tests. ALL-WIN holds; verify green; EXPLAIN `emits` digests
+byte-identical for all ten families; no family regressed (every p50 moved
+down or held: balance −52.8%, skew −42.5%, fk_walk −22.7%, range −18.8%,
+stats −15.9%, chain −5.6%, spread −3.6%, triangle −2.7%).
+
+Gates: range p50 48.0 µs ≤ 50 ✓; stats `jp_descend_n1` 2,686.2 µs ≤ 2,900 ✓.
+Three phase-row targets missed narrowly, each against the same wall — the
+per-row work that remains inside the batch emit is exactly what later PRDs
+own:
+
+- range `jp_descend_n0` 27.2 µs vs ≤ 25 (baseline 38.7, −30%): the row
+  loop is now `scratch fill + seen.insert` at ~13.6 ns/row over 2,000
+  rows; the insert is the sink-map probe (PRD 06's layout work).
+- chain `jp_descend_n2` 23.6 µs vs ≤ 20 (baseline 38.5, −39%): same —
+  1,914 inserts dominate.
+- balance traced `jp_descend_n1` 575.6 µs vs ≤ 550 (baseline 774.3,
+  −26%): the naive aggregate batch still probes the group map per row —
+  PRD 02's constant-group hoist is the named fix and its gate (≤ 300 µs)
+  supersedes this one.
+
+The targets assumed a sliver of per-row map cost that does not shrink
+without the map/group work; the structural goal of this PRD (kill leaf
+recursion and bookkeeping) is measured and landed.

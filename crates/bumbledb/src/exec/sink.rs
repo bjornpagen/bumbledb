@@ -13,7 +13,7 @@
 
 use crate::encoding::encode_i64;
 use crate::error::{Error, Result};
-use crate::exec::run::{Bindings, Flow, Sink};
+use crate::exec::run::{Bindings, Flow, LeafBatch, LeafSource, Sink};
 use crate::exec::wordmap::WordMap;
 use crate::ir::AggOp;
 
@@ -50,6 +50,9 @@ pub struct ProjectionSink {
     slots: Vec<usize>,
     seen: WordMap<()>,
     scratch: Vec<u64>,
+    /// Per-slot leaf-batch sources, recomputed once per batch (PRD 01):
+    /// `Some(word)` reads the batch keys, `None` the outer bindings.
+    batch_sources: Vec<Option<usize>>,
 }
 
 impl ProjectionSink {
@@ -61,6 +64,7 @@ impl ProjectionSink {
             slots,
             seen: WordMap::new(arity),
             scratch: vec![0; arity],
+            batch_sources: vec![None; arity],
         }
     }
 
@@ -91,6 +95,34 @@ impl Sink for ProjectionSink {
         // first duplicate) saves one full suffix descent per distinct
         // output tuple.
         Flow::SkipSuffix
+    }
+
+    fn emit_batch(&mut self, batch: &LeafBatch<'_>, stop_on_skip: bool) -> Flow {
+        // Sources once per batch; outer slots prefilled once — the row
+        // loop touches only the varying key words and the seen-set.
+        for (i, slot) in self.slots.iter().enumerate() {
+            match batch.source_of(*slot) {
+                LeafSource::Key(word) => self.batch_sources[i] = Some(word),
+                LeafSource::Outer => {
+                    self.batch_sources[i] = None;
+                    self.scratch[i] = batch.bindings.get(*slot);
+                }
+            }
+        }
+        for &entry in batch.survivors {
+            for (i, source) in self.batch_sources.iter().enumerate() {
+                if let Some(word) = source {
+                    self.scratch[i] = batch.key(entry, *word);
+                }
+            }
+            self.seen.insert(&self.scratch);
+            if stop_on_skip {
+                // First-emit semantics (see `emit`): the remaining rows
+                // bind nothing sink-relevant — the executor unwinds.
+                return Flow::SkipSuffix;
+            }
+        }
+        Flow::Continue
     }
 
     fn may_skip(&self) -> bool {
@@ -237,21 +269,21 @@ fn finalize(acc: Acc, find_idx: usize) -> Result<u64> {
     }
 }
 
-impl Sink for AggregateSink {
-    fn emit(&mut self, bindings: &Bindings) -> Flow {
+impl AggregateSink {
+    /// Folds the full binding currently in `binding_scratch`: dedup
+    /// (unless elided), group resolution, accumulator update. Both emit
+    /// paths land here — the scratch row is the one representation.
+    fn fold_scratch_row(&mut self) {
         // Binding dedup: fold only the first occurrence of each distinct
         // full binding — unless the plan proved distinctness (elision).
         if let Some(seen) = &mut self.seen {
-            for slot in 0..bindings.slot_count() {
-                self.binding_scratch[slot] = bindings.get(slot);
-            }
             if !seen.insert(&self.binding_scratch) {
-                return Flow::Continue;
+                return;
             }
         }
 
         for (i, slot) in self.group_slots.iter().enumerate() {
-            self.key_scratch[i] = bindings.get(*slot);
+            self.key_scratch[i] = self.binding_scratch[*slot];
         }
         let (group_idx, inserted) = {
             let next = self.groups.len();
@@ -289,24 +321,57 @@ impl Sink for AggregateSink {
             match (op, acc) {
                 (AggOp::Count, Acc::Count(n)) => *n += 1,
                 (AggOp::Sum, Acc::SumSigned(total)) => {
-                    let word = bindings.get(over_slot.expect("validated: Sum has a variable"));
+                    let word =
+                        self.binding_scratch[over_slot.expect("validated: Sum has a variable")];
                     debug_assert!(*signed);
                     *total += i128::from(word_to_i64(word));
                 }
                 (AggOp::Sum, Acc::SumUnsigned(total)) => {
-                    let word = bindings.get(over_slot.expect("validated: Sum has a variable"));
+                    let word =
+                        self.binding_scratch[over_slot.expect("validated: Sum has a variable")];
                     *total += u128::from(word);
                 }
                 (AggOp::Min, Acc::Min(best)) => {
-                    let word = bindings.get(over_slot.expect("validated: Min has a variable"));
+                    let word =
+                        self.binding_scratch[over_slot.expect("validated: Min has a variable")];
                     *best = (*best).min(word);
                 }
                 (AggOp::Max, Acc::Max(best)) => {
-                    let word = bindings.get(over_slot.expect("validated: Max has a variable"));
+                    let word =
+                        self.binding_scratch[over_slot.expect("validated: Max has a variable")];
                     *best = (*best).max(word);
                 }
                 _ => unreachable!("accumulators are seeded per op"),
             }
+        }
+    }
+}
+
+impl Sink for AggregateSink {
+    fn emit(&mut self, bindings: &Bindings) -> Flow {
+        for slot in 0..bindings.slot_count() {
+            self.binding_scratch[slot] = bindings.get(slot);
+        }
+        self.fold_scratch_row();
+        Flow::Continue
+    }
+
+    fn emit_batch(&mut self, batch: &LeafBatch<'_>, stop_on_skip: bool) -> Flow {
+        // Aggregate plans mark every node sink-relevant (hardening
+        // PRD 05), so the executor never asks a fold to stop on skip.
+        debug_assert!(!stop_on_skip, "folds never stop on skip");
+        // Outer slots are constant across the batch: prefill once; the
+        // row loop overwrites only the leaf's key slots.
+        for slot in 0..self.binding_scratch.len() {
+            if matches!(batch.source_of(slot), LeafSource::Outer) {
+                self.binding_scratch[slot] = batch.bindings.get(slot);
+            }
+        }
+        for &entry in batch.survivors {
+            for (word, slot) in batch.key_slots.iter().enumerate() {
+                self.binding_scratch[*slot] = batch.key(entry, word);
+            }
+            self.fold_scratch_row();
         }
         Flow::Continue
     }
@@ -530,6 +595,10 @@ mod tests {
         let schema = schema();
         // One posting, many tags: projecting only the account, the tag
         // suffix multiplies witnesses without changing the projection.
+        // The tag node is the LEAF and is not sink-relevant: at batch
+        // size 128 all 50 tags arrive in one leaf batch and the batch
+        // emit must stop at the first row (PRD 01's stop_on_skip) — the
+        // same skip the recursive path signaled per-row.
         let postings = vec![(1u64, 7u64, 100i64)];
         let tags: Vec<(u64, u64)> = (0..50).map(|t| (1, t)).collect();
         let views = views_of(&dir, &schema, &postings, &tags);
@@ -543,18 +612,114 @@ mod tests {
         };
         // Sink-relevant vars: just the account (var 1).
         let plan = planned(&normalized, &schema, &[0, 1], &[1]);
-        let mut colts = colts_for(&plan, &views);
-        let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
-        let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(1))]);
-        let mut counters = SkipCounter::default();
-        Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
+        for batch in [1usize, 2, 128] {
+            let mut colts = colts_for(&plan, &views);
+            let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
+            let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(1))]);
+            let mut counters = SkipCounter::default();
+            Executor::with_batch_size(&plan, batch).execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut counters,
+            );
 
-        let rows: Vec<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
-        assert_eq!(rows, vec![vec![7]]);
-        assert!(
-            counters.skips > 0,
-            "the tag suffix must be skipped after the first witness"
-        );
+            let rows: Vec<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
+            assert_eq!(rows, vec![vec![7]], "batch {batch}");
+            assert!(
+                counters.skips > 0,
+                "batch {batch}: the tag suffix must be skipped after the first witness"
+            );
+        }
+    }
+
+    /// PRD 01 (docs/perf/): the aggregate leaf batch folds bit-identically
+    /// to the scalar degenerate case at every batch size, including the
+    /// deterministic-overflow class at the i64 boundary.
+    #[test]
+    fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
+        let dir = TempDir::new("sink-batch-boundary");
+        let schema = schema();
+        // Account 7 sums to exactly i64::MAX (in range); account 8
+        // overflows deterministically.
+        let postings = vec![
+            (1u64, 7u64, i64::MAX),
+            (2, 7, 1),
+            (3, 7, -2),
+            (4, 7, 1),
+            (5, 8, i64::MAX),
+            (6, 8, 1),
+        ];
+        let views = views_of(&dir, &schema, &postings, &[]);
+        let normalized = NormalizedQuery {
+            occurrences: vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
+            residuals: vec![],
+        };
+        let plan = planned(&normalized, &schema, &[0], &[1]);
+        let finds = |plan: &ValidatedPlan| {
+            vec![
+                FindSpec::Var {
+                    slot: plan.slot_of(VarId(1)),
+                },
+                FindSpec::Agg {
+                    op: AggOp::Sum,
+                    over_slot: Some(plan.slot_of(VarId(2))),
+                    signed: true,
+                },
+                FindSpec::Agg {
+                    op: AggOp::Count,
+                    over_slot: None,
+                    signed: false,
+                },
+            ]
+        };
+        for batch in [1usize, 2, 7, 128] {
+            let mut colts = colts_for(&plan, &views);
+            let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
+            let mut sink = AggregateSink::new(finds(&plan), plan.slots().len(), true);
+            Executor::with_batch_size(&plan, batch).execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            );
+            // Account 8's Sum overflows: the error is deterministic and
+            // carries the find index, at every batch size.
+            let err = sink.into_rows().unwrap_err();
+            assert!(
+                matches!(err, Error::Overflow { find: 1 }),
+                "batch {batch}: {err:?}"
+            );
+        }
+        // Remove the overflowing account: values identical at every size.
+        let dir2 = TempDir::new("sink-batch-boundary-ok");
+        let views = views_of(&dir2, &schema, &postings[..4], &[]);
+        let mut reference: Option<Vec<Vec<u64>>> = None;
+        for batch in [1usize, 2, 7, 128] {
+            let mut colts = colts_for(&plan, &views);
+            let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
+            let mut sink = AggregateSink::new(finds(&plan), plan.slots().len(), true);
+            Executor::with_batch_size(&plan, batch).execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            );
+            let mut rows = sink.into_rows().expect("in range");
+            rows.sort_unstable();
+            assert_eq!(
+                rows,
+                vec![vec![7, i64_to_word(i64::MAX), 4]],
+                "batch {batch}"
+            );
+            match &reference {
+                None => reference = Some(rows),
+                Some(r) => assert_eq!(*r, rows, "batch {batch}"),
+            }
+        }
     }
 
     #[test]

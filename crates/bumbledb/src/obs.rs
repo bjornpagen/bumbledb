@@ -233,7 +233,7 @@ pub mod names {
 /// no syscall, no `mach_absolute_time`), `Instant`-based elsewhere.
 /// Tick frequency comes from `cntfrq_el0` (24 MHz on Apple Silicon —
 /// 41.67 ns granularity; unbiased across many accumulated phases).
-/// No `isb` barrier: accumulated attribution tolerates OoO slop, and the
+/// No `isb` barrier: accumulated attribution tolerates `OoO` slop, and the
 /// barrier would cost more than the read.
 #[cfg(feature = "trace")]
 pub mod fastclock {
@@ -285,6 +285,11 @@ pub mod fastclock {
 
     /// Converts accumulated ticks to nanoseconds (u128 interim: no
     /// overflow below ~584 years of ticks).
+    ///
+    /// # Panics
+    ///
+    /// Only on a programmer-invariant violation: an accumulated phase
+    /// total exceeding u64 nanoseconds (~584 years).
     #[must_use]
     pub fn ticks_to_ns(ticks: u64) -> u64 {
         u64::try_from(u128::from(ticks) * 1_000_000_000 / u128::from(frequency()))
