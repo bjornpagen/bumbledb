@@ -165,6 +165,22 @@ pub struct AggregateSink {
     seen: Option<WordMap<()>>,
     key_scratch: Vec<u64>,
     binding_scratch: Vec<u64>,
+    /// The group-run memo (docs/perf/ PRD 02): consecutive constant-group
+    /// batches within one node-entry run share their group — remember the
+    /// last key words and accumulator index and skip even the
+    /// once-per-batch probe when unchanged.
+    memo_key: Vec<u64>,
+    memo_idx: Option<usize>,
+    /// Batch-fold accumulator staging: the group's row is copied here,
+    /// folded, and written back once per batch.
+    acc_scratch: Vec<Acc>,
+    /// Dedup-pass survivors (the seen-set regime's batch fold): entries
+    /// whose full binding was first-seen this batch, gather-folded after
+    /// the dedup pass exactly like the elided path.
+    dedup_survivors: Vec<u32>,
+    /// Group-map probes actually issued (the PRD 02 hoist observable).
+    #[cfg(test)]
+    group_probes: usize,
 }
 
 impl AggregateSink {
@@ -186,6 +202,12 @@ impl AggregateSink {
             key_scratch: vec![0; group_slots.len()],
             binding_scratch: vec![0; slot_count],
             seen: (!distinct_bindings).then(|| WordMap::new(slot_count)),
+            memo_key: vec![0; group_slots.len()],
+            memo_idx: None,
+            acc_scratch: Vec::with_capacity(n_aggs),
+            dedup_survivors: Vec::new(),
+            #[cfg(test)]
+            group_probes: 0,
             group_slots,
             finds,
             accs: Vec::new(),
@@ -195,6 +217,7 @@ impl AggregateSink {
 
     /// Empties the sink for the next execution, retaining capacity.
     pub fn reset(&mut self) {
+        self.memo_idx = None;
         self.groups.clear();
         self.accs.clear();
         if let Some(seen) = &mut self.seen {
@@ -270,26 +293,17 @@ fn finalize(acc: Acc, find_idx: usize) -> Result<u64> {
 }
 
 impl AggregateSink {
-    /// Folds the full binding currently in `binding_scratch`: dedup
-    /// (unless elided), group resolution, accumulator update. Both emit
-    /// paths land here — the scratch row is the one representation.
-    fn fold_scratch_row(&mut self) {
-        // Binding dedup: fold only the first occurrence of each distinct
-        // full binding — unless the plan proved distinctness (elision).
-        if let Some(seen) = &mut self.seen {
-            if !seen.insert(&self.binding_scratch) {
-                return;
-            }
+    /// Probes the group map with the key currently in `key_scratch`,
+    /// seeding a fresh accumulator row on first sight. The one place a
+    /// group probe happens — the batch path memoizes around it.
+    fn probe_group(&mut self) -> usize {
+        #[cfg(test)]
+        {
+            self.group_probes += 1;
         }
-
-        for (i, slot) in self.group_slots.iter().enumerate() {
-            self.key_scratch[i] = self.binding_scratch[*slot];
-        }
-        let (group_idx, inserted) = {
-            let next = self.groups.len();
-            let (idx, inserted) = self.groups.get_or_insert_with(&self.key_scratch, || next);
-            (*idx, inserted)
-        };
+        let next = self.groups.len();
+        let (idx, inserted) = self.groups.get_or_insert_with(&self.key_scratch, || next);
+        let group_idx = *idx;
         if inserted {
             // Fresh accumulator row, seeded per op.
             for find in &self.finds {
@@ -304,6 +318,26 @@ impl AggregateSink {
                 }
             }
         }
+        group_idx
+    }
+
+    /// Folds the full binding currently in `binding_scratch`: dedup
+    /// (unless elided), group resolution, accumulator update. The
+    /// per-row paths land here — the scratch row is the one
+    /// representation.
+    fn fold_scratch_row(&mut self) {
+        // Binding dedup: fold only the first occurrence of each distinct
+        // full binding — unless the plan proved distinctness (elision).
+        if let Some(seen) = &mut self.seen {
+            if !seen.insert(&self.binding_scratch) {
+                return;
+            }
+        }
+
+        for (i, slot) in self.group_slots.iter().enumerate() {
+            self.key_scratch[i] = self.binding_scratch[*slot];
+        }
+        let group_idx = self.probe_group();
 
         let accs = &mut self.accs[group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs];
         let mut acc_cursor = 0;
@@ -347,6 +381,179 @@ impl AggregateSink {
     }
 }
 
+impl AggregateSink {
+    /// The per-row batch arm: outer slots prefilled once, leaf key slots
+    /// overwritten per row, each full binding folded through the scratch
+    /// (dedup and varying-group regimes).
+    fn fold_batch_rows(&mut self, batch: &LeafBatch<'_>) {
+        for slot in 0..self.binding_scratch.len() {
+            if matches!(batch.source_of(slot), LeafSource::Outer) {
+                self.binding_scratch[slot] = batch.bindings.get(slot);
+            }
+        }
+        for &entry in batch.survivors {
+            for (word, slot) in batch.key_slots.iter().enumerate() {
+                self.binding_scratch[*slot] = batch.key(entry, word);
+            }
+            self.fold_scratch_row();
+        }
+    }
+
+    /// The constant-group fast path (docs/perf/ PRD 02): one group probe
+    /// per batch (memoized across consecutive batches of the same run),
+    /// accumulators staged out of the group row, per-op dispatch outside
+    /// the row loop, and the row loops themselves shaped as the gather
+    /// folds PRD 03 kernelizes.
+    /// The dedup-regime batch arm (docs/perf/ PRD 02): the seen-set pass
+    /// runs per row (semantically required — the plan could not prove
+    /// distinct bindings), collecting first-seen entries; those then
+    /// gather-fold through the same constant-group core as the elided
+    /// path, group probe hoisted and all.
+    fn fold_batch_dedup_constant_group(&mut self, batch: &LeafBatch<'_>) {
+        // The dedup key is the full binding: outer slots constant,
+        // prefilled once; key slots overwritten per row.
+        for slot in 0..self.binding_scratch.len() {
+            if matches!(batch.source_of(slot), LeafSource::Outer) {
+                self.binding_scratch[slot] = batch.bindings.get(slot);
+            }
+        }
+        let mut survivors = std::mem::take(&mut self.dedup_survivors);
+        survivors.clear();
+        let seen = self.seen.as_mut().expect("dedup regime");
+        for &entry in batch.survivors {
+            for (word, slot) in batch.key_slots.iter().enumerate() {
+                self.binding_scratch[*slot] = batch.key(entry, word);
+            }
+            if seen.insert(&self.binding_scratch) {
+                survivors.push(entry);
+            }
+        }
+        if !survivors.is_empty() {
+            self.fold_batch_constant_group(batch, &survivors);
+        }
+        self.dedup_survivors = survivors;
+    }
+
+    fn fold_batch_constant_group(&mut self, batch: &LeafBatch<'_>, survivors: &[u32]) {
+        for (i, slot) in self.group_slots.iter().enumerate() {
+            self.key_scratch[i] = batch.bindings.get(*slot);
+        }
+        let group_idx = match self.memo_idx {
+            Some(idx) if self.memo_key == self.key_scratch => idx,
+            _ => {
+                let idx = self.probe_group();
+                self.memo_key.copy_from_slice(&self.key_scratch);
+                self.memo_idx = Some(idx);
+                idx
+            }
+        };
+
+        let range = group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs;
+        self.acc_scratch.clear();
+        self.acc_scratch
+            .extend_from_slice(&self.accs[range.clone()]);
+        let count = survivors.len() as u64;
+        let mut cursor = 0;
+        for find in &self.finds {
+            let FindSpec::Agg {
+                op,
+                over_slot,
+                signed,
+            } = find
+            else {
+                continue;
+            };
+            let acc = &mut self.acc_scratch[cursor];
+            cursor += 1;
+            match (op, acc) {
+                // Count is arithmetic, never a loop.
+                (AggOp::Count, Acc::Count(n)) => *n += count,
+                (AggOp::Sum, Acc::SumSigned(total)) => {
+                    debug_assert!(*signed);
+                    let slot = over_slot.expect("validated: Sum has a variable");
+                    *total += match batch.source_of(slot) {
+                        // Constant over the batch: value × count, i128 —
+                        // identical to `count` additions.
+                        LeafSource::Outer => {
+                            i128::from(word_to_i64(batch.bindings.get(slot))) * i128::from(count)
+                        }
+                        LeafSource::Key(word) => {
+                            gather_sum_signed(batch.keys, batch.arity, word, survivors)
+                        }
+                    };
+                }
+                (AggOp::Sum, Acc::SumUnsigned(total)) => {
+                    let slot = over_slot.expect("validated: Sum has a variable");
+                    *total += match batch.source_of(slot) {
+                        LeafSource::Outer => {
+                            u128::from(batch.bindings.get(slot)) * u128::from(count)
+                        }
+                        LeafSource::Key(word) => {
+                            gather_sum_unsigned(batch.keys, batch.arity, word, survivors)
+                        }
+                    };
+                }
+                (AggOp::Min, Acc::Min(best)) => {
+                    let slot = over_slot.expect("validated: Min has a variable");
+                    let word = match batch.source_of(slot) {
+                        LeafSource::Outer => batch.bindings.get(slot),
+                        LeafSource::Key(word) => {
+                            gather_min(batch.keys, batch.arity, word, survivors)
+                        }
+                    };
+                    *best = (*best).min(word);
+                }
+                (AggOp::Max, Acc::Max(best)) => {
+                    let slot = over_slot.expect("validated: Max has a variable");
+                    let word = match batch.source_of(slot) {
+                        LeafSource::Outer => batch.bindings.get(slot),
+                        LeafSource::Key(word) => {
+                            gather_max(batch.keys, batch.arity, word, survivors)
+                        }
+                    };
+                    *best = (*best).max(word);
+                }
+                _ => unreachable!("accumulators are seeded per op"),
+            }
+        }
+        self.accs[range].copy_from_slice(&self.acc_scratch);
+    }
+}
+
+/// The batch gather folds (docs/perf/ PRD 02): strided reads over the
+/// leaf batch's entry-major key words, one pass per aggregate — the
+/// shapes PRD 03 replaces with kernels. All take non-empty survivor
+/// lists (the executor skips empty batches).
+fn gather_sum_signed(keys: &[u64], arity: usize, word: usize, survivors: &[u32]) -> i128 {
+    survivors
+        .iter()
+        .map(|&e| i128::from(word_to_i64(keys[e as usize * arity + word])))
+        .sum()
+}
+
+fn gather_sum_unsigned(keys: &[u64], arity: usize, word: usize, survivors: &[u32]) -> u128 {
+    survivors
+        .iter()
+        .map(|&e| u128::from(keys[e as usize * arity + word]))
+        .sum()
+}
+
+fn gather_min(keys: &[u64], arity: usize, word: usize, survivors: &[u32]) -> u64 {
+    survivors
+        .iter()
+        .map(|&e| keys[e as usize * arity + word])
+        .min()
+        .expect("non-empty batch")
+}
+
+fn gather_max(keys: &[u64], arity: usize, word: usize, survivors: &[u32]) -> u64 {
+    survivors
+        .iter()
+        .map(|&e| keys[e as usize * arity + word])
+        .max()
+        .expect("non-empty batch")
+}
+
 impl Sink for AggregateSink {
     fn emit(&mut self, bindings: &Bindings) -> Flow {
         for slot in 0..bindings.slot_count() {
@@ -360,18 +567,25 @@ impl Sink for AggregateSink {
         // Aggregate plans mark every node sink-relevant (hardening
         // PRD 05), so the executor never asks a fold to stop on skip.
         debug_assert!(!stop_on_skip, "folds never stop on skip");
-        // Outer slots are constant across the batch: prefill once; the
-        // row loop overwrites only the leaf's key slots.
-        for slot in 0..self.binding_scratch.len() {
-            if matches!(batch.source_of(slot), LeafSource::Outer) {
-                self.binding_scratch[slot] = batch.bindings.get(slot);
-            }
+        if batch.survivors.is_empty() {
+            return Flow::Continue;
         }
-        for &entry in batch.survivors {
-            for (word, slot) in batch.key_slots.iter().enumerate() {
-                self.binding_scratch[*slot] = batch.key(entry, word);
-            }
-            self.fold_scratch_row();
+        // Group-key classification, once per batch: every group slot
+        // outer means the whole batch folds into ONE accumulator row —
+        // the trie already grouped it (PRD 02's constant-group regime).
+        let constant_group = self
+            .group_slots
+            .iter()
+            .all(|slot| matches!(batch.source_of(*slot), LeafSource::Outer));
+        match (self.seen.is_some(), constant_group) {
+            // Dedup required (the plan could not prove distinctness):
+            // the seen-set pass runs per row, but the group probe still
+            // hoists — surviving entries gather-fold like the elided
+            // path.
+            (true, true) => self.fold_batch_dedup_constant_group(batch),
+            (false, true) => self.fold_batch_constant_group(batch, batch.survivors),
+            // Varying group keys: the per-row correctness arm.
+            (_, false) => self.fold_batch_rows(batch),
         }
         Flow::Continue
     }
@@ -586,6 +800,290 @@ mod tests {
         fn emit(&mut self) {}
         fn skip(&mut self, _: usize) {
             self.skips += 1;
+        }
+    }
+
+    /// PRD 02 (docs/perf/): the constant-group fast path — one group
+    /// probe per run (memoized across batches), gather folds for every
+    /// op — is value-identical to the per-row seen path at every batch
+    /// size, on the stats shape (group key bound above the leaf).
+    #[test]
+    fn constant_group_batches_fold_once_per_run() {
+        let dir = TempDir::new("sink-constant-group");
+        let schema = schema();
+        // 8 accounts x 300 postings: each account's leaf subtree spans
+        // several batches at size 128 — the run memo holds probes at 8.
+        let mut postings = Vec::new();
+        let mut id = 0u64;
+        for account in 0..8u64 {
+            for i in 0..300i64 {
+                postings.push((id, account, i - 150));
+                id += 1;
+            }
+        }
+        let views = views_of(&dir, &schema, &postings, &[]);
+        let normalized = NormalizedQuery {
+            occurrences: vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
+            residuals: vec![],
+        };
+        // Hand-factored GJ plan: n0 binds the account, n1 the
+        // (id, amount) suffix — the stats shape, where the leaf's group
+        // key is outer.
+        let plan = crate::plan::fj::FjPlan {
+            nodes: vec![
+                crate::plan::fj::Node {
+                    subatoms: vec![crate::plan::fj::Subatom {
+                        occ: OccId(0),
+                        vars: vec![VarId(1)],
+                    }],
+                },
+                crate::plan::fj::Node {
+                    subatoms: vec![crate::plan::fj::Subatom {
+                        occ: OccId(0),
+                        vars: vec![VarId(0), VarId(2)],
+                    }],
+                },
+            ],
+        };
+        let sink_vars: BTreeSet<VarId> = [VarId(0), VarId(1), VarId(2)].into();
+        let plan =
+            validate(&plan, &normalized, &schema, vec![0; 2], &sink_vars).expect("valid plan");
+        let finds = |plan: &ValidatedPlan| {
+            vec![
+                FindSpec::Var {
+                    slot: plan.slot_of(VarId(1)),
+                },
+                FindSpec::Agg {
+                    op: AggOp::Sum,
+                    over_slot: Some(plan.slot_of(VarId(2))),
+                    signed: true,
+                },
+                FindSpec::Agg {
+                    op: AggOp::Count,
+                    over_slot: None,
+                    signed: false,
+                },
+                FindSpec::Agg {
+                    op: AggOp::Min,
+                    over_slot: Some(plan.slot_of(VarId(2))),
+                    signed: true,
+                },
+                FindSpec::Agg {
+                    op: AggOp::Max,
+                    over_slot: Some(plan.slot_of(VarId(2))),
+                    signed: true,
+                },
+            ]
+        };
+        // The fast path (elided) vs the per-row seen path, across sizes.
+        let mut reference: Option<Vec<Vec<u64>>> = None;
+        for (batch, distinct) in [(1usize, true), (7, true), (128, true), (128, false)] {
+            let mut colts = colts_for(&plan, &views);
+            let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
+            let mut sink = AggregateSink::new(finds(&plan), plan.slots().len(), distinct);
+            Executor::with_batch_size(&plan, batch).execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            );
+            if distinct && batch == 128 {
+                assert_eq!(
+                    sink.group_probes, 8,
+                    "one probe per group run, memoized across batches"
+                );
+            }
+            let mut rows = sink.into_rows().expect("in range");
+            rows.sort_unstable();
+            // Per account: Sum = -150, Count = 300, Min = -150, Max = 149.
+            assert_eq!(rows.len(), 8, "batch {batch} distinct {distinct}");
+            assert_eq!(
+                rows[0],
+                vec![
+                    0,
+                    i64_to_word(-150),
+                    300,
+                    i64_to_word(-150),
+                    i64_to_word(149)
+                ],
+                "batch {batch} distinct {distinct}"
+            );
+            match &reference {
+                None => reference = Some(rows),
+                Some(r) => assert_eq!(*r, rows, "batch {batch} distinct {distinct}"),
+            }
+        }
+    }
+
+    /// PRD 02: the dedup-then-gather arm — duplicate full bindings
+    /// collapse before the fold, identically at every batch size, with
+    /// the group probe still hoisted.
+    #[test]
+    fn dedup_constant_group_collapses_duplicates_before_folding() {
+        let dir = TempDir::new("sink-dedup-constant");
+        let schema = schema();
+        // Serials exist in storage but the query does not bind them:
+        // (account, amount) bindings collapse. Account 1 holds amounts
+        // {5, 5, 7} -> {5, 7}; account 2 holds {5, 5, 5} -> {5}.
+        let postings = vec![
+            (1u64, 1u64, 5i64),
+            (2, 1, 5),
+            (3, 1, 7),
+            (4, 2, 5),
+            (5, 2, 5),
+            (6, 2, 5),
+        ];
+        let views = views_of(&dir, &schema, &postings, &[]);
+        let normalized = NormalizedQuery {
+            occurrences: vec![occurrence(0, POSTING, &[(1, 0), (2, 1)])],
+            residuals: vec![],
+        };
+        let plan = crate::plan::fj::FjPlan {
+            nodes: vec![
+                crate::plan::fj::Node {
+                    subatoms: vec![crate::plan::fj::Subatom {
+                        occ: OccId(0),
+                        vars: vec![VarId(0)],
+                    }],
+                },
+                crate::plan::fj::Node {
+                    subatoms: vec![crate::plan::fj::Subatom {
+                        occ: OccId(0),
+                        vars: vec![VarId(1)],
+                    }],
+                },
+            ],
+        };
+        let sink_vars: BTreeSet<VarId> = [VarId(0), VarId(1)].into();
+        let plan =
+            validate(&plan, &normalized, &schema, vec![0; 2], &sink_vars).expect("valid plan");
+        let finds = |plan: &ValidatedPlan| {
+            vec![
+                FindSpec::Var {
+                    slot: plan.slot_of(VarId(0)),
+                },
+                FindSpec::Agg {
+                    op: AggOp::Sum,
+                    over_slot: Some(plan.slot_of(VarId(1))),
+                    signed: true,
+                },
+                FindSpec::Agg {
+                    op: AggOp::Count,
+                    over_slot: None,
+                    signed: false,
+                },
+            ]
+        };
+        for batch in [1usize, 2, 128] {
+            let mut colts = colts_for(&plan, &views);
+            let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
+            // distinct_bindings = false: the dedup arm is mandatory.
+            let mut sink = AggregateSink::new(finds(&plan), plan.slots().len(), false);
+            Executor::with_batch_size(&plan, batch).execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            );
+            let mut rows = sink.into_rows().expect("in range");
+            rows.sort_unstable();
+            assert_eq!(
+                rows,
+                vec![vec![1, i64_to_word(12), 2], vec![2, i64_to_word(5), 1],],
+                "batch {batch}"
+            );
+        }
+    }
+
+    /// PRD 02: an aggregate over a slot bound above the leaf folds as
+    /// value x count (i128/u128 — identical to count additions),
+    /// including the deterministic finalize-time overflow.
+    #[test]
+    fn constant_over_slot_folds_value_times_count() {
+        let dir = TempDir::new("sink-constant-over");
+        let schema = schema();
+        // Sum(account) grouped by account: the over-slot is the group
+        // slot itself — outer at the leaf. Account big enough that
+        // value x count overflows u64 (caught at finalize) for one
+        // group, stays in range for the other.
+        let big = u64::MAX / 2;
+        let mut postings = vec![];
+        for id in 0..5u64 {
+            postings.push((id, big, 1i64));
+        }
+        for id in 5..8u64 {
+            postings.push((id, 7u64, 1i64));
+        }
+        let views = views_of(&dir, &schema, &postings, &[]);
+        let normalized = NormalizedQuery {
+            occurrences: vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
+            residuals: vec![],
+        };
+        let plan = crate::plan::fj::FjPlan {
+            nodes: vec![
+                crate::plan::fj::Node {
+                    subatoms: vec![crate::plan::fj::Subatom {
+                        occ: OccId(0),
+                        vars: vec![VarId(1)],
+                    }],
+                },
+                crate::plan::fj::Node {
+                    subatoms: vec![crate::plan::fj::Subatom {
+                        occ: OccId(0),
+                        vars: vec![VarId(0), VarId(2)],
+                    }],
+                },
+            ],
+        };
+        let sink_vars: BTreeSet<VarId> = [VarId(0), VarId(1), VarId(2)].into();
+        let plan =
+            validate(&plan, &normalized, &schema, vec![0; 2], &sink_vars).expect("valid plan");
+        let finds = |plan: &ValidatedPlan| {
+            vec![
+                FindSpec::Var {
+                    slot: plan.slot_of(VarId(1)),
+                },
+                FindSpec::Agg {
+                    op: AggOp::Sum,
+                    over_slot: Some(plan.slot_of(VarId(1))),
+                    signed: false,
+                },
+            ]
+        };
+        // Overflow parity: the batch path and the per-row path yield the
+        // same typed error (big x 5 > u64::MAX).
+        for distinct in [true, false] {
+            let mut colts = colts_for(&plan, &views);
+            let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
+            let mut sink = AggregateSink::new(finds(&plan), plan.slots().len(), distinct);
+            Executor::with_batch_size(&plan, 128).execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            );
+            let err = sink.into_rows().unwrap_err();
+            assert!(matches!(err, Error::Overflow { find: 1 }), "{err:?}");
+        }
+        // Value parity in range: drop the big account.
+        let dir2 = TempDir::new("sink-constant-over-ok");
+        let views = views_of(&dir2, &schema, &postings[5..], &[]);
+        for distinct in [true, false] {
+            let mut colts = colts_for(&plan, &views);
+            let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
+            let mut sink = AggregateSink::new(finds(&plan), plan.slots().len(), distinct);
+            Executor::with_batch_size(&plan, 128).execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            );
+            let rows = sink.into_rows().expect("in range");
+            assert_eq!(rows, vec![vec![7, 21]], "distinct {distinct}");
         }
     }
 

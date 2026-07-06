@@ -686,6 +686,42 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// PRD 02 (docs/perf/): the aggregate families' fold regimes, pinned.
+    /// balance binds the posting serial — distinct bindings proven, the
+    /// seen-set elided, the constant-group fast path bare. stats binds
+    /// no unique coverage **by design** (collapsing duplicate
+    /// (kind, amount, at, instrument) bindings is the family's set
+    /// semantics), so its dedup pass is semantically required and the
+    /// batch fold runs the dedup-then-gather arm. A planner change that
+    /// flips either regime is a semantics bug, not a tuning change.
+    #[test]
+    fn aggregate_family_fold_regimes_are_pinned() {
+        let dir = std::env::temp_dir().join("bumbledb-bench-families-elide");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let db = bumbledb::Db::create(&dir, schema()).expect("create");
+        let mut seen: Vec<(&str, bool)> = Vec::new();
+        for family in all() {
+            let query = (family.query)();
+            if !query
+                .finds
+                .iter()
+                .any(|f| matches!(f, bumbledb::FindTerm::Aggregate { .. }))
+            {
+                continue;
+            }
+            let prepared = db.prepare(&query).expect("prepares");
+            seen.push((family.name, prepared.distinct_bindings()));
+        }
+        assert_eq!(
+            seen,
+            vec![("balance", true), ("stats", false)],
+            "the aggregate roster and its fold regimes"
+        );
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn every_golden_equals_its_translation() {
         for family in all() {

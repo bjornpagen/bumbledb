@@ -738,6 +738,14 @@ impl PreparedQuery<'_> {
     /// metadata a generic host needs to type an (even empty) result. The
     /// buffer itself stays typeless: stamping owned types per execution
     /// would allocate on the warm path.
+    /// Whether the plan proved distinct bindings (the aggregate sink's
+    /// seen-set elision, 30-execution) — the regime observable for the
+    /// batch-fold fast path (docs/perf/ PRD 02).
+    #[must_use]
+    pub fn distinct_bindings(&self) -> bool {
+        self.plan.distinct_bindings()
+    }
+
     pub fn column_types(&self) -> impl Iterator<Item = &ValueType> {
         self.finds.iter().map(|(_, ty)| ty)
     }
@@ -1053,7 +1061,9 @@ fn run_join<C: crate::exec::run::Counters>(
     // sink type — no per-emit enum branch on the hot path.
     match sink {
         EitherSink::Projection(s) => executor.execute(plan, &mut memo.colts, bindings, s, counters),
-        EitherSink::Aggregate(s) => executor.execute(plan, &mut memo.colts, bindings, s, counters),
+        EitherSink::Aggregate(s) => {
+            executor.execute(plan, &mut memo.colts, bindings, s.as_mut(), counters);
+        }
     }
     Ok(())
 }
@@ -1065,11 +1075,11 @@ fn make_sink(finds: &[(FindSpec, ValueType)], slot_count: usize, distinct: bool)
         .iter()
         .any(|(spec, _)| matches!(spec, FindSpec::Agg { .. }));
     if has_aggregates {
-        EitherSink::Aggregate(AggregateSink::new(
+        EitherSink::Aggregate(Box::new(AggregateSink::new(
             finds.iter().map(|(spec, _)| *spec).collect(),
             slot_count,
             distinct,
-        ))
+        )))
     } else {
         EitherSink::Projection(ProjectionSink::new(
             finds
@@ -1087,7 +1097,10 @@ fn make_sink(finds: &[(FindSpec, ValueType)], slot_count: usize, distinct: bool)
 /// `dyn` — the variant is fixed per prepared query).
 enum EitherSink {
     Projection(ProjectionSink),
-    Aggregate(AggregateSink),
+    /// Boxed: the batch-fold scratch (PRD 02) grew the sink past the
+    /// variant-size lint; one prepared query holds one sink, and the
+    /// indirection is paid once per batch, never per row.
+    Aggregate(Box<AggregateSink>),
 }
 
 impl EitherSink {

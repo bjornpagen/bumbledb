@@ -87,3 +87,37 @@ All in `exec/sink.rs`, on `AggregateSink::emit_batch` (from PRD 01).
 
 Kernelized folds (03 — this PRD's loops are plain Rust), suffix gather
 fusion (05), the seen-set map layout (06), finalize (08).
+
+## Result (2026-07-06, run bench-out/2026-07-06T23-46-17Z)
+
+**Premise correction, found by this PRD's own regime test.** The gates
+assumed stats folds on the elided path. It cannot: stats binds no unique
+coverage **by design** — collapsing duplicate (kind, amount, at,
+instrument) bindings is the family's set semantics, so its dedup pass is
+load-bearing. The pinned regime roster (bench test
+`aggregate_family_fold_regimes_are_pinned`): balance elides, stats
+dedups. skew, listed in an early task note as an aggregate, is a
+projection family — no PRD 02 gate applies to it. Consequence: the
+implementation grew a third arm beyond the PRD's two — dedup-then-gather
+(seen-set pass per row, first-seen entries gather-folded through the same
+hoisted constant-group core) — so the group probe hoist applies to BOTH
+aggregate regimes.
+
+Measured (ALL-WIN held, verify green, emits digests identical, no family
+regressed — every p50 improved):
+
+- **balance**: p50 12.3 → 2.6 µs (−79%); p95 1,110.2 → 304.8 µs (gate
+  ≤ 700 ✓); traced `jp_descend_n1` 774.3 → **35.9 µs** (gate ≤ 300 ✓) —
+  50,813 rows folding at ~0.7 ns/row in descend; the elided
+  constant-group path is essentially free.
+- **stats**: p50 4,130.9 → 2,265.4 µs (−45%); `jp_descend_n1` 3,634.9 →
+  1,601.5 µs (−56%). The elision-premised gates (p50 ≤ 1,600,
+  descend ≤ 900) miss: the remaining 1,601 µs is ~16 ns/row of
+  semantically-required seen-set insert (4-word full-binding keys,
+  100,000 rows) — exactly PRD 06's sink-map layout target, recorded
+  there as the follow-on expectation.
+- Group probes: the unit test pins one probe per group run (8 probes for
+  8 groups across 24 batches, memoized); per-row probing is gone from
+  both aggregate arms.
+- Spillover wins from the cheaper leaf: fk_walk p50 −31%, chain −29%,
+  range −19%, skew −33%, spread −6% / p95 −22%.
