@@ -10,6 +10,12 @@ pub struct WordMap<V> {
     /// `capacity * arity` key words.
     keys: Vec<u64>,
     values: Vec<Option<V>>,
+    /// Occupied slot indices in insertion order — docs/perf/05's dense
+    /// rule, extended to the sink maps: iteration *and clearing* walk
+    /// O(len), never O(capacity), so one hot execution's high-water
+    /// cannot tax every later execution's finalize and reset (the
+    /// traced 49.9 µs `fk_walk` finalize over 109 rows).
+    dense: Vec<u32>,
     len: usize,
 }
 
@@ -32,6 +38,7 @@ impl<V> WordMap<V> {
             arity,
             keys: Vec::new(),
             values: Vec::new(),
+            dense: Vec::new(),
             len: 0,
         }
     }
@@ -42,10 +49,12 @@ impl<V> WordMap<V> {
     }
 
     /// Empties the map, retaining capacity (the zero-alloc reuse path).
+    /// O(occupied): only the dense-listed slots are touched.
     pub fn clear(&mut self) {
-        for value in &mut self.values {
-            *value = None;
+        for &idx in &self.dense {
+            self.values[idx as usize] = None;
         }
+        self.dense.clear();
         self.len = 0;
     }
 
@@ -65,6 +74,8 @@ impl<V> WordMap<V> {
         if inserted {
             self.keys[idx * self.arity..(idx + 1) * self.arity].copy_from_slice(key);
             self.values[idx] = Some(make());
+            self.dense
+                .push(u32::try_from(idx).expect("slot index fits u32"));
             self.len += 1;
         }
         (
@@ -81,11 +92,17 @@ impl<V> WordMap<V> {
         self.get_or_insert_with(key, V::default).1
     }
 
-    /// Iterates `(key words, value)` in storage order (unordered).
+    /// Iterates `(key words, value)` in insertion order — O(len) via the
+    /// dense list, whatever the capacity.
     pub fn iter(&self) -> impl Iterator<Item = (&[u64], &V)> {
-        self.values.iter().enumerate().filter_map(|(idx, v)| {
-            v.as_ref()
-                .map(|value| (&self.keys[idx * self.arity..(idx + 1) * self.arity], value))
+        self.dense.iter().map(move |&idx| {
+            let idx = idx as usize;
+            (
+                &self.keys[idx * self.arity..(idx + 1) * self.arity],
+                self.values[idx]
+                    .as_ref()
+                    .expect("dense entries are occupied"),
+            )
         })
     }
 
@@ -107,17 +124,23 @@ impl<V> WordMap<V> {
     fn grow(&mut self) {
         let new_capacity = (self.values.len() * 2).max(8);
         let old_keys = std::mem::replace(&mut self.keys, vec![0; new_capacity * self.arity]);
-        let old_values = std::mem::replace(
+        let mut old_values = std::mem::replace(
             &mut self.values,
             std::iter::repeat_with(|| None).take(new_capacity).collect(),
         );
-        for (idx, value) in old_values.into_iter().enumerate() {
-            if let Some(value) = value {
-                let key = &old_keys[idx * self.arity..(idx + 1) * self.arity];
-                let new_idx = self.probe(key);
-                self.keys[new_idx * self.arity..(new_idx + 1) * self.arity].copy_from_slice(key);
-                self.values[new_idx] = Some(value);
-            }
+        // Re-probe in dense (insertion) order so iteration order — and
+        // with it every downstream determinism property — survives
+        // growth. All keys are distinct; the probe lands on empties.
+        let old_dense = std::mem::take(&mut self.dense);
+        self.dense.reserve(old_dense.len());
+        for &old_idx in &old_dense {
+            let old_idx = old_idx as usize;
+            let key = &old_keys[old_idx * self.arity..(old_idx + 1) * self.arity];
+            let new_idx = self.probe(key);
+            self.keys[new_idx * self.arity..(new_idx + 1) * self.arity].copy_from_slice(key);
+            self.values[new_idx] = old_values[old_idx].take();
+            self.dense
+                .push(u32::try_from(new_idx).expect("slot index fits u32"));
         }
     }
 }
@@ -125,6 +148,40 @@ impl<V> WordMap<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The dense rule (docs/perf/05, extended to sink maps): after a hot
+    /// execution inflates capacity, iteration and clearing stay O(len) —
+    /// pinned structurally by insertion-order iteration over a
+    /// high-water map.
+    #[test]
+    fn iteration_is_dense_and_insertion_ordered_after_high_water() {
+        let mut map: WordMap<u64> = WordMap::new(1);
+        // The hot execution: 50k entries inflate capacity.
+        for i in 0..50_000u64 {
+            map.get_or_insert_with(&[i], || i);
+        }
+        assert_eq!(map.len(), 50_000);
+        // The cold execution: clear (O(occupied)) then a handful.
+        map.clear();
+        assert_eq!(map.len(), 0);
+        assert_eq!(map.iter().count(), 0, "cleared maps iterate nothing");
+        for i in [7u64, 3, 9] {
+            map.get_or_insert_with(&[i], || i * 10);
+        }
+        let entries: Vec<(u64, u64)> = map.iter().map(|(k, v)| (k[0], *v)).collect();
+        assert_eq!(
+            entries,
+            vec![(7, 70), (3, 30), (9, 90)],
+            "exactly the occupied entries, in insertion order"
+        );
+        // Growth preserves insertion order (re-probed via the dense list).
+        let mut grown: WordMap<()> = WordMap::new(1);
+        for i in (0..100u64).rev() {
+            grown.insert(&[i]);
+        }
+        let order: Vec<u64> = grown.iter().map(|(k, ())| k[0]).collect();
+        assert_eq!(order, (0..100u64).rev().collect::<Vec<_>>());
+    }
 
     #[test]
     fn insert_dedups_and_survives_rehash() {
