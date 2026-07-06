@@ -168,6 +168,16 @@ mod tests {
                 }
                 // One uniform tag: ~2 accounts x ~200 postings + probes.
                 "skew" => 8 * (2 * (sizes.postings / sizes.accounts) + 8),
+                // Param-less self-join on transfer: the cover draws every
+                // posting once (~postings (t, x) keys) and the second
+                // occurrence ~2-3 per surviving entry (measured 4.0x
+                // postings at S) — 6x margin.
+                "spread" => 6 * sizes.postings,
+                // The cyclic self-join: the measured S plan iterates one
+                // full occurrence and probes the closing edges — bounded
+                // by a small multiple of postings (the cold ~1% window
+                // keeps the surviving suffix tiny).
+                "triangle" => 8 * sizes.postings,
                 other => unreachable!("unregistered family {other}"),
             };
             eprintln!(

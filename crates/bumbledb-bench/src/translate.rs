@@ -285,9 +285,10 @@ pub mod goldens {
     /// posting's account equated to the account's id.
     pub const FK_WALK: &str = "SELECT DISTINCT t2.\"name\", t0.\"amount\" FROM \"Posting\" AS t0, \"Account\" AS t1, \"Holder\" AS t2 WHERE t0.\"account\" = ?1 AND t1.\"id\" = ?1 AND t1.\"holder\" = t2.\"id\"";
 
-    /// balance — `Q(a, Sum(amount)) :- Posting(account = a, amount),
-    /// Account(id = a, holder = ?0)`.
-    pub const BALANCE: &str = "SELECT v0, SUM(v1) FROM (SELECT DISTINCT t0.\"account\" AS v0, t0.\"amount\" AS v1 FROM \"Posting\" AS t0, \"Account\" AS t1 WHERE t0.\"account\" = t1.\"id\" AND t1.\"holder\" = ?1) GROUP BY v0";
+    /// balance — `Q(a, Sum(amount)) :- Posting(id, account = a, amount),
+    /// Account(id = a, holder = ?0)` — the id binding makes the fold a
+    /// true ledger balance (duplicate amounts count once each).
+    pub const BALANCE: &str = "SELECT v0, SUM(v1) FROM (SELECT DISTINCT t0.\"account\" AS v0, t0.\"amount\" AS v1, t0.\"id\" AS v2 FROM \"Posting\" AS t0, \"Account\" AS t1 WHERE t0.\"account\" = t1.\"id\" AND t1.\"holder\" = ?1) GROUP BY v0";
 
     /// chain — `Q(region, amount, at) :- Posting(account = a, amount, at),
     /// Account(id = a, holder = h, status = Open), Holder(id = h, region)`
@@ -313,6 +314,16 @@ pub mod goldens {
     /// `label = ?0` — the small-side/hot-side shape where dynamic cover
     /// choice decides.
     pub const SKEW: &str = "SELECT DISTINCT t2.\"label\", t0.\"amount\" FROM \"Posting\" AS t0, \"AccountTag\" AS t1, \"Tag\" AS t2 WHERE t0.\"account\" = t1.\"account\" AND t1.\"tag\" = t2.\"id\" AND t2.\"label\" = ?1";
+
+    /// spread — `Q(x, y) :- Posting(transfer = t, amount = x),
+    /// Posting(transfer = t, amount = y)` with `x < y` — the cross-atom
+    /// residual family.
+    pub const SPREAD: &str = "SELECT DISTINCT t0.\"amount\", t1.\"amount\" FROM \"Posting\" AS t0, \"Posting\" AS t1 WHERE t0.\"transfer\" = t1.\"transfer\" AND t0.\"amount\" < t1.\"amount\"";
+
+    /// triangle — `Q(a) :- Posting(account = a, instrument = i),
+    /// Posting(instrument = i, transfer = w), Posting(transfer = w,
+    /// account = a)` with `?0 <= a < ?1` — the cyclic family.
+    pub const TRIANGLE: &str = "SELECT DISTINCT t0.\"account\" FROM \"Posting\" AS t0, \"Posting\" AS t1, \"Posting\" AS t2 WHERE t0.\"instrument\" = t1.\"instrument\" AND t1.\"transfer\" = t2.\"transfer\" AND t0.\"account\" = t2.\"account\" AND t0.\"account\" >= ?1 AND t0.\"account\" < ?2";
 }
 
 #[cfg(test)]
@@ -383,7 +394,7 @@ mod tests {
 
     #[test]
     fn balance_matches_its_hand_written_golden() {
-        // Q(a, Sum(amount)) :- Posting(account = a, amount),
+        // Q(a, Sum(amount)) :- Posting(id, account = a, amount),
         //                      Account(id = a, holder = ?0).
         let query = Query {
             finds: vec![
@@ -397,6 +408,7 @@ mod tests {
                 Atom {
                     relation: ids::POSTING,
                     bindings: vec![
+                        (ids::posting::ID, var(2)),
                         (ids::posting::ACCOUNT, var(0)),
                         (ids::posting::AMOUNT, var(1)),
                     ],

@@ -1,4 +1,4 @@
-//! The eight gated read families (docs/architecture/50-validation.md): exact IR, exact
+//! The ten gated read families (docs/architecture/50-validation.md): exact IR, exact
 //! param policy, hand-written SQL golden, gate classification. This file
 //! of queries **is** the benchmark's identity — `digest()` keys the
 //! verify stamp and every report on it.
@@ -10,7 +10,7 @@ use crate::schema::ids;
 use crate::translate::goldens;
 
 /// Whether a family gates the suite (loses ⇒ the run fails) or merely
-/// reports. All eight read families gate (`00-product.md`: every family
+/// reports. All ten read families gate (`00-product.md`: every family
 /// must win).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -196,8 +196,12 @@ fn range_params(cfg: &GenConfig) -> Vec<Vec<Value>> {
         .collect()
 }
 
-/// balance — `Q(a, Sum(amount)) :- Posting(account = a, amount),
-/// Account(id = a, holder = ?0)`.
+/// balance — `Q(a, Sum(amount)) :- Posting(id, account = a, amount),
+/// Account(id = a, holder = ?0)`. The serial id binding makes every
+/// posting a distinct binding, so the fold is the *ledger balance* —
+/// duplicate amounts on one account count once each, not once total —
+/// and the distinct-bindings elision engages (unique coverage), putting
+/// the seen-set-elided aggregate path under the oracle.
 fn balance_query() -> Query {
     Query {
         finds: vec![
@@ -211,6 +215,7 @@ fn balance_query() -> Query {
             Atom {
                 relation: ids::POSTING,
                 bindings: vec![
+                    (ids::posting::ID, var(2)),
                     (ids::posting::ACCOUNT, var(0)),
                     (ids::posting::AMOUNT, var(1)),
                 ],
@@ -365,7 +370,113 @@ fn skew_params(cfg: &GenConfig) -> Vec<Vec<Value>> {
     ]
 }
 
-/// The registry: the eight, in the suite's canonical order.
+/// spread — `Q(x, y) :- Posting(transfer = t, amount = x),
+/// Posting(transfer = t, amount = y)` with `x < y` — the cross-atom
+/// residual family: a self-join whose ordered comparison exercises
+/// `PlacedComparison` placement, per-node residual evaluation, and
+/// survivor compaction (no other family or generated shape did).
+fn spread_query() -> Query {
+    Query {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![
+            Atom {
+                relation: ids::POSTING,
+                bindings: vec![
+                    (ids::posting::TRANSFER, var(2)),
+                    (ids::posting::AMOUNT, var(0)),
+                ],
+            },
+            Atom {
+                relation: ids::POSTING,
+                bindings: vec![
+                    (ids::posting::TRANSFER, var(2)),
+                    (ids::posting::AMOUNT, var(1)),
+                ],
+            },
+        ],
+        predicates: vec![Comparison {
+            op: CmpOp::Lt,
+            lhs: var(0),
+            rhs: var(1),
+        }],
+    }
+}
+
+fn spread_params(_: &GenConfig) -> Vec<Vec<Value>> {
+    // Param-less full-relation family (like stats): ~1 ordered pair per
+    // transfer at any scale (2 postings per transfer), so the result is
+    // ~transfers rows — measured acceptable at S.
+    vec![vec![]]
+}
+
+/// triangle — `Q(a) :- Posting(account = a, instrument = i),
+/// Posting(instrument = i, transfer = w), Posting(transfer = w,
+/// account = a)` with `?0 <= a < ?1` — a true 3-cycle over the ledger via
+/// self-joins on Posting's three FK fields: three occurrences, three
+/// shared variables, a cyclic hypergraph — exactly the dynamic-cover
+/// stress the paper's triangle exposes.
+fn triangle_query() -> Query {
+    Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![
+            Atom {
+                relation: ids::POSTING,
+                bindings: vec![
+                    (ids::posting::ACCOUNT, var(0)),
+                    (ids::posting::INSTRUMENT, var(1)),
+                ],
+            },
+            Atom {
+                relation: ids::POSTING,
+                bindings: vec![
+                    (ids::posting::TRANSFER, var(2)),
+                    (ids::posting::INSTRUMENT, var(1)),
+                ],
+            },
+            Atom {
+                relation: ids::POSTING,
+                bindings: vec![
+                    (ids::posting::TRANSFER, var(2)),
+                    (ids::posting::ACCOUNT, var(0)),
+                ],
+            },
+        ],
+        predicates: vec![
+            Comparison {
+                op: CmpOp::Ge,
+                lhs: var(0),
+                rhs: param(0),
+            },
+            Comparison {
+                op: CmpOp::Lt,
+                lhs: var(0),
+                rhs: param(1),
+            },
+        ],
+    }
+}
+
+fn triangle_params(cfg: &GenConfig) -> Vec<Vec<Value>> {
+    // The unnarrowed cycle is O(postings x instrument-fanout) work —
+    // beyond the 10 ms budget class at S (measured) — so the account
+    // window `?0 <= a < ?1` keeps the family inside it. Windows are
+    // *cold* (they start past the hot set — any window containing hot
+    // account 0 is dominated by its posting share): three ~1%-of-
+    // accounts slices spread over the cold range, plus the empty window.
+    let sizes = Sizes::of(cfg.scale);
+    let hot = sizes.hot_accounts();
+    let width = (sizes.accounts / 100).max(1);
+    let cold = sizes.accounts - hot;
+    let window = |k: u64| {
+        let lo = hot + cold * k / 3;
+        vec![Value::U64(lo), Value::U64(lo + width)]
+    };
+    let mut sets: Vec<Vec<Value>> = (0..3).map(window).collect();
+    sets.push(vec![Value::U64(sizes.accounts), Value::U64(sizes.accounts)]);
+    sets
+}
+
+/// The registry: the ten, in the suite's canonical order.
 #[must_use]
 pub fn all() -> &'static [Family] {
     &[
@@ -432,6 +543,22 @@ pub fn all() -> &'static [Family] {
             params: skew_params,
             golden_sql: goldens::SKEW,
             param_policy: "2 hot-attached tag labels (tags 0 and 97) + 2 uniform tag labels.",
+        },
+        Family {
+            name: "spread",
+            kind: Kind::Gate,
+            query: spread_query,
+            params: spread_params,
+            golden_sql: goldens::SPREAD,
+            param_policy: "No params — full-relation cross-atom residual; one empty set.",
+        },
+        Family {
+            name: "triangle",
+            kind: Kind::Gate,
+            query: triangle_query,
+            params: triangle_params,
+            golden_sql: goldens::TRIANGLE,
+            param_policy: "3 cold ~1%-of-accounts windows (?0 <= a < ?1, past the hot set) + the empty window.",
         },
     ]
 }
@@ -545,12 +672,12 @@ mod tests {
     };
 
     #[test]
-    fn all_eight_validate_and_prepare() {
+    fn all_ten_validate_and_prepare() {
         let dir = std::env::temp_dir().join("bumbledb-bench-families");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch dir");
         let db = bumbledb::Db::create(&dir, schema()).expect("create");
-        assert_eq!(all().len(), 8);
+        assert_eq!(all().len(), 10);
         for family in all() {
             db.prepare(&(family.query)())
                 .unwrap_or_else(|e| panic!("{} fails validation: {e:?}", family.name));
@@ -575,7 +702,11 @@ mod tests {
             let a = (family.params)(&CFG);
             let b = (family.params)(&CFG);
             assert_eq!(a, b, "{} params must be seeded", family.name);
-            let expected_sets = if family.name == "stats" { 1 } else { 4 };
+            let expected_sets = if matches!(family.name, "stats" | "spread") {
+                1
+            } else {
+                4
+            };
             assert_eq!(a.len(), expected_sets, "{}", family.name);
         }
         // The documented misses.
@@ -640,6 +771,13 @@ mod tests {
         let pin = |name: &str| -> f64 {
             match name {
                 "point" | "string" | "fk_walk" | "balance" => 16.0,
+                // The cyclic family: the closing edge is fully correlated
+                // with the opening one, which a per-step fanout model
+                // cannot see — the paper's triangle exists precisely
+                // because pairwise estimates explode on cycles. The pin
+                // documents the class rather than pretending the
+                // estimator can beat it (measured 5.2e3 at S).
+                "triangle" => 8192.0,
                 _ => 64.0,
             }
         };
@@ -685,6 +823,136 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// PRD 08 (docs/hardening): the balance family is a *true balance* —
+    /// two equal-amount postings on one account sum to both, engine and
+    /// translated SQL alike (the pre-rebind query collapsed them into
+    /// one distinct (account, amount) pair).
+    /// The minimal consistent slice: one holder/account, two postings of
+    /// amount 5 on distinct transfers (every FK target present).
+    fn equal_amount_slice() -> Vec<(bumbledb::RelationId, Vec<Value>)> {
+        vec![
+            (ids::CURRENCY, vec![Value::U64(0), s("USD")]),
+            (ids::HOLDER, vec![Value::U64(0), s("h"), Value::Enum(0)]),
+            (
+                ids::INSTRUMENT,
+                vec![Value::U64(0), s("SYM"), Value::U64(0), Value::Enum(0)],
+            ),
+            (
+                ids::ACCOUNT,
+                vec![
+                    Value::U64(0),
+                    Value::U64(0),
+                    Value::U64(0),
+                    Value::Enum(0),
+                    Value::I64(0),
+                ],
+            ),
+            (
+                ids::TRANSFER,
+                vec![
+                    Value::U64(0),
+                    Value::I64(0),
+                    Value::Bytes(vec![0; 16].into()),
+                ],
+            ),
+            (
+                ids::TRANSFER,
+                vec![
+                    Value::U64(1),
+                    Value::I64(1),
+                    Value::Bytes(vec![1; 16].into()),
+                ],
+            ),
+            (
+                ids::POSTING,
+                vec![
+                    Value::U64(0),
+                    Value::U64(0),
+                    Value::U64(0),
+                    Value::U64(0),
+                    Value::I64(5),
+                    Value::I64(0),
+                    s("m"),
+                    Value::Bool(false),
+                ],
+            ),
+            (
+                ids::POSTING,
+                vec![
+                    Value::U64(1),
+                    Value::U64(1),
+                    Value::U64(0),
+                    Value::U64(0),
+                    Value::I64(5),
+                    Value::I64(1),
+                    s("m"),
+                    Value::Bool(false),
+                ],
+            ),
+        ]
+    }
+
+    #[test]
+    fn balance_counts_equal_amounts_separately() {
+        let rows = equal_amount_slice();
+        // Engine side.
+        let dir = std::env::temp_dir().join("bumbledb-bench-true-balance");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let db = bumbledb::Db::create(&dir, schema()).expect("create");
+        db.write(|tx| {
+            for (rel, values) in &rows {
+                tx.insert_dyn(*rel, values)?;
+            }
+            Ok(())
+        })
+        .expect("seed");
+        let mut prepared = db.prepare(&balance_query()).expect("prepare");
+        let out = db
+            .read(|snap| snap.execute_collect(&mut prepared, &[Value::U64(0)]))
+            .expect("execute");
+        assert_eq!(out.len(), 1);
+        assert_eq!(
+            out.get(0, 1),
+            bumbledb::ResultValue::I64(10),
+            "both amount-5 postings count"
+        );
+
+        // Translated-SQL side, over the identical rows.
+        let conn = rusqlite::Connection::open_in_memory().expect("sqlite");
+        for statement in crate::sqlmap::ddl(schema()) {
+            conn.execute(&statement, []).expect("ddl");
+        }
+        for (rel, values) in &rows {
+            let relation = schema().relation(*rel);
+            let placeholders = (1..=relation.fields().len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let params: Vec<rusqlite::types::Value> =
+                values.iter().map(crate::sqlmap::to_sql_value).collect();
+            conn.execute(
+                &format!(
+                    "INSERT INTO \"{}\" VALUES ({placeholders})",
+                    relation.name()
+                ),
+                rusqlite::params_from_iter(params),
+            )
+            .expect("insert");
+        }
+        let sum: i64 = conn
+            .query_row(goldens::BALANCE, [0i64], |row| row.get(1))
+            .expect("query");
+        assert_eq!(sum, 10, "the golden agrees");
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn s(text: &str) -> Value {
+        Value::String(text.as_bytes().into())
+    }
+
     /// The generator attaches the skew params' tags to hot accounts at S.
     #[test]
     fn skew_tags_are_hot_attached() {
@@ -701,7 +969,7 @@ mod tests {
     }
 
     #[test]
-    fn the_query_list_renders_all_eight_sections() {
+    fn the_query_list_renders_all_ten_sections() {
         let md = render_queries_md();
         assert!(md.starts_with("# The read query families"));
         for family in all() {
@@ -714,6 +982,6 @@ mod tests {
             assert!(md.contains(family.param_policy), "{} policy", family.name);
         }
         assert!(md.contains("Family-list digest: `"));
-        assert_eq!(md.matches("```sql").count(), 8);
+        assert_eq!(md.matches("```sql").count(), 10);
     }
 }
