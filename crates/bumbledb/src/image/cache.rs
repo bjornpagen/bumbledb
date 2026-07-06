@@ -25,7 +25,11 @@ struct CacheInner {
 }
 
 /// The cross-transaction image cache, shared by reader threads. The mutex
-/// covers map operations only — never a build.
+/// covers map operations only — never a build — and every critical
+/// section is panic-free (map probes, Arc clones, generation compares),
+/// so the `expect("cache mutex")` unwraps can never observe poison from
+/// this module's own code. Keep it that way: builds, decodes, and
+/// anything else that can panic stay outside the lock.
 pub struct ImageCache {
     inner: Mutex<CacheInner>,
     #[cfg(feature = "trace")]
@@ -86,18 +90,6 @@ impl ImageCache {
         }
     }
 
-    /// Returns the image of `rel` at the reader's generation, building it
-    /// outside the lock on a miss. Two same-generation readers racing to
-    /// build may both build; insert-if-absent means the loser adopts the
-    /// winner's `Arc` and drops its own (accepted waste, no latch).
-    ///
-    /// # Errors
-    ///
-    /// Build errors (`Lmdb`, `Corruption`) propagate.
-    ///
-    /// # Panics
-    ///
-    /// Only on a poisoned cache mutex (a prior panic while holding it).
     /// The resident image for `(rel, current generation)` — **never
     /// builds** (docs/architecture/30-execution.md: prepare-time statistics peek; a cold
     /// cache falls back to schema-derived bounds and floors).
@@ -115,6 +107,18 @@ impl ImageCache {
         Ok(inner.map.get(&(rel, generation)).map(Arc::clone))
     }
 
+    /// Returns the image of `rel` at the reader's generation, building it
+    /// outside the lock on a miss. Two same-generation readers racing to
+    /// build may both build; insert-if-absent means the loser adopts the
+    /// winner's `Arc` and drops its own (accepted waste, no latch).
+    ///
+    /// # Errors
+    ///
+    /// Build errors (`Lmdb`, `Corruption`) propagate.
+    ///
+    /// # Panics
+    ///
+    /// Only on a poisoned cache mutex (a prior panic while holding it).
     pub fn get_or_build(
         &self,
         txn: &ReadTxn<'_>,

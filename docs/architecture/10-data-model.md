@@ -212,9 +212,12 @@ database (export surface: `60-api.md`).
 **Fingerprint inputs, exhaustively:** an encoding-format version label; relations in
 declaration order — for each: name, fields in declaration order (name, structural type
 description — including the full ordered variant list for enums — and generation flag),
-and constraints in declaration order (name, ordered field list, and for FKs the target
-relation + constraint names). Relation/field/constraint ids are assigned by declaration
-order and are therefore pinned by the fingerprint without being hashed separately.
+and constraints in *materialized* order (name, ordered field list, and for FKs the
+target relation + constraint names). Materialized order = the serial auto-uniques
+first (one per serial field, in field order), then the declared constraints in
+declaration order — a deterministic function of the declaration, so constraint ids
+remain pinned by the fingerprint without being hashed separately. Relation and field
+ids are plain declaration order.
 Stated consequence, accepted: **adding an enum variant changes the fingerprint — a full
 ETL rebuild.** Closed domains are closed.
 

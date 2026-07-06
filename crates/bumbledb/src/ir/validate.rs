@@ -119,6 +119,12 @@ fn cmp_legal(op: CmpOp, value_type: &ValueType) -> bool {
 
 /// Validates a query against the schema, yielding the sealed witness.
 ///
+/// Duplicate and even statically contradictory predicates (`x < 5,
+/// x > 9`) are accepted deliberately: the semantics are exact (an empty
+/// result), and the "write the query you mean" roster rejects only
+/// shapes with no meaning at all (constant and self comparisons) — it
+/// does not extend to statically false conjunctions.
+///
 /// # Errors
 ///
 /// A distinct [`ValidationError`] per roster item; see the module docs.
@@ -730,7 +736,7 @@ mod tests {
 
     #[test]
     fn enum_ordinal_in_a_comparison_reports_the_precise_variant() {
-        // Account.status has 3 variants; ordinal 9 is out of range.
+        // Account.status has 2 variants; ordinal 9 is out of range.
         let query = Query {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![atom(ACCOUNT, vec![(2, var(0))])],

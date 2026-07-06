@@ -21,8 +21,11 @@ use crate::storage::env::ReadTxn;
 /// the byte-order-normalized word for 8-byte columns, the raw byte for
 /// 1-byte columns. `Param` resolves at bind time through the evaluator's
 /// param slice; `PendingIntern` is a raw String/Bytes literal resolved to
-/// an intern-id word per execution (the 30-execution doc — a dictionary miss means the
-/// query is empty on this snapshot, so the evaluator never sees one).
+/// an intern-id word per execution (the 30-execution doc). Miss semantics
+/// are per-operator: an `Eq` miss empties the whole query on this
+/// snapshot (the evaluator never sees it); any other operator resolves
+/// to the never-minted sentinel id, which `Ne` matches everywhere —
+/// ordinary word comparison carries the semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Const {
     Word(u64),
@@ -332,6 +335,10 @@ fn kernel_scan(
 /// Cold dual-output build (`40-storage.md`): one storage scan produces both
 /// the cacheable unfiltered image and the query-local survivor view. The
 /// caller inserts the image into the cache.
+///
+/// Test-only: the production cold path builds the unfiltered image and
+/// then filters it (`get_or_build` + `apply`) — the same two passes this
+/// fuses, kept as the executable record of 40-storage's one-scan claim.
 ///
 /// The filter pass runs over the freshly decoded columns rather than being
 /// interleaved into the decode loop — the one storage scan is the expensive

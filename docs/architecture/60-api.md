@@ -69,8 +69,10 @@ sugar, never the contract (`20-query-ir.md`).
   ids at materialization, into the buffer's byte heap), a `rows()` iterator, and
   column metadata via `PreparedQuery::column_types()` (the buffer itself stays
   typeless: stamping owned types per execution would allocate on the warm path).
-  Results are **sets**: unordered; the host sorts. Zero-alloc path: caller-provided
-  reusable buffer (`30-execution.md`); convenience path allocates a fresh buffer.
+  Contract on `Err`: the buffer's contents are unspecified — ignore `out` when
+  `execute` errors; the snapshot stays usable. Results are **sets**: unordered; the
+  host sorts. Zero-alloc path: caller-provided reusable buffer (`30-execution.md`);
+  convenience path allocates a fresh buffer.
 - Params are supplied positionally by `ParamId` at execution; count and structural
   types checked at bind time (`20-query-ir.md`).
 
@@ -97,10 +99,16 @@ a full-relation scan**: `snap.scan(relation)` yields *dynamic* facts
 sibling `snap.scan_facts::<F>()` decodes into the generated structs. The dynamic form
 pairs with `Db::bulk_load(relation, facts)`: chunks of 4096 per transaction, each
 chunk atomic, prior chunks committed on failure with the committed count carried on
-`BulkLoadError`. Mis-shaped dynamic facts are typed `FactShape` errors (decided: ETL
-input is data, not code — no panics on the import path). Explicit serial values
-preserve identity (high-water advances past them). Backup = quiesced file copy
-(`40-storage.md`).
+`BulkLoadError`. The returned/carried count is **facts that changed state**
+(idempotent re-inserts are consumed but not counted) — changed-not-consumed
+semantics, stated. Mis-shaped dynamic facts (including out-of-range relation ids)
+are typed `FactShape` errors (decided: ETL input is data, not code — no panics on
+the import path). Explicit serial values preserve identity (high-water advances past
+them). `Fact::encode_read`'s reader-side encode is host-reachable surface — a stated
+decision: it reports "this fact cannot exist" for never-interned values and is the
+membership-probe building block. `Db::compact` is safe concurrent with a writer
+(LMDB's copy transaction reads one consistent snapshot; the copy simply omits later
+commits). Backup = quiesced file copy (`40-storage.md`).
 
 ## Observability
 

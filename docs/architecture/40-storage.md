@@ -101,7 +101,20 @@ enforcement commit-time state-checking (`10-data-model.md`) with plain eager mec
 User operation order inside the closure is therefore semantically irrelevant; the
 delete-before-insert trap and FK insertion-ordering are unrepresentable. Crash
 consistency is LMDB atomicity — *tested* (crash/reopen family, `50-validation.md`).
-Dictionary entries are never removed (accepted leak).
+Dictionary entries are never removed (accepted leak; the delete path never *adds*
+one either — a never-interned value proves its fact absent, hardening PRD 01).
+
+Two write-side asymmetries, recorded as decisions rather than left as surprises:
+**R-delete verification** — deleting a fact deletes its `R` entries without
+verifying they existed (unlike `F`/`M`/`U`, whose absence is the
+`MembershipDesync` hard error); a missing `R` entry is not independently
+detectable at delete time without re-deriving every FK guard, and the class is
+covered by the same offline-sweeper deferral as the rest of M↔F↔U↔R consistency.
+**Counter overflow guards** — the serial ceiling is guarded (`SerialExhausted` at
+`u64::MAX`, because hosts can supply explicit serial values), while the storage tx
+id and row-id high-waters are not: they advance by at most one per commit/insert,
+so wrapping needs ~2⁶⁴ commits — twelve orders beyond the scale axiom, and no host
+input can jump them. The asymmetry is chosen, not overlooked.
 
 **Storage tx id:** advances **once per commit that changed logical state**; a commit
 whose delta is empty (all no-ops) does not advance it and does not invalidate any

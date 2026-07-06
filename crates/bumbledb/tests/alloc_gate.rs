@@ -5,6 +5,13 @@
 //! arena growth included, result buffer caller-provided.
 //!
 //! Run with `cargo test --features alloc-counter --test alloc_gate`.
+//!
+//! INVARIANT: this binary holds exactly ONE test function, and check.sh
+//! runs it with `--test-threads=1` (belt and suspenders). The counting
+//! allocator is process-global — a second test running concurrently
+//! would count its allocations into the measured window and turn the
+//! gate flaky. Add new gate scenarios *inside* the one test, never as
+//! sibling `#[test]`s.
 
 #![cfg(feature = "alloc-counter")]
 

@@ -17,10 +17,13 @@ and every report ends with an explicit "checked and sound" coverage record.
 | colt.md | 0 | 0 | 1 | 2 | 4 |
 | executor.md | 0 | 0 | 2 | 1 | 2 |
 | sink-pipeline.md | 0 | 0 | 1 | 1 | 3 |
-| api-schema.md | 0 | 0 | 1 | 3 | 5 |
+| api-schema.md | 0 | 0 | 1 | 3 | 6 |
 | oracle.md | 0 | 1 | 5 | 3 | 3 |
 | concurrency-crash.md | 1 | 0 | 1 | 1 | 4 |
-| **total** | **1** | **1** | **12** | **16** | **35** |
+| **total** | **1** | **1** | **12** | **16** | **36** |
+
+(The table originally undercounted api-schema's NOTEs by one; corrected
+here when the resolution ledger enumerated every finding — 66 total.)
 
 ## The headline
 
@@ -88,3 +91,118 @@ their exact repros), then `api-schema.md`; the remaining reports are
 independent and can be fixed in any order. Every report's "checked and
 sound" section is part of the record — what was verified matters as much as
 what was found.
+
+
+## Resolution ledger (closed 2026-07-06, hardening suite)
+
+Every finding, resolved. `fixed (PRD NN)` = a code change in
+`docs/hardening/NN` with its regression test; `documented (PRD 10)` = the
+behavior is correct and is now stated where a reader will look;
+`closed` = no action, with the reason. The audit is now a historical
+record with zero open items.
+
+### storage.md
+| finding | resolution |
+|---|---|
+| [LOW] Corrupt short keys panic instead of typed Corruption | fixed (PRD 06) |
+| [LOW] `create` refuses only bumbledb environments | fixed (PRD 00) |
+| [NOTE] `delete_fact` does not verify outgoing R entries | documented (PRD 10 — 40-storage records the asymmetry; offline sweeper stays deferred) |
+| [NOTE] Serial values from a no-op successful commit re-issued | fixed (PRD 01) |
+| [NOTE] No-op delete of a never-interned string interns it | fixed (PRD 01) |
+| [NOTE] Generation/row-id overflow unguarded (asymmetry) | documented (PRD 10 — 40-storage records it as a scale-axiom decision) |
+
+### image.md
+| finding | resolution |
+|---|---|
+| [LOW] Image build trusts the stored row count for slab sizing | fixed (PRD 06) |
+| [NOTE] `get_or_build` doc fused onto `peek` | fixed (PRD 10) |
+| [NOTE] `Const::PendingIntern` doc overstates miss semantics | fixed (PRD 10) |
+| [NOTE] Cold dual-output builder is `#[cfg(test)]`-only | documented (PRD 10 — the builder's doc records the production two-pass path) |
+
+### ir.md
+| finding | resolution |
+|---|---|
+| [NOTE] Stale "3 variants" test comment | fixed (PRD 10) |
+| [NOTE] `resolve_filter` Eq-miss arms unreachable but doc implies live | fixed (PRD 10) |
+| [NOTE] Duplicate/contradictory comparisons accepted | documented (PRD 10 — `validate`'s doc states the deliberate acceptance) |
+| [LOW] Var-vs-constant filters restrict only the first occurrence | closed — sound (a plan-quality skew, not a correctness hole); revisit with estimator work |
+
+### plan.md
+| finding | resolution |
+|---|---|
+| [MEDIUM] validate() accepts plans dropping a zero-var occurrence | fixed (PRD 03) |
+| [LOW] Unknown-occurrence subatoms reach the executor as panics | fixed (PRD 03) |
+| [NOTE] check_selections unreachable inside validate() | fixed (PRD 03 — demoted to debug_assert with the producer comment) |
+| [NOTE] factor() diverges from Fig. 8's text — and is right to | closed by audit (the existing comment is the record) |
+| [NOTE] Slot-layout comment + stale carve-out sentence | fixed (PRD 03 slot comment; PRD 10 carve-out sentence) |
+| [NOTE] DP inner loop O(2ⁿ·n²); table ~32 MB not ~24 MB | fixed (PRD 10 — per-mask prefix-vars memo; comment states the true sizes) |
+
+### colt.md
+| finding | resolution |
+|---|---|
+| [MEDIUM] Forcing under an outstanding token reinterprets it | fixed (PRD 04) |
+| [LOW] `Cursor::Row` iteration ignores `max` | fixed (PRD 04) |
+| [LOW] `start()` without `select()` debug-guarded only | fixed (PRD 04) |
+| [NOTE] Chunk token packing wraps at 2³²-scale chunk counts | closed by audit — beyond the u32 position space itself (closure comment at the mint site, PRD 04) |
+| [NOTE] `position_matches` truncates via `zip` | fixed (PRD 04) |
+| [NOTE] Pre-probe growth counts appends | closed by audit — at most one doubling of over-size (closure comment at the site, PRD 04) |
+| [NOTE] `WordMap::grow` re-allocates the dense list | fixed (PRD 04) |
+
+### executor.md
+| finding | resolution |
+|---|---|
+| [MEDIUM] 30-execution states the superseded cover rule | fixed (PRD 10) |
+| [MEDIUM] NEON survivor-compaction claim contradicts the code | fixed (PRD 10) |
+| [NOTE] Aggregate skip-legality on a single point of enforcement | fixed (PRD 05) |
+| [NOTE] Phase 1 hashes probes that never use the hash | fixed (PRD 05) |
+| [LOW] u32 conversion expects beyond the stated envelope | documented (PRD 06 non-goal — envelope panics stay documented `# Panics` contracts) |
+
+### sink-pipeline.md
+| finding | resolution |
+|---|---|
+| [MEDIUM] Parked placeholder COLTs pin prepare-generation images | fixed (PRD 02) |
+| [LOW] Result byte-heap offsets panic past 4 GiB | fixed (PRD 06) |
+| [NOTE] Failed execution leaves partial rows in the buffer | documented (PRD 10 — 60-api's ignore-`out`-on-`Err` contract) |
+| [NOTE] ProjectionSink's SkipSuffix safe only jointly with run.rs | fixed (PRD 05 — the bits encode the rule; both comments cross-reference) |
+| [NOTE] `resolve_filter` Eq-miss short-circuit dead on this path | fixed (PRD 10 — the doc names the belt-and-braces role) |
+
+### api-schema.md
+| finding | resolution |
+|---|---|
+| [MEDIUM] Serial ids minted in a net-no-op commit escape | fixed (PRD 01) |
+| [LOW] Deleting a never-interned string interns it | fixed (PRD 01) |
+| [LOW] Out-of-range `RelationId` panics on the ETL surface | fixed (PRD 06) |
+| [LOW] Nothing binds a `PreparedQuery` to its `Db` | fixed (PRD 00) |
+| [NOTE] `bulk_load` counts changed, not consumed | documented (PRD 10 — 60-api states changed-not-consumed) |
+| [NOTE] `compact()` concurrency safe but undocumented | documented (PRD 10) |
+| [NOTE] Constraint ids are materialized order, not declaration | documented (PRD 10 — 10-data-model states the materialized rule) |
+| [NOTE] Nested `Db::write` self-deadlocks | fixed (PRD 00) |
+| [NOTE] `Fact::encode_read` has no engine caller | documented (PRD 10 — 60-api states it as host surface) |
+| [NOTE] FK duplicate-field misuses `UniqueDuplicateField` | fixed (PRD 06 — renamed `ConstraintDuplicateField`) |
+
+### oracle.md
+| finding | resolution |
+|---|---|
+| [HIGH] The stamp does not invalidate on code changes | fixed (PRD 07 — binary fingerprint) |
+| [MEDIUM] No cross-atom residual anywhere in the oracle | fixed (PRD 08 spread family; PRD 09 generator) |
+| [MEDIUM] Gates never false; no relation ever empty | fixed (PRD 09 — the empty-store pass) |
+| [MEDIUM] No cyclic join despite 50-validation's promise | fixed (PRD 08 — triangle family) |
+| [MEDIUM] U64 aggregates never generated; sum-bound hole | fixed (PRD 09) |
+| [MEDIUM] Asserted coverage contract weaker than documented | fixed (PRD 09 — the per-(op, type) matrix) |
+| [LOW] NUL in a String literal truncates the SQL | fixed (PRD 07) |
+| [LOW] Divergence-by-error is a panic, not a bundle | fixed (PRD 07) |
+| [LOW] Boundary param sets probe only minima | fixed (PRD 09) |
+| [NOTE] balance's Sum is not a balance | fixed (PRD 08) |
+| [NOTE] A stamp can be earned with zero randomized cases | fixed (PRD 07 — the report provenance shows the count; zero stays legal, visibly) |
+| [NOTE] Family param functions outside the family digest | fixed (PRD 07 — subsumed: params are code, code is the binary fingerprint) |
+
+### concurrency-crash.md
+| finding | resolution |
+|---|---|
+| [CRITICAL] Cross-environment execution aliases the generation clock | fixed (PRD 00 — the audit's repro is the regression test) |
+| [MEDIUM] Parked COLTs pin prepare-generation images | fixed (PRD 02) |
+| [LOW] Nested `db.write` self-deadlocks | fixed (PRD 00) |
+| [NOTE] Panic between LMDB commit and eviction leaks the cache | closed — leaks, never corrupts; the next commit's eviction reclaims, and the unwind killed the writer anyway |
+| [NOTE] Multi-process access unguarded | fixed (PRD 00 — the advisory lock) |
+| [NOTE] alloc_gate depends on the one-test invariant | fixed (PRD 10 — `--test-threads=1` in check.sh + the named invariant header) |
+| [NOTE] No prepared-execution-vs-writer concurrency test | fixed (PRD 00 — the generation-atomicity family) |

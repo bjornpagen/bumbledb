@@ -11,9 +11,11 @@ use crate::ir::VarId;
 use crate::schema::Schema;
 
 /// Hard cap on occurrences the exhaustive subset DP accepts. The 30-execution doc named
-/// 32 (the bitmask width), but 2³² DP states is ~170 GB of table — memory-
-/// infeasible; 2²⁰ is ~24 MB and instant, and the doc's own envelope is
-/// "≤ ~12 atoms" (amendment recorded in docs/architecture/30-execution.md).
+/// 32 (the bitmask width), but 2³² DP states is memory-infeasible; at
+/// 2²⁰ the DP table (`Option<State>`, 32 bytes each) is ~32 MB plus a
+/// 16 MB per-mask prefix-variables memo — instant, and the doc's own
+/// envelope is "≤ ~12 atoms" (amendment recorded in
+/// docs/architecture/30-execution.md), where both are kilobytes.
 pub const MAX_OCCURRENCES: usize = 20;
 
 /// Distinct-variable cap for the planner's dense var bitsets.
@@ -131,6 +133,15 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
             last: u8::try_from(i).expect("n <= 20"),
         });
     }
+    // Per-mask prefix-variable memo: vars(mask) folds once per mask
+    // (the lowest bit's occurrence unioned with the rest), so the inner
+    // candidate loop reads one entry instead of refolding all n
+    // occurrences per (mask, last) pair — the audit's O(2ⁿ·n²) note.
+    let mut mask_vars: Vec<u128> = vec![0; (full as usize) + 1];
+    for mask in 1..=full {
+        let low = usize::try_from(mask.trailing_zeros()).expect("small");
+        mask_vars[mask as usize] = mask_vars[(mask & (mask - 1)) as usize] | occs[low].vars;
+    }
     for mask in 1..=full {
         if mask.count_ones() < 2 {
             continue;
@@ -142,10 +153,7 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
             }
             let prev_mask = mask & !(1 << last);
             let prev = best[prev_mask as usize].expect("smaller masks filled first");
-            let prefix_vars = (0..n)
-                .filter(|i| prev_mask & (1 << i) != 0)
-                .fold(0u128, |acc, i| acc | occs[i].vars);
-            let est = estimate(prev.est, prefix_vars, &occs, last);
+            let est = estimate(prev.est, mask_vars[prev_mask as usize], &occs, last);
             let cost = prev.cost.saturating_add(est);
             let better = match candidate {
                 None => true,

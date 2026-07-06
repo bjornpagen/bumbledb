@@ -68,10 +68,13 @@ no residual concept; we own filter placement because there is no external optimi
   that is only ever suffix-iterated is never forced by construction, and one that gets
   probed forces like any level.
 - **Dynamic cover choice** (§4.4): at node entry, iterate the cover with the fewest
-  keys; forced maps expose `Exact(n)`, unforced vectors `Estimate(len)` — **the labels
-  are load-bearing** and an `Estimate` is duplicate-inflated by construction; the
-  chooser must never compare them as the same quantity blindly (v5 did: post-mortem
-  §40). v0 rule: prefer the smallest `Exact`; otherwise smallest `Estimate`.
+  keys; forced maps expose `Exact(n)`, unforced vectors `Estimate(len)` — an
+  `Estimate` is duplicate-inflated by construction, but both labels are admissible
+  bounds on iteration cost. v0 rule, **magnitude-first**: the smaller magnitude wins
+  regardless of label; on a tie `Exact` wins (it cannot shrink); a full tie keeps the
+  lowest subatom index (deterministic). The earlier label-first rule ("an Exact
+  always displaces an Estimate") iterated a 500-key forced map while a 7-row
+  param-filtered view sat unforced beside it — the measured balance wrong-cover.
 - **`binary2fj` + conservative `factor()`** (§4.1): exactly per paper, over the DP
   planner's left-deep output.
 
@@ -121,9 +124,12 @@ check), Count→U64, Min/Max→input type. **Reverses if:** never structurally.
 survivor counts — *measured, not estimated*: filtered views are built before planning
 completes for the atoms whose filter constants are all concrete, so the planner uses
 the view's actual length. **Carve-out:** an atom whose filters involve params or
-not-yet-interned literals cannot be measured at prepare time — it plans on the base
-row count and resolves per execution. No NDV fields, no histograms, no magic
-selectivity constants.
+not-yet-interned literals cannot be measured at prepare time — it plans on the
+selectivity ladder (`plan/selectivity.rs`): unique-exact counts, resident-image
+distinct counts (peeked, never built), schema bounds (FK domains, enum variant
+counts, bool), then the documented keep-fraction floors per predicate class. No NDV
+fields, no histograms; the floors are the only constants and each is documented at
+its definition.
 
 **Join cardinality estimator, written down:** for `L ⋈ R` on join variables J —
 - J covers a unique constraint of R (incl. serial auto-unique): estimate = |L| (FK walk;
@@ -138,9 +144,10 @@ selectivity constants.
 **Search:** exhaustive DP over atom occurrences, **left-deep only**, minimizing the sum
 of prefix estimates *including the base relation's rows* (counting the root iteration
 breaks ties toward iterating the small side). The cap is 20 occurrences (a 2²⁰-state
-table, ~24 MB transient — amended down from an earlier 32, whose table would not fit
-memory; the cap is enforced at the validation boundary as a roster item, alongside the
-128-distinct-variable bitset cap). Then `binary2fj`, then `factor()`, then plan
+table, ~32 MB transient plus a 16 MB per-mask prefix-variables memo — amended down
+from an earlier 32 occurrences, whose table would not fit memory; the cap is enforced
+at the validation boundary as a roster item, alongside the 128-distinct-variable
+bitset cap). Then `binary2fj`, then `factor()`, then plan
 validation into the witness.
 **Decision: left-deep-only.** **Alternative:** bushy plans + materialized intermediates
 (the paper decomposes bushy input into several left-deep plans and names
@@ -168,14 +175,15 @@ engine overlaps across the full MLP width. COLT's forced maps use **open address
 with inline keys** (one probe ≈ one or two cache lines, no node chasing) and are kept
 compact enough that a query's hot maps live in the 12–16 MB shared L2. **Batches are
 processed branchlessly**: probe misses and residual failures become survivor
-compaction (NEON compress or scalar cursor-write), never per-tuple conditional
-control flow — on a >99%-accurate TAGE predictor, the data-dependent per-tuple branch
-is the only misprediction source left, so we remove it representationally. **No
-indirect dispatch exists in the hot path**: sinks, counters, and kernels are
-monomorphized generics, never `dyn`. NEON (`cfg(aarch64)`, 128-bit = 2×u64) handles
-fixed-width predicate scans and survivor compaction and nothing else — the deep-OoO
-scalar path is the primary engine and simple dependency-free loops are preferred over
-clever vectorization (`00-product.md` machine model). Columns are 128-byte-aligned SoA
+compaction (the scalar branchless cursor-write — NEON has no compress instruction;
+that is SVE, which Apple Silicon lacks), never per-tuple conditional control flow —
+on a >99%-accurate TAGE predictor, the data-dependent per-tuple branch is the only
+misprediction source left, so we remove it representationally. **No indirect
+dispatch exists in the hot path**: sinks, counters, and kernels are monomorphized
+generics, never `dyn`. NEON (`cfg(aarch64)`, 128-bit = 2×u64) handles fixed-width
+predicate scans and nothing else — the deep-OoO scalar path is the primary engine
+and simple dependency-free loops are preferred over clever vectorization
+(`00-product.md` machine model). Columns are 128-byte-aligned SoA
 with staggered bases (`40-storage.md`). Scalar fallback everywhere, equal results by
 test across batch sizes. **Vectorized execution is the default and only path** — a
 scalar "mode" exists solely as the degenerate batch size where useful for testing; v5's

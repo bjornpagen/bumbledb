@@ -1138,7 +1138,10 @@ fn bind_param(
 /// a dictionary miss under `Eq` (the whole-query empty short-circuit); a
 /// miss under any other operator resolves to the sentinel intern id, whose
 /// word comparison yields the correct per-operator semantics (`Ne` matches
-/// every stored value).
+/// every stored value). The `Eq` arms here are unreachable through the
+/// production pipeline — `split_filters` routes every Eq-constant into
+/// selections — and stay as belt-and-braces for the same reason
+/// `check_selections` exists: `PlanOccurrence` is plain data.
 fn resolve_filter(
     txn: &ReadTxn<'_>,
     filter: &FilterPredicate,

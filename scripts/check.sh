@@ -19,7 +19,10 @@ echo "==> cargo test --workspace --doc"
 cargo test --workspace --doc
 
 echo "==> allocation gate (release)"
-cargo test --features alloc-counter --test alloc_gate --release
+# --test-threads=1: the counting allocator is process-global; the gate
+# binary holds one test by invariant (alloc_gate.rs header), and the
+# flag keeps even an accidental second test from turning it flaky.
+cargo test --features alloc-counter --test alloc_gate --release -- --test-threads=1
 
 # The bench crate must build and lint with the engine's observability on
 # (docs/architecture/50-validation.md); the harness tests run under both configs.
