@@ -191,6 +191,27 @@ impl Colt {
         }
     }
 
+    /// A structurally identical trie with empty pools over no view — the
+    /// shape without the data (reader: the view memo's first park of an
+    /// empty slot, inside the sanctioned view-rebuild window).
+    #[must_use]
+    pub fn unbound_sibling(&self) -> Self {
+        Self {
+            view: View::Unbound,
+            selection_levels: self.selection_levels,
+            start: Cursor::Node(NodeRef(0)),
+            selected: self.selection_levels == 0,
+            schema_columns: self.schema_columns.clone(),
+            nodes: vec![NodeState::Unforced(Positions::Root)],
+            chunks: Vec::new(),
+            maps: Vec::new(),
+            slots: Vec::new(),
+            keys: Vec::new(),
+            dense: Vec::new(),
+            scratch: Vec::new(),
+        }
+    }
+
     /// Swaps in a fresh view for the next execution, clearing every pool
     /// while retaining capacity (post-warmup executions of same-shaped
     /// data allocate nothing here). Returns the old view so its survivor

@@ -264,12 +264,17 @@ Five decisions from the first benchmark report's evidence, enforced forever by
   measured 6.35× string-family loss.
 - **The view-memo LRU.** Each occurrence memoizes `MEMO_SLOTS = 4`
   (generation, resolved residual filters) bindings — one active whose COLT
-  the executor consumes, three parked and swapped in on hit; eviction is
-  stale-generation-first then LRU, and a stale active rebuilds in place so
-  selection-only occurrences never park. Sound because generational
-  immutability makes a view valid for its whole generation. Memory bound:
-  four COLT high-waters per occurrence per prepared query, documented on the
-  constant.
+  the executor consumes, three parked slots (empty at prepare) and swapped
+  in on hit. Prepare pins nothing: every COLT starts over `View::Unbound`
+  (no image Arc — a prepared-but-never-executed query holds zero image
+  memory), and the first execution binds via the ordinary miss path. Each
+  bind first reaps parked entries below the requested generation (provably
+  unhittable — their pools and image Arcs die at the first post-commit
+  execution); parking prefers an empty slot, then evicts by LRU, and a
+  stale or unbound active rebuilds in place so selection-only occurrences
+  never park. Sound because generational immutability makes a view valid
+  for its whole generation. Memory bound: four COLT high-waters per
+  occurrence per prepared query, current-generation images only.
 - **Magnitude-first cover choice.** `KeyCount` labels mean keys-exact vs
   positions-upper-bound; both are admissible iteration-cost bounds, so
   `better_cover` compares magnitudes and uses the label only on ties. The

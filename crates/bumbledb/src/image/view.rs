@@ -60,11 +60,17 @@ pub enum FilterPredicate {
     },
 }
 
-/// A query-local view over an image: either every position (unfiltered) or
-/// the filter's survivors. A two-variant representation, not a sentinel
-/// vector.
+/// A query-local view over an image: not yet bound to any generation
+/// (the state every COLT holds between prepare and its first execution
+/// — carrying *nothing*, so prepare pins no image), every position
+/// (unfiltered), or the filter's survivors. A three-variant
+/// representation, not a sentinel vector.
 #[derive(Debug)]
 pub enum View {
+    /// No image at all: the view has not been bound to a generation.
+    /// Unrepresentable as data that pins anything — a prepared query
+    /// holds only `Unbound` views until it executes.
+    Unbound,
     /// Every position `0..row_count`.
     All(Arc<RelationImage>),
     /// The survivor positions, in ascending order.
@@ -76,17 +82,26 @@ pub enum View {
 
 impl View {
     /// The underlying image.
+    ///
+    /// # Panics
+    ///
+    /// On a programmer-invariant violation: an unbound view has no image
+    /// — every execution path binds (or rebuilds) the view before any
+    /// probe or force can ask for one.
     #[must_use]
     pub fn image(&self) -> &Arc<RelationImage> {
         match self {
             Self::All(image) | Self::Survivors { image, .. } => image,
+            Self::Unbound => unreachable!("an unbound view has no image"),
         }
     }
 
-    /// Number of positions the view exposes.
+    /// Number of positions the view exposes (an unbound view exposes
+    /// none).
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
+            Self::Unbound => 0,
             Self::All(image) => image.row_count(),
             Self::Survivors { positions, .. } => positions.len(),
         }
@@ -109,6 +124,7 @@ impl View {
         // Chained empty arms keep one concrete iterator type without
         // boxing: exactly one arm is nonempty.
         let (all, survivors) = match self {
+            Self::Unbound => (0..0u32, [].iter()),
             Self::All(image) => (
                 0..u32::try_from(image.row_count()).expect("row_count < u32::MAX"),
                 [].iter(),
@@ -127,6 +143,7 @@ impl View {
     #[must_use]
     pub fn position_at(&self, idx: usize) -> u32 {
         match self {
+            Self::Unbound => unreachable!("an unbound view has no positions"),
             Self::All(_) => u32::try_from(idx).expect("positions fit u32"),
             Self::Survivors { positions, .. } => positions[idx],
         }
@@ -137,7 +154,7 @@ impl View {
     #[must_use]
     pub fn recycle(self) -> Vec<u32> {
         match self {
-            Self::All(_) => Vec::new(),
+            Self::Unbound | Self::All(_) => Vec::new(),
             Self::Survivors { positions, .. } => positions,
         }
     }

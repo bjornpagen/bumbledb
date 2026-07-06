@@ -382,9 +382,12 @@ pub(crate) fn prepare<'s>(
         ExecPlan::GuardProbe(guard) => (None, guard.vars.len(), 1),
     };
 
+    // BUILD_COLTS is pure column-schema construction since the unbound-
+    // views cutover: prepare provably never touches an image (the stats
+    // phase peeks, never builds), so a prepared query pins nothing.
     let memo = {
         let _s = obs::span(obs::names::BUILD_COLTS, obs::Category::Prepare);
-        build_view_memo(txn, cache, schema, &exec_plan)?
+        build_view_memo(&exec_plan)
     };
     let sink = make_sink(&finds, slot_count, exec_plan.distinct_bindings());
 
@@ -409,14 +412,12 @@ pub(crate) fn prepare<'s>(
     })
 }
 
-/// COLT sources with their fixed column schemas; the initial views are
-/// placeholders — every execution resets them against fresh images.
-fn build_view_memo(
-    txn: &ReadTxn<'_>,
-    cache: &ImageCache,
-    schema: &Schema,
-    exec_plan: &ExecPlan,
-) -> Result<ViewMemo> {
+/// COLT sources with their fixed column schemas over [`View::Unbound`]:
+/// prepare touches no image — the first execution binds every view via
+/// the ordinary memo-miss path (a `None` generation never matches),
+/// paying the image build exactly where a cold execution already pays
+/// it. Pure column-schema construction; nothing here can fail.
+fn build_view_memo(exec_plan: &ExecPlan) -> ViewMemo {
     let mut memo = ViewMemo {
         colts: Vec::new(),
         generation: Vec::new(),
@@ -426,10 +427,9 @@ fn build_view_memo(
         tick: 0,
     };
     let ExecPlan::FreeJoin(plan) = exec_plan else {
-        return Ok(memo); // guard probes never touch views
+        return memo; // guard probes never touch views
     };
     for occurrence in plan.occurrences() {
-        let image = cache.get_or_build(txn, schema, occurrence.relation)?;
         let columns: Vec<Vec<usize>> = occurrence
             .trie_schema
             .iter()
@@ -452,30 +452,14 @@ fn build_view_memo(
             .iter()
             .map(|s| usize::from(s.field.0))
             .collect();
-        memo.colts.push(Colt::new(
-            View::All(std::sync::Arc::clone(&image)),
-            &selections,
-            columns.clone(),
-        ));
+        memo.colts
+            .push(Colt::new(View::Unbound, &selections, columns));
         memo.generation.push(None);
         memo.filters.push(Vec::new());
-        memo.parked.push(
-            (0..PARKED_SLOTS)
-                .map(|_| ParkedView {
-                    generation: None,
-                    filters: Vec::new(),
-                    colt: Colt::new(
-                        View::All(std::sync::Arc::clone(&image)),
-                        &selections,
-                        columns.clone(),
-                    ),
-                    last_used: 0,
-                })
-                .collect(),
-        );
+        memo.parked.push((0..PARKED_SLOTS).map(|_| None).collect());
         memo.spare_buffers.push(Vec::new());
     }
-    Ok(memo)
+    memo
 }
 
 /// Derives per-find output specs (slots + result types) from the witness
@@ -853,8 +837,10 @@ const PARKED_SLOTS: usize = MEMO_SLOTS - 1;
 /// One parked view binding: a COLT (with its view and forced tries)
 /// keyed by the (generation, resolved residual filters) it was built
 /// for. Swapped — never cloned — with the active binding on a hit.
+/// Parked bindings always carry a real generation: only executed
+/// bindings park (prepare leaves every slot empty).
 struct ParkedView {
-    generation: Option<u64>,
+    generation: u64,
     filters: Vec<FilterPredicate>,
     colt: Colt,
     last_used: u64,
@@ -867,15 +853,20 @@ struct ParkedView {
 /// predicates are selections never park — their single binding hits on
 /// generation alone (docs/architecture/30-execution.md).
 struct ViewMemo {
-    /// The executor-facing COLTs: each occurrence's *active* binding.
+    /// The executor-facing COLTs: each occurrence's *active* binding
+    /// (over [`View::Unbound`] until the first execution — prepare pins
+    /// no image).
     colts: Vec<Colt>,
-    /// The active binding's generation, per occurrence.
+    /// The active binding's generation, per occurrence (`None` =
+    /// unbound).
     generation: Vec<Option<u64>>,
     /// The active binding's resolved residual filters, per occurrence.
     filters: Vec<Vec<FilterPredicate>>,
-    /// Parked bindings, [`PARKED_SLOTS`] per occurrence, LRU-evicted
-    /// (stale generations first — they can never hit again).
-    parked: Vec<Vec<ParkedView>>,
+    /// Parked bindings, [`PARKED_SLOTS`] per occurrence, empty at
+    /// prepare, LRU-evicted, stale-reaped at each bind (a below-current
+    /// generation can never hit again — dropping it frees its COLT pools
+    /// and its image Arc at the first post-commit execution).
+    parked: Vec<Vec<Option<ParkedView>>>,
     /// Spare survivor buffers recycled through rebuilds.
     spare_buffers: Vec<Vec<u32>>,
     /// The LRU clock, ticked once per execution.
@@ -885,35 +876,67 @@ struct ViewMemo {
 impl ViewMemo {
     /// Binds `occ`'s active slot to `(generation, filters)`: an active
     /// hit is free, a parked hit swaps in, and a miss parks the active
-    /// binding (stale-first, then LRU victim) and reports `false` so the
-    /// caller rebuilds in place.
+    /// binding (into an empty slot first, else the LRU victim) and
+    /// reports `false` so the caller rebuilds in place.
     fn bind(&mut self, occ: usize, generation: u64, filters: &[FilterPredicate]) -> bool {
+        // Stale reaping first: generations only advance, so a parked
+        // binding below this one is provably unhittable — drop it, its
+        // pools, and its image Arc. Fires only when the generation moved
+        // (within a generation every parked entry is current), so the
+        // zero-alloc/zero-dealloc discipline of the warm window holds.
+        for slot in &mut self.parked[occ] {
+            if slot
+                .as_ref()
+                .is_some_and(|parked| parked.generation < generation)
+            {
+                *slot = None;
+            }
+        }
         if self.generation[occ] == Some(generation) && self.filters[occ] == filters {
             return true;
         }
-        if let Some(slot) = self.parked[occ]
-            .iter()
-            .position(|s| s.generation == Some(generation) && s.filters == filters)
-        {
-            let parked = &mut self.parked[occ][slot];
+        if let Some(slot) = self.parked[occ].iter().position(|slot| {
+            slot.as_ref()
+                .is_some_and(|parked| parked.generation == generation && parked.filters == filters)
+        }) {
+            let parked = self.parked[occ][slot].as_mut().expect("matched Some above");
             std::mem::swap(&mut self.colts[occ], &mut parked.colt);
-            std::mem::swap(&mut self.generation[occ], &mut parked.generation);
             std::mem::swap(&mut self.filters[occ], &mut parked.filters);
+            // A parked entry exists only after a same-generation park, so
+            // the outgoing active binding is bound (post-reap both sides
+            // are at `generation`; the swap just rotates which is active).
+            let outgoing = self.generation[occ]
+                .replace(parked.generation)
+                .expect("a parked hit implies an executed active binding");
+            parked.generation = outgoing;
             parked.last_used = self.tick;
             return true;
         }
         // A current-generation active binding is still hittable — park it
-        // over the best victim. A stale one can never hit again: rebuild
-        // it in place (zero-residual occurrences always land here, so
-        // their parked slots stay untouched forever).
+        // into an empty slot (first park constructs the ParkedView inside
+        // the sanctioned view-rebuild window), else over the LRU victim
+        // (post-reap every survivor is current-generation, so LRU is the
+        // whole policy). A stale or unbound active can never hit again:
+        // rebuild it in place (zero-residual occurrences always land
+        // here, so their parked slots stay empty forever).
         if self.generation[occ] == Some(generation) {
-            if let Some(victim) = self.parked[occ]
+            if let Some(empty) = self.parked[occ].iter().position(Option::is_none) {
+                let fresh = self.colts[occ].unbound_sibling();
+                self.parked[occ][empty] = Some(ParkedView {
+                    generation,
+                    filters: std::mem::take(&mut self.filters[occ]),
+                    colt: std::mem::replace(&mut self.colts[occ], fresh),
+                    last_used: self.tick,
+                });
+                self.generation[occ] = None;
+            } else if let Some(victim) = self.parked[occ]
                 .iter_mut()
-                .min_by_key(|s| (s.generation == Some(generation), s.last_used))
+                .flatten()
+                .min_by_key(|parked| parked.last_used)
             {
                 std::mem::swap(&mut self.colts[occ], &mut victim.colt);
-                std::mem::swap(&mut self.generation[occ], &mut victim.generation);
                 std::mem::swap(&mut self.filters[occ], &mut victim.filters);
+                victim.generation = generation;
                 victim.last_used = self.tick;
             }
         }
@@ -1778,6 +1801,99 @@ mod tests {
         // A second execution memoizes per finalize, not across them.
         let (_, count) = resolves(&mut prepared, 2);
         assert_eq!(count, 16, "the memo clears per finalize");
+    }
+
+    /// PRD 02 (docs/hardening): prepare pins no image — the refcount
+    /// proof. Executions bind views; a commit plus one execution at the
+    /// new generation reaps every stale binding, releasing the old
+    /// image entirely (only the test's own Arc survives).
+    #[test]
+    fn prepare_pins_no_images_and_reaping_releases_them() {
+        let dir = TempDir::new("prepared-unbound-views");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        insert_postings(&env, &schema, &[(1, 7, "a", 10), (2, 7, "b", 20)]);
+        let cache = ImageCache::new();
+        let txn = env.read_txn().expect("txn");
+        let held = cache
+            .get_or_build(&txn, &schema, POSTING)
+            .expect("generation-1 image");
+        let baseline = std::sync::Arc::strong_count(&held);
+
+        let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
+        assert_eq!(
+            std::sync::Arc::strong_count(&held),
+            baseline,
+            "prepare pinned an image"
+        );
+
+        // Two residual windows: the active and one parked binding both
+        // hold views over the generation-1 image.
+        for floor in [-100, 15] {
+            prepared
+                .execute_collect(&txn, &cache, &[Value::U64(7), Value::I64(floor)])
+                .expect("execute");
+        }
+        assert!(
+            std::sync::Arc::strong_count(&held) > baseline,
+            "executions bind real views"
+        );
+        drop(txn);
+
+        // Commit generation 2 and evict, exactly as Db::write does; the
+        // first execution at the new generation reaps the stale parked
+        // binding and rebuilds the active one.
+        insert_postings(&env, &schema, &[(3, 7, "c", 30)]);
+        cache.evict_older_than(2);
+        let txn = env.read_txn().expect("txn");
+        prepared
+            .execute_collect(&txn, &cache, &[Value::U64(7), Value::I64(-100)])
+            .expect("execute at generation 2");
+        assert_eq!(
+            std::sync::Arc::strong_count(&held),
+            1,
+            "the prepared query holds nothing of generation 1"
+        );
+    }
+
+    /// PRD 02: prepare on a cold cache builds no images — zero
+    /// `image_build`/`cache_hit` events; the first execution pays the
+    /// build exactly where a cold execution always paid it.
+    #[cfg(feature = "trace")]
+    #[test]
+    fn prepare_emits_no_image_events() {
+        use crate::obs;
+
+        let dir = TempDir::new("prepared-no-image-events");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        insert_postings(&env, &schema, &[(1, 7, "a", 10)]);
+        let cache = ImageCache::new();
+        let txn = env.read_txn().expect("txn");
+
+        obs::start_capture();
+        let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
+        let events = obs::finish_capture();
+        let names: Vec<&str> = events.iter().map(|e| e.name).collect();
+        assert!(
+            !names.contains(&obs::names::IMAGE_BUILD),
+            "prepare built an image: {names:?}"
+        );
+        assert!(
+            !names.contains(&obs::names::CACHE_HIT),
+            "prepare touched the image cache: {names:?}"
+        );
+
+        obs::start_capture();
+        prepared
+            .execute_collect(&txn, &cache, &[Value::U64(7), Value::I64(-100)])
+            .expect("execute");
+        let events = obs::finish_capture();
+        let names: Vec<&str> = events.iter().map(|e| e.name).collect();
+        assert!(
+            names.contains(&obs::names::IMAGE_BUILD),
+            "the first execution pays the build: {names:?}"
+        );
     }
 
     /// The view-memo LRU (docs/architecture/30-execution.md): four rotating residual bindings

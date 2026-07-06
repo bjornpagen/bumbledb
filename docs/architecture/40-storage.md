@@ -178,7 +178,10 @@ The bridge to paper-faithful execution (`30-execution.md` D1):
 Images are whole-slab allocations freed as wholes; no per-value heap objects in
 storage or images. Query scratch belongs to prepared queries (`30-execution.md`).
 Steady-state process heap = LMDB's mmap + the newest generation's images +
-per-prepared-query pools + a constant.
+per-prepared-query pools + a constant. Prepared queries hold current-generation
+images only: prepare binds no image at all (`View::Unbound`), and each execution
+reaps memoized bindings below its generation — old images die with the last pinned
+reader or the first post-commit execution, whichever is later.
 
 ## Operations
 
