@@ -68,3 +68,30 @@ this PRD makes it normative and reproducible.
 ## Out of scope
 
 Any hot-path code change. This PRD writes doctrine and pins numbers.
+
+## Result (2026-07-06, reproducibility run bench-out/2026-07-06T22-54-02Z)
+
+All three architecture docs amended (00-product: unsafe policy + extended
+kernel shapes; 30-execution: sanctioned shapes + scalar-ILP-first fold
+doctrine; 50-validation: the trace seam section). `scripts/check.sh` green.
+
+Phase-row reproducibility: 24 of 27 rows ≥ 100 µs within ±10%. Three rows
+out of band, **all in the faster direction** (baseline high — targets stay
+conservative), each with a cause that does not move the baseline:
+
+- `triangle jp_force_n1` −20.8% (262 → 207 µs): force cost is sensitive to
+  map/page state at the traced sample; small absolute row.
+- `spread jp_residual_n1` −14.2% and `stats jp_iter_n1` −11.7%: rows
+  composed of ~10–425 ns segments where the 41.67 ns cntvct quantization
+  and scheduling shift dominate per-call; the accumulated totals wander
+  more than the big-segment rows.
+
+Untraced p50s: the seven volume-shaped families reproduce within ±8.5%
+(stats +3.4%, spread −1.0%, triangle −1.5%). The three rotation-skewed
+families (fk_walk, balance, skew) have **bimodal p50s** — the median lands
+on cheap or hot params run-to-run (fk_walk 12.8 → 6.1 µs) — while their
+p95s reproduce within −2.5% to −4.8% (fk_walk 1,797.7 → 1,753.1; balance
+1,110.2 → 1,073.5; skew 1,880.3 → 1,790.7). This is exactly why the
+suite's gates cite p95 for those families; additionally, any p50 gate on a
+rotation-skewed family in later PRDs must be read against this bimodality
+(the suite already avoids them). baseline.md stands unchanged.

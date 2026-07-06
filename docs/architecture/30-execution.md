@@ -180,10 +180,17 @@ that is SVE, which Apple Silicon lacks), never per-tuple conditional control flo
 on a >99%-accurate TAGE predictor, the data-dependent per-tuple branch is the only
 misprediction source left, so we remove it representationally. **No indirect
 dispatch exists in the hot path**: sinks, counters, and kernels are monomorphized
-generics, never `dyn`. NEON (`cfg(aarch64)`, 128-bit = 2×u64) handles fixed-width
-predicate scans and nothing else — the deep-OoO scalar path is the primary engine
-and simple dependency-free loops are preferred over clever vectorization
-(`00-product.md` machine model). Columns are 128-byte-aligned SoA
+generics, never `dyn`. NEON (`cfg(aarch64)`, 128-bit = 2×u64) is confined to the
+sanctioned kernel shapes (amended by the performance suite, docs/perf/):
+fixed-width predicate scans, survivor compaction, fold/accumulate kernels
+(Sum/Min/Max/Count over batch columns, strided or gathered — Sum semantics
+unchanged: i128 accumulation, one range check at finalization), gather kernels
+(position-indexed column reads), and software-prefetch passes (`prfm`) between
+probe phase 1 and phase 2. Fold kernels are **scalar-ILP-first**: unrolled
+multi-accumulator scalar loops are the default shape, and NEON earns its slot
+per kernel only by measuring faster on the reference host — the deep-OoO scalar
+path is the primary engine and simple dependency-free loops are preferred over
+clever vectorization (`00-product.md` machine model; unsafe policy there too). Columns are 128-byte-aligned SoA
 with staggered bases (`40-storage.md`). Scalar fallback everywhere, equal results by
 test across batch sizes. **Vectorized execution is the default and only path** — a
 scalar "mode" exists solely as the degenerate batch size where useful for testing; v5's

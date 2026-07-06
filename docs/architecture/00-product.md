@@ -92,8 +92,16 @@ decision accommodates narrower platforms). Full research notes with sources:
   flight — batched execution over dependent pointer-chasing, everywhere.
 - **Scalar-ILP first**: the deep OoO engine sustains 3–4 IPC on simple, branch-light,
   dependency-free loops; that beats clever vectorization. 128-bit NEON (no SVE) is a
-  supporting actor with exactly two kernel shapes — fixed-width predicate scans and
-  survivor compaction.
+  supporting actor with a closed set of sanctioned kernel shapes (amended by the
+  performance suite, docs/perf/): fixed-width predicate scans, survivor compaction,
+  fold/accumulate kernels (Sum/Min/Max/Count over batch columns, strided or
+  gathered), gather kernels (position-indexed column reads), and software-prefetch
+  passes (`prfm`) in two-phase probing. Fold kernels are scalar-ILP-first —
+  unrolled multi-accumulator scalar loops are the default shape; NEON is used only
+  where it measures faster on the reference host (64-bit lane compares earn it for
+  min/max; 2-lane adds rarely beat 6-wide scalar for sums). Kernel adoption never
+  changes semantics: Sum stays i128-accumulated with one range check at
+  finalization.
 - **60–120 GB/s memory bandwidth**: sequential scan+decode of a 100 MB relation is
   single-digit milliseconds — the quantitative reason the image-cache design
   (`30-execution.md` D1) is sound at this scale.
@@ -111,6 +119,18 @@ decision accommodates narrower platforms). Full research notes with sources:
 - Explicit SIMD lives under `#[cfg(target_arch = "aarch64")]`; other 64-bit platforms
   compile and run scalar fallback correctly, with no performance promises. x86 SIMD is
   forbidden.
+- **The unsafe policy (amended by the performance suite, docs/perf/).** `unsafe` —
+  including `core::arch` intrinsics and inline asm — is sanctioned in an explicit
+  allowlist of kernel/hot modules and nowhere else: `exec/kernel.rs`,
+  `exec/colt.rs` (gather/probe paths), `exec/wordmap.rs` (slab probe paths),
+  `exec/run.rs` (leaf/batch paths), `image.rs` (decode kernels), and `obs.rs`
+  (the trace-only fast clock). Each carries `#[allow(unsafe_code)]` at module or
+  item level with a comment naming this policy; the crate denies `unsafe_code`
+  everywhere else. The law, extended from kernel.rs: **every unsafe path has a
+  safe portable reference implementation, and a property test asserts
+  bit-identical results across randomized inputs including boundary shapes**
+  (empty, single, odd lengths, lane-multiple ±1). The differential oracle stays
+  the outer gate; the property tests are the inner one.
 
 **Decision:** Apple-Silicon-only performance target. **Alternative:** portable
 performance posture. **Why it lost:** there are no other consumers; portability spends

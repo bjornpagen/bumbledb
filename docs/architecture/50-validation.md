@@ -184,6 +184,41 @@ the expected cover choice and that batching engaged — the cheap detector for
 correct-but-slow regressions (v5's two flagship failures were exactly that class).
 Beyond this, the benchmark's timing is knowingly the only performance detector; stated.
 
+## Observability: the trace seam
+
+(Amended by the performance suite, docs/perf/.) The one tracing mechanism is
+`obs.rs`: nanosecond spans and point events recorded into a thread-local buffer
+during explicit capture, drained by tooling (Chrome-trace export + terminal
+flame summaries in `bumbledb-bench`). **Zero-cost when off**: under default
+features every obs function is an inline empty body and the span guard is a
+ZST — production timing paths carry no instrumentation. Under the `trace`
+feature, spans check a capturing flag; capture is never enabled inside a
+measured allocation window (trace and alloc are mutually exclusive run modes).
+
+**Per-(node, phase) executor attribution.** The flame summaries bottom out at
+one `join` span, so the executor exposes a phase seam:
+`JoinPhase {iter, hash, probe, residual, descend, force}` boundaries reported
+through `Counters::phase_start/phase_end` (default no-ops — the release path
+monomorphizes `NoopCounters` and pays exactly nothing; the prepared-query
+execute selects the timing implementation only under an active obs capture).
+`PhaseTimers` accumulates per-(node, phase) ticks and flushes one
+`Category::Phase` point event per touched cell (`a0` = total ns, `a1` = calls),
+named from the `jp_*` registry (node-indexed, capped at 8 with an `nX`
+overflow bucket). The bench renders these as a phase table with an `excl_us`
+column — descend minus the next node's total = per-row bookkeeping + leaf
+emits + the child node's un-phased entry setup. `WORDMAP_GROW` point events
+surface sink-map rehashes inside measured executions.
+
+**Measurement caveats, stated.** The fast clock is a raw `cntvct_el0` read
+(~2 ns; `cntfrq_el0` is 24 MHz on Apple Silicon — 41.67 ns granularity,
+unbiased across accumulation) with no `isb` barrier: OoO slop is tolerated
+because attribution sums many segments. Phase totals carry the stamp overhead
+of deep small-batch nodes (~5% observed on the heaviest families). Therefore:
+**phase tables direct work; the untraced timing tables decide gates.** Traced
+samples are single warm executions on the rotating param sets — for skewed
+families the sample may be the hot parameter; gates cite p95 where that
+matters.
+
 ## What we deliberately do not have
 
 Line-count gates. PRD-map checks. Banned-identifier greps. Coverage percentages.
