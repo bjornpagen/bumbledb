@@ -76,3 +76,44 @@ Probe-shape tiering (rejected: one shape + `prfm` is simpler and
 measured sufficient — record as considered-and-rejected); colt probes
 (05/06 replace that layout entirely); the sink-side deletion (done in
 02).
+
+## Result
+
+**Not shipped — the mechanism is refuted for the shipped workload
+shape, by exp 18's own data and an in-tree pin.**
+
+The PRD's 21–29% recovery quote is exp 18's **pure-hit-stream** rows
+(winP-hit f=25/f=50 at P=24: −24%/−22%). Exp 18's OWN mixed row —
+`winP-mix f=50: 12.78 → 12.82 ns (0%)` — is the shape that matches the
+sink seen-sets, which are miss-heavy by construction (every distinct
+key's first sight is a miss; the wordmap module doc has carried this
+law since silicon-03). Its miss rows run free-to-+5%.
+
+The in-tree pin (exp 18's pressure protocol reconstructed: 16 MiB
+arity-4 map, 50% hits, 8 MB streaming sweep between 256-op batches,
+min-of-5, A/B via a `cfg(test)` knob on the implemented `key_ahead`
+gate): **with prefetch 324,579 ns vs without 305,041 ns — key-ahead is
+6.4% WORSE under pressure.** Mechanism: the sink's row loop issues
+independent probe chains back to back, so the out-of-order window
+already saturates memory-level parallelism across iterations — the
+`prfm` adds issue-slot pressure to a stream with nothing left to
+overlap. Exp 18's single-stream protocol had serialization to recover;
+the engine's batched shape does not. (Exp 19's phase-1.5 refutation in
+PRD 01's Result is the same law from the other side: batching, not
+prefetching, is this engine's latency-overlap mechanism — and it is
+already everywhere.)
+
+The implementation (footprint-gated `key_ahead` on both probe entries,
+512 KiB budget, module-doc law, the pin) was built, measured, and
+REVERTED — the shipped wordmap is byte-identical to post-03 except a
+clippy hygiene fix in `hash_core` (range loop → slice iter, same
+codegen). No ledger battery: nothing shipped, the ledger is post-03's
+by construction.
+
+**Requirement rulings**: 1 (pin ≥15%/±2%): refuted, direction reversed
+— recorded above. 2 (spread −2% etc.): moot, nothing shipped. 3 (one
+`prfm` in the probe path): moot. 4 (differential/false-tag green): the
+corpus ran green with the prefetch in place before the revert — the
+refutation is performance, not correctness. Probe-shape tiering stays
+rejected as drafted; this Result adds key-ahead itself to the rejected
+list, closing the exp-13/18 thread: the window probe ships bare.
