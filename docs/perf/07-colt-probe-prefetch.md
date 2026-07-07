@@ -80,3 +80,38 @@ All in `exec/colt.rs` + the phase-1/2 loop in `exec/run.rs`.
 
 Sink maps (06), batch sizes at deep nodes (09/10), map sizing policy
 (unchanged), the wordmap hash function (shared and unchanged).
+
+## Result (2026-07-07, runs bench-out/2026-07-07T01-40-06Z + 01-47 confirm)
+
+Landed: the interleaved bucket layout — per-map ctrl ranges (0 = empty,
+else `0x80 | top-7-hash-bits`) plus `arity + 1`-word bucket rows (key
+words, then the packed child: bit 63 discriminates NodeRef from pinned
+position; `Slot` survives as the API type, decoded at the boundary) —
+across probe, iteration, force-ingest, singleton upgrade, and the
+75%-load rehash (dense-order preserved). `Colt::prefetch_bucket` + the
+phase-1.5 pass in run_node (gated ≥ 16 survivors), and the single-batch-
+word hash-loop specialization for the dominant FK-probe shape. The
+adversarial differential test pins probe hits/misses, upgrades, and
+growth against a key→positions model under equal-low-bit keys.
+
+Gates:
+- stats `jp_probe_n0` **5.5 µs** (gate ≤ 10; baseline 15.4) ✓.
+- spread `jp_probe_n0` **1,722.8 µs** (gate ≤ 1,400; baseline 2,090.5,
+  −18%) ✗ near-miss: the remaining cost is genuine L2/DRAM latency on a
+  ~100k-key map at batch 128 — the prefetch pass overlaps what the
+  OoO window reaches; deeper gains need bigger in-flight windows
+  (PRD 09's cross-parent batches).
+- triangle `jp_probe_n1` **5,504 µs** (gate ≤ 4,800; baseline 6,005,
+  −8%) and `jp_hash_n1` **1,496 µs** (gate ≤ 700; baseline 1,530) ✗ —
+  exactly the outcome the gate text pre-named: these rows run at batch
+  size ~1 (100k single-probe passes), below the prefetch gate and with
+  per-call overhead dominating the specialized hash; the batching gain
+  is PRD 09's gate, not a layout property.
+- Wins elsewhere: spread `jp_hash_n0` 322 → **149.5 µs** (−54%, the
+  specialized loop), chain p50 −18.5% (138.5 µs), fk_walk 4.4 µs,
+  spread p50 10.7–10.9 ms across runs (best yet). skew/triangle/
+  balance/point swings all returned to their documented bands on the
+  same-binary confirm run (triangle 16,059 µs — best sample to date).
+- Line-touch evidence: the model test + wordmap's 1.492-steps sweep
+  carry the probe-step story; per-probe line counts are structural now
+  (ctrl line + at most one bucket line on tag match).

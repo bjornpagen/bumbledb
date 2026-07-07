@@ -802,28 +802,56 @@ impl Executor {
                 let pinned = matches!(s_cursor, Cursor::Row(_));
                 counters.phase_start(node_idx, JoinPhase::Hash);
                 scratch.hashes.clear();
-                for (k, &e) in scratch.survivors.iter().enumerate() {
-                    let entry = usize::try_from(e).expect("batch fits usize");
-                    for i in 0..sub_arity {
-                        scratch.probe_keys[k * sub_arity + i] = value_of(
-                            &scratch.sources[sub_idx],
-                            &scratch.entry_keys,
-                            bindings,
-                            entry,
-                            i,
-                        );
-                    }
-                    if pinned {
-                        scratch.hashes.push(0);
-                    } else {
+                // The dominant probe shape — a single batch-sourced key
+                // word — takes a match-free specialized loop (docs/perf/
+                // PRD 07); everything else takes the general gather.
+                let single_batch_word = match scratch.sources[sub_idx].as_slice() {
+                    [Source::Batch(word)] if !pinned => Some(*word),
+                    _ => None,
+                };
+                if let Some(word) = single_batch_word {
+                    for (k, &e) in scratch.survivors.iter().enumerate() {
+                        let entry = usize::try_from(e).expect("batch fits usize");
+                        let key = scratch.entry_keys[entry * arity + word];
+                        scratch.probe_keys[k] = key;
                         counters.probe_hash(node_idx, sub_idx);
-                        scratch.hashes.push(crate::exec::colt::hash_key(
-                            &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
-                        ));
+                        scratch
+                            .hashes
+                            .push(crate::exec::colt::hash_key(std::slice::from_ref(&key)));
+                    }
+                } else {
+                    for (k, &e) in scratch.survivors.iter().enumerate() {
+                        let entry = usize::try_from(e).expect("batch fits usize");
+                        for i in 0..sub_arity {
+                            scratch.probe_keys[k * sub_arity + i] = value_of(
+                                &scratch.sources[sub_idx],
+                                &scratch.entry_keys,
+                                bindings,
+                                entry,
+                                i,
+                            );
+                        }
+                        if pinned {
+                            scratch.hashes.push(0);
+                        } else {
+                            counters.probe_hash(node_idx, sub_idx);
+                            scratch.hashes.push(crate::exec::colt::hash_key(
+                                &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
+                            ));
+                        }
                     }
                 }
-
                 counters.phase_end(node_idx, JoinPhase::Hash);
+
+                // Phase 1.5 (docs/perf/ PRD 07): the prefetch pass — every
+                // bucket the batch will probe gets its ctrl and bucket
+                // lines hinted while the OoO window is still free. Gated:
+                // tiny batches gain nothing and pay the loop.
+                if !pinned && scratch.survivors.len() >= 16 {
+                    for &hash in &scratch.hashes {
+                        colts[occ].prefetch_bucket(s_cursor, hash);
+                    }
+                }
 
                 // Phase 2: all bucket loads — independent chains the
                 // out-of-order window overlaps — then kernel compaction.

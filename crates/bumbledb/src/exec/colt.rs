@@ -135,30 +135,73 @@ struct Chunk {
     next: u32,
 }
 
+/// A decoded occupied-slot child (PRD 07: emptiness lives in the ctrl
+/// bytes; a bucket's packed child word is always one of these).
 #[derive(Debug, Clone, Copy)]
 enum Slot {
-    Empty,
     /// Singleton optimization: the first position lives inline; a chunked
     /// node is allocated only on the second.
     Single(u32),
     Node(NodeRef),
 }
 
-/// One forced level's open-addressed map: power-of-two capacity, inline
-/// key words, linear probing, no tombstones (build-once, never deleted
-/// from). Capacity starts from the position-count guess and
-/// rehash-doubles at 75% load (docs/architecture/30-execution.md); iteration never touches
-/// the slot array — it walks the dense occupied list.
+/// One forced level's open-addressed map: power-of-two capacity, linear
+/// probing, no tombstones (build-once, never deleted from). Capacity
+/// starts from the position-count guess and rehash-doubles at 75% load
+/// (docs/architecture/30-execution.md); iteration never touches the slot
+/// array — it walks the dense occupied list.
+///
+/// Layout (docs/perf/ PRD 07): a ctrl byte per slot (0 = empty, else
+/// `0x80 | top-7-hash-bits`) plus one interleaved bucket row of
+/// `arity + 1` words — key words then the packed child — so a probe
+/// step reads the ctrl line and, on a tag match, ONE bucket line.
 #[derive(Debug, Clone, Copy)]
 struct Map {
     arity: usize,
     capacity: usize,
     len: u32,
-    keys_start: usize,
-    slots_start: usize,
+    /// Start of this map's ctrl range in the shared ctrl slab.
+    ctrl_start: usize,
+    /// Start of this map's bucket rows (`capacity * (arity + 1)` words).
+    bucket_start: usize,
     /// Start of this map's occupied-slot list in the dense slab —
     /// `len` entries, insertion-ordered, O(keys) to walk.
     dense_start: usize,
+}
+
+impl Map {
+    /// Words per bucket row: the key then the packed child.
+    fn stride(&self) -> usize {
+        self.arity + 1
+    }
+}
+
+/// The packed child word's node tag (bit 63): set = `NodeRef` index,
+/// clear = a single pinned position. Both payloads are u32.
+const CHILD_NODE_TAG: u64 = 1 << 63;
+
+/// Packs a slot child into its bucket word.
+fn pack_child(slot: Slot) -> u64 {
+    match slot {
+        Slot::Single(position) => u64::from(position),
+        Slot::Node(node) => CHILD_NODE_TAG | u64::from(node.0),
+    }
+}
+
+/// Unpacks a bucket child word (the slot is occupied by ctrl).
+fn unpack_child(word: u64) -> Slot {
+    if word & CHILD_NODE_TAG == 0 {
+        Slot::Single(u32::try_from(word).expect("positions fit u32"))
+    } else {
+        Slot::Node(NodeRef(
+            u32::try_from(word & !CHILD_NODE_TAG).expect("node refs fit u32"),
+        ))
+    }
+}
+
+/// The 7-bit hash tag a ctrl byte carries (bit 7 marks occupancy).
+fn ctrl_tag(hash: u64) -> u8 {
+    0x80 | u8::try_from(hash >> 57).expect("7 bits")
 }
 
 /// The lazy trie over one occurrence's view. Owns the view (a cheap
@@ -185,8 +228,10 @@ pub struct Colt {
     nodes: Vec<NodeState>,
     chunks: Vec<Chunk>,
     maps: Vec<Map>,
-    slots: Vec<Slot>,
-    keys: Vec<u64>,
+    /// Ctrl bytes for every forced map, range per map (PRD 07).
+    ctrl: Vec<u8>,
+    /// Interleaved bucket rows for every forced map, range per map.
+    buckets: Vec<u64>,
     /// The dense occupied-slot lists, one contiguous range per map
     /// (docs/architecture/30-execution.md). A rehash abandons its old range at the slab's
     /// interior — reclaimed by [`Colt::reset`], a documented ≤2× slab
@@ -235,8 +280,8 @@ impl Colt {
             nodes: vec![NodeState::Unforced(Positions::Root)],
             chunks: Vec::new(),
             maps: Vec::new(),
-            slots: Vec::new(),
-            keys: Vec::new(),
+            ctrl: Vec::new(),
+            buckets: Vec::new(),
             dense: Vec::new(),
             scratch: Vec::new(),
         }
@@ -256,8 +301,8 @@ impl Colt {
             nodes: vec![NodeState::Unforced(Positions::Root)],
             chunks: Vec::new(),
             maps: Vec::new(),
-            slots: Vec::new(),
-            keys: Vec::new(),
+            ctrl: Vec::new(),
+            buckets: Vec::new(),
             dense: Vec::new(),
             scratch: Vec::new(),
         }
@@ -273,8 +318,8 @@ impl Colt {
         self.nodes.push(NodeState::Unforced(Positions::Root));
         self.chunks.clear();
         self.maps.clear();
-        self.slots.clear();
-        self.keys.clear();
+        self.ctrl.clear();
+        self.buckets.clear();
         self.dense.clear();
         self.start = Cursor::Node(NodeRef(0));
         self.selected = self.selection_levels == 0;
@@ -360,8 +405,8 @@ impl Colt {
         self.nodes.len()
             + self.chunks.len()
             + self.maps.len()
-            + self.slots.len()
-            + self.keys.len()
+            + self.ctrl.len()
+            + self.buckets.len()
             + self.dense.len()
     }
 
@@ -447,8 +492,7 @@ impl Colt {
                 if !found {
                     return None;
                 }
-                match self.slots[m.slots_start + idx] {
-                    Slot::Empty => unreachable!("probe hit an occupied slot"),
+                match unpack_child(self.buckets[m.bucket_start + idx * m.stride() + m.arity]) {
                     Slot::Single(position) => Some(Cursor::Row(position)),
                     Slot::Node(child) => Some(Cursor::Node(child)),
                 }
@@ -815,19 +859,19 @@ impl Colt {
         // with the key line prefetched a few entries ahead (insertion
         // order scatters slots across the map).
         let dense = &self.dense[m.dense_start..m.dense_start + len];
+        let stride = m.stride();
         for k in 0..take {
             let dense_idx = start + k;
             if dense_idx + 8 < len {
                 let ahead = usize::try_from(dense[dense_idx + 8]).expect("64-bit usize");
                 crate::exec::kernel::prefetch_read(
-                    &raw const self.keys[m.keys_start + ahead * arity],
+                    &raw const self.buckets[m.bucket_start + ahead * stride],
                 );
             }
             let slot_idx = usize::try_from(dense[dense_idx]).expect("64-bit usize");
-            let key = &self.keys[m.keys_start + slot_idx * arity..];
-            keys_out[k * arity..k * arity + arity].copy_from_slice(&key[..arity]);
-            children_out[k] = match self.slots[m.slots_start + slot_idx] {
-                Slot::Empty => unreachable!("dense entries are occupied"),
+            let row = &self.buckets[m.bucket_start + slot_idx * stride..];
+            keys_out[k * arity..k * arity + arity].copy_from_slice(&row[..arity]);
+            children_out[k] = match unpack_child(row[arity]) {
                 Slot::Single(position) => Cursor::Row(position),
                 Slot::Node(child) => Cursor::Node(child),
             };
@@ -835,25 +879,42 @@ impl Colt {
         (take, BatchToken((start + take) as u64 | DENSE_TOKEN_TAG))
     }
 
-    /// Linear probe: returns (found, slot index within the map).
-    fn probe(&self, m: &Map, key: &[u64]) -> (bool, usize) {
-        self.probe_hashed(m, key, hash_words(key))
-    }
-
-    /// Linear probe with a precomputed hash.
+    /// Linear probe with a precomputed hash: the ctrl byte gates the
+    /// bucket read — a mismatched tag steps without touching the bucket
+    /// line (docs/perf/ PRD 07).
     fn probe_hashed(&self, m: &Map, key: &[u64], hash: u64) -> (bool, usize) {
         let mask = m.capacity - 1;
+        let wanted = ctrl_tag(hash);
         let mut idx = usize::try_from(hash).expect("64-bit usize") & mask;
         loop {
-            if matches!(self.slots[m.slots_start + idx], Slot::Empty) {
+            let c = self.ctrl[m.ctrl_start + idx];
+            if c == 0 {
                 return (false, idx);
             }
-            let stored = &self.keys[m.keys_start + idx * m.arity..];
-            if &stored[..m.arity] == key {
-                return (true, idx);
+            if c == wanted {
+                let stored = &self.buckets[m.bucket_start + idx * m.stride()..];
+                if &stored[..m.arity] == key {
+                    return (true, idx);
+                }
             }
             idx = (idx + 1) & mask;
         }
+    }
+
+    /// Prefetches the bucket a hash will probe (phase 1.5, docs/perf/
+    /// PRD 07): the ctrl byte's line and the bucket row's line. A no-op
+    /// for pinned rows and unforced nodes.
+    pub fn prefetch_bucket(&self, cursor: Cursor, hash: u64) {
+        let Cursor::Node(node) = cursor else { return };
+        let NodeState::Forced { map } = self.nodes[node.0 as usize] else {
+            return;
+        };
+        let m = &self.maps[map as usize];
+        let idx = usize::try_from(hash).expect("64-bit usize") & (m.capacity - 1);
+        crate::exec::kernel::prefetch_read(&raw const self.ctrl[m.ctrl_start + idx]);
+        crate::exec::kernel::prefetch_read(
+            &raw const self.buckets[m.bucket_start + idx * m.stride()],
+        );
     }
 
     /// Single-pass force: iterate the node's positions once, decoding key
@@ -881,17 +942,18 @@ impl Colt {
             .min(count_usize.max(1) * 2)
             .next_power_of_two();
         let map_idx = u32::try_from(self.maps.len()).expect("map count fits u32");
-        let slots_start = self.slots.len();
-        let keys_start = self.keys.len();
+        let ctrl_start = self.ctrl.len();
+        let bucket_start = self.buckets.len();
         let dense_start = self.dense.len();
-        self.slots.resize(slots_start + capacity, Slot::Empty);
-        self.keys.resize(keys_start + capacity * arity, 0);
+        self.ctrl.resize(ctrl_start + capacity, 0);
+        self.buckets
+            .resize(bucket_start + capacity * (arity + 1), 0);
         let mut m = Map {
             arity,
             capacity,
             len: 0,
-            keys_start,
-            slots_start,
+            ctrl_start,
+            bucket_start,
             dense_start,
         };
 
@@ -949,13 +1011,15 @@ impl Colt {
             self.scratch.push(w);
         }
         let key = std::mem::take(&mut self.scratch);
-        let (found, idx) = self.probe(m, &key);
+        let hash = hash_words(&key);
+        let (found, idx) = self.probe_hashed(m, &key, hash);
+        let row_at = m.bucket_start + idx * m.stride();
         if found {
-            self.append_child(m.slots_start + idx, position);
+            self.append_child(row_at + arity, position);
         } else {
-            self.keys[m.keys_start + idx * arity..m.keys_start + idx * arity + arity]
-                .copy_from_slice(&key);
-            self.slots[m.slots_start + idx] = Slot::Single(position);
+            self.ctrl[m.ctrl_start + idx] = ctrl_tag(hash);
+            self.buckets[row_at..row_at + arity].copy_from_slice(&key);
+            self.buckets[row_at + arity] = pack_child(Slot::Single(position));
             self.dense
                 .push(u32::try_from(idx).expect("slot index fits u32"));
             m.len += 1;
@@ -971,38 +1035,39 @@ impl Colt {
     /// the first empty slot.
     fn grow_map(&mut self, m: &mut Map) {
         let arity = m.arity;
+        let stride = m.stride();
         let new_capacity = m.capacity * 2;
-        let slots_start = self.slots.len();
-        let keys_start = self.keys.len();
+        let ctrl_start = self.ctrl.len();
+        let bucket_start = self.buckets.len();
         let dense_start = self.dense.len();
-        self.slots.resize(slots_start + new_capacity, Slot::Empty);
-        self.keys.resize(keys_start + new_capacity * arity, 0);
+        self.ctrl.resize(ctrl_start + new_capacity, 0);
+        self.buckets.resize(bucket_start + new_capacity * stride, 0);
         let mask = new_capacity - 1;
         for i in 0..usize::try_from(m.len).expect("64-bit usize") {
             let old_slot = usize::try_from(self.dense[m.dense_start + i]).expect("64-bit usize");
-            let old_key_at = m.keys_start + old_slot * arity;
-            let hash = hash_words(&self.keys[old_key_at..old_key_at + arity]);
+            let old_row_at = m.bucket_start + old_slot * stride;
+            let hash = hash_words(&self.buckets[old_row_at..old_row_at + arity]);
             let mut idx = usize::try_from(hash).expect("64-bit usize") & mask;
-            while !matches!(self.slots[slots_start + idx], Slot::Empty) {
+            while self.ctrl[ctrl_start + idx] != 0 {
                 idx = (idx + 1) & mask;
             }
-            self.keys
-                .copy_within(old_key_at..old_key_at + arity, keys_start + idx * arity);
-            self.slots[slots_start + idx] = self.slots[m.slots_start + old_slot];
+            self.ctrl[ctrl_start + idx] = ctrl_tag(hash);
+            self.buckets
+                .copy_within(old_row_at..old_row_at + stride, bucket_start + idx * stride);
             self.dense
                 .push(u32::try_from(idx).expect("slot index fits u32"));
         }
         m.capacity = new_capacity;
-        m.slots_start = slots_start;
-        m.keys_start = keys_start;
+        m.ctrl_start = ctrl_start;
+        m.bucket_start = bucket_start;
         m.dense_start = dense_start;
     }
 
     /// Appends a position to an occupied slot's child: singleton inline
-    /// first, a chunked node from the second position on.
-    fn append_child(&mut self, slot_idx: usize, position: u32) {
-        match self.slots[slot_idx] {
-            Slot::Empty => unreachable!("appending to an occupied slot"),
+    /// first, a chunked node from the second position on. `child_at`
+    /// indexes the bucket slab's packed child word.
+    fn append_child(&mut self, child_at: usize, position: u32) {
+        match unpack_child(self.buckets[child_at]) {
             Slot::Single(first_position) => {
                 // Second position: allocate the chunked child node now.
                 let chunk_idx = u32::try_from(self.chunks.len()).expect("chunk count fits u32");
@@ -1021,7 +1086,7 @@ impl Colt {
                     last: chunk_idx,
                     count: 2,
                 }));
-                self.slots[slot_idx] = Slot::Node(node_ref);
+                self.buckets[child_at] = pack_child(Slot::Node(node_ref));
             }
             Slot::Node(node_ref) => {
                 let NodeState::Unforced(Positions::Chunks { first, last, count }) =
@@ -1147,6 +1212,56 @@ mod tests {
             token = next;
         }
         out
+    }
+
+    /// PRD 07 (docs/perf/): the ctrl-gated bucket probe is behavior-
+    /// identical to a model across adversarial keys (equal low bits —
+    /// same slot, different tags), probe hits AND misses, singleton
+    /// upgrades, and growth across the 75% boundary.
+    #[test]
+    fn bucket_probes_match_the_model_under_adversarial_keys() {
+        let dir = TempDir::new("colt-bucket-model");
+        let schema = schema();
+        // Keys collide mod any small capacity (equal low 8 bits) and
+        // repeat (singleton -> chunk upgrades); enough distinct keys to
+        // force several rehash doubles from the /8 initial guess.
+        let mut rows: Vec<(u64, u64)> = Vec::new();
+        for i in 0..400u64 {
+            let key = (i % 97) << 8;
+            rows.push((key, i));
+        }
+        rows.sort_unstable();
+        rows.dedup();
+        let view = view_of(&dir, &schema, &rows);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+        let root = Colt::root();
+        colt.ensure_forced(root, 0);
+
+        // Model: key -> positions (image order).
+        let k_col: Vec<u64> = view.column_words(0).to_vec();
+        let mut model: std::collections::HashMap<u64, Vec<u32>> = std::collections::HashMap::new();
+        for (pos, k) in k_col.iter().enumerate() {
+            model
+                .entry(*k)
+                .or_default()
+                .push(u32::try_from(pos).expect("small"));
+        }
+        for (key, positions) in &model {
+            let child = colt.get(root, 0, &[*key]).expect("present key probes");
+            let got: Vec<u32> = drain(&mut colt, child, 1)
+                .into_iter()
+                .map(|(_, c)| match c {
+                    Cursor::Row(p) => p,
+                    Cursor::Node(_) => unreachable!("suffix children pin rows"),
+                })
+                .collect();
+            assert_eq!(&got, positions, "key {key}");
+        }
+        // Misses: same low bits as present keys, absent values.
+        for i in 0..97u64 {
+            let absent = (i << 8) | 1;
+            assert!(colt.get(root, 0, &[absent]).is_none(), "key {absent}");
+        }
     }
 
     /// PRD 04 (docs/perf/): the column-hoisted unchecked gathers are
