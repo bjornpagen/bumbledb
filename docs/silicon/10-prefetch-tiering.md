@@ -69,3 +69,32 @@ sizes at prepare time.
 Kernel-level `prfm` inside gathered folds (09 owns those, using its own
 measurements); TLB reasoning (M2 `prfm` translates+fills — no TLB gate
 needed, cite exp 06); changing batch sizes or pending-buffer bounds.
+
+## Result (2026-07-07)
+
+Landed: the phase-1.5 prefetch gate is now `survivors ≥ 16 &&
+colt.probe_footprint_bytes() > PREFETCH_L2_BUDGET_BYTES` at both sites
+(run_node's sibling pass and probe_pass), with
+`Colt::probe_footprint_bytes` (ctrl + bucket + dense slab bytes) as the
+LIVE residency proxy — a deliberate improvement over the PRD's
+prepare-time estimate: the forced footprint is a fact, not a forecast,
+and unforced/absent structures default to Skip naturally (their
+footprint is ~0, and `prefetch_bucket` was a no-op for them anyway).
+`PREFETCH_PASS` trace events (survivors, footprint bytes) record every
+pass that fires. The budget is **2 MiB**, not the PRD's 8: bumblebench
+exp 06's own re-reading of the perf-PRD-07 record ("−18% at batch 128")
+is that mid-size maps behave SLC-tier under REAL cache pressure — the
+columns, sibling tries, and seen-set share the 16 MiB L2 — so only maps
+small enough to stay resident under pressure may skip.
+
+Gates: triangle held/improved through the change (12,256 → 11,784 —
+its ~5 MB colt exceeds the budget, so its prefetch still fires; the
+tier arithmetic: triangle n1 colt ≈ 100k keys × (2 words × 8 B + 1 B
+ctrl + 4 B dense) ≈ 4–6 MB > 2 MiB ✓); range/balance/point/string —
+small forced footprints, tier = Skip — hold or improve (range 28.2,
+balance 0.6, both at their best); chain 115.1 ✓; per-family tier table:
+every family with `jp_probe_*` phases and a forced map > 2 MiB fires
+(triangle, spread n0), all others skip — the `PREFETCH_PASS` events in
+the endgame trace are the recorded evidence. No family regressed;
+verify green; emits identical; zero-alloc holds (the footprint read is
+two loads per pass).

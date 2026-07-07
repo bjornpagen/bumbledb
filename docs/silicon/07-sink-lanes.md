@@ -66,3 +66,27 @@ Finalize/ResultBuffer (already batched in perf-PRD 08); making `emit`
 batch-only (the batch path exists; per-item `emit` remains for
 correctness paths); any `dyn` — stays banned, and this PRD documents why
 (unpredictable `blr` ~28 cycles/miss).
+
+## Result (2026-07-07)
+
+The audit (objdump, release bench binary at the batch-3 state):
+
+| symbol | loop-carried q round trip on state? | per-item `bl`? | verdict |
+|---|---|---|---|
+| `fold_scratch_row` | none (0 q-stores) | none | accepted — scalar accs rename at 1.00 cycle |
+| `fold_batch_constant_group` | none (0 q-stores) | none | accepted — staged `Acc` rows are scalar words |
+| `emit_batch` (projection) | none on state; 6 `str q` = SLP'd scratch-ROW data writes | none | accepted — data movement, not loop-carried accumulator state; noted as a micro-lever if a future profile blames store-forwarding |
+| `execute_guard_direct` | inlined (no standalone symbol) | — | accepted |
+
+No SLP q-register accumulator round trip exists in any per-item path —
+the batch-fold staging that perf-PRD 02 built (copy the group's `Acc`
+row out, fold, write back once per batch) is precisely the K-lane/
+scalar-local shape docs/silicon/07 prescribes, and the kernels
+(PRD 06) carry 4-lane accumulators internally. The measured-and-accepted
+record: `EitherSink`'s enum dispatch compiles to compare-branch dispatch
+(+0.13 ns even mispredicted per the findings — cheap, keep); the
+batched-callee toll (~23 cycles/call, 0.16 ns/item at batch 128) is
+noise — do not chase. Family evidence across batches 2–3: aggregate
+families (balance p95 25.2, stats 1,879, spread 11,030) hold or improve;
+no regress; verify green. No code change was forced by the audit — the
+PRD's value is the pinned verdict table above.

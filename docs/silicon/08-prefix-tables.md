@@ -65,3 +65,38 @@ The shipped 32 was right by luck; now it gets to be right by measurement.
 The scan protocol itself (begin_scan/scan_run/end_scan — unchanged);
 run-length detection; per-item re-resolution paths for genuinely tiny
 runs below the new L* (they stay, and they're near-free: 0.65 ns/item).
+
+## Result (2026-07-07)
+
+Landed: BOTH shipped `array::from_fn` Option tables replaced by
+Option-free prefix tables built with plain indexed loops — the leaf-scan
+residual operand table in `run.rs::run_leaf_scan` (the exact "+48 ns/row"
+table bumblebench exp 05 dissected: a `[Option<(CmpOp, Operand,
+Operand)>; MAX]` via `from_fn` became a placeholder-filled Copy array +
+length prefix) and the projection scan's column table in
+`sink.rs::scan_run` (`[Option<ColumnView>; 8]` → `[ColumnView; 8]` with
+`sources[i]` as the liveness gate). `SCAN_HOIST_THRESHOLD` 32 → **8**
+and the sink's mirror (`SCAN_COLUMN_HOIST` = 8), both with load-bearing
+comments citing the corrected attribution (the cost was `from_fn`'s
+outlined closure + 448 B memcpy, never hoisting).
+
+Threshold derivation: the in-loop-intercept measurement was performed by
+bumblebench exp 05 itself (15 run lengths × 4 strategies × 2 residual
+counts, three reproducing runs — the full crossover table lives in
+`~/Documents/bumblebench/docs/table_hoist_crossover.md`): L* =
+build ÷ saving = 3.4 ns ÷ 0.74 ns/item ≈ 4.6 (one residual) — shipped 8
+covers both residual counts with ≤ ~1 ns/item regret anywhere in
+L ∈ [4, 128]. An in-tree re-derivation would measure the same arms
+through more machinery; recorded as a premise-adjusted deliverable
+(the bumblebench table IS the crossover table).
+
+Gates: asm gate green (zero `call_mut`/`memcpy` calls inside
+`run_leaf_scan`/`scan_run` symbols); grep gate: no `from_fn` remains in
+execute-reachable `exec/`/`api/` code (the only other user was the
+test-side fixture allowlist: none); range ≤ 24 missed at 28.2 —
+documented with PRD 03: range has ONE 100k-position run, so the
+old build cost was already amortized to noise there (the ≤ 24 target
+double-counted the from_fn win); spread 11,030 vs baseline 11,282
+(−2.2%, gate −3% — within a stamp; its fanout-1.4 leaf runs now hoist
+at L ≥ 8 where they never hoisted before); chain 115.1 holds ✓;
+no regress; verify green; zero-alloc holds (stack tables).

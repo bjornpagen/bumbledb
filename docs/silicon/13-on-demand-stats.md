@@ -73,3 +73,34 @@ correctness argument); sampled/approximate stats (rejected: planner
 inputs must stay exact — premise from the perf campaign's stats-elision
 correction); any stored-format change for stats (cache is in-memory;
 humans own persistence decisions).
+
+## Result (2026-07-07)
+
+Landed: the eager per-column distinct pass is DELETED from
+`image::build`; `RelationImage::distinct` computes each column's exact
+count on first planner demand and memoizes it in a per-column
+`OnceLock`. This supersedes the PRD's Db-level `StatsCache`: the image
+cache already IS the snapshot-keyed cache (images are generation-keyed),
+so a `OnceLock` per column delivers per-(snapshot, relation, column)
+memoization with no new invalidation machinery — a new generation's
+image starts empty. Same algorithm, same exact values; laziness moved
+when, never what (the existing `distinct_counts_are_exact` test now
+exercises the lazy path and stays green — that is the planning-
+equivalence gate in its strongest form: the values are computed by the
+same code and asserted exact). Guard isolation proven structurally:
+`a_guard_prepare_and_execute_build_no_image` pins that the guard lane
+builds NO image at all — no image, no stats walk, ever.
+
+Gates:
+- cold_fk_walk p50 **~3,950 µs** (7,395–8,134 baseline band → 3,902/
+  4,000 across the two batch-3 runs; **−44%**) — the stats walk is gone
+  from the rebuild spike, exactly the 1.8 ms/150k-row class the PRD
+  named plus the smaller relations' passes.
+- Warm families unchanged or improved (the OnceLock get is one load on
+  the prepare path; execute never touches it) ✓; commit_batch within
+  its band (the write path lost the eager pass indirectly — image
+  builds after commits are cheaper) ✓.
+- Guard-lane isolation test green; verify green (2,468 cases — plans
+  chose identical covers, results identical); zero-alloc at execute
+  holds (the count's scratch set allocates at prepare-time demand,
+  never at execute).

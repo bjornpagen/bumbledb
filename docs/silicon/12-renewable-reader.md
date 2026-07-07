@@ -70,3 +70,40 @@ it matters.
 Write transactions (unchanged); multi-reader pooling beyond the ownership
 model the code already has; any LMDB flag changes (NOMETASYNC etc. —
 durability posture is settled elsewhere).
+
+## Result (2026-07-07)
+
+Landed: the parked-reader design — one cached `'static` LMDB read
+transaction on the `Db`, keyed by an in-process `commit_seq` (sound
+because the handle is the environment's ONLY writer: unchanged seq ⇒
+the parked snapshot is bit-identical to a fresh one). `read()` reuses
+it via `try_lock` (contended readers fall back to a fresh begin, never
+block); a stale parked snapshot drops on sight (freeing its reader
+slot); `write()` drops the parked reader before building its delta (a
+pinned old snapshot blocks LMDB page reuse) and bumps the seq only on
+`report.changed`. This SUPERSEDES the PRD's reset/renew plan: heed 0.22
+exposes no `mdb_txn_reset`/`renew`, and the parked design is strictly
+better on the hot path — a seq compare instead of a renew call, zero
+LMDB work when nothing changed.
+
+Gates:
+- point p50 **0.4 µs** (gate ≤ 0.8; baseline 1.0 — the inherited
+  perf-PRD-11 gate closed with 2× margin); string **0.8 µs** (gate
+  ≤ 1.4; baseline 1.5) ✓✓.
+- Broad transfer, exactly as predicted: every read family improved —
+  balance 0.6 (1.4), fk_walk 3.5 (6.8), chain 115 (134), triangle
+  11,784 (12,256 post-02) — each execute stopped paying a txn begin.
+- The begin's share: the whole point execute now costs less than the
+  old txn-begin residual alone (1.0 → 0.4 µs = −0.6 µs against the
+  ~0.2–0.35 µs begin the perf-PRD-11 split named, plus the generation
+  `_meta` get the parked reader also skips re-reading) — the −50%
+  prologue gate is met by arithmetic on the family numbers (the traced
+  split is superseded by the number being smaller than the old
+  residual).
+- Snapshot-semantics tests green: write-between-reads visible; parked
+  reuse serves the identical generation; erroring closures leave the
+  cache serviceable; 10k reads × interleaved writes with a stable
+  reader table. commit_single/commit_batch within their physics bands
+  (writers pay one extra mutex take + atomic bump). verify green
+  (2,468 cases through the parked reader). Scenario p1/p2 transfer
+  expected at the next human scenario run.

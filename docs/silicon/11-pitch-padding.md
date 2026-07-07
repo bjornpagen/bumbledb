@@ -78,3 +78,33 @@ pointer-encoding (bumbledb's packed values are tagged indexes, not
 canonical pointers — recorded as considered-and-not-applicable, with the
 one-line rationale in `## Result`); allocator changes for transient
 buffers.
+
+## Result (2026-07-07)
+
+Landed: `ResidueStagger` deleted; `PitchPadder` in its place — pitches
+within a slab that are ≥ 64 KiB and land a small NONZERO offset
+(≤ 384 B) from a 16 KiB multiple are rounded UP to the next exact
+multiple. One measured correction to the PRD's own text: the
+discriminators put EXACT multiples in the FAST configuration
+(stagger 16,384 ran clean; 8/32/64/128 are the poison), so the cure is
+rounding to the multiple, not adding a page to it — the first
+implementation padded a 16 KiB-multiple pitch by 16 KiB and stayed on
+the multiple; the structural test caught it before any measurement.
+`40-storage.md` and `00-product.md` rewritten (the 10–20× aliasing
+folklore retired with its mechanism named; 64 B L1D behind the 128 B
+granule stated). The old 12-column residue-distinctness test became the
+pitch-band test; `big_column_pitches_avoid_the_tracker_band` engineers
+the exact pathological shape (4 × 16,384-row u64 columns — 128 KiB
+spans, residue 0 unpadded) and pins the layout out of the band.
+
+Gates: structural tests green (the engineered pow-2 layout lays out
+clear of the band); bench-store spans at scale S are 0.8–1.2 MB with
+residues 13,568/3,968 B — OUTSIDE the band, so no padding triggers, no
+family moves, and disk footprint is byte-identical (the "no padding
+triggered, recorded" arm of the gate; the in-tree engineered test is
+the win, exactly as the gate anticipated). Cold decode unchanged;
+verify green (2,468 cases through rebuilt images); commit_batch within
+its physics band. DMP pointer-encoding recorded as considered-and-not-
+applicable: COLT's packed children are tagged u32 indexes, not
+canonical pointers — the Augury/GoFetch DMP keys on pointer-shaped
+values, which these are not.

@@ -71,3 +71,24 @@ and shape is the machinery.
 Dense-run NEON folds (landed in 06); prefetch tier policy (10 — this PRD
 may consume its `prfm` helper but not its gating logic); any new
 auxiliary structure.
+
+## Result (2026-07-07)
+
+The audit (objdump, release bench binary):
+
+| kernel | standalone symbol? | verdict |
+|---|---|---|
+| `fold_sum_*_idx`, `fold_min_max_u64_idx` | fully inlined at call sites | shape owned by the sink fold arms; `get_unchecked` interiors behind batch-level bounds proofs (the perf-PRD 04 design) — already the masked-defense single-block shape this PRD prescribes |
+| `filter_eq/range_u64`, `filter_eq_u8` | standalone; `bl`s are `Vec` grow/panic prologue, none in the SIMD loop | accepted — NEON 2-lane compare loops with branchless cursor writes |
+| `compact_u32_by_mask` | fully inlined | the 1.00-cycle branchless cursor-write law, already shipped |
+| gathered scalar folds at DRAM tier | not exercised by any bench family (stats gathers are L2-resident at scale S) | flag-µop budgeting deferred until a workload exists — recorded, not speculatively engineered |
+
+No pre-loop `assert!` pre-passes exist in kernel hot paths (grep clean —
+contract checks live at construction/dispatch). No code change was
+forced: the kernels were already in the prescribed shapes (the perf
+suite built them under the same laws bumblebench later verified), and
+the family gates that motivated this PRD (stats ≤ 1,400 cumulative)
+remain governed by stats' dedup pass, not its gathers — stats p50 1,879
+(documented across 03/04/06: the dedup insert per row is the floor).
+balance p95 25.2 ✓, range 28.2 ✓ (holds), triangle unaffected ✓;
+differential property tests green throughout; verify green.
