@@ -395,7 +395,21 @@ pub(crate) fn prepare<'s>(
         let _s = obs::span(obs::names::BUILD_COLTS, obs::Category::Prepare);
         build_view_memo(&exec_plan)
     };
-    let sink = make_sink(&finds, slot_count, exec_plan.distinct_bindings());
+    // Sink presizing (docs/perf/ PRD 06): the last node's planner
+    // estimate bounds the binding stream the sink consumes.
+    let output_hint = match &exec_plan {
+        ExecPlan::FreeJoin(plan) => {
+            usize::try_from(plan.estimates().last().copied().unwrap_or(0).min(1 << 21))
+                .expect("clamped")
+        }
+        ExecPlan::GuardProbe(_) => 1,
+    };
+    let sink = make_sink(
+        &finds,
+        slot_count,
+        exec_plan.distinct_bindings(),
+        output_hint,
+    );
 
     Ok(PreparedQuery {
         schema,
@@ -1070,18 +1084,24 @@ fn run_join<C: crate::exec::run::Counters>(
 
 /// Builds the sink matching the find shape (the variant is fixed per
 /// prepared query — an enum, not `dyn`).
-fn make_sink(finds: &[(FindSpec, ValueType)], slot_count: usize, distinct: bool) -> EitherSink {
+fn make_sink(
+    finds: &[(FindSpec, ValueType)],
+    slot_count: usize,
+    distinct: bool,
+    hint: usize,
+) -> EitherSink {
     let has_aggregates = finds
         .iter()
         .any(|(spec, _)| matches!(spec, FindSpec::Agg { .. }));
     if has_aggregates {
-        EitherSink::Aggregate(Box::new(AggregateSink::new(
+        EitherSink::Aggregate(Box::new(AggregateSink::with_capacity_hint(
             finds.iter().map(|(spec, _)| *spec).collect(),
             slot_count,
             distinct,
+            hint,
         )))
     } else {
-        EitherSink::Projection(ProjectionSink::new(
+        EitherSink::Projection(ProjectionSink::with_capacity_hint(
             finds
                 .iter()
                 .map(|(spec, _)| match spec {
@@ -1089,6 +1109,7 @@ fn make_sink(finds: &[(FindSpec, ValueType)], slot_count: usize, distinct: bool)
                     FindSpec::Agg { .. } => unreachable!("no aggregates here"),
                 })
                 .collect(),
+            hint,
         ))
     }
 }

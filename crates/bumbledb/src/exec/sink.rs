@@ -66,13 +66,23 @@ pub struct ProjectionSink {
 }
 
 impl ProjectionSink {
-    /// `slots`: the projected variables' binding slots, in find order.
+    /// `slots`: the projected variables' binding slots, in find order
+    /// (tests; production sinks are hint-sized).
+    #[cfg(test)]
     #[must_use]
     pub fn new(slots: Vec<usize>) -> Self {
+        Self::with_capacity_hint(slots, 0)
+    }
+
+    /// Presized construction (docs/perf/ PRD 06): `hint` is the plan's
+    /// output-cardinality estimate — the seen-set allocates once instead
+    /// of rehash-doubling through the first measured execution.
+    #[must_use]
+    pub fn with_capacity_hint(slots: Vec<usize>, hint: usize) -> Self {
         let arity = slots.len();
         Self {
             slots,
-            seen: WordMap::new(arity),
+            seen: WordMap::with_capacity_hint(arity, hint),
             scratch: vec![0; arity],
             batch_sources: vec![None; arity],
             sources_key: (0, 0),
@@ -288,8 +298,24 @@ impl AggregateSink {
     /// Builds the sink. `slot_count` is the plan's binding-slot count;
     /// `distinct_bindings` is the plan's elision flag (30-execution): when
     /// set, the seen-set is skipped entirely.
+    /// Unhinted construction (tests; production sinks are hint-sized).
+    #[cfg(test)]
     #[must_use]
     pub fn new(finds: Vec<FindSpec>, slot_count: usize, distinct_bindings: bool) -> Self {
+        Self::with_capacity_hint(finds, slot_count, distinct_bindings, 0)
+    }
+
+    /// Presized construction (docs/perf/ PRD 06): the dedup seen-set
+    /// takes the plan's output estimate; the group map takes a small
+    /// clamp of it (groups are few — the estimate bounds bindings, not
+    /// groups).
+    #[must_use]
+    pub fn with_capacity_hint(
+        finds: Vec<FindSpec>,
+        slot_count: usize,
+        distinct_bindings: bool,
+        hint: usize,
+    ) -> Self {
         let group_slots: Vec<usize> = finds
             .iter()
             .filter_map(|f| match f {
@@ -299,10 +325,10 @@ impl AggregateSink {
             .collect();
         let n_aggs = finds.len() - group_slots.len();
         Self {
-            groups: WordMap::new(group_slots.len()),
+            groups: WordMap::with_capacity_hint(group_slots.len(), hint.min(4096)),
             key_scratch: vec![0; group_slots.len()],
             binding_scratch: vec![0; slot_count],
-            seen: (!distinct_bindings).then(|| WordMap::new(slot_count)),
+            seen: (!distinct_bindings).then(|| WordMap::with_capacity_hint(slot_count, hint)),
             memo_key: vec![0; group_slots.len()],
             memo_idx: None,
             acc_scratch: Vec::with_capacity(n_aggs),

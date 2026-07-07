@@ -79,3 +79,39 @@ on them.
 
 COLT's forced maps (07 — different structure, same idea), the sinks' fold
 logic (02/03), cross-node batching.
+
+## Result (2026-07-07, run bench-out/2026-07-07T01-26-57Z)
+
+Landed: the tag-byte rebuild — `ctrl: Vec<u8>` (0 = empty, else
+`0x80 | top-7-hash-bits`) gating every key compare, `MaybeUninit<V>`
+values (`V: Copy`, no `Option` in the slot array), growth preserved with
+in-place dense-order rehash — plus `with_capacity_hint` presizing
+threaded from the plan's last-node estimate through `make_sink`
+(seen-sets take the estimate, group maps a 4,096 clamp; unhinted
+constructors are test-only now). Differential property test vs a
+HashMap+insertion-order reference model across randomized op sequences
+(adversarial equal-low-bit keys, growth boundaries, clear cycles,
+arities {1, 2, 4}); the covering-hint test pins zero growth
+structurally.
+
+Gates:
+1. Differential + existing wordmap suite green ✓; functional gates green.
+2. Zero `WORDMAP_GROW` events in every traced execution ✓, and the
+   covering-hint unit test pins the stronger property deterministically.
+3. Measured: spread p50 +0.8% vs post-05 (gate: −400 µs) ✗ — and stats
+   −1.0%. The analysis: at 4-word full-binding keys the insert cost is
+   the hash and the key write, not probe-line count; the ctrl-byte win
+   lands where collisions and misses dominate instead — range p50
+   40.8 → **33.0 µs** (−19%; the PRD 05 near-miss gate of ≤30 is now
+   within reach), skew 60.1 → **35.8 µs** (−40%), fk_walk → 5.2 µs.
+   balance/stats within noise as required (small-map tripwire held);
+   chain 170 µs inside its documented 143–210 band.
+4. Probe-step evidence: **1.492 average probe steps** at 50% load
+   (32,768 2-word keys), all-hit sweep — the ctrl byte absorbs the
+   collision walk without touching key lines.
+
+The residual seen-set cost on stats/spread is now firmly attributed to
+hashing + key traffic per insert, not map layout — the remaining levers
+are fewer inserts (PRD 09's batching does not change insert counts;
+nothing in this suite does — it is semantic work) or a cheaper hash,
+noted as a possible future measurement outside this suite's scope.
