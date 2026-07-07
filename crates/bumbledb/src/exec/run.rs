@@ -1603,9 +1603,15 @@ impl Executor {
         counters.phase_end(node_idx, JoinPhase::Descend);
         scratch.parents.clear();
         scratch.element_origins.clear();
-        // Cascade a full child batch immediately (bounded memory: the
-        // child never holds more than two batches).
-        if !leaf && self.scratch[node_idx + 1].pending_len >= self.batch {
+        // Cascade at TWO accumulated batches (docs/silicon/14): the
+        // endgame trace showed pump-call granularity — not cover flips —
+        // capping probe-batch means at ~37 of 128 (each ~one-batch
+        // cascade yields ~one batch of rows, split across group tails).
+        // Doubling the pending accumulation doubles rows per pump call
+        // and halves the per-pass overhead. Bounded memory: the child
+        // holds at most three batches transiently (2×batch trigger plus
+        // one pass's appends before the next check).
+        if !leaf && self.scratch[node_idx + 1].pending_len >= self.batch * 2 {
             self.pump(tables, plan, node_idx + 1, colts, bindings, sink, counters);
         }
     }

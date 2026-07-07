@@ -75,3 +75,39 @@ measurement and recording otherwise.
 Anything new. Scenario suite, L-scale runs, the performance claim, and
 publication of results are human-owned. Follow-ups discovered here are
 recorded as named walls in `final.md`, not chased.
+
+## Result (2026-07-07)
+
+Landed: cover-stable batch segregation in `pump` (pass 1 precomputes
+each pending entry's dynamic cover choice + exactness; pass 2 processes
+entries grouped by cover in first-appearance order, cancellation
+re-checked per entry) and the 2×-batch cascade threshold. The
+segregation lever's own measurement is the finding: triangle's batch
+means moved only 37 → 39 — the fragmentation was never cover flips but
+pump-call granularity (each ~one-batch cascade carries ~one batch of
+rows), and doubling the accumulation confirmed the volume bound. The
+full D2 gauntlet stayed green through the reorder: the randomized
+subset-projection differential at **200 cases**, the two-parent
+interleave fixtures, batch-size equality, and the 2,468-case verify
+oracle — cancellation is origin-keyed and order-independent, exactly as
+the origins design promised.
+
+Gates:
+- **point p50 0.4 µs ≤ 0.8 ✓** (re-affirmed on the final binary).
+- **triangle p50 11,742 µs — MISSED ≤ 8,000**; **jp_probe_n1 3,667 µs —
+  MISSED ≤ 1,500** (−22% and −35% from baseline). The high-bar
+  documentation lives in `final.md`: full phase attribution
+  (probe_n1 5,649 → 3,667; probe_n0 −39%; hash_n0 −67%) and the
+  irreducibility statement — ~37 ns/probe against bumblebench's
+  17–21 ns faithfully-shaped floor, L2-resident and ROB-overlapped at
+  batch 1, so the remaining levers are probe-COUNT reduction (planner
+  scope) or SIMD-batched COLT probing (layout redesign); both recorded
+  as the next suite's openers.
+- **Suite-wide: ALL-WIN on every run ✓; every family's final p50 ≤ its
+  baseline p50 (bimodal families' p95 all improved) ✓; ledger geomean
+  0.69 (−31%, gate ≥ −20%) ✓.**
+- `final.md` committed with the complete table, phase attribution,
+  per-PRD delta attribution, prefetch-tier evidence (782 passes on
+  triangle/spread, zero elsewhere), and the surviving walls with
+  owners; verify green; zero-alloc green; clippy green; check-asm green
+  on all accumulated gates.

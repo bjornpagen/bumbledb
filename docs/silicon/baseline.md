@@ -1,5 +1,10 @@
 # The silicon-suite baseline (PRD 00)
 
+> **Superseded as the live denominator by [`final.md`](final.md)**
+> (PRD 14, 2026-07-07): any future suite gates against the final table.
+> This file remains the PRD-00 starting point every silicon-suite delta
+> is attributed against.
+
 Committed denominator for every gate in docs/silicon/. Captured
 2026-07-07 on the reference host (Apple M2 Max), scale S, seed 1,
 256 samples/family, verify stamp
