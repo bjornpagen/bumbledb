@@ -144,3 +144,47 @@ New module `exec/pipeline.rs`; plan-time selection in `api/prepared.rs`
 
 D2 skip semantics under batching (PRD 10 — chain stays recursive here),
 plan selection changes, COLT restructuring beyond PRD 07's.
+
+## Result (2026-07-07, run bench-out/2026-07-07T02-31-26Z)
+
+**The classification test — written first, as ordered — moved this PRD's
+gates.** The pinned roster (bench `skip_free_classification_is_pinned`):
+skip-free = {range, balance, stats, string, spread}, all ≤2-node plans
+whose leaves already run fused per parent — cross-node batching has no
+parents to batch on any of them. The deep-node families — triangle,
+chain, skew, fk_walk — are all D2-crossing and gate PRD 10, exactly as
+the "let its output decide" clause anticipated. This PRD therefore
+delivers the pipelined executor itself, proven synthetically and under
+the oracle, with the family payoff deferred one PRD.
+
+Landed: `PipeTables` (static per-plan levels + carried-cursor columns),
+per-node pending buffers (binding rows + carried cursor sets, bounded
+at two batches with immediate cascade on a full child), `pump` /
+`probe_pass` — expansion across pending entries with per-entry dynamic
+cover choice (the magnitude-first rule holds per parent; mixed batches
+flush on cover change), cross-parent sibling probes with per-parent
+Slot reads and phase-1.5 prefetch, residual filtering, and survivor
+routing (middle children append; the last node runs per parent through
+the ordinary `run_node`, inheriting every leaf fast path, counter, and
+phase). Dispatch: `skip_free && nodes ≥ 3`; the recursive executor
+serves everything else untouched. `Bindings::load_row` carries parent
+rows to the leaf.
+
+Gates:
+1. Equivalence green: the fill-boundary sweep (pending at/under/over the
+   batch, multi-batch expansions with resume tokens, empty covers) at
+   batch sizes {1, 2, 127, 128, 129, 1024} vs the nested-loop oracle;
+   the full verify (2,468 cases) exercises the pipeline under every
+   skip-free randomized aggregate. One real bug was caught by the
+   batch-1 leg during development: consumed pending buffers kept stale
+   rows that post-cascade appends indexed past — the class of bug the
+   PRD's fill-boundary tests were specified to catch, caught by them.
+2. Counter-proven batching: the starvation-shaped fixture (1,000
+   parents, fanout-1 middle probes) runs its middle node at **mean probe
+   batch length 125** (gate ≥ 32; was 1 by construction recursively).
+3. The memory bound holds by assert: pending capacity ≤ 2 batches.
+4. Families: every p50 within its documented band vs post-08 (no
+   skip-free family has middle nodes, so zero dispatch — the run is a
+   pure no-regression check, and it passed; ALL-WIN held). triangle/
+   spread/fk_walk/skew p50-p95 targets transfer to PRD 10 with the
+   recursive executor's retirement.

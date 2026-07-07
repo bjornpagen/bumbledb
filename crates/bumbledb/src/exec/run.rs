@@ -369,6 +369,19 @@ impl Bindings {
         }
     }
 
+    /// Loads a complete binding row (the pipelined executor's parent
+    /// rows, docs/perf/ PRD 09): every slot becomes bound.
+    pub fn load_row(&mut self, row: &[u64]) {
+        self.slots.copy_from_slice(row);
+        #[cfg(debug_assertions)]
+        {
+            self.current += 1;
+            for epoch in &mut self.epochs {
+                *epoch = self.current;
+            }
+        }
+    }
+
     /// Reads a bound slot.
     #[must_use]
     pub fn get(&self, slot: usize) -> u64 {
@@ -468,6 +481,17 @@ struct NodeScratch {
     mask: Vec<u8>,
     /// Undo journal: (occurrence index, previous cursor, previous level).
     journal: Vec<(usize, Cursor, usize)>,
+    /// Pipeline probe-batch parent indices (docs/perf/ PRD 09): the
+    /// pending entry each batch element expanded from.
+    parents: Vec<u32>,
+    /// Pending binding rows awaiting this node, entry-major
+    /// (stride = slot count).
+    pending_bindings: Vec<u64>,
+    /// Pending carried cursors, entry-major (stride = the node's carried
+    /// occurrence count).
+    pending_cursors: Vec<Cursor>,
+    /// Entries in the pending buffers.
+    pending_len: usize,
 }
 
 /// The executor scratch for one plan shape: per-execution cursor state and
@@ -503,6 +527,62 @@ pub struct Executor {
     /// Residual-surviving positions of one scan run (docs/perf/ PRD 05:
     /// leaf residuals filter positions before the sink folds them).
     scan_filter: Vec<u32>,
+    /// The pipelined executor's shape tables (docs/perf/ PRD 09):
+    /// `Some` exactly when the plan is skip-free with ≥ 3 nodes — the
+    /// shapes where cross-node batching has parents to batch.
+    pipe: Option<PipeTables>,
+}
+
+/// The pipelined executor's static shape tables (docs/perf/ PRD 09):
+/// levels and carried-cursor columns are plan facts, derived once.
+struct PipeTables {
+    /// `[node][occ]` — the join level an occurrence's cursor sits at when
+    /// the node begins (= its appearances in earlier nodes).
+    entry_level: Vec<Vec<usize>>,
+    /// `[node]` — occurrences whose cursors pending entries carry INTO
+    /// the node (advanced by an earlier node, used at this node or
+    /// later).
+    carried: Vec<Vec<usize>>,
+    /// `[node][occ]` — the carried column, aligned with `carried[node]`.
+    carried_col: Vec<Vec<Option<usize>>>,
+}
+
+impl PipeTables {
+    fn of(plan: &ValidatedPlan) -> Self {
+        let n_nodes = plan.nodes().len();
+        let n_occ = plan.occurrences().len();
+        let mut appears = vec![vec![false; n_nodes]; n_occ];
+        for (node_idx, node) in plan.nodes().iter().enumerate() {
+            for subatom in &node.subatoms {
+                appears[usize::from(subatom.occ.0)][node_idx] = true;
+            }
+        }
+        let mut entry_level = Vec::with_capacity(n_nodes);
+        let mut carried = Vec::with_capacity(n_nodes);
+        let mut carried_col = Vec::with_capacity(n_nodes);
+        for node_idx in 0..n_nodes {
+            let mut levels = Vec::with_capacity(n_occ);
+            let mut occs = Vec::new();
+            let mut cols = vec![None; n_occ];
+            for (occ, at) in appears.iter().enumerate() {
+                levels.push(at[..node_idx].iter().filter(|b| **b).count());
+                let before = at[..node_idx].iter().any(|b| *b);
+                let at_or_after = at[node_idx..].iter().any(|b| *b);
+                if before && at_or_after {
+                    cols[occ] = Some(occs.len());
+                    occs.push(occ);
+                }
+            }
+            entry_level.push(levels);
+            carried.push(occs);
+            carried_col.push(cols);
+        }
+        Self {
+            entry_level,
+            carried,
+            carried_col,
+        }
+    }
 }
 
 /// The single-subatom-leaf precompute (docs/perf/ PRD 05): everything
@@ -628,6 +708,10 @@ impl Executor {
                     residual_sources: Vec::new(),
                     mask: Vec::with_capacity(batch),
                     journal: Vec::new(),
+                    parents: Vec::with_capacity(batch),
+                    pending_bindings: Vec::new(),
+                    pending_cursors: Vec::new(),
+                    pending_len: 0,
                 }
             })
             .collect();
@@ -644,6 +728,7 @@ impl Executor {
             leaf_const_residuals: leaf.const_residuals,
             leaf_row: leaf.row,
             scan_filter: Vec::new(),
+            pipe: (plan.skip_free() && plan.nodes().len() >= 3).then(|| PipeTables::of(plan)),
         }
     }
 
@@ -671,7 +756,188 @@ impl Executor {
         // (docs/architecture/30-execution.md).
         self.cursors
             .extend(colts.iter().map(|colt| (colt.start(), 0usize)));
-        self.run_node(plan, 0, colts, bindings, sink, counters);
+        // The pipelined path (docs/perf/ PRD 09): skip-free plans with
+        // middle nodes batch probes ACROSS parent entries — deep nodes
+        // finally see full batches. Everything else recurses per parent.
+        if self.pipe.is_some() {
+            self.run_pipeline(plan, colts, bindings, sink, counters);
+        } else {
+            self.run_node(plan, 0, colts, bindings, sink, counters);
+        }
+    }
+
+    /// The pipelined executor (docs/perf/ PRD 09): pending binding rows
+    /// and carried cursor sets flow node to node; each middle node
+    /// expands pending entries into shared probe batches (flushed on
+    /// cover change), probes every sibling across parents, and appends
+    /// survivors to the next node's pending. The last node runs per
+    /// parent through the ordinary `run_node` machinery — leaf fast
+    /// paths, counters, phases and all.
+    fn run_pipeline<S: Sink, C: Counters>(
+        &mut self,
+        plan: &ValidatedPlan,
+        colts: &mut [Colt],
+        bindings: &mut Bindings,
+        sink: &mut S,
+        counters: &mut C,
+    ) {
+        let tables = self.pipe.take().expect("dispatched on Some");
+        let slot_count = bindings.slot_count();
+        for scratch in &mut self.scratch {
+            scratch.pending_bindings.clear();
+            scratch.pending_cursors.clear();
+            scratch.pending_len = 0;
+        }
+        // The virtual root entry: no bindings, no carried cursors.
+        self.scratch[0].pending_bindings.resize(slot_count, 0);
+        self.scratch[0].pending_len = 1;
+        self.pump(&tables, plan, 0, colts, bindings, sink, counters);
+        self.pipe = Some(tables);
+    }
+
+    /// Consumes every pending entry at a middle node, cascading full
+    /// child batches immediately and draining the remainder at the end.
+    #[allow(clippy::too_many_lines)] // one batch loop; the invariants read in order
+    #[allow(clippy::too_many_arguments)]
+    fn pump<S: Sink, C: Counters>(
+        &mut self,
+        tables: &PipeTables,
+        plan: &ValidatedPlan,
+        node_idx: usize,
+        colts: &mut [Colt],
+        bindings: &mut Bindings,
+        sink: &mut S,
+        counters: &mut C,
+    ) {
+        let n_nodes = plan.nodes().len();
+        debug_assert!(node_idx + 1 < n_nodes, "the leaf runs per parent");
+        let mut scratch = std::mem::take(&mut self.scratch[node_idx]);
+        let carried_w = tables.carried[node_idx].len();
+
+        let mut entry = 0usize;
+        let mut token = BatchToken::default();
+        let mut fill = 0usize;
+        let mut cur_cover: Option<usize> = None;
+        let mut cur_arity = 0usize;
+        while entry < scratch.pending_len {
+            counters.node_entry(node_idx);
+            // Per-entry cursors: carried column or the colt's start.
+            let cursor_of = |occ: usize, scratch: &NodeScratch, colts: &[Colt]| -> Cursor {
+                match tables.carried_col[node_idx][occ] {
+                    Some(col) => scratch.pending_cursors[entry * carried_w + col],
+                    None => colts[occ].start(),
+                }
+            };
+            // Dynamic cover choice per entry (the magnitude-first rule
+            // holds per parent — mixed batches flush on cover change).
+            let node = &plan.nodes()[node_idx];
+            let mut best: Option<(usize, KeyCount)> = None;
+            for &cover in &node.covers {
+                let sub_idx = usize::from(cover);
+                let occ = usize::from(node.subatoms[sub_idx].occ.0);
+                let count = colts[occ].key_count(cursor_of(occ, &scratch, colts));
+                let better = match &best {
+                    None => true,
+                    Some((_, incumbent)) => better_cover(count, *incumbent),
+                };
+                if better {
+                    best = Some((sub_idx, count));
+                }
+            }
+            let (cover_sub, count) = best.expect("validated plans have non-empty cover sets");
+            counters.cover_choice(node_idx, cover_sub, matches!(count, KeyCount::Exact(_)));
+            if cur_cover != Some(cover_sub) {
+                if fill > 0 {
+                    self.probe_pass(
+                        tables,
+                        plan,
+                        node_idx,
+                        cur_cover.expect("fill implies a cover"),
+                        cur_arity,
+                        fill,
+                        &mut scratch,
+                        colts,
+                        bindings,
+                        sink,
+                        counters,
+                    );
+                    fill = 0;
+                }
+                cur_cover = Some(cover_sub);
+                cur_arity = node.subatoms[cover_sub].vars.len();
+            }
+            let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
+            let cover_cursor = cursor_of(cover_occ, &scratch, colts);
+            let cover_level = tables.entry_level[node_idx][cover_occ];
+            loop {
+                let want = self.batch - fill;
+                let (yielded, next) = colts[cover_occ].iter_batch(
+                    cover_cursor,
+                    cover_level,
+                    token,
+                    &mut scratch.entry_keys[fill * cur_arity..],
+                    &mut scratch.children[fill..],
+                    want,
+                );
+                counters.batch(node_idx, yielded);
+                for _ in 0..yielded {
+                    scratch
+                        .parents
+                        .push(u32::try_from(entry).expect("pending fits u32"));
+                }
+                fill += yielded;
+                token = next;
+                if fill == self.batch {
+                    self.probe_pass(
+                        tables,
+                        plan,
+                        node_idx,
+                        cover_sub,
+                        cur_arity,
+                        fill,
+                        &mut scratch,
+                        colts,
+                        bindings,
+                        sink,
+                        counters,
+                    );
+                    fill = 0;
+                    if yielded == want {
+                        continue; // the entry may have more; resume its token
+                    }
+                }
+                if yielded < want {
+                    break; // entry exhausted
+                }
+            }
+            entry += 1;
+            token = BatchToken::default();
+        }
+        if fill > 0 {
+            self.probe_pass(
+                tables,
+                plan,
+                node_idx,
+                cur_cover.expect("fill implies a cover"),
+                cur_arity,
+                fill,
+                &mut scratch,
+                colts,
+                bindings,
+                sink,
+                counters,
+            );
+        }
+        scratch.pending_len = 0;
+        scratch.pending_bindings.clear();
+        scratch.pending_cursors.clear();
+        scratch.parents.clear();
+        self.scratch[node_idx] = scratch;
+        // Drain the child's sub-batch remainder (full batches cascaded
+        // already inside probe_pass's flush check — see its tail).
+        if node_idx + 2 < n_nodes && self.scratch[node_idx + 1].pending_len > 0 {
+            self.pump(tables, plan, node_idx + 1, colts, bindings, sink, counters);
+        }
     }
 
     #[allow(clippy::too_many_lines)] // the one hot loop; splitting it would
@@ -1009,6 +1275,194 @@ impl Executor {
 
         self.scratch[node_idx] = scratch;
         flow
+    }
+
+    /// One cross-parent probe pass (docs/perf/ PRD 09): hashes, prefetch,
+    /// probes, and residuals run over `fill` elements drawn from many
+    /// pending entries; survivors either append to the child's pending
+    /// (middle child — flushed when a full batch accumulates) or run the
+    /// last node per parent through `run_node`.
+    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_arguments)]
+    fn probe_pass<S: Sink, C: Counters>(
+        &mut self,
+        tables: &PipeTables,
+        plan: &ValidatedPlan,
+        node_idx: usize,
+        cover_sub: usize,
+        arity: usize,
+        fill: usize,
+        scratch: &mut NodeScratch,
+        colts: &mut [Colt],
+        bindings: &mut Bindings,
+        sink: &mut S,
+        counters: &mut C,
+    ) {
+        let n_nodes = plan.nodes().len();
+        let slot_count = bindings.slot_count();
+        let carried_w = tables.carried[node_idx].len();
+        let node = &plan.nodes()[node_idx];
+        let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
+        scratch.survivors.clear();
+        scratch
+            .survivors
+            .extend(0..u32::try_from(fill).expect("batch fits u32"));
+
+        // Sibling passes: per-parent Slot reads and per-parent cursors.
+        for sub_idx in 0..node.subatoms.len() {
+            if sub_idx == cover_sub || scratch.survivors.is_empty() {
+                continue;
+            }
+            let subatom = &node.subatoms[sub_idx];
+            let sub_arity = subatom.vars.len();
+            let occ = usize::from(subatom.occ.0);
+            let s_level = tables.entry_level[node_idx][occ];
+            let cover_vars = &node.subatoms[cover_sub].vars;
+            counters.phase_start(node_idx, JoinPhase::Hash);
+            for (k, &e) in scratch.survivors.iter().enumerate() {
+                let element = usize::try_from(e).expect("batch fits usize");
+                let parent = scratch.parents[element] as usize;
+                for (i, var) in subatom.vars.iter().enumerate() {
+                    scratch.probe_keys[k * sub_arity + i] =
+                        if let Some(word) = cover_vars.iter().position(|cv| cv == var) {
+                            scratch.entry_keys[element * arity + word]
+                        } else {
+                            let slot = self.slot_map[node_idx][sub_idx][i];
+                            scratch.pending_bindings[parent * slot_count + slot]
+                        };
+                }
+                counters.probe_hash(node_idx, sub_idx);
+                scratch.hashes.push(crate::exec::colt::hash_key(
+                    &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
+                ));
+            }
+            counters.phase_end(node_idx, JoinPhase::Hash);
+            if scratch.survivors.len() >= 16 {
+                for (k, &e) in scratch.survivors.iter().enumerate() {
+                    let parent = scratch.parents[e as usize] as usize;
+                    let cursor = match tables.carried_col[node_idx][occ] {
+                        Some(col) => scratch.pending_cursors[parent * carried_w + col],
+                        None => colts[occ].start(),
+                    };
+                    colts[occ].prefetch_bucket(cursor, scratch.hashes[k]);
+                }
+            }
+            counters.phase_start(node_idx, JoinPhase::Probe);
+            scratch.mask.clear();
+            for k in 0..scratch.survivors.len() {
+                let e = scratch.survivors[k];
+                let element = usize::try_from(e).expect("batch fits usize");
+                let parent = scratch.parents[element] as usize;
+                let cursor = match tables.carried_col[node_idx][occ] {
+                    Some(col) => scratch.pending_cursors[parent * carried_w + col],
+                    None => colts[occ].start(),
+                };
+                let hit = colts[occ].get_prehashed(
+                    cursor,
+                    s_level,
+                    &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
+                    scratch.hashes[k],
+                );
+                counters.probe(node_idx, sub_idx, hit.is_some());
+                scratch.sibling_children[sub_idx][element] = hit.unwrap_or(Cursor::Row(0));
+                scratch.mask.push(u8::from(hit.is_some()));
+            }
+            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+            counters.phase_end(node_idx, JoinPhase::Probe);
+            scratch.hashes.clear();
+        }
+
+        // Residuals: per-parent Slot reads.
+        counters.phase_start(node_idx, JoinPhase::Residual);
+        for (residual, lhs_slot, rhs_slot) in &self.residual_slots[node_idx] {
+            let cover_vars = &node.subatoms[cover_sub].vars;
+            let lhs_word = cover_vars.iter().position(|cv| *cv == residual.lhs);
+            let rhs_word = cover_vars.iter().position(|cv| *cv == residual.rhs);
+            scratch.mask.clear();
+            for k in 0..scratch.survivors.len() {
+                let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
+                let parent = scratch.parents[element] as usize;
+                let value = |word: Option<usize>, slot: usize| match word {
+                    Some(word) => scratch.entry_keys[element * arity + word],
+                    None => scratch.pending_bindings[parent * slot_count + slot],
+                };
+                let pass = residual
+                    .op
+                    .compare(&value(lhs_word, *lhs_slot), &value(rhs_word, *rhs_slot));
+                counters.residual(node_idx, pass);
+                scratch.mask.push(u8::from(pass));
+            }
+            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+        }
+        counters.phase_end(node_idx, JoinPhase::Residual);
+
+        // Survivor routing.
+        counters.phase_start(node_idx, JoinPhase::Descend);
+        let leaf = node_idx + 2 == n_nodes;
+        let child_carried = &tables.carried[node_idx + 1];
+        for k in 0..scratch.survivors.len() {
+            let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
+            let parent = scratch.parents[element] as usize;
+            let assemble = |occ: usize| -> Cursor {
+                // Advanced at this node: the cover's child or a probed
+                // sibling's; otherwise inherited from the parent (or the
+                // colt's start when never advanced).
+                if occ == cover_occ {
+                    return scratch.children[element];
+                }
+                if let Some(sub_idx) = node
+                    .subatoms
+                    .iter()
+                    .position(|sub| usize::from(sub.occ.0) == occ)
+                {
+                    debug_assert_ne!(sub_idx, cover_sub, "distinct occs per node");
+                    return scratch.sibling_children[sub_idx][element];
+                }
+                match tables.carried_col[node_idx][occ] {
+                    Some(col) => scratch.pending_cursors[parent * carried_w + col],
+                    None => colts[occ].start(),
+                }
+            };
+            if leaf {
+                // The last node runs per parent through the ordinary
+                // machinery: bindings row + cursors restored, then
+                // run_node — leaf fast paths, counters, phases and all.
+                bindings.load_row(
+                    &scratch.pending_bindings[parent * slot_count..(parent + 1) * slot_count],
+                );
+                for (i, slot) in self.slot_map[node_idx][cover_sub].iter().enumerate() {
+                    bindings.set(*slot, scratch.entry_keys[element * arity + i]);
+                }
+                let leaf_node = &plan.nodes()[node_idx + 1];
+                for subatom in &leaf_node.subatoms {
+                    let occ = usize::from(subatom.occ.0);
+                    self.cursors[occ] = (assemble(occ), tables.entry_level[node_idx + 1][occ]);
+                }
+                let flow = self.run_node(plan, node_idx + 1, colts, bindings, sink, counters);
+                debug_assert_eq!(flow, Flow::Continue, "skip-free plans never unwind");
+            } else {
+                let child = &mut self.scratch[node_idx + 1];
+                let start = child.pending_bindings.len();
+                child.pending_bindings.extend_from_slice(
+                    &scratch.pending_bindings[parent * slot_count..(parent + 1) * slot_count],
+                );
+                for (i, slot) in self.slot_map[node_idx][cover_sub].iter().enumerate() {
+                    child.pending_bindings[start + slot] = scratch.entry_keys[element * arity + i];
+                }
+                for &occ in child_carried {
+                    let cursor = assemble(occ);
+                    self.scratch[node_idx + 1].pending_cursors.push(cursor);
+                }
+                self.scratch[node_idx + 1].pending_len += 1;
+            }
+        }
+        counters.phase_end(node_idx, JoinPhase::Descend);
+        scratch.parents.clear();
+        // Cascade a full child batch immediately (bounded memory: the
+        // child never holds more than two batches).
+        if !leaf && self.scratch[node_idx + 1].pending_len >= self.batch {
+            self.pump(tables, plan, node_idx + 1, colts, bindings, sink, counters);
+        }
     }
 
     /// The leaf fast paths (docs/perf/ PRD 05). `None` = declined —
@@ -1442,20 +1896,34 @@ mod tests {
     }
 
     fn planned(normalized: &NormalizedQuery, schema: &Schema, order: &[u16]) -> ValidatedPlan {
+        planned_with_sinks(normalized, schema, order, &BTreeSet::new())
+    }
+
+    /// A plan with explicit sink vars — all-vars sets make every node
+    /// sink-relevant, i.e. skip-free: the pipelined executor's shapes
+    /// (docs/perf/ PRD 09).
+    fn planned_with_sinks(
+        normalized: &NormalizedQuery,
+        schema: &Schema,
+        order: &[u16],
+        sinks: &BTreeSet<VarId>,
+    ) -> ValidatedPlan {
         let join_order = JoinOrder {
             order: order.iter().map(|o| OccId(*o)).collect(),
             estimates: vec![0; order.len()],
         };
         let mut plan = binary2fj(normalized, &join_order);
         factor(&mut plan);
-        validate(
-            &plan,
-            normalized,
-            schema,
-            vec![0; order.len()],
-            &BTreeSet::new(),
-        )
-        .expect("valid plan")
+        validate(&plan, normalized, schema, vec![0; order.len()], sinks).expect("valid plan")
+    }
+
+    /// All the query's vars — the skip-free sink set.
+    fn all_vars(normalized: &NormalizedQuery) -> BTreeSet<VarId> {
+        normalized
+            .occurrences
+            .iter()
+            .flat_map(|o| o.vars.iter().map(|(_, v)| *v))
+            .collect()
     }
 
     fn run(plan: &ValidatedPlan, views: &[Arc<crate::image::RelationImage>]) -> BTreeSet<Vec<u64>> {
@@ -1471,6 +1939,174 @@ mod tests {
             &mut NoopCounters,
         );
         sink.rows
+    }
+
+    /// PRD 09 (docs/perf/): the pipelined executor — dispatched exactly
+    /// for skip-free plans with middle nodes — matches the recursive
+    /// executor and the nested-loop oracle bit for bit, across batch
+    /// sizes that stress fill boundaries (pending exactly at, one under,
+    /// and far over the batch), multi-batch expansions with resume
+    /// tokens, empty covers, and duplicate-heavy skew.
+    #[test]
+    fn pipelined_executor_matches_recursive_and_oracle() {
+        let _dir = TempDir::new("run-pipeline-equiv");
+        let schema = schema(3);
+        // Chain shape with heavy fanout at every step; sizes cross the
+        // 128 batch on both sides.
+        for (n_r, n_s, n_t) in [(127u64, 128, 129), (5, 300, 40), (1, 1, 1), (200, 0, 10)] {
+            let r: Vec<(u64, u64)> = (0..n_r).map(|i| (i % 13, i % 7)).collect();
+            let s: Vec<(u64, u64)> = (0..n_s).map(|i| (i % 7, i % 11)).collect();
+            let t: Vec<(u64, u64)> = (0..n_t).map(|i| (i % 11, i)).collect();
+            let mut r = r;
+            r.sort_unstable();
+            r.dedup();
+            let mut s = s;
+            s.sort_unstable();
+            s.dedup();
+            let mut t = t;
+            t.sort_unstable();
+            t.dedup();
+            let dir2 = TempDir::new(&format!("run-pipeline-{n_r}-{n_s}-{n_t}"));
+            let views = views_of(&dir2, &schema, &[r.clone(), s.clone(), t.clone()]);
+            let normalized = NormalizedQuery {
+                occurrences: vec![
+                    occurrence(0, 0, &[(0, 0), (1, 1)]),
+                    occurrence(1, 1, &[(0, 1), (1, 2)]),
+                    occurrence(2, 2, &[(0, 2), (1, 3)]),
+                ],
+                residuals: vec![PlacedComparison {
+                    op: CmpOp::Ne,
+                    lhs: VarId(0),
+                    rhs: VarId(3),
+                }],
+            };
+            let sinks = all_vars(&normalized);
+            let pipe_plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
+            assert!(pipe_plan.skip_free(), "all-vars projections are skip-free");
+            let rec_plan = planned(&normalized, &schema, &[0, 1, 2]);
+            assert!(!rec_plan.skip_free());
+
+            let mut expected = BTreeSet::new();
+            for (rx, ry) in &r {
+                for (sy, sz) in &s {
+                    for (tz, tw) in &t {
+                        if ry == sy && sz == tz && rx != tw {
+                            expected.insert(vec![*rx, *ry, *sz, *tw]);
+                        }
+                    }
+                }
+            }
+            for batch in [1usize, 2, 127, 128, 129, 1024] {
+                let mut executor = Executor::with_batch_size(&pipe_plan, batch);
+                assert!(executor.pipe.is_some(), "pipeline dispatched");
+                let mut colts = colts_for(&pipe_plan, &views);
+                let mut bindings = Bindings::new(pipe_plan.slots().len());
+                let mut sink = CollectSink::default();
+                executor.execute(
+                    &pipe_plan,
+                    &mut colts,
+                    &mut bindings,
+                    &mut sink,
+                    &mut NoopCounters,
+                );
+                let got: BTreeSet<Vec<u64>> = sink
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        (0..4u16)
+                            .map(|v| row[pipe_plan.slot_of(VarId(v))])
+                            .collect::<Vec<u64>>()
+                    })
+                    .collect();
+                assert_eq!(got, expected, "sizes ({n_r},{n_s},{n_t}) batch {batch}");
+            }
+        }
+    }
+
+    /// PRD 09's counter-proven batching: a triangle-shaped skip-free plan
+    /// whose middle node used to probe once per parent now probes in
+    /// cross-parent batches with mean length well above the gate.
+    #[test]
+    fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
+        #[derive(Default)]
+        struct ProbeBatches {
+            passes: usize,
+            probes: usize,
+            current: usize,
+            node: usize,
+        }
+        impl Counters for ProbeBatches {
+            fn node_entry(&mut self, _: usize) {}
+            fn batch(&mut self, _: usize, _: usize) {}
+            fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+            fn probe_hash(&mut self, _: usize, _: usize) {}
+            fn probe(&mut self, node: usize, _: usize, _: bool) {
+                if node == self.node {
+                    self.probes += 1;
+                    self.current += 1;
+                }
+            }
+            fn residual(&mut self, _: usize, _: bool) {}
+            fn emit(&mut self) {}
+            fn skip(&mut self, _: usize) {}
+            fn phase_start(&mut self, node: usize, phase: JoinPhase) {
+                if node == self.node && phase == JoinPhase::Probe {
+                    self.current = 0;
+                }
+            }
+            fn phase_end(&mut self, node: usize, phase: JoinPhase) {
+                if node == self.node && phase == JoinPhase::Probe && self.current > 0 {
+                    self.passes += 1;
+                }
+            }
+        }
+
+        let dir = TempDir::new("run-pipeline-batching");
+        let schema = schema(3);
+        // R fans out 1000 parents; the middle node probes S per parent —
+        // fanout 1 each — the exact starvation shape.
+        let r: Vec<(u64, u64)> = (0..1000).map(|i| (i % 4, i)).collect();
+        let s: Vec<(u64, u64)> = (0..1000).map(|i| (i, i % 5)).collect();
+        let t: Vec<(u64, u64)> = (0..5).map(|i| (i, i)).collect();
+        let views = views_of(&dir, &schema, &[r, s, t]);
+        let normalized = NormalizedQuery {
+            occurrences: vec![
+                occurrence(0, 0, &[(0, 0), (1, 1)]),
+                occurrence(1, 1, &[(0, 1), (1, 2)]),
+                occurrence(2, 2, &[(0, 2), (1, 3)]),
+            ],
+            residuals: vec![],
+        };
+        let sinks = all_vars(&normalized);
+        let plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
+        assert!(plan.skip_free());
+        let mut executor = Executor::new(&plan);
+        assert!(executor.pipe.is_some());
+        let mut colts = colts_for(&plan, &views);
+        let mut bindings = Bindings::new(plan.slots().len());
+        let mut sink = CollectSink::default();
+        let mut counters = ProbeBatches {
+            node: 1,
+            ..Default::default()
+        };
+        executor.execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
+        assert!(!sink.rows.is_empty());
+        assert!(counters.passes > 0);
+        let mean = counters.probes / counters.passes;
+        assert!(
+            mean >= 32,
+            "middle-node probes batch across parents: mean {mean} (probes {}, passes {})",
+            counters.probes,
+            counters.passes
+        );
+
+        // The memory bound: pending buffers never exceed two batches.
+        for scratch in &executor.scratch {
+            assert!(
+                scratch.pending_bindings.capacity()
+                    <= 2 * BATCH * plan.slots().len() + plan.slots().len()
+            );
+        }
     }
 
     /// The clover query over the paper's Fig. 4 instance: only

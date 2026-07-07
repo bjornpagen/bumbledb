@@ -793,6 +793,17 @@ impl PreparedQuery<'_> {
     /// metadata a generic host needs to type an (even empty) result. The
     /// buffer itself stays typeless: stamping owned types per execution
     /// would allocate on the warm path.
+    /// Whether every plan node binds a sink-relevant variable — the
+    /// pipelined executor's eligibility (docs/perf/ PRD 09); `None` for
+    /// guard plans (no join runs at all).
+    #[must_use]
+    pub fn skip_free(&self) -> Option<bool> {
+        match &self.plan {
+            ExecPlan::FreeJoin(plan) => Some(plan.skip_free()),
+            ExecPlan::GuardProbe(_) => None,
+        }
+    }
+
     /// Whether the plan proved distinct bindings (the aggregate sink's
     /// seen-set elision, 30-execution) — the regime observable for the
     /// batch-fold fast path (docs/perf/ PRD 02).

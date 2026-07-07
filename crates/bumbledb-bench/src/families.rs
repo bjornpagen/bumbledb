@@ -686,6 +686,44 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// PRD 09 (docs/perf/): the skip-free roster, pinned from real plans
+    /// (the classification test the PRD orders written FIRST — its output
+    /// decides which families gate PRD 09 vs PRD 10). The result moved
+    /// the suite's plan: every skip-free family is a ≤2-node plan whose
+    /// leaf already runs fused (cross-node batching has no parents to
+    /// batch), while the deep-node families — triangle, chain, skew,
+    /// fk_walk — all carry D2-crossing nodes and gate PRD 10.
+    #[test]
+    fn skip_free_classification_is_pinned() {
+        let dir = std::env::temp_dir().join("bumbledb-bench-families-skipfree");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let db = bumbledb::Db::create(&dir, schema()).expect("create");
+        let mut seen: Vec<(&str, Option<bool>)> = Vec::new();
+        for family in all() {
+            let prepared = db.prepare(&(family.query)()).expect("prepares");
+            seen.push((family.name, prepared.skip_free()));
+        }
+        assert_eq!(
+            seen,
+            vec![
+                ("point", None),
+                ("fk_walk", Some(false)),
+                ("chain", Some(false)),
+                ("range", Some(true)),
+                ("balance", Some(true)),
+                ("stats", Some(true)),
+                ("string", Some(true)),
+                ("skew", Some(false)),
+                ("spread", Some(true)),
+                ("triangle", Some(false)),
+            ],
+            "the skip-free roster and with it the PRD 09/10 gate split"
+        );
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// PRD 02 (docs/perf/): the aggregate families' fold regimes, pinned.
     /// balance binds the posting serial — distinct bindings proven, the
     /// seen-set elided, the constant-group fast path bare. stats binds

@@ -214,6 +214,10 @@ pub struct ValidatedPlan {
     /// unique constraint, so distinct facts imply distinct bindings and the
     /// aggregate sink may skip its seen-set (30-execution, elision).
     distinct_bindings: bool,
+    /// Every node binds a sink-relevant variable (docs/perf/ PRD 09):
+    /// `Flow::SkipSuffix` can never cross a node, so the pipelined
+    /// executor's cross-node batching needs no cancellation machinery.
+    skip_free: bool,
     /// The planner's per-step estimates (EXPLAIN's reader, the 30-execution doc).
     estimates: Vec<u64>,
 }
@@ -263,6 +267,13 @@ impl ValidatedPlan {
     #[must_use]
     pub fn distinct_bindings(&self) -> bool {
         self.distinct_bindings
+    }
+
+    /// Whether a suffix skip can never cross a node — the pipelined
+    /// executor's eligibility (docs/perf/ PRD 09).
+    #[must_use]
+    pub fn skip_free(&self) -> bool {
+        self.skip_free
     }
 
     #[must_use]
@@ -381,12 +392,14 @@ pub fn validate(
     }
 
     let distinct_bindings = provably_distinct(normalized, schema);
+    let skip_free = nodes.iter().all(|n| n.sink_relevant);
 
     Ok(ValidatedPlan {
         occurrences,
         nodes,
         slots,
         distinct_bindings,
+        skip_free,
         estimates,
     })
 }
