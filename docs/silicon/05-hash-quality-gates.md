@@ -53,3 +53,20 @@ regression impossible.
 
 Changing the hash; per-column hash selection (rejected — one vetted hash,
 one contract); any release-mode instrumentation.
+
+## Result (2026-07-07)
+
+Landed: the false-tag-rate contract as pure test-side property tests
+(`adversarial_false_tag_rates` — a model table at the shipped geometry,
+walked exactly as the probe walks): sequential, strided-8, strided-4096,
+biased-i64-small, serial-pairs, and random-control families, gated at
+≤ 2/128 false compares per probe; plus the visible red case — a
+single-multiply fold hash **fails** the same gate (`#[should_panic]`),
+so a future hash swap that breaks the tag breaks the build. The hash is
+pinned by property, not by name.
+
+Gates: all families green at the shipped mulxor (rates ≲ 0.008 ≈ the
+1/128 design point); red-case teeth demonstrated; release cost ZERO by
+construction (no release-path code exists; objdump shows no counter
+artifacts in the probe monomorphs); ledger within noise across batches;
+`probe_steps` distribution still pinned; verify + clippy green.

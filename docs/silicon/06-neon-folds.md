@@ -78,3 +78,31 @@ host; it was contamination. min/max already went NEON in the perf suite
 Gathered (non-dense) NEON folds (09 owns gather shape; a NEON gather fold
 is a follow-up only if 09's measurements justify it); f64 folds (none
 exist); SME/AMX anything.
+
+## Result (2026-07-07)
+
+Landed: `neon::fold_sum_u64_dense` — exact u128 via carry counting
+(4 × 2-lane wrapping `vaddq_u64` accumulators + `vcgtq_u64` carry
+lanes; total = Σ lo + (Σ carries << 64)); `fold_sum_u64` and
+`fold_sum_biased_i64` dispatch stride-1 runs to it (the biased form via
+the exact bias identity `Σ value = Σ word − n·2^63`); strided and
+gathered folds stay scalar (a latency×MLP question, PRD 09/10's turf).
+Bit-identity: the full property corpus (extremes, overflow boundaries,
+lane-boundary lengths) plus the 2,468-case verify oracle, all green.
+Doctrine rewritten: kernel.rs header, 30-execution.md, and
+00-product.md now state the port-topology law; the 2.45 rows/ns origin
+number is recorded as a contamination artifact, not erased. The
+"wrapping ≥ 12 rows/ns" gate premise did not apply (the engine has no
+wrapping-sum semantics — sums are exact by law); the exact gates stand.
+
+Gates: `fold_throughput_contiguous_sum` — biased **7.9 rows/ns**, u64
+**7.8 rows/ns** (gate ≥ 7; scalar-era baseline 2.45–4.6; kernel ceiling
+8.8) ✓ (first run after a build read 7.08/5.47 — the DVFS-cold artifact
+the suite's own doctrine predicts; warm reruns stable). Disassembly:
+the NEON loop is `ldp q`-paired loads with vector adds; the only
+`adds/adcs` in the symbol are the post-loop horizontal u128 reduction ✓.
+stats ≤ 1,550 missed (1,879) — documented: stats' scan-folds were
+already a minor term next to its dedup pass; the NEON win is real at
+kernel level and small at family level. balance p95 25.2 (holds) ✓;
+spread −2.2% ✓-ish (documented with 04); no family regressed; verify
+green.

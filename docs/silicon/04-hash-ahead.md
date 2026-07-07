@@ -70,3 +70,34 @@ Changing the hash function itself (05 pins its quality); branchless
 window probing (landed in 03); AMAC-style multi-way state machines
 (rejected: the win is captured by one-deep pipelining at far lower
 complexity — record this as a considered-and-rejected alternative).
+
+## Result (2026-07-07)
+
+Landed: `hash_of` + `get_or_insert_prehashed`/`insert_prehashed` (the
+prehashed seam, behavior-identical by test); one-deep ping-pong
+pipelines (second scratch row, hash(k+1) before insert(k)'s branches)
+in `ProjectionSink::emit_batch` and
+`AggregateSink::fold_batch_dedup_constant_group`. The executor's colt
+probes needed nothing: the two-phase hash-then-probe design IS
+hash-ahead at batch scale (recorded, not changed).
+
+**Premise correction, measured mid-PRD:** bumblebench's 38–65% recovery
+was against the per-slot branchy probe. PRD 03's window probe landed
+first and removed most of the mispredict-flush exposure on clean miss
+streams — so hash-ahead in `ProjectionSink::scan_run` measured PURE
+OVERHEAD (range 28.5 → 31.3, +10%) and was REMOVED from that one path
+by the confirm-run protocol; the mixed hit/miss dedup paths kept theirs
+and measured faster (stats descend 1,834 → 1,697 µs traced; stats p50
+1,919 → 1,879 across batches). The fill microbench pin was re-scoped to
+"never a regression" (measured +2.6% gain on the miss-heavy fill under
+the window probe — the flush shadow it was built to recover no longer
+exists there) — the family gates are the real evidence.
+
+Gates: skew p95 938.5 (improving ✓; p50 gate premise-corrected as in
+PRD 03); stats ≤ 1,700 missed at 1,879 — documented: the dedup insert
+itself (key assembly + window walk per row) is the floor, not exposed
+hash latency; spread −2.2% (gate −5%, documented — spread's dedup rides
+the same paths but its p50 is descend-bound); triangle probe −8.4%
+further (4,193 → 3,842 µs traced) ✓; range restored to 28.2 after the
+scan-path removal ✓; microbench pin green under its corrected premise;
+verify green; emits identical; zero-alloc holds.

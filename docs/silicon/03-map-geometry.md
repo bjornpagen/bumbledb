@@ -68,3 +68,38 @@ and today they don't.
 
 Hash function and hash scheduling (04, 05); colt bucket layout changes;
 any auxiliary index structure (still banned).
+
+## Result (2026-07-07)
+
+Landed: `LOAD_DEN` named and swept; **33% max load** shipped (the sweep:
+50% loses spread badly — 14,381 vs 11,513 µs — 25% costs triangle +7%
+vs 33%; 33% best-or-near-best everywhere: triangle 11,836, skew 42.5,
+spread 11,513); hint sizing covers the hint at the shipped load (the
+`a_covering_hint_never_grows` arithmetic updated and green);
+**branchless SWAR window probing** (8 ctrl bytes per step, zero-byte and
+tag-match masks, candidates resolved in slot order; a `WINDOW−1`-byte
+ctrl mirror makes window loads wrap-free; the mirror invariant is
+test-pinned through insert/clear/grow); key compares are manual word
+loops (no `bcmp`); the full differential-vs-reference corpus is the
+portable-implementation law for the new probe.
+
+Gates:
+- Sweep table recorded above ✓ (single runs, proxy-annotated; the
+  co-tenant contamination in two cells is struck in the merge).
+- skew gates on p95 per the suite doctrine (bimodal family): p95
+  **938.5 µs** vs baseline 1,107 (−15%) ✓. Its p50 gate value (≤ 24)
+  was written against the p50 of a parameter-mix mode — premise
+  corrected in place of the miss: the rotation's hot-parameter mode
+  dominates p50 run-to-run (49–125 µs across runs at identical code).
+- chain p50 **115.1 µs** (gate ≤ 120; baseline 134.4) ✓.
+- range p50 **28.2 µs** (gate ≤ 26; baseline 28.5) — documented miss:
+  range's seen-set is small and L1/L2-resident; its inserts were never
+  walk-bound, so geometry does not move it (its residual cost is column
+  reads + filter, PRD 09's turf). No regression ✓.
+- stats p50 1,879 (gate: −5%) — miss at −0.4%: stats is dedup-BOUND,
+  not walk-bound; the geometry change moved its descend phase
+  (1,834 → 1,697 µs traced) but finalize/iter costs held the p50.
+  Named lever: none inside map geometry — recorded against 04/06.
+- triangle improved through every batch (12,256 → 11,784 post-sweep
+  constants) ✓; memory cap: 1.5× table bytes at 33% by construction
+  (≤ 2× cap) ✓; `probe_steps` pinned ≤ 1.2 green ✓; verify green ✓.
