@@ -96,6 +96,19 @@ impl ProjectionSink {
         self.seen.iter().map(|(key, ())| key)
     }
 
+    /// Distinct rows held (finalize's reservation, docs/perf/ PRD 08).
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.seen.len()
+    }
+
+    /// Whether no rows landed (clippy's `len` companion).
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.seen.len() == 0
+    }
+
     /// Empties the sink for the next execution, retaining capacity.
     pub fn reset(&mut self) {
         self.seen.clear();
@@ -345,6 +358,12 @@ impl AggregateSink {
             accs: Vec::new(),
             n_aggs,
         }
+    }
+
+    /// Groups held (finalize's reservation, docs/perf/ PRD 08).
+    #[must_use]
+    pub fn group_count(&self) -> usize {
+        self.groups.len()
     }
 
     /// Empties the sink for the next execution, retaining capacity.

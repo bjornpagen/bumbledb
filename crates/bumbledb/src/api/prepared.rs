@@ -131,6 +131,25 @@ impl ResultBuffer {
         (0..self.len()).map(move |row| Row { buffer: self, row })
     }
 
+    /// Converts a fixed-width word to its cell — infallible by schema
+    /// invariant (docs/perf/ PRD 08: the all-words finalize path carries
+    /// no `Result` and no dictionary plumbing per cell).
+    fn word_cell(ty: &ValueType, word: u64) -> Cell {
+        match ty {
+            ValueType::Bool => Cell::Bool(word != 0),
+            ValueType::Enum { .. } => Cell::Enum(
+                // Programmer invariant, not corruption: image build
+                // range-checked every stored ordinal against the schema.
+                u8::try_from(word).expect("enum words fit u8"),
+            ),
+            ValueType::U64 => Cell::U64(word),
+            ValueType::I64 => Cell::I64((word ^ (1 << 63)).cast_signed()),
+            ValueType::String | ValueType::Bytes => {
+                unreachable!("interned finds take the resolving path")
+            }
+        }
+    }
+
     fn push_word(
         &mut self,
         txn: &ReadTxn<'_>,
@@ -176,17 +195,22 @@ impl ResultBuffer {
 struct ResolveMemo {
     /// `(word, tag)` → packed `(start, len)` into the buffer's bytes.
     ranges: crate::exec::wordmap::WordMap<(u32, u32)>,
+    /// The last resolution (docs/perf/ PRD 08): run-coherent columns
+    /// (few distinct interns, clustered rows) skip even the map probe.
+    last: Option<((u64, u8), (usize, usize))>,
 }
 
 impl ResolveMemo {
     fn new() -> Self {
         Self {
             ranges: crate::exec::wordmap::WordMap::new(2),
+            last: None,
         }
     }
 
     fn clear(&mut self) {
         self.ranges.clear();
+        self.last = None;
     }
 
     /// The byte range for one intern word: memoized, or resolved through
@@ -200,9 +224,16 @@ impl ResolveMemo {
         buffer: &mut ResultBuffer,
         utf8: bool,
     ) -> Result<(usize, usize)> {
+        if let Some((last_key, range)) = self.last {
+            if last_key == (word, tag) {
+                return Ok(range);
+            }
+        }
         let key = [word, u64::from(tag)];
         if let (range, false) = self.ranges.get_or_insert_with(&key, || (0, 0)) {
-            return Ok((range.0 as usize, range.1 as usize));
+            let range = (range.0 as usize, range.1 as usize);
+            self.last = Some(((word, tag), range));
+            return Ok(range);
         }
         let raw = dict::resolve(txn, word, tag)?;
         obs::event(
@@ -227,6 +258,7 @@ impl ResolveMemo {
         );
         let (slot, _) = self.ranges.get_or_insert_with(&key, || range);
         *slot = range;
+        self.last = Some(((word, tag), (start, raw.len())));
         Ok((start, raw.len()))
     }
 }
@@ -293,6 +325,9 @@ pub struct PreparedQuery<'s> {
     sink: EitherSink,
     /// Aggregate-finalization row scratch.
     row_scratch: Vec<u64>,
+    /// No interned finds (docs/perf/ PRD 08): finalize takes the
+    /// infallible all-words blit.
+    all_words: bool,
     /// The per-finalize intern-resolution memo (docs/architecture/30-execution.md).
     resolve_memo: ResolveMemo,
     /// Guard-key byte scratch.
@@ -411,6 +446,9 @@ pub(crate) fn prepare<'s>(
         output_hint,
     );
 
+    let all_words = finds
+        .iter()
+        .all(|(_, ty)| !matches!(ty, ValueType::String | ValueType::Bytes));
     Ok(PreparedQuery {
         schema,
         env_instance: txn.env_instance(),
@@ -426,6 +464,7 @@ pub(crate) fn prepare<'s>(
         memo,
         sink,
         row_scratch: Vec::new(),
+        all_words,
         resolve_memo: ResolveMemo::new(),
         guard_key: Vec::new(),
         _not_sync: std::marker::PhantomData,
@@ -622,6 +661,7 @@ impl PreparedQuery<'_> {
                 &mut self.resolve_memo,
                 txn,
                 &self.finds,
+                self.all_words,
                 out,
             )
         };
@@ -741,6 +781,7 @@ impl PreparedQuery<'_> {
                     &mut self.resolve_memo,
                     txn,
                     &self.finds,
+                    self.all_words,
                     &mut out,
                 )?;
                 Ok((out, counters.into_stats(plan)))
@@ -1268,11 +1309,25 @@ fn finalize(
     memo: &mut ResolveMemo,
     txn: &ReadTxn<'_>,
     finds: &[(FindSpec, ValueType)],
+    all_words: bool,
     out: &mut ResultBuffer,
 ) -> Result<()> {
     memo.clear();
+    // The all-words fast path (docs/perf/ PRD 08): one reservation, then
+    // infallible cell writes — no Result, no dictionary plumbing per
+    // cell. Interned finds keep the resolving path (the per-cell memo
+    // probe is the resolution semantics, softened by the run memo).
     match sink {
         EitherSink::Projection(sink) => {
+            out.cells.reserve(sink.len() * finds.len());
+            if all_words {
+                for row in sink.rows() {
+                    for (column, (_, ty)) in finds.iter().enumerate() {
+                        out.cells.push(ResultBuffer::word_cell(ty, row[column]));
+                    }
+                }
+                return Ok(());
+            }
             for row in sink.rows() {
                 for (column, (_, ty)) in finds.iter().enumerate() {
                     out.push_word(txn, ty, row[column], memo)?;
@@ -1280,12 +1335,23 @@ fn finalize(
             }
             Ok(())
         }
-        EitherSink::Aggregate(sink) => sink.finalize_into(row_scratch, |row| {
-            for (column, (_, ty)) in finds.iter().enumerate() {
-                out.push_word(txn, ty, row[column], memo)?;
+        EitherSink::Aggregate(sink) => {
+            out.cells.reserve(sink.group_count() * finds.len());
+            if all_words {
+                return sink.finalize_into(row_scratch, |row| {
+                    for (column, (_, ty)) in finds.iter().enumerate() {
+                        out.cells.push(ResultBuffer::word_cell(ty, row[column]));
+                    }
+                    Ok(())
+                });
             }
-            Ok(())
-        }),
+            sink.finalize_into(row_scratch, |row| {
+                for (column, (_, ty)) in finds.iter().enumerate() {
+                    out.push_word(txn, ty, row[column], memo)?;
+                }
+                Ok(())
+            })
+        }
     }
 }
 
@@ -1500,6 +1566,73 @@ mod tests {
             expected.into_iter().collect::<Vec<_>>(),
             "cross-atom residual"
         );
+    }
+
+    /// PRD 08 (docs/perf/): a finalize-time Overflow leaves the buffer
+    /// discardable — the same prepared query re-executes cleanly into
+    /// the same buffer (deterministic error), and a passing query then
+    /// fills that buffer with exactly its own rows.
+    #[test]
+    fn overflow_errors_leave_the_buffer_reusable() {
+        let dir = TempDir::new("prepared-overflow-reuse");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        insert_postings(
+            &env,
+            &schema,
+            &[(1, 7, "a", i64::MAX), (2, 7, "b", 1), (3, 8, "c", 4)],
+        );
+        // Sum by account: account 7 overflows at finalize.
+        let query = Query {
+            finds: vec![
+                FindTerm::Var(VarId(0)),
+                FindTerm::Aggregate {
+                    op: crate::ir::AggOp::Sum,
+                    over: Some(VarId(1)),
+                },
+            ],
+            atoms: vec![Atom {
+                relation: POSTING,
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(2))),
+                    (FieldId(1), Term::Var(VarId(0))),
+                    (FieldId(3), Term::Var(VarId(1))),
+                ],
+            }],
+            predicates: vec![],
+        };
+        let txn = env.read_txn().expect("txn");
+        let cache = crate::image::cache::ImageCache::new();
+        let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
+        let mut out = ResultBuffer::new();
+        for _ in 0..2 {
+            let err = prepared
+                .execute(&txn, &cache, &[], &mut out)
+                .expect_err("account 7 overflows");
+            assert!(matches!(err, Error::Overflow { find: 1 }), "{err:?}");
+        }
+        // A passing query fills the same buffer with exactly its rows.
+        let ok_query = Query {
+            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            atoms: vec![Atom {
+                relation: POSTING,
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(2))),
+                    (FieldId(1), Term::Var(VarId(0))),
+                    (FieldId(3), Term::Var(VarId(1))),
+                ],
+            }],
+            predicates: vec![Comparison {
+                op: CmpOp::Eq,
+                lhs: Term::Var(VarId(0)),
+                rhs: Term::Literal(crate::ir::Value::U64(8)),
+            }],
+        };
+        let mut ok = prepare(&txn, &cache, &schema, &ok_query).expect("prepares");
+        ok.execute(&txn, &cache, &[], &mut out).expect("executes");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.get(0, 0), ResultValue::U64(8));
+        assert_eq!(out.get(0, 1), ResultValue::I64(4));
     }
 
     /// PRD 05 (docs/hardening): an aggregate whose body has a node

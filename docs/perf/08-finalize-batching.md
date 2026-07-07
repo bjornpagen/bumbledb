@@ -62,3 +62,35 @@ interned columns can resolve column-wise through the memo.
 
 Sink internals (01–06), result *ordering* (none exists — stays none),
 `Row`/`Cell` read-side API (unchanged), dictionary storage.
+
+## Result (2026-07-07, run bench-out/2026-07-07T01-57-10Z)
+
+Landed: `all_words` classified once at prepare (no String/Bytes finds);
+finalize reserves the cell vector from the sink's row count
+(`ProjectionSink::len` / `AggregateSink::group_count`) and takes an
+infallible blit arm — `word_cell` conversions with no `Result` and no
+dictionary plumbing per cell — for all-words queries in both sink
+shapes; interned queries keep the resolving path, softened by a
+last-value micro-memo in `ResolveMemo::resolve` (run-coherent columns
+skip even the map probe). The overflow-reuse test pins error hygiene:
+a finalize-time Overflow is deterministic across re-executions and the
+buffer then serves a passing query exactly.
+
+Gates (traced samples; baseline → now):
+- skew finalize 617.5 → **393.2 µs** (gate ≤ 150) ✗: skew's label column
+  is interned — the per-cell memo probe is the resolution semantics; the
+  run memo and PRD 06's map already took −36%. skew p95 **1,091.5 µs**
+  (gate ≤ 1,400) ✓; p50 33.8 µs.
+- spread finalize 579.9 → **399.8 µs** (gate ≤ 200) ✗: spread IS
+  all-words — 200k reserved cell blits at ~2 ns/cell is near the floor
+  for 16-byte enum cells; the gate overreached. spread p50 **10,219 µs**,
+  best yet (−23.8% vs baseline).
+- chain finalize 14.8 → **16.2 µs** (gate ≤ 6) ✗ premise error: chain
+  finds carry the region string — it was never an all-words family; its
+  p50 is 158.0 µs (−25% vs baseline) regardless.
+- fk_walk finalize 2.2 → **1.5 µs** (gate ≤ 1.2, dict-resolve bound as
+  the gate noted) — within a stamp of the target; p50 7.8 µs.
+- Bonus: range finalize 10.6 → **5.6 µs** and range p50 **28.8 µs** —
+  retroactively passing PRD 05's ≤ 30 gate. stats/balance finalize at
+  0.1 µs (reserved single-row blits). ALL-WIN held; verify green; the
+  oracle's 2,468 value-identical cases cover the blit arm end to end.
