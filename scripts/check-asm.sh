@@ -61,6 +61,14 @@ PROBE_CLASS='bcmp|memcmp|get_prehashed|probe_child_at|probe_hashed|probe_walk17h
 no_calls_inside "probe_pass" "$PROBE_CLASS" "prd02 probe_pass"
 no_calls_inside "run_node"   "$PROBE_CLASS" "prd02 run_node"
 
+# --- silicon2 PRD 03: the sink row loops carry the const-arity insert
+# chain fully inlined — no hash call, no runtime-length compare, no
+# WordMap call ceremony per row. The dyn fallback (exotic widths) is
+# deliberately outlined as entry_dyn_hashing — a call to IT is legal;
+# calls to the hash or the general compare are not.
+SINK_CLASS='bcmp|memcmp|hash_words|hash_core|get_or_insert|6insert17h|entry_core|entry_hashed_core|probe_with|key_at_matches'
+no_calls_inside "emit_batch" "$SINK_CLASS" "s2prd03 sink emit_batch"
+
 if [ "$FAIL" -ne 0 ]; then
     echo "check-asm: FAILURES (see above)"
     exit 1

@@ -70,6 +70,25 @@ fn hash_words(words: &[u64]) -> u64 {
     h
 }
 
+/// [`hash_words`] with the word count fixed at compile time — same
+/// seed, same fold order, same constants, so the two forms are
+/// hash-identical (pinned by test). Under const K, LLVM fully unrolls
+/// the fold, hoists prefix hashes of batch-constant words out of the
+/// caller's row loop, and fuses the key gather with the hash — the
+/// free transformations runtime arity blocks (docs/silicon2/03,
+/// exp 15: hand-fused variants measured redundant or worse).
+#[inline(always)]
+fn hash_core<const K: usize>(words: &[u64]) -> u64 {
+    debug_assert_eq!(words.len(), K);
+    let mut h = 0x517C_C1B7_2722_0A95_u64;
+    for i in 0..K {
+        h ^= words[i];
+        h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        h ^= h >> 29;
+    }
+    h
+}
+
 /// The probe hash for a key — public so callers can software-pipeline
 /// the hash ahead of the probe's branches (docs/silicon/04: the
 /// probe-exit mispredict flush kills a speculated next hash chain;
@@ -192,8 +211,44 @@ impl<V: Copy> WordMap<V> {
     /// # Panics
     ///
     /// Only on a programmer-invariant violation: `key.len() != arity`.
+    #[inline(always)] // the whole chain inlines into the sink row loops so
+    // LLVM can hoist batch-constant prefix hashes out of them (exp 15)
     pub fn get_or_insert_with(&mut self, key: &[u64], make: impl FnOnce() -> V) -> (&mut V, bool) {
-        self.get_or_insert_prehashed(key, hash_words(key), make)
+        assert_eq!(key.len(), self.arity);
+        // The const-arity dispatch (docs/silicon2/03, exp 15): runtime
+        // arity taxed every dedup row +4.3-4.9 ns via the general-length
+        // compare/copy ladder, the slot*arity multiplies, and the blocked
+        // hash hoisting. One predictable branch here (the same arm every
+        // call from a given sink) buys straight-line monomorphs for the
+        // widths in use: group keys are 1-4, full bindings 2-6, 8 is
+        // headroom. Exotic widths keep the dyn path.
+        match self.arity {
+            1 => self.entry_core::<1>(key, make),
+            2 => self.entry_core::<2>(key, make),
+            3 => self.entry_core::<3>(key, make),
+            4 => self.entry_core::<4>(key, make),
+            6 => self.entry_core::<6>(key, make),
+            8 => self.entry_core::<8>(key, make),
+            _ => self.entry_dyn_hashing(key, make),
+        }
+    }
+
+    /// The runtime-arity fallback's hashing shell, deliberately outlined
+    /// (docs/silicon2/03): exotic widths only — a `bl` here is the cold
+    /// arm, and keeping `hash_words` inside it keeps the hot sink
+    /// symbols free of hash calls (the check-asm gate).
+    #[cold]
+    #[inline(never)]
+    fn entry_dyn_hashing(&mut self, key: &[u64], make: impl FnOnce() -> V) -> (&mut V, bool) {
+        self.entry_dyn(key, hash_words(key), make)
+    }
+
+    /// The monomorphic entry: hash and probe with the key width fixed at
+    /// K, so the hash unrolls and fuses with the gather (exp 15).
+    #[inline(always)]
+    fn entry_core<const K: usize>(&mut self, key: &[u64], make: impl FnOnce() -> V) -> (&mut V, bool) {
+        let hash = hash_core::<K>(key);
+        self.entry_hashed_core::<K>(key, hash, make)
     }
 
     /// [`WordMap::get_or_insert_with`] with the hash supplied by the
@@ -204,6 +259,7 @@ impl<V: Copy> WordMap<V> {
     /// # Panics
     ///
     /// Only on a programmer-invariant violation: `key.len() != arity`.
+    #[inline(always)]
     pub fn get_or_insert_prehashed(
         &mut self,
         key: &[u64],
@@ -211,6 +267,50 @@ impl<V: Copy> WordMap<V> {
         make: impl FnOnce() -> V,
     ) -> (&mut V, bool) {
         assert_eq!(key.len(), self.arity);
+        // Same dispatch as `get_or_insert_with`, hash supplied: the probe,
+        // compare, and copy still monomorphize (docs/silicon2/03).
+        match self.arity {
+            1 => self.entry_hashed_core::<1>(key, hash, make),
+            2 => self.entry_hashed_core::<2>(key, hash, make),
+            3 => self.entry_hashed_core::<3>(key, hash, make),
+            4 => self.entry_hashed_core::<4>(key, hash, make),
+            6 => self.entry_hashed_core::<6>(key, hash, make),
+            8 => self.entry_hashed_core::<8>(key, hash, make),
+            _ => self.entry_dyn(key, hash, make),
+        }
+    }
+
+    /// The monomorphic insert core: K straight-line word compares, K
+    /// stores, strength-reduced `idx * K` slab indexing.
+    #[inline(always)]
+    fn entry_hashed_core<const K: usize>(
+        &mut self,
+        key: &[u64],
+        hash: u64,
+        make: impl FnOnce() -> V,
+    ) -> (&mut V, bool) {
+        debug_assert_eq!(key.len(), K);
+        if (self.len + 1) * LOAD_DEN > self.capacity() {
+            self.grow();
+        }
+        let (found, idx) = self.probe_core::<K>(key, hash);
+        if !found {
+            self.set_ctrl(idx, tag(hash));
+            self.keys[idx * K..idx * K + K].copy_from_slice(&key[..K]);
+            self.values[idx].write(make());
+            self.dense
+                .push(u32::try_from(idx).expect("slot index fits u32"));
+            self.len += 1;
+        }
+        // SAFETY: the slot's ctrl byte is set (matched or just written),
+        // so its value was initialized by the write above or a prior one.
+        (unsafe { self.values[idx].assume_init_mut() }, !found)
+    }
+
+    /// The runtime-arity fallback for widths without a monomorph — the
+    /// pre-silicon2/03 body, kept for exotic widths (0, 5, 7, > 8).
+    fn entry_dyn(&mut self, key: &[u64], hash: u64, make: impl FnOnce() -> V) -> (&mut V, bool) {
+        debug_assert_eq!(key.len(), self.arity);
         if (self.len + 1) * LOAD_DEN > self.capacity() {
             self.grow();
         }
@@ -229,6 +329,7 @@ impl<V: Copy> WordMap<V> {
     }
 
     /// Whether `key` was newly inserted (a set-flavored helper).
+    #[inline(always)]
     pub fn insert(&mut self, key: &[u64]) -> bool
     where
         V: Default,
@@ -274,6 +375,19 @@ impl<V: Copy> WordMap<V> {
         matches
     }
 
+    /// [`WordMap::key_at_matches`] with the width fixed at K: the loop
+    /// unrolls to K straight-line compares, `slot * K` strength-reduces
+    /// (docs/silicon2/03).
+    #[inline(always)]
+    fn key_at_matches_core<const K: usize>(&self, slot: usize, key: &[u64]) -> bool {
+        let stored = &self.keys[slot * K..slot * K + K];
+        let mut matches = true;
+        for i in 0..K {
+            matches &= stored[i] == key[i];
+        }
+        matches
+    }
+
     /// Slot index for `key`: the match, or the empty slot to fill.
     /// Branchless window scan (docs/silicon/03): eight ctrl bytes load as
     /// one word; SWAR masks mark empties and tag matches; candidates
@@ -281,6 +395,20 @@ impl<V: Copy> WordMap<V> {
     /// replaces one branch per slot — the measured 4.6× at hit-rate 0,
     /// which is the seen-set's steady state.
     fn probe(&self, key: &[u64], hash: u64) -> (bool, usize) {
+        self.probe_with(hash, |slot| self.key_at_matches(slot, key))
+    }
+
+    /// [`WordMap::probe`] with the key width fixed at K — the compare is
+    /// K straight-line words (docs/silicon2/03).
+    #[inline(always)]
+    fn probe_core<const K: usize>(&self, key: &[u64], hash: u64) -> (bool, usize) {
+        self.probe_with(hash, |slot| self.key_at_matches_core::<K>(slot, key))
+    }
+
+    /// The window-scan body, generic over the key compare so the const-
+    /// arity and runtime-arity probes share one probe shape.
+    #[inline(always)]
+    fn probe_with(&self, hash: u64, key_at: impl Fn(usize) -> bool) -> (bool, usize) {
         debug_assert!(!self.values.is_empty());
         let capacity = self.capacity();
         let mask = capacity - 1;
@@ -304,7 +432,7 @@ impl<V: Copy> WordMap<V> {
                 if empties & bit != 0 {
                     return (false, slot);
                 }
-                if self.key_at_matches(slot, key) {
+                if key_at(slot) {
                     return (true, slot);
                 }
                 candidates &= !bit;
@@ -332,12 +460,43 @@ impl<V: Copy> WordMap<V> {
                 .collect(),
         );
         self.ctrl = vec![0; new_capacity + WINDOW - 1];
-        // Re-probe in dense (insertion) order so iteration order — and
-        // with it every downstream determinism property — survives
-        // growth. All keys are distinct; the probe lands on empties. The
-        // dense list is rewritten in place: a rehash never changes the
-        // entry count, so the buffer it has is the buffer it needs — no
-        // fresh allocation, ever.
+        // The rehash re-probes every key, so it rides the same const-
+        // arity dispatch as the entry points (docs/silicon2/03).
+        match self.arity {
+            1 => self.rehash_core::<1>(&old_keys, &old_values),
+            2 => self.rehash_core::<2>(&old_keys, &old_values),
+            3 => self.rehash_core::<3>(&old_keys, &old_values),
+            4 => self.rehash_core::<4>(&old_keys, &old_values),
+            6 => self.rehash_core::<6>(&old_keys, &old_values),
+            8 => self.rehash_core::<8>(&old_keys, &old_values),
+            _ => self.rehash_dyn(&old_keys, &old_values),
+        }
+    }
+
+    /// The rehash body with the key width fixed at K. Re-probes in dense
+    /// (insertion) order so iteration order — and with it every
+    /// downstream determinism property — survives growth. All keys are
+    /// distinct; the probe lands on empties. The dense list is rewritten
+    /// in place: a rehash never changes the entry count, so the buffer it
+    /// has is the buffer it needs — no fresh allocation, ever.
+    fn rehash_core<const K: usize>(&mut self, old_keys: &[u64], old_values: &[MaybeUninit<V>]) {
+        for i in 0..self.dense.len() {
+            let old_idx = self.dense[i] as usize;
+            let key = &old_keys[old_idx * K..old_idx * K + K];
+            let hash = hash_core::<K>(key);
+            let (found, new_idx) = self.probe_core::<K>(key, hash);
+            debug_assert!(!found, "rehashed keys are distinct");
+            self.set_ctrl(new_idx, tag(hash));
+            self.keys[new_idx * K..new_idx * K + K].copy_from_slice(key);
+            // SAFETY: old_idx was occupied (dense-listed), so its value
+            // was initialized; the copy moves it to the new slot.
+            self.values[new_idx].write(unsafe { old_values[old_idx].assume_init_read() });
+            self.dense[i] = u32::try_from(new_idx).expect("slot index fits u32");
+        }
+    }
+
+    /// [`WordMap::rehash_core`], runtime-arity form (the dyn widths).
+    fn rehash_dyn(&mut self, old_keys: &[u64], old_values: &[MaybeUninit<V>]) {
         for i in 0..self.dense.len() {
             let old_idx = self.dense[i] as usize;
             let key_range = old_idx * self.arity..(old_idx + 1) * self.arity;
@@ -482,9 +641,10 @@ mod tests {
     /// reference model (`HashMap` + insertion-order list) across randomized
     /// operation sequences — inserted flags, values, iteration order,
     /// lengths — including growth boundaries, adversarial equal-low-bits
-    /// keys, clear cycles, and every arity in use. The window probe
-    /// (docs/silicon/03) rides the same differential: the reference IS
-    /// the portable implementation of record.
+    /// keys, clear cycles, and every arity in use: all six monomorph
+    /// widths plus a dyn-arm width (5) per docs/silicon2/03. The window
+    /// probe (docs/silicon/03) rides the same differential: the
+    /// reference IS the portable implementation of record.
     #[test]
     fn differential_against_the_reference_model() {
         let mut rng = 0x2468_ACE0_1357_9BDFu64;
@@ -494,7 +654,7 @@ mod tests {
                 .wrapping_add(1_442_695_040_888_963_407);
             rng >> 33
         };
-        for arity in [1usize, 2, 4] {
+        for arity in [1usize, 2, 3, 4, 5, 6, 8] {
             for round in 0..3 {
                 let mut map: WordMap<u64> = if round == 0 {
                     WordMap::new(arity)
@@ -729,6 +889,105 @@ mod tests {
                 (name, rate)
             })
             .collect()
+    }
+
+    /// The const-arity contract (docs/silicon2/03): `hash_core::<K>` is
+    /// hash-IDENTICAL to `hash_words` — same seed, fold order, constants
+    /// — so the monomorph and dyn arms land keys in the same slots and
+    /// the false-tag gate covers both.
+    #[test]
+    fn hash_core_is_identical_to_hash_words() {
+        let mut rng = 0x0F1E_2D3C_4B5A_6978u64;
+        let mut next = move || {
+            rng = rng
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            rng
+        };
+        fn check<const K: usize>(next: &mut impl FnMut() -> u64) {
+            for _ in 0..1_000 {
+                let key: Vec<u64> = (0..K).map(|_| next()).collect();
+                assert_eq!(hash_core::<K>(&key), hash_words(&key), "K={K}");
+            }
+        }
+        check::<1>(&mut next);
+        check::<2>(&mut next);
+        check::<3>(&mut next);
+        check::<4>(&mut next);
+        check::<6>(&mut next);
+        check::<8>(&mut next);
+    }
+
+    /// The const-arity pin (docs/silicon2/03 gate, threshold corrected
+    /// in its Result): the K=4 monomorphic insert beats the dyn arm on a
+    /// 16 MB miss-heavy fill. Exp 15's 1.9× was measured against its own
+    /// dyn reconstruction, which still carried the general-length
+    /// compare ladder; the shipped dyn arm was already dieted by the
+    /// campaign (manual word loops, no `bcmp`), so the honest in-tree
+    /// margin is 1.16–1.25× (16 MB / 2 MB tiers). The pin guards the
+    /// MECHANISM — monomorph strictly beats dyn — at a ≥ 10% floor that
+    /// survives tier noise. Both arms probe OPAQUE runtime slices (flat
+    /// buffer, black-boxed arity) — the shipped sink shape — so the
+    /// compiler cannot const-prop the key width into either arm from the
+    /// test itself; the monomorph arm's width knowledge comes only from
+    /// the internal dispatch. Ignored: a microbenchmark, run explicitly
+    /// for the Result section.
+    #[test]
+    #[ignore = "microbench pin: run explicitly with --ignored"]
+    fn const_arity_k4_insert_beats_the_dyn_arm() {
+        // 128k arity-4 keys: capacity (128k×3).next_pow2 = 512k slots,
+        // 512k × 32 B keys = 16 MiB — the DRAM-tier miss-heavy fill.
+        const N: usize = std::hint::black_box(128) * 1024;
+        let arity = std::hint::black_box(4usize);
+        let flat: Vec<u64> = {
+            let mut rng = 0x5DEE_CE66_D42F_1A2Bu64;
+            (0..N * arity)
+                .map(|_| {
+                    rng = rng
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    rng
+                })
+                .collect()
+        };
+        let fill_core = |flat: &[u64]| {
+            let mut map: WordMap<()> = WordMap::with_capacity_hint(arity, N);
+            let start = std::time::Instant::now();
+            for i in 0..N {
+                map.insert(&flat[i * arity..(i + 1) * arity]);
+            }
+            let elapsed = start.elapsed();
+            assert_eq!(map.len(), N);
+            elapsed
+        };
+        let fill_dyn = |flat: &[u64]| {
+            let mut map: WordMap<()> = WordMap::with_capacity_hint(arity, N);
+            let start = std::time::Instant::now();
+            for i in 0..N {
+                let key = &flat[i * arity..(i + 1) * arity];
+                let _ = map.entry_dyn(key, hash_words(key), || ());
+            }
+            let elapsed = start.elapsed();
+            assert_eq!(map.len(), N);
+            elapsed
+        };
+        // Interleaved min-of-5 (docs/silicon2/00 doctrine: min-of-N
+        // absorbs DVFS and residency noise without a proxy dependency).
+        let mut core_best = std::time::Duration::MAX;
+        let mut dyn_best = std::time::Duration::MAX;
+        for _ in 0..5 {
+            core_best = core_best.min(fill_core(&flat));
+            dyn_best = dyn_best.min(fill_dyn(&flat));
+        }
+        let core_ns = u64::try_from(core_best.as_nanos()).expect("fits");
+        let dyn_ns = u64::try_from(dyn_best.as_nanos()).expect("fits");
+        #[allow(clippy::cast_precision_loss)] // both far below 2^52
+        let ratio = dyn_ns as f64 / core_ns as f64;
+        println!("const-arity K=4 fill: core {core_ns} ns, dyn {dyn_ns} ns, ratio {ratio:.2}");
+        assert!(
+            dyn_ns * 10 >= core_ns * 11,
+            "K=4 monomorph must beat the dyn arm by ≥ 10%: core {core_ns} ns vs dyn {dyn_ns} ns"
+        );
     }
 
     /// Probe-step evidence for the Result section: average probe steps
