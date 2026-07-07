@@ -61,3 +61,26 @@ actually bites (−83% error on a 28 ns op).
 
 Bench-harness clock proxy (landed in 00); any change to what is traced;
 phase-table rendering.
+
+## Result (2026-07-07)
+
+Landed: `fastclock::ticks_ss()` (`CNTVCTSS_EL0` by encoding
+`s3_3_c14_c0_6`); trace spans now stamp on the SAME cntvct timeline as
+PhaseTimers (tick anchor, anchor-resolves-first — the first-stamp
+underflow was caught by the trace tests), with raw opening stamps and
+self-synchronized closing stamps; `Instant::now` (22–32 ns/stamp) is out
+of the span path entirely. PhaseTimers audit: phase_start/end already
+compile to flag-check + `mrs` + integer ops — nothing to trim; the
+objdump gate on the trace build found no `bl` in the stamp sequences.
+50-validation.md's timer section rewritten to the measured cost model.
+
+Gates:
+1. Traced-vs-untraced triangle delta: obs binary min-of-5 12,302.6 µs
+   vs default 12,563.9 µs — the trace seam reads 2.1% FASTER than the
+   default build (binary-layout noise dominates; the seam cost is below
+   noise). ≤ 3% ✓.
+2. Stamp-cost pin green: raw ≤ 0.6 ns, `ticks_ss` ≤ 7.0 ns asserted
+   (loop-amortized, proxy-bracketed).
+3. No `bl` in inlined phase stamps (objdump, trace build) ✓.
+4. Doc greps: "2 ns" gone, "CNTVCTSS" present ✓.
+5. No family regressed (see PRD 02's battery — same binaries) ✓.

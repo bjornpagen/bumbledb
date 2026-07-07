@@ -127,7 +127,10 @@ impl GhzStamp {
 
 /// Runs `f` bracketed by proxy readings; on a contaminated bracket the
 /// block is re-measured exactly once (bounded retry — beyond that the
-/// dirt is reported, never hidden by a retry loop).
+/// dirt is reported, never hidden by a retry loop). The closure must be
+/// idempotent — read-family measurement blocks are; write blocks use
+/// [`stamped`] instead (their contamination is fsync-DVFS physics, and
+/// re-running a block that creates stores is not a retry, it's a crash).
 ///
 /// # Errors
 ///
@@ -137,6 +140,30 @@ where
     F: FnMut() -> Result<T, String>,
 {
     guarded_at(CONTAMINATION_GHZ, f)
+}
+
+/// Brackets `f` with proxy readings WITHOUT retry — the non-idempotent
+/// (write-family) form: the stamp annotates, never re-runs.
+///
+/// # Errors
+///
+/// The closure's error, verbatim.
+pub fn stamped<T, F>(mut f: F) -> Result<(T, GhzStamp), String>
+where
+    F: FnMut() -> Result<T, String>,
+{
+    let pre = effective_ghz();
+    let value = f()?;
+    let post = effective_ghz();
+    Ok((
+        value,
+        GhzStamp {
+            pre,
+            post,
+            retried: false,
+            threshold: CONTAMINATION_GHZ,
+        },
+    ))
 }
 
 /// [`guarded`] with an injectable threshold (the detector's test seam).

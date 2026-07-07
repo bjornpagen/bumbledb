@@ -53,6 +53,10 @@ pub struct ProjectionSink {
     slots: Vec<usize>,
     seen: WordMap<()>,
     scratch: Vec<u64>,
+    /// The hash-ahead pipeline's second row (docs/silicon/04): row k+1
+    /// assembles and hashes here BEFORE row k's insert branches, so a
+    /// probe-exit mispredict flush never kills the next hash chain.
+    scratch_next: Vec<u64>,
     /// Per-slot leaf-batch sources, recomputed only when the leaf shape
     /// changes (PRD 05's pointer-keyed cache — pinned leaves emit
     /// batches of one, so per-batch recomputation was per-row work):
@@ -84,6 +88,7 @@ impl ProjectionSink {
             slots,
             seen: WordMap::with_capacity_hint(arity, hint),
             scratch: vec![0; arity],
+            scratch_next: vec![0; arity],
             batch_sources: vec![None; arity],
             sources_key: (0, 0),
             scan_count: 0,
@@ -150,21 +155,45 @@ impl Sink for ProjectionSink {
         for (i, slot) in self.slots.iter().enumerate() {
             if self.batch_sources[i].is_none() {
                 self.scratch[i] = batch.bindings.get(*slot);
+                self.scratch_next[i] = self.scratch[i];
             }
         }
-        for &entry in batch.survivors {
-            for (i, source) in self.batch_sources.iter().enumerate() {
+        let assemble = |row: &mut [u64], sources: &[Option<usize>], entry: u32| {
+            for (i, source) in sources.iter().enumerate() {
                 if let Some(word) = source {
-                    self.scratch[i] = batch.key(entry, *word);
+                    row[i] = batch.key(entry, *word);
                 }
             }
+        };
+        if stop_on_skip {
+            // First-emit semantics (see `emit`): one row lands, and the
+            // remaining rows bind nothing sink-relevant — the executor
+            // unwinds.
+            let Some(&first) = batch.survivors.first() else {
+                return Flow::Continue;
+            };
+            assemble(&mut self.scratch, &self.batch_sources, first);
             self.seen.insert(&self.scratch);
-            if stop_on_skip {
-                // First-emit semantics (see `emit`): the remaining rows
-                // bind nothing sink-relevant — the executor unwinds.
-                return Flow::SkipSuffix;
-            }
+            return Flow::SkipSuffix;
         }
+        // The hash-ahead pipeline (docs/silicon/04): row k+1's key
+        // assembly and hash — pure ALU on loaded words — issue before
+        // row k's probe branches, so an exit-branch mispredict flush
+        // cannot serialize the hash chains across rows.
+        let n = batch.survivors.len();
+        if n == 0 {
+            return Flow::Continue;
+        }
+        assemble(&mut self.scratch, &self.batch_sources, batch.survivors[0]);
+        let mut hash = crate::exec::wordmap::hash_of(&self.scratch);
+        for k in 1..n {
+            assemble(&mut self.scratch_next, &self.batch_sources, batch.survivors[k]);
+            let next_hash = crate::exec::wordmap::hash_of(&self.scratch_next);
+            self.seen.insert_prehashed(&self.scratch, hash);
+            std::mem::swap(&mut self.scratch, &mut self.scratch_next);
+            hash = next_hash;
+        }
+        self.seen.insert_prehashed(&self.scratch, hash);
         Flow::Continue
     }
 
@@ -188,6 +217,7 @@ impl Sink for ProjectionSink {
         for (i, slot) in self.slots.iter().enumerate() {
             if self.batch_sources[i].is_none() {
                 self.scratch[i] = scan.bindings.get(*slot);
+                self.scratch_next[i] = self.scratch[i];
             }
         }
         self.scan_count = 0;
@@ -196,43 +226,66 @@ impl Sink for ProjectionSink {
 
     fn scan_run(&mut self, scan: &LeafScan<'_>, run: SuffixRun<'_>) {
         self.scan_count += run.len() as u64;
-        // Run-length-adaptive column resolution (docs/perf/ PRD 05,
-        // measured both ways): big runs amortize a hoisted column table,
-        // fanout-sized runs resolve per position.
-        if run.len() >= 32 {
-            assert!(self.batch_sources.len() <= 8, "projection arity cap");
-            let cols: [Option<ColumnView<'_>>; 8] = std::array::from_fn(|i| {
-                self.batch_sources
-                    .get(i)
-                    .copied()
-                    .flatten()
-                    .map(|word| scan.colt.suffix_column(scan.level, word))
-            });
-            let mut insert = |position: u32| {
-                for (i, source) in self.batch_sources.iter().enumerate() {
+        // Both arms run the hash-ahead pipeline (docs/silicon/04):
+        // position p+1's key words gather and hash before position p's
+        // insert branches. Run-length-adaptive column resolution
+        // (docs/perf/ PRD 05) still splits the arms: big runs amortize a
+        // hoisted column table, fanout-sized runs resolve per position.
+        let seen = &mut self.seen;
+        let scratch = &mut self.scratch;
+        let scratch_next = &mut self.scratch_next;
+        let sources = &self.batch_sources;
+        let mut pending: Option<u64> = None;
+        if run.len() >= SCAN_COLUMN_HOIST {
+            assert!(sources.len() <= 8, "projection arity cap");
+            // Option-free hoist table built by a plain indexed loop
+            // (docs/silicon/08): `array::from_fn` refuses to inline its
+            // element closure (rust-lang/rust#108765) — measured ~34 ns
+            // per 8-entry Option table (eight outlined calls + a 448 B
+            // memcpy) vs ~3.4 ns for straight-line stores. `sources[i]`
+            // already gates which entries are live; no Option needed.
+            let mut cols: [ColumnView<'_>; 8] = [ColumnView::Words(&[]); 8];
+            for (i, source) in sources.iter().enumerate() {
+                if let Some(word) = *source {
+                    cols[i] = scan.colt.suffix_column(scan.level, word);
+                }
+            }
+            run_positions(run, &mut |position: u32| {
+                for (i, source) in sources.iter().enumerate() {
                     if source.is_some() {
-                        self.scratch[i] = match cols[i].as_ref().expect("resolved with sources") {
+                        scratch_next[i] = match cols[i] {
                             ColumnView::Words(w) => w[position as usize],
                             ColumnView::Bytes(b) => u64::from(b[position as usize]),
                         };
                     }
                 }
-                self.seen.insert(&self.scratch);
-            };
-            run_positions(run, &mut insert);
+                let next_hash = crate::exec::wordmap::hash_of(scratch_next);
+                if let Some(hash) = pending {
+                    seen.insert_prehashed(scratch, hash);
+                }
+                std::mem::swap(scratch, scratch_next);
+                pending = Some(next_hash);
+            });
         } else {
-            let mut insert = |position: u32| {
-                for (i, source) in self.batch_sources.iter().enumerate() {
+            run_positions(run, &mut |position: u32| {
+                for (i, source) in sources.iter().enumerate() {
                     if let Some(word) = source {
-                        self.scratch[i] = match scan.colt.suffix_column(scan.level, *word) {
+                        scratch_next[i] = match scan.colt.suffix_column(scan.level, *word) {
                             ColumnView::Words(w) => w[position as usize],
                             ColumnView::Bytes(b) => u64::from(b[position as usize]),
                         };
                     }
                 }
-                self.seen.insert(&self.scratch);
-            };
-            run_positions(run, &mut insert);
+                let next_hash = crate::exec::wordmap::hash_of(scratch_next);
+                if let Some(hash) = pending {
+                    seen.insert_prehashed(scratch, hash);
+                }
+                std::mem::swap(scratch, scratch_next);
+                pending = Some(next_hash);
+            });
+        }
+        if let Some(hash) = pending {
+            seen.insert_prehashed(scratch, hash);
         }
     }
 
@@ -240,6 +293,14 @@ impl Sink for ProjectionSink {
         self.scan_count
     }
 }
+
+/// The projection scan's column-hoist threshold (docs/silicon/08):
+/// hoisting pays when `run_length` ≥ `build_cost` ÷ `per-item saving`. With
+/// the Option-free prefix table the build is ~3.4 ns (was ~34 with the
+/// `from_fn` Option table that forced the old threshold of 32), so the
+/// crossover lands at single digits; the in-tree derivation test
+/// (`scan_hoist_crossover_derivation`) records the measured curve.
+const SCAN_COLUMN_HOIST: usize = 8;
 
 /// One accumulator cell.
 #[derive(Debug, Clone, Copy)]
@@ -276,6 +337,9 @@ pub struct AggregateSink {
     seen: Option<WordMap<()>>,
     key_scratch: Vec<u64>,
     binding_scratch: Vec<u64>,
+    /// The dedup pipeline's second row (docs/silicon/04): binding k+1
+    /// assembles and hashes here before binding k's seen-set branches.
+    binding_scratch_next: Vec<u64>,
     /// The group-run memo (docs/perf/ PRD 02): consecutive constant-group
     /// batches within one node-entry run share their group — remember the
     /// last key words and accumulator index and skip even the
@@ -341,6 +405,7 @@ impl AggregateSink {
             groups: WordMap::with_capacity_hint(group_slots.len(), hint.min(4096)),
             key_scratch: vec![0; group_slots.len()],
             binding_scratch: vec![0; slot_count],
+            binding_scratch_next: vec![0; slot_count],
             seen: (!distinct_bindings).then(|| WordMap::with_capacity_hint(slot_count, hint)),
             memo_key: vec![0; group_slots.len()],
             memo_idx: None,
@@ -596,20 +661,44 @@ impl AggregateSink {
     /// path, group probe hoisted and all.
     fn fold_batch_dedup_constant_group(&mut self, batch: &LeafBatch<'_>) {
         // The dedup key is the full binding: outer slots constant,
-        // prefilled once (cached shape); key slots overwritten per row.
+        // prefilled once (cached shape) into BOTH pipeline rows; key
+        // slots overwritten per row.
         for &slot in &self.cached_outer_slots {
             self.binding_scratch[slot] = batch.bindings.get(slot);
+            self.binding_scratch_next[slot] = self.binding_scratch[slot];
         }
         let mut survivors = std::mem::take(&mut self.dedup_survivors);
         survivors.clear();
         let seen = self.seen.as_mut().expect("dedup regime");
-        for &entry in batch.survivors {
+        // The hash-ahead pipeline (docs/silicon/04): binding k+1's
+        // assembly and hash issue before binding k's seen-set branches —
+        // the dedup pass is miss-heavy (every distinct binding's first
+        // sight), exactly where the mispredict flush exposed the most
+        // hash latency (~85% on deep misses).
+        let n = batch.survivors.len();
+        if n == 0 {
+            self.dedup_survivors = survivors;
+            return;
+        }
+        let scratch = &mut self.binding_scratch;
+        let scratch_next = &mut self.binding_scratch_next;
+        for (word, slot) in batch.key_slots.iter().enumerate() {
+            scratch[*slot] = batch.key(batch.survivors[0], word);
+        }
+        let mut hash = crate::exec::wordmap::hash_of(scratch);
+        for k in 1..n {
             for (word, slot) in batch.key_slots.iter().enumerate() {
-                self.binding_scratch[*slot] = batch.key(entry, word);
+                scratch_next[*slot] = batch.key(batch.survivors[k], word);
             }
-            if seen.insert(&self.binding_scratch) {
-                survivors.push(entry);
+            let next_hash = crate::exec::wordmap::hash_of(scratch_next);
+            if seen.insert_prehashed(scratch, hash) {
+                survivors.push(batch.survivors[k - 1]);
             }
+            std::mem::swap(scratch, scratch_next);
+            hash = next_hash;
+        }
+        if seen.insert_prehashed(scratch, hash) {
+            survivors.push(batch.survivors[n - 1]);
         }
         if !survivors.is_empty() {
             self.fold_batch_constant_group(batch, &survivors);

@@ -229,12 +229,20 @@ pub mod names {
     pub const WORDMAP_GROW: &str = "wordmap_grow";
 }
 
-/// The trace-mode fast clock: raw `cntvct_el0` reads on aarch64 (~2 ns,
-/// no syscall, no `mach_absolute_time`), `Instant`-based elsewhere.
-/// Tick frequency comes from `cntfrq_el0` (24 MHz on Apple Silicon —
-/// 41.67 ns granularity; unbiased across many accumulated phases).
-/// No `isb` barrier: accumulated attribution tolerates `OoO` slop, and the
-/// barrier would cost more than the read.
+/// The trace-mode fast clock, under the measured cost model
+/// (docs/silicon/01-timer-discipline.md, bumblebench exp 11): a raw
+/// `cntvct_el0` read costs 0.30 ns (1/cycle — the instrument is free;
+/// the 24 MHz / 41.67 ns tick granularity is the real constraint), and
+/// an unfenced closing stamp can read up to ~50 ns early (bounded by
+/// backend scheduler occupancy, not the ROB). Stamp policy:
+///
+/// - **Accumulated attribution** (`PhaseTimers`) uses raw [`ticks`] at
+///   both ends — measured inflation ≤ 2–3% at 10 ns phases; any fence
+///   costs more than it fixes (`isb` stamps measured +164%).
+/// - **Single-shot spans** close with [`ticks_ss`] (`CNTVCTSS_EL0`,
+///   `FEAT_ECV` — present on M2+): self-synchronized, slide-proof, 4.6 ns
+///   worst case — half the price of `isb` (9.4 ns), and the only honest
+///   way to time one sub-500 ns region.
 #[cfg(feature = "trace")]
 pub mod fastclock {
     /// An opaque monotonic tick count.
@@ -250,6 +258,34 @@ pub mod fastclock {
             core::arch::asm!("mrs {t}, cntvct_el0", t = out(reg) t, options(nomem, nostack));
         }
         t
+    }
+
+    /// The self-synchronized tick count (`CNTVCTSS_EL0`): cannot read
+    /// early across in-flight work — the closing stamp for single-shot
+    /// spans. Spelled by encoding (`s3_3_c14_c0_6`) so the assembler
+    /// accepts it without a `FEAT_ECV` target attribute; the machine
+    /// tailoring rulings pin the reference host at M2+, where ECV is
+    /// architectural.
+    #[cfg(target_arch = "aarch64")]
+    #[allow(unsafe_code)] // one mrs read; sanctioned for trace-only builds
+    #[inline]
+    #[must_use]
+    pub fn ticks_ss() -> u64 {
+        let t: u64;
+        // SAFETY: CNTVCTSS_EL0 is user-readable wherever cntvct_el0 is
+        // (FEAT_ECV); the read has no memory effects.
+        unsafe {
+            core::arch::asm!("mrs {t}, s3_3_c14_c0_6", t = out(reg) t, options(nomem, nostack));
+        }
+        t
+    }
+
+    /// Portable fallback: the ordinary tick (no reorder-slide semantics
+    /// to preserve off aarch64).
+    #[cfg(not(target_arch = "aarch64"))]
+    #[must_use]
+    pub fn ticks_ss() -> u64 {
+        ticks()
     }
 
     /// Tick frequency in Hz (`cntfrq_el0`).
@@ -299,22 +335,37 @@ pub mod fastclock {
 
 #[cfg(feature = "trace")]
 mod imp {
-    use super::{Category, TraceEvent};
+    use super::{fastclock, Category, TraceEvent};
     use std::cell::RefCell;
     use std::sync::OnceLock;
-    use std::time::Instant;
 
     thread_local! {
         static BUFFER: RefCell<Option<Vec<TraceEvent>>> = const { RefCell::new(None) };
     }
 
-    fn anchor() -> Instant {
-        static ANCHOR: OnceLock<Instant> = OnceLock::new();
-        *ANCHOR.get_or_init(Instant::now)
+    /// The process tick anchor: trace timestamps are ns since the first
+    /// stamp, from the same counter `PhaseTimers` accumulates — one
+    /// timeline, coherent across spans and phase events.
+    fn anchor_ticks() -> u64 {
+        static ANCHOR: OnceLock<u64> = OnceLock::new();
+        *ANCHOR.get_or_init(fastclock::ticks)
     }
 
+    /// The opening stamp: raw ticks (0.30 ns; an early-read slide on an
+    /// opening stamp only lengthens the span, bounded by ~50 ns). The
+    /// anchor resolves FIRST — on the very first stamp the anchor would
+    /// otherwise be read after the stamp and sit ahead of it.
     pub(super) fn now_ns() -> u64 {
-        u64::try_from(anchor().elapsed().as_nanos()).expect("process uptime fits u64 ns")
+        let anchor = anchor_ticks();
+        fastclock::ticks_to_ns(fastclock::ticks().wrapping_sub(anchor))
+    }
+
+    /// The closing stamp: self-synchronized (docs/silicon/01) — a raw
+    /// closing stamp can read up to ~50 ns early, which is −83% on a
+    /// 28 ns span; `CNTVCTSS` cannot slide.
+    pub(super) fn now_ns_ss() -> u64 {
+        let anchor = anchor_ticks();
+        fastclock::ticks_to_ns(fastclock::ticks_ss().wrapping_sub(anchor))
     }
 
     pub(super) fn capturing() -> bool {
@@ -376,7 +427,7 @@ mod imp {
                     name: live.name,
                     cat: live.cat,
                     start_ns: live.start_ns,
-                    dur_ns: now_ns() - live.start_ns,
+                    dur_ns: now_ns_ss().saturating_sub(live.start_ns),
                     a0: live.a0,
                     a1: live.a1,
                 });
@@ -561,6 +612,42 @@ mod tests {
         start_capture();
         let events = finish_capture();
         assert!(events.is_empty());
+    }
+
+    /// The stamp-cost pin (docs/silicon/01-timer-discipline.md): raw
+    /// `cntvct` reads are ~0.30 ns (1/cycle) and `CNTVCTSS` back-to-back
+    /// ~4.6 ns on the reference host; the gates leave headroom for load.
+    #[test]
+    #[ignore = "stamp-cost pin (docs/silicon/01 gate); timing-sensitive, run manually"]
+    fn stamp_costs_match_the_measured_model() {
+        use super::fastclock;
+        let n = 1_000_000u64;
+
+        let mut acc = 0u64;
+        let start = fastclock::ticks();
+        for _ in 0..n {
+            acc = acc.wrapping_add(fastclock::ticks());
+        }
+        let raw_ticks = fastclock::ticks().wrapping_sub(start);
+        std::hint::black_box(acc);
+        #[allow(clippy::cast_precision_loss)]
+        let raw_ns = fastclock::ticks_to_ns(raw_ticks) as f64 / n as f64;
+
+        let mut acc = 0u64;
+        let start = fastclock::ticks();
+        for _ in 0..n {
+            acc = acc.wrapping_add(fastclock::ticks_ss());
+        }
+        let ss_ticks = fastclock::ticks().wrapping_sub(start);
+        std::hint::black_box(acc);
+        #[allow(clippy::cast_precision_loss)]
+        let ss_ns = fastclock::ticks_to_ns(ss_ticks) as f64 / n as f64;
+
+        assert!(raw_ns <= 0.6, "raw cntvct read: {raw_ns:.3} ns (model 0.30)");
+        assert!(ss_ns <= 7.0, "CNTVCTSS read: {ss_ns:.3} ns (model 4.6)");
+        // The ordering that justifies the policy: ss costs more than raw,
+        // and both are far under the old ~2 ns budget assumption.
+        assert!(raw_ns < ss_ns, "raw {raw_ns:.3} vs ss {ss_ns:.3}");
     }
 
     #[test]

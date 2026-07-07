@@ -411,7 +411,7 @@ fn write_families(
             corpus::load_sqlite(&scratch.join("oracle.sqlite"), cfg).map_err(|e| format!("{e}"))?;
         if selected("commit_single") {
             eprintln!("bench: commit_single");
-            let ((ours, theirs), ghz) = clockproxy::guarded(|| {
+            let ((ours, theirs), ghz) = clockproxy::stamped(|| {
                 Ok((
                     writebench::commit_single_bumbledb(&db, cfg)?,
                     sqlite_run::commit_single(&conn, cfg)?,
@@ -427,7 +427,7 @@ fn write_families(
         }
         if selected("commit_batch") {
             eprintln!("bench: commit_batch");
-            let ((ours, theirs), ghz) = clockproxy::guarded(|| {
+            let ((ours, theirs), ghz) = clockproxy::stamped(|| {
                 Ok((
                     writebench::commit_batch_bumbledb(&db, cfg)?,
                     sqlite_run::commit_batch(&conn, cfg)?,
@@ -443,7 +443,7 @@ fn write_families(
         }
         if cold_selected {
             eprintln!("bench: cold_fk_walk");
-            let ((ours, theirs), ghz) = clockproxy::guarded(|| {
+            let ((ours, theirs), ghz) = clockproxy::stamped(|| {
                 Ok((
                     writebench::cold_fk_walk(&db, cfg)?,
                     sqlite_run::cold_fk_walk(&conn, cfg)?,
@@ -465,7 +465,7 @@ fn write_families(
             .find(|f| f.name == "bulk")
             .expect("registered")
             .protocol;
-        let ((ours, theirs), ghz) = clockproxy::guarded(|| {
+        let ((ours, theirs), ghz) = clockproxy::stamped(|| {
             Ok((
                 writebench::bulk_bumbledb(cfg, scratch)?,
                 sqlite_run::bulk(cfg, scratch)?,

@@ -66,3 +66,25 @@ captures the baseline.
 
 Any engine change; scenario-suite and L-scale runs (human-owned); the
 timer changes inside the engine's obs layer (PRD 01).
+
+## Result (2026-07-07)
+
+Landed: the serial-ALU clock proxy (`clockproxy.rs`: 8-mul dependent
+chain, 24 cycles/iter, ~200 µs loop-amortized reads), per-family-block
+GHz brackets in every report row (`ghz` in JSON, Clock proxy table in
+markdown), contamination = min < 3.2 GHz with ONE bounded retry for
+idempotent read blocks (`guarded`) and annotate-only for write blocks
+(`stamped` — the retry re-ran `Db::create` once and crashed on
+`AlreadyInitialized`: writes are not idempotent, and their low GHz is
+fsync-DVFS physics anyway), cross-run minima via the new `merge`
+subcommand (contaminated blocks excluded, exclusion count printed), a
+200 ms warm spin before the first family, and the 500 ns quantum guard
+(batch-and-divide; no current family trips it). `measure.sh` created
+(mkdir-lock measurement mutex).
+
+Gates: detector-fires ignored test green under 24-way spin load; run
+variance investigated and documented in baseline.md (tick-quantized
+sub-2 µs families; chain's ±10% run-scoped mode); baseline.md committed
+(min-of-5 ledger, six phase tables, GHz bands, 12 contaminated blocks
+named). Engine untouched at the baseline commit; verify green (2,468
+cases).

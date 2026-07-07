@@ -186,11 +186,20 @@ fixed-width predicate scans, survivor compaction, fold/accumulate kernels
 (Sum/Min/Max/Count over batch columns, strided or gathered — Sum semantics
 unchanged: i128 accumulation, one range check at finalization), gather kernels
 (position-indexed column reads), and software-prefetch passes (`prfm`) between
-probe phase 1 and phase 2. Fold kernels are **scalar-ILP-first**: unrolled
-multi-accumulator scalar loops are the default shape, and NEON earns its slot
-per kernel only by measuring faster on the reference host — the deep-OoO scalar
-path is the primary engine and simple dependency-free loops are preferred over
-clever vectorization (`00-product.md` machine model; unsafe policy there too). Columns are 128-byte-aligned SoA
+probe phase 1 and phase 2. Fold kernels follow the **port-topology law**
+(docs/silicon/06, from bumblebench exps 03/04, superseding the scalar-ILP-first
+doctrine): every flag-writing scalar op (`adds/adcs/cmp/csel`) is confined to 3
+of the reference core's 6 integer ALUs, so exact scalar summation caps at ~2.8
+flag-µops/cycle while NEON escapes the triad and rides the 3×16 B load ports —
+dense exact sums measured 8.8 vs 4.0–4.6 rows/ns at L1 (carry-counted u128 via
+`vcgtq_u64`), min/max 2.65× at every tier, with DRAM converging all parallel
+kernels (~7.5 rows/ns single-core). Dense (stride-1) folds therefore take NEON
+unconditionally; strided and gathered folds stay scalar until measured
+(latency×MLP-bound — a different law). The retired doctrine's founding number
+(2.45 rows/ns scalar) was a frequency-contamination artifact; the correction
+stays on record. Deep-OoO scalar remains the shape for irregular control flow —
+the law is about reductions, not loops in general (`00-product.md` machine
+model; unsafe policy there too). Columns are 128-byte-aligned SoA
 with staggered bases (`40-storage.md`). Scalar fallback everywhere, equal results by
 test across batch sizes. **Vectorized execution is the default and only path** — a
 scalar "mode" exists solely as the degenerate batch size where useful for testing; v5's

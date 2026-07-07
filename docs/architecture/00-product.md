@@ -88,20 +88,25 @@ compile time — 32-bit targets are rejected, `usize` is 8 bytes everywhere, and
 decision accommodates narrower platforms). Full research notes with sources:
 `docs/reference/apple-silicon-performance.md`. The machine model the design exploits:
 
-- **~28 MLP lanes per core, ~630-entry ROB**: the win is many *independent* loads in
-  flight — batched execution over dependent pointer-chasing, everywhere.
-- **Scalar-ILP first**: the deep OoO engine sustains 3–4 IPC on simple, branch-light,
-  dependency-free loops; that beats clever vectorization. 128-bit NEON (no SVE) is a
-  supporting actor with a closed set of sanctioned kernel shapes (amended by the
-  performance suite, docs/perf/): fixed-width predicate scans, survivor compaction,
-  fold/accumulate kernels (Sum/Min/Max/Count over batch columns, strided or
-  gathered), gather kernels (position-indexed column reads), and software-prefetch
-  passes (`prfm`) in two-phase probing. Fold kernels are scalar-ILP-first —
-  unrolled multi-accumulator scalar loops are the default shape; NEON is used only
-  where it measures faster on the reference host (64-bit lane compares earn it for
-  min/max; 2-lane adds rarely beat 6-wide scalar for sums). Kernel adoption never
-  changes semantics: Sum stays i128-accumulated with one range check at
-  finalization.
+- **~28–33 MLP lanes per core, bounded by smaller queues first**: the win is many
+  *independent* loads in flight — batched execution over dependent pointer-chasing,
+  everywhere. Measured refinements (docs/silicon/, bumblebench): the binding OoO
+  window under per-item work is the ~115-entry integer issue queue, not the
+  ~630-entry ROB; and dependent flag-µops per gathered load consume miss lanes
+  (28 → 14 at four flag-µops per miss) — budget comparison code like cache lines.
+- **Port topology decides scalar-vs-NEON** (docs/silicon/06, superseding
+  scalar-ILP-first): flag-writing ops (`adds/adcs/cmp/csel`) are confined to 3 of
+  the 6 integer ALUs, so NEON wins every dense reduction (exact sums 2×, min/max
+  2.65× — carry-counted `vcgtq_u64` exactness costs vector ops, not flag ports),
+  while deep-OoO scalar remains the shape for irregular control flow. 128-bit NEON
+  (no SVE) keeps a closed set of sanctioned kernel shapes (amended by docs/perf/
+  and docs/silicon/): fixed-width predicate scans, survivor compaction,
+  fold/accumulate kernels — dense sums via carry-counted exact u128 now among
+  them — (Sum/Min/Max/Count over batch columns, strided or gathered), gather
+  kernels (position-indexed column reads), and software-prefetch passes (`prfm`)
+  in two-phase probing. Kernel adoption never changes semantics: Sum stays
+  i128-accumulated with one range check at finalization, and every kernel ships
+  with a portable reference and a bit-identity differential test.
 - **60–120 GB/s memory bandwidth**: sequential scan+decode of a 100 MB relation is
   single-digit milliseconds — the quantitative reason the image-cache design
   (`30-execution.md` D1) is sound at this scale.

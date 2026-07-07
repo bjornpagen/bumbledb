@@ -16,6 +16,14 @@
 //! `(key words, child cursor)` pairs — **the child comes with the key**;
 //! re-probing the map just enumerated is inexpressible through this API
 //! (post-mortem §34).
+//!
+//! The probe path is `#[inline(always)]` end to end (docs/silicon/02):
+//! an L2-resident probe stream's surviving cost class is instructions
+//! retired per probe, and call ceremony was first on the bill. The
+//! lint's "usually a bad idea" is measured wrong here, and the inlining
+//! is machine-checked by `scripts/check-asm.sh`, not trusted to the
+//! attribute.
+#![allow(clippy::inline_always)]
 
 use crate::image::view::View;
 use crate::image::ColumnView;
@@ -189,6 +197,7 @@ fn pack_child(slot: Slot) -> u64 {
 }
 
 /// Unpacks a bucket child word (the slot is occupied by ctrl).
+#[inline(always)]
 fn unpack_child(word: u64) -> Slot {
     if word & CHILD_NODE_TAG == 0 {
         Slot::Single(u32::try_from(word).expect("positions fit u32"))
@@ -200,6 +209,7 @@ fn unpack_child(word: u64) -> Slot {
 }
 
 /// The 7-bit hash tag a ctrl byte carries (bit 7 marks occupancy).
+#[inline(always)]
 fn ctrl_tag(hash: u64) -> u8 {
     0x80 | u8::try_from(hash >> 57).expect("7 bits")
 }
@@ -245,10 +255,12 @@ pub struct Colt {
 /// can compute all hashes (pure ALU) before phase 2 issues any bucket load
 /// (D4's two-phase probing, the 30-execution doc).
 #[must_use]
+#[inline(always)]
 pub fn hash_key(words: &[u64]) -> u64 {
     hash_words(words)
 }
 
+#[inline(always)]
 fn hash_words(words: &[u64]) -> u64 {
     let mut h = 0x517C_C1B7_2722_0A95_u64;
     for w in words {
@@ -429,6 +441,7 @@ impl Colt {
 
     /// Decodes the key word of one column at one position (1-byte columns
     /// widen to u64 — binding slots are words everywhere).
+    #[inline(always)]
     fn word_at(&self, column: usize, position: u32) -> u64 {
         match self.view.image().column(column) {
             ColumnView::Words(words) => words[position as usize],
@@ -437,6 +450,7 @@ impl Colt {
     }
 
     /// Whether the position's key words at `level` equal `key`.
+    #[inline(always)]
     fn position_matches(&self, level: usize, position: u32, key: &[u64]) -> bool {
         // The zip truncates to the shorter side — correct only when the
         // arities agree, so the invariant is asserted where the
@@ -459,6 +473,11 @@ impl Colt {
     /// Probe with a precomputed hash (phase 2 of the two-phase batched
     /// probe): the load chain starts here; the hash was phase-1 ALU work.
     /// `level` is a join level.
+    ///
+    /// Inlined into the executor's probe loops (docs/silicon/02): an
+    /// L2-resident probe stream's surviving cost class is instructions
+    /// retired per probe — call ceremony here was first on the bill.
+    #[inline(always)]
     pub fn get_prehashed(
         &mut self,
         cursor: Cursor,
@@ -471,6 +490,7 @@ impl Colt {
 
     /// [`Colt::get_prehashed`] over an internal (selection-inclusive)
     /// level — the shared body selection probes also walk.
+    #[inline(always)]
     fn probe_child_at(
         &mut self,
         cursor: Cursor,
@@ -487,8 +507,12 @@ impl Colt {
                 .then_some(Cursor::Row(position)),
             Cursor::Node(node) => {
                 let map = self.force(node, level);
-                let m = self.maps[map as usize];
-                let (found, idx) = self.probe_hashed(&m, key, hash);
+                // By reference (docs/silicon/02): `Map` is a 48-byte
+                // Copy struct — a by-value bind here was one stack copy
+                // per probe, a first-class suspect in the emulation that
+                // reproduced the 55–60 ns plateau.
+                let m = &self.maps[map as usize];
+                let (found, idx) = self.probe_hashed(m, key, hash);
                 if !found {
                     return None;
                 }
@@ -881,8 +905,52 @@ impl Colt {
 
     /// Linear probe with a precomputed hash: the ctrl byte gates the
     /// bucket read — a mismatched tag steps without touching the bucket
-    /// line (docs/perf/ PRD 07).
+    /// line (docs/perf/ PRD 07). Arity-monomorphic (docs/silicon/02):
+    /// the dispatch happens once per probe, and each walk loop's key
+    /// compare is straight-line word compares — a runtime-length slice
+    /// equality here compiled to a `bcmp` call per tag match.
+    #[inline(always)]
     fn probe_hashed(&self, m: &Map, key: &[u64], hash: u64) -> (bool, usize) {
+        match key.len() {
+            1 => self.probe_walk::<1>(m, key, hash),
+            2 => self.probe_walk::<2>(m, key, hash),
+            3 => self.probe_walk::<3>(m, key, hash),
+            4 => self.probe_walk::<4>(m, key, hash),
+            _ => self.probe_walk_general(m, key, hash),
+        }
+    }
+
+    /// The monomorphic walk: `A` is the key arity, so the compare unrolls
+    /// to `A` word compares with no call and no length test.
+    #[inline(always)]
+    fn probe_walk<const A: usize>(&self, m: &Map, key: &[u64], hash: u64) -> (bool, usize) {
+        debug_assert_eq!(key.len(), A);
+        debug_assert_eq!(m.arity, A);
+        let mask = m.capacity - 1;
+        let wanted = ctrl_tag(hash);
+        let mut idx = usize::try_from(hash).expect("64-bit usize") & mask;
+        loop {
+            let c = self.ctrl[m.ctrl_start + idx];
+            if c == 0 {
+                return (false, idx);
+            }
+            if c == wanted {
+                let bucket = m.bucket_start + idx * (A + 1);
+                let stored = &self.buckets[bucket..bucket + A];
+                let mut matches = true;
+                for i in 0..A {
+                    matches &= stored[i] == key[i];
+                }
+                if matches {
+                    return (true, idx);
+                }
+            }
+            idx = (idx + 1) & mask;
+        }
+    }
+
+    /// The rare wide-key fallback (arity > 4 — beyond every bench plan).
+    fn probe_walk_general(&self, m: &Map, key: &[u64], hash: u64) -> (bool, usize) {
         let mask = m.capacity - 1;
         let wanted = ctrl_tag(hash);
         let mut idx = usize::try_from(hash).expect("64-bit usize") & mask;
@@ -904,6 +972,7 @@ impl Colt {
     /// Prefetches the bucket a hash will probe (phase 1.5, docs/perf/
     /// PRD 07): the ctrl byte's line and the bucket row's line. A no-op
     /// for pinned rows and unforced nodes.
+    #[inline(always)]
     pub fn prefetch_bucket(&self, cursor: Cursor, hash: u64) {
         let Cursor::Node(node) = cursor else { return };
         let NodeState::Forced { map } = self.nodes[node.0 as usize] else {

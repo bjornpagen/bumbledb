@@ -71,3 +71,41 @@ walk and the hash.
 
 Load factor and walk length (03), hash-ahead (04), prefetch gating (10),
 cover-stable batch segregation (14).
+
+## Result (2026-07-07)
+
+Landed: `Map` bound by reference in `probe_child_at` (the 48 B by-value
+copy per probe is gone); `#[inline(always)]` end to end on the probe
+chain with `scripts/check-asm.sh` created to enforce it in machine code
+(the gate caught its own first violation: the arity>4 general walk arm,
+now allowlisted as the deliberately-outlined cold arm);
+arity-monomorphic probe walks (`probe_walk::<1..4>` — straight-line
+word compares, no `bcmp`); probe-key sources resolved once per
+(pass, subatom) in `probe_pass` (was a per-element `position()` search)
+with the single-batch-word specialized loop run_node already had; loop
+invariants hoisted (carried column, start cursor); inner loops write
+pre-sized buffers by index (`resize` + store — `Vec::push`'s grow branch
+blocked LICM per docs/silicon law).
+
+Gates:
+1. check-asm green: no `bl`/`bcmp`/probe-class calls inside `probe_pass`
+   or `run_node` monomorphizations ✓.
+2. Triangle (untraced, min across 5 dedicated + 2 filtered 256-sample
+   runs): p50 **12,256 µs** (gate ≤ 13,500; baseline 15,064; −18.6%) ✓.
+   Traced phase table: `jp_probe_n1` 5,649 → **4,193 µs** (−26%),
+   `jp_hash_n0` 313 → 106 (−66%, the hoisted sources), `jp_probe_n0`
+   1,918 → 1,366 (−29%), `jp_hash_n1` 1,558 → 1,379 (−11%).
+   **`jp_probe_n1` ≤ 3,500 missed at 4,193** — documented miss: the
+   remaining ~1,538 ns/call (~41 ns/probe at batch ~37) is the walk
+   itself — miss-heavy probes against the ~100k-key map (misses cost
+   MORE than hits: walk + exit branch) — precisely PRD 03's load-factor
+   lever and PRD 04's hash-ahead; both land next in this suite.
+3. skew 32.4 (baseline 39.7) ✓, chain 124.0 (134.4) ✓, range 28.3
+   (28.5) ✓, stats 1,871 (1,886) ✓, spread 10,578 (11,282, −6.2%) ✓ —
+   no measured family regressed. point/string/balance/fk_walk are
+   untouched paths (guard lane / leaf-only); re-verified in the batch-2
+   full ledger.
+4. Verify green (2,468 cases through the new probe path — the
+   per-binary stamp forced it before any timing); zero-alloc gate green;
+   emits digests unchanged (EXPLAIN counters byte-identical semantics
+   preserved; verified by the harness's exec digests in every report).

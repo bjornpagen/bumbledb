@@ -209,15 +209,22 @@ column — descend minus the next node's total = per-row bookkeeping + leaf
 emits + the child node's un-phased entry setup. `WORDMAP_GROW` point events
 surface sink-map rehashes inside measured executions.
 
-**Measurement caveats, stated.** The fast clock is a raw `cntvct_el0` read
-(~2 ns; `cntfrq_el0` is 24 MHz on Apple Silicon — 41.67 ns granularity,
-unbiased across accumulation) with no `isb` barrier: OoO slop is tolerated
-because attribution sums many segments. Phase totals carry the stamp overhead
-of deep small-batch nodes (~5% observed on the heaviest families). Therefore:
-**phase tables direct work; the untraced timing tables decide gates.** Traced
-samples are single warm executions on the rotating param sets — for skewed
-families the sample may be the hot parameter; gates cite p95 where that
-matters.
+**Measurement caveats, measured** (bumblebench exp 11,
+docs/silicon/01-timer-discipline.md). The raw `cntvct_el0` read costs 0.30 ns
+(1 per cycle) — the instrument is free; the constraint is `cntfrq_el0`'s
+24 MHz (41.67 ns granularity, unbiased across accumulation). The unfenced
+closing-stamp slide is bounded by backend scheduler occupancy at ≤ ~50 ns —
+NOT by the ~630-entry ROB — which is ≤ 2–3% on accumulated two-stamp phase
+attribution and fatal only for single-shot timing of sub-500 ns regions.
+Stamp policy, accordingly: `PhaseTimers` accumulates with raw stamps at both
+ends (an `isb` fence costs more than the slop it removes — measured +164% at
+10 ns phases); single-shot spans close with `CNTVCTSS_EL0` (self-synchronized,
+4.6 ns worst case, slide-proof — half the price of `isb`'s 9.4 ns). Phase
+totals carry the stamp overhead of deep small-batch nodes, and short phases
+under-attribute up to ~7%. Therefore: **phase tables direct work; the
+untraced timing tables decide gates.** Traced samples are single warm
+executions on the rotating param sets — for skewed families the sample may be
+the hot parameter; gates cite p95 where that matters.
 
 ## What we deliberately do not have
 

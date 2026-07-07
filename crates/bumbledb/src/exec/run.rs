@@ -417,16 +417,21 @@ enum Source {
 
 /// A leaf-scan residual operand resolved for one big run (docs/perf/
 /// PRD 05): a live column view or the outer binding's constant word.
-/// Small runs skip the table — measured on spread (~1.4 positions/run),
-/// building it cost +48 ns/row; measured on range (one 100k-position
-/// run), skipping it cost ~10 µs. [`SCAN_HOIST_THRESHOLD`] splits them.
+/// Small runs skip the table. [`SCAN_HOIST_THRESHOLD`] splits them.
+#[derive(Clone, Copy)]
 enum Operand<'a> {
     Col(crate::image::ColumnView<'a>),
     Const(u64),
 }
 
-/// Run length at which hoisting operand/column tables pays for itself.
-const SCAN_HOIST_THRESHOLD: usize = 32;
+/// Run length at which hoisting operand/column tables pays for itself:
+/// L* = `build_cost` ÷ `per-item saving` (docs/silicon/08). The old value
+/// of 32 was forced by a `from_fn`-of-Options table costing ~34 ns/run
+/// (rust-lang/rust#108765 — eight outlined closure calls plus a 448 B
+/// memcpy, the "+48 ns/row" that docs/perf PRD 05 attributed to
+/// hoisting itself); the Option-free prefix table builds in ~3.4 ns
+/// straight-line, putting the measured crossover at 4–8.
+const SCAN_HOIST_THRESHOLD: usize = 8;
 
 /// Appends the positions of `run` that pass `eval` to `out`.
 fn push_surviving(
@@ -1135,7 +1140,9 @@ impl Executor {
                 // probes (one branch per sibling per batch).
                 let pinned = matches!(s_cursor, Cursor::Row(_));
                 counters.phase_start(node_idx, JoinPhase::Hash);
+                let n = scratch.survivors.len();
                 scratch.hashes.clear();
+                scratch.hashes.resize(n, 0);
                 // The dominant probe shape — a single batch-sourced key
                 // word — takes a match-free specialized loop (docs/perf/
                 // PRD 07); everything else takes the general gather.
@@ -1149,9 +1156,8 @@ impl Executor {
                         let key = scratch.entry_keys[entry * arity + word];
                         scratch.probe_keys[k] = key;
                         counters.probe_hash(node_idx, sub_idx);
-                        scratch
-                            .hashes
-                            .push(crate::exec::colt::hash_key(std::slice::from_ref(&key)));
+                        scratch.hashes[k] =
+                            crate::exec::colt::hash_key(std::slice::from_ref(&key));
                     }
                 } else {
                     for (k, &e) in scratch.survivors.iter().enumerate() {
@@ -1165,13 +1171,11 @@ impl Executor {
                                 i,
                             );
                         }
-                        if pinned {
-                            scratch.hashes.push(0);
-                        } else {
+                        if !pinned {
                             counters.probe_hash(node_idx, sub_idx);
-                            scratch.hashes.push(crate::exec::colt::hash_key(
+                            scratch.hashes[k] = crate::exec::colt::hash_key(
                                 &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
-                            ));
+                            );
                         }
                     }
                 }
@@ -1191,7 +1195,8 @@ impl Executor {
                 // out-of-order window overlaps — then kernel compaction.
                 counters.phase_start(node_idx, JoinPhase::Probe);
                 scratch.mask.clear();
-                for k in 0..scratch.survivors.len() {
+                scratch.mask.resize(n, 0);
+                for k in 0..n {
                     let e = scratch.survivors[k];
                     let entry = usize::try_from(e).expect("batch fits usize");
                     let hit = colts[occ].get_prehashed(
@@ -1202,7 +1207,7 @@ impl Executor {
                     );
                     counters.probe(node_idx, sub_idx, hit.is_some());
                     scratch.sibling_children[sub_idx][entry] = hit.unwrap_or(Cursor::Row(0));
-                    scratch.mask.push(u8::from(hit.is_some()));
+                    scratch.mask[k] = u8::from(hit.is_some());
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
                 counters.phase_end(node_idx, JoinPhase::Probe);
@@ -1212,8 +1217,10 @@ impl Executor {
             counters.phase_start(node_idx, JoinPhase::Residual);
             for (r_idx, (lhs_src, rhs_src)) in scratch.residual_sources.iter().enumerate() {
                 let op = self.residual_slots[node_idx][r_idx].0.op;
+                let n = scratch.survivors.len();
                 scratch.mask.clear();
-                for k in 0..scratch.survivors.len() {
+                scratch.mask.resize(n, 0);
+                for k in 0..n {
                     let e = scratch.survivors[k];
                     let entry = usize::try_from(e).expect("batch fits usize");
                     let value = |src: &Source| match *src {
@@ -1222,7 +1229,7 @@ impl Executor {
                     };
                     let pass = op.compare(&value(lhs_src), &value(rhs_src));
                     counters.residual(node_idx, pass);
-                    scratch.mask.push(u8::from(pass));
+                    scratch.mask[k] = u8::from(pass);
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
@@ -1316,6 +1323,11 @@ impl Executor {
             .extend(0..u32::try_from(fill).expect("batch fits u32"));
 
         // Sibling passes: per-parent Slot reads and per-parent cursors.
+        // Instruction diet (docs/silicon/02): value sources resolve once
+        // per (pass, subatom) — never a per-element variable search —
+        // loop invariants (carried column, start cursor) hoist, and the
+        // inner loops write pre-sized buffers by index (a `Vec::push`'s
+        // grow branch blocks LICM and unrolling in exactly these loops).
         for sub_idx in 0..node.subatoms.len() {
             if sub_idx == cover_sub || scratch.survivors.is_empty() {
                 continue;
@@ -1326,44 +1338,76 @@ impl Executor {
             let s_level = tables.entry_level[node_idx][occ];
             let cover_vars = &node.subatoms[cover_sub].vars;
             counters.phase_start(node_idx, JoinPhase::Hash);
-            for (k, &e) in scratch.survivors.iter().enumerate() {
-                let element = usize::try_from(e).expect("batch fits usize");
-                let parent = scratch.parents[element] as usize;
-                for (i, var) in subatom.vars.iter().enumerate() {
-                    scratch.probe_keys[k * sub_arity + i] =
-                        if let Some(word) = cover_vars.iter().position(|cv| cv == var) {
-                            scratch.entry_keys[element * arity + word]
-                        } else {
-                            let slot = self.slot_map[node_idx][sub_idx][i];
-                            scratch.pending_bindings[parent * slot_count + slot]
-                        };
+            scratch.sources[sub_idx].clear();
+            for (i, var) in subatom.vars.iter().enumerate() {
+                let source = cover_vars.iter().position(|cv| cv == var).map_or(
+                    Source::Slot(self.slot_map[node_idx][sub_idx][i]),
+                    Source::Batch,
+                );
+                scratch.sources[sub_idx].push(source);
+            }
+            let n = scratch.survivors.len();
+            scratch.hashes.clear();
+            scratch.hashes.resize(n, 0);
+            // The dominant shape — one batch-sourced key word — takes a
+            // match-free specialized loop, exactly as `run_node`'s
+            // sibling pass does.
+            let single_batch_word = match scratch.sources[sub_idx].as_slice() {
+                [Source::Batch(word)] => Some(*word),
+                _ => None,
+            };
+            if let Some(word) = single_batch_word {
+                for (k, &e) in scratch.survivors.iter().enumerate() {
+                    let element = usize::try_from(e).expect("batch fits usize");
+                    let key = scratch.entry_keys[element * arity + word];
+                    scratch.probe_keys[k] = key;
+                    counters.probe_hash(node_idx, sub_idx);
+                    scratch.hashes[k] =
+                        crate::exec::colt::hash_key(std::slice::from_ref(&key));
                 }
-                counters.probe_hash(node_idx, sub_idx);
-                scratch.hashes.push(crate::exec::colt::hash_key(
-                    &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
-                ));
+            } else {
+                for (k, &e) in scratch.survivors.iter().enumerate() {
+                    let element = usize::try_from(e).expect("batch fits usize");
+                    let parent = scratch.parents[element] as usize;
+                    for i in 0..sub_arity {
+                        scratch.probe_keys[k * sub_arity + i] = match scratch.sources[sub_idx][i]
+                        {
+                            Source::Batch(word) => scratch.entry_keys[element * arity + word],
+                            Source::Slot(slot) => {
+                                scratch.pending_bindings[parent * slot_count + slot]
+                            }
+                        };
+                    }
+                    counters.probe_hash(node_idx, sub_idx);
+                    scratch.hashes[k] = crate::exec::colt::hash_key(
+                        &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
+                    );
+                }
             }
             counters.phase_end(node_idx, JoinPhase::Hash);
+            let carried = tables.carried_col[node_idx][occ];
+            let start_cursor = colts[occ].start();
             if scratch.survivors.len() >= 16 {
                 for (k, &e) in scratch.survivors.iter().enumerate() {
                     let parent = scratch.parents[e as usize] as usize;
-                    let cursor = match tables.carried_col[node_idx][occ] {
-                        Some(col) => scratch.pending_cursors[parent * carried_w + col],
-                        None => colts[occ].start(),
-                    };
+                    let cursor = carried
+                        .map_or(start_cursor, |col| {
+                            scratch.pending_cursors[parent * carried_w + col]
+                        });
                     colts[occ].prefetch_bucket(cursor, scratch.hashes[k]);
                 }
             }
             counters.phase_start(node_idx, JoinPhase::Probe);
             scratch.mask.clear();
-            for k in 0..scratch.survivors.len() {
+            scratch.mask.resize(n, 0);
+            for k in 0..n {
                 let e = scratch.survivors[k];
                 let element = usize::try_from(e).expect("batch fits usize");
                 let parent = scratch.parents[element] as usize;
-                let cursor = match tables.carried_col[node_idx][occ] {
-                    Some(col) => scratch.pending_cursors[parent * carried_w + col],
-                    None => colts[occ].start(),
-                };
+                let cursor = carried
+                    .map_or(start_cursor, |col| {
+                        scratch.pending_cursors[parent * carried_w + col]
+                    });
                 let hit = colts[occ].get_prehashed(
                     cursor,
                     s_level,
@@ -1372,7 +1416,7 @@ impl Executor {
                 );
                 counters.probe(node_idx, sub_idx, hit.is_some());
                 scratch.sibling_children[sub_idx][element] = hit.unwrap_or(Cursor::Row(0));
-                scratch.mask.push(u8::from(hit.is_some()));
+                scratch.mask[k] = u8::from(hit.is_some());
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             counters.phase_end(node_idx, JoinPhase::Probe);
@@ -1385,8 +1429,10 @@ impl Executor {
             let cover_vars = &node.subatoms[cover_sub].vars;
             let lhs_word = cover_vars.iter().position(|cv| *cv == residual.lhs);
             let rhs_word = cover_vars.iter().position(|cv| *cv == residual.rhs);
+            let n = scratch.survivors.len();
             scratch.mask.clear();
-            for k in 0..scratch.survivors.len() {
+            scratch.mask.resize(n, 0);
+            for k in 0..n {
                 let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
                 let parent = scratch.parents[element] as usize;
                 let value = |word: Option<usize>, slot: usize| match word {
@@ -1397,7 +1443,7 @@ impl Executor {
                     .op
                     .compare(&value(lhs_word, *lhs_slot), &value(rhs_word, *rhs_slot));
                 counters.residual(node_idx, pass);
-                scratch.mask.push(u8::from(pass));
+                scratch.mask[k] = u8::from(pass);
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
@@ -1649,21 +1695,31 @@ impl Executor {
                         self.leaf_scan_residuals.len() <= MAX_LEAF_RESIDUALS,
                         "leaf residual count exceeds the scan table"
                     );
-                    let resolved: [Option<(crate::ir::CmpOp, Operand<'_>, Operand<'_>)>;
-                        MAX_LEAF_RESIDUALS] = std::array::from_fn(|i| {
-                        self.leaf_scan_residuals.get(i).map(|(op, lhs, rhs)| {
-                            let side = |src: &Source| match *src {
-                                Source::Batch(word) => {
-                                    Operand::Col(scan.colt.suffix_column(scan.level, word))
-                                }
-                                Source::Slot(slot) => Operand::Const(bindings.get(slot)),
-                            };
-                            (*op, side(lhs), side(rhs))
-                        })
-                    });
+                    // Option-free prefix table, plain indexed loop
+                    // (docs/silicon/08): `array::from_fn` refuses to
+                    // inline its element closure (rust-lang/rust#108765)
+                    // — this exact table measured ~34 ns/run as a
+                    // from_fn-of-Options (eight outlined calls + a 448 B
+                    // memcpy, +48 ns/row at fanout runs) vs ~3.4 ns as
+                    // straight-line stores. `n_residuals` is the length
+                    // prefix; slots past it stay at the placeholder.
+                    let placeholder = (
+                        crate::ir::CmpOp::Eq,
+                        Operand::Const(0),
+                        Operand::Const(0),
+                    );
+                    let mut resolved = [placeholder; MAX_LEAF_RESIDUALS];
+                    for (i, (op, lhs, rhs)) in self.leaf_scan_residuals.iter().enumerate() {
+                        let side = |src: &Source| match *src {
+                            Source::Batch(word) => {
+                                Operand::Col(scan.colt.suffix_column(scan.level, word))
+                            }
+                            Source::Slot(slot) => Operand::Const(bindings.get(slot)),
+                        };
+                        resolved[i] = (*op, side(lhs), side(rhs));
+                    }
                     let mut eval = |position: u32| {
-                        for spec in resolved.iter().take(n_residuals) {
-                            let (op, lhs, rhs) = spec.as_ref().expect("resolved up to len");
+                        for (op, lhs, rhs) in resolved.iter().take(n_residuals) {
                             let value = |operand: &Operand<'_>| match operand {
                                 Operand::Col(crate::image::ColumnView::Words(w)) => {
                                     w[position as usize]

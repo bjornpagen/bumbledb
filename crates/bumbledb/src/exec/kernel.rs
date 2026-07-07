@@ -13,13 +13,25 @@
 //! against, bit for bit (an aarch64 release build omits them: dead code
 //! is disallowed).
 //!
-//! Fold doctrine (30-execution, amended): **scalar-ILP first** — the fold
-//! kernels are unrolled multi-accumulator scalar loops (the M2 runs
-//! 6-wide integer ALU; 2-lane NEON adds on 64-bit data lose to it), and
-//! NEON earns a slot only where measured faster (min/max via
-//! `vcgtq_u64` + `vbslq_u64` — there is no `vmaxq_u64`). Sum semantics
+//! Fold doctrine (30-execution, rewritten by docs/silicon/06 from
+//! bumblebench exps 03/04): **port topology decides, not lane count.**
+//! Every flag-writing scalar op (`adds/adcs/cmp/csel`) is confined to 3
+//! of the M2's 6 integer ALUs, so exact scalar summation caps at ~2.8
+//! flag-µops/cycle while the frontend idles; NEON escapes the triad and
+//! multiplies load-port width (3 × 16 B). Measured on the reference
+//! host: exact-u128 NEON via carry counting 8.8 rows/ns vs 4.0–4.6 for
+//! the 4-accumulator scalar i128 loop at L1; min/max 2.65× at every
+//! tier (`cmhi`/`bsl` run on all 4 vector pipes — there is no
+//! `vmaxq_u64`). From DRAM all parallel kernels converge (~7.5 rows/ns
+//! at 60.6 GB/s single-core), so dense folds take NEON unconditionally.
+//! The prior scalar-ILP-first doctrine rested on a 2.45 rows/ns scalar
+//! measurement that reproduces on no core/cache combination of the
+//! reference host — a frequency-contamination artifact, kept on record
+//! (docs/silicon/README, law table) rather than erased. Sum semantics
 //! are exact i128/u128 accumulation — bit-identical to the naive fold at
-//! any association, since fewer than 2^64 i64 terms cannot wrap i128.
+//! any association, since fewer than 2^64 i64 terms cannot wrap i128;
+//! the NEON sum counts unsigned carries (`vcgtq_u64(old, new)`) into a
+//! parallel lane so exactness costs vector ops, not flag ports.
 //!
 //! Survivor compaction is the scalar cursor-write on every target: NEON has
 //! no compress instruction (that is SVE, which Apple Silicon lacks), and
@@ -215,7 +227,10 @@ pub fn fold_min_max_u64_idx(
 
 /// Contiguous strided sum of biased-i64 words over
 /// `values[offset], values[offset + stride], ..` for `count` elements —
-/// the dense-survivor fast form (no index loads).
+/// the dense-survivor fast form (no index loads). Stride 1 takes the
+/// NEON carry-count path (docs/silicon/06) through the bias identity:
+/// each biased word is `value + 2^63 (mod 2^64)`, so
+/// `Σ value = Σ word − count·2^63` exactly in i128.
 ///
 /// # Panics
 ///
@@ -225,6 +240,14 @@ pub fn fold_min_max_u64_idx(
 #[allow(unsafe_code)]
 pub fn fold_sum_biased_i64(values: &[u64], stride: usize, offset: usize, count: usize) -> i128 {
     assert!(stride > 0 && (count == 0 || (count - 1) * stride + offset < values.len()));
+    #[cfg(target_arch = "aarch64")]
+    if stride == 1 {
+        let total = neon::fold_sum_u64_dense(&values[offset..offset + count]);
+        let bias = u128::from(count as u64) << 63;
+        // Both fit i128 comfortably: total < count·2^64 ≤ 2^96-ish.
+        return i128::try_from(total).expect("sum of u32-counted words fits i128")
+            - i128::try_from(bias).expect("bias fits i128");
+    }
     let mut acc = [0i128; 4];
     let mut i = 0;
     while i + 4 <= count {
@@ -244,6 +267,7 @@ pub fn fold_sum_biased_i64(values: &[u64], stride: usize, offset: usize, count: 
 }
 
 /// Contiguous strided sum of u64 words (see [`fold_sum_biased_i64`]).
+/// Stride 1 takes the NEON carry-count path (docs/silicon/06).
 ///
 /// # Panics
 ///
@@ -253,6 +277,10 @@ pub fn fold_sum_biased_i64(values: &[u64], stride: usize, offset: usize, count: 
 #[allow(unsafe_code)]
 pub fn fold_sum_u64(values: &[u64], stride: usize, offset: usize, count: usize) -> u128 {
     assert!(stride > 0 && (count == 0 || (count - 1) * stride + offset < values.len()));
+    #[cfg(target_arch = "aarch64")]
+    if stride == 1 {
+        return neon::fold_sum_u64_dense(&values[offset..offset + count]);
+    }
     let mut acc = [0u128; 4];
     let mut i = 0;
     while i + 4 <= count {
@@ -418,6 +446,57 @@ mod neon {
             }
         }
         out.truncate(write);
+    }
+
+    /// Dense exact-u128 sum via carry counting (docs/silicon/06): four
+    /// 2-lane accumulators take wrapping `vaddq_u64` adds while a
+    /// parallel counter lane counts carries — unsigned overflow iff
+    /// `new < old`, i.e. `vcgtq_u64(old, new)` all-ones, subtracted to
+    /// count +1. Total = Σ lane lo + (Σ lane carries << 64): exact, and
+    /// bit-identical to any-association i128/u128 folding. Flag ports
+    /// untouched — the scalar exact loop's `adds/adcs` are confined to
+    /// 3 of 6 ALUs, which was the whole wall (measured 8.8 vs 4.0–4.6
+    /// rows/ns at L1).
+    pub(super) fn fold_sum_u64_dense(values: &[u64]) -> u128 {
+        // SAFETY: every vld1q_u64 reads exactly two u64s from within
+        // `chunks_exact(8)` of `values`.
+        unsafe {
+            use std::arch::aarch64::{vaddq_u64, vcgtq_u64, vsubq_u64};
+            let mut lows = [vdupq_n_u64(0); 4];
+            let mut carries = [vdupq_n_u64(0); 4];
+            let chunks = values.chunks_exact(8);
+            let tail = chunks.remainder();
+            for chunk in chunks {
+                for lane in 0..4 {
+                    let v = vld1q_u64(chunk.as_ptr().add(lane * 2));
+                    let new = vaddq_u64(lows[lane], v);
+                    // Overflowed lanes read all-ones; subtracting adds 1.
+                    let carry = vcgtq_u64(lows[lane], new);
+                    carries[lane] = vsubq_u64(carries[lane], carry);
+                    lows[lane] = new;
+                }
+            }
+            let mut total: u128 = 0;
+            for lane in 0..4 {
+                for half in 0..2 {
+                    let lo = if half == 0 {
+                        vgetq_lane_u64(lows[lane], 0)
+                    } else {
+                        vgetq_lane_u64(lows[lane], 1)
+                    };
+                    let carry = if half == 0 {
+                        vgetq_lane_u64(carries[lane], 0)
+                    } else {
+                        vgetq_lane_u64(carries[lane], 1)
+                    };
+                    total += u128::from(lo) + (u128::from(carry) << 64);
+                }
+            }
+            for &v in tail {
+                total += u128::from(v);
+            }
+            total
+        }
     }
 
     /// Dense (min, max) over a contiguous u64 slice: compare-select
@@ -644,29 +723,47 @@ mod tests {
         }
     }
 
-    /// PRD 03's throughput evidence (ignored: a timing test runs only by
-    /// hand — `cargo test -p bumbledb --release fold_throughput -- --ignored --nocapture`).
-    /// The gate: ≥ 1 row/ns on a contiguous stride-1 biased-i64 sum.
+    /// Fold-throughput evidence (docs/silicon/06 gate; ignored: a timing
+    /// test runs only by hand —
+    /// `cargo test -p bumbledb --release fold_throughput -- --ignored --nocapture`).
+    /// The gates: ≥ 7 rows/ns exact dense sums on the reference host
+    /// (bumblebench measured the kernel ceiling at 8.8; scalar-era
+    /// baseline was 2.45–4.6).
     #[test]
     #[ignore = "timing evidence, run by hand on the reference host"]
     fn fold_throughput_contiguous_sum() {
-        let values: Vec<u64> = (0..1_000_000u64).map(|i| i ^ (1 << 63)).collect();
-        // Warm.
-        let mut sink = 0i128;
-        for _ in 0..3 {
-            sink += fold_sum_biased_i64(&values, 1, 0, values.len());
-        }
-        let start = std::time::Instant::now();
-        let reps = 100;
-        for _ in 0..reps {
-            sink += fold_sum_biased_i64(&values, 1, 0, values.len());
-        }
-        let elapsed = start.elapsed();
-        #[allow(clippy::cast_precision_loss)] // both values are far below 2^52
-        let rate = (values.len() as u64 * reps) as f64
-            / u64::try_from(elapsed.as_nanos().max(1)).expect("short run") as f64;
-        println!("fold_sum_biased_i64 dense: {rate:.2} rows/ns (sink {sink})");
-        assert!(rate >= 1.0, "≥1 row/ns on the reference host");
+        // L2-resident: 1M words = 8 MB... use 256k words (2 MB) so the
+        // fold measures the execution core, not DRAM (where every
+        // parallel kernel converges at ~7.5 rows/ns anyway).
+        let values: Vec<u64> = (0..262_144u64).map(|i| i ^ (1 << 63)).collect();
+        let rate_of = |label: &str, f: &mut dyn FnMut() -> i128| {
+            let mut sink = 0i128;
+            for _ in 0..3 {
+                sink += f();
+            }
+            let start = std::time::Instant::now();
+            let reps = 400;
+            for _ in 0..reps {
+                sink += f();
+            }
+            let elapsed = start.elapsed();
+            #[allow(clippy::cast_precision_loss)] // both far below 2^52
+            let rate = (values.len() as u64 * reps) as f64
+                / u64::try_from(elapsed.as_nanos().max(1)).expect("short run") as f64;
+            println!("{label}: {rate:.2} rows/ns (sink {sink})");
+            rate
+        };
+        let biased = rate_of("fold_sum_biased_i64 dense", &mut || {
+            fold_sum_biased_i64(&values, 1, 0, values.len())
+        });
+        let unsigned = rate_of("fold_sum_u64 dense", &mut || {
+            #[allow(clippy::cast_possible_wrap)]
+            {
+                fold_sum_u64(&values, 1, 0, values.len()) as i128
+            }
+        });
+        assert!(biased >= 7.0, "exact biased dense sum ≥7 rows/ns, got {biased:.2}");
+        assert!(unsigned >= 7.0, "exact u64 dense sum ≥7 rows/ns, got {unsigned:.2}");
     }
 
     #[test]
