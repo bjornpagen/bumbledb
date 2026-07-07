@@ -70,8 +70,15 @@ denominator > 10%, scale the gate and record the scaling.
 under pressure → 05 bucket-of-8 COLT layout+build → 06 bucket probe +
 NEON sweep integration → 07 alias-hoisted executor loops →
 08 delete the dead batching levers → 09 endgame: bench protocol,
-doctrine docs, final2.md.
+doctrine docs, final2.md → **10 re-simplify: the whole-crate audit
+where every optimization defends its complexity with a measured
+citation or is deleted** (runs last, gated measurement-neutral, diff
+deletion-dominated — the suite ends with the tree SIMPLER than it
+found it everywhere a change didn't pay).
 
 01–04 are independent of 05–06 (wordmap vs colt); they are ordered by
 predicted value ÷ risk. 05 and 06 are one campaign split so the layout
 lands (with its own differential gates) before the probe cutover.
+10 exists because three campaigns of sediment violate the 00-product
+simplicity law wherever a lever measured at noise — and rounds one and
+two both proved deletion is a measurable discipline.
