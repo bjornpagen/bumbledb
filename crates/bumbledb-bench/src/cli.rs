@@ -27,6 +27,8 @@ impl Default for CorpusArgs {
 }
 
 /// `bench`'s knobs.
+#[allow(clippy::struct_excessive_bools)] // a 1:1 mirror of independent CLI
+// flags; folding them into state enums would misrepresent the surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BenchArgs {
     pub corpus: CorpusArgs,
@@ -36,6 +38,9 @@ pub struct BenchArgs {
     pub samples: Option<u32>,
     pub trace: bool,
     pub alloc: bool,
+    /// Per-rep proxy stamps + normalized p50 (docs/silicon2/00) — the
+    /// confirm-run mode for suspicious findings.
+    pub proxy_per_rep: bool,
     pub out: Option<PathBuf>,
     /// Skip the verify-stamp gate; the report is branded UNVERIFIED.
     pub i_am_lying: bool,
@@ -121,6 +126,7 @@ pub fn help() -> String {
          \x20 --samples N     measured samples per read family (default 256)\n\
          \x20 --trace         capture one traced warm+cold sample per family\n\
          \x20 --alloc         allocation windows (needs the obs feature build)\n\
+         \x20 --proxy-per-rep per-sample GHz stamps + normalized p50 (confirm runs)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>)\n\
          \x20 --i-am-lying    skip the stamp gate; the report reads UNVERIFIED\n\
          \n\
@@ -240,6 +246,7 @@ fn parse_bench(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
         samples: None,
         trace: false,
         alloc: false,
+        proxy_per_rep: false,
         out: None,
         i_am_lying: false,
     };
@@ -255,6 +262,7 @@ fn parse_bench(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
             "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
             "--trace" => args.trace = true,
             "--alloc" => args.alloc = true,
+            "--proxy-per-rep" => args.proxy_per_rep = true,
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             "--i-am-lying" => args.i_am_lying = true,
             _ => return Err(unknown("bench", &flag)),
@@ -398,6 +406,7 @@ mod tests {
             "8",
             "--trace",
             "--alloc",
+            "--proxy-per-rep",
             "--out",
             "artifacts",
             "--i-am-lying",
@@ -411,6 +420,7 @@ mod tests {
                 samples: Some(8),
                 trace: true,
                 alloc: true,
+                proxy_per_rep: true,
                 out: Some(PathBuf::from("artifacts")),
                 i_am_lying: true,
             })

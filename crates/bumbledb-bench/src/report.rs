@@ -207,6 +207,11 @@ pub struct ReadFamilyReport {
     pub exec: Option<ExecDigest>,
     pub p99_within_budget: bool,
     pub ghz: Option<GhzReport>,
+    /// Per-rep-normalized p50 (docs/silicon2/00), when `--proxy-per-rep`
+    /// ran: samples rescaled to the cohort's best clock before the
+    /// percentile — the confirm-run column that unmasks contamination
+    /// hiding inside a block.
+    pub p50_norm: Option<u64>,
 }
 
 /// One write/cold family's row (`theirs` absent for cold — no `SQLite`
@@ -447,21 +452,22 @@ fn markdown_diagnostics(out: &mut String, report: &RunReport) {
         report.store.cache_images, report.store.cache_bytes
     );
 
-    let stamped: Vec<(&str, GhzReport)> = report
+    let stamped: Vec<(&str, GhzReport, Option<u64>)> = report
         .reads
         .iter()
-        .map(|f| (f.name.as_str(), f.ghz))
-        .chain(report.writes.iter().map(|f| (f.name.as_str(), f.ghz)))
-        .filter_map(|(name, ghz)| ghz.map(|g| (name, g)))
+        .map(|f| (f.name.as_str(), f.ghz, f.p50_norm))
+        .chain(report.writes.iter().map(|f| (f.name.as_str(), f.ghz, None)))
+        .filter_map(|(name, ghz, norm)| ghz.map(|g| (name, g, norm)))
         .collect();
     if !stamped.is_empty() {
         let _ = writeln!(out, "## Clock proxy\n");
-        let _ = writeln!(out, "| family | GHz pre | GHz post | status |");
-        let _ = writeln!(out, "|---|---|---|---|");
-        for (name, ghz) in &stamped {
+        let _ = writeln!(out, "| family | GHz pre | GHz post | status | norm p50 (us) |");
+        let _ = writeln!(out, "|---|---|---|---|---|");
+        for (name, ghz, norm) in &stamped {
+            let norm = norm.map_or_else(|| "-".to_owned(), |n| format!("{:.1}", us(n)));
             let _ = writeln!(
                 out,
-                "| {name} | {:.2} | {:.2} | {} |",
+                "| {name} | {:.2} | {:.2} | {} | {norm} |",
                 ghz.pre,
                 ghz.post,
                 ghz.status(),
@@ -530,6 +536,13 @@ fn push_read_family(out: &mut String, family: &ReadFamilyReport) {
         None => out.push_str("null"),
     }
     push_ghz(out, family.ghz);
+    out.push_str(",\"p50_norm\":");
+    match family.p50_norm {
+        Some(v) => {
+            let _ = write!(out, "{v}");
+        }
+        None => out.push_str("null"),
+    }
     out.push('}');
 }
 
@@ -818,6 +831,7 @@ mod tests {
                 }),
                 p99_within_budget: true,
                 ghz: None,
+                p50_norm: None,
             }],
             writes: vec![WriteFamilyReport {
                 name: "commit_single".to_owned(),

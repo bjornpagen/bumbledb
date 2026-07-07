@@ -257,11 +257,17 @@ fn alloc_report(
 }
 
 /// The per-run context the bench families share.
+#[allow(clippy::struct_excessive_bools)] // mirrors BenchArgs' flag surface.
 struct BenchRun<'a> {
     cfg: GenConfig,
     proto: Protocol,
     alloc: bool,
     trace: bool,
+    proxy_per_rep: bool,
+    /// Whether the process-start warm discipline ran (docs/silicon2/00):
+    /// the FIRST measured family additionally absorbs the 1.45–1.97 GHz
+    /// process-start band with extra discarded iterations.
+    first_family_warmed: bool,
     trace_dir: PathBuf,
     db: &'a Db<'a>,
     conn: &'a Connection,
@@ -307,8 +313,17 @@ impl BenchRun<'_> {
         let modes = Modes {
             alloc_window: self.alloc,
             trace: false,
+            proxy_per_rep: self.proxy_per_rep,
         };
         let proto = self.proto;
+        // Process-start warm discipline (docs/silicon2/00): the first
+        // family absorbs the start-band beyond its own warmups.
+        if !self.first_family_warmed {
+            for _ in 0..32 {
+                run_ours(&mut prepared)?;
+            }
+            self.first_family_warmed = true;
+        }
         let (ours, ghz_ours) = clockproxy::guarded(|| {
             harness::measure_with(proto, modes, || run_ours(&mut prepared))
         })?;
@@ -381,6 +396,7 @@ impl BenchRun<'_> {
             alloc,
             exec: Some(exec_digest(&stats)),
             ghz: Some(merge_stamps(ghz_ours, ghz_theirs)),
+            p50_norm: ours.p50_norm,
         })
     }
 }
@@ -592,6 +608,8 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         proto,
         alloc: args.alloc,
         trace: args.trace,
+        proxy_per_rep: args.proxy_per_rep,
+        first_family_warmed: false,
         trace_dir: out_dir.join("trace"),
         db: &db,
         conn: &conn,
@@ -803,6 +821,7 @@ mod tests {
             samples: Some(8),
             trace: false,
             alloc: false,
+            proxy_per_rep: false,
             out: Some(dir.join("out")),
             i_am_lying: false,
         };
@@ -820,6 +839,7 @@ mod tests {
             samples: None,
             trace: false,
             alloc: true,
+            proxy_per_rep: false,
             out: None,
             i_am_lying: false,
         };
@@ -857,6 +877,7 @@ mod tests {
             samples: Some(8),
             trace: false,
             alloc: false,
+            proxy_per_rep: false,
             out: Some(out.clone()),
             i_am_lying: false,
         };

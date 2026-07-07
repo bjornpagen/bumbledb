@@ -78,6 +78,10 @@ pub fn stats(samples: &mut [u64]) -> Stats {
 pub struct Measurement {
     pub stats: Stats,
     pub work: u64,
+    /// The per-rep-normalized p50 (docs/silicon2/00), when
+    /// [`Modes::proxy_per_rep`] ran: computed here, where the pre-sort
+    /// sample/GHz alignment still exists.
+    pub p50_norm: Option<u64>,
     /// The allocation window over the measured samples, when
     /// [`Modes::alloc_window`] ran (needs the `obs` feature).
     #[cfg(feature = "obs")]
@@ -88,12 +92,20 @@ pub struct Measurement {
     pub trace: Option<(u64, Vec<TraceEvent>)>,
 }
 
-/// Optional harness modes — mutually exclusive (README rule: an
-/// allocation window and a trace capture never share an invocation).
+/// Optional harness modes — alloc window and trace capture are
+/// mutually exclusive (README rule); the per-rep proxy composes with
+/// either.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Modes {
     pub alloc_window: bool,
     pub trace: bool,
+    /// Record an effective-GHz proxy reading after EVERY sample
+    /// (docs/silicon2/00): co-tenant contamination arrives as
+    /// seconds-long 2.0–2.4 GHz spans that survive min-of-reps between
+    /// clean block-bracket proxies (fleet exp 15's phantom-finding
+    /// machinery). Costs ~200 µs/sample — a confirm-run tool, not a
+    /// routine gate mode.
+    pub proxy_per_rep: bool,
 }
 
 /// [`measure_with`] in plain timing mode.
@@ -165,6 +177,9 @@ where
         bumbledb::alloc_counter::reset();
     }
     let mut samples = Vec::with_capacity(proto.samples as usize);
+    let mut sample_ghz = modes
+        .proxy_per_rep
+        .then(|| Vec::with_capacity(proto.samples as usize));
     let mut work = 0u64;
     for _ in 0..proto.samples {
         let mut count = 0u64;
@@ -174,8 +189,12 @@ where
         }
         let elapsed = u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
         samples.push(elapsed / u64::from(batch));
+        if let Some(ghz) = &mut sample_ghz {
+            ghz.push(crate::clockproxy::effective_ghz());
+        }
         work += std::hint::black_box(count);
     }
+
     #[cfg(feature = "obs")]
     let alloc = modes.alloc_window.then(bumbledb::alloc_counter::snapshot);
     let trace = if modes.trace {
@@ -183,13 +202,43 @@ where
     } else {
         None
     };
+    // Percentiles sort in place, so the normalized p50 (which needs the
+    // pre-sort alignment with sample_ghz) computes first.
+    let p50_norm = sample_ghz.as_ref().map(|ghz| normalized_p50(&samples, ghz));
     Ok(Measurement {
         stats: stats(&mut samples),
         work,
+        p50_norm,
         #[cfg(feature = "obs")]
         alloc,
         trace,
     })
+}
+
+/// The per-rep normalization (docs/silicon2/00): each sample's elapsed
+/// time is rescaled to the cohort's best observed clock
+/// (`ns × ghz / ghz_ref`), so a sample that ran slow only because the
+/// clock was low stops hiding structural findings — and a sample that
+/// is genuinely slow stays slow. Returns the normalized p50.
+///
+/// # Panics
+///
+/// On mismatched lengths (a programmer error).
+#[must_use]
+pub fn normalized_p50(samples_ns: &[u64], ghz: &[f64]) -> u64 {
+    assert_eq!(samples_ns.len(), ghz.len());
+    let ghz_ref = ghz.iter().copied().fold(f64::MIN, f64::max);
+    let mut normalized: Vec<u64> = samples_ns
+        .iter()
+        .zip(ghz)
+        .map(|(&ns, &g)| {
+            #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            {
+                (ns as f64 * g / ghz_ref) as u64
+            }
+        })
+        .collect();
+    stats(&mut normalized).p50
 }
 
 /// One traced sample: the closure runs inside `obs::start_capture` /
@@ -266,6 +315,7 @@ where
     Ok(Measurement {
         stats: stats(&mut samples),
         work,
+        p50_norm: None,
         #[cfg(feature = "obs")]
         alloc: None,
         trace: None,
@@ -377,6 +427,58 @@ mod tests {
         assert!(m.trace.is_none());
     }
 
+    /// The per-rep normalization unmasks contamination the block
+    /// bracket misses (docs/silicon2/00): a sample that ran at 2.0 GHz
+    /// reads 1.75x slow raw; normalized to the cohort's 3.5 GHz it
+    /// rejoins the population — and a GENUINELY slow sample stays slow.
+    #[test]
+    fn normalization_corrects_slow_clock_samples_and_keeps_real_ones() {
+        // Five samples: four clean at 100 ns/3.5 GHz, one clock-slowed
+        // (same work, 2.0 GHz -> 175 ns raw). Raw p50 is fine but raw
+        // MIN-based protocols would also pass — the failure mode is when
+        // slow-clock samples DOMINATE: three of five contaminated.
+        let samples = [100u64, 175, 175, 175, 100];
+        let ghz = [3.5f64, 2.0, 2.0, 2.0, 3.5];
+        // Raw p50 = 175 (contaminated); normalized p50 = 100.
+        let mut raw = samples.to_vec();
+        assert_eq!(stats(&mut raw).p50, 175);
+        assert_eq!(normalized_p50(&samples, &ghz), 100);
+        // A genuinely slow sample at full clock stays slow.
+        let samples = [100u64, 300, 100, 100, 100];
+        let ghz = [3.5f64; 5];
+        assert_eq!(normalized_p50(&samples, &ghz), 100);
+        let mut raw = samples.to_vec();
+        assert_eq!(stats(&mut raw).p50, 100);
+        let samples = [300u64, 300, 300, 100, 100];
+        assert_eq!(normalized_p50(&samples, &ghz), 300, "real slowness survives");
+    }
+
+    /// End-to-end: the per-rep mode populates `p50_norm`. Ignored:
+    /// timing-adjacent (runs ~200 us of proxy per sample).
+    #[test]
+    #[ignore = "per-rep proxy e2e (docs/silicon2/00 gate); run manually"]
+    fn per_rep_proxy_mode_populates_the_normalized_p50() {
+        let proto = Protocol {
+            warmups: 1,
+            samples: 8,
+        };
+        let m = measure_with(
+            proto,
+            Modes {
+                alloc_window: false,
+                trace: false,
+                proxy_per_rep: true,
+            },
+            || Ok(std::hint::black_box((0..10_000u64).sum::<u64>())),
+        )
+        .expect("measures");
+        let norm = m.p50_norm.expect("per-rep mode populates p50_norm");
+        // Normalization rescales toward the best clock: never above raw.
+        assert!(norm <= m.stats.p50 + m.stats.p50 / 10);
+        let off = measure_with(proto, Modes::default(), || Ok(1)).expect("measures");
+        assert!(off.p50_norm.is_none(), "off by default");
+    }
+
     #[test]
     fn batched_measurement_divides_time_and_sums_all_work() {
         let proto = Protocol {
@@ -400,6 +502,7 @@ mod tests {
             Modes {
                 alloc_window: true,
                 trace: true,
+                proxy_per_rep: false,
             },
             || Ok(0),
         )
@@ -419,6 +522,7 @@ mod tests {
             Modes {
                 alloc_window: false,
                 trace: true,
+                proxy_per_rep: false,
             },
             || {
                 calls += 1;
@@ -444,6 +548,7 @@ mod tests {
             Modes {
                 alloc_window: true,
                 trace: false,
+                proxy_per_rep: false,
             },
             || Ok(std::hint::black_box(vec![1u8; 4096]).len() as u64),
         )
@@ -461,6 +566,7 @@ mod tests {
             Modes {
                 alloc_window: true,
                 trace: false,
+                proxy_per_rep: false,
             },
             || Ok(0),
         )
