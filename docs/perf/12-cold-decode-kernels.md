@@ -67,3 +67,33 @@ Baseline throughput ≈ 30 ns/fact; the format supports single-digit ns/fact.
 Pay-at-commit image maintenance, incremental/delta images, MAP_SIZE and
 L-scale questions, bulk-load throughput (bulk shares the commit path, not
 this decode path).
+
+## Result (2026-07-07, runs bench-out/2026-07-07T03-22-05Z + cold trace)
+
+Profile split first, as ordered (ignored test `image_build_split_evidence`,
+150k Posting-shaped rows, release): **LMDB cursor walk 1.8 ms; full build
+4.5 ms; everything above the walk 2.7 ms** — and that residual is
+dominated not by field decode but by the distinct-count statistics pass
+(a semantic planner input: one hash-insert pass per column). The decode
+optimization landed regardless: a hoisted per-column decode plan (static
+offsets, Word/Bool/Enum arms resolved once), one fact-width corruption
+check per fact (`WrongFactWidth`), then unchecked loads and slab stores.
+Measured effect on the fixture: within noise — the per-(fact, field)
+layout walks and bounds checks the hoist removed were a minor share, and
+NEON byte-reversal was therefore not pursued (nothing left for it to
+amortize; the scalar column loop is the reference and the live path).
+
+Gates:
+- `image_build` in the cold fk_walk trace: 4,619 → **4,160 µs** (−10%;
+  primary gate ≤ 2,300 ✗). The PRD's own fallback clause applies:
+  decode+scatter+stats = 2.7 ms ≤ 3 × the 1.8 ms walk floor ✓. The
+  primary is unreachable while the distinct-stats pass stays semantic —
+  removing or lazifying it is a planner-statistics design question, not
+  a decode kernel, and is recorded as the named lever.
+- `cold_fk_walk` p50 6,922.3 → **6,178.1 µs** (gate ≤ 4,700 ✗, same
+  wall; −11%).
+- No warm regression — the run is a suite-best sweep: chain 121.5 µs,
+  balance 1.3 µs, skew 29.8 µs, stats 1,863.7 µs, triangle 15,939 µs;
+  ALL-WIN held; verify green. Byte-identity of the kernelized build is
+  pinned by the existing `columns_equal_per_field_decode_of_the_scan`
+  differential plus the full oracle.

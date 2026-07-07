@@ -191,6 +191,131 @@ fn slab_lengths(row_count: usize, word_cols: usize, byte_cols: usize) -> Result<
     Ok((word_len, byte_len))
 }
 
+/// One column's hoisted decode step (docs/perf/ PRD 12): static offset,
+/// validation arm resolved once — the row loop runs bare loads/stores.
+enum Decode {
+    Word {
+        offset: usize,
+        start: usize,
+    },
+    Bool {
+        offset: usize,
+        start: usize,
+    },
+    Enum {
+        offset: usize,
+        start: usize,
+        variants: u16,
+    },
+}
+
+/// Builds the per-column decode plan from the layout.
+fn decode_plan(
+    field_types: &[TypeDesc],
+    columns: &[Column],
+    layout: &crate::encoding::FactLayout,
+) -> Vec<Decode> {
+    field_types
+        .iter()
+        .zip(columns)
+        .enumerate()
+        .map(|(field_idx, (desc, column))| {
+            let offset = layout.field_offset(field_idx);
+            match (column, desc) {
+                (Column::Words { start }, _) => Decode::Word {
+                    offset,
+                    start: *start,
+                },
+                (Column::Bytes { start }, TypeDesc::Bool) => Decode::Bool {
+                    offset,
+                    start: *start,
+                },
+                (Column::Bytes { start }, TypeDesc::Enum { variant_count }) => Decode::Enum {
+                    offset,
+                    start: *start,
+                    variants: *variant_count,
+                },
+                _ => unreachable!("1-byte columns are Bool or Enum"),
+            }
+        })
+        .collect()
+}
+
+/// The scan loop: one width check per fact, then unchecked loads and
+/// slab stores through the plan. Returns the rows filled.
+#[allow(unsafe_code)] // 00-product policy: image decode kernels
+#[allow(clippy::too_many_arguments)]
+fn fill_columns(
+    txn: &ReadTxn<'_>,
+    schema: &Schema,
+    rel: RelationId,
+    plan: &[Decode],
+    fact_width: usize,
+    row_count: usize,
+    words: &mut [u64],
+    bytes: &mut [u8],
+) -> Result<usize> {
+    let mut position = 0usize;
+    for entry in read::scan(txn, schema, rel)? {
+        let (_row_id, fact_bytes) = entry?;
+        if position >= row_count {
+            return Err(Error::Corruption(CorruptionError::RowCountMismatch {
+                relation: rel,
+                stored: row_count as u64,
+            }));
+        }
+        // One width check per fact makes every plan offset in-bounds.
+        if fact_bytes.len() != fact_width {
+            return Err(Error::Corruption(CorruptionError::WrongFactWidth {
+                relation: rel,
+                row_id: position as u64,
+                expected: fact_width,
+                actual: fact_bytes.len(),
+            }));
+        }
+        for step in plan {
+            match step {
+                Decode::Word { offset, start } => {
+                    // SAFETY: offset + 8 <= fact_width (layout-derived)
+                    // and the width was checked above; position <
+                    // row_count checked above, slabs sized to row_count.
+                    let word = u64::from_be_bytes(unsafe {
+                        fact_bytes
+                            .get_unchecked(*offset..*offset + 8)
+                            .try_into()
+                            .expect("8-byte field")
+                    });
+                    unsafe {
+                        *words.get_unchecked_mut(start + position) = word;
+                    }
+                }
+                Decode::Bool { offset, start } => {
+                    // SAFETY: as above.
+                    let byte = unsafe { *fact_bytes.get_unchecked(*offset) };
+                    decode_bool(byte)?;
+                    unsafe {
+                        *bytes.get_unchecked_mut(start + position) = byte;
+                    }
+                }
+                Decode::Enum {
+                    offset,
+                    start,
+                    variants,
+                } => {
+                    // SAFETY: as above.
+                    let byte = unsafe { *fact_bytes.get_unchecked(*offset) };
+                    decode_enum(byte, *variants)?;
+                    unsafe {
+                        *bytes.get_unchecked_mut(start + position) = byte;
+                    }
+                }
+            }
+        }
+        position += 1;
+    }
+    Ok(position)
+}
+
 /// Builds the full-width image of `rel` from one sequential scan.
 ///
 /// # Errors
@@ -247,46 +372,19 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
         })
         .collect();
 
-    // One sequential scan fills every column (positions = scan ordinals).
-    let mut position = 0usize;
-    for entry in read::scan(txn, schema, rel)? {
-        let (_row_id, fact_bytes) = entry?;
-        if position >= row_count {
-            return Err(Error::Corruption(CorruptionError::RowCountMismatch {
-                relation: rel,
-                stored: row_count as u64,
-            }));
-        }
-        for (field_idx, (desc, column)) in field_types.iter().zip(&columns).enumerate() {
-            let offset = layout.field_offset(field_idx);
-            match column {
-                Column::Words { start } => {
-                    let word = u64::from_be_bytes(
-                        fact_bytes[offset..offset + 8]
-                            .try_into()
-                            .expect("8-byte field"),
-                    );
-                    words[start + position] = word;
-                }
-                Column::Bytes { start } => {
-                    let byte = fact_bytes[offset];
-                    // Validated decode: corrupt Bool/Enum bytes abort the
-                    // build — never a skip.
-                    match desc {
-                        TypeDesc::Bool => {
-                            decode_bool(byte)?;
-                        }
-                        TypeDesc::Enum { variant_count } => {
-                            decode_enum(byte, *variant_count)?;
-                        }
-                        _ => unreachable!("1-byte columns are Bool or Enum"),
-                    }
-                    bytes[start + position] = byte;
-                }
-            }
-        }
-        position += 1;
-    }
+    // One sequential scan fills every column (positions = scan ordinals),
+    // through the hoisted decode plan (docs/perf/ PRD 12).
+    let plan = decode_plan(&field_types, &columns, layout);
+    let position = fill_columns(
+        txn,
+        schema,
+        rel,
+        &plan,
+        layout.fact_width(),
+        row_count,
+        &mut words,
+        &mut bytes,
+    )?;
     if position != row_count {
         return Err(Error::Corruption(CorruptionError::RowCountMismatch {
             relation: rel,
@@ -495,6 +593,100 @@ mod tests {
         // nothing except… 7i-30 ∈ {0,1,2,3,4} ⇔ i has no integer
         // solution except none (7i = 30..34 has none). 10 + 5 = 15.
         assert_eq!(image.distinct(3), 15);
+    }
+
+    /// PRD 12's profile split (ignored: timing evidence, run by hand):
+    /// the LMDB cursor walk alone vs the full build, on a Posting-shaped
+    /// 150k-row relation.
+    #[test]
+    #[ignore = "timing evidence, run by hand on the reference host"]
+    fn image_build_split_evidence() {
+        let dir = TempDir::new("image-split");
+        let schema = posting_like_schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let txn0 = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        let mut bytes = Vec::new();
+        for i in 0..150_000u64 {
+            bytes.clear();
+            encode_fact(
+                &[
+                    ValueRef::U64(i),
+                    ValueRef::U64(i % 512),
+                    ValueRef::I64((i % 1000).cast_signed() - 500),
+                    ValueRef::I64((i * 7 % 100_000).cast_signed()),
+                    ValueRef::Bool(i % 2 == 0),
+                ],
+                schema.relation(R).layout(),
+                &mut bytes,
+            );
+            delta.insert(&txn0, R, &bytes).expect("insert");
+        }
+        drop(txn0);
+        commit(delta, &env).expect("commit");
+        let txn = env.read_txn().expect("txn");
+
+        // Walk floor: drain the cursor, touch every fact byte cheaply.
+        let mut sink = 0u64;
+        let walk = std::time::Instant::now();
+        for _ in 0..5 {
+            for entry in crate::storage::read::scan(&txn, &schema, R).expect("scan") {
+                let (_, fact) = entry.expect("entry");
+                sink = sink
+                    .wrapping_add(u64::from(fact[0]))
+                    .wrapping_add(fact.len() as u64);
+            }
+        }
+        let walk = walk.elapsed() / 5;
+
+        let full = std::time::Instant::now();
+        for _ in 0..5 {
+            let image = build(&txn, &schema, R).expect("build");
+            sink = sink.wrapping_add(image.row_count() as u64);
+        }
+        let full = full.elapsed() / 5;
+        println!(
+            "image_build split over 150k rows: walk {walk:?}, full {full:?}, decode+scatter {:?} (sink {sink})",
+            full.saturating_sub(walk)
+        );
+    }
+
+    fn posting_like_schema() -> Schema {
+        SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "P".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "id".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "account".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "amount".into(),
+                        value_type: ValueType::I64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "at".into(),
+                        value_type: ValueType::I64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "flag".into(),
+                        value_type: ValueType::Bool,
+                        generation: Generation::None,
+                    },
+                ],
+                constraints: vec![],
+            }],
+        }
+        .validate()
+        .expect("valid fixture")
     }
 
     #[test]
