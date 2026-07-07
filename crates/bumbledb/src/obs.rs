@@ -227,6 +227,10 @@ pub mod names {
 
     /// One sink-map rehash inside a measured execution. (new capacity, arity)
     pub const WORDMAP_GROW: &str = "wordmap_grow";
+
+    /// One residency-gated phase-1.5 prefetch pass ran (docs/silicon/10).
+    /// (survivors hinted, probed colt's forced footprint in bytes)
+    pub const PREFETCH_PASS: &str = "prefetch_pass";
 }
 
 /// The trace-mode fast clock, under the measured cost model

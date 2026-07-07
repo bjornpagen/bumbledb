@@ -226,16 +226,18 @@ impl Sink for ProjectionSink {
 
     fn scan_run(&mut self, scan: &LeafScan<'_>, run: SuffixRun<'_>) {
         self.scan_count += run.len() as u64;
-        // Both arms run the hash-ahead pipeline (docs/silicon/04):
-        // position p+1's key words gather and hash before position p's
-        // insert branches. Run-length-adaptive column resolution
-        // (docs/perf/ PRD 05) still splits the arms: big runs amortize a
-        // hoisted column table, fanout-sized runs resolve per position.
+        // NO hash-ahead here, by measurement (docs/silicon/04 Result): a
+        // projection scan's inserts are nearly all first-sight misses,
+        // and with the window probe a clean miss stream's exit branch
+        // predicts — no flush, no exposed hash latency — so the pipeline
+        // ping-pong measured as pure overhead (range +10% while it was
+        // here). The mixed hit/miss dedup paths keep theirs and measured
+        // faster. Run-length-adaptive column resolution (docs/perf/
+        // PRD 05) splits the arms: big runs amortize a hoisted column
+        // table, fanout-sized runs resolve per position.
         let seen = &mut self.seen;
         let scratch = &mut self.scratch;
-        let scratch_next = &mut self.scratch_next;
         let sources = &self.batch_sources;
-        let mut pending: Option<u64> = None;
         if run.len() >= SCAN_COLUMN_HOIST {
             assert!(sources.len() <= 8, "projection arity cap");
             // Option-free hoist table built by a plain indexed loop
@@ -253,39 +255,26 @@ impl Sink for ProjectionSink {
             run_positions(run, &mut |position: u32| {
                 for (i, source) in sources.iter().enumerate() {
                     if source.is_some() {
-                        scratch_next[i] = match cols[i] {
+                        scratch[i] = match cols[i] {
                             ColumnView::Words(w) => w[position as usize],
                             ColumnView::Bytes(b) => u64::from(b[position as usize]),
                         };
                     }
                 }
-                let next_hash = crate::exec::wordmap::hash_of(scratch_next);
-                if let Some(hash) = pending {
-                    seen.insert_prehashed(scratch, hash);
-                }
-                std::mem::swap(scratch, scratch_next);
-                pending = Some(next_hash);
+                seen.insert(scratch);
             });
         } else {
             run_positions(run, &mut |position: u32| {
                 for (i, source) in sources.iter().enumerate() {
                     if let Some(word) = source {
-                        scratch_next[i] = match scan.colt.suffix_column(scan.level, *word) {
+                        scratch[i] = match scan.colt.suffix_column(scan.level, *word) {
                             ColumnView::Words(w) => w[position as usize],
                             ColumnView::Bytes(b) => u64::from(b[position as usize]),
                         };
                     }
                 }
-                let next_hash = crate::exec::wordmap::hash_of(scratch_next);
-                if let Some(hash) = pending {
-                    seen.insert_prehashed(scratch, hash);
-                }
-                std::mem::swap(scratch, scratch_next);
-                pending = Some(next_hash);
+                seen.insert(scratch);
             });
-        }
-        if let Some(hash) = pending {
-            seen.insert_prehashed(scratch, hash);
         }
     }
 

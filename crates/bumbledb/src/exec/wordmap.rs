@@ -12,10 +12,10 @@
 //! cost more than hits in open addressing (walk length plus a
 //! mispredicted exit branch). Two consequences, built in:
 //!
-//! - **25% max load** (was 50%): dropping load factor shortens the walks
-//!   that misses pay for; the measured miss cost fell 9.2 → 2.8 ns
-//!   between 38% and 5% load, and 25% takes most of that at 2× the
-//!   memory instead of 8×.
+//! - **33% max load** (was 50%): dropping load factor shortens the walks
+//!   that misses pay for (measured miss cost fell 9.2 → 2.8 ns between
+//!   38% and 5% load); the {50, 33, 25}% ledger sweep picked 33% —
+//!   most of the walk win at 1.5× the memory.
 //! - **Branchless window probing**: the ctrl bytes are scanned eight at
 //!   a time with SWAR masks — one well-predicted exit branch per window
 //!   instead of one branch per slot (measured 4.6× at hit-rate 0). The
@@ -102,6 +102,13 @@ fn eq_byte_mask(w: u64, needle: u8) -> u64 {
 /// balloon a sink.
 const HINT_CAP: usize = 1 << 21;
 
+/// Max load as `len × LOAD_DEN ≤ capacity` — 3 = 33% (docs/silicon/03,
+/// justified by the {50, 33, 25}% family-ledger sweep recorded in that
+/// PRD's Result: 50% loses badly on spread (+28%), 25% costs triangle
+/// +7%; 33% is best-or-near-best everywhere. Misses pay for walks, and
+/// these maps are miss-heavy).
+const LOAD_DEN: usize = 3;
+
 impl<V: Copy> WordMap<V> {
     /// An empty map for keys of `arity` words (zero arity is legal: every
     /// key is the empty tuple — the global-aggregate group).
@@ -120,11 +127,11 @@ impl<V: Copy> WordMap<V> {
     /// An empty map presized for ~`hint` entries (docs/perf/ PRD 06): one
     /// allocation up front instead of a rehash ladder inside the first
     /// measured execution. The map still grows if the hint was short.
-    /// Sizing covers the hint at the 25% max load (docs/silicon/03).
+    /// Sizing covers the hint at the shipped max load (docs/silicon/03).
     #[must_use]
     pub fn with_capacity_hint(arity: usize, hint: usize) -> Self {
         let mut map = Self::new(arity);
-        let capacity = (hint.clamp(2, HINT_CAP) * 4).next_power_of_two();
+        let capacity = (hint.clamp(2, HINT_CAP) * LOAD_DEN).next_power_of_two();
         map.allocate(capacity);
         map
     }
@@ -201,7 +208,7 @@ impl<V: Copy> WordMap<V> {
         make: impl FnOnce() -> V,
     ) -> (&mut V, bool) {
         assert_eq!(key.len(), self.arity);
-        if (self.len + 1) * 4 > self.capacity() {
+        if (self.len + 1) * LOAD_DEN > self.capacity() {
             self.grow();
         }
         let (found, idx) = self.probe(key, hash);
@@ -568,8 +575,8 @@ mod tests {
         assert_eq!(map.len(), 100_000);
         assert_eq!(map.values.len(), capacity, "no rehash under the hint");
         assert!(
-            map.len() * 4 <= capacity,
-            "the covered hint keeps load ≤ 25%"
+            map.len() * LOAD_DEN <= capacity,
+            "the covered hint keeps load at the shipped max"
         );
     }
 
@@ -720,8 +727,67 @@ mod tests {
             .collect()
     }
 
+    /// The hash-ahead pin (docs/silicon/04 gate, PREMISE-CORRECTED in
+    /// its Result): bumblebench's 38% fill recovery was measured against
+    /// the per-slot branchy probe, whose exit branch mispredicted every
+    /// walk; docs/silicon/03's WINDOW probe already removed those
+    /// branches, so a clean miss-heavy fill has almost no flush exposure
+    /// left for hash-ahead to recover (measured 2.6% here). The pin is
+    /// therefore: the pipeline must never be a REGRESSION on the fill —
+    /// its wins live in the mixed hit/miss dedup paths, gated at family
+    /// level (stats/skew). Ignored: timing evidence, run by hand.
+    #[test]
+    #[ignore = "timing evidence (docs/silicon/04 gate); run by hand"]
+    fn hash_ahead_beats_inline_hashing_on_miss_heavy_fills() {
+        const N: usize = 1 << 22; // 4M distinct 2-word keys, DRAM-tier map
+        let keys: Vec<[u64; 2]> = (0..N as u64)
+            .map(|i| {
+                let x = i.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                [x, x ^ 0x5555_5555_5555_5555]
+            })
+            .collect();
+        let time = |pipelined: bool| -> f64 {
+            let mut best = f64::MAX;
+            for _ in 0..3 {
+                let mut map: WordMap<()> = WordMap::with_capacity_hint(2, N);
+                let start = std::time::Instant::now();
+                if pipelined {
+                    let mut hash = hash_of(&keys[0]);
+                    for k in 1..N {
+                        let next = hash_of(&keys[k]);
+                        map.insert_prehashed(&keys[k - 1], hash);
+                        hash = next;
+                    }
+                    map.insert_prehashed(&keys[N - 1], hash);
+                } else {
+                    for key in &keys {
+                        map.insert(key);
+                    }
+                }
+                let ns = start.elapsed().as_nanos();
+                assert_eq!(map.len(), N);
+                #[allow(clippy::cast_precision_loss)]
+                let per = ns as f64 / N as f64;
+                best = best.min(per);
+            }
+            best
+        };
+        let inline = time(false);
+        let ahead = time(true);
+        let gain = (inline - ahead) / inline;
+        println!(
+            "miss-heavy fill: inline {inline:.2} ns/insert, hash-ahead {ahead:.2} ns/insert ({:.1}% better)",
+            gain * 100.0
+        );
+        assert!(
+            gain >= -0.03,
+            "hash-ahead must not regress the miss-heavy fill, got {:.1}%",
+            gain * 100.0
+        );
+    }
+
     /// Probe-step evidence for the Result section: average probe steps
-    /// at the 25% max load stay near 1 (docs/silicon/03 gate: ≤ 1.2).
+    /// at the shipped max load stay near 1 (docs/silicon/03 gate: ≤ 1.2).
     #[test]
     fn probe_steps_stay_near_one_at_max_load() {
         let mut map: WordMap<()> = WordMap::with_capacity_hint(2, 32_768);
@@ -734,7 +800,7 @@ mod tests {
             map.insert(&[next(), next()]);
         }
         assert!(
-            map.len() * 4 <= map.values.len(),
+            map.len() * LOAD_DEN <= map.values.len(),
             "the sweep runs at the shipped max load"
         );
         // Measure probes for hits over every key (slot-step model:
@@ -760,7 +826,7 @@ mod tests {
         }
         #[allow(clippy::cast_precision_loss)] // both far below 2^52
         let avg = steps as f64 / keys.len() as f64;
-        println!("avg probe steps at ≤25% load: {avg:.3}");
+        println!("avg probe steps at the shipped max load: {avg:.3}");
         assert!(avg <= 1.2, "near-one probe steps at 25% load, got {avg}");
     }
 }

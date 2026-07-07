@@ -112,11 +112,13 @@ decision accommodates narrower platforms). Full research notes with sources:
   (`30-execution.md` D1) is sound at this scale.
 - **Unaligned loads are near-free (16 KB pages)**: facts are stored dense, with no
   intra-row padding; alignment is spent only where NEON reads column bases.
-- **Columnar data is SoA, 128-byte aligned, with staggered column bases**: L1D is 8-way
-  with a 16 KB set stride, so columns scanned in lockstep must not sit at bases
-  congruent mod 16 KB — the pathological aliasing case is a 10–20× slowdown
-  (`40-storage.md`). (The reference notes carry a flagged 64 B-vs-128 B L1D-line
-  contradiction; 128-byte alignment is correct under either reading.)
+- **Columnar data is SoA, 128-byte aligned, with pitches padded off 16 KiB
+  multiples** (`40-storage.md`, docs/silicon/11): the L1D manages 64 B lines behind
+  a 128 B memory-system granule — both numbers are real, at different levels
+  (measurement settled the once-flagged contradiction) — and its set congruence
+  costs at most 1.55× on real lockstep scans. The layout hazard that actually
+  matters is prefetch-tracker aliasing on 16 KiB page-number bits (4–6× on DRAM
+  lockstep scans); one page of pitch padding cures it.
 - **TAGE branch prediction (>99%)**: the residual misprediction source is per-tuple
   data-dependent branching — batching converts it into branchless compaction; and the
   hot path contains no indirect dispatch (sinks/counters monomorphized,

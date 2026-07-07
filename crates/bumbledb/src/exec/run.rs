@@ -433,6 +433,20 @@ enum Operand<'a> {
 /// straight-line, putting the measured crossover at 4–8.
 const SCAN_HOIST_THRESHOLD: usize = 8;
 
+/// The prefetch residency tier (docs/silicon/10): the phase-1.5 `prfm`
+/// pass runs only when the probed colt's forced footprint exceeds this —
+/// an L2-resident probe stream is already fully overlapped by the `OoO`
+/// core at batch 1, and prefetching it measured +7–12% pure loss; past
+/// L2 the pass buys up to 4×. The threshold is 2 MiB, deliberately far
+/// below the 16 MiB shared L2: bumblebench exp 06's re-reading of the
+/// docs/perf PRD-07 record ("−18% at batch 128, nothing at ~37") is
+/// that mid-size maps behave SLC-tier under REAL cache pressure — the
+/// columns, sibling tries, and seen-set share the L2 — so only maps
+/// small enough to be resident under pressure may skip the pass. The
+/// survivor-count floor stays — below ~10 a separate pass never
+/// half-amortizes (measured half-win at batch ~10).
+const PREFETCH_L2_BUDGET_BYTES: usize = 2 << 20;
+
 /// Appends the positions of `run` that pass `eval` to `out`.
 fn push_surviving(
     run: crate::exec::colt::SuffixRun<'_>,
@@ -499,6 +513,11 @@ struct NodeScratch {
     /// Per pending entry: the D2 origin it descends from (docs/perf/
     /// PRD 10) — minted at the absorb node's routing, inherited below.
     pending_origins: Vec<u32>,
+    /// Per pending entry: the chosen cover (low 7 bits) and its
+    /// exactness flag (bit 7), precomputed by pump's pass 1
+    /// (docs/silicon/14 — cover-stable batch segregation); 0xFF =
+    /// cancelled at pass-1 time.
+    entry_covers: Vec<u8>,
     /// Per probe-batch element: the origin (aligned with `parents`).
     element_origins: Vec<u32>,
 }
@@ -737,6 +756,7 @@ impl Executor {
                     pending_cursors: Vec::new(),
                     pending_len: 0,
                     pending_origins: Vec::new(),
+                    entry_covers: Vec::new(),
                     element_origins: Vec::with_capacity(batch),
                 }
             })
@@ -869,15 +889,17 @@ impl Executor {
         let mut scratch = std::mem::take(&mut self.scratch[node_idx]);
         let carried_w = tables.carried[node_idx].len();
 
-        let mut entry = 0usize;
-        let mut token = BatchToken::default();
-        let mut fill = 0usize;
-        let mut cur_cover: Option<usize> = None;
-        let mut cur_arity = 0usize;
-        while entry < scratch.pending_len {
-            if self.all_cancelled {
-                break;
-            }
+        // Pass 1 (docs/silicon/14 — cover-stable batch segregation):
+        // the per-entry dynamic cover choice (the magnitude-first rule,
+        // held per parent) is PRECOMPUTED so pass 2 can process entries
+        // grouped by cover. Flush-on-cover-change over interleaved
+        // parents capped triangle's probe-batch means at ~37 of 128;
+        // grouping restores full batches. The choice itself is a
+        // performance heuristic — any cover is correct — so choosing
+        // from pass-1 colt state (a force during pass 2 could have
+        // flipped an Estimate to Exact) changes nothing semantic.
+        scratch.entry_covers.clear();
+        for entry in 0..scratch.pending_len {
             // D2 (PRD 10): a cancelled origin's pending work is dead —
             // its outputs could only duplicate rows already seen. Origin
             // ids are meaningful strictly BELOW the absorb node (minted
@@ -886,26 +908,19 @@ impl Executor {
             if tables.absorb.is_some_and(|a| node_idx > a)
                 && self.origin_cancelled(scratch.pending_origins[entry])
             {
-                entry += 1;
-                token = BatchToken::default();
+                scratch.entry_covers.push(0xFF);
                 continue;
             }
-            counters.node_entry(node_idx);
-            // Per-entry cursors: carried column or the colt's start.
-            let cursor_of = |occ: usize, scratch: &NodeScratch, colts: &[Colt]| -> Cursor {
-                match tables.carried_col[node_idx][occ] {
-                    Some(col) => scratch.pending_cursors[entry * carried_w + col],
-                    None => colts[occ].start(),
-                }
-            };
-            // Dynamic cover choice per entry (the magnitude-first rule
-            // holds per parent — mixed batches flush on cover change).
             let node = &plan.nodes()[node_idx];
             let mut best: Option<(usize, KeyCount)> = None;
             for &cover in &node.covers {
                 let sub_idx = usize::from(cover);
                 let occ = usize::from(node.subatoms[sub_idx].occ.0);
-                let count = colts[occ].key_count(cursor_of(occ, &scratch, colts));
+                let cursor = match tables.carried_col[node_idx][occ] {
+                    Some(col) => scratch.pending_cursors[entry * carried_w + col],
+                    None => colts[occ].start(),
+                };
+                let count = colts[occ].key_count(cursor);
                 let better = match &best {
                     None => true,
                     Some((_, incumbent)) => better_cover(count, *incumbent),
@@ -915,89 +930,115 @@ impl Executor {
                 }
             }
             let (cover_sub, count) = best.expect("validated plans have non-empty cover sets");
-            counters.cover_choice(node_idx, cover_sub, matches!(count, KeyCount::Exact(_)));
-            if cur_cover != Some(cover_sub) {
-                if fill > 0 {
-                    self.probe_pass(
-                        tables,
-                        plan,
-                        node_idx,
-                        cur_cover.expect("fill implies a cover"),
-                        cur_arity,
-                        fill,
-                        &mut scratch,
-                        colts,
-                        bindings,
-                        sink,
-                        counters,
-                    );
-                    fill = 0;
-                }
-                cur_cover = Some(cover_sub);
-                cur_arity = node.subatoms[cover_sub].vars.len();
+            let exact = matches!(count, KeyCount::Exact(_));
+            scratch
+                .entry_covers
+                .push(u8::try_from(cover_sub).expect("covers fit u8") | if exact { 0x80 } else { 0 });
+        }
+
+        // Pass 2: per cover in first-appearance order, every live entry
+        // with that cover — cover-stable batches, one flush per group
+        // tail instead of one per parent flip.
+        let node = &plan.nodes()[node_idx];
+        let mut seen_covers = 0u64;
+        for first in 0..scratch.pending_len {
+            let tagged = scratch.entry_covers[first];
+            if tagged == 0xFF {
+                continue;
             }
+            let group_cover = usize::from(tagged & 0x7F);
+            if seen_covers & (1 << group_cover) != 0 {
+                continue;
+            }
+            seen_covers |= 1 << group_cover;
+            let cover_sub = group_cover;
+            let cur_arity = node.subatoms[cover_sub].vars.len();
             let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
-            let cover_cursor = cursor_of(cover_occ, &scratch, colts);
             let cover_level = tables.entry_level[node_idx][cover_occ];
-            loop {
-                let want = self.batch - fill;
-                let (yielded, next) = colts[cover_occ].iter_batch(
-                    cover_cursor,
-                    cover_level,
-                    token,
+            let mut fill = 0usize;
+            for entry in first..scratch.pending_len {
+                if self.all_cancelled {
+                    break;
+                }
+                let tagged = scratch.entry_covers[entry];
+                if tagged == 0xFF || usize::from(tagged & 0x7F) != cover_sub {
+                    continue;
+                }
+                // Cancellation can fire DURING pass 2 (a leaf skip in an
+                // earlier group): re-check per entry.
+                if tables.absorb.is_some_and(|a| node_idx > a)
+                    && self.origin_cancelled(scratch.pending_origins[entry])
+                {
+                    continue;
+                }
+                counters.node_entry(node_idx);
+                counters.cover_choice(node_idx, cover_sub, tagged & 0x80 != 0);
+                let cover_cursor = match tables.carried_col[node_idx][cover_occ] {
+                    Some(col) => scratch.pending_cursors[entry * carried_w + col],
+                    None => colts[cover_occ].start(),
+                };
+                let mut token = BatchToken::default();
+                loop {
+                    let want = self.batch - fill;
+                    let (yielded, next) = colts[cover_occ].iter_batch(
+                        cover_cursor,
+                        cover_level,
+                        token,
                     &mut scratch.entry_keys[fill * cur_arity..],
                     &mut scratch.children[fill..],
                     want,
                 );
-                counters.batch(node_idx, yielded);
-                for _ in 0..yielded {
-                    scratch
-                        .parents
-                        .push(u32::try_from(entry).expect("pending fits u32"));
-                    scratch.element_origins.push(scratch.pending_origins[entry]);
-                }
-                fill += yielded;
-                token = next;
-                if fill == self.batch {
-                    self.probe_pass(
-                        tables,
-                        plan,
-                        node_idx,
-                        cover_sub,
-                        cur_arity,
-                        fill,
-                        &mut scratch,
-                        colts,
-                        bindings,
-                        sink,
-                        counters,
-                    );
-                    fill = 0;
-                    if yielded == want {
-                        continue; // the entry may have more; resume its token
+                    counters.batch(node_idx, yielded);
+                    for _ in 0..yielded {
+                        scratch
+                            .parents
+                            .push(u32::try_from(entry).expect("pending fits u32"));
+                        scratch.element_origins.push(scratch.pending_origins[entry]);
+                    }
+                    fill += yielded;
+                    token = next;
+                    if fill == self.batch {
+                        self.probe_pass(
+                            tables,
+                            plan,
+                            node_idx,
+                            cover_sub,
+                            cur_arity,
+                            fill,
+                            &mut scratch,
+                            colts,
+                            bindings,
+                            sink,
+                            counters,
+                        );
+                        fill = 0;
+                        if yielded == want {
+                            continue; // the entry may have more; resume its token
+                        }
+                    }
+                    if yielded < want {
+                        break; // entry exhausted
                     }
                 }
-                if yielded < want {
-                    break; // entry exhausted
-                }
             }
-            entry += 1;
-            token = BatchToken::default();
-        }
-        if fill > 0 {
-            self.probe_pass(
-                tables,
-                plan,
-                node_idx,
-                cur_cover.expect("fill implies a cover"),
-                cur_arity,
-                fill,
-                &mut scratch,
-                colts,
-                bindings,
-                sink,
-                counters,
-            );
+            if fill > 0 {
+                self.probe_pass(
+                    tables,
+                    plan,
+                    node_idx,
+                    cover_sub,
+                    cur_arity,
+                    fill,
+                    &mut scratch,
+                    colts,
+                    bindings,
+                    sink,
+                    counters,
+                );
+            }
+            if self.all_cancelled {
+                break;
+            }
         }
         scratch.pending_len = 0;
         scratch.pending_bindings.clear();
@@ -1181,11 +1222,22 @@ impl Executor {
                 }
                 counters.phase_end(node_idx, JoinPhase::Hash);
 
-                // Phase 1.5 (docs/perf/ PRD 07): the prefetch pass — every
-                // bucket the batch will probe gets its ctrl and bucket
-                // lines hinted while the OoO window is still free. Gated:
-                // tiny batches gain nothing and pay the loop.
-                if !pinned && scratch.survivors.len() >= 16 {
+                // Phase 1.5 (docs/perf/ PRD 07, re-gated by docs/silicon/
+                // 10): the prefetch pass — every bucket the batch will
+                // probe gets its ctrl and bucket lines hinted. Gated on
+                // RESIDENCY first (an L2-resident map's prefetch is pure
+                // loss) and batch width second (tiny batches never
+                // amortize the pass).
+                if !pinned
+                    && scratch.survivors.len() >= 16
+                    && colts[occ].probe_footprint_bytes() > PREFETCH_L2_BUDGET_BYTES
+                {
+                    crate::obs::event(
+                        crate::obs::names::PREFETCH_PASS,
+                        crate::obs::Category::Execute,
+                        scratch.survivors.len() as u64,
+                        colts[occ].probe_footprint_bytes() as u64,
+                    );
                     for &hash in &scratch.hashes {
                         colts[occ].prefetch_bucket(s_cursor, hash);
                     }
@@ -1387,7 +1439,16 @@ impl Executor {
             counters.phase_end(node_idx, JoinPhase::Hash);
             let carried = tables.carried_col[node_idx][occ];
             let start_cursor = colts[occ].start();
-            if scratch.survivors.len() >= 16 {
+            // Residency-gated phase 1.5 (docs/silicon/10) — see run_node.
+            if scratch.survivors.len() >= 16
+                && colts[occ].probe_footprint_bytes() > PREFETCH_L2_BUDGET_BYTES
+            {
+                crate::obs::event(
+                    crate::obs::names::PREFETCH_PASS,
+                    crate::obs::Category::Execute,
+                    scratch.survivors.len() as u64,
+                    colts[occ].probe_footprint_bytes() as u64,
+                );
                 for (k, &e) in scratch.survivors.iter().enumerate() {
                     let parent = scratch.parents[e as usize] as usize;
                     let cursor = carried
@@ -2124,7 +2185,7 @@ mod tests {
             state >> 33
         };
         let schema = schema(3);
-        for case in 0..70u32 {
+        for case in 0..200u32 {
             let domain = 1 + next() % 6;
             let mut data: Vec<Vec<(u64, u64)>> = Vec::new();
             for _ in 0..3 {

@@ -16,20 +16,21 @@ use crate::schema::{RelationId, Schema};
 use crate::storage::env::ReadTxn;
 use crate::storage::read;
 
-/// L1D set stride on the target machine: 8-way associative with a 16 KiB
-/// stride, so columns scanned in lockstep must not sit at bases congruent
-/// mod 16 KiB — the pathological aliasing case is a 10-20x slowdown
-/// (`docs/reference/apple-silicon-performance.md`, Category 5).
+/// The 16 KiB granule two hardware structures key on (measured,
+/// docs/silicon/11): the L1D's set congruence (256 sets × 64 B lines,
+/// index bits 6–13 — a mild ≤1.55× on real lockstep scans) and the
+/// stream-prefetch trackers' page-number bits (the severe one: 4–6× on
+/// DRAM lockstep scans when pitches sit near a multiple). The layout
+/// rule pads PITCHES off multiples of this ([`PitchPadder`]); the old
+/// belief that congruent bases cost "10–20×" is retired — that figure
+/// required a fully serialized dependent chain and never applied to
+/// scans.
 const SET_STRIDE: usize = 16_384;
 
-/// Column base alignment: safe under either reading of the flagged
-/// 64B-vs-128B L1D line-size contradiction (128 implies 64).
+/// Column base alignment: 128 B is the L2/SLC/DRAM transfer granule
+/// (the L1D manages 64 B lines behind it — both numbers are real,
+/// docs/silicon/11); alignment to the outer granule serves both.
 const LINE: usize = 128;
-
-/// Distinct 128-byte-aligned residues within one set stride. Relations with
-/// more columns than this cannot have all-distinct residues; BCNF relations
-/// are narrow, so the excess (if ever) simply reuses residues.
-const RESIDUE_SLOTS: usize = SET_STRIDE / LINE;
 
 /// One decoded column: a range into the image's backing store. Positions
 /// are dense scan ordinals `0..row_count`; row ids exist only in LMDB keys
@@ -57,12 +58,18 @@ pub enum ColumnView<'a> {
 #[derive(Debug)]
 pub struct RelationImage {
     row_count: usize,
-    /// Per-column exact distinct-value counts, computed once at build —
-    /// the planner's selection-selectivity source (docs/architecture/30-execution.md).
-    distincts: Box<[u64]>,
+    /// Per-column exact distinct-value counts, computed LAZILY on first
+    /// planner demand (docs/silicon/13): the eager per-column pass was
+    /// the cold path's dominant fixed cost (~1.8 ms per 150k rows,
+    /// paid before the first query could run — even a guard probe that
+    /// needs no estimates). The image is generation-keyed by the cache,
+    /// so a `OnceLock` per column IS the per-(snapshot, relation,
+    /// column) stats cache; the counts themselves are unchanged (same
+    /// exact algorithm, same values — laziness moves when, never what).
+    distincts: Box<[std::sync::OnceLock<u64>]>,
     columns: Box<[Column]>,
     /// Backing store for 8-byte columns; column bases are 128-byte aligned
-    /// with staggered set-stride residues (see [`SET_STRIDE`]).
+    /// with pitches padded off 16 KiB multiples (see [`PitchPadder`]).
     words: Vec<u64>,
     /// Backing store for 1-byte columns, same alignment discipline.
     bytes: Vec<u8>,
@@ -84,12 +91,20 @@ impl RelationImage {
     }
 
     /// The exact distinct-value count of one column (docs/architecture/30-execution.md):
-    /// word columns counted through a scratch hash set at build, byte
-    /// columns through a 256-slot table. Intern ids are injective, so a
+    /// word columns counted through a scratch hash set, byte columns
+    /// through a 256-slot table. Intern ids are injective, so a
     /// String/Bytes column's word distincts are its value distincts.
+    /// Computed on first demand and memoized on the image
+    /// (docs/silicon/13); a plan that never asks — every guard probe —
+    /// never pays the walk.
     #[must_use]
     pub fn distinct(&self, field_idx: usize) -> u64 {
-        self.distincts[field_idx]
+        *self.distincts[field_idx].get_or_init(|| match self.column(field_idx) {
+            ColumnView::Words(words) => {
+                DistinctCounter::new(self.row_count).count_words(words)
+            }
+            ColumnView::Bytes(bytes) => DistinctCounter::count_bytes(bytes),
+        })
     }
 
     /// The column for field `field_idx`, in declaration order.
@@ -135,41 +150,74 @@ impl RelationImage {
     }
 }
 
-/// Tracks which set-stride residues are taken while laying out columns.
-struct ResidueStagger {
-    used: [bool; RESIDUE_SLOTS],
+/// Column pitches padded away from prefetch-tracker aliasing
+/// (docs/silicon/11, bumblebench exp 10). The measured law: the L1D's
+/// 16 KiB set congruence costs AT MOST 1.55× on real lockstep scans —
+/// but stream-prefetch trackers alias on low 16 KiB page-number bits,
+/// so power-of-two-ish pitches with small (1–3 line) staggers cost
+/// 4–6× on DRAM-tier lockstep scans (8.13 vs 1.78 ns/row measured).
+/// The old rule here — odd 128 B residues mod 16 KiB, the "stagger" —
+/// was built against the first (mild) hazard and CREATED the second.
+/// The replacement: when a column-to-column pitch is large enough to be
+/// scanned from DRAM (≥ [`PAD_MIN_PITCH`]) and lands a small NONZERO
+/// offset (≤ [`PAD_TOLERANCE`]) from a 16 KiB multiple, round it UP to
+/// the next exact multiple — exact multiples measured clean (the
+/// stagger-16,384 discriminator ran fast); the poison is the small
+/// offset. Below [`PAD_MIN_PITCH`], columns are cache-resident at scan
+/// time and no tracker interference was measured — disk is not free.
+struct PitchPadder {
+    /// Previous column start per backing slab (element index), so the
+    /// pitch under test is always between neighbors in the SAME slab —
+    /// lockstep scans stride within a slab.
+    prev_start_by_width: [Option<usize>; 2],
 }
 
-impl ResidueStagger {
+/// Pitches below this never pad (the columns are cache-resident when
+/// scanned; the pathology is a DRAM-stream phenomenon).
+const PAD_MIN_PITCH: usize = 64 * 1024;
+
+/// How close (bytes) to a 16 KiB multiple a pitch must land to count as
+/// tracker-aliasing-shaped: the measured discriminators put stagger 8,
+/// 32, 64, and 128 in the pathological band and 16,384 out of it.
+const PAD_TOLERANCE: usize = 384;
+
+impl PitchPadder {
     fn new() -> Self {
         Self {
-            used: [false; RESIDUE_SLOTS],
+            prev_start_by_width: [None; 2],
         }
     }
 
     /// Advances `cursor` (an element index into a backing store whose base
     /// address is `base_addr`, elements of `elem_size` bytes) to the next
-    /// 128-byte-aligned position whose absolute address occupies an unused
-    /// set-stride residue. Falls back to the first aligned position when
-    /// every residue is taken (>128 columns).
+    /// 128-byte-aligned position, then applies the pitch rule against the
+    /// previous column in the same slab.
     fn place(&mut self, base_addr: usize, elem_size: usize, cursor: usize) -> usize {
-        let step = LINE / elem_size;
         let mut idx = cursor;
         // Align the absolute address to the line size.
         let misalign = (base_addr + idx * elem_size) % LINE;
         if misalign != 0 {
             idx += (LINE - misalign) / elem_size;
         }
-        let aligned = idx;
-        for _ in 0..RESIDUE_SLOTS {
-            let slot = ((base_addr + idx * elem_size) % SET_STRIDE) / LINE;
-            if !self.used[slot] {
-                self.used[slot] = true;
-                return idx;
+        let slab = usize::from(elem_size != 8);
+        if let Some(prev) = self.prev_start_by_width[slab] {
+            let pitch = (idx - prev) * elem_size;
+            let residue = pitch % SET_STRIDE;
+            // The measured band (exp 10's discriminators): EXACT 16 KiB
+            // multiples are the fast configuration (stagger 16,384 ran
+            // clean); the poison is a small NONZERO offset from one
+            // (stagger 8/32 mild, 64/128 severe). Cure by rounding the
+            // pitch UP to the next exact multiple.
+            let in_band = (residue > 0 && residue <= PAD_TOLERANCE)
+                || residue >= SET_STRIDE - PAD_TOLERANCE;
+            if pitch >= PAD_MIN_PITCH && in_band {
+                // Aligned starts make the residue a multiple of LINE,
+                // so the delta divides evenly by either element size.
+                idx += (SET_STRIDE - residue) / elem_size;
             }
-            idx += step;
         }
-        aligned
+        self.prev_start_by_width[slab] = Some(idx);
+        idx
     }
 }
 
@@ -351,10 +399,11 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
     let mut words = vec![0u64; word_len];
     let mut bytes = vec![0u8; byte_len];
 
-    // Lay out column bases: 128-byte aligned, no two congruent mod 16 KiB.
+    // Lay out column bases: 128-byte aligned, pitches padded off 16 KiB
+    // multiples (docs/silicon/11 — the tracker-aliasing rule).
     let words_addr = words.as_ptr().addr();
     let bytes_addr = bytes.as_ptr().addr();
-    let mut stagger = ResidueStagger::new();
+    let mut stagger = PitchPadder::new();
     let mut word_cursor = 0usize;
     let mut byte_cursor = 0usize;
     let columns: Vec<Column> = field_types
@@ -392,18 +441,12 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
         }));
     }
 
-    // Exact per-column distinct counts (docs/architecture/30-execution.md): one extra pass per
-    // column inside the build window — word columns through one reused
-    // open-addressed scratch set, byte columns through a 256-slot table.
-    let mut counter = DistinctCounter::new(row_count);
-    let distincts: Vec<u64> = columns
+    // Distinct counts are NOT computed here (docs/silicon/13): the
+    // eager pass was the cold path's fixed cost. Each column's count
+    // materializes on first planner demand ([`RelationImage::distinct`]).
+    let distincts: Vec<std::sync::OnceLock<u64>> = columns
         .iter()
-        .map(|column| match *column {
-            Column::Words { start } => counter.count_words(&words[start..start + row_count]),
-            Column::Bytes { start } => {
-                DistinctCounter::count_bytes(&bytes[start..start + row_count])
-            }
-        })
+        .map(|_| std::sync::OnceLock::new())
         .collect();
 
     Ok(Arc::new(RelationImage {
@@ -809,14 +852,81 @@ mod tests {
         for (i, addr) in addrs.iter().enumerate() {
             assert_eq!(addr % LINE, 0, "column {i} base must be 128-byte aligned");
         }
-        for i in 0..12 {
-            for j in (i + 1)..12 {
-                assert_ne!(
-                    addrs[i] % SET_STRIDE,
-                    addrs[j] % SET_STRIDE,
-                    "columns {i} and {j} alias the same L1D set stride"
+        // The pitch rule (docs/silicon/11): no big same-slab pitch lands
+        // within the tracker-aliasing tolerance of a 16 KiB multiple.
+        // (At 100 rows every pitch is far below PAD_MIN_PITCH — assert
+        // the rule vacuously holds here and structurally in
+        // `big_column_pitches_avoid_the_tracker_band`.)
+        for window in addrs.windows(2) {
+            let pitch = window[1].abs_diff(window[0]);
+            if pitch >= PAD_MIN_PITCH {
+                let residue = pitch % SET_STRIDE;
+                assert!(
+                    residue == 0 || (residue > PAD_TOLERANCE && residue < SET_STRIDE - PAD_TOLERANCE),
+                    "pitch {pitch} sits in the tracker-aliasing band"
                 );
             }
+        }
+    }
+
+    /// The pitch rule under DRAM-scale spans (docs/silicon/11): a
+    /// power-of-two row span — the exact shape the old stagger rule
+    /// turned into a 4–6× DRAM-scan pathology — lays out with every
+    /// same-slab pitch clear of the 16 KiB tracker band.
+    #[test]
+    fn big_column_pitches_avoid_the_tracker_band() {
+        // 4 u64 columns × 16384 rows: span = 128 KiB exactly (pow-2,
+        // 16 KiB-multiple) — unpadded pitches would land at residue 0.
+        let fields: Vec<FieldDescriptor> = (0..4)
+            .map(|i| FieldDescriptor {
+                name: format!("c{i}").into(),
+                value_type: ValueType::U64,
+                generation: Generation::None,
+            })
+            .collect();
+        let schema = SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "Big".into(),
+                fields,
+                constraints: vec![],
+            }],
+        }
+        .validate()
+        .expect("valid fixture");
+        let dir = TempDir::new("image-pitch");
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        for row in 0..16_384u64 {
+            let values = [
+                ValueRef::U64(row),
+                ValueRef::U64(row ^ 1),
+                ValueRef::U64(row ^ 2),
+                ValueRef::U64(row ^ 3),
+            ];
+            let mut bytes = Vec::new();
+            encode_fact(&values, schema.relation(R).layout(), &mut bytes);
+            delta.insert(&view, R, &bytes).expect("insert");
+        }
+        drop(view);
+        commit(delta, &env).expect("commit");
+        let txn = env.read_txn().expect("txn");
+        let image = build(&txn, &schema, R).expect("build");
+        let addrs: Vec<usize> = (0..4)
+            .map(|i| match image.column(i) {
+                ColumnView::Words(w) => w.as_ptr().addr(),
+                ColumnView::Bytes(_) => unreachable!("all u64"),
+            })
+            .collect();
+        for (i, window) in addrs.windows(2).enumerate() {
+            let pitch = window[1] - window[0];
+            assert!(pitch >= PAD_MIN_PITCH, "spans are DRAM-scale here");
+            let residue = pitch % SET_STRIDE;
+            assert!(
+                residue == 0 || (residue > PAD_TOLERANCE && residue < SET_STRIDE - PAD_TOLERANCE),
+                "pitch {i}→{} = {pitch} sits in the tracker band (residue {residue})",
+                i + 1
+            );
         }
     }
 

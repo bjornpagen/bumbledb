@@ -422,6 +422,16 @@ impl Colt {
             + self.dense.len()
     }
 
+    /// Bytes a probe of this trie's forced maps can touch — the
+    /// residency proxy for the prefetch tier decision (docs/silicon/10):
+    /// software prefetch pays only when the probed structure misses L2
+    /// (+7–12% pure loss when it is resident), and the LIVE forced
+    /// footprint is a better tier signal than any prepare-time estimate.
+    #[must_use]
+    pub fn probe_footprint_bytes(&self) -> usize {
+        self.ctrl.len() + self.buckets.len() * 8 + self.dense.len() * 4
+    }
+
     /// The labeled key count at a cursor (never forces).
     #[must_use]
     pub fn key_count(&self, cursor: Cursor) -> KeyCount {

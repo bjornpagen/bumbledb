@@ -146,12 +146,19 @@ The bridge to paper-faithful execution (`30-execution.md` D1):
   `F`-prefix scan into whole-slab, 128-byte-aligned SoA vectors (one allocation per
   store, freed as a whole — the arena discipline without the arena type), plus the
   row count.
-  At 60–120 GB/s of scan bandwidth this is single-digit milliseconds per 100 MB — the
-  number that makes the whole cache design sound. **Column bases are staggered**: the
-  image staggers successive column slab bases by odd multiples of the line size so no
-  two columns of one relation are congruent mod 16 KB (the L1D set stride) — lockstep
-  multi-column scans otherwise alias into one 8-way set, the documented 10–20×
-  pathological case (`docs/reference/apple-silicon-performance.md`, Category 5).
+  At ~60 GB/s of single-core scan bandwidth this is single-digit milliseconds per
+  100 MB — the number that makes the whole cache design sound. **Column pitches are
+  padded off 16 KiB multiples** (docs/silicon/11, superseding the stagger rule):
+  measurement retired the old fear — L1D set congruence (256 sets × 64 B lines,
+  bits 6–13) costs at most 1.55× on real lockstep scans, never the folklore 10–20×
+  (that figure required a fully serialized dependent chain) — and exposed the real
+  hazard: stream-prefetch trackers alias on low 16 KiB page-number bits, so
+  power-of-two-ish pitches with small (1–3 line) staggers cost 4–6× on DRAM-tier
+  lockstep scans (8.13 vs 1.78 ns/row, four pre-registered discriminators). The rule:
+  when a column-to-column pitch within a slab is ≥ 64 KiB and lands within 384 B of a
+  16 KiB multiple, round it up to the next exact multiple (exact multiples measured
+  clean — the poison is the small offset). The old stagger rule (odd 128 B
+  residues) *created* the pathology it meant to prevent.
   Immutable once built. Positions in the image are **dense scan ordinals**; `row_id`s
   exist only in LMDB keys and never appear in images (COLT offsets are image positions;
   the guard-probe path reads `F` directly and never needs a translation).

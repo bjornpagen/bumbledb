@@ -233,17 +233,27 @@ impl Environment {
         Ok(self.env.real_disk_size()?)
     }
 
-    /// Begins a read snapshot.
+    /// Begins a read snapshot. The underlying LMDB transaction is the
+    /// `'static` form (the heed env is `Arc`-backed and rides inside it)
+    /// so [`Db`](crate::Db)'s reader cache can hold one across calls
+    /// (docs/silicon/12) — the per-read `mdb_txn_begin` was the point
+    /// path's last fixed cost.
     ///
     /// # Errors
     ///
     /// `Lmdb` on transaction failure (e.g. reader-slot exhaustion).
     pub fn read_txn(&self) -> Result<ReadTxn<'_>> {
-        Ok(ReadTxn {
+        Ok(self.resume_read_txn(self.env.clone().static_read_txn()?))
+    }
+
+    /// Wraps an already-open raw read transaction (the reader cache's
+    /// resume path): a fresh generation cell, same snapshot.
+    pub(crate) fn resume_read_txn(&self, txn: RoTxn<'static, WithoutTls>) -> ReadTxn<'_> {
+        ReadTxn {
             env: self,
-            txn: self.env.read_txn()?,
+            txn,
             generation: std::cell::OnceCell::new(),
-        })
+        }
     }
 
     /// Begins the write transaction (LMDB serializes writers).
@@ -291,7 +301,7 @@ fn read_u64(meta: &Database<Bytes, Bytes>, rtxn: &RoTxn<'_, AnyTls>, key: &[u8])
 /// A read snapshot over the environment.
 pub struct ReadTxn<'env> {
     env: &'env Environment,
-    txn: RoTxn<'env, WithoutTls>,
+    txn: RoTxn<'static, WithoutTls>,
     /// Snapshot-constant by definition (the tx id is read *inside* this
     /// snapshot), so one `_meta` get serves every `generation()` caller —
     /// the cache asks once per occurrence per execution otherwise.
@@ -342,6 +352,12 @@ impl ReadTxn<'_> {
     /// prepared query records at prepare and checks at execute.
     pub(crate) fn env_instance(&self) -> u64 {
         self.env.instance
+    }
+
+    /// Unwraps the raw transaction for the reader cache (docs/silicon/12):
+    /// the snapshot stays open, parked for the next same-generation read.
+    pub(crate) fn into_raw_txn(self) -> RoTxn<'static, WithoutTls> {
+        self.txn
     }
 }
 
