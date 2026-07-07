@@ -1,22 +1,23 @@
-//! The recursive Free Join executor (the architecture docs + 21) — vectorized execution
-//! is the default and only path; batch size 1 is merely its degenerate
-//! setting, never a mode (`docs/architecture/30-execution.md` D4,
-//! post-mortem §31; paper §3.3 Fig. 5, §4.3).
+//! The pipelined Free Join executor (the architecture docs; docs/perf/
+//! PRDs 01–10) — vectorized execution is the default and only path;
+//! batch size 1 is merely its degenerate setting, never a mode
+//! (`docs/architecture/30-execution.md` D4, post-mortem §31).
 //!
 //! Everything is a monomorphized generic — no `dyn` anywhere in the hot
-//! path. Per node entry: choose the cover by labeled key count, iterate it
-//! in batches, two-phase-probe each sibling (phase 1 computes every hash —
-//! pure ALU; phase 2 issues all bucket loads — independent chains the
-//! out-of-order window overlaps), compact survivors branchlessly, evaluate residuals as
-//! batch compaction, then recurse per surviving element with the scalar
-//! journal discipline — except at the last node, where the surviving
-//! batch goes to the sink whole (docs/perf/ PRD 01: no recursion, no
-//! journal, no per-row binding stores at the leaf).
-//!
-//! Honest caveat, stated (D4): deep in the plan the batch source is the
-//! current subtrie, whose fanout on FK walks is often 1-10 — large batches
-//! are reliably available only at the root; cross-node-entry accumulation
-//! is future work, not assumed.
+//! path. Middle nodes pump: pending binding rows + carried cursor sets
+//! flow node to node, each node expanding pending entries into shared
+//! probe batches (dynamic cover choice per entry; flush on cover
+//! change), two-phase-probing every sibling ACROSS parents (phase 1
+//! hashes — pure ALU; phase 1.5 prefetches; phase 2 issues all bucket
+//! loads — independent chains the out-of-order window overlaps),
+//! compacting survivors branchlessly, and routing them onward. The last
+//! node runs per parent: leaf fast paths (pinned-row elision, scan-fold
+//! pushdown) or the generic leaf batch, emitting to the sink whole.
+//! D2 suffix skips cancel origins — the subtree of one absorb-node
+//! element — as pure work-skipping: a late cancel re-emits rows the
+//! seen-set already holds (set semantics make cancellation
+//! correctness-free). The paper's "cross-node-entry accumulation is
+//! future work" caveat is retired: deep nodes see full batches.
 
 use crate::exec::colt::{BatchToken, Colt, Cursor, KeyCount};
 use crate::ir::normalize::PlacedComparison;
@@ -479,8 +480,6 @@ struct NodeScratch {
     residual_sources: Vec<(Source, Source)>,
     /// Per-entry survivor mask for the compaction kernel.
     mask: Vec<u8>,
-    /// Undo journal: (occurrence index, previous cursor, previous level).
-    journal: Vec<(usize, Cursor, usize)>,
     /// Pipeline probe-batch parent indices (docs/perf/ PRD 09): the
     /// pending entry each batch element expanded from.
     parents: Vec<u32>,
@@ -492,6 +491,11 @@ struct NodeScratch {
     pending_cursors: Vec<Cursor>,
     /// Entries in the pending buffers.
     pending_len: usize,
+    /// Per pending entry: the D2 origin it descends from (docs/perf/
+    /// PRD 10) — minted at the absorb node's routing, inherited below.
+    pending_origins: Vec<u32>,
+    /// Per probe-batch element: the origin (aligned with `parents`).
+    element_origins: Vec<u32>,
 }
 
 /// The executor scratch for one plan shape: per-execution cursor state and
@@ -527,10 +531,17 @@ pub struct Executor {
     /// Residual-surviving positions of one scan run (docs/perf/ PRD 05:
     /// leaf residuals filter positions before the sink folds them).
     scan_filter: Vec<u32>,
-    /// The pipelined executor's shape tables (docs/perf/ PRD 09):
-    /// `Some` exactly when the plan is skip-free with ≥ 3 nodes — the
-    /// shapes where cross-node batching has parents to batch.
+    /// The pipelined executor's shape tables (docs/perf/ PRD 09/10):
+    /// `Some` for every multi-node plan — the one executor.
     pipe: Option<PipeTables>,
+    /// D2 origin cancellation (docs/perf/ PRD 10), epoch-stamped:
+    /// `cancelled[origin] == cancel_epoch` marks a dead subtree. Grows
+    /// to the per-execution origin high-water and is never cleared.
+    cancelled: Vec<u32>,
+    cancel_epoch: u32,
+    next_origin: u32,
+    /// A skip crossed the virtual root: the whole execution is done.
+    all_cancelled: bool,
 }
 
 /// The pipelined executor's static shape tables (docs/perf/ PRD 09):
@@ -545,6 +556,13 @@ struct PipeTables {
     carried: Vec<Vec<usize>>,
     /// `[node][occ]` — the carried column, aligned with `carried[node]`.
     carried_col: Vec<Vec<Option<usize>>>,
+    /// The D2 absorb node (docs/perf/ PRD 10): the deepest sink-relevant
+    /// node — a leaf skip cancels the subtree of one of its elements.
+    /// `Some(N-1)` (the leaf itself) means skips never cross a node;
+    /// `None` means a skip ends the whole execution. Skips only exist
+    /// under sinks that `may_skip`; cancellation is an optimization —
+    /// a late cancel re-emits rows the seen-set already holds.
+    absorb: Option<usize>,
 }
 
 impl PipeTables {
@@ -577,10 +595,12 @@ impl PipeTables {
             carried.push(occs);
             carried_col.push(cols);
         }
+        let absorb = (0..n_nodes).rev().find(|&m| plan.nodes()[m].sink_relevant);
         Self {
             entry_level,
             carried,
             carried_col,
+            absorb,
         }
     }
 }
@@ -707,11 +727,12 @@ impl Executor {
                     sources: node.subatoms.iter().map(|_| Vec::new()).collect(),
                     residual_sources: Vec::new(),
                     mask: Vec::with_capacity(batch),
-                    journal: Vec::new(),
                     parents: Vec::with_capacity(batch),
                     pending_bindings: Vec::new(),
                     pending_cursors: Vec::new(),
                     pending_len: 0,
+                    pending_origins: Vec::new(),
+                    element_origins: Vec::with_capacity(batch),
                 }
             })
             .collect();
@@ -728,7 +749,11 @@ impl Executor {
             leaf_const_residuals: leaf.const_residuals,
             leaf_row: leaf.row,
             scan_filter: Vec::new(),
-            pipe: (plan.skip_free() && plan.nodes().len() >= 3).then(|| PipeTables::of(plan)),
+            pipe: (plan.nodes().len() >= 2).then(|| PipeTables::of(plan)),
+            cancelled: Vec::new(),
+            cancel_epoch: 0,
+            next_origin: 0,
+            all_cancelled: false,
         }
     }
 
@@ -756,9 +781,10 @@ impl Executor {
         // (docs/architecture/30-execution.md).
         self.cursors
             .extend(colts.iter().map(|colt| (colt.start(), 0usize)));
-        // The pipelined path (docs/perf/ PRD 09): skip-free plans with
-        // middle nodes batch probes ACROSS parent entries — deep nodes
-        // finally see full batches. Everything else recurses per parent.
+        // The one executor (docs/perf/ PRD 09/10): multi-node plans
+        // pipeline — probes batch ACROSS parent entries, D2 skips cancel
+        // origins — and single-node plans are one leaf pass. The
+        // recursive per-survivor executor is gone.
         if self.pipe.is_some() {
             self.run_pipeline(plan, colts, bindings, sink, counters);
         } else {
@@ -786,13 +812,37 @@ impl Executor {
         for scratch in &mut self.scratch {
             scratch.pending_bindings.clear();
             scratch.pending_cursors.clear();
+            scratch.pending_origins.clear();
             scratch.pending_len = 0;
         }
+        // D2 state (PRD 10): a fresh epoch outlives any prior execution's
+        // cancellations without clearing the high-water table.
+        self.cancel_epoch = self.cancel_epoch.wrapping_add(1);
+        self.next_origin = 0;
+        self.all_cancelled = false;
         // The virtual root entry: no bindings, no carried cursors.
         self.scratch[0].pending_bindings.resize(slot_count, 0);
         self.scratch[0].pending_len = 1;
+        self.scratch[0].pending_origins.push(0);
         self.pump(&tables, plan, 0, colts, bindings, sink, counters);
         self.pipe = Some(tables);
+    }
+
+    /// Whether an origin's subtree was cancelled (PRD 10).
+    fn origin_cancelled(&self, origin: u32) -> bool {
+        self.cancelled
+            .get(origin as usize)
+            .is_some_and(|&e| e == self.cancel_epoch)
+    }
+
+    /// Cancels one origin's subtree.
+    fn cancel_origin(&mut self, origin: u32) {
+        let idx = origin as usize;
+        if self.cancelled.len() <= idx {
+            self.cancelled
+                .resize(idx + 1, self.cancel_epoch.wrapping_sub(1));
+        }
+        self.cancelled[idx] = self.cancel_epoch;
     }
 
     /// Consumes every pending entry at a middle node, cascading full
@@ -820,6 +870,21 @@ impl Executor {
         let mut cur_cover: Option<usize> = None;
         let mut cur_arity = 0usize;
         while entry < scratch.pending_len {
+            if self.all_cancelled {
+                break;
+            }
+            // D2 (PRD 10): a cancelled origin's pending work is dead —
+            // its outputs could only duplicate rows already seen. Origin
+            // ids are meaningful strictly BELOW the absorb node (minted
+            // at its routing); above it entries carry the meaningless
+            // seed and must never be filtered.
+            if tables.absorb.is_some_and(|a| node_idx > a)
+                && self.origin_cancelled(scratch.pending_origins[entry])
+            {
+                entry += 1;
+                token = BatchToken::default();
+                continue;
+            }
             counters.node_entry(node_idx);
             // Per-entry cursors: carried column or the colt's start.
             let cursor_of = |occ: usize, scratch: &NodeScratch, colts: &[Colt]| -> Cursor {
@@ -884,6 +949,7 @@ impl Executor {
                     scratch
                         .parents
                         .push(u32::try_from(entry).expect("pending fits u32"));
+                    scratch.element_origins.push(scratch.pending_origins[entry]);
                 }
                 fill += yielded;
                 token = next;
@@ -931,7 +997,9 @@ impl Executor {
         scratch.pending_len = 0;
         scratch.pending_bindings.clear();
         scratch.pending_cursors.clear();
+        scratch.pending_origins.clear();
         scratch.parents.clear();
+        scratch.element_origins.clear();
         self.scratch[node_idx] = scratch;
         // Drain the child's sub-batch remainder (full batches cascaded
         // already inside probe_pass's flush check — see its tail).
@@ -951,13 +1019,13 @@ impl Executor {
         sink: &mut S,
         counters: &mut C,
     ) -> Flow {
-        // Zero-node plans are unrepresentable (validation rule 14 rejects
-        // atom-less queries; binary2fj makes a node per occurrence), and
-        // the leaf batch path emits at the last real node — so every call
-        // lands on a real node.
+        // The one caller class (docs/perf/ PRD 10): the LAST node — the
+        // pipeline pumps every middle node, single-node plans call this
+        // directly. Zero-node plans are unrepresentable (validation
+        // rule 14 rejects atom-less queries).
         assert!(
-            node_idx < plan.nodes().len(),
-            "the leaf batch path emits at the last node"
+            node_idx + 1 == plan.nodes().len(),
+            "run_node is the leaf pass; middle nodes pump"
         );
         // The leaf fast paths (docs/perf/ PRD 05): pinned-row elision and
         // the scan-fold pushdown. A `None` decline falls through to the
@@ -1206,71 +1274,10 @@ impl Executor {
                 continue;
             }
 
-            // Save the node-entry cursors once per batch: every entry's
-            // recursion restores them, so they are identical for each
-            // surviving element — the old per-entry journal rebuild paid
-            // a push/drain cycle per tuple in the innermost loop. The
-            // journal save is descend bookkeeping: timed as Descend.
-            counters.phase_start(node_idx, JoinPhase::Descend);
-            scratch.journal.clear();
-            scratch.journal.push((cover_occ, cover_cursor, cover_level));
-            for (sub_idx, subatom) in plan.nodes()[node_idx].subatoms.iter().enumerate() {
-                if sub_idx == cover_sub {
-                    continue;
-                }
-                let occ = usize::from(subatom.occ.0);
-                let (cursor, level) = self.cursors[occ];
-                scratch.journal.push((occ, cursor, level));
-            }
-
-            // Recurse per surviving element (paper §4.3: batch within a
-            // node, recurse per tuple) with the scalar journal discipline.
-            for k in 0..scratch.survivors.len() {
-                let entry = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
-                for (i, slot) in self.slot_map[node_idx][cover_sub].iter().enumerate() {
-                    bindings.set(*slot, scratch.entry_keys[entry * arity + i]);
-                }
-                self.cursors[cover_occ] = (scratch.children[entry], cover_level + 1);
-                let mut journal_idx = 1;
-                for (sub_idx, _) in plan.nodes()[node_idx].subatoms.iter().enumerate() {
-                    if sub_idx == cover_sub {
-                        continue;
-                    }
-                    let (occ, _, level) = scratch.journal[journal_idx];
-                    journal_idx += 1;
-                    self.cursors[occ] = (scratch.sibling_children[sub_idx][entry], level + 1);
-                }
-
-                flow = self.run_node(plan, node_idx + 1, colts, bindings, sink, counters);
-
-                for &(occ, cursor, level) in scratch.journal.iter().rev() {
-                    self.cursors[occ] = (cursor, level);
-                }
-
-                if flow == Flow::SkipSuffix {
-                    if plan.nodes()[node_idx].sink_relevant {
-                        // This node binds a sink-relevant variable: absorb
-                        // the skip — later entries change the output.
-                        // Under an aggregate plan *every* variable is
-                        // sink-relevant (hardening PRD 05; sink.rs's
-                        // AggregateSink notes the same coupling), so a
-                        // skip can never travel past its producing node.
-                        flow = Flow::Continue;
-                    } else {
-                        // The suffix from here binds nothing sink-relevant:
-                        // propagate the unwind (D2) — reachable only for
-                        // sinks that skip at all (the projection sink).
-                        debug_assert!(
-                            sink.may_skip(),
-                            "a SkipSuffix crossed a node under a non-skipping sink"
-                        );
-                        counters.skip(node_idx);
-                        counters.phase_end(node_idx, JoinPhase::Descend);
-                        break 'outer;
-                    }
-                }
-            }
-            counters.phase_end(node_idx, JoinPhase::Descend);
+            // Middle nodes never reach here (the entry assert): every
+            // batch either emitted through the leaf arm above or was
+            // empty.
+            unreachable!("run_node is the leaf pass; the leaf arm consumed the batch");
         }
 
         self.scratch[node_idx] = scratch;
@@ -1396,13 +1403,31 @@ impl Executor {
         }
         counters.phase_end(node_idx, JoinPhase::Residual);
 
-        // Survivor routing.
+        // Survivor routing. Origins (PRD 10): the absorb node mints one
+        // fresh origin per routed survivor — the cancellation unit is
+        // exactly "one absorb-element's subtree"; deeper nodes inherit.
         counters.phase_start(node_idx, JoinPhase::Descend);
         let leaf = node_idx + 2 == n_nodes;
         let child_carried = &tables.carried[node_idx + 1];
+        let mints_origins = tables.absorb == Some(node_idx);
         for k in 0..scratch.survivors.len() {
+            if self.all_cancelled {
+                break;
+            }
             let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
             let parent = scratch.parents[element] as usize;
+            let origin = if mints_origins {
+                let minted = self.next_origin;
+                self.next_origin += 1;
+                minted
+            } else {
+                scratch.element_origins[element]
+            };
+            // Real origins exist strictly below the absorb node; the
+            // seed id above it must never match a minted id.
+            if tables.absorb.is_some_and(|a| node_idx > a) && self.origin_cancelled(origin) {
+                continue;
+            }
             let assemble = |occ: usize| -> Cursor {
                 // Advanced at this node: the cover's child or a probed
                 // sibling's; otherwise inherited from the parent (or the
@@ -1439,7 +1464,18 @@ impl Executor {
                     self.cursors[occ] = (assemble(occ), tables.entry_level[node_idx + 1][occ]);
                 }
                 let flow = self.run_node(plan, node_idx + 1, colts, bindings, sink, counters);
-                debug_assert_eq!(flow, Flow::Continue, "skip-free plans never unwind");
+                if flow == Flow::SkipSuffix {
+                    // The leaf skipped (D2): everything descended from
+                    // this survivor's origin can only duplicate rows.
+                    // The origin is real exactly when this node is at or
+                    // below the absorb (minted here or inherited).
+                    counters.skip(node_idx);
+                    match tables.absorb {
+                        Some(a) if node_idx >= a => self.cancel_origin(origin),
+                        Some(_) => {}
+                        None => self.all_cancelled = true,
+                    }
+                }
             } else {
                 let child = &mut self.scratch[node_idx + 1];
                 let start = child.pending_bindings.len();
@@ -1453,11 +1489,13 @@ impl Executor {
                     let cursor = assemble(occ);
                     self.scratch[node_idx + 1].pending_cursors.push(cursor);
                 }
+                self.scratch[node_idx + 1].pending_origins.push(origin);
                 self.scratch[node_idx + 1].pending_len += 1;
             }
         }
         counters.phase_end(node_idx, JoinPhase::Descend);
         scratch.parents.clear();
+        scratch.element_origins.clear();
         // Cascade a full child batch immediately (bounded memory: the
         // child never holds more than two batches).
         if !leaf && self.scratch[node_idx + 1].pending_len >= self.batch {
@@ -1939,6 +1977,208 @@ mod tests {
             &mut NoopCounters,
         );
         sink.rows
+    }
+
+    /// Counters recording D2 skips (pipeline flavor).
+    #[derive(Default)]
+    struct SkipCounterRun {
+        skips: usize,
+    }
+
+    impl Counters for SkipCounterRun {
+        fn batch(&mut self, _: usize, _: usize) {}
+        fn node_entry(&mut self, _: usize) {}
+        fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+        fn probe_hash(&mut self, _: usize, _: usize) {}
+        fn probe(&mut self, _: usize, _: usize, _: bool) {}
+        fn residual(&mut self, _: usize, _: bool) {}
+        fn emit(&mut self) {}
+        fn skip(&mut self, _: usize) {
+            self.skips += 1;
+        }
+    }
+
+    /// The real projection sink, re-exported for pipeline D2 tests.
+    use crate::exec::sink::ProjectionSink as ProjectionSinkForTest;
+
+    trait FirstCol {
+        fn rows_first_col(&self) -> Vec<u64>;
+    }
+    impl FirstCol for ProjectionSinkForTest {
+        fn rows_first_col(&self) -> Vec<u64> {
+            self.rows().map(|r| r[0]).collect()
+        }
+    }
+
+    /// PRD 10 (docs/perf/): D2 under the pipeline — two parents
+    /// interleave in one batch, one parent's suffix skips, and the other
+    /// parent's rows all emit. The absorb node sits above a
+    /// non-sink-relevant middle node, so cancellation crosses a level.
+    #[test]
+    fn pipelined_d2_cancels_one_origin_and_spares_the_rest() {
+        let dir = TempDir::new("run-pipe-d2");
+        let schema = schema(3);
+        // R(x, y): two x groups fan out through y; S(y, z) multiplies
+        // witnesses; T(z, w) leaf binds nothing projected. Projecting x
+        // only: n0 (binds x, y? — order [0,1,2] makes n0 bind x,y) is
+        // sink-relevant via x; n1 (z) and n2 (w) are not — a leaf skip
+        // cancels one n0-element subtree.
+        let r: Vec<(u64, u64)> = vec![(1, 10), (1, 11), (2, 10)];
+        let s: Vec<(u64, u64)> = (0..40).map(|i| (10 + (i % 2), i)).collect();
+        let t: Vec<(u64, u64)> = (0..40).map(|i| (i, 900 + i)).collect();
+        let views = views_of(&dir, &schema, &[r.clone(), s.clone(), t.clone()]);
+        let normalized = NormalizedQuery {
+            occurrences: vec![
+                occurrence(0, 0, &[(0, 0), (1, 1)]),
+                occurrence(1, 1, &[(0, 1), (1, 2)]),
+                occurrence(2, 2, &[(0, 2), (1, 3)]),
+            ],
+            residuals: vec![],
+        };
+        // Sink vars: x only.
+        let sinks: BTreeSet<VarId> = [VarId(0)].into();
+        let plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
+        assert!(!plan.skip_free(), "the D2 shape");
+        for batch in [1usize, 2, 128] {
+            let mut executor = Executor::with_batch_size(&plan, batch);
+            let mut colts = colts_for(&plan, &views);
+            let mut bindings = Bindings::new(plan.slots().len());
+            let mut sink = ProjectionSinkForTest::new(vec![plan.slot_of(VarId(0))]);
+            let mut counters = SkipCounterRun::default();
+            executor.execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
+            let mut rows: Vec<u64> = sink.rows_first_col();
+            rows.sort_unstable();
+            assert_eq!(rows, vec![1, 2], "batch {batch}: both x groups present");
+            assert!(counters.skips > 0, "batch {batch}: skips fired");
+        }
+    }
+
+    /// PRD 10's randomized differential: subset projections force real
+    /// D2 skips through the pipeline — random instances, orders, and
+    /// batch sizes against the nested-loop oracle's projected sets.
+    /// (This is the harness specified to catch origin-tagging bugs.)
+    #[test]
+    #[allow(clippy::too_many_lines)] // three shapes, three oracles, one sweep
+    fn randomized_subset_projections_match_the_oracle_under_d2() {
+        let mut state = 0xBEEF_CAFE_1234_5678u64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            state >> 33
+        };
+        let schema = schema(3);
+        for case in 0..70u32 {
+            let domain = 1 + next() % 6;
+            let mut data: Vec<Vec<(u64, u64)>> = Vec::new();
+            for _ in 0..3 {
+                let rows = 1 + next() % 30;
+                let mut rel = Vec::new();
+                for _ in 0..rows {
+                    rel.push((next() % domain, next() % domain));
+                }
+                rel.sort_unstable();
+                rel.dedup();
+                data.push(rel);
+            }
+            let dir = TempDir::new(&format!("run-d2-diff-{case}"));
+            let views = views_of(&dir, &schema, &data);
+            let shape = case % 3;
+            let occurrences = match shape {
+                0 => vec![
+                    occurrence(0, 0, &[(0, 0), (1, 1)]),
+                    occurrence(1, 1, &[(0, 1), (1, 2)]),
+                ],
+                1 => vec![
+                    occurrence(0, 0, &[(0, 0), (1, 1)]),
+                    occurrence(1, 1, &[(0, 1), (1, 2)]),
+                    occurrence(2, 2, &[(0, 0), (1, 2)]),
+                ],
+                _ => vec![
+                    occurrence(0, 0, &[(0, 0), (1, 1)]),
+                    occurrence(1, 1, &[(0, 1), (1, 2)]),
+                    occurrence(2, 2, &[(0, 2), (1, 3)]),
+                ],
+            };
+            let n_vars = if shape == 2 { 4u16 } else { 3 };
+            let n = occurrences.len();
+            let normalized = NormalizedQuery {
+                occurrences,
+                residuals: vec![],
+            };
+            let mut order: Vec<u16> = (0..u16::try_from(n).expect("small")).collect();
+            for i in (1..order.len()).rev() {
+                let j = usize::try_from(next()).expect("64-bit") % (i + 1);
+                order.swap(i, j);
+            }
+            // Project a random nonempty strict subset of the vars.
+            let keep: Vec<VarId> = (0..n_vars).filter(|_| next() % 2 == 0).map(VarId).collect();
+            let keep = if keep.is_empty() || keep.len() == usize::from(n_vars) {
+                vec![VarId(0)]
+            } else {
+                keep
+            };
+            let sinks: BTreeSet<VarId> = keep.iter().copied().collect();
+            let plan = planned_with_sinks(&normalized, &schema, &order, &sinks);
+
+            // Oracle: full joins, then project.
+            let mut expected: BTreeSet<Vec<u64>> = BTreeSet::new();
+            let full = |expected: &mut BTreeSet<Vec<u64>>, vals: &[u64]| {
+                expected.insert(keep.iter().map(|v| vals[usize::from(v.0)]).collect());
+            };
+            match shape {
+                0 => {
+                    for (a, b) in &data[0] {
+                        for (c, d) in &data[1] {
+                            if b == c {
+                                full(&mut expected, &[*a, *b, *d]);
+                            }
+                        }
+                    }
+                }
+                1 => {
+                    for (a, b) in &data[0] {
+                        for (c, d) in &data[1] {
+                            for (e, g) in &data[2] {
+                                if b == c && a == e && d == g {
+                                    full(&mut expected, &[*a, *b, *d]);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    for (a, b) in &data[0] {
+                        for (c, d) in &data[1] {
+                            for (e, g) in &data[2] {
+                                if b == c && d == e {
+                                    full(&mut expected, &[*a, *b, *d, *g]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for batch in [1usize, 7, 128] {
+                let mut executor = Executor::with_batch_size(&plan, batch);
+                let mut colts = colts_for(&plan, &views);
+                let mut bindings = Bindings::new(plan.slots().len());
+                let mut sink =
+                    ProjectionSinkForTest::new(keep.iter().map(|v| plan.slot_of(*v)).collect());
+                executor.execute(
+                    &plan,
+                    &mut colts,
+                    &mut bindings,
+                    &mut sink,
+                    &mut NoopCounters,
+                );
+                let got: BTreeSet<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
+                assert_eq!(
+                    got, expected,
+                    "case {case} shape {shape} order {order:?} keep {keep:?} batch {batch}"
+                );
+            }
+        }
     }
 
     /// PRD 09 (docs/perf/): the pipelined executor — dispatched exactly

@@ -110,3 +110,44 @@ skip machinery and the executor-selection rule.
 
 Everything else — this PRD ends with one executor, one discipline, and
 the suite's structural work complete.
+
+## Result (2026-07-07, run bench-out/2026-07-07T02-50-13Z)
+
+Landed: origin-tagged D2 under the pipeline — the absorb node (deepest
+sink-relevant, static per plan) mints one origin per routed survivor,
+deeper nodes inherit, and a leaf skip cancels the origin's subtree
+through epoch-stamped marks checked at expansion and routing.
+Cancellation is correctness-free by construction (a late cancel
+re-emits rows the seen-set already holds), and origins are meaningful
+strictly below the absorb — the randomized subset-projection
+differential caught an origin-id collision between the upstream seed
+and the first minted id on its second case (the exact bug class the
+harness was specified for) and pinned the fix. The recursive executor
+is deleted: no journal, no per-survivor recursion; `run_node` is the
+leaf pass, the pipeline pumps every middle node, and the module header
+formally retires the paper's "cross-node accumulation is future work"
+caveat.
+
+Gates:
+- chain p50 **130.0 µs** (gate ≤ 140; baseline 210.0, −38%) ✓.
+- Transferred from PRD 09: fk_walk p95 **1,039.7 µs** (gate ≤ 1,200) ✓
+  with p50 4.0 µs (−69% vs baseline); skew p95 **1,066.8 µs** (gate
+  ≤ 1,200) ✓ with p50 28.3 µs (−52%).
+- triangle: batching counter-proven — `jp_hash_n1` calls 100,000 →
+  **2,725** (mean probe batch ~37, gate ≥ 32 ✓); n0 descend bookkeeping
+  4,220 → 1,089 µs; p50 **15,083 µs** (−13.7% vs baseline, best ever;
+  p95 15,459 — its tightest distribution yet). The ≤ 8,000 p50 and
+  `jp_probe_n1` ≤ 1,500 gates miss: probe time held at ~5.5 ms despite
+  batching + prefetch — the latency is no longer in flight-count but in
+  the probe work itself (miss-heavy walks against a ~100k-key map, and
+  batch fragmentation from per-entry cover flips capping means at ~37).
+  Recorded as the standing wall with two named follow-up levers outside
+  this suite's remaining scope: cover-stable batch segregation and
+  longer prefetch lead.
+- Every family within band or improved vs post-09; ALL-WIN held; verify
+  green (2,468 cases, all through the one executor); **EXPLAIN emits
+  digests byte-identical on all ten families including triangle's 464**
+  — the cancellation eagerness reproduced the recursive counts exactly.
+- Suite-wide at this commit vs the committed baseline: every family
+  between −11% (string) and −85% (balance); fk_walk −69%, skew −52%,
+  range −51%, stats −54%, chain −38%, spread −18%, triangle −14%.
