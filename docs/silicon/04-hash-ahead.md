@@ -101,3 +101,11 @@ the same paths but its p50 is descend-bound); triangle probe −8.4%
 further (4,193 → 3,842 µs traced) ✓; range restored to 28.2 after the
 scan-path removal ✓; microbench pin green under its corrected premise;
 verify green; emits identical; zero-alloc holds.
+
+> **Superseded (docs/silicon2/02, 2026-07-07):** fleet exp 15 measured
+> the shipped ping-pong shape directly: +1.2–2.4 ns/row everywhere,
+> including the mixed hit/miss dedup paths this PRD's Result kept it
+> for — the window probe had already removed the flush exposure it
+> shadowed. Both sink pipelines are deleted there; the premise-corrected
+> microbench pin goes with the mechanism. The wordmap prehashed API
+> stays (PRD silicon2/03's seam).

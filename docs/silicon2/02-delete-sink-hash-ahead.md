@@ -61,3 +61,32 @@ Const-arity (03 — lands next and multiplies this deletion's value);
 wordmap-internal probe changes (04); any executor-side two-phase
 hash/probe structure (that is the colt design and it stays — exp 01's
 law: the executor's phase split IS hash-ahead at batch scale).
+
+## Result
+
+**Shipped**: both sink pipelines deleted — `ProjectionSink::emit_batch`
+back to the direct per-row loop (the `stop_on_skip` first-row arm
+preserved), `AggregateSink::fold_batch_dedup_constant_group` back to
+direct assemble + insert; `scratch_next`/`binding_scratch_next` fields,
+inits, and double prefills gone; the premise-corrected microbench pin
+deleted with its mechanism. The wordmap prehashed API stays (PRD 03's
+seam; `#[allow(dead_code)]` with PRD-10-ledger notes on the two
+now-caller-less functions). Superseded note appended to
+docs/silicon/04's Result.
+
+**Grep gates**: zero `scratch_next`/`binding_scratch_next`; zero
+`insert_prehashed`/`get_or_insert_prehashed` callers outside
+`wordmap.rs` (its internals + tests only). ✓
+
+**Measured** (min-of-3 vs post-01, `bench-out/s2p02-{1,2,3}`, verify
+stamp `692ab607`):
+- **stats 1,887.0 → 1,623.0 µs = −14.0%** — 7× the gate's ≥2%. Exp 15
+  priced the visible ceremony at ~1.3 ns of the 11 ns/row floor; the
+  deletion evidently also unblocked compiler fusion across the
+  assemble+hash+insert chain (its projected mechanism for PRD 03).
+- range 27.3 ≤ 28.5 ✓; skew p95 926.4 → 918.9 (p50 38.7 → 34.5) ✓;
+  spread 10,843.1 (+0.8%, noise) ✓; triangle 11,771.0 (−0.2%) ✓;
+  chain 111.6 → 102.3 (−8.3%) ✓; fk_walk p50 2.8 / p95 888.2 ✓;
+  point/string/balance flat. No family regresses > 5%. ✓
+- Verify 2,468 green; engine lib tests 299 green; check-asm green;
+  zero-alloc holds (fields removed, nothing added).

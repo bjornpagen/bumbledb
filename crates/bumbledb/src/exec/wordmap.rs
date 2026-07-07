@@ -76,6 +76,9 @@ fn hash_words(words: &[u64]) -> u64 {
 /// computing h(i+1) before probe(i) recovers 60–65% of that exposure).
 #[must_use]
 #[inline(always)]
+#[allow(dead_code)] // the prehashed seam (docs/silicon2/02: kept for 03's
+// const-arity internals; only test callers remain — PRD 10's audit
+// ledger rules on it)
 pub fn hash_of(key: &[u64]) -> u64 {
     hash_words(key)
 }
@@ -235,6 +238,7 @@ impl<V: Copy> WordMap<V> {
 
     /// [`WordMap::insert`] with the hash supplied by the caller (the
     /// hash-ahead seam, docs/silicon/04).
+    #[allow(dead_code)] // kept with the seam (docs/silicon2/02); PRD 10 rules
     pub fn insert_prehashed(&mut self, key: &[u64], hash: u64) -> bool
     where
         V: Default,
@@ -725,65 +729,6 @@ mod tests {
                 (name, rate)
             })
             .collect()
-    }
-
-    /// The hash-ahead pin (docs/silicon/04 gate, PREMISE-CORRECTED in
-    /// its Result): bumblebench's 38% fill recovery was measured against
-    /// the per-slot branchy probe, whose exit branch mispredicted every
-    /// walk; docs/silicon/03's WINDOW probe already removed those
-    /// branches, so a clean miss-heavy fill has almost no flush exposure
-    /// left for hash-ahead to recover (measured 2.6% here). The pin is
-    /// therefore: the pipeline must never be a REGRESSION on the fill —
-    /// its wins live in the mixed hit/miss dedup paths, gated at family
-    /// level (stats/skew). Ignored: timing evidence, run by hand.
-    #[test]
-    #[ignore = "timing evidence (docs/silicon/04 gate); run by hand"]
-    fn hash_ahead_beats_inline_hashing_on_miss_heavy_fills() {
-        const N: usize = 1 << 22; // 4M distinct 2-word keys, DRAM-tier map
-        let keys: Vec<[u64; 2]> = (0..N as u64)
-            .map(|i| {
-                let x = i.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-                [x, x ^ 0x5555_5555_5555_5555]
-            })
-            .collect();
-        let time = |pipelined: bool| -> f64 {
-            let mut best = f64::MAX;
-            for _ in 0..3 {
-                let mut map: WordMap<()> = WordMap::with_capacity_hint(2, N);
-                let start = std::time::Instant::now();
-                if pipelined {
-                    let mut hash = hash_of(&keys[0]);
-                    for k in 1..N {
-                        let next = hash_of(&keys[k]);
-                        map.insert_prehashed(&keys[k - 1], hash);
-                        hash = next;
-                    }
-                    map.insert_prehashed(&keys[N - 1], hash);
-                } else {
-                    for key in &keys {
-                        map.insert(key);
-                    }
-                }
-                let ns = start.elapsed().as_nanos();
-                assert_eq!(map.len(), N);
-                #[allow(clippy::cast_precision_loss)]
-                let per = ns as f64 / N as f64;
-                best = best.min(per);
-            }
-            best
-        };
-        let inline = time(false);
-        let ahead = time(true);
-        let gain = (inline - ahead) / inline;
-        println!(
-            "miss-heavy fill: inline {inline:.2} ns/insert, hash-ahead {ahead:.2} ns/insert ({:.1}% better)",
-            gain * 100.0
-        );
-        assert!(
-            gain >= -0.03,
-            "hash-ahead must not regress the miss-heavy fill, got {:.1}%",
-            gain * 100.0
-        );
     }
 
     /// Probe-step evidence for the Result section: average probe steps

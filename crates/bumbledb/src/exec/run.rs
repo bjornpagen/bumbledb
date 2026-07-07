@@ -448,7 +448,7 @@ const SCAN_HOIST_THRESHOLD: usize = 8;
 ///
 /// The budget's teeth were measured BOTH ways (docs/silicon2/01's
 /// Result): dropping it to 32 KiB covered triangle n1's 54 KB colt at
-/// 98.8% of passes and bought NOTHING — jp_probe_n1 was already at the
+/// 98.8% of passes and bought NOTHING — `jp_probe_n1` was already at the
 /// covered floor (12.3 ns/probe over 299k probes; the campaign's "37 ns
 /// residual" was an attribution error, probes/pass ≈ 117 not 39) while
 /// the ~600k added prefetch µops cost triangle +4.8%. Sub-256 KiB maps
