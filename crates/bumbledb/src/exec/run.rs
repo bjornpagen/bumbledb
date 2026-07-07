@@ -80,6 +80,19 @@ impl LeafBatch<'_> {
     }
 }
 
+/// A fused leaf scan (docs/perf/ PRD 05): the last node's suffix
+/// positions handed to the sink as runs over live column views — no key
+/// batch is materialized at all. The sink reads leaf words through
+/// [`Colt::suffix_column`] and outer slots through `bindings`.
+pub struct LeafScan<'a> {
+    pub colt: &'a Colt,
+    /// The leaf join level (the occurrence's last).
+    pub level: usize,
+    /// Binding slot of each leaf key word, in word order.
+    pub key_slots: &'a [usize],
+    pub bindings: &'a Bindings,
+}
+
 /// Consumes complete bindings (D3: the executor emits to a sink, never an
 /// `output()`).
 pub trait Sink {
@@ -106,6 +119,29 @@ pub trait Sink {
     /// unless the sink is allowed to skip at all.
     fn may_skip(&self) -> bool {
         false
+    }
+
+    /// Opens a fused leaf scan (docs/perf/ PRD 05). `false` — the
+    /// default, and an honest capability report, not a shim — sends the
+    /// executor to the batch path. A `true` return is followed by any
+    /// number of [`Sink::scan_run`] calls and exactly one
+    /// [`Sink::end_scan`].
+    fn begin_scan(&mut self, scan: &LeafScan<'_>) -> bool {
+        let _ = scan;
+        false
+    }
+
+    /// Folds one position run of an open scan.
+    fn scan_run(&mut self, scan: &LeafScan<'_>, run: crate::exec::colt::SuffixRun<'_>) {
+        let _ = (scan, run);
+        unreachable!("scan_run without begin_scan == true");
+    }
+
+    /// Closes an open scan (accumulator write-back). Returns the number
+    /// of rows the scan consumed (EXPLAIN's `emits` accounting).
+    fn end_scan(&mut self, scan: &LeafScan<'_>) -> u64 {
+        let _ = scan;
+        unreachable!("end_scan without begin_scan == true");
     }
 }
 
@@ -365,6 +401,47 @@ enum Source {
     Slot(usize),
 }
 
+/// A leaf-scan residual operand resolved for one big run (docs/perf/
+/// PRD 05): a live column view or the outer binding's constant word.
+/// Small runs skip the table — measured on spread (~1.4 positions/run),
+/// building it cost +48 ns/row; measured on range (one 100k-position
+/// run), skipping it cost ~10 µs. [`SCAN_HOIST_THRESHOLD`] splits them.
+enum Operand<'a> {
+    Col(crate::image::ColumnView<'a>),
+    Const(u64),
+}
+
+/// Run length at which hoisting operand/column tables pays for itself.
+const SCAN_HOIST_THRESHOLD: usize = 32;
+
+/// Appends the positions of `run` that pass `eval` to `out`.
+fn push_surviving(
+    run: crate::exec::colt::SuffixRun<'_>,
+    out: &mut Vec<u32>,
+    eval: &mut impl FnMut(u32) -> bool,
+) {
+    match run {
+        crate::exec::colt::SuffixRun::Identity { start, len } => {
+            for position in start..start + len {
+                let position = u32::try_from(position).expect("positions fit u32");
+                if eval(position) {
+                    out.push(position);
+                }
+            }
+        }
+        crate::exec::colt::SuffixRun::Positions(positions) => {
+            for &position in positions {
+                if eval(position) {
+                    out.push(position);
+                }
+            }
+        }
+    }
+}
+
+/// Residual specs one scan can hold; the resolve site asserts.
+const MAX_LEAF_RESIDUALS: usize = 8;
+
 /// Per-node reusable scratch: each node's frame is active at most once in
 /// the recursion (frames advance strictly by node index), so scratch is
 /// indexed by node and allocated once per executor construction.
@@ -407,6 +484,83 @@ pub struct Executor {
     /// Per residual: (lhs slot, rhs slot), aligned with each node's list.
     residual_slots: Vec<Vec<(PlacedComparison, usize, usize)>>,
     scratch: Vec<NodeScratch>,
+    /// The leaf fast paths (docs/perf/ PRD 05) apply when the last node
+    /// has exactly one subatom — its cover is fixed, so the per-entry
+    /// source resolution is precomputed here once.
+    leaf_single: bool,
+    /// Leaf residual value sources, fixed at construction (single-subatom
+    /// leaves only; `Batch` = leaf key word, `Slot` = outer binding).
+    leaf_residual_sources: Vec<(Source, Source)>,
+    /// The scan arm's residual partition, also fixed at construction
+    /// (zero-alloc warm contract: nothing recomputes per node entry):
+    /// per-position specs (at least one side reads a leaf column) and
+    /// batch-constant specs (both sides outer).
+    leaf_scan_residuals: Vec<(crate::ir::CmpOp, Source, Source)>,
+    leaf_const_residuals: Vec<(crate::ir::CmpOp, usize, usize)>,
+    /// One pinned row's gathered key words (the pinned-leaf elision's
+    /// only buffer).
+    leaf_row: Vec<u64>,
+    /// Residual-surviving positions of one scan run (docs/perf/ PRD 05:
+    /// leaf residuals filter positions before the sink folds them).
+    scan_filter: Vec<u32>,
+}
+
+/// The single-subatom-leaf precompute (docs/perf/ PRD 05): everything
+/// the leaf fast paths would otherwise re-derive per node entry.
+struct LeafPrecompute {
+    single: bool,
+    residual_sources: Vec<(Source, Source)>,
+    scan_residuals: Vec<(crate::ir::CmpOp, Source, Source)>,
+    const_residuals: Vec<(crate::ir::CmpOp, usize, usize)>,
+    row: Vec<u64>,
+}
+
+impl LeafPrecompute {
+    fn of(plan: &ValidatedPlan, residual_slots: &[Vec<(PlacedComparison, usize, usize)>]) -> Self {
+        let last = plan.nodes().len() - 1;
+        let single = plan.nodes()[last].subatoms.len() == 1;
+        if !single {
+            return Self {
+                single,
+                residual_sources: Vec::new(),
+                scan_residuals: Vec::new(),
+                const_residuals: Vec::new(),
+                row: Vec::new(),
+            };
+        }
+        let cover_vars = &plan.nodes()[last].subatoms[0].vars;
+        let residual_sources: Vec<(Source, Source)> = residual_slots[last]
+            .iter()
+            .map(|(residual, lhs_slot, rhs_slot)| {
+                let resolve = |var: crate::ir::VarId, slot: usize| {
+                    cover_vars
+                        .iter()
+                        .position(|cv| *cv == var)
+                        .map_or(Source::Slot(slot), Source::Batch)
+                };
+                (
+                    resolve(residual.lhs, *lhs_slot),
+                    resolve(residual.rhs, *rhs_slot),
+                )
+            })
+            .collect();
+        let mut scan_residuals = Vec::new();
+        let mut const_residuals = Vec::new();
+        for (idx, (lhs, rhs)) in residual_sources.iter().enumerate() {
+            let op = residual_slots[last][idx].0.op;
+            match (lhs, rhs) {
+                (Source::Slot(l), Source::Slot(r)) => const_residuals.push((op, *l, *r)),
+                _ => scan_residuals.push((op, *lhs, *rhs)),
+            }
+        }
+        Self {
+            single,
+            residual_sources,
+            scan_residuals,
+            const_residuals,
+            row: vec![0u64; cover_vars.len().max(1)],
+        }
+    }
 }
 
 impl Executor {
@@ -477,12 +631,19 @@ impl Executor {
                 }
             })
             .collect();
+        let leaf = LeafPrecompute::of(plan, &residual_slots);
         Self {
             batch,
             cursors: Vec::new(),
             slot_map,
             residual_slots,
             scratch,
+            leaf_single: leaf.single,
+            leaf_residual_sources: leaf.residual_sources,
+            leaf_scan_residuals: leaf.scan_residuals,
+            leaf_const_residuals: leaf.const_residuals,
+            leaf_row: leaf.row,
+            scan_filter: Vec::new(),
         }
     }
 
@@ -532,6 +693,15 @@ impl Executor {
             node_idx < plan.nodes().len(),
             "the leaf batch path emits at the last node"
         );
+        // The leaf fast paths (docs/perf/ PRD 05): pinned-row elision and
+        // the scan-fold pushdown. A `None` decline falls through to the
+        // generic batch machinery with no counters fired.
+        if self.leaf_single && node_idx + 1 == plan.nodes().len() {
+            if let Some(flow) = self.run_leaf_fast(plan, node_idx, colts, bindings, sink, counters)
+            {
+                return flow;
+            }
+        }
         counters.node_entry(node_idx);
 
         // Dynamic cover choice (§4.4): prefer the smallest Exact, else the
@@ -811,6 +981,224 @@ impl Executor {
 
         self.scratch[node_idx] = scratch;
         flow
+    }
+
+    /// The leaf fast paths (docs/perf/ PRD 05). `None` = declined —
+    /// multi-position forced nodes the sink cannot scan, sinks without
+    /// scan support, byte-column folds — and the generic batch path runs
+    /// instead (conservative by construction: correctness never depends
+    /// on a fast path firing).
+    fn run_leaf_fast<S: Sink, C: Counters>(
+        &mut self,
+        plan: &ValidatedPlan,
+        node_idx: usize,
+        colts: &mut [Colt],
+        bindings: &mut Bindings,
+        sink: &mut S,
+        counters: &mut C,
+    ) -> Option<Flow> {
+        let node = &plan.nodes()[node_idx];
+        let occ = usize::from(node.subatoms[0].occ.0);
+        let (cursor, level) = self.cursors[occ];
+        match cursor {
+            Cursor::Row(position) => Some(self.run_leaf_pinned(
+                plan, node_idx, occ, level, position, colts, bindings, sink, counters,
+            )),
+            Cursor::Node(_) => self.run_leaf_scan(
+                plan, node_idx, occ, level, cursor, colts, bindings, sink, counters,
+            ),
+        }
+    }
+
+    /// The pinned-row arm: a batch of exactly one, with every batch
+    /// scaffold skipped — gather, residuals, emit.
+    #[allow(clippy::too_many_arguments)] // the run_node context, unpacked
+    fn run_leaf_pinned<S: Sink, C: Counters>(
+        &mut self,
+        plan: &ValidatedPlan,
+        node_idx: usize,
+        occ: usize,
+        level: usize,
+        position: u32,
+        colts: &mut [Colt],
+        bindings: &mut Bindings,
+        sink: &mut S,
+        counters: &mut C,
+    ) -> Flow {
+        let node = &plan.nodes()[node_idx];
+        {
+            let key_slots = &self.slot_map[node_idx][0];
+            let arity = key_slots.len();
+            counters.node_entry(node_idx);
+            counters.cover_choice(node_idx, 0, false);
+            counters.batch(node_idx, 1);
+            counters.phase_start(node_idx, JoinPhase::Descend);
+            colts[occ].gather_row(level, position, &mut self.leaf_row[..arity.max(1)]);
+            for (idx, (lhs_src, rhs_src)) in self.leaf_residual_sources.iter().enumerate() {
+                let value = |src: &Source| match *src {
+                    Source::Batch(word) => self.leaf_row[word],
+                    Source::Slot(slot) => bindings.get(slot),
+                };
+                let op = self.residual_slots[node_idx][idx].0.op;
+                let pass = op.compare(&value(lhs_src), &value(rhs_src));
+                counters.residual(node_idx, pass);
+                if !pass {
+                    counters.phase_end(node_idx, JoinPhase::Descend);
+                    return Flow::Continue;
+                }
+            }
+            let batch = LeafBatch {
+                keys: &self.leaf_row,
+                arity,
+                survivors: &[0],
+                key_slots,
+                bindings,
+            };
+            let stop_on_skip = !node.sink_relevant && sink.may_skip();
+            let flow = sink.emit_batch(&batch, stop_on_skip);
+            counters.emit();
+            counters.phase_end(node_idx, JoinPhase::Descend);
+            if flow == Flow::SkipSuffix {
+                counters.skip(node_idx);
+                return Flow::SkipSuffix;
+            }
+            Flow::Continue
+        }
+    }
+
+    /// The scan-pushdown arm: positions flow straight from the trie into
+    /// the sink's kernels; no key batch exists. Leaf residuals filter
+    /// positions per run before the sink sees them; a leaf that could
+    /// skip (D2) stays on the batch path.
+    #[allow(clippy::too_many_arguments)] // the run_node context, unpacked
+    #[allow(clippy::too_many_lines)] // the two measured eval arms are siblings by design
+    fn run_leaf_scan<S: Sink, C: Counters>(
+        &mut self,
+        plan: &ValidatedPlan,
+        node_idx: usize,
+        occ: usize,
+        level: usize,
+        cursor: Cursor,
+        colts: &mut [Colt],
+        bindings: &mut Bindings,
+        sink: &mut S,
+        counters: &mut C,
+    ) -> Option<Flow> {
+        let node = &plan.nodes()[node_idx];
+        {
+            if !colts[occ].suffix_scannable(cursor) || (!node.sink_relevant && sink.may_skip()) {
+                return None;
+            }
+            // Batch-constant residuals (both sides outer) decide the
+            // whole leaf at once.
+            for (op, lhs, rhs) in &self.leaf_const_residuals {
+                if !op.compare(&bindings.get(*lhs), &bindings.get(*rhs)) {
+                    counters.node_entry(node_idx);
+                    counters.cover_choice(node_idx, 0, false);
+                    counters.residual(node_idx, false);
+                    return Some(Flow::Continue);
+                }
+            }
+            let scan = LeafScan {
+                colt: &colts[occ],
+                level,
+                key_slots: &self.slot_map[node_idx][0],
+                bindings,
+            };
+            if !sink.begin_scan(&scan) {
+                return None;
+            }
+            counters.node_entry(node_idx);
+            counters.cover_choice(node_idx, 0, false);
+            counters.phase_start(node_idx, JoinPhase::Descend);
+            let n_residuals = self.leaf_scan_residuals.len();
+            let mut filtered = std::mem::take(&mut self.scan_filter);
+            let drove = scan.colt.for_each_suffix_run(cursor, |run| {
+                counters.batch(node_idx, run.len());
+                if n_residuals == 0 {
+                    sink.scan_run(&scan, run);
+                    return;
+                }
+                // Filter positions through the leaf residuals — run-
+                // length-adaptive (see SCAN_HOIST_THRESHOLD): big runs
+                // amortize a resolved operand table; small runs resolve
+                // per position (both directions measured, both real).
+                filtered.clear();
+                if run.len() >= SCAN_HOIST_THRESHOLD {
+                    assert!(
+                        self.leaf_scan_residuals.len() <= MAX_LEAF_RESIDUALS,
+                        "leaf residual count exceeds the scan table"
+                    );
+                    let resolved: [Option<(crate::ir::CmpOp, Operand<'_>, Operand<'_>)>;
+                        MAX_LEAF_RESIDUALS] = std::array::from_fn(|i| {
+                        self.leaf_scan_residuals.get(i).map(|(op, lhs, rhs)| {
+                            let side = |src: &Source| match *src {
+                                Source::Batch(word) => {
+                                    Operand::Col(scan.colt.suffix_column(scan.level, word))
+                                }
+                                Source::Slot(slot) => Operand::Const(bindings.get(slot)),
+                            };
+                            (*op, side(lhs), side(rhs))
+                        })
+                    });
+                    let mut eval = |position: u32| {
+                        for spec in resolved.iter().take(n_residuals) {
+                            let (op, lhs, rhs) = spec.as_ref().expect("resolved up to len");
+                            let value = |operand: &Operand<'_>| match operand {
+                                Operand::Col(crate::image::ColumnView::Words(w)) => {
+                                    w[position as usize]
+                                }
+                                Operand::Col(crate::image::ColumnView::Bytes(b)) => {
+                                    u64::from(b[position as usize])
+                                }
+                                Operand::Const(word) => *word,
+                            };
+                            let pass = op.compare(&value(lhs), &value(rhs));
+                            counters.residual(node_idx, pass);
+                            if !pass {
+                                return false;
+                            }
+                        }
+                        true
+                    };
+                    push_surviving(run, &mut filtered, &mut eval);
+                } else {
+                    let mut eval = |position: u32| {
+                        for (op, lhs_src, rhs_src) in &self.leaf_scan_residuals {
+                            let value = |src: &Source| match *src {
+                                Source::Batch(word) => {
+                                    match scan.colt.suffix_column(scan.level, word) {
+                                        crate::image::ColumnView::Words(w) => w[position as usize],
+                                        crate::image::ColumnView::Bytes(b) => {
+                                            u64::from(b[position as usize])
+                                        }
+                                    }
+                                }
+                                Source::Slot(slot) => bindings.get(slot),
+                            };
+                            let pass = op.compare(&value(lhs_src), &value(rhs_src));
+                            counters.residual(node_idx, pass);
+                            if !pass {
+                                return false;
+                            }
+                        }
+                        true
+                    };
+                    push_surviving(run, &mut filtered, &mut eval);
+                }
+                if !filtered.is_empty() {
+                    sink.scan_run(&scan, crate::exec::colt::SuffixRun::Positions(&filtered));
+                }
+            });
+            debug_assert!(drove, "suffix_scannable pre-checked");
+            let emitted = sink.end_scan(&scan);
+            for _ in 0..emitted {
+                counters.emit();
+            }
+            counters.phase_end(node_idx, JoinPhase::Descend);
+            self.scan_filter = filtered;
+            Some(Flow::Continue)
+        }
     }
 
     /// Chooses the cover with the fewest keys: smallest `Exact` wins;

@@ -1137,6 +1137,31 @@ impl Sink for EitherSink {
             Self::Aggregate(sink) => sink.may_skip(),
         }
     }
+
+    fn begin_scan(&mut self, scan: &crate::exec::run::LeafScan<'_>) -> bool {
+        match self {
+            Self::Projection(sink) => sink.begin_scan(scan),
+            Self::Aggregate(sink) => sink.begin_scan(scan),
+        }
+    }
+
+    fn scan_run(
+        &mut self,
+        scan: &crate::exec::run::LeafScan<'_>,
+        run: crate::exec::colt::SuffixRun<'_>,
+    ) {
+        match self {
+            Self::Projection(sink) => sink.scan_run(scan, run),
+            Self::Aggregate(sink) => sink.scan_run(scan, run),
+        }
+    }
+
+    fn end_scan(&mut self, scan: &crate::exec::run::LeafScan<'_>) -> u64 {
+        match self {
+            Self::Projection(sink) => sink.end_scan(scan),
+            Self::Aggregate(sink) => sink.end_scan(scan),
+        }
+    }
 }
 
 /// Converts a bound param value to column form. A String or Bytes value

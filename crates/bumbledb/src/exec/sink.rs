@@ -13,8 +13,11 @@
 
 use crate::encoding::encode_i64;
 use crate::error::{Error, Result};
-use crate::exec::run::{Bindings, Flow, LeafBatch, LeafSource, Sink};
+use crate::exec::colt::SuffixRun;
+use crate::exec::kernel;
+use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, LeafSource, Sink};
 use crate::exec::wordmap::WordMap;
+use crate::image::ColumnView;
 use crate::ir::AggOp;
 
 /// One find term in execution form: a projected slot or an aggregate spec.
@@ -50,9 +53,16 @@ pub struct ProjectionSink {
     slots: Vec<usize>,
     seen: WordMap<()>,
     scratch: Vec<u64>,
-    /// Per-slot leaf-batch sources, recomputed once per batch (PRD 01):
+    /// Per-slot leaf-batch sources, recomputed only when the leaf shape
+    /// changes (PRD 05's pointer-keyed cache — pinned leaves emit
+    /// batches of one, so per-batch recomputation was per-row work):
     /// `Some(word)` reads the batch keys, `None` the outer bindings.
     batch_sources: Vec<Option<usize>>,
+    /// The cache key: `key_slots` pointer + length (stable per prepared
+    /// executor; invalidated on reset).
+    sources_key: (usize, usize),
+    /// Rows consumed by the open scan (docs/perf/ PRD 05).
+    scan_count: u64,
 }
 
 impl ProjectionSink {
@@ -65,6 +75,8 @@ impl ProjectionSink {
             seen: WordMap::new(arity),
             scratch: vec![0; arity],
             batch_sources: vec![None; arity],
+            sources_key: (0, 0),
+            scan_count: 0,
         }
     }
 
@@ -77,6 +89,7 @@ impl ProjectionSink {
     /// Empties the sink for the next execution, retaining capacity.
     pub fn reset(&mut self) {
         self.seen.clear();
+        self.sources_key = (0, 0);
     }
 }
 
@@ -98,15 +111,22 @@ impl Sink for ProjectionSink {
     }
 
     fn emit_batch(&mut self, batch: &LeafBatch<'_>, stop_on_skip: bool) -> Flow {
-        // Sources once per batch; outer slots prefilled once — the row
-        // loop touches only the varying key words and the seen-set.
+        // Sources cached on the leaf shape (pointer-keyed, PRD 05); the
+        // outer values refresh per batch (bindings vary per parent), the
+        // row loop touches only the varying key words and the seen-set.
+        let key = (batch.key_slots.as_ptr() as usize, batch.key_slots.len());
+        if key != self.sources_key {
+            for (i, slot) in self.slots.iter().enumerate() {
+                self.batch_sources[i] = match batch.source_of(*slot) {
+                    LeafSource::Key(word) => Some(word),
+                    LeafSource::Outer => None,
+                };
+            }
+            self.sources_key = key;
+        }
         for (i, slot) in self.slots.iter().enumerate() {
-            match batch.source_of(*slot) {
-                LeafSource::Key(word) => self.batch_sources[i] = Some(word),
-                LeafSource::Outer => {
-                    self.batch_sources[i] = None;
-                    self.scratch[i] = batch.bindings.get(*slot);
-                }
+            if self.batch_sources[i].is_none() {
+                self.scratch[i] = batch.bindings.get(*slot);
             }
         }
         for &entry in batch.survivors {
@@ -127,6 +147,74 @@ impl Sink for ProjectionSink {
 
     fn may_skip(&self) -> bool {
         true
+    }
+
+    /// The projection scan (docs/perf/ PRD 05): positions insert straight
+    /// into the seen-set — outer slots prefilled once, leaf words read
+    /// live from the columns. The executor never opens a scan on a leaf
+    /// that could skip (D2 leaves stay on the batch path), so every
+    /// position inserts.
+    fn begin_scan(&mut self, scan: &LeafScan<'_>) -> bool {
+        let key = (scan.key_slots.as_ptr() as usize, scan.key_slots.len());
+        if key != self.sources_key {
+            for (i, slot) in self.slots.iter().enumerate() {
+                self.batch_sources[i] = scan.key_slots.iter().position(|k| k == slot);
+            }
+            self.sources_key = key;
+        }
+        for (i, slot) in self.slots.iter().enumerate() {
+            if self.batch_sources[i].is_none() {
+                self.scratch[i] = scan.bindings.get(*slot);
+            }
+        }
+        self.scan_count = 0;
+        true
+    }
+
+    fn scan_run(&mut self, scan: &LeafScan<'_>, run: SuffixRun<'_>) {
+        self.scan_count += run.len() as u64;
+        // Run-length-adaptive column resolution (docs/perf/ PRD 05,
+        // measured both ways): big runs amortize a hoisted column table,
+        // fanout-sized runs resolve per position.
+        if run.len() >= 32 {
+            assert!(self.batch_sources.len() <= 8, "projection arity cap");
+            let cols: [Option<ColumnView<'_>>; 8] = std::array::from_fn(|i| {
+                self.batch_sources
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .map(|word| scan.colt.suffix_column(scan.level, word))
+            });
+            let mut insert = |position: u32| {
+                for (i, source) in self.batch_sources.iter().enumerate() {
+                    if source.is_some() {
+                        self.scratch[i] = match cols[i].as_ref().expect("resolved with sources") {
+                            ColumnView::Words(w) => w[position as usize],
+                            ColumnView::Bytes(b) => u64::from(b[position as usize]),
+                        };
+                    }
+                }
+                self.seen.insert(&self.scratch);
+            };
+            run_positions(run, &mut insert);
+        } else {
+            let mut insert = |position: u32| {
+                for (i, source) in self.batch_sources.iter().enumerate() {
+                    if let Some(word) = source {
+                        self.scratch[i] = match scan.colt.suffix_column(scan.level, *word) {
+                            ColumnView::Words(w) => w[position as usize],
+                            ColumnView::Bytes(b) => u64::from(b[position as usize]),
+                        };
+                    }
+                }
+                self.seen.insert(&self.scratch);
+            };
+            run_positions(run, &mut insert);
+        }
+    }
+
+    fn end_scan(&mut self, _scan: &LeafScan<'_>) -> u64 {
+        self.scan_count
     }
 }
 
@@ -178,6 +266,19 @@ pub struct AggregateSink {
     /// whose full binding was first-seen this batch, gather-folded after
     /// the dedup pass exactly like the elided path.
     dedup_survivors: Vec<u32>,
+    /// The open scan's per-aggregate leaf-word sources (PRD 05):
+    /// `Some(word)` folds a column, `None` finishes from the constant
+    /// outer value at `end_scan`.
+    scan_sources: Vec<Option<usize>>,
+    /// Rows consumed by the open scan.
+    scan_count: u64,
+    /// The leaf-shape cache (pointer-keyed on `key_slots`): outer slots
+    /// for the per-row prefill, and whether the group key is batch-
+    /// constant. Pinned leaves emit batches of one — recomputing this
+    /// per batch was per-row work.
+    cached_outer_slots: Vec<usize>,
+    cached_constant_group: bool,
+    sources_key: (usize, usize),
     /// Group-map probes actually issued (the PRD 02 hoist observable).
     #[cfg(test)]
     group_probes: usize,
@@ -206,6 +307,11 @@ impl AggregateSink {
             memo_idx: None,
             acc_scratch: Vec::with_capacity(n_aggs),
             dedup_survivors: Vec::new(),
+            scan_sources: Vec::with_capacity(n_aggs),
+            scan_count: 0,
+            cached_outer_slots: Vec::new(),
+            cached_constant_group: false,
+            sources_key: (0, 0),
             #[cfg(test)]
             group_probes: 0,
             group_slots,
@@ -218,6 +324,7 @@ impl AggregateSink {
     /// Empties the sink for the next execution, retaining capacity.
     pub fn reset(&mut self) {
         self.memo_idx = None;
+        self.sources_key = (0, 0);
         self.groups.clear();
         self.accs.clear();
         if let Some(seen) = &mut self.seen {
@@ -293,6 +400,41 @@ fn finalize(acc: Acc, find_idx: usize) -> Result<u64> {
 }
 
 impl AggregateSink {
+    /// The memoized group resolution (PRD 02): consecutive batches of one
+    /// run share their group — compare key words before hashing.
+    fn resolve_group_memoized(&mut self) -> usize {
+        match self.memo_idx {
+            Some(idx) if self.memo_key == self.key_scratch => idx,
+            _ => {
+                let idx = self.probe_group();
+                self.memo_key.copy_from_slice(&self.key_scratch);
+                self.memo_idx = Some(idx);
+                idx
+            }
+        }
+    }
+
+    /// Refreshes the leaf-shape cache (outer slots + group constancy) —
+    /// pointer-keyed on `key_slots`, so pinned batch-of-one leaves pay
+    /// nothing after the first batch (PRD 05).
+    fn refresh_shape_cache(&mut self, batch: &LeafBatch<'_>) {
+        let key = (batch.key_slots.as_ptr() as usize, batch.key_slots.len());
+        if key == self.sources_key {
+            return;
+        }
+        self.cached_outer_slots.clear();
+        for slot in 0..self.binding_scratch.len() {
+            if matches!(batch.source_of(slot), LeafSource::Outer) {
+                self.cached_outer_slots.push(slot);
+            }
+        }
+        self.cached_constant_group = self
+            .group_slots
+            .iter()
+            .all(|slot| matches!(batch.source_of(*slot), LeafSource::Outer));
+        self.sources_key = key;
+    }
+
     /// Probes the group map with the key currently in `key_scratch`,
     /// seeding a fresh accumulator row on first sight. The one place a
     /// group probe happens — the batch path memoizes around it.
@@ -386,10 +528,8 @@ impl AggregateSink {
     /// overwritten per row, each full binding folded through the scratch
     /// (dedup and varying-group regimes).
     fn fold_batch_rows(&mut self, batch: &LeafBatch<'_>) {
-        for slot in 0..self.binding_scratch.len() {
-            if matches!(batch.source_of(slot), LeafSource::Outer) {
-                self.binding_scratch[slot] = batch.bindings.get(slot);
-            }
+        for &slot in &self.cached_outer_slots {
+            self.binding_scratch[slot] = batch.bindings.get(slot);
         }
         for &entry in batch.survivors {
             for (word, slot) in batch.key_slots.iter().enumerate() {
@@ -411,11 +551,9 @@ impl AggregateSink {
     /// path, group probe hoisted and all.
     fn fold_batch_dedup_constant_group(&mut self, batch: &LeafBatch<'_>) {
         // The dedup key is the full binding: outer slots constant,
-        // prefilled once; key slots overwritten per row.
-        for slot in 0..self.binding_scratch.len() {
-            if matches!(batch.source_of(slot), LeafSource::Outer) {
-                self.binding_scratch[slot] = batch.bindings.get(slot);
-            }
+        // prefilled once (cached shape); key slots overwritten per row.
+        for &slot in &self.cached_outer_slots {
+            self.binding_scratch[slot] = batch.bindings.get(slot);
         }
         let mut survivors = std::mem::take(&mut self.dedup_survivors);
         survivors.clear();
@@ -438,15 +576,7 @@ impl AggregateSink {
         for (i, slot) in self.group_slots.iter().enumerate() {
             self.key_scratch[i] = batch.bindings.get(*slot);
         }
-        let group_idx = match self.memo_idx {
-            Some(idx) if self.memo_key == self.key_scratch => idx,
-            _ => {
-                let idx = self.probe_group();
-                self.memo_key.copy_from_slice(&self.key_scratch);
-                self.memo_idx = Some(idx);
-                idx
-            }
-        };
+        let group_idx = self.resolve_group_memoized();
 
         let range = group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs;
         self.acc_scratch.clear();
@@ -520,6 +650,22 @@ impl AggregateSink {
     }
 }
 
+/// Drives `f` over every position of a run (the projection scan's loop).
+fn run_positions(run: SuffixRun<'_>, f: &mut impl FnMut(u32)) {
+    match run {
+        SuffixRun::Identity { start, len } => {
+            for position in start..start + len {
+                f(u32::try_from(position).expect("positions fit u32"));
+            }
+        }
+        SuffixRun::Positions(positions) => {
+            for &position in positions {
+                f(position);
+            }
+        }
+    }
+}
+
 /// The batch gather folds, kerneled (docs/perf/ PRD 03): dense survivor
 /// runs (ascending with no gaps — the common all-survived batch) take
 /// the contiguous strided kernels with zero index loads; everything
@@ -583,6 +729,162 @@ impl Sink for AggregateSink {
         Flow::Continue
     }
 
+    /// The scan-fold pushdown (docs/perf/ PRD 05): supported for the
+    /// elided constant-group regime over word columns — positions fold
+    /// straight through the kernels with no key batch materialized.
+    /// Partials are identity-seeded and merged at `end_scan`, so an
+    /// empty scan creates no group row (matching the batch paths).
+    fn begin_scan(&mut self, scan: &LeafScan<'_>) -> bool {
+        if self.seen.is_some() {
+            return false;
+        }
+        if self
+            .group_slots
+            .iter()
+            .any(|slot| scan.key_slots.contains(slot))
+        {
+            return false;
+        }
+        self.scan_sources.clear();
+        for find in &self.finds {
+            let FindSpec::Agg { over_slot, .. } = find else {
+                continue;
+            };
+            let source = over_slot.and_then(|slot| scan.key_slots.iter().position(|k| *k == slot));
+            if let Some(word) = source {
+                // Aggregates fold integer columns; a byte-backed column
+                // here would be a validation hole — decline, don't trust.
+                if !matches!(
+                    scan.colt.suffix_column(scan.level, word),
+                    ColumnView::Words(_)
+                ) {
+                    return false;
+                }
+            }
+            self.scan_sources.push(source);
+        }
+        // Identity-seeded partials; the group key resolves now (outer
+        // bindings are constant for this node entry).
+        self.acc_scratch.clear();
+        for find in &self.finds {
+            if let FindSpec::Agg { op, signed, .. } = find {
+                self.acc_scratch.push(match (op, signed) {
+                    (AggOp::Sum, true) => Acc::SumSigned(0),
+                    (AggOp::Sum, false) => Acc::SumUnsigned(0),
+                    (AggOp::Min, _) => Acc::Min(u64::MAX),
+                    (AggOp::Max, _) => Acc::Max(u64::MIN),
+                    (AggOp::Count, _) => Acc::Count(0),
+                });
+            }
+        }
+        self.scan_count = 0;
+        for (i, slot) in self.group_slots.iter().enumerate() {
+            self.key_scratch[i] = scan.bindings.get(*slot);
+        }
+        true
+    }
+
+    fn scan_run(&mut self, scan: &LeafScan<'_>, run: SuffixRun<'_>) {
+        self.scan_count += run.len() as u64;
+        let mut cursor = 0;
+        for find in &self.finds {
+            let FindSpec::Agg { op, .. } = find else {
+                continue;
+            };
+            let source = self.scan_sources[cursor];
+            let acc = &mut self.acc_scratch[cursor];
+            cursor += 1;
+            let Some(word) = source else {
+                continue; // outer-constant / Count: finished at end_scan
+            };
+            let ColumnView::Words(col) = scan.colt.suffix_column(scan.level, word) else {
+                unreachable!("begin_scan declined byte columns")
+            };
+            match (op, acc, run) {
+                (AggOp::Sum, Acc::SumSigned(total), SuffixRun::Identity { start, len }) => {
+                    *total += kernel::fold_sum_biased_i64(col, 1, start, len);
+                }
+                (AggOp::Sum, Acc::SumSigned(total), SuffixRun::Positions(p)) => {
+                    *total += kernel::fold_sum_biased_i64_idx(col, 1, 0, p);
+                }
+                (AggOp::Sum, Acc::SumUnsigned(total), SuffixRun::Identity { start, len }) => {
+                    *total += kernel::fold_sum_u64(col, 1, start, len);
+                }
+                (AggOp::Sum, Acc::SumUnsigned(total), SuffixRun::Positions(p)) => {
+                    *total += kernel::fold_sum_u64_idx(col, 1, 0, p);
+                }
+                (AggOp::Min, Acc::Min(best), SuffixRun::Identity { start, len }) => {
+                    *best = (*best).min(kernel::fold_min_max_u64(col, 1, start, len).0);
+                }
+                (AggOp::Min, Acc::Min(best), SuffixRun::Positions(p)) => {
+                    *best = (*best).min(kernel::fold_min_max_u64_idx(col, 1, 0, p).0);
+                }
+                (AggOp::Max, Acc::Max(best), SuffixRun::Identity { start, len }) => {
+                    *best = (*best).max(kernel::fold_min_max_u64(col, 1, start, len).1);
+                }
+                (AggOp::Max, Acc::Max(best), SuffixRun::Positions(p)) => {
+                    *best = (*best).max(kernel::fold_min_max_u64_idx(col, 1, 0, p).1);
+                }
+                _ => unreachable!("accumulators are seeded per op; Count has no source"),
+            }
+        }
+    }
+
+    fn end_scan(&mut self, scan: &LeafScan<'_>) -> u64 {
+        let count = self.scan_count;
+        if count == 0 {
+            return 0;
+        }
+        // Finish the outer-sourced and Count partials.
+        let mut cursor = 0;
+        for find in &self.finds {
+            let FindSpec::Agg { op, over_slot, .. } = find else {
+                continue;
+            };
+            let source = self.scan_sources[cursor];
+            let acc = &mut self.acc_scratch[cursor];
+            cursor += 1;
+            if source.is_some() {
+                continue;
+            }
+            match (op, acc) {
+                (AggOp::Count, Acc::Count(n)) => *n += count,
+                (AggOp::Sum, Acc::SumSigned(total)) => {
+                    let slot = over_slot.expect("validated: Sum has a variable");
+                    *total += i128::from(word_to_i64(scan.bindings.get(slot))) * i128::from(count);
+                }
+                (AggOp::Sum, Acc::SumUnsigned(total)) => {
+                    let slot = over_slot.expect("validated: Sum has a variable");
+                    *total += u128::from(scan.bindings.get(slot)) * u128::from(count);
+                }
+                (AggOp::Min, Acc::Min(best)) => {
+                    let slot = over_slot.expect("validated: Min has a variable");
+                    *best = (*best).min(scan.bindings.get(slot));
+                }
+                (AggOp::Max, Acc::Max(best)) => {
+                    let slot = over_slot.expect("validated: Max has a variable");
+                    *best = (*best).max(scan.bindings.get(slot));
+                }
+                _ => unreachable!("accumulators are seeded per op"),
+            }
+        }
+        // Merge the partials into the group's row (identity seeds make
+        // the merge exact for every op).
+        let group_idx = self.resolve_group_memoized();
+        let range = group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs;
+        for (acc, partial) in self.accs[range].iter_mut().zip(&self.acc_scratch) {
+            match (acc, partial) {
+                (Acc::SumSigned(t), Acc::SumSigned(p)) => *t += p,
+                (Acc::SumUnsigned(t), Acc::SumUnsigned(p)) => *t += p,
+                (Acc::Min(t), Acc::Min(p)) => *t = (*t).min(*p),
+                (Acc::Max(t), Acc::Max(p)) => *t = (*t).max(*p),
+                (Acc::Count(t), Acc::Count(p)) => *t += p,
+                _ => unreachable!("partials are seeded from the same finds"),
+            }
+        }
+        count
+    }
+
     fn emit_batch(&mut self, batch: &LeafBatch<'_>, stop_on_skip: bool) -> Flow {
         // Aggregate plans mark every node sink-relevant (hardening
         // PRD 05), so the executor never asks a fold to stop on skip.
@@ -590,14 +892,11 @@ impl Sink for AggregateSink {
         if batch.survivors.is_empty() {
             return Flow::Continue;
         }
-        // Group-key classification, once per batch: every group slot
-        // outer means the whole batch folds into ONE accumulator row —
-        // the trie already grouped it (PRD 02's constant-group regime).
-        let constant_group = self
-            .group_slots
-            .iter()
-            .all(|slot| matches!(batch.source_of(*slot), LeafSource::Outer));
-        match (self.seen.is_some(), constant_group) {
+        // Group-key classification, cached on the leaf shape: every
+        // group slot outer means the whole batch folds into ONE
+        // accumulator row — the trie already grouped it (PRD 02).
+        self.refresh_shape_cache(batch);
+        match (self.seen.is_some(), self.cached_constant_group) {
             // Dedup required (the plan could not prove distinctness):
             // the seen-set pass runs per row, but the group probe still
             // hoists — surviving entries gather-fold like the elided
@@ -820,6 +1119,102 @@ mod tests {
         fn emit(&mut self) {}
         fn skip(&mut self, _: usize) {
             self.skips += 1;
+        }
+    }
+
+    /// PRD 05: the projection scan with leaf residuals (the spread
+    /// shape) — positions filter through the residual, insert into the
+    /// seen-set, and match the brute-force pair set exactly.
+    #[test]
+    fn projection_scan_filters_residuals_like_the_oracle() {
+        let dir = TempDir::new("sink-projection-scan");
+        let schema = schema();
+        // Pairs within an account: Q(lo, hi) :- Posting(acct, lo),
+        // Posting(acct, hi), lo < hi.
+        let postings: Vec<(u64, u64, i64)> = (0..60)
+            .map(|i| (i, i % 5, i64::try_from(i * 7 % 23).expect("small")))
+            .collect();
+        let views = views_of(&dir, &schema, &postings, &[]);
+        let normalized = NormalizedQuery {
+            occurrences: vec![
+                occurrence(0, POSTING, &[(1, 0), (2, 1)]),
+                occurrence(1, POSTING, &[(1, 0), (2, 2)]),
+            ],
+            residuals: vec![crate::ir::normalize::PlacedComparison {
+                op: crate::ir::CmpOp::Lt,
+                lhs: VarId(1),
+                rhs: VarId(2),
+            }],
+        };
+        let plan = planned(&normalized, &schema, &[0, 1], &[1, 2]);
+        let views2 = vec![views[0].clone(), views[0].clone()];
+        let mut expected = BTreeSet::new();
+        for (_, ka, va) in &postings {
+            for (_, kb, vb) in &postings {
+                if ka == kb && va < vb {
+                    expected.insert(vec![i64_to_word(*va), i64_to_word(*vb)]);
+                }
+            }
+        }
+        for batch in [1usize, 128] {
+            let mut colts = colts_for(&plan, &views2);
+            let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
+            let mut sink =
+                ProjectionSink::new(vec![plan.slot_of(VarId(1)), plan.slot_of(VarId(2))]);
+            Executor::with_batch_size(&plan, batch).execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            );
+            let got: BTreeSet<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
+            assert_eq!(got, expected, "batch {batch}");
+        }
+    }
+
+    /// PRD 05: the pinned-leaf elision preserves D2 exactly — a fanout-1
+    /// leaf that binds nothing sink-relevant skips per parent element,
+    /// and the parent's absorption still runs, at every batch size.
+    #[test]
+    fn pinned_leaf_skips_preserve_d2() {
+        let dir = TempDir::new("sink-pinned-d2");
+        let schema = schema();
+        // One tag per posting: the tag leaf pins to Cursor::Row.
+        let postings: Vec<(u64, u64, i64)> = (0..40)
+            .map(|i| (i, i % 4, i64::try_from(i).expect("small")))
+            .collect();
+        let tags: Vec<(u64, u64)> = (0..40).map(|i| (i, 900 + i)).collect();
+        let views = views_of(&dir, &schema, &postings, &tags);
+        // Q(account) :- Posting(id=p, account=a), PostingTag(posting=p, tag=t).
+        let normalized = NormalizedQuery {
+            occurrences: vec![
+                occurrence(0, POSTING, &[(0, 0), (1, 1)]),
+                occurrence(1, TAG, &[(0, 0), (1, 2)]),
+            ],
+            residuals: vec![],
+        };
+        let plan = planned(&normalized, &schema, &[0, 1], &[1]);
+        for batch in [1usize, 128] {
+            let mut colts = colts_for(&plan, &views);
+            let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
+            let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(1))]);
+            let mut counters = SkipCounter::default();
+            Executor::with_batch_size(&plan, batch).execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut counters,
+            );
+            let mut rows: Vec<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
+            rows.sort_unstable();
+            assert_eq!(
+                rows,
+                vec![vec![0], vec![1], vec![2], vec![3]],
+                "batch {batch}"
+            );
+            assert!(counters.skips > 0, "batch {batch}: pinned leaves skip");
         }
     }
 

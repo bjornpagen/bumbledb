@@ -58,6 +58,34 @@ pub enum Cursor {
     Row(u32),
 }
 
+/// One position run under an unforced suffix node (docs/perf/ PRD 05):
+/// either the all-rows identity range (positions are the indices) or a
+/// borrowed position slice (survivor roots, chunk-chain segments).
+#[derive(Debug, Clone, Copy)]
+pub enum SuffixRun<'a> {
+    Identity { start: usize, len: usize },
+    Positions(&'a [u32]),
+}
+
+impl SuffixRun<'_> {
+    /// Positions in this run.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Identity { len, .. } => *len,
+            Self::Positions(p) => p.len(),
+        }
+    }
+
+    /// Whether the run is empty (clippy's `len` companion; the executor
+    /// counts, sinks fold — nothing branches on emptiness yet).
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// Index of a node in the pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NodeRef(u32);
@@ -446,6 +474,87 @@ impl Colt {
     /// # Panics
     ///
     /// Only on programmer-invariant violations: undersized caller buffers.
+    /// Gathers one pinned row's key words at a join level into `out`
+    /// (docs/perf/ PRD 05's pinned-leaf elision: the executor skips the
+    /// batch machinery for `Cursor::Row` leaves and reads the row
+    /// directly).
+    ///
+    /// # Panics
+    ///
+    /// Only on a programmer-invariant violation: `out` shorter than the
+    /// level's arity.
+    pub fn gather_row(&self, level: usize, position: u32, out: &mut [u64]) {
+        let level = self.selection_levels + level;
+        for (i, col) in self.schema_columns[level].iter().enumerate() {
+            out[i] = match self.view.image().column(*col) {
+                ColumnView::Words(words) => words[position as usize],
+                ColumnView::Bytes(bytes) => u64::from(bytes[position as usize]),
+            };
+        }
+    }
+
+    /// The column view backing one key word of a join level — the
+    /// scan-fold pushdown reads columns directly instead of copying key
+    /// batches (docs/perf/ PRD 05).
+    #[must_use]
+    pub fn suffix_column(&self, level: usize, word: usize) -> ColumnView<'_> {
+        self.view
+            .image()
+            .column(self.schema_columns[self.selection_levels + level][word])
+    }
+
+    /// Whether a cursor is an unforced node at a suffix — the scan-fold
+    /// pushdown's cheap pre-check (docs/perf/ PRD 05), so a fallback to
+    /// the batch path never has to unwind a half-opened scan.
+    #[must_use]
+    pub fn suffix_scannable(&self, cursor: Cursor) -> bool {
+        matches!(
+            cursor,
+            Cursor::Node(node)
+                if matches!(self.nodes[node.0 as usize], NodeState::Unforced(_))
+        )
+    }
+
+    /// Drives `f` over every position run under an **unforced** node at
+    /// the given join level (the scan-fold pushdown's position source):
+    /// the all-rows root yields one `Identity` run, survivor roots and
+    /// chunk chains yield position slices. Returns `false` — with `f`
+    /// never called — when the cursor is a pinned row or a forced node
+    /// (the caller falls back to the batch path).
+    pub fn for_each_suffix_run(&self, cursor: Cursor, mut f: impl FnMut(SuffixRun<'_>)) -> bool {
+        let Cursor::Node(node) = cursor else {
+            return false;
+        };
+        match self.nodes[node.0 as usize] {
+            NodeState::Forced { .. } => false,
+            NodeState::Unforced(Positions::Root) => {
+                if self.view.is_empty() {
+                    return true;
+                }
+                match &self.view {
+                    View::Survivors { positions, .. } => f(SuffixRun::Positions(positions)),
+                    _ => f(SuffixRun::Identity {
+                        start: 0,
+                        len: self.view.len(),
+                    }),
+                }
+                true
+            }
+            NodeState::Unforced(Positions::Chunks { first, .. }) => {
+                let mut chunk = first;
+                while chunk != u32::MAX {
+                    let c = &self.chunks[chunk as usize];
+                    if c.next != u32::MAX {
+                        crate::exec::kernel::prefetch_read(&raw const self.chunks[c.next as usize]);
+                    }
+                    f(SuffixRun::Positions(&c.positions[..usize::from(c.len)]));
+                    chunk = c.next;
+                }
+                true
+            }
+        }
+    }
+
     pub fn iter_batch(
         &mut self,
         cursor: Cursor,

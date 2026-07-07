@@ -85,3 +85,46 @@ pinned row) + resolved column slices + residual specs to a fused kernel.
 ## Out of scope
 
 Middle-node batching (09/10), sink map internals (06), finalize (08).
+
+## Result (2026-07-07, runs bench-out/2026-07-07T01-08-48Z + 01-14-06Z confirm)
+
+Landed: runtime leaf classification (single-subatom leaves dispatch on
+cursor kind — no plan-time enum needed, strictly more conservative),
+the pinned-row elision (gather + precomputed residual sources + one-row
+emit through pointer-cached sink shapes; no batch scaffolding), and the
+scan pushdown — `Sink::begin_scan/scan_run/end_scan` with positions
+flowing from `SuffixRun`s into the PRD 03 kernels for elided
+constant-group aggregates, and into direct seen-set inserts for
+projections, with executor-side residual filtering (batch-constant
+residuals decide the whole leaf; per-position specs precomputed at
+construction — a mid-PRD `collect()` per node entry would have broken
+the zero-alloc warm contract and was caught and fixed before commit).
+
+Two optimization lessons were measured INTO this PRD and are load-
+bearing code comments now: hoisted operand/column tables cost
++48 ns/row at fanout-sized runs (spread regressed 11.5 → 15.6 ms) and
+save ~10 µs at scan-sized runs (range 52.6 → 41.3 µs) — resolution is
+now run-length-adaptive (`SCAN_HOIST_THRESHOLD` = 32), with both
+directions pinned by the ledger.
+
+Gates (vs baseline; confirm-run values):
+- balance p95 **26.1 µs** (gate ≤ 450; baseline 1,110.2) ✓ — p50 1.7 µs
+  (−86%). The elided scan-fold leaf is ~free: 8 scans, no iter phase.
+- fk_walk p50 **7.5 µs** (gate ≤ 10; bimodal band 4.9–7.8 across runs) ✓.
+- range p50 **40.8 µs** (gate ≤ 30) ✗ near-miss: the scan now filters
+  2,000 survivors through the residuals and inserts them — the
+  remaining cost is seen-set inserts (PRD 06) + finalize (PRD 08).
+- stats p50 **1,839–1,905 µs** (gate ≤ 700) ✗: the dedup wall, premise-
+  corrected in PRD 02's Result — 100k semantically-required seen-set
+  inserts; PRD 06 owns it. Still −55% vs baseline.
+- spread p50 **10.4–11.7 ms** across three post-adaptive samples (gate
+  ≤ 8,000) ✗: the gate's pinned-leaf premise was wrong — spread's leaf
+  is fanout-~1.4 *chunked nodes* (transfer pairs), so it takes the scan
+  path per node entry, not the pinned elision. The scan removed the
+  iter/residual leaf machinery; what remains is n0's per-survivor
+  middle-node bookkeeping (~2.3 ms — PRD 09's cross-node batching),
+  n0's probes (~2.0 ms — PRD 07), and the seen-set inserts (PRD 06).
+- triangle 16.7 ms (−4.7%), chain 151 (−28%), skew 38 (−36%); EXPLAIN
+  emits digests byte-identical on every run; ALL-WIN held; verify green.
+  One hot sample (triangle 19.2 ms / p95 38 ms) was ruled noise by the
+  same-binary confirm run per the PRD 03 protocol.
