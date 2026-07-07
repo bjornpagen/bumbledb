@@ -520,38 +520,58 @@ impl AggregateSink {
     }
 }
 
-/// The batch gather folds (docs/perf/ PRD 02): strided reads over the
-/// leaf batch's entry-major key words, one pass per aggregate — the
-/// shapes PRD 03 replaces with kernels. All take non-empty survivor
+/// The batch gather folds, kerneled (docs/perf/ PRD 03): dense survivor
+/// runs (ascending with no gaps — the common all-survived batch) take
+/// the contiguous strided kernels with zero index loads; everything
+/// else takes the `_idx` gather kernels. All take non-empty survivor
 /// lists (the executor skips empty batches).
+fn dense_run(survivors: &[u32]) -> Option<u32> {
+    let (first, last) = (survivors[0], survivors[survivors.len() - 1]);
+    (last as usize - first as usize + 1 == survivors.len()).then_some(first)
+}
+
 fn gather_sum_signed(keys: &[u64], arity: usize, word: usize, survivors: &[u32]) -> i128 {
-    survivors
-        .iter()
-        .map(|&e| i128::from(word_to_i64(keys[e as usize * arity + word])))
-        .sum()
+    match dense_run(survivors) {
+        Some(first) => crate::exec::kernel::fold_sum_biased_i64(
+            keys,
+            arity,
+            first as usize * arity + word,
+            survivors.len(),
+        ),
+        None => crate::exec::kernel::fold_sum_biased_i64_idx(keys, arity, word, survivors),
+    }
 }
 
 fn gather_sum_unsigned(keys: &[u64], arity: usize, word: usize, survivors: &[u32]) -> u128 {
-    survivors
-        .iter()
-        .map(|&e| u128::from(keys[e as usize * arity + word]))
-        .sum()
+    match dense_run(survivors) {
+        Some(first) => crate::exec::kernel::fold_sum_u64(
+            keys,
+            arity,
+            first as usize * arity + word,
+            survivors.len(),
+        ),
+        None => crate::exec::kernel::fold_sum_u64_idx(keys, arity, word, survivors),
+    }
 }
 
 fn gather_min(keys: &[u64], arity: usize, word: usize, survivors: &[u32]) -> u64 {
-    survivors
-        .iter()
-        .map(|&e| keys[e as usize * arity + word])
-        .min()
-        .expect("non-empty batch")
+    gather_min_max(keys, arity, word, survivors).0
 }
 
 fn gather_max(keys: &[u64], arity: usize, word: usize, survivors: &[u32]) -> u64 {
-    survivors
-        .iter()
-        .map(|&e| keys[e as usize * arity + word])
-        .max()
-        .expect("non-empty batch")
+    gather_min_max(keys, arity, word, survivors).1
+}
+
+fn gather_min_max(keys: &[u64], arity: usize, word: usize, survivors: &[u32]) -> (u64, u64) {
+    match dense_run(survivors) {
+        Some(first) => crate::exec::kernel::fold_min_max_u64(
+            keys,
+            arity,
+            first as usize * arity + word,
+            survivors.len(),
+        ),
+        None => crate::exec::kernel::fold_min_max_u64_idx(keys, arity, word, survivors),
+    }
 }
 
 impl Sink for AggregateSink {

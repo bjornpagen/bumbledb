@@ -72,3 +72,35 @@ property tests per the 00 law.
 
 Group-key hashing (PRD 02 owns the group path), suffix gather into the sink
 without materialized batches (PRD 05), non-aarch64 performance.
+
+## Result (2026-07-07, runs bench-out/2026-07-06T23-59-32Z + 2026-07-07T00-02-30Z)
+
+Landed: the five fold kernels in kernel.rs — `fold_sum_biased_i64[_idx]`,
+`fold_sum_u64[_idx]`, `fold_min_max_u64[_idx]` — indexed-gather and
+contiguous-strided shapes, 4-way multi-accumulator scalar per the
+scalar-ILP doctrine, NEON compare-select (`vcgtq_u64` + `vbslq_u64`,
+4 vector accumulators) for the dense stride-1 min/max, exact i128/u128
+sum semantics. Bit-identity property tests across strides {1,2,3,5},
+boundary words, duplicate/reversed indices, lane-boundary lengths. The
+sink's gathers route through them with a dense-run detector (ascending
+gap-free survivors → contiguous kernels, zero index loads).
+
+- Throughput gate: **2.45 rows/ns** on the contiguous stride-1 biased-i64
+  sum (1M rows × 100 reps, release; ignored test
+  `fold_throughput_contiguous_sum`, run by hand) — gate ≥ 1 ✓.
+- stats p50 gate (≤ 900 µs): not applicable as written — premise
+  corrected in PRD 02's Result (stats' fold cost is dedup-bound, not
+  fold-bound). Kernel delta on the aggregate families: neutral within
+  noise (stats 2,265 → 2,274/2,346 across two runs; balance 2.6 → 2.6/2.8;
+  balance descend_n1 35.9 → 21.6 µs traced). Expected: PRD 02 already
+  collapsed these paths to sub-ns/row; the kernels' payoff is wired for
+  PRD 05's position gathers.
+- Run-variance note for the record: the first post-03 run showed +6–29%
+  on four families whose code paths are provably untouched (projection
+  sinks); a same-binary second run returned all of them to band
+  (triangle +0.3%, skew +1.0%, spread +2.8%, stats +0.4% vs post-02).
+  Single traced samples after several back-to-back suite runs can run
+  hot; regression judgments use a confirming sample from here on.
+- ALL-WIN held on both runs; verify green; asm outcome: the contiguous
+  sum compiles to 4-chain add/adc with no bounds checks (2.45 rows/ns is
+  the empirical proof; listing not archived).
