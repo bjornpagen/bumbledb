@@ -98,3 +98,9 @@ every family with `jp_probe_*` phases and a forced map > 2 MiB fires
 the endgame trace are the recorded evidence. No family regressed;
 verify green; emits identical; zero-alloc holds (the footprint read is
 two loads per pass).
+
+> **Superseded (docs/silicon2/01, 2026-07-07):** fleet exp 19 showed the
+> residency precondition fails in situ — inter-phase displacement makes
+> nominally-resident maps miss between passes, and full coverage buys
+> the whole residual back. The gate is re-tuned there: width floor
+> 16 → 4, footprint budget 2 MiB → 256 KiB.

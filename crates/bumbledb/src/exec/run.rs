@@ -355,6 +355,7 @@ impl Bindings {
     }
 
     /// Starts a fresh execution: every slot becomes stale at once.
+    #[allow(clippy::unused_self)] // the epoch bump is debug-only; release reads no state
     pub fn reset(&mut self) {
         #[cfg(debug_assertions)]
         {
@@ -433,19 +434,32 @@ enum Operand<'a> {
 /// straight-line, putting the measured crossover at 4–8.
 const SCAN_HOIST_THRESHOLD: usize = 8;
 
-/// The prefetch residency tier (docs/silicon/10): the phase-1.5 `prfm`
-/// pass runs only when the probed colt's forced footprint exceeds this —
-/// an L2-resident probe stream is already fully overlapped by the `OoO`
-/// core at batch 1, and prefetching it measured +7–12% pure loss; past
-/// L2 the pass buys up to 4×. The threshold is 2 MiB, deliberately far
-/// below the 16 MiB shared L2: bumblebench exp 06's re-reading of the
-/// docs/perf PRD-07 record ("−18% at batch 128, nothing at ~37") is
-/// that mid-size maps behave SLC-tier under REAL cache pressure — the
-/// columns, sibling tries, and seen-set share the L2 — so only maps
-/// small enough to be resident under pressure may skip the pass. The
-/// survivor-count floor stays — below ~10 a separate pass never
-/// half-amortizes (measured half-win at batch ~10).
-const PREFETCH_L2_BUDGET_BYTES: usize = 2 << 20;
+/// The prefetch gates, re-founded by fleet round two (docs/silicon2/01,
+/// exp 19): **residency is a property of phase interleaving, not
+/// structure footprint.** Between two probe passes over one node's map,
+/// the executor's other phases displace the map's lines — reuse
+/// distance dwarfs the L2 — so silicon-10's isolation law ("resident ⇒
+/// prefetch is pure loss") holds only in isolation; in situ, full
+/// phase-1.5 coverage measured 34.7–40.9 → 11.4–12.1 ns/probe at EVERY
+/// pressure tier, and a uselessly-covered resident pass costs only
+/// +0.2–2.6 ns/probe. The footprint gate therefore exempts only maps
+/// small enough to be L1-hot even in situ (guard-scale); the width
+/// floor exempts passes too small to amortize the pass overhead.
+///
+/// The budget's teeth were measured BOTH ways (docs/silicon2/01's
+/// Result): dropping it to 32 KiB covered triangle n1's 54 KB colt at
+/// 98.8% of passes and bought NOTHING — jp_probe_n1 was already at the
+/// covered floor (12.3 ns/probe over 299k probes; the campaign's "37 ns
+/// residual" was an attribution error, probes/pass ≈ 117 not 39) while
+/// the ~600k added prefetch µops cost triangle +4.8%. Sub-256 KiB maps
+/// on this corpus probe at floor without help; the gate keeps them
+/// exempt.
+const PREFETCH_L2_BUDGET_BYTES: usize = 256 << 10;
+
+/// Minimum survivors for a phase-1.5 pass (docs/silicon2/01): exp 19
+/// measured the pass at ~12 ns fixed + ~0.3 ns/probe — a 4-survivor
+/// pass amortizes it; below that it is pure overhead.
+const PREFETCH_WIDTH_FLOOR: usize = 4;
 
 /// Appends the positions of `run` that pass `eval` to `out`.
 fn push_surviving(
@@ -1229,7 +1243,7 @@ impl Executor {
                 // loss) and batch width second (tiny batches never
                 // amortize the pass).
                 if !pinned
-                    && scratch.survivors.len() >= 16
+                    && scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR
                     && colts[occ].probe_footprint_bytes() > PREFETCH_L2_BUDGET_BYTES
                 {
                     crate::obs::event(
@@ -1440,7 +1454,7 @@ impl Executor {
             let carried = tables.carried_col[node_idx][occ];
             let start_cursor = colts[occ].start();
             // Residency-gated phase 1.5 (docs/silicon/10) — see run_node.
-            if scratch.survivors.len() >= 16
+            if scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR
                 && colts[occ].probe_footprint_bytes() > PREFETCH_L2_BUDGET_BYTES
             {
                 crate::obs::event(
