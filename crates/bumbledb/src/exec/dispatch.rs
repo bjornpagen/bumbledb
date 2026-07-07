@@ -204,7 +204,7 @@ fn const_word(txn: &ReadTxn<'_>, value: &Const, params: &[Const]) -> Result<u64>
 }
 
 /// One field's column word sliced straight out of canonical fact bytes.
-fn fact_word(schema: &Schema, plan: &GuardPlan, fact: &[u8], field: FieldId) -> u64 {
+pub(crate) fn fact_word(schema: &Schema, plan: &GuardPlan, fact: &[u8], field: FieldId) -> u64 {
     let layout = schema.relation(plan.relation).layout();
     let bytes = field_bytes(fact, layout, usize::from(field.0));
     match bytes.len() {
@@ -230,6 +230,34 @@ pub fn execute_guard<S: Sink>(
     bindings: &mut Bindings,
     sink: &mut S,
 ) -> Result<()> {
+    let Some(fact) = guard_probe_fact(plan, txn, schema, params, key_scratch)? else {
+        return Ok(());
+    };
+    // The single binding, through the ordinary sink (the aggregate-find
+    // guard path; plain-variable guards take the direct lane, docs/perf/
+    // PRD 11).
+    bindings.reset();
+    for (slot, (field, _)) in plan.vars.iter().enumerate() {
+        bindings.set(slot, fact_word(schema, plan, fact, *field));
+    }
+    sink.emit(bindings);
+    Ok(())
+}
+
+/// The probe half of the guard: key from constants, one `U`/`M` get, one
+/// `F` fetch, remaining filters on the fact bytes. `None` = miss or a
+/// failed filter — an empty result, never an error.
+///
+/// # Errors
+///
+/// `Lmdb`/`Corruption` from the storage reads.
+pub(crate) fn guard_probe_fact<'t>(
+    plan: &GuardPlan,
+    txn: &'t ReadTxn<'_>,
+    schema: &Schema,
+    params: &[Const],
+    key_scratch: &mut Vec<u8>,
+) -> Result<Option<&'t [u8]>> {
     // Build the guard key in the caller's reused scratch; a dictionary
     // miss lands the sentinel id in the key, and the probe below misses.
     key_scratch.clear();
@@ -244,7 +272,7 @@ pub fn execute_guard<S: Sink>(
     };
     probe_span.set_args(u64::from(row_id.is_some()), 0);
     let Some(row_id) = row_id else {
-        return Ok(()); // miss: empty result
+        return Ok(None); // miss: empty result
     };
     let fact = read::fetch(txn, schema, plan.relation, row_id)?;
 
@@ -261,17 +289,10 @@ pub fn execute_guard<S: Sink>(
             ),
         };
         if !pass {
-            return Ok(());
+            return Ok(None);
         }
     }
-
-    // The single binding, through the ordinary sink.
-    bindings.reset();
-    for (slot, (field, _)) in plan.vars.iter().enumerate() {
-        bindings.set(slot, fact_word(schema, plan, fact, *field));
-    }
-    sink.emit(bindings);
-    Ok(())
+    Ok(Some(fact))
 }
 
 #[cfg(test)]

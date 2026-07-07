@@ -71,3 +71,30 @@ candidates:
 Scenario-suite point queries as gates (they are not in the ledger bench;
 note expected transfer: p1/p2 ratios flip < 1.0 at the next scenario run,
 recorded when a human runs it), LMDB internals, guard semantics.
+
+## Result (2026-07-07, run bench-out/2026-07-07T03-03-40Z)
+
+Landed: the guard fast lane — `guard_probe_fact` (the probe half: key
+from constants, one U/M get, one F fetch, remaining filters) split out
+of `execute_guard`, and plain-variable guard plans decode cells straight
+from the fact bytes into the buffer through the PRD 08 writers: no sink
+reset, no bindings, no finalize pass (the point flame's finalize row is
+gone). Aggregate-find guards keep the sink path (classify does not
+inspect finds — the lane is conditional, not asserted). Unit test pins
+hit (with an interned column beside the word blits), miss, and the
+typed param error.
+
+The prologue split (traced sample, 41.7 ns tick quantization):
+guard_probe 0.625 µs (the two LMDB gets), bind_params ~0.0–0.4 µs,
+finalize 0 (eliminated), execute-self ~1.29 µs — of which the dominant
+share is the `db.read` wrapper's per-read LMDB read-txn begin plus the
+snapshot check and buffer clear.
+
+Gates: point p50 **1.0 µs** (gate ≤ 0.8; baseline 1.1) ✗ and string
+**1.6 µs** (gate ≤ 1.4; baseline 1.8) ✗ — both ~0.2 µs short, and the
+residual is the per-read transaction begin, not query work: the
+renewable-reader change (`mdb_txn_reset`/`renew` semantics in
+storage/env.rs) is the named lever, deliberately not taken inside this
+PRD's api-layer scope. No other family regressed (all within bands;
+ALL-WIN held; verify green). Expected transfer to the scenario suite's
+p1/p2 ratios recorded for the next human scenario run.

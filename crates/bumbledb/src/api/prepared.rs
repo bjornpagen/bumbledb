@@ -328,6 +328,11 @@ pub struct PreparedQuery<'s> {
     /// No interned finds (docs/perf/ PRD 08): finalize takes the
     /// infallible all-words blit.
     all_words: bool,
+    /// The guard fast lane's find table (docs/perf/ PRD 11): each output
+    /// column's fact field and type, in find order. `Some` for guard
+    /// plans whose finds are all plain variables; aggregate-find guards
+    /// keep the sink path.
+    guard_finds: Option<Vec<(crate::schema::FieldId, ValueType)>>,
     /// The per-finalize intern-resolution memo (docs/architecture/30-execution.md).
     resolve_memo: ResolveMemo,
     /// Guard-key byte scratch.
@@ -449,6 +454,7 @@ pub(crate) fn prepare<'s>(
     let all_words = finds
         .iter()
         .all(|(_, ty)| !matches!(ty, ValueType::String | ValueType::Bytes));
+    let guard_finds = guard_find_table(&exec_plan, &finds);
     Ok(PreparedQuery {
         schema,
         env_instance: txn.env_instance(),
@@ -465,6 +471,7 @@ pub(crate) fn prepare<'s>(
         sink,
         row_scratch: Vec::new(),
         all_words,
+        guard_finds,
         resolve_memo: ResolveMemo::new(),
         guard_key: Vec::new(),
         _not_sync: std::marker::PhantomData,
@@ -590,9 +597,18 @@ impl PreparedQuery<'_> {
             let _s = obs::span(obs::names::BIND_PARAMS, obs::Category::Execute);
             self.bind_params(txn, params)?;
         }
-        self.sink.reset();
         match &self.plan {
             ExecPlan::GuardProbe(guard) => {
+                // The point fast lane (docs/perf/ PRD 11): one probe, one
+                // fetch, cells decoded straight into the buffer — no
+                // sink, no bindings, no finalize pass. Aggregate-find
+                // guards (rare) keep the sink path below.
+                if self.guard_finds.is_some() {
+                    let result = self.execute_guard_direct(txn, out);
+                    execute_span.set_args(out.len() as u64, 0);
+                    return result;
+                }
+                self.sink.reset();
                 execute_guard(
                     guard,
                     txn,
@@ -604,6 +620,7 @@ impl PreparedQuery<'_> {
                 )?;
             }
             ExecPlan::FreeJoin(plan) => {
+                self.sink.reset();
                 let resolved = {
                     let _s = obs::span(obs::names::RESOLVE_FILTERS, obs::Category::Execute);
                     resolve_predicates(
@@ -667,6 +684,37 @@ impl PreparedQuery<'_> {
         };
         execute_span.set_args(out.len() as u64, 0);
         result
+    }
+
+    /// The point fast lane's body (docs/perf/ PRD 11): probe + fetch +
+    /// direct cell decode, no sink machinery.
+    fn execute_guard_direct(&mut self, txn: &ReadTxn<'_>, out: &mut ResultBuffer) -> Result<()> {
+        let ExecPlan::GuardProbe(guard) = &self.plan else {
+            unreachable!("guard_finds implies a guard plan")
+        };
+        let guard_finds = self.guard_finds.as_ref().expect("checked by the caller");
+        self.resolve_memo.clear();
+        let Some(fact) = crate::exec::dispatch::guard_probe_fact(
+            guard,
+            txn,
+            self.schema,
+            &self.resolved_params,
+            &mut self.guard_key,
+        )?
+        else {
+            return Ok(());
+        };
+        out.cells.reserve(guard_finds.len());
+        for (field, ty) in guard_finds {
+            let word = crate::exec::dispatch::fact_word(self.schema, guard, fact, *field);
+            match ty {
+                ValueType::String | ValueType::Bytes => {
+                    out.push_word(txn, ty, word, &mut self.resolve_memo)?;
+                }
+                _ => out.cells.push(ResultBuffer::word_cell(ty, word)),
+            }
+        }
+        Ok(())
     }
 
     /// Convenience path: a fresh buffer per call.
@@ -1134,6 +1182,24 @@ fn run_join<C: crate::exec::run::Counters>(
     Ok(())
 }
 
+/// The guard fast lane's find table (docs/perf/ PRD 11): `Some` for
+/// guard plans whose finds are all plain variables.
+fn guard_find_table(
+    exec_plan: &ExecPlan,
+    finds: &[(FindSpec, ValueType)],
+) -> Option<Vec<(crate::schema::FieldId, ValueType)>> {
+    match exec_plan {
+        ExecPlan::GuardProbe(guard) => finds
+            .iter()
+            .map(|(spec, ty)| match spec {
+                FindSpec::Var { slot } => Some((guard.vars[*slot].0, ty.clone())),
+                FindSpec::Agg { .. } => None, // aggregate guards keep the sink path
+            })
+            .collect::<Option<Vec<_>>>(),
+        ExecPlan::FreeJoin(_) => None,
+    }
+}
+
 /// Builds the sink matching the find shape (the variant is fixed per
 /// prepared query — an enum, not `dyn`).
 fn make_sink(
@@ -1577,6 +1643,61 @@ mod tests {
             expected.into_iter().collect::<Vec<_>>(),
             "cross-atom residual"
         );
+    }
+
+    /// PRD 11 (docs/perf/): the guard fast lane — hit, miss, and a
+    /// param-type error, with an interned find exercising the resolving
+    /// column beside the word blits.
+    #[test]
+    fn guard_fast_lane_hits_misses_and_type_errors() {
+        let dir = TempDir::new("prepared-guard-lane");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        insert_postings(&env, &schema, &[(1, 7, "memo-a", 41), (2, 8, "memo-b", 42)]);
+        // Q(account, memo, amount) :- Posting(id = ?0, account, memo, amount).
+        let query = Query {
+            finds: vec![
+                FindTerm::Var(VarId(0)),
+                FindTerm::Var(VarId(1)),
+                FindTerm::Var(VarId(2)),
+            ],
+            atoms: vec![Atom {
+                relation: POSTING,
+                bindings: vec![
+                    (FieldId(0), Term::Param(crate::ir::ParamId(0))),
+                    (FieldId(1), Term::Var(VarId(0))),
+                    (FieldId(2), Term::Var(VarId(1))),
+                    (FieldId(3), Term::Var(VarId(2))),
+                ],
+            }],
+            predicates: vec![],
+        };
+        let txn = env.read_txn().expect("txn");
+        let cache = crate::image::cache::ImageCache::new();
+        let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
+        assert!(
+            prepared.guard_finds.is_some(),
+            "plain-variable guard takes the fast lane"
+        );
+        let mut out = ResultBuffer::new();
+        // Hit: every cell decoded straight from the fact.
+        prepared
+            .execute(&txn, &cache, &[crate::ir::Value::U64(2)], &mut out)
+            .expect("hit");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.get(0, 0), ResultValue::U64(8));
+        assert_eq!(out.get(0, 1), ResultValue::String("memo-b"));
+        assert_eq!(out.get(0, 2), ResultValue::I64(42));
+        // Miss: clean empty buffer.
+        prepared
+            .execute(&txn, &cache, &[crate::ir::Value::U64(999)], &mut out)
+            .expect("miss is empty, not an error");
+        assert_eq!(out.len(), 0);
+        // Param-type error: typed, before any probe.
+        let err = prepared
+            .execute(&txn, &cache, &[crate::ir::Value::Bool(true)], &mut out)
+            .expect_err("type mismatch");
+        assert!(matches!(err, Error::ParamTypeMismatch { .. }), "{err:?}");
     }
 
     /// PRD 08 (docs/perf/): a finalize-time Overflow leaves the buffer
