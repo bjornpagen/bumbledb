@@ -116,10 +116,40 @@ where
 ///
 /// The closure's error; a request for both modes at once; an
 /// alloc-window request on a build without the `obs` feature.
-pub fn measure_with<F>(proto: Protocol, modes: Modes, mut f: F) -> Result<Measurement, String>
+pub fn measure_with<F>(proto: Protocol, modes: Modes, f: F) -> Result<Measurement, String>
 where
     F: FnMut() -> Result<u64, String>,
 {
+    measure_batched(proto, modes, 1, f)
+}
+
+/// The quantum floor (docs/silicon/00-baseline-and-harness.md): the
+/// 24 MHz counter behind `Instant` quantizes at 41.67 ns, so a gated
+/// per-sample time must be at least 12 ticks — below it, the driver
+/// batches executes per sample and divides.
+pub const QUANTUM_FLOOR_NS: u64 = 500;
+
+/// [`measure_with`] timing `batch` calls per sample and dividing the
+/// elapsed time — the quantum guard's mechanism. Work counts sum across
+/// every call; batch 1 is the plain protocol.
+///
+/// # Errors
+///
+/// As [`measure_with`].
+///
+/// # Panics
+///
+/// On `batch == 0` (a programmer error).
+pub fn measure_batched<F>(
+    proto: Protocol,
+    modes: Modes,
+    batch: u32,
+    mut f: F,
+) -> Result<Measurement, String>
+where
+    F: FnMut() -> Result<u64, String>,
+{
+    assert!(batch >= 1, "a zero batch measures nothing");
     if modes.alloc_window && modes.trace {
         return Err("alloc-window and trace-capture are mutually exclusive modes".to_owned());
     }
@@ -137,9 +167,13 @@ where
     let mut samples = Vec::with_capacity(proto.samples as usize);
     let mut work = 0u64;
     for _ in 0..proto.samples {
+        let mut count = 0u64;
         let start = Instant::now();
-        let count = f()?;
-        samples.push(u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX));
+        for _ in 0..batch {
+            count += f()?;
+        }
+        let elapsed = u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        samples.push(elapsed / u64::from(batch));
         work += std::hint::black_box(count);
     }
     #[cfg(feature = "obs")]
@@ -341,6 +375,22 @@ mod tests {
         assert_eq!(calls, 8, "3 warmups + 5 samples");
         assert_eq!(m.work, 10, "work sums the samples only");
         assert!(m.trace.is_none());
+    }
+
+    #[test]
+    fn batched_measurement_divides_time_and_sums_all_work() {
+        let proto = Protocol {
+            warmups: 2,
+            samples: 4,
+        };
+        let mut calls = 0u64;
+        let m = measure_batched(proto, Modes::default(), 8, || {
+            calls += 1;
+            Ok(3)
+        })
+        .expect("measures");
+        assert_eq!(calls, 2 + 4 * 8, "warmups run once each; samples run batch times");
+        assert_eq!(m.work, 4 * 8 * 3, "work sums every batched call");
     }
 
     #[test]

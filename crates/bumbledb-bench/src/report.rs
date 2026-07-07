@@ -169,6 +169,32 @@ pub struct ExecDigest {
     pub emits: u64,
 }
 
+/// The clock-proxy bracket around one family's measurement block
+/// (docs/silicon/00-baseline-and-harness.md): effective GHz before and
+/// after, whether the block was re-measured once, and whether the final
+/// bracket still read contaminated.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GhzReport {
+    pub pre: f64,
+    pub post: f64,
+    pub retried: bool,
+    pub contaminated: bool,
+}
+
+impl GhzReport {
+    /// The rendered status word.
+    #[must_use]
+    pub fn status(&self) -> &'static str {
+        if self.contaminated {
+            "CONTAMINATED"
+        } else if self.retried {
+            "retried"
+        } else {
+            "clean"
+        }
+    }
+}
+
 /// One read family's comparison row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReadFamilyReport {
@@ -180,6 +206,7 @@ pub struct ReadFamilyReport {
     pub alloc: Option<AllocReport>,
     pub exec: Option<ExecDigest>,
     pub p99_within_budget: bool,
+    pub ghz: Option<GhzReport>,
 }
 
 /// One write/cold family's row (`theirs` absent for cold — no `SQLite`
@@ -190,6 +217,7 @@ pub struct WriteFamilyReport {
     pub ours: Stats,
     pub theirs: Option<Stats>,
     pub facts_per_sec: Option<f64>,
+    pub ghz: Option<GhzReport>,
 }
 
 /// Store-level numbers.
@@ -243,6 +271,19 @@ impl RunReport {
             .filter(|family| family.verdict != Verdict::ReportOnly)
             .all(|family| family.p99_within_budget)
     }
+
+    /// The families whose measurement block still read contaminated
+    /// after the bounded retry — dirty percentiles, named.
+    #[must_use]
+    pub fn contaminated_families(&self) -> Vec<&str> {
+        self.reads
+            .iter()
+            .map(|f| (f.name.as_str(), f.ghz))
+            .chain(self.writes.iter().map(|f| (f.name.as_str(), f.ghz)))
+            .filter(|(_, ghz)| ghz.is_some_and(|g| g.contaminated))
+            .map(|(name, _)| name)
+            .collect()
+    }
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -292,7 +333,19 @@ fn markdown_header(out: &mut String, report: &RunReport) {
     } else {
         "informational below scale L"
     };
-    let _ = writeln!(out, "p99 budget (<= 10 ms warm): {budget} ({scope}).\n");
+    let _ = writeln!(out, "p99 budget (<= 10 ms warm): {budget} ({scope}).");
+    let dirty = report.contaminated_families();
+    if dirty.is_empty() {
+        let _ = writeln!(out);
+    } else {
+        let _ = writeln!(
+            out,
+            "clock proxy: {} block(s) still contaminated after retry — treat their \
+             percentiles as dirty: {}.\n",
+            dirty.len(),
+            dirty.join(", ")
+        );
+    }
 }
 
 fn markdown_family_tables(out: &mut String, report: &RunReport) {
@@ -394,6 +447,29 @@ fn markdown_diagnostics(out: &mut String, report: &RunReport) {
         report.store.cache_images, report.store.cache_bytes
     );
 
+    let stamped: Vec<(&str, GhzReport)> = report
+        .reads
+        .iter()
+        .map(|f| (f.name.as_str(), f.ghz))
+        .chain(report.writes.iter().map(|f| (f.name.as_str(), f.ghz)))
+        .filter_map(|(name, ghz)| ghz.map(|g| (name, g)))
+        .collect();
+    if !stamped.is_empty() {
+        let _ = writeln!(out, "## Clock proxy\n");
+        let _ = writeln!(out, "| family | GHz pre | GHz post | status |");
+        let _ = writeln!(out, "|---|---|---|---|");
+        for (name, ghz) in &stamped {
+            let _ = writeln!(
+                out,
+                "| {name} | {:.2} | {:.2} | {} |",
+                ghz.pre,
+                ghz.post,
+                ghz.status(),
+            );
+        }
+        let _ = writeln!(out);
+    }
+
     let _ = writeln!(out, "## Flame summaries\n");
     if report.flames.is_empty() {
         let _ = writeln!(out, "(none captured — run with --trace)");
@@ -453,7 +529,22 @@ fn push_read_family(out: &mut String, family: &ReadFamilyReport) {
         }
         None => out.push_str("null"),
     }
+    push_ghz(out, family.ghz);
     out.push('}');
+}
+
+fn push_ghz(out: &mut String, ghz: Option<GhzReport>) {
+    out.push_str(",\"ghz\":");
+    match ghz {
+        Some(g) => {
+            let _ = write!(
+                out,
+                "{{\"pre\":{:.3},\"post\":{:.3},\"retried\":{},\"contaminated\":{}}}",
+                g.pre, g.post, g.retried, g.contaminated
+            );
+        }
+        None => out.push_str("null"),
+    }
 }
 
 fn push_write_family(out: &mut String, family: &WriteFamilyReport) {
@@ -473,6 +564,7 @@ fn push_write_family(out: &mut String, family: &WriteFamilyReport) {
         }
         None => out.push_str("null"),
     }
+    push_ghz(out, family.ghz);
     out.push('}');
 }
 
@@ -569,6 +661,111 @@ pub fn write_artifacts(report: &RunReport, out_dir: &Path) -> std::io::Result<()
     std::fs::write(out_dir.join("QUERIES.md"), families::render_queries_md())
 }
 
+/// One family's numbers pulled out of a parsed `report.json`.
+struct MergeRow {
+    p50: f64,
+    p95: f64,
+    contaminated: bool,
+}
+
+fn merge_rows(parsed: &json::Value, key: &str) -> Vec<(String, MergeRow)> {
+    let Some(families) = parsed.get(key).and_then(json::Value::as_arr) else {
+        return Vec::new();
+    };
+    families
+        .iter()
+        .filter_map(|family| {
+            let name = family.get("name")?.as_str()?.to_owned();
+            let ours = family.get("ours")?;
+            Some((
+                name,
+                MergeRow {
+                    p50: ours.get("p50")?.as_f64()?,
+                    p95: ours.get("p95")?.as_f64()?,
+                    contaminated: family
+                        .get("ghz")
+                        .and_then(|g| g.get("contaminated"))
+                        .and_then(json::Value::as_bool)
+                        .unwrap_or(false),
+                },
+            ))
+        })
+        .collect()
+}
+
+/// The cross-run merge (docs/silicon/00-baseline-and-harness.md): N
+/// parsed `report.json` documents → one markdown table per family with
+/// each run's p50 and the min-of-runs p50/p95. Blocks whose clock-proxy
+/// bracket stayed contaminated are excluded from the minima, and the
+/// exclusion count is printed.
+///
+/// # Errors
+///
+/// A run with no readable read families.
+pub fn merge_markdown(runs: &[(String, json::Value)]) -> Result<String, String> {
+    let mut out = String::new();
+    let _ = writeln!(out, "# bumbledb bench merge ({} runs)\n", runs.len());
+    let per_run: Vec<(String, Vec<(String, MergeRow)>)> = runs
+        .iter()
+        .map(|(label, parsed)| {
+            let mut rows = merge_rows(parsed, "reads");
+            rows.extend(merge_rows(parsed, "writes"));
+            if rows.is_empty() {
+                return Err(format!("{label}: no families in report.json"));
+            }
+            Ok((label.clone(), rows))
+        })
+        .collect::<Result<_, String>>()?;
+
+    // Family order follows the first run; families missing from a run
+    // render as `-`.
+    let order: Vec<String> = per_run[0].1.iter().map(|(name, _)| name.clone()).collect();
+    let mut excluded = 0usize;
+
+    let _ = write!(out, "| family |");
+    for (label, _) in &per_run {
+        let _ = write!(out, " {label} p50 (us) |");
+    }
+    let _ = writeln!(out, " min p50 (us) | min p95 (us) |");
+    let _ = write!(out, "|---|");
+    for _ in &per_run {
+        let _ = write!(out, "---|");
+    }
+    let _ = writeln!(out, "---|---|");
+
+    for name in &order {
+        let _ = write!(out, "| {name} |");
+        let mut min_p50 = f64::INFINITY;
+        let mut min_p95 = f64::INFINITY;
+        for (_, rows) in &per_run {
+            match rows.iter().find(|(n, _)| n == name) {
+                Some((_, row)) if row.contaminated => {
+                    excluded += 1;
+                    let _ = write!(out, " ~~{:.1}~~ |", row.p50 / 1000.0);
+                }
+                Some((_, row)) => {
+                    min_p50 = min_p50.min(row.p50);
+                    min_p95 = min_p95.min(row.p95);
+                    let _ = write!(out, " {:.1} |", row.p50 / 1000.0);
+                }
+                None => {
+                    let _ = write!(out, " - |");
+                }
+            }
+        }
+        if min_p50.is_finite() {
+            let _ = writeln!(out, " {:.1} | {:.1} |", min_p50 / 1000.0, min_p95 / 1000.0);
+        } else {
+            let _ = writeln!(out, " - | - |");
+        }
+    }
+    let _ = writeln!(
+        out,
+        "\n{excluded} contaminated block(s) excluded from the minima."
+    );
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,12 +817,14 @@ mod tests {
                     emits: 256,
                 }),
                 p99_within_budget: true,
+                ghz: None,
             }],
             writes: vec![WriteFamilyReport {
                 name: "commit_single".to_owned(),
                 ours: stats(100_000),
                 theirs: Some(stats(120_000)),
                 facts_per_sec: None,
+                ghz: None,
             }],
             store: StoreNumbers {
                 db_bytes: 1024,
@@ -731,6 +930,70 @@ p99 budget (<= 10 ms warm): PASS (informational below scale L).
         ] {
             assert!(text.contains(key), "missing {key} in {text}");
         }
+    }
+
+    #[test]
+    fn ghz_stamps_render_in_markdown_json_and_the_merge_excludes_dirt() {
+        let mut stamped = fixture();
+        stamped.reads[0].ghz = Some(GhzReport {
+            pre: 3.45,
+            post: 3.41,
+            retried: false,
+            contaminated: false,
+        });
+        stamped.writes[0].ghz = Some(GhzReport {
+            pre: 2.41,
+            post: 3.44,
+            retried: true,
+            contaminated: true,
+        });
+        let md = to_markdown(&stamped);
+        assert!(md.contains("## Clock proxy"), "{md}");
+        assert!(md.contains("| point | 3.45 | 3.41 | clean |"), "{md}");
+        assert!(
+            md.contains("| commit_single | 2.41 | 3.44 | CONTAMINATED |"),
+            "{md}"
+        );
+        assert!(
+            md.contains("clock proxy: 1 block(s) still contaminated after retry"),
+            "{md}"
+        );
+        let text = to_json(&stamped);
+        assert!(
+            text.contains("\"ghz\":{\"pre\":3.450,\"post\":3.410,\"retried\":false,\"contaminated\":false}"),
+            "{text}"
+        );
+
+        // The merge: two runs; the second's point block is contaminated,
+        // so the min must come from the first even though the second is
+        // numerically lower.
+        let mut second = stamped.clone();
+        second.reads[0].ours.p50 = 5_000;
+        second.reads[0].ours.p95 = 6_000;
+        second.reads[0].ghz = Some(GhzReport {
+            pre: 2.0,
+            post: 2.0,
+            retried: true,
+            contaminated: true,
+        });
+        let runs = vec![
+            ("run1".to_owned(), json::parse(&to_json(&stamped)).expect("parses")),
+            ("run2".to_owned(), json::parse(&to_json(&second)).expect("parses")),
+        ];
+        let merged = merge_markdown(&runs).expect("merges");
+        assert!(
+            merged.contains("| point | 10.0 | ~~5.0~~ | 10.0 | 30.0 |"),
+            "{merged}"
+        );
+        assert!(
+            merged.contains("excluded from the minima"),
+            "{merged}"
+        );
+        // commit_single is contaminated in BOTH runs: no clean minima.
+        assert!(
+            merged.contains("| commit_single | ~~100.0~~ | ~~100.0~~ | - | - |"),
+            "{merged}"
+        );
     }
 
     #[test]

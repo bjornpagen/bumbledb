@@ -13,7 +13,7 @@ use crate::gen::{self, GenConfig};
 use crate::harness::{self, Modes, Protocol, Rotation};
 use crate::schema::schema;
 use crate::translate::translate;
-use crate::{corpus, families, report, sqlite_run, trace_out, verify, writebench};
+use crate::{clockproxy, corpus, families, json, report, sqlite_run, trace_out, verify, writebench};
 
 /// The digest-keyed corpus locations.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,6 +268,18 @@ struct BenchRun<'a> {
     flames: Vec<report::FlameEmbed>,
 }
 
+/// The stamp merge for a family whose ours/theirs blocks were guarded
+/// as one bracket pair each: the reported bracket is the WORST of the
+/// two (contamination of either engine's block dirties the ratio).
+fn merge_stamps(ours: clockproxy::GhzStamp, theirs: clockproxy::GhzStamp) -> report::GhzReport {
+    report::GhzReport {
+        pre: ours.pre.min(theirs.pre),
+        post: ours.post.min(theirs.post),
+        retried: ours.retried || theirs.retried,
+        contaminated: ours.contaminated() || theirs.contaminated(),
+    }
+}
+
 impl BenchRun<'_> {
     /// One read family on both engines.
     fn read_family(
@@ -292,14 +304,33 @@ impl BenchRun<'_> {
                 .map_err(|e| format!("execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         };
-        let ours = harness::measure_with(
-            self.proto,
-            Modes {
-                alloc_window: self.alloc,
-                trace: false,
-            },
-            || run_ours(&mut prepared),
-        )?;
+        let modes = Modes {
+            alloc_window: self.alloc,
+            trace: false,
+        };
+        let proto = self.proto;
+        let (ours, ghz_ours) = clockproxy::guarded(|| {
+            harness::measure_with(proto, modes, || run_ours(&mut prepared))
+        })?;
+        // The quantum guard: a gated p50 below 12 timer ticks would be
+        // quantization, not measurement — batch executes and divide.
+        let batch = if ours.stats.p50 < harness::QUANTUM_FLOOR_NS {
+            16
+        } else {
+            1
+        };
+        let (ours, ghz_ours) = if batch > 1 {
+            eprintln!(
+                "bench: {} p50 under the {} ns quantum floor — re-measuring at batch {batch}",
+                family.name,
+                harness::QUANTUM_FLOOR_NS
+            );
+            clockproxy::guarded(|| {
+                harness::measure_batched(proto, modes, batch, || run_ours(&mut prepared))
+            })?
+        } else {
+            (ours, ghz_ours)
+        };
         if self.trace {
             let (_, events) = harness::traced_sample(&mut || run_ours(&mut prepared))?;
             let (engine, harness_events) = trace_out::split_harness(events);
@@ -328,8 +359,10 @@ impl BenchRun<'_> {
         let translated = translate(&query, schema()).map_err(|e| format!("translate: {e}"))?;
         let mut sqlite_family = sqlite_run::PreparedFamily::new(self.conn, &translated, types)?;
         let mut rotation = Rotation::new(sets);
-        let theirs = harness::measure(self.proto, || {
-            sqlite_run::sample(&mut sqlite_family, rotation.next_set())
+        let (theirs, ghz_theirs) = clockproxy::guarded(|| {
+            harness::measure_batched(proto, Modes::default(), batch, || {
+                sqlite_run::sample(&mut sqlite_family, rotation.next_set())
+            })
         })?;
 
         #[allow(clippy::cast_precision_loss)]
@@ -347,6 +380,7 @@ impl BenchRun<'_> {
             ratio_p50,
             alloc,
             exec: Some(exec_digest(&stats)),
+            ghz: Some(merge_stamps(ghz_ours, ghz_theirs)),
         })
     }
 }
@@ -377,35 +411,50 @@ fn write_families(
             corpus::load_sqlite(&scratch.join("oracle.sqlite"), cfg).map_err(|e| format!("{e}"))?;
         if selected("commit_single") {
             eprintln!("bench: commit_single");
-            let ours = writebench::commit_single_bumbledb(&db, cfg)?;
-            let theirs = sqlite_run::commit_single(&conn, cfg)?;
+            let ((ours, theirs), ghz) = clockproxy::guarded(|| {
+                Ok((
+                    writebench::commit_single_bumbledb(&db, cfg)?,
+                    sqlite_run::commit_single(&conn, cfg)?,
+                ))
+            })?;
             out.push(report::WriteFamilyReport {
                 name: "commit_single".to_owned(),
                 ours: ours.stats,
                 theirs: Some(theirs.stats),
                 facts_per_sec: None,
+                ghz: Some(write_ghz(ghz)),
             });
         }
         if selected("commit_batch") {
             eprintln!("bench: commit_batch");
-            let ours = writebench::commit_batch_bumbledb(&db, cfg)?;
-            let theirs = sqlite_run::commit_batch(&conn, cfg)?;
+            let ((ours, theirs), ghz) = clockproxy::guarded(|| {
+                Ok((
+                    writebench::commit_batch_bumbledb(&db, cfg)?,
+                    sqlite_run::commit_batch(&conn, cfg)?,
+                ))
+            })?;
             out.push(report::WriteFamilyReport {
                 name: "commit_batch".to_owned(),
                 ours: ours.stats,
                 theirs: Some(theirs.stats),
                 facts_per_sec: None,
+                ghz: Some(write_ghz(ghz)),
             });
         }
         if cold_selected {
             eprintln!("bench: cold_fk_walk");
-            let ours = writebench::cold_fk_walk(&db, cfg)?;
-            let theirs = sqlite_run::cold_fk_walk(&conn, cfg)?;
+            let ((ours, theirs), ghz) = clockproxy::guarded(|| {
+                Ok((
+                    writebench::cold_fk_walk(&db, cfg)?,
+                    sqlite_run::cold_fk_walk(&conn, cfg)?,
+                ))
+            })?;
             out.push(report::WriteFamilyReport {
                 name: "cold_fk_walk".to_owned(),
                 ours: ours.stats,
                 theirs: Some(theirs.stats),
                 facts_per_sec: None,
+                ghz: Some(write_ghz(ghz)),
             });
         }
     }
@@ -416,16 +465,55 @@ fn write_families(
             .find(|f| f.name == "bulk")
             .expect("registered")
             .protocol;
-        let ours = writebench::bulk_bumbledb(cfg, scratch)?;
-        let theirs = sqlite_run::bulk(cfg, scratch)?;
+        let ((ours, theirs), ghz) = clockproxy::guarded(|| {
+            Ok((
+                writebench::bulk_bumbledb(cfg, scratch)?,
+                sqlite_run::bulk(cfg, scratch)?,
+            ))
+        })?;
         out.push(report::WriteFamilyReport {
             name: "bulk".to_owned(),
             facts_per_sec: Some(facts_per_sec(&ours, proto.samples)),
             ours: ours.stats,
             theirs: Some(theirs.stats),
+            ghz: Some(write_ghz(ghz)),
         });
     }
     Ok(out)
+}
+
+/// A write family's block is guarded as one bracket over both engines.
+fn write_ghz(stamp: clockproxy::GhzStamp) -> report::GhzReport {
+    report::GhzReport {
+        pre: stamp.pre,
+        post: stamp.post,
+        retried: stamp.retried,
+        contaminated: stamp.contaminated(),
+    }
+}
+
+/// `merge`: N run directories' `report.json` → the min-of-runs table on
+/// stdout (docs/silicon/00-baseline-and-harness.md).
+///
+/// # Errors
+///
+/// Unreadable or unparseable report files, named.
+pub fn cmd_merge(dirs: &[PathBuf]) -> Result<i32, String> {
+    let runs: Vec<(String, json::Value)> = dirs
+        .iter()
+        .map(|dir| {
+            let path = dir.join("report.json");
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| format!("read {}: {e}", path.display()))?;
+            let parsed = json::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+            let label = dir
+                .file_name()
+                .map_or_else(|| dir.display().to_string(), |n| n.to_string_lossy().into_owned());
+            Ok((label, parsed))
+        })
+        .collect::<Result<_, String>>()?;
+    print!("{}", report::merge_markdown(&runs)?);
+    Ok(0)
 }
 
 fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, bool), String> {
@@ -489,6 +577,11 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     let conn =
         sqlite_run::open_for_bench(&paths.oracle).map_err(|e| format!("open oracle: {e}"))?;
     sqlite_run::FairnessCheck::run(&conn)?;
+
+    // The DVFS ramp eater (docs/silicon/00): ≥ 200 ms of warm work before
+    // the first family, so opening samples measure a settled clock.
+    eprintln!("bench: warming clocks (200 ms spin)");
+    clockproxy::warm_up(std::time::Duration::from_millis(200));
 
     let proto = Protocol {
         warmups: Protocol::WARM.warmups,

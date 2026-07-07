@@ -58,6 +58,8 @@ pub enum Cmd {
     Trace { corpus: CorpusArgs, family: String },
     /// The scenario suites: non-ledger worlds, oracle-gated then timed.
     Scenarios(ScenarioArgs),
+    /// Merge N run directories' `report.json` into a min-of-runs table.
+    Merge { dirs: Vec<PathBuf> },
 }
 
 /// `scenarios`' knobs. Scenarios own their sizes (no scale flag): the
@@ -102,6 +104,7 @@ pub fn help() -> String {
          \x20 bench    the timing run (requires a fresh verify stamp)\n\
          \x20 trace    one traced warm+cold pair for one family\n\
          \x20 scenarios non-ledger worlds (joins/graph/olap/points), gated then timed\n\
+         \x20 merge    min-of-runs table from N run dirs' report.json\n\
          \x20 queries  print the versioned query list (QUERIES.md)\n\
          \x20 help     print this text\n\
          \n\
@@ -123,6 +126,9 @@ pub fn help() -> String {
          \n\
          TRACE:\n\
          \x20 --family NAME   the family to trace (required)\n\
+         \n\
+         MERGE:\n\
+         \x20 merge DIR [DIR ...]   run directories holding report.json\n\
          \n\
          SCENARIOS:\n\
          \x20 --seed N        corpus seed              (default 1)\n\
@@ -321,6 +327,16 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         "bench" => parse_bench(&mut tokens),
         "trace" => parse_trace(&mut tokens),
         "scenarios" => parse_scenarios(&mut tokens),
+        "merge" => {
+            let mut dirs = Vec::new();
+            while let Some(token) = tokens.next() {
+                dirs.push(PathBuf::from(token));
+            }
+            if dirs.is_empty() {
+                return Err("`merge` needs at least one run directory".to_owned());
+            }
+            Ok(Cmd::Merge { dirs })
+        }
         other => Err(format!("unknown command `{other}`")),
     }
 }
