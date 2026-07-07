@@ -692,7 +692,7 @@ mod tests {
     /// the suite's plan: every skip-free family is a ≤2-node plan whose
     /// leaf already runs fused (cross-node batching has no parents to
     /// batch), while the deep-node families — triangle, chain, skew,
-    /// fk_walk — all carry D2-crossing nodes and gate PRD 10.
+    /// `fk_walk` — all carry D2-crossing nodes and gate PRD 10.
     #[test]
     fn skip_free_classification_is_pinned() {
         let dir = std::env::temp_dir().join("bumbledb-bench-families-skipfree");
