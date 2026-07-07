@@ -1,11 +1,16 @@
 //! COLT — the Column-Oriented Lazy Trie (docs/architecture/30-execution.md), per paper §4.2 with the
 //! chunked-child-list deviation (`docs/architecture/30-execution.md`).
 //!
-//! No `unsafe` anywhere: nodes, chunks, map slots, and key words live in
-//! index-addressed pools (`NodeRef`-style u32 indices, never pointers) —
-//! the representational fix for v5's `UnsafeCell` aliasing UB (post-mortem
-//! §36). Nothing is ever built eagerly: a node is offsets into the base
-//! columns until a `get` (or a non-suffix `iter`) forces exactly one level.
+//! Aliasing safety is representational: nodes, chunks, map slots, and key
+//! words live in index-addressed pools (`NodeRef`-style u32 indices, never
+//! pointers) — the fix for v5's `UnsafeCell` aliasing UB (post-mortem
+//! §36). Since docs/perf/ PRD 04 the *bounds* checks on iteration
+//! gathers are debug-asserted once per batch segment and elided in
+//! release (`get_unchecked` per the 00-product unsafe policy: this
+//! module is on the allowlist, and every unchecked read sits behind a
+//! segment-level invariant stated at the site). Nothing is ever built
+//! eagerly: a node is offsets into the base columns until a `get` (or a
+//! non-suffix `iter`) forces exactly one level.
 //!
 //! Iteration is batched copy-out ([`Colt::iter_batch`]): entries are
 //! `(key words, child cursor)` pairs — **the child comes with the key**;
@@ -511,6 +516,12 @@ impl Colt {
     /// index; a chunked node's token packs `(chunk + 2, offset)` into the
     /// u64 (0 = start, high half 1 = exhausted) so a drain is O(k), never
     /// the O(k²/64) of re-walking the chain per position.
+    ///
+    /// Gathers are column-hoisted and unchecked (docs/perf/ PRD 04): each
+    /// key column resolves its slice once per segment, positions are
+    /// debug-asserted in-bounds once, and the interior runs bare loads —
+    /// ~1 load per (position, column) instead of an enum match and two
+    /// bounds checks each.
     fn iter_positions(
         &mut self,
         node: NodeRef,
@@ -524,22 +535,24 @@ impl Colt {
         // outstanding iteration — impossible within a generation; a stale
         // token from before a reset lands here too.
         assert!(token.0 & DENSE_TOKEN_TAG == 0, "{STALE_TOKEN}");
-        let arity = self.arity_at(level);
-        let mut yielded = 0;
         match self.nodes[node.0 as usize] {
             NodeState::Forced { .. } => unreachable!("caller checked unforced"),
             NodeState::Unforced(Positions::Root) => {
-                let mut index = usize::try_from(token.0).expect("64-bit usize");
-                while yielded < max && index < self.view.len() {
-                    let position = self.view.position_at(index);
-                    for (i, col) in self.schema_columns[level].iter().enumerate() {
-                        keys_out[yielded * arity + i] = self.word_at(*col, position);
-                    }
-                    children_out[yielded] = Cursor::Row(position);
-                    yielded += 1;
-                    index += 1;
+                let index = usize::try_from(token.0).expect("64-bit usize");
+                let take = max.min(self.view.len().saturating_sub(index));
+                if take == 0 {
+                    return (0, token);
                 }
-                (yielded, BatchToken(index as u64))
+                match &self.view {
+                    View::Survivors { positions, .. } => {
+                        let segment = &positions[index..index + take];
+                        self.gather_segment(level, segment, keys_out, children_out, 0);
+                    }
+                    // The all-rows view: positions ARE the indices — the
+                    // fully contiguous gather, no position loads at all.
+                    _ => self.gather_identity(level, index, take, keys_out, children_out),
+                }
+                (take, BatchToken((index + take) as u64))
             }
             NodeState::Unforced(Positions::Chunks { first, .. }) => {
                 const EXHAUSTED: u64 = 1 << 32;
@@ -551,12 +564,14 @@ impl Colt {
                         usize::try_from(packed & 0xFFFF_FFFF).expect("64-bit usize"),
                     ),
                 };
+                let mut yielded = 0;
                 loop {
                     if yielded >= max {
                         break;
                     }
-                    let c = self.chunks[chunk as usize];
-                    if offset >= usize::from(c.len) {
+                    let c = &self.chunks[chunk as usize];
+                    let len = usize::from(c.len);
+                    if offset >= len {
                         if c.next == u32::MAX {
                             return (yielded, BatchToken(EXHAUSTED));
                         }
@@ -564,13 +579,16 @@ impl Colt {
                         offset = 0;
                         continue;
                     }
-                    let position = c.positions[offset];
-                    for (i, col) in self.schema_columns[level].iter().enumerate() {
-                        keys_out[yielded * arity + i] = self.word_at(*col, position);
+                    // One chunk ahead: the chain walk is this loop's only
+                    // dependent-load sequence.
+                    if c.next != u32::MAX {
+                        crate::exec::kernel::prefetch_read(&raw const self.chunks[c.next as usize]);
                     }
-                    children_out[yielded] = Cursor::Row(position);
-                    yielded += 1;
-                    offset += 1;
+                    let take = (len - offset).min(max - yielded);
+                    let segment = &c.positions[offset..offset + take];
+                    self.gather_segment(level, segment, keys_out, children_out, yielded);
+                    yielded += take;
+                    offset += take;
                 }
                 let packed = (u64::from(chunk) + 2) << 32 | offset as u64;
                 // Bit 63 (the dense tag) is unreachable below 2³⁰ chunks
@@ -579,6 +597,80 @@ impl Colt {
                 debug_assert_eq!(packed & DENSE_TOKEN_TAG, 0);
                 (yielded, BatchToken(packed))
             }
+        }
+    }
+
+    /// Column-hoisted gather of one position segment into
+    /// `keys_out[out_base..]` + pinned-row children (PRD 04's interior).
+    #[allow(unsafe_code)]
+    fn gather_segment(
+        &self,
+        level: usize,
+        segment: &[u32],
+        keys_out: &mut [u64],
+        children_out: &mut [Cursor],
+        out_base: usize,
+    ) {
+        let arity = self.arity_at(level);
+        for (i, col) in self.schema_columns[level].iter().enumerate() {
+            match self.view.image().column(*col) {
+                ColumnView::Words(words) => {
+                    debug_assert!(segment.iter().all(|&p| (p as usize) < words.len()));
+                    for (k, &position) in segment.iter().enumerate() {
+                        // SAFETY: positions index the image the view was
+                        // built over — debug-asserted per segment above.
+                        let word = unsafe { *words.get_unchecked(position as usize) };
+                        keys_out[(out_base + k) * arity + i] = word;
+                    }
+                }
+                ColumnView::Bytes(bytes) => {
+                    debug_assert!(segment.iter().all(|&p| (p as usize) < bytes.len()));
+                    for (k, &position) in segment.iter().enumerate() {
+                        // SAFETY: as above.
+                        let byte = unsafe { *bytes.get_unchecked(position as usize) };
+                        keys_out[(out_base + k) * arity + i] = u64::from(byte);
+                    }
+                }
+            }
+        }
+        for (k, &position) in segment.iter().enumerate() {
+            children_out[out_base + k] = Cursor::Row(position);
+        }
+    }
+
+    /// The all-rows-view gather: positions are `start..start + take`, so
+    /// word columns copy contiguously — no position loads at all.
+    fn gather_identity(
+        &self,
+        level: usize,
+        start: usize,
+        take: usize,
+        keys_out: &mut [u64],
+        children_out: &mut [Cursor],
+    ) {
+        let arity = self.arity_at(level);
+        for (i, col) in self.schema_columns[level].iter().enumerate() {
+            match self.view.image().column(*col) {
+                ColumnView::Words(words) => {
+                    let src = &words[start..start + take];
+                    if arity == 1 {
+                        keys_out[..take].copy_from_slice(src);
+                    } else {
+                        for (k, &word) in src.iter().enumerate() {
+                            keys_out[k * arity + i] = word;
+                        }
+                    }
+                }
+                ColumnView::Bytes(bytes) => {
+                    let src = &bytes[start..start + take];
+                    for (k, &byte) in src.iter().enumerate() {
+                        keys_out[k * arity + i] = u64::from(byte);
+                    }
+                }
+            }
+        }
+        for (k, position) in (start..start + take).enumerate() {
+            children_out[k] = Cursor::Row(u32::try_from(position).expect("positions fit u32"));
         }
     }
 
@@ -606,22 +698,32 @@ impl Colt {
             token.0 == 0 || token.0 & DENSE_TOKEN_TAG != 0,
             "{STALE_TOKEN}"
         );
-        let mut dense_idx = usize::try_from(token.0 & !DENSE_TOKEN_TAG).expect("64-bit usize");
-        let mut yielded = 0;
-        while yielded < max && dense_idx < usize::try_from(m.len).expect("64-bit usize") {
-            let slot_idx =
-                usize::try_from(self.dense[m.dense_start + dense_idx]).expect("64-bit usize");
+        let start = usize::try_from(token.0 & !DENSE_TOKEN_TAG).expect("64-bit usize");
+        let len = usize::try_from(m.len).expect("64-bit usize");
+        let take = max.min(len.saturating_sub(start));
+        // Hoisted slices (docs/perf/ PRD 04): the dense walk touches the
+        // occupied list, the key slab, and the slot array — resolved once,
+        // with the key line prefetched a few entries ahead (insertion
+        // order scatters slots across the map).
+        let dense = &self.dense[m.dense_start..m.dense_start + len];
+        for k in 0..take {
+            let dense_idx = start + k;
+            if dense_idx + 8 < len {
+                let ahead = usize::try_from(dense[dense_idx + 8]).expect("64-bit usize");
+                crate::exec::kernel::prefetch_read(
+                    &raw const self.keys[m.keys_start + ahead * arity],
+                );
+            }
+            let slot_idx = usize::try_from(dense[dense_idx]).expect("64-bit usize");
             let key = &self.keys[m.keys_start + slot_idx * arity..];
-            keys_out[yielded * arity..yielded * arity + arity].copy_from_slice(&key[..arity]);
-            children_out[yielded] = match self.slots[m.slots_start + slot_idx] {
+            keys_out[k * arity..k * arity + arity].copy_from_slice(&key[..arity]);
+            children_out[k] = match self.slots[m.slots_start + slot_idx] {
                 Slot::Empty => unreachable!("dense entries are occupied"),
                 Slot::Single(position) => Cursor::Row(position),
                 Slot::Node(child) => Cursor::Node(child),
             };
-            yielded += 1;
-            dense_idx += 1;
         }
-        (yielded, BatchToken(dense_idx as u64 | DENSE_TOKEN_TAG))
+        (take, BatchToken((start + take) as u64 | DENSE_TOKEN_TAG))
     }
 
     /// Linear probe: returns (found, slot index within the map).
@@ -936,6 +1038,135 @@ mod tests {
             token = next;
         }
         out
+    }
+
+    /// PRD 04 (docs/perf/): the column-hoisted unchecked gathers are
+    /// bit-identical to a first-principles per-position reference, across
+    /// word and byte columns, the identity (all-rows) root, chunked
+    /// children, and resume-token splits at every batch size.
+    #[test]
+    #[allow(clippy::too_many_lines)] // one fixture, five batch sizes, two node shapes
+    fn hoisted_gathers_match_the_per_position_reference() {
+        let dir = TempDir::new("colt-hoisted-gather");
+        // R(k u64, v u64, b bool): a byte-backed column beside the words.
+        let schema = SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "R".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "k".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "v".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "b".into(),
+                        value_type: ValueType::Bool,
+                        generation: Generation::None,
+                    },
+                ],
+                constraints: vec![],
+            }],
+        }
+        .validate()
+        .expect("valid fixture");
+
+        // Skewed keys force multi-chunk children (k=0 holds >64 rows).
+        let mut rows: Vec<(u64, u64, bool)> = (0..200u64)
+            .map(|i| (if i % 3 == 0 { 0 } else { i % 7 }, i * 31 % 191, i % 2 == 0))
+            .collect();
+        rows.sort_unstable();
+        rows.dedup();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let txn0 = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        for (k, v, b) in &rows {
+            let mut bytes = Vec::new();
+            encode_fact(
+                &[ValueRef::U64(*k), ValueRef::U64(*v), ValueRef::Bool(*b)],
+                schema.relation(R).layout(),
+                &mut bytes,
+            );
+            delta.insert(&txn0, R, &bytes).expect("insert");
+        }
+        drop(txn0);
+        commit(delta, &env).expect("commit");
+        let txn = env.read_txn().expect("txn");
+        let image = crate::image::build(&txn, &schema, R).expect("build");
+        // The reference reads the image columns per position — the exact
+        // access the hoisted gather replaces; no assumption about the
+        // image's position order.
+        let k_col: Vec<u64> = image.column_words(0).to_vec();
+        let v_col: Vec<u64> = image.column_words(1).to_vec();
+        let b_col: Vec<u64> = image
+            .column_bytes(2)
+            .iter()
+            .map(|&b| u64::from(b))
+            .collect();
+        let n_rows = k_col.len();
+        assert_eq!(n_rows, rows.len());
+
+        let drain_at = |colt: &mut Colt, cursor: Cursor, level: usize, size: usize| {
+            let arity = colt.arity(level);
+            let mut keys = vec![0u64; size * arity.max(1)];
+            let mut children = vec![Cursor::Row(0); size];
+            let mut token = BatchToken::default();
+            let mut out = Vec::new();
+            loop {
+                let (n, next) =
+                    colt.iter_batch(cursor, level, token, &mut keys, &mut children, size);
+                if n == 0 {
+                    break;
+                }
+                for i in 0..n {
+                    out.push((keys[i * arity..(i + 1) * arity].to_vec(), children[i]));
+                }
+                token = next;
+            }
+            out
+        };
+
+        for &size in &[1usize, 3, 8, 64, 128] {
+            // Identity root suffix over (k, b): word + byte columns.
+            let mut colt = Colt::new(apply(&image, &[], &[], Vec::new()), &[], vec![vec![0, 2]]);
+            let got = drain_at(&mut colt, Colt::root(), 0, size);
+            let expected: Vec<(Vec<u64>, Cursor)> = (0..n_rows)
+                .map(|pos| {
+                    (
+                        vec![k_col[pos], b_col[pos]],
+                        Cursor::Row(u32::try_from(pos).expect("small")),
+                    )
+                })
+                .collect();
+            assert_eq!(got, expected, "identity root, batch {size}");
+
+            // Chunked child suffix over (v, b) under each key.
+            let mut colt = Colt::new(
+                apply(&image, &[], &[], Vec::new()),
+                &[],
+                vec![vec![0], vec![1, 2]],
+            );
+            for key in 0..7u64 {
+                let Some(child) = colt.get(Colt::root(), 0, &[key]) else {
+                    continue;
+                };
+                let got = drain_at(&mut colt, child, 1, size);
+                let expected: Vec<(Vec<u64>, Cursor)> = (0..n_rows)
+                    .filter(|&pos| k_col[pos] == key)
+                    .map(|pos| {
+                        (
+                            vec![v_col[pos], b_col[pos]],
+                            Cursor::Row(u32::try_from(pos).expect("small")),
+                        )
+                    })
+                    .collect();
+                assert_eq!(got, expected, "key {key} suffix, batch {size}");
+            }
+        }
     }
 
     /// Dense iteration (docs/architecture/30-execution.md): draining a forced map costs

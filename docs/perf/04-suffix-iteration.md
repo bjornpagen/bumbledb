@@ -74,3 +74,38 @@ All in `exec/colt.rs` (added to the 00 unsafe allowlist), suffix paths
 Batch-of-1 call overhead at pinned-row leaves (spread `jp_iter_n1`'s
 16 ns/call — that is 05/09/10 structure, not gather cost), map probe
 layout (07).
+
+## Result (2026-07-07, run bench-out/2026-07-07T00-16-51Z)
+
+Landed: column-hoisted gathers (`gather_segment` — each key column
+resolves its `ColumnView` once per segment, `get_unchecked` interiors
+behind per-segment debug bound sweeps), the all-rows identity fast path
+(`gather_identity`: positions ARE the indices; arity-1 word columns are
+one `copy_from_slice`), chunk-chain prefetch one chunk ahead
+(`kernel::prefetch_read`, prfm pldl1keep), and the hoisted dense-map walk
+with the key line prefetched 8 entries ahead. The differential test pins
+the gathers bit-identical to per-position image-column reads across
+word/byte columns, identity and chunked nodes, and token splits at batch
+sizes {1, 3, 8, 64, 128} — and building it corrected a wrong assumption
+in the test's first draft (image positions do NOT follow F-key order;
+the reference now reads the image, not a sort).
+
+All four gates pass (vs baseline / gate):
+- stats `jp_iter_n1` 653.7 → **191.4 µs** (gate ≤ 330) — ~1.9 ns/position.
+- balance `jp_iter_n1` 271.8 → **54.7 µs** (gate ≤ 150) — ~1.1 ns/position.
+- spread `jp_iter_n0` 336.9 → **130.8 µs** (gate ≤ 250).
+- range p50 59.1 → **42.6 µs** (gate ≤ 45); its `jp_iter_n0` is 2.9 µs —
+  the identity-copy arm at work.
+
+Spillover (vs post-03 confirm run): fk_walk p50 −55% (4.9 µs), stats
+−17% (1,882.5 µs — 2.2× from baseline), balance −39% (1.7 µs), spread
+−8.3%, triangle −4.0%, chain −7.1%. skew +18.5% and point +10% sit
+inside their documented bimodal/quantization bands (skew band 34–60 µs
+across runs; point 1.0–1.2 µs). ALL-WIN held; verify green.
+
+Asm outcome: not disassembled; the empirical rates stand in — identity
+arity-1 runs as memcpy (2.9 µs for 2,000-row batches over the range
+family), strided gathers at ~1–2 ns/position (stats/balance iter rows
+above), consistent with bounds checks elided and the OoO window covering
+the position loads. Acceptable per the gate's "and why" clause: the
+rates are at the load-limit envelope the PRD targeted.
