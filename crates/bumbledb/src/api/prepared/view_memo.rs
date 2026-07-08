@@ -5,7 +5,12 @@ impl ViewMemo {
     /// hit is free, a parked hit swaps in, and a miss parks the active
     /// binding (into an empty slot first, else the LRU victim) and
     /// reports `false` so the caller rebuilds in place.
-    pub(super) fn bind(&mut self, occ: usize, generation: u64, filters: &[FilterPredicate]) -> bool {
+    pub(super) fn bind(
+        &mut self,
+        occ: usize,
+        generation: u64,
+        filters: &[FilterPredicate],
+    ) -> bool {
         // Stale reaping first: generations only advance, so a parked
         // binding below this one is provably unhittable — drop it, its
         // pools, and its image Arc. Fires only when the generation moved

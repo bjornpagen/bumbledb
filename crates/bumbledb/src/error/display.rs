@@ -95,81 +95,42 @@ impl fmt::Display for CorruptionError {
 
 impl fmt::Display for SchemaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Short bindings: r = relation, c = constraint, fd = field.
+        // Short bindings: r = relation, fd = field.
         match self {
             Self::DuplicateRelationName { name } => write!(f, "duplicate relation name `{name}`"),
             Self::DuplicateFieldName { relation: r, name } => {
                 write!(f, "relation {}: duplicate field name `{name}`", r.0)
             }
-            Self::DuplicateConstraintName { relation: r, name } => {
-                write!(f, "relation {}: duplicate constraint name `{name}`", r.0)
-            }
-            Self::EnumWithoutVariants { relation: r, field: fd } => {
+            Self::EnumWithoutVariants {
+                relation: r,
+                field: fd,
+            } => {
                 write!(f, "relation {}, field {}: enum with no variants", r.0, fd.0)
             }
-            Self::EnumTooManyVariants { relation: r, field: fd, count } => write!(
+            Self::EnumTooManyVariants {
+                relation: r,
+                field: fd,
+                count,
+            } => write!(
                 f,
                 "relation {}, field {}: {count} enum variants exceed the u8 ordinal",
                 r.0, fd.0
             ),
-            Self::DuplicateEnumVariant { relation: r, field: fd, variant } => write!(
+            Self::DuplicateEnumVariant {
+                relation: r,
+                field: fd,
+                variant,
+            } => write!(
                 f,
                 "relation {}, field {}: duplicate enum variant `{variant}`",
                 r.0, fd.0
             ),
-            Self::SerialOnNonU64 { relation: r, field: fd } => {
+            Self::SerialOnNonU64 {
+                relation: r,
+                field: fd,
+            } => {
                 write!(f, "relation {}, field {}: serial requires u64", r.0, fd.0)
             }
-            Self::UnknownConstraintField { relation: r, constraint: c, field: fd } => write!(
-                f,
-                "relation {}, constraint {}: unknown field {}",
-                r.0, c.0, fd.0
-            ),
-            Self::UniqueWithoutFields { relation: r, constraint: c } => write!(
-                f,
-                "relation {}, constraint {}: unique over no fields",
-                r.0, c.0
-            ),
-            Self::ConstraintDuplicateField { relation: r, constraint: c, field: fd } => write!(
-                f,
-                "relation {}, constraint {}: field {} listed twice",
-                r.0, c.0, fd.0
-            ),
-            Self::DuplicateConstraintFields { relation: r, constraint: c } => write!(
-                f,
-                "relation {}, constraint {}: another unique constraint covers the same fields",
-                r.0, c.0
-            ),
-            Self::GuardKeyTooWide { relation: r, constraint: c, width } => write!(
-                f,
-                "relation {}, constraint {}: {width}-byte guard key exceeds the LMDB ceiling",
-                r.0, c.0
-            ),
-            Self::UnknownFkTargetRelation { relation: r, constraint: c, target } => write!(
-                f,
-                "relation {}, constraint {}: unknown fk target relation {}",
-                r.0, c.0, target.0
-            ),
-            Self::UnknownFkTargetConstraint { relation: r, constraint: c, target } => write!(
-                f,
-                "relation {}, constraint {}: unknown fk target constraint {}",
-                r.0, c.0, target.0
-            ),
-            Self::FkTargetNotUnique { relation: r, constraint: c, target } => write!(
-                f,
-                "relation {}, constraint {}: fk target constraint {} is not unique",
-                r.0, c.0, target.0
-            ),
-            Self::FkArityMismatch { relation: r, constraint: c } => write!(
-                f,
-                "relation {}, constraint {}: fk arity differs from its target",
-                r.0, c.0
-            ),
-            Self::FkFieldTypeMismatch { relation: r, constraint: c, position } => write!(
-                f,
-                "relation {}, constraint {}: fk field type differs from its target at position {position}",
-                r.0, c.0
-            ),
         }
     }
 }

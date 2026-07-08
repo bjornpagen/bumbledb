@@ -278,8 +278,7 @@ fn guard_and_free_join_paths_agree_by_construction() {
     };
     let mut fj = binary2fj(&normalized, &order);
     factor(&mut fj);
-    let plan =
-        validate(&fj, &normalized, &schema, vec![0], &BTreeSet::new()).expect("valid plan");
+    let plan = validate(&fj, &normalized, &schema, vec![0], &BTreeSet::new()).expect("valid plan");
     let txn = env.read_txn().expect("txn");
     let image = crate::image::build(&txn, &schema, ACCOUNT).expect("build");
     let view = apply(&image, &normalized.occurrences[0].filters, &[], Vec::new());

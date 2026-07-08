@@ -1,4 +1,4 @@
-use super::{Colt, Cursor, NodeState, SuffixRun, Positions, View};
+use super::{Colt, Cursor, NodeState, Positions, SuffixRun, View};
 use crate::image::ColumnView;
 
 impl Colt {

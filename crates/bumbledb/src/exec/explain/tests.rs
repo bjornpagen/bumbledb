@@ -10,8 +10,8 @@ use crate::ir::{CmpOp, VarId};
 use crate::plan::fj::{binary2fj, factor, validate, ValidatedPlan};
 use crate::plan::planner::JoinOrder;
 use crate::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
+    ValueType,
 };
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
@@ -219,8 +219,8 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
             },
         ],
     };
-    let plan = validate(&plan, &normalized, &schema, vec![0; 3], &BTreeSet::new())
-        .expect("valid plan");
+    let plan =
+        validate(&plan, &normalized, &schema, vec![0; 3], &BTreeSet::new()).expect("valid plan");
     let mut colts = colts_for(&plan, &views);
     // Pre-force the tiny side so its Exact(2) beats Estimate(500).
     let s_root = Colt::root();

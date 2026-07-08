@@ -103,10 +103,9 @@ impl Executor {
                 );
                 for (k, &e) in scratch.survivors.iter().enumerate() {
                     let parent = scratch.parents[e as usize] as usize;
-                    let cursor = carried
-                        .map_or(start_cursor, |col| {
-                            scratch.pending_cursors[parent * carried_w + col]
-                        });
+                    let cursor = carried.map_or(start_cursor, |col| {
+                        scratch.pending_cursors[parent * carried_w + col]
+                    });
                     colts[occ].prefetch_bucket(cursor, scratch.hashes[k]);
                 }
             }
@@ -129,8 +128,9 @@ impl Executor {
                 for k in 0..n {
                     let element = usize::try_from(survivors[k]).expect("batch fits usize");
                     let parent = parents[element] as usize;
-                    let cursor = carried
-                        .map_or(start_cursor, |col| pending_cursors[parent * carried_w + col]);
+                    let cursor = carried.map_or(start_cursor, |col| {
+                        pending_cursors[parent * carried_w + col]
+                    });
                     let hit = colt.get_prehashed(
                         cursor,
                         s_level,

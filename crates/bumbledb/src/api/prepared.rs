@@ -205,9 +205,9 @@ struct ViewMemo {
 /// The two sink shapes behind one monomorphized dispatch (an enum, not
 /// `dyn` — the variant is fixed per prepared query).
 #[allow(clippy::large_enum_variant)] // Projection stays unboxed: it is
-// the hot variant (per-item emit paths reach through it), one prepared
-// query holds exactly one sink, and the pipeline scratch rows
-// (docs/silicon/04) that tripped the lint are the working set itself.
+                                     // the hot variant (per-item emit paths reach through it), one prepared
+                                     // query holds exactly one sink, and the pipeline scratch rows
+                                     // (docs/silicon/04) that tripped the lint are the working set itself.
 enum EitherSink {
     Projection(ProjectionSink),
     /// Boxed: the batch-fold scratch (PRD 02) grew the sink past the

@@ -15,8 +15,8 @@ fn aggregate_sink_vars_mark_every_node_relevant() {
     // Projection over x only: at least one node binds nothing
     // projected — D2 has something to skip.
     let projected: BTreeSet<VarId> = [X].into_iter().collect();
-    let narrow = validate(&plan, &normalized, &schema(3, 3), vec![0; 3], &projected)
-        .expect("valid plan");
+    let narrow =
+        validate(&plan, &normalized, &schema(3, 3), vec![0; 3], &projected).expect("valid plan");
     assert!(
         narrow.nodes().iter().any(|n| !n.sink_relevant),
         "projections keep skippable nodes"
@@ -243,8 +243,7 @@ fn duplicate_occurrence_within_a_node_is_rejected() {
     };
     let mut normalized = clover();
     normalized.occurrences.truncate(1);
-    let err =
-        validate(&plan, &normalized, &schema(3, 3), vec![0], &BTreeSet::new()).unwrap_err();
+    let err = validate(&plan, &normalized, &schema(3, 3), vec![0], &BTreeSet::new()).unwrap_err();
     assert_eq!(
         err,
         PlanError::DuplicateOccurrenceInNode {

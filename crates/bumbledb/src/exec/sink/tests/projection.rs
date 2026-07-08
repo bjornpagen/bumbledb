@@ -37,8 +37,7 @@ fn projection_scan_filters_residuals_like_the_oracle() {
     for batch in [1usize, 128] {
         let mut colts = colts_for(&plan, &views2);
         let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
-        let mut sink =
-            ProjectionSink::new(vec![plan.slot_of(VarId(1)), plan.slot_of(VarId(2))]);
+        let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(1)), plan.slot_of(VarId(2))]);
         Executor::with_batch_size(&plan, batch).execute(
             &plan,
             &mut colts,

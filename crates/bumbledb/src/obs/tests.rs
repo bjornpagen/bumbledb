@@ -75,7 +75,10 @@ fn stamp_costs_match_the_measured_model() {
     #[allow(clippy::cast_precision_loss)]
     let ss_ns = fastclock::ticks_to_ns(ss_ticks) as f64 / n as f64;
 
-    assert!(raw_ns <= 0.6, "raw cntvct read: {raw_ns:.3} ns (model 0.30)");
+    assert!(
+        raw_ns <= 0.6,
+        "raw cntvct read: {raw_ns:.3} ns (model 0.30)"
+    );
     assert!(ss_ns <= 7.0, "CNTVCTSS read: {ss_ns:.3} ns (model 4.6)");
     // The ordering that justifies the policy: ss costs more than raw,
     // and both are far under the old ~2 ns budget assumption.

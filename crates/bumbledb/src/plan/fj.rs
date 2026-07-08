@@ -25,10 +25,10 @@ mod validate;
 mod occurrence;
 
 pub use binary2fj::binary2fj;
-pub use factor::factor;
-pub use validate::validate;
 pub(crate) use check_selections::check_selections;
+pub use factor::factor;
 pub(crate) use split_filters::split_filters;
+pub use validate::validate;
 
 /// A subatom: one occurrence with a subset of its variables. The plan
 /// partitions every occurrence's variables across its subatoms.

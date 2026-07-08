@@ -1,6 +1,6 @@
 use super::hash::{hash_core, hash_words};
 use super::probe::tag;
-use super::{LOAD_DEN, WordMap};
+use super::{WordMap, LOAD_DEN};
 
 impl<V: Copy> WordMap<V> {
     /// Gets the value for `key`, inserting `make()` when absent. Returns
@@ -10,7 +10,7 @@ impl<V: Copy> WordMap<V> {
     ///
     /// Only on a programmer-invariant violation: `key.len() != arity`.
     #[inline(always)] // the whole chain inlines into the sink row loops so
-    // LLVM can hoist batch-constant prefix hashes out of them (exp 15)
+                      // LLVM can hoist batch-constant prefix hashes out of them (exp 15)
     pub fn get_or_insert_with(&mut self, key: &[u64], make: impl FnOnce() -> V) -> (&mut V, bool) {
         assert_eq!(key.len(), self.arity);
         // The const-arity dispatch (docs/silicon2/03, exp 15): runtime
@@ -44,7 +44,11 @@ impl<V: Copy> WordMap<V> {
     /// The monomorphic entry: hash and probe with the key width fixed at
     /// K, so the hash unrolls and fuses with the gather (exp 15).
     #[inline(always)]
-    fn entry_core<const K: usize>(&mut self, key: &[u64], make: impl FnOnce() -> V) -> (&mut V, bool) {
+    fn entry_core<const K: usize>(
+        &mut self,
+        key: &[u64],
+        make: impl FnOnce() -> V,
+    ) -> (&mut V, bool) {
         let hash = hash_core::<K>(key);
         self.entry_hashed_core::<K>(key, hash, make)
     }

@@ -1,4 +1,4 @@
-use super::{Colt, Map, hash_words, zero_byte_mask, ctrl_tag};
+use super::{ctrl_tag, hash_words, zero_byte_mask, Colt, Map};
 
 impl Colt {
     /// Rehash-doubles a map mid-force: fresh slot/key/dense ranges at
@@ -31,9 +31,8 @@ impl Colt {
             let mut b = usize::try_from(hash).expect("64-bit usize") & nbm;
             let idx = loop {
                 let group = ctrl_start + b * 8;
-                let cw = u64::from_le_bytes(
-                    self.ctrl[group..group + 8].try_into().expect("ctrl group"),
-                );
+                let cw =
+                    u64::from_le_bytes(self.ctrl[group..group + 8].try_into().expect("ctrl group"));
                 let empties = zero_byte_mask(cw);
                 if empties != 0 {
                     break b * 8 + ((empties.trailing_zeros() as usize) >> 3);

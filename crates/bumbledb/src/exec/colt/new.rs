@@ -1,4 +1,4 @@
-use super::{Colt, View, Cursor, NodeRef, NodeState, Positions};
+use super::{Colt, Cursor, NodeRef, NodeState, Positions, View};
 
 impl Colt {
     /// Builds the root over a view: O(1) — nothing decodes until a force.

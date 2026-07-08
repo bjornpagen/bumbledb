@@ -2,7 +2,7 @@ use std::mem::MaybeUninit;
 
 use super::hash::{hash_core, hash_words};
 use super::probe::tag;
-use super::{WINDOW, WordMap};
+use super::{WordMap, WINDOW};
 
 impl<V: Copy> WordMap<V> {
     pub(super) fn grow(&mut self) {

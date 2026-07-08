@@ -1,4 +1,4 @@
-use super::{Colt, Cursor, hash_words, NodeRef};
+use super::{hash_words, Colt, Cursor, NodeRef};
 
 impl Colt {
     /// Probes the selection levels with this execution's resolved words,

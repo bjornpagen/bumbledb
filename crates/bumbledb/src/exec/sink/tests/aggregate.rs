@@ -44,8 +44,7 @@ fn constant_group_batches_fold_once_per_run() {
         ],
     };
     let sink_vars: BTreeSet<VarId> = [VarId(0), VarId(1), VarId(2)].into();
-    let plan =
-        validate(&plan, &normalized, &schema, vec![0; 2], &sink_vars).expect("valid plan");
+    let plan = validate(&plan, &normalized, &schema, vec![0; 2], &sink_vars).expect("valid plan");
     let finds = |plan: &ValidatedPlan| {
         vec![
             FindSpec::Var {
@@ -154,8 +153,7 @@ fn dedup_constant_group_collapses_duplicates_before_folding() {
         ],
     };
     let sink_vars: BTreeSet<VarId> = [VarId(0), VarId(1)].into();
-    let plan =
-        validate(&plan, &normalized, &schema, vec![0; 2], &sink_vars).expect("valid plan");
+    let plan = validate(&plan, &normalized, &schema, vec![0; 2], &sink_vars).expect("valid plan");
     let finds = |plan: &ValidatedPlan| {
         vec![
             FindSpec::Var {
@@ -236,8 +234,7 @@ fn constant_over_slot_folds_value_times_count() {
         ],
     };
     let sink_vars: BTreeSet<VarId> = [VarId(0), VarId(1), VarId(2)].into();
-    let plan =
-        validate(&plan, &normalized, &schema, vec![0; 2], &sink_vars).expect("valid plan");
+    let plan = validate(&plan, &normalized, &schema, vec![0; 2], &sink_vars).expect("valid plan");
     let finds = |plan: &ValidatedPlan| {
         vec![
             FindSpec::Var {

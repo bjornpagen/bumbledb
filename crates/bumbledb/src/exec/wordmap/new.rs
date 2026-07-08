@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use super::{HINT_CAP, LOAD_DEN, WINDOW, WordMap};
+use super::{WordMap, HINT_CAP, LOAD_DEN, WINDOW};
 
 impl<V: Copy> WordMap<V> {
     /// An empty map for keys of `arity` words (zero arity is legal: every

@@ -1,8 +1,8 @@
 //! The scan-pushdown leaf arm and its residual position filter (docs/perf/ PRD 05).
 
 use super::{
-    Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, LeafScan, Operand, Sink,
-    Source, ValidatedPlan, MAX_LEAF_RESIDUALS,
+    Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, LeafScan, Operand, Sink, Source,
+    ValidatedPlan, MAX_LEAF_RESIDUALS,
 };
 
 impl Executor {
@@ -77,11 +77,7 @@ impl Executor {
                     // memcpy, +48 ns/row at fanout runs) vs ~3.4 ns as
                     // straight-line stores. `n_residuals` is the length
                     // prefix; slots past it stay at the placeholder.
-                    let placeholder = (
-                        crate::ir::CmpOp::Eq,
-                        Operand::Const(0),
-                        Operand::Const(0),
-                    );
+                    let placeholder = (crate::ir::CmpOp::Eq, Operand::Const(0), Operand::Const(0));
                     let mut resolved = [placeholder; MAX_LEAF_RESIDUALS];
                     for (i, (op, lhs, rhs)) in self.leaf_scan_residuals.iter().enumerate() {
                         let side = |src: &Source| match *src {

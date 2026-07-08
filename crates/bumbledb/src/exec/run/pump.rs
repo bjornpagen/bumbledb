@@ -86,8 +86,17 @@ impl Executor {
             if let Some((open_sub, open_arity, _, _)) = group {
                 if open_sub != cover_sub && fill > 0 {
                     self.probe_pass(
-                        tables, plan, node_idx, open_sub, open_arity, fill, &mut scratch,
-                        colts, bindings, sink, counters,
+                        tables,
+                        plan,
+                        node_idx,
+                        open_sub,
+                        open_arity,
+                        fill,
+                        &mut scratch,
+                        colts,
+                        bindings,
+                        sink,
+                        counters,
                     );
                     fill = 0;
                 }
@@ -119,8 +128,17 @@ impl Executor {
                 token = next;
                 if fill == self.batch {
                     self.probe_pass(
-                        tables, plan, node_idx, cover_sub, cur_arity, fill, &mut scratch,
-                        colts, bindings, sink, counters,
+                        tables,
+                        plan,
+                        node_idx,
+                        cover_sub,
+                        cur_arity,
+                        fill,
+                        &mut scratch,
+                        colts,
+                        bindings,
+                        sink,
+                        counters,
                     );
                     fill = 0;
                     if yielded == want {
@@ -135,8 +153,17 @@ impl Executor {
         if fill > 0 {
             if let Some((open_sub, open_arity, _, _)) = group {
                 self.probe_pass(
-                    tables, plan, node_idx, open_sub, open_arity, fill, &mut scratch, colts,
-                    bindings, sink, counters,
+                    tables,
+                    plan,
+                    node_idx,
+                    open_sub,
+                    open_arity,
+                    fill,
+                    &mut scratch,
+                    colts,
+                    bindings,
+                    sink,
+                    counters,
                 );
             }
         }

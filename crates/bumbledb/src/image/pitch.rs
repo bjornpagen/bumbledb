@@ -30,8 +30,8 @@ impl PitchPadder {
             // clean); the poison is a small NONZERO offset from one
             // (stagger 8/32 mild, 64/128 severe). Cure by rounding the
             // pitch UP to the next exact multiple.
-            let in_band = (residue > 0 && residue <= PAD_TOLERANCE)
-                || residue >= SET_STRIDE - PAD_TOLERANCE;
+            let in_band =
+                (residue > 0 && residue <= PAD_TOLERANCE) || residue >= SET_STRIDE - PAD_TOLERANCE;
             if pitch >= PAD_MIN_PITCH && in_band {
                 // Aligned starts make the residue a multiple of LINE,
                 // so the delta divides evenly by either element size.

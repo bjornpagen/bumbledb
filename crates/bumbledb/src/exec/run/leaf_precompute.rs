@@ -3,7 +3,10 @@
 use super::{LeafPrecompute, PlacedComparison, Source, ValidatedPlan};
 
 impl LeafPrecompute {
-    pub(super) fn of(plan: &ValidatedPlan, residual_slots: &[Vec<(PlacedComparison, usize, usize)>]) -> Self {
+    pub(super) fn of(
+        plan: &ValidatedPlan,
+        residual_slots: &[Vec<(PlacedComparison, usize, usize)>],
+    ) -> Self {
         let last = plan.nodes().len() - 1;
         let single = plan.nodes()[last].subatoms.len() == 1;
         if !single {

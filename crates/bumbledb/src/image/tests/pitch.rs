@@ -1,9 +1,7 @@
 use super::R;
 use crate::encoding::{encode_fact, ValueRef};
 use crate::image::{build, ColumnView, LINE, PAD_MIN_PITCH, PAD_TOLERANCE, SET_STRIDE};
-use crate::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
-};
+use crate::schema::{FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType};
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;

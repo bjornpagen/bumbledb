@@ -1,6 +1,6 @@
-use super::{Colt, Cursor, unpack_child, Slot, Map, ctrl_tag, eq_byte_mask, zero_byte_mask};
 #[cfg(test)]
 use super::hash_words;
+use super::{ctrl_tag, eq_byte_mask, unpack_child, zero_byte_mask, Colt, Cursor, Map, Slot};
 
 impl Colt {
     /// Probes for `key` at `cursor`'s level, forcing the node if needed.
@@ -110,9 +110,8 @@ impl Colt {
         let mut b = usize::try_from(hash).expect("64-bit usize") & nbm;
         loop {
             let group = m.ctrl_start + b * 8;
-            let cw = u64::from_le_bytes(
-                self.ctrl[group..group + 8].try_into().expect("ctrl group"),
-            );
+            let cw =
+                u64::from_le_bytes(self.ctrl[group..group + 8].try_into().expect("ctrl group"));
             let mut matches = eq_byte_mask(cw, wanted);
             while matches != 0 {
                 let slot = (matches.trailing_zeros() as usize) >> 3;
@@ -145,9 +144,8 @@ impl Colt {
         let mut b = usize::try_from(hash).expect("64-bit usize") & nbm;
         loop {
             let group = m.ctrl_start + b * 8;
-            let cw = u64::from_le_bytes(
-                self.ctrl[group..group + 8].try_into().expect("ctrl group"),
-            );
+            let cw =
+                u64::from_le_bytes(self.ctrl[group..group + 8].try_into().expect("ctrl group"));
             let mut matches = eq_byte_mask(cw, wanted);
             while matches != 0 {
                 let slot = (matches.trailing_zeros() as usize) >> 3;

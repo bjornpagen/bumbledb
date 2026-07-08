@@ -33,11 +33,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ir::{ParamId, Query, VarId};
 use crate::schema::ValueType;
 
-#[allow(clippy::module_inception)]
-mod validate;
 mod context;
 mod param_types;
 mod sink_vars;
+#[allow(clippy::module_inception)]
+mod validate;
 
 pub use validate::validate;
 

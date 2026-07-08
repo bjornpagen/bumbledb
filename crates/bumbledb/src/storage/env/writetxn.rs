@@ -1,6 +1,6 @@
+use crate::error::Result;
 #[cfg(test)]
 use crate::error::{CorruptionError, Error};
-use crate::error::Result;
 
 use super::read_meta::read_u64;
 use super::{WriteTxn, META_DICT_NEXT_ID, META_TX_ID};

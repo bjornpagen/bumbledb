@@ -7,7 +7,6 @@ impl AggregateSink {
     /// pointer-keyed on `key_slots`, so pinned batch-of-one leaves pay
     /// nothing after the first batch (PRD 05).
     pub(super) fn refresh_shape_cache(&mut self, batch: &LeafBatch<'_>) {
-
         self.cached_outer_slots.clear();
         for slot in 0..self.binding_scratch.len() {
             if matches!(batch.source_of(slot), LeafSource::Outer) {

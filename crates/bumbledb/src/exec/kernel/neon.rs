@@ -1,6 +1,6 @@
 use std::arch::aarch64::{
-    vceqq_u64, vceqq_u8, vcgeq_u64, vcleq_u64, vdupq_n_u64, vdupq_n_u8, vgetq_lane_u64,
-    vld1q_u64, vld1q_u8, vst1q_u8,
+    vceqq_u64, vceqq_u8, vcgeq_u64, vcleq_u64, vdupq_n_u64, vdupq_n_u8, vgetq_lane_u64, vld1q_u64,
+    vld1q_u8, vst1q_u8,
 };
 
 pub(super) fn filter_eq_u64(col: &[u64], value: u64, out: &mut Vec<u32>) {

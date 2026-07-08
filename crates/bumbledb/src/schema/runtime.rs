@@ -1,15 +1,15 @@
 //! Runtime resolution for the `schema!` macro
-//! (docs/architecture/60-api.md): the macro emits name-based declaration
+//! (docs/architecture/70-api.md): the macro emits name-based declaration
 //! data plus calls; every piece of real logic lives here. The generated
 //! `schema()` resolves the declaration into id-based descriptors and runs
-//! the validated constructor — the macro output is *exactly* sugar. (The intern/resolve helpers the generated `Fact`
-//! impls call live in `api::db::plumbing`; both are re-exported through
-//! `crate::__private`.)
+//! the validated constructor — the macro output is *exactly* sugar. (The
+//! intern/resolve helpers the generated `Fact` impls call live in
+//! `api::db::plumbing`; both are re-exported through `crate::__private`.)
 
 use crate::error::SchemaError;
 use crate::schema::{
-    ConstraintDescriptor, ConstraintId, FieldDescriptor, FieldId, Generation, RelationDescriptor,
-    RelationId, Schema, SchemaDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, IntervalElement, LiteralValue, RelationDescriptor,
+    RelationId, Schema, SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 
 /// A field's declared type, name-based (macro-facing).
@@ -22,6 +22,8 @@ pub enum FieldTy {
     Bytes,
     /// The ordered variant-name list — the enum's structural identity.
     Enum(&'static [&'static str]),
+    /// `interval<u64>` / `interval<i64>`.
+    Interval(IntervalElement),
 }
 
 /// One declared field, name-based.
@@ -30,24 +32,53 @@ pub struct FieldDecl {
     pub name: &'static str,
     pub ty: FieldTy,
     pub serial: bool,
-    /// A single-field declared unique (ignored by the macro for serial
-    /// fields — the auto-unique already covers them).
-    pub unique: bool,
-    /// `(target relation, target constraint name)` — a serial field's
-    /// auto-unique shares its field's name, so `Rel.field` and
-    /// `Rel.constraint` are one namespace.
-    pub fk: Option<(&'static str, &'static str)>,
 }
 
-/// One declared relation, name-based.
+/// One declared relation, name-based. Everything relational is a statement
+/// (`docs/architecture/30-dependencies.md`); a field carries only its type
+/// and generation.
 #[derive(Debug, Clone, Copy)]
 pub struct RelationDecl {
     pub name: &'static str,
     pub fields: &'static [FieldDecl],
-    /// Compound uniques (auto-named by joining field names with `_`).
-    pub uniques: &'static [&'static [&'static str]],
-    /// Compound FKs: `(fields, target relation, target constraint name)`.
-    pub fks: &'static [(&'static [&'static str], &'static str, &'static str)],
+}
+
+/// A selection literal, borrowed for `static` declaration tables. Enum
+/// ordinals arrive pre-resolved: the macro sees the variant list in the
+/// same invocation (PRD 05 grammar, `docs/architecture/70-api.md`).
+#[derive(Debug, Clone, Copy)]
+pub enum LiteralDecl {
+    Bool(bool),
+    U64(u64),
+    I64(i64),
+    Enum(u8),
+    IntervalU64(u64, u64),
+    IntervalI64(i64, i64),
+    Str(&'static str),
+    Bytes(&'static [u8]),
+}
+
+/// One side of a declared containment, name-based.
+#[derive(Debug, Clone, Copy)]
+pub struct SideDecl {
+    pub relation: &'static str,
+    pub projection: &'static [&'static str],
+    pub selection: &'static [(&'static str, LiteralDecl)],
+}
+
+/// One declared statement, name-based. `==` never reaches here: the macro
+/// lowers it to two adjacent `Containment` declarations with the sides
+/// swapped (`docs/architecture/30-dependencies.md`).
+#[derive(Debug, Clone, Copy)]
+pub enum StatementDecl {
+    Functionality {
+        relation: &'static str,
+        projection: &'static [&'static str],
+    },
+    Containment {
+        source: SideDecl,
+        target: SideDecl,
+    },
 }
 
 fn value_type(ty: FieldTy) -> ValueType {
@@ -60,6 +91,20 @@ fn value_type(ty: FieldTy) -> ValueType {
         FieldTy::Enum(variants) => ValueType::Enum {
             variants: variants.iter().map(|v| Box::from(*v)).collect(),
         },
+        FieldTy::Interval(element) => ValueType::Interval { element },
+    }
+}
+
+fn literal_value(literal: LiteralDecl) -> LiteralValue {
+    match literal {
+        LiteralDecl::Bool(v) => LiteralValue::Bool(v),
+        LiteralDecl::U64(v) => LiteralValue::U64(v),
+        LiteralDecl::I64(v) => LiteralValue::I64(v),
+        LiteralDecl::Enum(ordinal) => LiteralValue::Enum(ordinal),
+        LiteralDecl::IntervalU64(start, end) => LiteralValue::IntervalU64(start, end),
+        LiteralDecl::IntervalI64(start, end) => LiteralValue::IntervalI64(start, end),
+        LiteralDecl::Str(s) => LiteralValue::String(s.as_bytes().into()),
+        LiteralDecl::Bytes(b) => LiteralValue::Bytes(b.into()),
     }
 }
 
@@ -80,84 +125,47 @@ fn field_id(decl: &RelationDecl, name: &str) -> FieldId {
     FieldId(u16::try_from(index).expect("field count fits u16"))
 }
 
-/// Constraint ids follow the schema's numbering rule: auto-uniques (serial fields in
-/// declaration order) first, then declared constraints in order. The
-/// declared order here is: per-field uniques, per-field fks, compound
-/// uniques, compound fks.
-fn constraint_id(decl: &RelationDecl, name: &str) -> ConstraintId {
-    let mut names: Vec<String> = decl
-        .fields
-        .iter()
-        .filter(|f| f.serial)
-        .map(|f| f.name.to_owned())
-        .collect();
-    names.extend(
-        decl.fields
+/// Resolves one side's names to ids.
+fn side(declarations: &[RelationDecl], decl: &SideDecl) -> Side {
+    let relation = relation_id(declarations, decl.relation);
+    let relation_decl = &declarations[relation.0 as usize];
+    Side {
+        relation,
+        projection: decl
+            .projection
             .iter()
-            .filter(|f| f.unique && !f.serial)
-            .map(|f| f.name.to_owned()),
-    );
-    names.extend(
-        decl.fields
+            .map(|f| field_id(relation_decl, f))
+            .collect(),
+        selection: decl
+            .selection
             .iter()
-            .filter(|f| f.fk.is_some())
-            .map(|f| format!("{}_fk", f.name)),
-    );
-    names.extend(decl.uniques.iter().map(|fields| fields.join("_")));
-    names.extend(
-        decl.fks
-            .iter()
-            .map(|(fields, _, _)| format!("{}_fk", fields.join("_"))),
-    );
-    let index = names
-        .iter()
-        .position(|n| n == name)
-        .unwrap_or_else(|| panic!("schema!: unknown constraint `{}.{name}`", decl.name));
-    ConstraintId(u16::try_from(index).expect("constraint count fits u16"))
+            .map(|(f, literal)| (field_id(relation_decl, f), literal_value(*literal)))
+            .collect(),
+    }
 }
 
-/// One relation's declared constraints, ids resolved, in
-/// [`constraint_id`]'s declared order.
-fn declared_constraints(
-    declarations: &[RelationDecl],
-    decl: &RelationDecl,
-) -> Vec<ConstraintDescriptor> {
-    let target_decl = |target_relation: &str| -> &RelationDecl {
-        &declarations
-            [usize::try_from(relation_id(declarations, target_relation).0).expect("64-bit usize")]
-    };
-    let mut constraints: Vec<ConstraintDescriptor> = Vec::new();
-    for f in decl.fields.iter().filter(|f| f.unique && !f.serial) {
-        constraints.push(ConstraintDescriptor::Unique {
-            name: f.name.into(),
-            fields: Box::new([field_id(decl, f.name)]),
-        });
-    }
-    for f in decl.fields {
-        if let Some((target_relation, target)) = f.fk {
-            constraints.push(ConstraintDescriptor::ForeignKey {
-                name: format!("{}_fk", f.name).into(),
-                fields: Box::new([field_id(decl, f.name)]),
-                target_relation: relation_id(declarations, target_relation),
-                target_constraint: constraint_id(target_decl(target_relation), target),
-            });
+/// Resolves one declared statement's names to ids.
+fn statement(declarations: &[RelationDecl], decl: &StatementDecl) -> StatementDescriptor {
+    match decl {
+        StatementDecl::Functionality {
+            relation,
+            projection,
+        } => {
+            let id = relation_id(declarations, relation);
+            let relation_decl = &declarations[id.0 as usize];
+            StatementDescriptor::Functionality {
+                relation: id,
+                projection: projection
+                    .iter()
+                    .map(|f| field_id(relation_decl, f))
+                    .collect(),
+            }
         }
+        StatementDecl::Containment { source, target } => StatementDescriptor::Containment {
+            source: side(declarations, source),
+            target: side(declarations, target),
+        },
     }
-    for unique_fields in decl.uniques {
-        constraints.push(ConstraintDescriptor::Unique {
-            name: unique_fields.join("_").into(),
-            fields: unique_fields.iter().map(|f| field_id(decl, f)).collect(),
-        });
-    }
-    for (fk_fields, target_relation, target) in decl.fks {
-        constraints.push(ConstraintDescriptor::ForeignKey {
-            name: format!("{}_fk", fk_fields.join("_")).into(),
-            fields: fk_fields.iter().map(|f| field_id(decl, f)).collect(),
-            target_relation: relation_id(declarations, target_relation),
-            target_constraint: constraint_id(target_decl(target_relation), target),
-        });
-    }
-    constraints
 }
 
 /// Resolves the name-based declaration to ids and runs the validated
@@ -169,10 +177,13 @@ fn declared_constraints(
 ///
 /// # Panics
 ///
-/// On unresolvable *names* (unknown relation/field/constraint names in the
+/// On unresolvable *names* (unknown relation/field names in the
 /// declaration) — those are programmer errors in the `schema!` source,
 /// reported with the offending name.
-pub fn build_schema(declarations: &[RelationDecl]) -> std::result::Result<Schema, SchemaError> {
+pub fn build_schema(
+    declarations: &[RelationDecl],
+    statements: &[StatementDecl],
+) -> std::result::Result<Schema, SchemaError> {
     let relations = declarations
         .iter()
         .map(|decl| RelationDescriptor {
@@ -190,8 +201,14 @@ pub fn build_schema(declarations: &[RelationDecl]) -> std::result::Result<Schema
                     },
                 })
                 .collect(),
-            constraints: declared_constraints(declarations, decl),
         })
         .collect();
-    SchemaDescriptor { relations }.validate()
+    SchemaDescriptor {
+        relations,
+        statements: statements
+            .iter()
+            .map(|s| statement(declarations, s))
+            .collect(),
+    }
+    .validate()
 }

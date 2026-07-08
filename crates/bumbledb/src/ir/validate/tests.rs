@@ -38,10 +38,7 @@ fn schema() -> Schema {
                     field(
                         "status",
                         ValueType::Enum {
-                            variants: ["Active", "Closed"]
-                                .iter()
-                                .map(|v| Box::from(*v))
-                                .collect(),
+                            variants: ["Active", "Closed"].iter().map(|v| Box::from(*v)).collect(),
                         },
                     ),
                 ],

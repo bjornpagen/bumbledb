@@ -45,8 +45,8 @@ fn dynamic_cover_prefers_the_forced_small_side() {
             },
         ],
     };
-    let plan = validate(&plan, &normalized, &schema, vec![0; 3], &BTreeSet::new())
-        .expect("valid plan");
+    let plan =
+        validate(&plan, &normalized, &schema, vec![0; 3], &BTreeSet::new()).expect("valid plan");
 
     // Pre-force S's root so its Exact(2) beats R's Estimate(500).
     let mut colts = colts_for(&plan, &views);
@@ -293,8 +293,8 @@ fn pinned_siblings_probe_without_hashing() {
             },
         ],
     };
-    let plan = validate(&plan, &normalized, &schema, vec![0; 2], &BTreeSet::new())
-        .expect("valid plan");
+    let plan =
+        validate(&plan, &normalized, &schema, vec![0; 2], &BTreeSet::new()).expect("valid plan");
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slots().len());
     let mut sink = CollectSink::default();

@@ -26,7 +26,8 @@
 //! rule: iteration *and clearing* walk `O(len)`, never `O(capacity)`).
 //!
 #![allow(unsafe_code)] // 00-product unsafe policy: this module is allowlisted
-#![allow(clippy::inline_always)] // docs/silicon/03/04: the probe path's
+#![allow(clippy::inline_always)]
+// docs/silicon/03/04: the probe path's
 // inlining is load-bearing (per-element call ceremony was measured cost)
 // and machine-checked by scripts/check-asm.sh, not trusted to attributes.
 //! `unsafe` per the 00-product policy (this module is allowlisted): the

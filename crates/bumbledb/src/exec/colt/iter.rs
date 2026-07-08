@@ -1,4 +1,7 @@
-use super::{Colt, Cursor, BatchToken, NodeState, NodeRef, DENSE_TOKEN_TAG, STALE_TOKEN, Positions, View, unpack_child, Slot};
+use super::{
+    unpack_child, BatchToken, Colt, Cursor, NodeRef, NodeState, Positions, Slot, View,
+    DENSE_TOKEN_TAG, STALE_TOKEN,
+};
 
 impl Colt {
     pub fn iter_batch(

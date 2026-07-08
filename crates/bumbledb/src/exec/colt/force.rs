@@ -1,4 +1,4 @@
-use super::{Colt, NodeRef, NodeState, Positions, Map, hash_words, ctrl_tag, pack_child, Slot};
+use super::{ctrl_tag, hash_words, pack_child, Colt, Map, NodeRef, NodeState, Positions, Slot};
 
 impl Colt {
     /// Single-pass force: iterate the node's positions once, decoding key

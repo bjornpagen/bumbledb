@@ -1,6 +1,6 @@
-//! Field, constraint, layout, and FK-target accessors on a validated relation.
+//! Field, layout, and statement-index accessors on a validated relation.
 
-use super::{ConstraintDescriptor, ConstraintId, FactLayout, FieldDescriptor, FieldId, Relation};
+use super::{FactLayout, FieldDescriptor, FieldId, Relation, StatementId};
 
 impl Relation {
     #[must_use]
@@ -18,32 +18,29 @@ impl Relation {
         &self.fields[usize::from(id.0)]
     }
 
-    #[must_use]
-    pub fn constraints(&self) -> &[ConstraintDescriptor] {
-        &self.constraints
-    }
-
-    #[must_use]
-    pub fn constraint(&self, id: ConstraintId) -> &ConstraintDescriptor {
-        &self.constraints[usize::from(id.0)]
-    }
-
     /// The relation's fact byte layout (fields in declaration order).
     #[must_use]
     pub const fn layout(&self) -> &FactLayout {
         &self.layout
     }
 
-    /// Ids of this relation's `Unique` constraints (auto-materialized and
-    /// declared alike).
+    /// `Functionality` statements on this relation (auto-materialized and
+    /// declared alike), in materialized order.
     #[must_use]
-    pub fn unique_constraints(&self) -> &[ConstraintId] {
-        &self.unique_constraints
+    pub fn keys(&self) -> &[StatementId] {
+        &self.keys
     }
 
-    /// Unique constraints of this relation that some FK targets.
+    /// `Containment` statements whose source is this relation.
     #[must_use]
-    pub fn fk_targeted(&self) -> &[ConstraintId] {
-        &self.fk_targeted
+    pub fn outgoing(&self) -> &[StatementId] {
+        &self.outgoing
+    }
+
+    /// `Containment` statements whose target is this relation — the
+    /// delete-side reverse-edge scan set (`docs/architecture/50-storage.md`).
+    #[must_use]
+    pub fn incoming(&self) -> &[StatementId] {
+        &self.incoming
     }
 }

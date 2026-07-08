@@ -19,7 +19,11 @@ fn overflowing_home_buckets_chain_to_the_next_and_round_trip() {
     }
     let dir = TempDir::new("colt-bucket-overflow");
     let schema = schema();
-    let rows: Vec<(u64, u64)> = keys.iter().enumerate().map(|(i, k)| (*k, i as u64)).collect();
+    let rows: Vec<(u64, u64)> = keys
+        .iter()
+        .enumerate()
+        .map(|(i, k)| (*k, i as u64))
+        .collect();
     let view = view_of(&dir, &schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let root = Colt::root();
@@ -49,6 +53,9 @@ fn overflowing_home_buckets_chain_to_the_next_and_round_trip() {
         miss += 1;
     }
     // The drain sees exactly the 12 keys, in ingest (image) order.
-    let drained: Vec<u64> = drain(&mut colt, root, 0).iter().map(|(k, _)| k[0]).collect();
+    let drained: Vec<u64> = drain(&mut colt, root, 0)
+        .iter()
+        .map(|(k, _)| k[0])
+        .collect();
     assert_eq!(drained, column, "dense drain in ingest order");
 }

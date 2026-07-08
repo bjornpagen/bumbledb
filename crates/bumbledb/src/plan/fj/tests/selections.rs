@@ -17,8 +17,8 @@ fn lowering_splits_eq_constants_into_selections() {
         residuals: vec![],
     };
     let plan = binary2fj(&normalized, &order(&[0]));
-    let validated = validate(&plan, &normalized, &schema(1, 3), vec![0], &BTreeSet::new())
-        .expect("valid plan");
+    let validated =
+        validate(&plan, &normalized, &schema(1, 3), vec![0], &BTreeSet::new()).expect("valid plan");
     let lowered = validated.occurrence(OccId(0));
     assert_eq!(
         lowered.selections,
@@ -62,8 +62,8 @@ fn residuals_and_field_compares_stay_filters() {
         residuals: vec![],
     };
     let plan = binary2fj(&normalized, &order(&[0]));
-    let validated = validate(&plan, &normalized, &schema(1, 3), vec![0], &BTreeSet::new())
-        .expect("valid plan");
+    let validated =
+        validate(&plan, &normalized, &schema(1, 3), vec![0], &BTreeSet::new()).expect("valid plan");
     let lowered = validated.occurrence(OccId(0));
     assert_eq!(
         lowered.selections,
@@ -97,8 +97,8 @@ fn residuals_and_field_compares_stay_filters() {
     );
 
     // Determinism: the same query lowers to the same plan.
-    let again = validate(&plan, &normalized, &schema(1, 3), vec![0], &BTreeSet::new())
-        .expect("valid plan");
+    let again =
+        validate(&plan, &normalized, &schema(1, 3), vec![0], &BTreeSet::new()).expect("valid plan");
     assert_eq!(validated.occurrences(), again.occurrences());
 }
 

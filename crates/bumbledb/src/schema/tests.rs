@@ -25,14 +25,23 @@ fn enum_type(variants: &[&str]) -> ValueType {
     }
 }
 
-/// Account(id serial, holder u64 -> Holder.id, status enum) + Holder(id serial, name string).
+/// An unselected side: `R(X)`.
+fn side(relation: RelationId, projection: &[FieldId]) -> Side {
+    Side {
+        relation,
+        projection: projection.into(),
+        selection: Box::new([]),
+    }
+}
+
+/// Holder(id serial, name string) + Account(id serial, holder u64, status enum),
+/// with the statement `Account(holder) <= Holder(id)`.
 fn ledger_slice() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 name: "Holder".into(),
                 fields: vec![serial_field("id"), field("name", ValueType::String)],
-                constraints: vec![],
             },
             RelationDescriptor {
                 name: "Account".into(),
@@ -41,27 +50,21 @@ fn ledger_slice() -> SchemaDescriptor {
                     field("holder", ValueType::U64),
                     field("status", enum_type(&["Active", "Closed"])),
                 ],
-                constraints: vec![ConstraintDescriptor::ForeignKey {
-                    name: "account_holder".into(),
-                    fields: Box::new([FieldId(1)]),
-                    target_relation: RelationId(0),
-                    // Holder's auto-unique on its serial `id` field.
-                    target_constraint: ConstraintId(0),
-                }],
             },
         ],
+        statements: vec![StatementDescriptor::Containment {
+            source: side(RelationId(1), &[FieldId(1)]),
+            target: side(RelationId(0), &[FieldId(0)]),
+        }],
     }
 }
 
-fn one_relation(
-    fields: Vec<FieldDescriptor>,
-    constraints: Vec<ConstraintDescriptor>,
-) -> SchemaDescriptor {
+fn one_relation(fields: Vec<FieldDescriptor>) -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
             name: "R".into(),
             fields,
-            constraints,
         }],
+        statements: vec![],
     }
 }

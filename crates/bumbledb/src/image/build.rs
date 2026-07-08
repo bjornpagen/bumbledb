@@ -111,10 +111,8 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
     // Distinct counts are NOT computed here (docs/silicon/13): the
     // eager pass was the cold path's fixed cost. Each column's count
     // materializes on first planner demand ([`RelationImage::distinct`]).
-    let distincts: Vec<std::sync::OnceLock<u64>> = columns
-        .iter()
-        .map(|_| std::sync::OnceLock::new())
-        .collect();
+    let distincts: Vec<std::sync::OnceLock<u64>> =
+        columns.iter().map(|_| std::sync::OnceLock::new()).collect();
 
     Ok(Arc::new(RelationImage {
         row_count,

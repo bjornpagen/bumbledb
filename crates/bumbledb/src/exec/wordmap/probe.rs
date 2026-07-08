@@ -1,4 +1,4 @@
-use super::{WINDOW, WordMap};
+use super::{WordMap, WINDOW};
 
 /// The 7-bit hash tag a ctrl byte carries (bit 7 marks occupancy).
 pub(super) fn tag(hash: u64) -> u8 {

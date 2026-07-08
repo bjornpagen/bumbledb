@@ -43,8 +43,7 @@ fn insert_lands_exactly_the_expected_key_set() {
         // the inserted target guard recorded for the FK-targeted
         // constraint.
         assert_eq!(applied.fk_probes.len(), 1);
-        let (target_rel, target_cid, guard) =
-            applied.fk_probes.keys().next().expect("one probe");
+        let (target_rel, target_cid, guard) = applied.fk_probes.keys().next().expect("one probe");
         assert_eq!((*target_rel, *target_cid), (TARGET, C0));
         assert_eq!(guard.as_slice(), encode_u64(5));
         assert!(applied.deleted_guards.is_empty());

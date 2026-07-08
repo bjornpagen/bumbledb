@@ -1,5 +1,5 @@
-use super::*;
 use super::lower_literal::lower_literal;
+use super::*;
 use crate::encoding::{encode_fact, encode_i64, ValueRef};
 use crate::image::view::Const;
 use crate::ir::validate::validate;
@@ -12,7 +12,6 @@ use crate::storage::delta::WriteDelta;
 use crate::storage::dict::{TAG_BYTES, TAG_STRING};
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
-
 
 /// R(id u64 serial, a i64, b i64) + S(x u64, y i64).
 fn schema() -> Schema {
@@ -99,8 +98,7 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
     commit(delta, &env).expect("commit");
     let txn = env.read_txn().expect("txn");
     let image = crate::image::build(&txn, &schema, R).expect("build");
-    let filtered =
-        crate::image::view::apply(&image, &norm.occurrences[0].filters, &[], Vec::new());
+    let filtered = crate::image::view::apply(&image, &norm.occurrences[0].filters, &[], Vec::new());
     // Exactly the a == b rows survive.
     let ids: Vec<u64> = filtered
         .positions()

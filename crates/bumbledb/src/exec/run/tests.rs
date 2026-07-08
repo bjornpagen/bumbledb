@@ -6,8 +6,7 @@ use crate::ir::{CmpOp, VarId};
 use crate::plan::fj::{binary2fj, factor, validate, ValidatedPlan};
 use crate::plan::planner::JoinOrder;
 use crate::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor,
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
 };
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;

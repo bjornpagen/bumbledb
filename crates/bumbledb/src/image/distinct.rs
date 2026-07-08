@@ -15,9 +15,7 @@ impl RelationImage {
     #[must_use]
     pub fn distinct(&self, field_idx: usize) -> u64 {
         *self.distincts[field_idx].get_or_init(|| match self.column(field_idx) {
-            ColumnView::Words(words) => {
-                DistinctCounter::new(self.row_count).count_words(words)
-            }
+            ColumnView::Words(words) => DistinctCounter::new(self.row_count).count_words(words),
             ColumnView::Bytes(bytes) => DistinctCounter::count_bytes(bytes),
         })
     }

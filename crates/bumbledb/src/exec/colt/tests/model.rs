@@ -127,8 +127,7 @@ fn hoisted_gathers_match_the_per_position_reference() {
         let mut token = BatchToken::default();
         let mut out = Vec::new();
         loop {
-            let (n, next) =
-                colt.iter_batch(cursor, level, token, &mut keys, &mut children, size);
+            let (n, next) = colt.iter_batch(cursor, level, token, &mut keys, &mut children, size);
             if n == 0 {
                 break;
             }

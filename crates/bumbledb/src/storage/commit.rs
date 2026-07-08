@@ -15,8 +15,8 @@ use crate::storage::delta::WriteDelta;
 use crate::storage::env::WriteTxn;
 use crate::storage::keys::KeyBuf;
 
-mod apply;
 mod applier;
+mod apply;
 mod restrict;
 mod write;
 

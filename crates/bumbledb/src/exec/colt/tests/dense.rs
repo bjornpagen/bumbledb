@@ -140,8 +140,7 @@ fn a_token_that_outlives_a_force_is_refused() {
     let child = colt.get(Colt::root(), 0, &[7]).expect("key 7 exists");
     let mut keys = vec![0u64; 8];
     let mut children = vec![Cursor::Row(0); 8];
-    let (n, token) =
-        colt.iter_batch(child, 1, BatchToken::default(), &mut keys, &mut children, 8);
+    let (n, token) = colt.iter_batch(child, 1, BatchToken::default(), &mut keys, &mut children, 8);
     assert_eq!(n, 8);
     let (n, stale) = colt.iter_batch(child, 1, token, &mut keys, &mut children, 8);
     assert_eq!(n, 8, "two positions batches drained");

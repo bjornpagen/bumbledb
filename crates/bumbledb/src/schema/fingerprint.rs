@@ -5,15 +5,19 @@
 //! string and list is length-prefixed (u32 LE) so no two schemas can alias
 //! to one byte stream; ids are pinned by declaration order and therefore
 //! covered without being hashed separately.
+//!
+//! **PRD 04's site.** The dependency statements in materialized order are a
+//! fingerprint input (`docs/architecture/10-data-model.md`) but are not
+//! serialized yet; PRD 04 adds them and bumps the format version label.
 
-use super::{ConstraintDescriptor, Generation, Schema, ValueType};
+use super::{Generation, IntervalElement, Schema, ValueType};
 
 /// Bumped whenever the canonical serialization format itself changes.
 const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v0";
 
 /// Deterministic schema identity: blake3 of the canonical bytes. Stored at
 /// database creation; open compares fingerprints and mismatches are hard
-/// failures (docs/architecture/40-storage.md).
+/// failures (docs/architecture/50-storage.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SchemaFingerprint(pub [u8; 32]);
 
@@ -31,38 +35,6 @@ pub fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
                 Generation::None => 0,
                 Generation::Serial => 1,
             });
-        }
-        // Auto-materialized serial uniques are ordinary constraints in the
-        // descriptor (docs/architecture/10-data-model.md), so they are serialized with no special case —
-        // which is the point.
-        put_len(out, relation.constraints().len());
-        for constraint in relation.constraints() {
-            match constraint {
-                ConstraintDescriptor::Unique { name, fields } => {
-                    out.push(0);
-                    put_bytes(out, name.as_bytes());
-                    put_field_ids(out, fields);
-                }
-                ConstraintDescriptor::ForeignKey {
-                    name,
-                    fields,
-                    target_relation,
-                    target_constraint,
-                } => {
-                    out.push(1);
-                    put_bytes(out, name.as_bytes());
-                    put_field_ids(out, fields);
-                    // Targets serialize as names (10-data-model's input
-                    // list); the ids are equivalent but the doc is the
-                    // contract.
-                    let target_rel = schema.relation(*target_relation);
-                    put_bytes(out, target_rel.name().as_bytes());
-                    put_bytes(
-                        out,
-                        target_rel.constraint(*target_constraint).name().as_bytes(),
-                    );
-                }
-            }
         }
     }
 }
@@ -85,13 +57,6 @@ fn put_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
     out.extend_from_slice(bytes);
 }
 
-fn put_field_ids(out: &mut Vec<u8>, fields: &[super::FieldId]) {
-    put_len(out, fields.len());
-    for field in fields {
-        out.extend_from_slice(&field.0.to_le_bytes());
-    }
-}
-
 fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
     match value_type {
         ValueType::Bool => out.push(0),
@@ -106,21 +71,30 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
         ValueType::I64 => out.push(3),
         ValueType::String => out.push(4),
         ValueType::Bytes => out.push(5),
+        ValueType::Interval { element } => {
+            out.push(6);
+            out.push(match element {
+                IntervalElement::U64 => 0,
+                IntervalElement::I64 => 1,
+            });
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::{
-        ConstraintDescriptor, ConstraintId, FieldDescriptor, FieldId, Generation,
-        RelationDescriptor, RelationId, SchemaDescriptor, ValueType,
+        FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
     };
     use super::*;
 
     fn schema_of(relations: Vec<RelationDescriptor>) -> Schema {
-        SchemaDescriptor { relations }
-            .validate()
-            .expect("valid fixture")
+        SchemaDescriptor {
+            relations,
+            statements: vec![],
+        }
+        .validate()
+        .expect("valid fixture")
     }
 
     fn field(name: &str, value_type: ValueType, generation: Generation) -> FieldDescriptor {
@@ -137,7 +111,7 @@ mod tests {
         }
     }
 
-    /// The mutation fixture: two relations, an enum, a serial, an FK.
+    /// The mutation fixture: two relations, an enum, a serial.
     fn base() -> Vec<RelationDescriptor> {
         vec![
             RelationDescriptor {
@@ -146,7 +120,6 @@ mod tests {
                     field("id", ValueType::U64, Generation::Serial),
                     field("name", ValueType::String, Generation::None),
                 ],
-                constraints: vec![],
             },
             RelationDescriptor {
                 name: "Account".into(),
@@ -154,18 +127,6 @@ mod tests {
                     field("id", ValueType::U64, Generation::Serial),
                     field("holder", ValueType::U64, Generation::None),
                     field("status", enum_type(&["Active", "Closed"]), Generation::None),
-                ],
-                constraints: vec![
-                    ConstraintDescriptor::Unique {
-                        name: "holder_status".into(),
-                        fields: Box::new([FieldId(1), FieldId(2)]),
-                    },
-                    ConstraintDescriptor::ForeignKey {
-                        name: "account_holder".into(),
-                        fields: Box::new([FieldId(1)]),
-                        target_relation: RelationId(0),
-                        target_constraint: ConstraintId(0),
-                    },
                 ],
             },
         ]
@@ -212,50 +173,38 @@ mod tests {
     }
 
     #[test]
-    fn changing_constraint_field_order_changes_the_fingerprint() {
-        let mut decl = base();
-        decl[1].constraints[0] = ConstraintDescriptor::Unique {
-            name: "holder_status".into(),
-            fields: Box::new([FieldId(2), FieldId(1)]),
-        };
-        assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
-    }
-
-    #[test]
-    fn changing_an_fk_target_changes_the_fingerprint() {
-        let mut decl = base();
-        decl[1].constraints[1] = ConstraintDescriptor::ForeignKey {
-            name: "account_holder".into(),
-            fields: Box::new([FieldId(1)]),
-            target_relation: RelationId(1),
-            target_constraint: ConstraintId(0), // Account's own auto-unique id
-        };
-        assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
-    }
-
-    #[test]
     fn toggling_serial_generation_changes_the_fingerprint() {
         let mut decl = base();
         decl[0].fields[0].generation = Generation::None;
-        // Dropping Serial also drops the auto-unique, which Account's FK
-        // targets — retarget it to a declared unique to keep the schema valid.
-        decl[0].constraints = vec![ConstraintDescriptor::Unique {
-            name: "id".into(),
-            fields: Box::new([FieldId(0)]),
-        }];
         assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
+    }
+
+    #[test]
+    fn changing_an_interval_element_changes_the_fingerprint() {
+        let of_element = |element| {
+            fingerprint(&schema_of(vec![RelationDescriptor {
+                name: "R".into(),
+                fields: vec![field(
+                    "during",
+                    ValueType::Interval { element },
+                    Generation::None,
+                )],
+            }]))
+        };
+        assert_ne!(
+            of_element(IntervalElement::U64),
+            of_element(IntervalElement::I64)
+        );
     }
 
     #[test]
     fn golden_bytes_pin_the_canonical_serialization() {
-        // One relation R { x: u64 serial } — the auto-unique on x is
-        // serialized as an ordinary constraint. This golden is the
-        // anti-drift anchor: if it breaks, the format version label must be
-        // bumped and every stored fingerprint invalidated (full ETL).
+        // One relation R { x: u64 serial }. This golden is the anti-drift
+        // anchor: if it breaks, the format version label must be bumped and
+        // every stored fingerprint invalidated (full ETL).
         let schema = schema_of(vec![RelationDescriptor {
             name: "R".into(),
             fields: vec![field("x", ValueType::U64, Generation::Serial)],
-            constraints: vec![],
         }]);
         let mut bytes = Vec::new();
         canonical_bytes(&schema, &mut bytes);
@@ -271,12 +220,6 @@ mod tests {
         expected.extend_from_slice(b"x");
         expected.push(2); // ValueType::U64 tag
         expected.push(1); // Generation::Serial tag
-        expected.extend_from_slice(&1u32.to_le_bytes()); // constraint count
-        expected.push(0); // Unique tag
-        expected.extend_from_slice(&1u32.to_le_bytes()); // constraint name len
-        expected.extend_from_slice(b"x");
-        expected.extend_from_slice(&1u32.to_le_bytes()); // field id count
-        expected.extend_from_slice(&0u16.to_le_bytes()); // FieldId(0)
         assert_eq!(bytes, expected);
     }
 
@@ -287,12 +230,10 @@ mod tests {
         let one = schema_of(vec![RelationDescriptor {
             name: "AB".into(),
             fields: vec![field("C", ValueType::U64, Generation::None)],
-            constraints: vec![],
         }]);
         let two = schema_of(vec![RelationDescriptor {
             name: "A".into(),
             fields: vec![field("BC", ValueType::U64, Generation::None)],
-            constraints: vec![],
         }]);
         let (mut a, mut b) = (Vec::new(), Vec::new());
         canonical_bytes(&one, &mut a);

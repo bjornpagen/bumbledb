@@ -191,8 +191,14 @@ fn fold_throughput_contiguous_sum() {
             fold_sum_u64(&values, 1, 0, values.len()) as i128
         }
     });
-    assert!(biased >= 7.0, "exact biased dense sum ≥7 rows/ns, got {biased:.2}");
-    assert!(unsigned >= 7.0, "exact u64 dense sum ≥7 rows/ns, got {unsigned:.2}");
+    assert!(
+        biased >= 7.0,
+        "exact biased dense sum ≥7 rows/ns, got {biased:.2}"
+    );
+    assert!(
+        unsigned >= 7.0,
+        "exact u64 dense sum ≥7 rows/ns, got {unsigned:.2}"
+    );
 }
 
 #[test]

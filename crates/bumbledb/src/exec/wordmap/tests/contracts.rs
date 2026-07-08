@@ -66,20 +66,17 @@ fn adversarial_false_tag_rates(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, f6
             "serial-pairs",
             (0..16_384u64).map(|i| vec![i, i / 64]).collect(),
         ),
-        (
-            "random-control",
-            {
-                let mut rng = 0xDEAD_BEEF_u64;
-                (0..16_384)
-                    .map(|_| {
-                        rng = rng
-                            .wrapping_mul(6_364_136_223_846_793_005)
-                            .wrapping_add(1_442_695_040_888_963_407);
-                        vec![rng]
-                    })
-                    .collect()
-            },
-        ),
+        ("random-control", {
+            let mut rng = 0xDEAD_BEEF_u64;
+            (0..16_384)
+                .map(|_| {
+                    rng = rng
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    vec![rng]
+                })
+                .collect()
+        }),
     ];
     families
         .into_iter()

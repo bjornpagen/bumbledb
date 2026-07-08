@@ -11,7 +11,7 @@ mod display;
 
 use crate::ir::{ParamId, VarId};
 use crate::schema::fingerprint::SchemaFingerprint;
-use crate::schema::{ConstraintId, FieldId, RelationId, ValueType};
+use crate::schema::{FieldId, RelationId, ValueType};
 
 /// Corruption detected while decoding stored bytes — a hard error, never a
 /// skip, never a default (`docs/architecture/40-storage.md`).
@@ -63,16 +63,16 @@ pub enum CorruptionError {
 /// A schema declaration error (the 10-data-model doc's validation boundary). Every illegal
 /// schema shape has a distinct variant; an invalid schema is
 /// unconstructible, not flagged.
+///
+/// PRD 03 extends this enum with one variant per line of the statement
+/// validation roster (`docs/architecture/30-dependencies.md`); the current
+/// variants are the field-level checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaError {
     DuplicateRelationName {
         name: Box<str>,
     },
     DuplicateFieldName {
-        relation: RelationId,
-        name: Box<str>,
-    },
-    DuplicateConstraintName {
         relation: RelationId,
         name: Box<str>,
     },
@@ -93,59 +93,6 @@ pub enum SchemaError {
     SerialOnNonU64 {
         relation: RelationId,
         field: FieldId,
-    },
-    UnknownConstraintField {
-        relation: RelationId,
-        constraint: ConstraintId,
-        field: FieldId,
-    },
-    UniqueWithoutFields {
-        relation: RelationId,
-        constraint: ConstraintId,
-    },
-    /// A field listed twice in one constraint's field list — unique or
-    /// foreign-key alike.
-    ConstraintDuplicateField {
-        relation: RelationId,
-        constraint: ConstraintId,
-        field: FieldId,
-    },
-    /// Two unique constraints over the identical ordered field list —
-    /// double guard maintenance with no added meaning.
-    DuplicateConstraintFields {
-        relation: RelationId,
-        constraint: ConstraintId,
-    },
-    /// The constraint's guard key would exceed LMDB's key ceiling
-    /// (`storage::keys::MAX_GUARD_WIDTH`) once embedded in a Restrict key.
-    GuardKeyTooWide {
-        relation: RelationId,
-        constraint: ConstraintId,
-        width: usize,
-    },
-    UnknownFkTargetRelation {
-        relation: RelationId,
-        constraint: ConstraintId,
-        target: RelationId,
-    },
-    UnknownFkTargetConstraint {
-        relation: RelationId,
-        constraint: ConstraintId,
-        target: ConstraintId,
-    },
-    FkTargetNotUnique {
-        relation: RelationId,
-        constraint: ConstraintId,
-        target: ConstraintId,
-    },
-    FkArityMismatch {
-        relation: RelationId,
-        constraint: ConstraintId,
-    },
-    FkFieldTypeMismatch {
-        relation: RelationId,
-        constraint: ConstraintId,
-        position: usize,
     },
 }
 

@@ -1,6 +1,6 @@
 use super::*;
-use crate::error::Result;
 use crate::encoding::{encode_fact, ValueRef};
+use crate::error::Result;
 use crate::exec::colt::Colt;
 use crate::exec::run::{Counters, Executor};
 use crate::image::view::apply;
@@ -9,8 +9,8 @@ use crate::ir::VarId;
 use crate::plan::fj::{binary2fj, factor, validate, ValidatedPlan};
 use crate::plan::planner::JoinOrder;
 use crate::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
+    ValueType,
 };
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;

@@ -1,4 +1,6 @@
-use super::{Colt, unpack_child, Slot, Chunk, CHUNK_LEN, NodeRef, NodeState, Positions, pack_child};
+use super::{
+    pack_child, unpack_child, Chunk, Colt, NodeRef, NodeState, Positions, Slot, CHUNK_LEN,
+};
 
 impl Colt {
     /// Appends a position to an occupied slot's child: singleton inline
