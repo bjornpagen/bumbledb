@@ -2,18 +2,20 @@
 //! reverse-edge scans (stranded source, cluster demolition, statement
 //! scoping under identical key bytes), the interval re-walk matrix
 //! (shrink under / outside a source, chain segment deletion, delete plus
-//! covering replacement in one delta), and the `==` pair's delete-time
-//! totality.
+//! covering replacement in one delta), the `==` pair's delete-time
+//! totality, and ψ-qualified re-establishment (both forms).
 //!
 //! Own fixture: two scalar containments sharing one target key (their
 //! `R` key bytes collide byte-for-byte — only the statement id separates
-//! them), a coverage statement over a pointwise key, and a `==` pair.
+//! them), a coverage statement over a pointwise key, a `==` pair, and
+//! two σ-carrying containments whose targets can re-land a key guard
+//! with a changed ψ-relevant non-key field.
 
 use crate::encoding::{encode_fact, ValueRef};
 use crate::error::{Direction, Error, Result};
 use crate::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
+    FieldDescriptor, FieldId, Generation, IntervalElement, LiteralValue, RelationDescriptor,
+    RelationId, Schema, SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
 };
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
@@ -29,6 +31,10 @@ const SHIFT: RelationId = RelationId(3);
 const SESSION: RelationId = RelationId(4);
 const PARENT: RelationId = RelationId(5);
 const CHILD: RelationId = RelationId(6);
+const ACCOUNT: RelationId = RelationId(7);
+const TRANSFER: RelationId = RelationId(8);
+const ROSTER: RelationId = RelationId(9);
+const REST: RelationId = RelationId(10);
 
 /// Declared statement order (no serial fields, so no auto-keys).
 const CLAIM_A_TARGET: StatementId = StatementId(4);
@@ -36,6 +42,8 @@ const CLAIM_B_TARGET: StatementId = StatementId(5);
 const SESSION_COVER: StatementId = StatementId(6);
 const TOTALITY: StatementId = StatementId(7);
 const ARM: StatementId = StatementId(8);
+const TRANSFER_ACCOUNT: StatementId = StatementId(11);
+const REST_COVER: StatementId = StatementId(12);
 
 /// Target(id, note; key id) referenced by two claims: ClaimA(t) <=
 /// Target(id) and ClaimB(t) <= Target(id) — same target key, identical
@@ -43,6 +51,11 @@ const ARM: StatementId = StatementId(8);
 /// re-establish the same key tuple). Session(worker, span) <=
 /// Shift(worker, span) against Shift's pointwise key. Parent(id; key id)
 /// == Child(parent; key parent), lowered to [`TOTALITY`] and [`ARM`].
+/// The ψ-qualification pair: Transfer(account) <= Account(id | active ==
+/// true) with key Account(id) and a non-key `note` (a distinct in-ψ fact
+/// can re-land the guard), and Rest(worker, span) <= Roster(worker, span
+/// | rested == true) with pointwise key Roster(worker, span) and non-key
+/// `rested` (a byte-identical segment can re-land outside ψ).
 fn schema() -> Schema {
     let field = |name: &str, value_type: ValueType| FieldDescriptor {
         name: name.into(),
@@ -52,10 +65,17 @@ fn schema() -> Schema {
     let interval = ValueType::Interval {
         element: IntervalElement::U64,
     };
+    let roster_interval = interval.clone();
+    let rest_interval = interval.clone();
     let side = |relation: RelationId, projection: &[u16]| Side {
         relation,
         projection: projection.iter().map(|&f| FieldId(f)).collect(),
         selection: Box::new([]),
+    };
+    let selected = |relation: RelationId, projection: &[u16], field: u16, literal: bool| Side {
+        relation,
+        projection: projection.iter().map(|&f| FieldId(f)).collect(),
+        selection: Box::new([(FieldId(field), LiteralValue::Bool(literal))]),
     };
     SchemaDescriptor {
         relations: vec![
@@ -89,6 +109,33 @@ fn schema() -> Schema {
             RelationDescriptor {
                 name: "Child".into(),
                 fields: vec![field("parent", ValueType::U64)],
+            },
+            RelationDescriptor {
+                name: "Account".into(),
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field("active", ValueType::Bool),
+                    field("note", ValueType::U64),
+                ],
+            },
+            RelationDescriptor {
+                name: "Transfer".into(),
+                fields: vec![field("account", ValueType::U64)],
+            },
+            RelationDescriptor {
+                name: "Roster".into(),
+                fields: vec![
+                    field("worker", ValueType::U64),
+                    field("span", roster_interval),
+                    field("rested", ValueType::Bool),
+                ],
+            },
+            RelationDescriptor {
+                name: "Rest".into(),
+                fields: vec![
+                    field("worker", ValueType::U64),
+                    field("span", rest_interval),
+                ],
             },
         ],
         statements: vec![
@@ -128,6 +175,22 @@ fn schema() -> Schema {
                 source: side(CHILD, &[0]),
                 target: side(PARENT, &[0]),
             },
+            StatementDescriptor::Functionality {
+                relation: ACCOUNT,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: ROSTER,
+                projection: Box::new([FieldId(0), FieldId(1)]),
+            },
+            StatementDescriptor::Containment {
+                source: side(TRANSFER, &[0]),
+                target: selected(ACCOUNT, &[0], 1, true),
+            },
+            StatementDescriptor::Containment {
+                source: side(REST, &[0, 1]),
+                target: selected(ROSTER, &[0, 1], 2, true),
+            },
         ],
     }
     .validate()
@@ -155,6 +218,34 @@ fn span_fact(schema: &Schema, rel: RelationId, worker: u64, start: u64, end: u64
     encode_fact(
         &[ValueRef::U64(worker), ValueRef::IntervalU64(start, end)],
         schema.relation(rel).layout(),
+        &mut b,
+    );
+    b
+}
+
+fn account_fact(schema: &Schema, id: u64, active: bool, note: u64) -> Vec<u8> {
+    let mut b = Vec::new();
+    encode_fact(
+        &[
+            ValueRef::U64(id),
+            ValueRef::Bool(active),
+            ValueRef::U64(note),
+        ],
+        schema.relation(ACCOUNT).layout(),
+        &mut b,
+    );
+    b
+}
+
+fn roster_fact(schema: &Schema, worker: u64, start: u64, end: u64, rested: bool) -> Vec<u8> {
+    let mut b = Vec::new();
+    encode_fact(
+        &[
+            ValueRef::U64(worker),
+            ValueRef::IntervalU64(start, end),
+            ValueRef::Bool(rested),
+        ],
+        schema.relation(ROSTER).layout(),
         &mut b,
     );
     b
@@ -285,8 +376,9 @@ fn surviving_source_of_the_other_statement_aborts_on_its_own_id() {
 #[test]
 fn delete_and_reestablish_by_a_different_fact_commits() {
     // The key tuple (id = 5) is deleted with one fact and re-established
-    // by another (a changed non-key field): the subtraction empties the
-    // check set and the surviving claim stays satisfied.
+    // by another (a changed non-key field): the claims carry no target ψ,
+    // so the plain set difference empties their check set and the
+    // surviving claim stays satisfied.
     let schema = schema();
     base_then_delta(
         "tgt-scalar-reestablish",
@@ -417,6 +509,72 @@ fn segment_outside_every_source_deletes_freely() {
         &[],
     )
     .expect("a non-intersecting segment is unreferenced");
+}
+
+// ---------- ψ-qualified re-establishment ----------
+
+#[test]
+fn reestablishment_outside_psi_aborts_naming_the_source() {
+    // Delete Account(9, active=true) + insert Account(9, active=false)
+    // in one delta: the key guard (id = 9) re-lands, but the establishing
+    // fact fails TRANSFER_ACCOUNT's ψ — the tuple stays in that
+    // statement's check set and the surviving transfer convicts.
+    let schema = schema();
+    let t = u64_fact(&schema, TRANSFER, 9);
+    assert_target_violation(
+        base_then_delta(
+            "tgt-psi-scalar-strand",
+            &[
+                (ACCOUNT, account_fact(&schema, 9, true, 0)),
+                (TRANSFER, t.clone()),
+            ],
+            &[(ACCOUNT, account_fact(&schema, 9, true, 0))],
+            &[(ACCOUNT, account_fact(&schema, 9, false, 0))],
+        ),
+        TRANSFER_ACCOUNT,
+        &t,
+    );
+}
+
+#[test]
+fn reestablishment_inside_psi_commits() {
+    // The re-establishing fact satisfies ψ (only the non-selected `note`
+    // changed): the tuple counts as re-established for the σ-carrying
+    // dependent too.
+    let schema = schema();
+    base_then_delta(
+        "tgt-psi-scalar-satisfied",
+        &[
+            (ACCOUNT, account_fact(&schema, 9, true, 0)),
+            (TRANSFER, u64_fact(&schema, TRANSFER, 9)),
+        ],
+        &[(ACCOUNT, account_fact(&schema, 9, true, 0))],
+        &[(ACCOUNT, account_fact(&schema, 9, true, 1))],
+    )
+    .expect("an in-ψ establisher re-establishes the tuple");
+}
+
+#[test]
+fn interval_reestablishment_outside_psi_aborts() {
+    // Byte-identical segment delete + reinsert whose ψ-relevant non-key
+    // field changed: the guard bytes re-land, the establisher fails
+    // REST_COVER's ψ, and the re-walk's per-segment σ check convicts,
+    // naming the surviving rest.
+    let schema = schema();
+    let r = span_fact(&schema, REST, 1, 2, 6);
+    assert_target_violation(
+        base_then_delta(
+            "tgt-psi-interval-strand",
+            &[
+                (ROSTER, roster_fact(&schema, 1, 0, 10, true)),
+                (REST, r.clone()),
+            ],
+            &[(ROSTER, roster_fact(&schema, 1, 0, 10, true))],
+            &[(ROSTER, roster_fact(&schema, 1, 0, 10, false))],
+        ),
+        REST_COVER,
+        &r,
+    );
 }
 
 // ---------- the == pair (both directions on delete) ----------

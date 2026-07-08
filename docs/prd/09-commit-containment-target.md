@@ -65,7 +65,7 @@ Any new namespace. Any caching across commits.
 - `[test]` `==` demolition: parent + child deleted in one delta commits; child
   alone deleted aborts on the totality direction.
 
-## Conflict
+## Conflict (resolved)
 
 Found while implementing technical direction 1; implemented exactly as specified,
 flagged for the owner because the architecture is silent.
@@ -89,3 +89,8 @@ re-established guard counts only if the establishing fact satisfies that
 statement's target σ (one `F` get per re-established guard per σ-carrying
 dependent; dependents with empty σ keep the plain subtraction, which is every
 currently-tested case).
+
+**Resolved:** owner ruling adopted the sketched fix — re-establishment is
+ψ-qualified per dependent statement; docs amended in commit 891420e
+(`50-storage.md` § commit step 3 target side, `30-dependencies.md` § enforcement)
+and implemented in `judgment::check_target`.

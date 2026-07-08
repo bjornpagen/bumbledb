@@ -217,9 +217,14 @@ pub(super) fn check_source(
 }
 
 /// The target-side judgment: every key tuple deleted in phase 1 and not
-/// re-established in phase 2 — the set difference is the check set —
-/// probes its dependent containment statements' `R` prefixes for
-/// surviving sources. A scalar survivor convicts outright: the key
+/// re-established in phase 2 probes its dependent containment
+/// statements' `R` prefixes for surviving sources. Re-establishment is
+/// **per statement, ψ-qualified** (`docs/architecture/50-storage.md`
+/// § commit step 3): a dependent with a nonempty target selection counts
+/// a re-landed guard tuple as re-established only if the establishing
+/// fact satisfies its ψ — one `F` get per re-established tuple, shared
+/// across that tuple's ψ-carrying dependents; empty-ψ dependents use the
+/// plain set difference. A scalar survivor convicts outright: the key
 /// statement's guard was the tuple's one holder and the final state no
 /// longer has it. An interval tuple is a disestablished
 /// *segment* `(prefix, ts, te)`: each surviving source of the prefix
@@ -249,10 +254,43 @@ pub(super) fn check_target(
     // disestablished segments of one (statement, prefix-group) collapse
     // to one coverage walk per source.
     let mut affected: BTreeSet<Vec<u8>> = BTreeSet::new();
-    for entry in deleted_guards.difference(inserted_guards) {
+    for entry in deleted_guards {
         let (key_sid, guard) = entry;
-        scanned += 1;
+        let reestablished = inserted_guards.contains(entry);
+        // The establishing fact of a re-landed guard, fetched at most
+        // once per tuple and shared by every ψ-carrying dependent.
+        let mut establisher: Option<&[u8]> = None;
+        let mut counted = false;
         for &sid in schema.dependents(*key_sid) {
+            if reestablished {
+                match &selections.containment(sid).target {
+                    // Empty ψ: any establishing fact re-establishes —
+                    // the plain set difference.
+                    SelectionCheck::Empty => continue,
+                    // ψ-qualification: the tuple stays disestablished
+                    // for this statement unless the establishing fact
+                    // satisfies its ψ. `Never` means no fact can.
+                    SelectionCheck::Never => {}
+                    check @ SelectionCheck::Compare(_) => {
+                        let relation = key_relation(schema, *key_sid);
+                        let fact = match establisher {
+                            Some(fact) => fact,
+                            None => {
+                                let fact = establishing_fact(data, txn, relation, *key_sid, guard)?;
+                                establisher = Some(fact);
+                                fact
+                            }
+                        };
+                        if satisfies(check, schema.relation(relation).layout(), fact) {
+                            continue;
+                        }
+                    }
+                }
+            }
+            if !counted {
+                scanned += 1;
+                counted = true;
+            }
             let Resolved::Containment {
                 interval_position, ..
             } = &schema.statement(sid).resolved
@@ -270,7 +308,7 @@ pub(super) fn check_target(
                     let (_, _, source_rel, source_row) = keys::parse_reverse_key(r_key).ok_or(
                         Error::Corruption(CorruptionError::MalformedValue("R key shape")),
                     )?;
-                    let fact = fetch_source_fact(data, txn, source_rel, source_row)?;
+                    let fact = fact_by_row(data, txn, source_rel, source_row)?;
                     return Err(Error::ContainmentViolation {
                         statement: sid,
                         side: Direction::TargetRequired,
@@ -335,7 +373,7 @@ pub(super) fn check_target(
         let Resolved::Containment { target_key, .. } = &statement.resolved else {
             unreachable!("validated schema: Containment resolves as Containment")
         };
-        let fact_bytes = fetch_source_fact(data, txn, source_rel, source_row)?;
+        let fact_bytes = fact_by_row(data, txn, source_rel, source_row)?;
         let probe = Probe {
             statement: sid,
             target_relation: target.relation,
@@ -352,11 +390,42 @@ pub(super) fn check_target(
     Ok(())
 }
 
-/// Fetches a surviving source fact's canonical bytes by its `R`-entry
-/// identity — the violation payload (scalar form) or the coverage walk's
-/// subject (interval form). Borrowed from the transaction: the target
-/// side reads, never copies, until an error is built.
-fn fetch_source_fact<'t>(
+/// The relation a key (`Functionality`) statement guards.
+fn key_relation(schema: &Schema, key: StatementId) -> RelationId {
+    let StatementDescriptor::Functionality { relation, .. } = &schema.statement(key).descriptor
+    else {
+        unreachable!("validated schema: guard-set ids name Functionality statements")
+    };
+    *relation
+}
+
+/// The fact that re-established a key guard in phase 2, reached through
+/// the guard's own `U` entry — the ψ-qualification subject. Both gets
+/// hit state this commit just wrote (write txns read their own writes),
+/// so a miss is corruption, never a race.
+fn establishing_fact<'t>(
+    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+    txn: &'t WriteTxn<'_>,
+    relation: RelationId,
+    key: StatementId,
+    guard: &[u8],
+) -> Result<&'t [u8]> {
+    let mut buf: KeyBuf = [0; MAX_KEY];
+    let u_len = keys::guard_key(&mut buf, relation, key, guard);
+    let value = data
+        .get(txn.raw(), &buf[..u_len])?
+        .ok_or(Error::Corruption(CorruptionError::MalformedValue(
+            "re-established U guard",
+        )))?;
+    fact_by_row(data, txn, relation, decode_row_id(value)?)
+}
+
+/// Fetches a fact's canonical bytes by row — the surviving source (the
+/// violation payload or the coverage walk's subject) and the
+/// re-establishing target (the ψ check's subject). Borrowed from the
+/// transaction: the target side reads, never copies, until an error is
+/// built.
+fn fact_by_row<'t>(
     data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
     txn: &'t WriteTxn<'_>,
     relation: RelationId,
