@@ -1,0 +1,67 @@
+#[cfg(test)]
+use crate::error::{CorruptionError, Error};
+use crate::error::Result;
+
+use super::read_meta::read_u64;
+use super::{WriteTxn, META_DICT_NEXT_ID, META_TX_ID};
+
+impl WriteTxn<'_> {
+    /// Commits (fsync per LMDB defaults).
+    ///
+    /// # Errors
+    ///
+    /// `Lmdb` on commit failure; nothing persists.
+    pub fn commit(self) -> Result<()> {
+        self.txn.commit()?;
+        Ok(())
+    }
+
+    /// Aborts: drops the transaction, nothing persists.
+    pub fn abort(self) {
+        drop(self.txn);
+    }
+
+    /// Advances the storage tx id (reader: the 40-storage doc's commit step 4; the id
+    /// advances iff the delta changed logical state).
+    pub(crate) fn put_generation(&mut self, generation: u64) -> Result<()> {
+        self.env.meta.put(
+            &mut self.txn,
+            META_TX_ID,
+            generation.to_le_bytes().as_slice(),
+        )?;
+        Ok(())
+    }
+
+    /// Reads the dictionary next-id counter (reader: `storage::dict`'s
+    /// direct-write intern, test-only since the delta's pending-intern set
+    /// re-homed the live path in the 40-storage doc).
+    #[cfg(test)]
+    pub(crate) fn dict_next_id(&self) -> Result<u64> {
+        let next = read_u64(&self.env.meta, &self.txn, META_DICT_NEXT_ID)?;
+        if next == u64::MAX {
+            return Err(Error::Corruption(CorruptionError::MalformedValue(
+                "dict next id",
+            )));
+        }
+        Ok(next)
+    }
+
+    /// Writes the dictionary next-id counter.
+    pub(crate) fn put_dict_next_id(&mut self, next: u64) -> Result<()> {
+        self.env.meta.put(
+            &mut self.txn,
+            META_DICT_NEXT_ID,
+            next.to_le_bytes().as_slice(),
+        )?;
+        Ok(())
+    }
+
+    /// The current committed generation as seen by this write transaction.
+    ///
+    /// # Errors
+    ///
+    /// `Corruption(MetaMissing)` if the tx-id key is absent or malformed.
+    pub fn generation(&self) -> Result<u64> {
+        read_u64(&self.env.meta, &self.txn, META_TX_ID)
+    }
+}
