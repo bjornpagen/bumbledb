@@ -7,16 +7,19 @@ use crate::storage::delta::WriteDelta;
 use crate::storage::env::{Environment, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
 
-use super::{apply, Applied, CommitReport};
+use super::{apply, judgment, Applied, CommitReport};
 
 /// The full commit (docs/architecture/50-storage.md): apply (phases 1-2),
-/// the judgment phase (phase 3, PRDs 08-09), counter flush (phase 4), LMDB
-/// commit (phase 5). Any error anywhere aborts — nothing persists.
+/// the judgment phase (phase 3 — containment source side here, target
+/// side with PRD 09), counter flush (phase 4), LMDB commit (phase 5).
+/// Any error anywhere aborts — nothing persists.
 ///
 /// # Errors
 ///
 /// `FunctionalityViolation` on a key statement violated by the final
-/// state; `Lmdb`/`Corruption` on storage failure.
+/// state; `ContainmentViolation` on a containment statement whose source
+/// side the final state leaves unsatisfied; `Lmdb`/`Corruption` on
+/// storage failure.
 ///
 /// # Panics
 ///
@@ -61,12 +64,15 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         mut txn,
         delta,
         row_id_next,
+        selections,
         ..
     } = applied;
 
-    // Phase 3, the judgment phase — containment source side (PRD 08) and
-    // target side over `deleted_guards`/`inserted_guards` (PRD 09) — lands
-    // here, final-state probes inside this same write transaction.
+    // Phase 3, the judgment phase: final-state probes inside this same
+    // write transaction (LMDB write txns read their own writes).
+    // Containment source side here; the target side over
+    // `deleted_guards`/`inserted_guards` lands with PRD 09.
+    judgment::check_source(&txn, env.data(), &delta, &selections)?;
 
     // Phase 4: counters — row counts, row-id high-waters, serial sequences,
     // pending dictionary entries and the dictionary next-id.

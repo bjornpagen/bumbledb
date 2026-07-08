@@ -128,10 +128,10 @@ pub mod names {
     pub const APPLY_DELETES: &str = "apply_deletes";
     /// Phase 2. (facts inserted, -)
     pub const APPLY_INSERTS: &str = "apply_inserts";
-    /// Phase 3a. (deduped forward probes, -)
-    pub const FK_FORWARD: &str = "fk_forward";
-    /// Phase 3b. (guards scanned, -)
-    pub const FK_RESTRICT: &str = "fk_restrict";
+    /// Phase 3, containment source side. (satisfying source probes, -)
+    pub const JUDGMENT_SOURCE: &str = "judgment_source";
+    /// Phase 3, containment target side. (disestablished guards scanned, -)
+    pub const JUDGMENT_TARGET: &str = "judgment_target";
     /// Phase 4. (pending interns flushed, -)
     pub const COUNTERS_FLUSH: &str = "counters_flush";
     /// Phase 5: the LMDB commit alone — the fsync-bound number. (-, -)

@@ -1,8 +1,8 @@
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::{RelationId, Resolved, Schema, Statement, StatementDescriptor};
+use crate::schema::{RelationId, Resolved, Schema, Statement, StatementDescriptor, StatementId};
 use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
 
-use super::Applier;
+use super::{judgment, Applier};
 
 impl Applier<'_> {
     /// Phase-1 step: removes one fact's F/M/U entries if it exists in
@@ -54,8 +54,18 @@ impl Applier<'_> {
                 self.deleted_guards.insert((sid, self.guard.clone()));
             }
         }
-        // Outgoing R entries: PRD 08 (source-side containment) owns the
-        // R namespace; deletion of this fact's reverse edges lands there.
+        // Outgoing R entries: the same key derivation as the insert-side
+        // puts, so the removal is byte-symmetric. Deleted without
+        // verifying they existed — unlike F/M/U, a missing R entry is not
+        // independently detectable here without re-deriving every
+        // statement's edges; the class is covered by the offline-sweeper
+        // deferral (docs/architecture/50-storage.md, R-delete
+        // verification).
+        for &sid in relation.outgoing() {
+            if let Some(r_len) = self.reverse_key_for(schema, rel, sid, fact_bytes, row_id) {
+                self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;
+            }
+        }
         self.changed = true;
         Ok(())
     }
@@ -132,10 +142,67 @@ impl Applier<'_> {
                 self.inserted_guards.insert((sid, self.guard.clone()));
             }
         }
-        // R puts per outgoing containment: PRD 08 (source-side
-        // containment) owns the R namespace.
+        // One R entry per outgoing containment statement whose source
+        // selection this fact satisfies — conditional containments write
+        // reverse edges only for facts inside their σ
+        // (docs/architecture/50-storage.md § key layout).
+        for &sid in relation.outgoing() {
+            if let Some(r_len) = self.reverse_key_for(schema, rel, sid, fact_bytes, row_id) {
+                self.data.put(self.txn.raw_mut(), &self.key[..r_len], &[])?;
+            }
+        }
         self.changed = true;
         Ok(())
+    }
+
+    /// Derives one outgoing statement's `R` key into `self.key` — the
+    /// source fact's projection laid down in the target key's guard order
+    /// (`keys::permuted_guard_bytes`), statement-scoped. Returns the key
+    /// length, or `None` when the fact is outside the statement's source
+    /// selection (no reverse edge exists for it, by design). The same
+    /// derivation serves the insert-phase put and the delete-phase
+    /// removal, which is what makes them byte-symmetric.
+    fn reverse_key_for(
+        &mut self,
+        schema: &Schema,
+        rel: RelationId,
+        sid: StatementId,
+        fact_bytes: &[u8],
+        row_id: u64,
+    ) -> Option<usize> {
+        let relation = schema.relation(rel);
+        let statement = schema.statement(sid);
+        let StatementDescriptor::Containment { source, .. } = &statement.descriptor else {
+            unreachable!("validated schema: outgoing ids name Containment statements")
+        };
+        let Resolved::Containment {
+            key_permutation, ..
+        } = &statement.resolved
+        else {
+            unreachable!("validated schema: Containment resolves as Containment")
+        };
+        if !judgment::satisfies(
+            &self.selections.containment(sid).source,
+            relation.layout(),
+            fact_bytes,
+        ) {
+            return None;
+        }
+        // Scratch reuse: the key-statement loop is done with `self.guard`.
+        keys::permuted_guard_bytes(
+            relation.layout(),
+            &source.projection,
+            key_permutation,
+            fact_bytes,
+            &mut self.guard,
+        );
+        Some(keys::reverse_key(
+            &mut self.key,
+            sid,
+            &self.guard,
+            rel,
+            row_id,
+        ))
     }
 
     /// The ordered-neighbor probe for a pointwise key: after the exact `U`
@@ -261,7 +328,7 @@ fn key_projection(statement: &Statement) -> &[crate::schema::FieldId] {
     projection
 }
 
-fn decode_row_id(bytes: &[u8]) -> Result<u64> {
+pub(super) fn decode_row_id(bytes: &[u8]) -> Result<u64> {
     Ok(u64::from_le_bytes(bytes.try_into().map_err(|_| {
         Error::Corruption(CorruptionError::MalformedValue("M row id"))
     })?))

@@ -184,9 +184,12 @@ mod tests {
     use crate::testutil::TempDir;
 
     fn empty_schema() -> Schema {
-        SchemaDescriptor { relations: vec![] }
-            .validate()
-            .expect("valid fixture")
+        SchemaDescriptor {
+            relations: vec![],
+            statements: vec![],
+        }
+        .validate()
+        .expect("valid fixture")
     }
 
     fn env(dir: &TempDir) -> Environment {

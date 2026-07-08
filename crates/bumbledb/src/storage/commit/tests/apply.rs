@@ -229,6 +229,73 @@ fn deleting_a_containment_targeted_key_records_its_guard() {
 }
 
 #[test]
+fn inserting_a_source_fact_writes_its_reverse_edge() {
+    let dir = TempDir::new("commit-insert-reverse-edge");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let t = target_fact(&schema, 5);
+    let c = claim_fact(&schema, 5);
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    delta.insert(&view, TARGET, &t).expect("insert");
+    delta.insert(&view, CLAIM, &c).expect("insert");
+    drop(view);
+    let applied = apply(delta, &env).expect("apply");
+
+    // R | statement | key_bytes | source_rel | source_row: key_bytes is
+    // the claim's projection in Target's guard order, the source row is
+    // the claim's own row id (0, first fact of its relation).
+    let r = key(|b| keys::reverse_key(b, CLAIM_TARGET, &encode_u64(5), CLAIM, 0));
+    assert!(all_data_keys(&applied.txn, &env).contains(&r));
+}
+
+#[test]
+fn deleting_a_source_fact_removes_the_same_reverse_edge() {
+    let dir = TempDir::new("commit-delete-reverse-edge");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let t = target_fact(&schema, 5);
+    let c = claim_fact(&schema, 5);
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, TARGET, &t).expect("insert");
+        delta.insert(&view, CLAIM, &c).expect("insert");
+        drop(view);
+        apply(delta, &env)
+            .expect("apply")
+            .txn
+            .commit()
+            .expect("commit");
+    }
+    let before = committed_data(&env);
+    let r = key(|b| keys::reverse_key(b, CLAIM_TARGET, &encode_u64(5), CLAIM, 0));
+    assert!(before.iter().any(|(k, _)| *k == r));
+
+    // The delete re-derives the identical key bytes: exactly the claim's
+    // F/M/R entries disappear (Claim has no key statements, so no U).
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    delta.delete(&view, CLAIM, &c).expect("delete");
+    drop(view);
+    let applied = apply(delta, &env).expect("apply");
+    let c_hash = crate::encoding::fact_hash(&c);
+    let removed: BTreeSet<Vec<u8>> = [
+        key(|b| keys::fact_key(b, CLAIM, 0)),
+        key(|b| keys::membership_key(b, CLAIM, &c_hash)),
+        r,
+    ]
+    .into_iter()
+    .collect();
+    let expected: BTreeSet<Vec<u8>> = before
+        .iter()
+        .map(|(k, _)| k.clone())
+        .filter(|k| !removed.contains(k))
+        .collect();
+    assert_eq!(all_data_keys(&applied.txn, &env), expected);
+}
+
+#[test]
 fn delete_plus_insert_of_same_key_succeeds_in_either_user_order() {
     let dir = TempDir::new("commit-swap-order");
     let schema = schema();

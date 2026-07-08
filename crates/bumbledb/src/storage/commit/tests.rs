@@ -10,6 +10,7 @@ use crate::storage::keys::{KeyBuf, MAX_KEY};
 mod apply;
 mod commit;
 mod functionality;
+mod judgment;
 
 /// Target(id serial) + Keyed(x u64, y i64; key x) +
 /// Booking(room u64, during interval<u64>, tag u64; key (room, during)) +
@@ -90,6 +91,7 @@ const CLAIM: RelationId = RelationId(3);
 const TARGET_KEY: StatementId = StatementId(0);
 const KEYED_KEY: StatementId = StatementId(1);
 const BOOKING_KEY: StatementId = StatementId(2);
+const CLAIM_TARGET: StatementId = StatementId(3);
 
 fn target_fact(schema: &Schema, id: u64) -> Vec<u8> {
     let mut b = Vec::new();
@@ -106,6 +108,16 @@ fn keyed_fact(schema: &Schema, x: u64, y: i64) -> Vec<u8> {
     encode_fact(
         &[ValueRef::U64(x), ValueRef::I64(y)],
         schema.relation(KEYED).layout(),
+        &mut b,
+    );
+    b
+}
+
+fn claim_fact(schema: &Schema, holder: u64) -> Vec<u8> {
+    let mut b = Vec::new();
+    encode_fact(
+        &[ValueRef::U64(holder)],
+        schema.relation(CLAIM).layout(),
         &mut b,
     );
     b

@@ -6,7 +6,7 @@ use crate::storage::delta::{Disposition, WriteDelta};
 use crate::storage::env::Environment;
 use crate::storage::keys::MAX_KEY;
 
-use super::{Applied, Applier};
+use super::{judgment, Applied, Applier};
 
 /// Applies the delta to LMDB in canonical order: phase 1 all deletes, then
 /// phase 2 all inserts. Opens the LMDB write transaction here — nothing
@@ -24,6 +24,13 @@ use super::{Applied, Applier};
 ///
 /// Only on programmer-invariant violations (validated-schema shapes).
 pub fn apply<'env, 's>(delta: WriteDelta<'s>, env: &'env Environment) -> Result<Applied<'env, 's>> {
+    // Selection literals encode once per commit, before the write lock:
+    // the resolution reads only the committed dictionary (frozen for the
+    // single writer) plus the delta's pending interns.
+    let selections = {
+        let view = env.read_txn()?;
+        judgment::Selections::encode(&delta, &view)?
+    };
     let txn = env.write_txn()?;
     let mut applier = Applier {
         txn,
@@ -32,6 +39,7 @@ pub fn apply<'env, 's>(delta: WriteDelta<'s>, env: &'env Environment) -> Result<
         row_id_next: BTreeMap::new(),
         deleted_guards: BTreeSet::new(),
         inserted_guards: BTreeSet::new(),
+        selections,
         key: [0; MAX_KEY],
         guard: Vec::new(),
     };
@@ -68,6 +76,7 @@ pub fn apply<'env, 's>(delta: WriteDelta<'s>, env: &'env Environment) -> Result<
         row_id_next,
         deleted_guards,
         inserted_guards,
+        selections,
         ..
     } = applier;
     Ok(Applied {
@@ -77,5 +86,6 @@ pub fn apply<'env, 's>(delta: WriteDelta<'s>, env: &'env Environment) -> Result<
         row_id_next,
         deleted_guards,
         inserted_guards,
+        selections,
     })
 }

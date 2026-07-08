@@ -356,6 +356,18 @@ pub enum ValidationError {
     },
 }
 
+/// Which side of a containment statement the commit-time judgment found
+/// unsatisfied (`docs/architecture/30-dependencies.md` § enforcement).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    /// An inserted source fact inside σ has no target: the guard probe
+    /// missed, or the coverage walk found a gap.
+    SourceUnsatisfied,
+    /// A deleted target key tuple is still required by a surviving
+    /// source fact (the reverse-edge scan).
+    TargetRequired,
+}
+
 /// The one workspace error type, categorized per
 /// `docs/architecture/60-api.md`.
 #[derive(Debug)]
@@ -390,8 +402,6 @@ pub enum Error {
     FactShape(FactShapeError),
 
     // --- Write errors ---
-    // The containment-violation variants arrive with PRDs 08–09
-    // (`docs/architecture/30-dependencies.md` § judged on final states).
     /// A `Functionality` statement violated by the committed final state:
     /// two live facts claim one key — the same guard bytes (scalar
     /// put-conflict), or overlapping intervals within one scalar-prefix
@@ -405,6 +415,19 @@ pub enum Error {
         /// names both parties. `None` for a scalar put-conflict, where
         /// the guard bytes inside `fact` already identify the collision.
         incumbent: Option<Box<[u8]>>,
+    },
+    /// A `Containment` statement violated by the committed final state
+    /// (`docs/architecture/30-dependencies.md` § judged on final states).
+    /// `fact` is canonical source-fact bytes on either side: the judgment
+    /// speaks about sources — a missing target is named by the source
+    /// that requires it.
+    ContainmentViolation {
+        statement: StatementId,
+        side: Direction,
+        /// The source fact: the inserted fact whose target is missing
+        /// (`SourceUnsatisfied`), or the surviving fact still requiring a
+        /// deleted target key (`TargetRequired`).
+        fact: Box<[u8]>,
     },
     /// A serial sequence reached `u64::MAX`; the generator can issue no
     /// further values for this field.

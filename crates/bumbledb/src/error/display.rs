@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use super::{CorruptionError, Error, FactShapeError, SchemaError, ValidationError};
+use super::{CorruptionError, Direction, Error, FactShapeError, SchemaError, ValidationError};
 
 impl fmt::Display for FactShapeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -395,6 +395,20 @@ impl fmt::Display for Error {
                 "statement {}: functionality violated — two live facts claim one key",
                 statement.0
             ),
+            Self::ContainmentViolation {
+                statement, side, ..
+            } => match side {
+                Direction::SourceUnsatisfied => write!(
+                    f,
+                    "statement {}: containment violated — an inserted source fact has no target",
+                    statement.0
+                ),
+                Direction::TargetRequired => write!(
+                    f,
+                    "statement {}: containment violated — a deleted target key is still required",
+                    statement.0
+                ),
+            },
             Self::SerialExhausted { relation, field } => write!(
                 f,
                 "serial sequence exhausted (relation {}, field {})",

@@ -7,9 +7,11 @@
 //! Because every delete lands before any insert and the insert set is
 //! deduplicated by construction, a `U` conflict during inserts is a genuine
 //! functionality violation; user operation order inside the transaction is
-//! semantically irrelevant. The 50-storage doc extends this into the full
-//! commit (the judgment phase, counters, tx id, LMDB commit); the judgment
-//! phase and `R` maintenance land with PRDs 08-09.
+//! semantically irrelevant. Phases 1-2 also maintain the `R` reverse edges
+//! (one per containment statement whose source selection the fact
+//! satisfies), and phase 3 — the judgment phase (`judgment`) — proves every
+//! containment's source side against the final state; the target side
+//! lands with PRD 09.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,6 +22,7 @@ use crate::storage::keys::KeyBuf;
 
 mod applier;
 mod apply;
+mod judgment;
 mod write;
 
 #[cfg(test)]
@@ -48,6 +51,10 @@ pub struct Applied<'env, 's> {
     /// statements — subtracted from `deleted_guards` before the
     /// target-side scan (PRD 09).
     pub inserted_guards: BTreeSet<(StatementId, Vec<u8>)>,
+    /// Selection literals pre-encoded once for this commit (phases 1-2
+    /// gate the `R` writes with them; phase 3 reuses them for its source
+    /// and target checks).
+    pub selections: judgment::Selections,
 }
 
 /// The commit outcome: whether logical state changed, and the resulting
@@ -67,6 +74,7 @@ struct Applier<'env> {
     row_id_next: BTreeMap<RelationId, u64>,
     deleted_guards: BTreeSet<(StatementId, Vec<u8>)>,
     inserted_guards: BTreeSet<(StatementId, Vec<u8>)>,
+    selections: judgment::Selections,
     key: KeyBuf,
     guard: Vec<u8>,
 }
