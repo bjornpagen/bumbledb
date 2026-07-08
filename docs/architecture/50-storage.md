@@ -10,14 +10,13 @@ becomes a correctness or maintenance liability.
 
 ## Design inputs (why this layout)
 
-The v5 layout stored every field value 4–6 times across ten namespaces and did ~15
-B-tree puts per inserted fact; its per-(field,row) column cells turned megabytes of
-column data into hundreds of thousands of LMDB point-gets — 80% of traced execution
-(post-mortem §20–§24, `docs/history/post-mortem.md`). The governing observation: an
-encoded fact is already a fixed-width row sliceable into columns for free — **one
-sequential scan of a row-major table yields every column.**
+The first governing observation: an encoded fact is already a fixed-width row
+sliceable into columns for free — **one sequential scan of a row-major table yields
+every column.** A layout that instead stores field values severally across many
+namespaces turns megabytes of column data into hundreds of thousands of LMDB
+point-gets; this layout exists to make that shape unwritable.
 
-New governing sentence (2026-07-08, the dependency redesign): **guard namespaces are
+The second: **guard namespaces are
 derived accelerators for the dependency judgments (`30-dependencies.md`), not the
 judgments' definitions.** `U` exists so the functionality check is O(log n) per
 touched fact; `R` exists so the containment check's target side is O(log n) per
@@ -46,9 +45,9 @@ from read snapshots) and `_dict` (forward `blake3(tag‖bytes) → id`, reverse
 (order-sensitive); stored values are not order-sensitive and are little-endian
 (dictionary ids big-endian) — pinned here for the offline checker this doc defers.
 
-- Every namespace names its reader above (README rule 3). The v5 namespaces with no
-  reader (`H`, `P`, `C`, always-on `A`) stay deleted; declared opt-in accelerators may
-  return only with a benchmark that demands them (OPEN, README).
+- Every namespace names its reader above (README rule 3); a namespace with no
+  reader is deleted. Declared opt-in accelerator namespaces exist only with a
+  benchmark that demands them (OPEN, README).
 - `fact_bytes` = the canonical encoding owned by `10-data-model.md`; identity = bytes.
 - `fact_hash` = full 32-byte blake3 of `fact_bytes`; an `M` hit is trusted without
   verification (collision axiom, recorded in `10-data-model.md`).
@@ -70,9 +69,9 @@ from read snapshots) and `_dict` (forward `blake3(tag‖bytes) → id`, reverse
   u64 — all big-endian; ids assigned by declaration/materialized order and pinned by
   the fingerprint.
 - Open-time checks, in order: storage format version, then schema fingerprint — each
-  mismatch is a hard failure. **The dependency redesign bumps the format version**;
-  pre-redesign stores do not open, and no migration path exists (ETL is the story,
-  `70-api.md` — and the compatibility break is deliberate, `00-product.md`).
+  mismatch is a hard failure. No other format version opens and no migration path
+  exists (ETL is the story, `70-api.md`; compatibility is never a design input,
+  `00-product.md`).
 
 **Decision: one `_data` database with first-byte namespaces.** **Alternative:** one
 LMDB database per namespace (enables per-namespace append mode and integer-key layouts).
@@ -190,9 +189,9 @@ stays deliberately unbuilt.
 **Corrupt data is a hard error, never a skip:** an `F` value whose length differs from
 the schema's fact width, a dangling intern id, an `M`/`F` disagreement, an
 out-of-range enum ordinal, an interval with `start ≥ end` — any of these aborts the
-scan/query with a corruption error (v5 silently skipped undecodable rows and shrank
-query results — post-mortem §37). An offline integrity checker (M↔F↔U↔R sweep) is out
-of scope for v0, stated.
+scan/query with a corruption error; an engine that silently skips undecodable rows
+silently shrinks query results, which is the worse bug. An offline integrity
+checker (M↔F↔U↔R sweep) is out of scope for v0, stated.
 
 ## The columnar image cache (the hot representation)
 
@@ -208,13 +207,12 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   16-byte unit exists only in `fact_bytes` and guard keys, where ordering needs it.
   At ~60 GB/s of single-core scan bandwidth a build is single-digit milliseconds per
   100 MB — the number that makes the whole cache design sound. **Column pitches are
-  padded off 16 KiB multiples** (docs/silicon/11, superseding the stagger rule):
-  measurement retired the old fear — L1D set congruence (256 sets × 64 B lines,
-  bits 6–13) costs at most 1.55× on real lockstep scans, never the folklore 10–20×
-  (that figure required a fully serialized dependent chain) — and exposed the real
-  hazard: stream-prefetch trackers alias on low 16 KiB page-number bits, so
-  power-of-two-ish pitches with small (1–3 line) staggers cost 4–6× on DRAM-tier
-  lockstep scans (8.13 vs 1.78 ns/row, four pre-registered discriminators). The rule:
+  padded off 16 KiB multiples** (measured): L1D set congruence (256 sets × 64 B
+  lines, bits 6–13) costs at most 1.55× on real lockstep scans — never the folklore
+  10–20×, which requires a fully serialized dependent chain — while the hazard that
+  actually matters is stream-prefetch trackers aliasing on low 16 KiB page-number
+  bits: power-of-two-ish pitches with small (1–3 line) staggers cost 4–6× on
+  DRAM-tier lockstep scans (8.13 vs 1.78 ns/row). The rule:
   when a column-to-column pitch within a slab is ≥ 64 KiB and lands within 384 B of a
   16 KiB multiple, round it up to the next exact multiple (exact multiples measured
   clean — the poison is the small offset). Immutable once built. Positions in the
@@ -248,7 +246,7 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   filter kernels). Views are survivor-position vectors in retained-capacity buffers,
   never cached; the prepared query additionally memoizes its views per (generation,
   resolved filters), so a warm re-execution skips even the in-memory re-scan.
-- Invariant test (from the v5 regression, post-mortem §26): two sequential read
+- Invariant test: two sequential read
   transactions with no intervening write share identical image instances; plus the
   concurrent families in `60-validation.md`.
 
@@ -269,24 +267,21 @@ Compaction and space reclamation = ETL into a fresh database (`70-api.md`
 export/import surfaces). The LMDB file never shrinks; the dictionary leaks by
 accepted design. That is the entire operational story, deliberately.
 
-## Store-size anatomy and compaction (measured 2026-07-03; pre-redesign numbers)
+## Store-size anatomy and compaction
 
-The S-scale corpus store measured 101 MB against SQLite's 13.6 MB for the same
-logical content. `mdb_stat` anatomy, so nobody re-derives it:
+The store is larger than SQLite's for the same logical content, structurally and by
+design — recorded so nobody re-derives it:
 
-- **~39 % freelist churn**: 2,529 of 6,463 pages were free — CoW residue from
-  the ~43 chunked bulk-load commits. LMDB never shrinks its file; length
-  reflects peak usage.
-- **~5–6 `_data` entries per fact by design**: fact (`F`) + membership hash
-  (`M`) + FD guard (`U`) + one reverse edge (`R`) per containment — 761,786
-  entries for ~152,700 facts. This is deliberate rent for O(log n) commit-time
-  judgment checks and stays. (Bidirectional statements add one edge per
-  direction; the redesign's re-measured anatomy lands with the new format's
-  first corpus.)
+- **Freelist churn**: chunked bulk-load commits leave CoW residue as free pages.
+  LMDB never shrinks its file; length reflects peak usage.
+- **Several `_data` entries per fact by design**: fact (`F`) + membership hash
+  (`M`) + one FD guard (`U`) per key + one reverse edge (`R`) per satisfied
+  containment direction. This is deliberate rent for O(log n) commit-time
+  judgment checks and stays.
 - **16 KB pages** on Apple Silicon (LMDB uses the OS page size) — chunkier
   B-tree overhead than SQLite's 4 KB pages with varint-packed rows.
 
-The churn half is recoverable: `Db::compact(dest)` writes a live-pages-only
+The churn component is recoverable: `Db::compact(dest)` writes a live-pages-only
 sequential copy through LMDB's `mdb_env_copy2(MDB_CP_COMPACT)` (copy-and-swap,
 never in-place; refuses an existing destination; the copy is a first-class
 writable store). The bench corpus cache loads into a scratch sibling and

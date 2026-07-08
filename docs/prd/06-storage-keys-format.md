@@ -7,7 +7,7 @@
 ## Goal
 
 The `_data` key layout matches `50-storage.md`: `U` keyed by statement id, `R`
-statement-scoped; the store format version bumps so pre-redesign stores fail at
+statement-scoped; the store format version bumps so older-format stores fail at
 open.
 
 ## Technical direction

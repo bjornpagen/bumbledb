@@ -140,11 +140,9 @@ The algorithmic reference is Wang, Willsey & Suciu, *Free Join: Unifying
 Worst-Case Optimal and Traditional Joins* (arXiv:2301.10841), vendored in
 [`docs/free-join-paper/`](docs/free-join-paper/).
 
-The measured record behind these numbers (the silicon campaigns, phase
-tables, and per-family denominators) was retired to git history with the
-2026-07-08 dependency redesign — the numbers on this page describe the
-pre-redesign engine and are re-earned after the redesign is implemented
-(see [docs/architecture/README.md](docs/architecture/README.md), rule 6).
+These numbers describe an earlier engine and are unearned for the current
+architecture until its benchmark suite runs green
+(see [docs/architecture/README.md](docs/architecture/README.md)).
 
 ## Measurement discipline
 

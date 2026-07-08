@@ -7,9 +7,8 @@ data, no borrows, no behavior), inspectable. The IR is the engine's public contr
 and it is also the language dependencies are written in (`30-dependencies.md`): one
 representation for "what holds" and "what do you want".
 
-**Alternative 1 — a Logica text frontend** (the long-standing plan): investigated deeply
-(2026-07-02; findings summarized here since the working repo at `~/Documents/logica` is
-outside this repo). Logica's syntax and rule model are excellent; its semantics are
+**Alternative 1 — a Logica text frontend**: investigated deeply (findings
+summarized here). Logica's syntax and rule model are excellent; its semantics are
 SQL-shaped at the core — explicit bag semantics ("conjunction multiplies
 multiplicities"), null in every type, negation defined as an is-null test over an
 aggregate, 269 untyped SQL-passthrough functions plus a raw-SQL escape hatch, recursion
@@ -267,5 +266,3 @@ variables (maximal disjoint intervals per group — Snodgrass's coalesce, Postgr
 `range_agg`); its result is a *set* of intervals per group, which breaks the
 one-row-per-group aggregate shape, so it waits for both a real need and a shape
 decision. Both arrive as new IR node kinds; nothing above assumes they never come.
-(Negation, membership, param sets, CountDistinct, and Arg-restriction graduated
-from this list on 2026-07-08.)

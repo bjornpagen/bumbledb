@@ -1,25 +1,10 @@
 # 60 — Validation
 
-**Status ledger (2026-07-08, the dependency redesign).** Everything below the oracle
-section describes the validation system the redesign requires; the paragraphs in
-*this* ledger record what exists versus what the redesign resets. In-repo from the
-pre-redesign engine and still true in kind: the negative-validation corpus, the
-deterministic property/golden content as unit tests, the randomized
-executor-vs-nested-loop differential family, kill-during-commit crash injection, the
-concurrent reader/writer families (incl. the pinned-at-T reads), the ETL family, the
-allocation gate (allocations *and* deallocations), the EXPLAIN family, the SQLite
-oracle (`bumbledb-bench verify`), the IR→SQL translator, and the ledger benchmark
-(`bumbledb-bench bench`). **The redesign voids the oracle stamp and the performance
-claim wholesale:** the 2,468-case count, the S-scale reports, and the pinned
-denominators (docs/silicon2/final2.md and the README charts) are historical evidence
-about the pre-redesign engine — kept, never re-cited as current. Every count is
-re-derived and every claim re-earned on the new format; the discipline (this
-chapter) is the thing that carries over. **The reference engine is promoted from
-deferred tie-breaker to required infrastructure** (below) — the redesign's judgment
-semantics cannot be validated any other way.
-
-The old repo's best asset was its correctness discipline; the worst was its gate
-theater. We keep the former and refuse the latter.
+Correctness discipline without gate theater. The validation system: two oracles, a
+seeded differential suite with an asserted coverage contract, a small golden anchor
+set, one allocation boolean, and the ledger benchmark protocol. Every count and
+every performance claim is derived and earned on this engine — a claim without a
+current run behind it does not exist.
 
 ## The two oracles
 
@@ -31,9 +16,9 @@ claim.
 independent, battle-tested implementation catches whole bug classes a same-author
 reference shares. **Reverses if:** never.
 
-**The naive model is the oracle for dependency semantics** — the in-memory reference
-engine (naive loops + BTreeSets, obviously correct), promoted to required
-infrastructure by the redesign because SQLite cannot express the judgments
+**The naive model is the oracle for dependency semantics** — an in-memory reference
+engine (naive loops + BTreeSets, obviously correct), required infrastructure
+because SQLite cannot express the judgments
 (`30-dependencies.md`): pointwise keys, conditional containments, totality. The
 naive model implements chapter 30 literally — after every commit in a differential
 run it evaluates **every statement by brute force over the full final state** and
@@ -47,7 +32,7 @@ same change.
 lost:** trigger emulation is a second nontrivial implementation of the semantics
 *in a language nobody here trusts for it*, validated by nothing; the naive model is
 smaller than its triggers would be and doubles as the query-gap oracle.
-**Reverses if:** never — three-way beats two-way and the model was always the plan.
+**Reverses if:** never — three-way beats two-way.
 
 **Durability parity under `synchronous=FULL`.** Both engines flush **to media** on
 the timing machine: LMDB does unconditionally on macOS (`lmdb-master-sys`
@@ -55,12 +40,12 @@ the timing machine: LMDB does unconditionally on macOS (`lmdb-master-sys`
 while SQLite's default `fullfsync=OFF` issues a plain `fsync(2)` that macOS does not
 propagate through the drive cache. The bench session therefore pins
 `PRAGMA fullfsync=ON` and `PRAGMA checkpoint_fullfsync=ON`, and `FairnessCheck`
-asserts both — the first benchmark run's 41× commit_single gap was this asymmetry,
-not engine work.
+asserts both — an unpinned fullfsync manufactures order-of-magnitude phantom
+write-latency gaps that are drive-cache policy, not engine work.
 
-**The value mapping is normative** (the v5 oracle parsed CLI text with
-`parse().unwrap_or(0)`, silently coercing everything — never again). Comparison uses
-the **typed rusqlite API**, never CLI text:
+**The value mapping is normative.** Comparison uses
+the **typed rusqlite API**, never CLI text — text parsing with fallback defaults
+silently coerces everything and is the oracle-corrupting bug class:
 
 | bumbledb | SQLite | note |
 |---|---|---|
@@ -236,12 +221,12 @@ buffer). It is a boolean, not a budget file.
 
 One small family: on constructed skew fixtures, EXPLAIN's counted execution asserts
 the expected cover choice and that batching engaged — the cheap detector for
-correct-but-slow regressions (v5's two flagship failures were exactly that class).
+correct-but-slow regressions, the class no functional test can see.
 Beyond this, the benchmark's timing is knowingly the only performance detector; stated.
 
 ## Observability: the trace seam
 
-(Amended by the performance suite, docs/perf/.) The one tracing mechanism is
+The one tracing mechanism is
 `obs.rs`: nanosecond spans and point events recorded into a thread-local buffer
 during explicit capture, drained by tooling (Chrome-trace export + terminal
 flame summaries in `bumbledb-bench`). **Zero-cost when off**: under default
@@ -264,8 +249,7 @@ column — descend minus the next node's total = per-row bookkeeping + leaf
 emits + the child node's un-phased entry setup. `WORDMAP_GROW` point events
 surface sink-map rehashes inside measured executions.
 
-**Measurement caveats, measured** (bumblebench exp 11,
-docs/silicon/01-timer-discipline.md). The raw `cntvct_el0` read costs 0.30 ns
+**Measurement caveats, measured.** The raw `cntvct_el0` read costs 0.30 ns
 (1 per cycle) — the instrument is free; the constraint is `cntfrq_el0`'s
 24 MHz (41.67 ns granularity, unbiased across accumulation). The unfenced
 closing-stamp slide is bounded by backend scheduler occupancy at ≤ ~50 ns —
@@ -279,19 +263,16 @@ totals carry the stamp overhead of deep small-batch nodes, and short phases
 under-attribute up to ~7%. Therefore: **phase tables direct work; the
 untraced timing tables decide gates.**
 
-Round two sharpened the slide bound (bumblebench exp 20,
-docs/silicon2/00): the unfenced closing stamp slides by
+The sharper slide bound (measured): the unfenced closing stamp slides by
 **min(remaining payload latency, scheduler drain)** — occupancy is only
 the ceiling. On a latency-bound span (a pointer chase mid-flight at the
-stamp) the slide reached −99.6% of the span; on throughput-bound spans
-it stays in the ≤ ~50 ns drain regime. `CNTVCTSS_EL0` closes held ±7%
+stamp) the slide reaches −99.6% of the span; on throughput-bound spans
+it stays in the ≤ ~50 ns drain regime. `CNTVCTSS_EL0` closes hold ±7%
 everywhere. The health rule: **attribution claims under ~1 µs require
 CNTVCTSS closes AND repetition; a latency-bound span's raw-stamped
 attribution is presumed wrong.** On the platform side, macOS's commpage
-kind-3 conversion means the libsystem clocks (`Instant`,
-`mach_absolute_time`) are slide-proof on M2 — the campaign's early "2×
-attribution error" was stamp cost + tick noise + ablation scope, never
-an `Instant` slide. Traced samples are single warm
+kind-3 conversion makes the libsystem clocks (`Instant`,
+`mach_absolute_time`) slide-proof on M2. Traced samples are single warm
 executions on the rotating param sets — for skewed families the sample may be
 the hot parameter; gates cite p95 where that matters.
 

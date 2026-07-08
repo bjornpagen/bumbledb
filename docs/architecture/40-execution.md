@@ -3,10 +3,7 @@
 The execution engine is Free Join as specified in the paper (Wang, Willsey, Suciu,
 SIGMOD 2023 — `docs/free-join-paper/`), run over snapshot-local columnar data, with
 documented deviations. When this doc and the paper disagree and no `Deviation:` block
-explains why, this doc is wrong. The dependency redesign (2026-07-08) changes this
-chapter less than any other: Free Join, COLT, the probe laws, batching, and the
-allocation contract are untouched; what is new is the anti-probe (negation), param-set
-probes, interval lowering, and two sink behaviors — each earning its place below.
+explains why, this doc is wrong.
 
 ## Access paths (before any join machinery)
 
@@ -94,7 +91,7 @@ no residual concept; we own filter placement because there is no external optimi
   `Estimate` is duplicate-inflated by construction, but both labels are admissible
   bounds on iteration cost. v0 rule, **magnitude-first**: the smaller magnitude wins
   regardless of label; on a tie `Exact` wins (it cannot shrink); a full tie keeps the
-  lowest subatom index (deterministic). The earlier label-first rule ("an Exact
+  lowest subatom index (deterministic). A label-first rule ("an Exact
   always displaces an Estimate") iterated a 500-key forced map while a 7-row
   param-filtered view sat unforced beside it — the measured balance wrong-cover.
 - **`binary2fj` + conservative `factor()`** (§4.1): exactly per paper, over the DP
@@ -105,7 +102,7 @@ field→column maps; the node list with subatom partitions; per-node cover sets;
 occurrence trie schemas derived per §3.3; per-node residual **and anti-probe** lists;
 per-atom filter lists; the binding-slot layout (below); and the
 provably-distinct-bindings flag (below). Validated once at construction; nothing
-downstream re-checks (post-mortem §38).
+downstream re-checks.
 
 ## Set semantics in the executor
 
@@ -215,41 +212,40 @@ survivor compaction (the scalar branchless cursor-write — NEON has no compress
 instruction; that is SVE, which Apple Silicon lacks), never per-tuple conditional
 control flow — on a >99%-accurate TAGE predictor, the data-dependent per-tuple branch
 is the only misprediction source left, so we remove it representationally. The probe
-walk itself is the measured exception to naive vectorization (docs/silicon2/06): a
+walk itself is the measured exception to naive vectorization: a
 full NEON candidate sweep — all 8 bucket keys compared per probe — ran 2.7×
 faster than the tag-gated scalar walk in an isolated resident-map loop and
 INVERTED in situ (chain +25%, triangle +4%), because the sweep touches the key
 block on every probe while the tag-gated walk's data-dependent key load never
-issues on a miss; under inter-phase displacement (exp 19's law) that is an
+issues on a miss; under inter-phase displacement that is an
 extra line per miss, and on L2-hot always-hit paths the 2.5× instruction bill
-is retire-bound loss. The bucket-of-8 SWAR group walk (docs/silicon2/05) is
+is retire-bound loss. The bucket-of-8 SWAR group walk is
 the shipped shape. **No indirect
 dispatch exists in the hot path**: sinks, counters, and kernels are monomorphized
 generics, never `dyn`. NEON (`cfg(aarch64)`, 128-bit = 2×u64) is confined to the
-sanctioned kernel shapes (amended by the performance suite, docs/perf/):
+sanctioned kernel shapes:
 fixed-width predicate scans (interval membership/overlap included — two-word
 compares over the start/end column pair, no new width), survivor compaction,
 fold/accumulate kernels (Sum/Min/Max/Count over batch columns, strided or
 gathered — Sum semantics unchanged: i128 accumulation, one range check at
 finalization), gather kernels (position-indexed column reads), and
 software-prefetch passes (`prfm`) between probe phase 1 and phase 2. Fold kernels
-follow the **port-topology law** (docs/silicon/06, from bumblebench exps 03/04,
-superseding the scalar-ILP-first doctrine): every flag-writing scalar op
+follow the **port-topology law** (measured): every flag-writing scalar op
 (`adds/adcs/cmp/csel`) is confined to 3 of the reference core's 6 integer ALUs, so
 exact scalar summation caps at ~2.8 flag-µops/cycle while NEON escapes the triad
 and rides the 3×16 B load ports — dense exact sums measured 8.8 vs 4.0–4.6 rows/ns
 at L1 (carry-counted u128 via `vcgtq_u64`), min/max 2.65× at every tier, with DRAM
 converging all parallel kernels (~7.5 rows/ns single-core). Dense (stride-1) folds
 therefore take NEON unconditionally; strided and gathered folds stay scalar until
-measured (latency×MLP-bound — a different law). The retired doctrine's founding
-number (2.45 rows/ns scalar) was a frequency-contamination artifact; the correction
-stays on record. Deep-OoO scalar remains the shape for irregular control flow —
+measured (latency×MLP-bound — a different law). Deep-OoO scalar remains the shape
+for irregular control flow —
 the law is about reductions, not loops in general (`00-product.md` machine
 model; unsafe policy there too). Columns are 128-byte-aligned SoA
 with pitch-padded bases (`50-storage.md`). Scalar fallback everywhere, equal results by
 test across batch sizes. **Vectorized execution is the default and only path** — a
-scalar "mode" exists solely as the degenerate batch size where useful for testing; v5's
-fake vectorized mode (post-mortem §31) is the cautionary tale. Honest caveat, stated:
+scalar "mode" exists solely as the degenerate batch size where useful for testing; a
+"vectorized mode" that wraps scalar loops without batching is the failure shape this
+sentence forbids. Honest caveat, stated:
 deep in the plan the batch source is the current subtrie, whose fanout on reference
 walks is often 1–10 — large batches are reliably available only at the root;
 cross-node-entry batch accumulation is future work, not assumed. **Reverses if:**
@@ -258,8 +254,8 @@ measured equal-or-worse than scalar on the ledger suite after honest tuning.
 **COLT force is single-pass with chunked child lists:** forcing pushes each offset into
 its key's child list, chunked (64 offsets per arena chunk, chained by chunk — bounded
 pointer-chase, independent loads within a chunk), rather than the paper's growable
-per-key vectors or v5's two-pass contiguous layout (which decoded and hashed every row
-twice — post-mortem §33). **Deviation:** the paper's leaves are plain vectors; ours are
+per-key vectors or a two-pass contiguous layout (which decodes and hashes every row
+twice). **Deviation:** the paper's leaves are plain vectors; ours are
 chunked. **Reverses if:** a force+iterate microbenchmark shows two-pass-contiguous
 winning end-to-end.
 
@@ -317,13 +313,12 @@ counting variant and **executes the query** (ANALYZE semantics), reporting the p
 per-node estimated vs actual cardinalities, residual and anti-probe selectivity, and
 cover-choice histograms (choices aggregated per node, not per entry). Output shape:
 OPEN. Release builds contain no other instrumentation: no per-tuple labels, no
-always-on counters, no diagnostics allocation anywhere in the join loops (post-mortem
-§32 is the reason this paragraph exists).
+always-on counters, no diagnostics allocation anywhere in the join loops.
 
-## Perf-suite mechanisms (landed 2026-07-03; unchanged by the redesign)
+## Measured mechanisms
 
-Five decisions from the first benchmark report's evidence, enforced forever by
-`crates/bumbledb-bench/src/tripwires.rs`:
+Five measured decisions, enforced structurally by
+`crates/bumbledb-bench/src/tripwires.rs` (never by wall clock):
 
 - **Selection levels.** Every Eq-against-a-constant (literal or param — the
   same machine) lowers into `PlanOccurrence::selections` and becomes a
@@ -352,9 +347,9 @@ Five decisions from the first benchmark report's evidence, enforced forever by
   occurrence per prepared query, current-generation images only.
 - **Magnitude-first cover choice.** `KeyCount` labels mean keys-exact vs
   positions-upper-bound; both are admissible iteration-cost bounds, so
-  `better_cover` compares magnitudes and uses the label only on ties. The
-  old "Exact displaces Estimate" rule iterated a 500-key forced map over a
-  7-row view — the measured balance wrong-cover.
+  `better_cover` compares magnitudes and uses the label only on ties. A
+  label-first "Exact displaces Estimate" rule iterates a 500-key forced map over a
+  7-row view — the measured wrong-cover this rule exists to prevent.
 - **Dense map iteration and occupancy sizing.** Forced maps carry a dense
   occupied-slot list (iteration is O(keys), never O(capacity); the map
   `BatchToken` is a dense index) and size from
@@ -371,5 +366,5 @@ Prepare-time statistics live in `plan/selectivity.rs` (the distinct ladder:
 key-exact, resident-image exact via `ImageCache::peek` — prepare never
 builds — schema bounds, documented floors) and the DP's join steps multiply
 per-binding fanout `rows / distinct(join field)` with key coverage pinning
-fanout to 1; measured worst est/actual across the eight families fell from
-114,679× to ≤ 3.3×.
+fanout to 1 (measured worst est/actual across the ledger families: ≤ 3.3×,
+against five orders of magnitude for naive row-product estimation).

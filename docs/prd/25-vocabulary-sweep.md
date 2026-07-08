@@ -23,13 +23,14 @@ the tree builds green; the root README's code example speaks the new language.
    architecture doc's tombstone); test names → renamed to what they now test.
 2. **Systematic procedure** (do it this way, not ad hoc): for each target word,
    run `rg -i --pretty <word> crates scripts`, classify every hit into
-   {identifier, comment, historical-citation, false-positive}, fix the first two
-   classes, and record the count of accepted historical citations in this PRD
-   file when done. Zero identifier hits is the bar.
+   {identifier, comment, false-positive}, and fix the first two classes. Zero
+   identifier hits is the bar; a comment may keep a deleted word only when it
+   states the current refusal (e.g. "no cascade exists; delete the cluster in one
+   delta"), never to narrate what used to be.
 3. **Root README:** the code example (`schema!` block and the surrounding prose
    that names `fk`/serial-unique behavior) is rewritten in statement notation to
-   compile against the new macro; benchmark prose was already marked historical —
-   leave it. Do not otherwise rewrite the README (owner's document).
+   compile against the new macro. Do not otherwise rewrite the README (owner's
+   document).
 4. **Compile-and-gate closure:** this PRD ends with
    `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
    and `cargo test --workspace` green — every `[test]` criterion from PRDs 01–24
@@ -49,8 +50,7 @@ owner ruling).
 ## Passing criteria
 
 - `[shape]` `rg -i 'unique|foreign|fkey|\bfk\b|constraint|cascade|restrict' crates scripts`
-  yields only the recorded historical citations (count listed in this file) and
-  string-API false positives.
+  yields only current-refusal comments and string-API false positives.
 - `[shape]` The root README `schema!` example uses statement notation and the
   seven-type vocabulary.
 - `[gate]` `cargo fmt --all --check` clean; `clippy --workspace --all-targets

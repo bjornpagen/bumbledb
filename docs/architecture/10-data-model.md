@@ -2,7 +2,7 @@
 
 ## The type layer: a type is an encoding, and nothing else
 
-Bumbledb is **hard structurally typed** (owner ruling, 2026-07-02). The engine's type
+Bumbledb is **hard structurally typed** (owner ruling). The engine's type
 layer answers exactly one question — what do the bytes mean and which operations exist —
 and carries no names, no identity metaphysics:
 
@@ -28,7 +28,7 @@ Rationale (the owner's, verbatim in spirit): *an enum is a schema-level relation
 extension is closed and known at compile time* — three states don't deserve a table; the
 byte is the table, inlined. The ordinal encoding is declaration order; >256 variants is
 a schema-declaration error; an out-of-range ordinal anywhere is corruption.
-**Decision:** structural enums. **Alternative:** nominal `Enum{name}` (v5's design).
+**Decision:** structural enums. **Alternative:** nominal `Enum{name}`.
 **Why it lost:** hard-structural ruling — the variant list is what determines the
 encoding, so it *is* the identity; the wrapper name types nothing. **Reverses if:**
 never — philosophy.
@@ -61,7 +61,7 @@ microseconds; Money = scaled I64, scale chosen per application; rates = scaled I
 all considered-and-rejected: scaled i64 covers personal-ledger magnitudes (±92
 quadrillion cents), and a second scalar width would multiply the codec and NEON kernel
 shapes for bytes that don't matter at this scale.
-**Uuid, rejected explicitly (2026-07-08):** uuidv7 in the surveyed Postgres workloads
+**Uuid, rejected explicitly:** uuidv7 in the surveyed Postgres workloads
 does three jobs — identity, clash-avoidance, and clock — because Postgres cannot trust
 its clients to mint ids. Here the single-writer engine mints serials (identity and
 clash-rejection by construction), and wall-clock time is an explicit I64 column.
@@ -174,8 +174,8 @@ is a **storage behavior, not a type**:
   after", it stores an explicit I64 time or an Interval — the convention exists so
   nobody rediscovers uuid.
 
-**Decision:** serial demoted from type to generation attribute + auto-key.
-**Alternatives:** (a) nominal `Serial{type_name, owning_relation}` (v5) — lost to the
+**Decision:** serial is a generation attribute + auto-key, not a type.
+**Alternatives:** (a) nominal `Serial{type_name, owning_relation}` — lost to the
 structural ruling; (b) generative insert (insert mints and returns the id) — lost
 because it splits insert into two semantics and breaks idempotence and the fact-hash
 membership check. **Reverses if:** never — this is strictly simpler and preserves the
@@ -200,8 +200,8 @@ ergonomic contract.
   empty fact — a database-level boolean. Every layer (encoding, hashing, IR) defines
   behavior for it because it falls out of the representation.
 
-**Decision: no primary keys.** **Alternative:** v1's entity relations with PKs and
-whole-row `replace`. **Why it lost:** one identity concept (the fact), one mutation
+**Decision: no primary keys.** **Alternative:** entity relations with appointed PKs
+and whole-row `replace`. **Why it lost:** one identity concept (the fact), one mutation
 algebra (insert/delete), no PK-vs-key duality. Consequences now explicit: mutating a
 referenced fact needs dependency-timing rules (commit-time, against the final state —
 `30-dependencies.md`) and serial re-supply (specified above). **Reverses if:** the

@@ -48,7 +48,7 @@ bumbledb::schema! {
   and the `schema()` constructor the `Db` functions take.
 
 **Decision: the macro surface is the algebra, with no sugar keywords.** Owner ruling
-2026-07-08 (`30-dependencies.md` records the alternative and its loss). The macro
+(`30-dependencies.md` records the alternative and its loss). The macro
 remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
 
 ## Environment lifecycle
@@ -91,8 +91,7 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   `SerialExhausted` raises eagerly at the `alloc` call (the sequence state is knowable
   immediately), not at commit. Bulk import is `Db::bulk_load` — a `Db`-level method,
   not a write-closure operation (see the ETL section).
-- **WriteTx point reads (decision, 2026-07-08 — replaces "no reads in write
-  transactions"):** `tx.contains(&fact) -> bool` (membership — the `insert`/`delete`
+- **WriteTx point reads (decision):** `tx.contains(&fact) -> bool` (membership — the `insert`/`delete`
   return value's read-only sibling) and `tx.get::<F>(key) -> Option<F>` — lookup of
   the full fact through any key FD of its relation (typed via the key's newtype
   signature; `_dyn` form takes relation + statement id + encoded key). Both read
@@ -170,8 +169,8 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
 
 ## ETL / migration surface
 
-Schema change = ETL into a new database (`10-data-model.md`); the redesign's format
-bump makes this the *only* path from a pre-redesign store, stated. The **export
+Schema change = ETL into a new database (`10-data-model.md`) — the only path from
+any other format, stated. The **export
 surface is a full-relation scan**: `snap.scan(relation)` yields *dynamic* facts
 (`Result<Vec<Value>>` — per-item corruption is a hard error and the stream fuses)
 over `F` in row_id order (a storage iteration, not a query — streams, not sets); the
@@ -221,7 +220,7 @@ surface it is built from.
 Resolved by ruling or implementation (recorded above): the `ResultBuffer` shape;
 the dynamic-fact ETL form; EXPLAIN's surface (`snap.explain(&mut prepared, params)
 -> (ResultBuffer, String)` — ANALYZE semantics, rendered-text report); WriteTx point
-reads (decided 2026-07-08, replacing the "no reads in write transactions" v0 rule).
+reads (decided).
 
 Still open:
 

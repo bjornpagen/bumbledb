@@ -1,9 +1,8 @@
 # PRD set — reconciling the code against the 2026-07-08 architecture
 
-This directory is the complete, ordered work plan that takes the codebase from the
-pre-redesign engine to the architecture documented in `docs/architecture/`. When a
-PRD and an architecture chapter disagree, **the chapter wins** and the PRD is
-amended.
+This directory is the complete, ordered work plan that takes the current code to
+the architecture documented in `docs/architecture/`. When a PRD and an architecture
+chapter disagree, **the chapter wins** and the PRD is amended.
 
 ## Policy (read before executing any PRD)
 

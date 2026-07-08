@@ -5,16 +5,15 @@
 Bumbledb is an embedded, typed, schemaful, **set-semantic** relational database over
 LMDB, built by and for one user (Bjorn Pagen) and his applications. It is Postgres's
 relational elegance with the parts its owner hates removed: no SQL, no bag semantics,
-no nulls, no layer cake — and, since the dependency redesign (2026-07-08), a
-constraint system Postgres cannot follow: **invariants are two judgments about
-queries** (functionality and containment, `30-dependencies.md`), judged once per
-commit against the transaction's final state, which makes totality of sum types,
-conditional reference targets, and pointwise temporal keys *statable* — and makes
-the SQL constraint zoo (unique, foreign key, primary key, check, exclusion, cascade,
-restrict, deferrable) **deleted vocabulary**, each word replaced by a derivation.
-BCNF stays a modeling discipline the owner enforces; temporality stops being a
-discipline and becomes a type (`Interval`, `10-data-model.md` — the seventh and
-last).
+no nulls, no layer cake — and a constraint system Postgres cannot follow:
+**invariants are two judgments about queries** (functionality and containment,
+`30-dependencies.md`), judged once per commit against the transaction's final state,
+which makes totality of sum types, conditional reference targets, and pointwise
+temporal keys *statable* — and makes the SQL constraint zoo (unique, foreign key,
+primary key, check, exclusion, cascade, restrict, deferrable) **deleted
+vocabulary**, each word replaced by a derivation. BCNF is a modeling discipline the
+owner enforces; temporality is not a discipline but a type (`Interval`,
+`10-data-model.md` — the seventh and last).
 
 The bet: take one good algorithm (Free Join), one elegant relational core (typed
 sets + dependency judgments), one storage engine (LMDB), and push those decisions to
@@ -29,7 +28,7 @@ that wants a branch, a flag, or a mode, the first question is what representatio
 make the case inexpressible. Illegal states unrepresentable; parse, don't validate.
 
 **Hard structural typing.** A type is an encoding, and nothing else. Nominal typing is
-rejected everywhere in the engine (owner ruling, 2026-07-02): names live in the host
+rejected everywhere in the engine (owner ruling): names live in the host
 language, where rustc polices them for free. See `10-data-model.md`.
 
 **Generality of representation, discipline of acceptance.** Dependencies are stored
@@ -40,9 +39,9 @@ declaration** (`30-dependencies.md`) — the same law the performance work lives
 under: an optimization that cannot cite its number does not ship, and a constraint
 that cannot cite its plan does not validate.
 
-**Rust, for allocation control.** Allocation churn was an Achilles heel of the five
-discarded implementations (post-mortem §32–33). Rust makes the zero-allocation contract
-(`40-execution.md`) verifiable.
+**Rust, for allocation control.** Allocation churn is the failure mode the
+zero-allocation contract (`40-execution.md`) exists to kill, and Rust makes the
+contract verifiable.
 **Decision:** Rust. **Alternative:** Zig/C++ offer comparable allocation control.
 **Why it lost:** the owner's applications are Rust; the host language *is* the query
 composition layer and the nominal-typing layer, so it must be the applications'
@@ -51,18 +50,17 @@ language. **Reverses if:** never — owner axiom.
 ## Owner and workload
 
 - Single user, embedded in his Rust applications. Not a product, not a server, no
-  external API-stability obligations. **Compatibility is never a design input**: the
-  dependency redesign broke the format, the schema surface, and the constraint
-  vocabulary in one release, deliberately — the repo's own prior art is ETL'd
-  forward or regenerated, and this is the recorded precedent for next time.
+  external API-stability obligations. **Compatibility is never a design input**:
+  when the design improves, the format, surface, and vocabulary break in one
+  release, and data is ETL'd forward or regenerated.
 - Workload shape: ledger-like, highly normalized app data — many narrow relations,
   many joins, point lookups by key, reference walks, time-range and interval
   queries, balance-style aggregates. Read-heavy. The shape is measured, not assumed:
-  two of the owner's production schemas were censused (2026-07-08 — a 74-table
-  Postgres app and a payroll SQLite app); their entire type usage collapses onto the
-  seven types, their query operators onto this IR, and their app-enforced invariants
-  onto the two judgments. The census drove the feature set; nothing shipped without
-  a sighting in it.
+  two of the owner's production schemas were censused (a 74-table Postgres app and a
+  payroll SQLite app); their entire type usage collapses onto the seven types, their
+  query operators onto this IR, and their app-enforced invariants onto the two
+  judgments. The census drove the feature set; nothing shipped without a sighting
+  in it.
 - **Write design point:** writes are bursty and batched — one write transaction per
   burst; the design assumes **≥100 query executions per committed write generation**.
   Continuous high-frequency commits are out of the envelope (they would defeat the
@@ -119,17 +117,17 @@ decision accommodates narrower platforms). Full research notes with sources:
 
 - **~28–33 MLP lanes per core, bounded by smaller queues first**: the win is many
   *independent* loads in flight — batched execution over dependent pointer-chasing,
-  everywhere. Measured refinements (docs/silicon/, bumblebench): the binding OoO
+  everywhere. Measured refinements: the binding OoO
   window under per-item work is the ~115-entry integer issue queue, not the
   ~630-entry ROB; and dependent flag-µops per gathered load consume miss lanes
   (28 → 14 at four flag-µops per miss) — budget comparison code like cache lines.
-- **Port topology decides scalar-vs-NEON** (docs/silicon/06, superseding
-  scalar-ILP-first): flag-writing ops (`adds/adcs/cmp/csel`) are confined to 3 of
+- **Port topology decides scalar-vs-NEON** (measured): flag-writing ops
+  (`adds/adcs/cmp/csel`) are confined to 3 of
   the 6 integer ALUs, so NEON wins every dense reduction (exact sums 2×, min/max
   2.65× — carry-counted `vcgtq_u64` exactness costs vector ops, not flag ports),
   while deep-OoO scalar remains the shape for irregular control flow. 128-bit NEON
-  (no SVE) keeps a closed set of sanctioned kernel shapes (amended by docs/perf/
-  and docs/silicon/): fixed-width predicate scans, survivor compaction,
+  (no SVE) keeps a closed set of sanctioned kernel
+  shapes: fixed-width predicate scans, survivor compaction,
   fold/accumulate kernels — dense sums via carry-counted exact u128 now among
   them — (Sum/Min/Max/Count over batch columns, strided or gathered), gather
   kernels (position-indexed column reads), and software-prefetch passes (`prfm`)
@@ -144,12 +142,11 @@ decision accommodates narrower platforms). Full research notes with sources:
 - **Unaligned loads are near-free (16 KB pages)**: facts are stored dense, with no
   intra-row padding; alignment is spent only where NEON reads column bases.
 - **Columnar data is SoA, 128-byte aligned, with pitches padded off 16 KiB
-  multiples** (`50-storage.md`, docs/silicon/11): the L1D manages 64 B lines behind
-  a 128 B memory-system granule — both numbers are real, at different levels
-  (measurement settled the once-flagged contradiction) — and its set congruence
-  costs at most 1.55× on real lockstep scans. The layout hazard that actually
-  matters is prefetch-tracker aliasing on 16 KiB page-number bits (4–6× on DRAM
-  lockstep scans); one page of pitch padding cures it.
+  multiples** (`50-storage.md`; measured): the L1D manages 64 B lines behind
+  a 128 B memory-system granule — both numbers are real, at different levels —
+  and its set congruence costs at most 1.55× on real lockstep scans. The layout
+  hazard that actually matters is prefetch-tracker aliasing on 16 KiB page-number
+  bits (4–6× on DRAM lockstep scans); one page of pitch padding cures it.
 - **TAGE branch prediction (>99%)**: the residual misprediction source is per-tuple
   data-dependent branching — batching converts it into branchless compaction; and the
   hot path contains no indirect dispatch (sinks/counters monomorphized,
@@ -157,7 +154,7 @@ decision accommodates narrower platforms). Full research notes with sources:
 - Explicit SIMD lives under `#[cfg(target_arch = "aarch64")]`; other 64-bit platforms
   compile and run scalar fallback correctly, with no performance promises. x86 SIMD is
   forbidden.
-- **The unsafe policy (amended by the performance suite, docs/perf/).** `unsafe` —
+- **The unsafe policy.** `unsafe` —
   including `core::arch` intrinsics and inline asm — is sanctioned in an explicit
   allowlist of kernel/hot modules and nowhere else: `exec/kernel.rs`,
   `exec/colt.rs` (gather/probe paths), `exec/wordmap.rs` (slab probe paths),
@@ -181,13 +178,12 @@ tables + append-only WAL/snapshot file — at this scale it would make the durab
 representation identical to the paper's execution environment, deleting Deviation D1 and
 the image cache entirely. **Why it lost:** LMDB gives crash-safe atomic commits, real
 MVCC read snapshots, and a battle-tested B-tree for free; a hand-rolled WAL is exactly
-the kind of subtle, unglamorous correctness surface this project should not own, and the
+the kind of subtle, unglamorous correctness surface this project should not own; the
 image-cache design (`50-storage.md`) recovers the paper's environment at a cost the
-write-rate design point makes negligible. The redesign raised the stakes on this
-decision and it held: the ordered B-tree is also what makes pointwise keys and
-coverage walks O(log n) neighbor probes instead of new index structures. **Reverses
-if:** traced image-rebuild cost exceeds the latency budget despite caching, or LMDB's
-write amplification dominates bursty commits.
+write-rate design point makes negligible; and the ordered B-tree is what makes
+pointwise keys and coverage walks O(log n) neighbor probes instead of new index
+structures. **Reverses if:** traced image-rebuild cost exceeds the latency budget
+despite caching, or LMDB's write amplification dominates bursty commits.
 
 **Decision: Free Join is the execution algorithm.** **Alternative (strong):**
 Selinger-planned binary hash joins — for reference-walk-heavy ledger queries they are
@@ -215,8 +211,7 @@ SQL. Server mode. Network protocol. Text query language (OPEN). Nulls. Floats in
 persistent data. Bag semantics. Nominal typing. Runtime DDL. Migrations (ETL into a
 new database is the schema-change story; export surface in `70-api.md`). Async API.
 Multiple writers. Multi-process access. Data beyond RAM. Intra-query parallelism.
-Encryption/access control. Compatibility with every prior format, v1–v5 and
-pre-redesign v0 alike.
+Encryption/access control. Compatibility with any prior on-disk format.
 
 **Deleted vocabulary** (each word's replacement, one line, normative in
 `30-dependencies.md` and `10-data-model.md`): *primary key* → the fact is its own
@@ -237,16 +232,14 @@ idiom.
    The two-oracle construction is normative in `60-validation.md`. **Mechanism:**
    `bumbledb-bench verify` — every family and N randomized queries compared, a stamp
    on success, arbitration bundles on failure; `bench` refuses to time without the
-   stamp. All pre-redesign counts and stamps are void; the suite is re-derived on
-   the new format.
+   stamp.
 2. **Performance:** beats SQLite on the ledger benchmark under the protocol in
    `60-validation.md`: per-family median, **every family must win**, warm timing gates
    (cold reported, not gated), SQLite fully indexed + prepared + `ANALYZE`d,
    `synchronous=FULL`, `SELECT DISTINCT` included in timed SQL, canonical machine =
-   the owner's. **The claim is void until re-earned on the new format** — the
-   pre-redesign ALL-WIN evidence (README charts, docs/silicon2/final2.md) is
-   historical record, cited as history only. The "ratchet" is a manually re-run
-   report per meaningful change — not a CI gate.
+   the owner's. **The claim is unearned until the suite runs green on this
+   engine.** The "ratchet" is a manually re-run report per meaningful change — not
+   a CI gate.
 3. **Allocation:** a warm prepared-query execution performs **zero heap allocations**
    (and zero deallocations) excluding a caller-provided result buffer, asserted by a
    counting allocator under the protocol defined in `40-execution.md`. Enforcement
@@ -254,13 +247,12 @@ idiom.
    it becomes a CI gate verbatim when CI exists.
 4. **Docs stay true** (stated intent, mechanized as rules 3/5 in
    `docs/architecture/README.md`: mechanisms name readers; code that contradicts a doc
-   amends the doc in the same change). As of 2026-07-08 the docs lead the code by
-   design: the repo is in its documented-broken state until the implementation
-   catches up to this chapter set, and that state is the process working, not
-   failing.
+   amends the doc in the same change). Where the docs lead the code, the repo is in
+   its documented-broken state until the implementation catches up (`docs/prd/`) —
+   the process working, not failing.
 
-**Decision: the primary benchmark is ledger-shaped.** **Alternative:** JOB, as v2–v5
-used. **Why it lost:** chasing JOB dragged the old architecture toward analytics
-machinery while the basics went unbuilt; the benchmark quietly *became* the product
-thesis (post-mortem §00). JOB may return as a stress suite, never as the ratchet.
-**Reverses if:** never — the thesis defines the benchmark, not vice versa.
+**Decision: the primary benchmark is ledger-shaped.** **Alternative:** JOB.
+**Why it lost:** chasing a benchmark that is not the workload drags the
+architecture toward analytics machinery while the basics go unbuilt — the benchmark
+quietly *becomes* the product thesis. JOB may run as a stress suite, never as the
+ratchet. **Reverses if:** never — the thesis defines the benchmark, not vice versa.

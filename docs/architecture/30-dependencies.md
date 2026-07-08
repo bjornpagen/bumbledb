@@ -7,13 +7,6 @@ no constraint kinds, no modes, no triggers, no deferral. The words *unique key*,
 and *restrict* name nothing here; where one of them used to name something, this
 chapter derives that something as an instance and the word is retired.
 
-The unification is not aspiration — the pre-redesign code already enforced "no
-committed state contains a dangling reference" against the transaction's *final*
-state (deleting a target and all its referrers in one transaction passed, by design).
-That is an inclusion dependency judged on final states, wearing a foreign-key
-costume. This chapter removes the costume and takes the semantics the rest of the
-way.
-
 ## The two judgments
 
 Both are parameterized by **single-atom queries** in the ordinary query IR
@@ -58,11 +51,10 @@ cascade was a workaround for, and *dangling references never commit*, which is w
 restrict was a weak spelling of. Operation order inside the transaction remains
 semantically irrelevant (`50-storage.md` delta write path); cyclic references insert
 without any staging concept.
-**Decision.** **Alternative:** per-operation checking with staged visibility (the
-day-1 design, already rejected once). **Why it lost then and still:** it enforces
-invariants on states nobody can observe, pushes ordering obligations onto the
-caller, and fights the accumulate-then-commit write path. **Reverses if:** never —
-semantics.
+**Decision.** **Alternative:** per-operation checking with staged visibility.
+**Why it lost:** it enforces invariants on states nobody can observe, pushes
+ordering obligations onto the caller, and fights the accumulate-then-commit write
+path. **Reverses if:** never — semantics.
 
 ## Statements: the schema surface
 
@@ -96,7 +88,7 @@ everything relational is a statement. Statements are anonymous; their identity i
 their materialized-order id, pinned by the fingerprint, and errors cite the
 statement rendered back in this notation.
 **Decision: raw statements only.** **Alternative:** blessed sugar keywords lowering
-to statements (`key`, `in`, `union`). **Why it lost:** owner ruling (2026-07-08) —
+to statements (`key`, `in`, `union`). **Why it lost:** owner ruling —
 the surface must *be* the mental model; three keywords re-import three SQL concepts
 and hide that they were one. The derivations below are documentation, not syntax.
 **Reverses if:** never — and a future text frontend would lower to statements, not
