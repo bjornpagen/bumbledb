@@ -153,24 +153,32 @@ enum Slot {
     Node(NodeRef),
 }
 
-/// One forced level's open-addressed map: power-of-two capacity, linear
-/// probing, no tombstones (build-once, never deleted from). Capacity
-/// starts from the position-count guess and rehash-doubles at 75% load
-/// (docs/architecture/30-execution.md); iteration never touches the slot
-/// array — it walks the dense occupied list.
-///
-/// Layout (docs/perf/ PRD 07): a ctrl byte per slot (0 = empty, else
-/// `0x80 | top-7-hash-bits`) plus one interleaved bucket row of
-/// `arity + 1` words — key words then the packed child — so a probe
-/// step reads the ctrl line and, on a tag match, ONE bucket line.
+/// One forced level's open-addressed map, bucket-of-8 layout
+/// (docs/silicon2/05, exp 16): 8 slots per bucket — 8 ctrl bytes as one
+/// aligned word in the ctrl slab, then `8 × arity` key words
+/// **column-major within the bucket** (key word 0 of all 8 slots
+/// contiguous — the NEON sweep's natural shape) and 8 packed child
+/// words, contiguous in the bucket slab with stride `8·arity + 8`. A
+/// probe loads the bucket ONCE and resolves all 8 candidates from it;
+/// overflow steps to the NEXT bucket (bucket-linear probing — exp 16
+/// measured displacement negligible below 0.4 load). No tombstones
+/// (build-once, never deleted from). Sizing targets ≤ 0.4 load — the
+/// occupancy-invariant band (exp 16: flat probes 0.15–0.4) — from the
+/// position-count guess, rehash-doubling in bucket units when short;
+/// iteration never touches the slot array — it walks the dense
+/// occupied list. Slot indices everywhere (dense entries, probe
+/// returns) stay GLOBAL (`bucket·8 + slot`), so ctrl indexing and the
+/// dense list are unchanged from the linear layout.
 #[derive(Debug, Clone, Copy)]
 struct Map {
     arity: usize,
-    capacity: usize,
+    /// Power-of-two bucket count; home bucket = `hash & (nbuckets−1)`.
+    nbuckets: usize,
     len: u32,
-    /// Start of this map's ctrl range in the shared ctrl slab.
+    /// Start of this map's ctrl range (`nbuckets * 8` bytes, 8-aligned
+    /// groups — a bucket's ctrl word never straddles groups).
     ctrl_start: usize,
-    /// Start of this map's bucket rows (`capacity * (arity + 1)` words).
+    /// Start of this map's buckets (`nbuckets * (8·arity + 8)` words).
     bucket_start: usize,
     /// Start of this map's occupied-slot list in the dense slab —
     /// `len` entries, insertion-ordered, O(keys) to walk.
@@ -178,9 +186,34 @@ struct Map {
 }
 
 impl Map {
-    /// Words per bucket row: the key then the packed child.
+    /// Words per bucket: `8 × arity` keys (column-major) + 8 children.
     fn stride(&self) -> usize {
-        self.arity + 1
+        8 * self.arity + 8
+    }
+
+    /// Slot capacity (8 per bucket) — the test-facing sizing number.
+    #[cfg(test)]
+    fn capacity(&self) -> usize {
+        self.nbuckets * 8
+    }
+
+    /// Bucket-slab word index of a global slot's bucket base.
+    #[inline(always)]
+    fn bucket_base(&self, idx: usize) -> usize {
+        self.bucket_start + (idx >> 3) * self.stride()
+    }
+
+    /// Bucket-slab word index of one key word of a global slot
+    /// (column-major within the bucket).
+    #[inline(always)]
+    fn key_word_at(&self, idx: usize, word: usize) -> usize {
+        self.bucket_base(idx) + word * 8 + (idx & 7)
+    }
+
+    /// Bucket-slab word index of a global slot's packed child.
+    #[inline(always)]
+    fn child_at(&self, idx: usize) -> usize {
+        self.bucket_base(idx) + 8 * self.arity + (idx & 7)
     }
 }
 
@@ -212,6 +245,20 @@ fn unpack_child(word: u64) -> Slot {
 #[inline(always)]
 fn ctrl_tag(hash: u64) -> u8 {
     0x80 | u8::try_from(hash >> 57).expect("7 bits")
+}
+
+/// SWAR zero-byte mask over a bucket's ctrl word: bit 7 of each zero
+/// (empty) byte sets (docs/silicon2/05; same masks as the wordmap's
+/// window probe, docs/silicon/03).
+#[inline(always)]
+fn zero_byte_mask(w: u64) -> u64 {
+    w.wrapping_sub(0x0101_0101_0101_0101) & !w & 0x8080_8080_8080_8080
+}
+
+/// SWAR byte-equality mask against a broadcast needle.
+#[inline(always)]
+fn eq_byte_mask(w: u64, needle: u8) -> u64 {
+    zero_byte_mask(w ^ (u64::from(needle) * 0x0101_0101_0101_0101))
 }
 
 /// The lazy trie over one occurrence's view. Owns the view (a cheap
@@ -403,7 +450,7 @@ impl Colt {
         match cursor {
             Cursor::Row(_) => None,
             Cursor::Node(node) => match self.nodes[node.0 as usize] {
-                NodeState::Forced { map } => Some(self.maps[map as usize].capacity),
+                NodeState::Forced { map } => Some(self.maps[map as usize].capacity()),
                 NodeState::Unforced(_) => None,
             },
         }
@@ -526,7 +573,7 @@ impl Colt {
                 if !found {
                     return None;
                 }
-                match unpack_child(self.buckets[m.bucket_start + idx * m.stride() + m.arity]) {
+                match unpack_child(self.buckets[m.child_at(idx)]) {
                     Slot::Single(position) => Some(Cursor::Row(position)),
                     Slot::Node(child) => Some(Cursor::Node(child)),
                 }
@@ -893,19 +940,17 @@ impl Colt {
         // with the key line prefetched a few entries ahead (insertion
         // order scatters slots across the map).
         let dense = &self.dense[m.dense_start..m.dense_start + len];
-        let stride = m.stride();
         for k in 0..take {
             let dense_idx = start + k;
             if dense_idx + 8 < len {
                 let ahead = usize::try_from(dense[dense_idx + 8]).expect("64-bit usize");
-                crate::exec::kernel::prefetch_read(
-                    &raw const self.buckets[m.bucket_start + ahead * stride],
-                );
+                crate::exec::kernel::prefetch_read(&raw const self.buckets[m.bucket_base(ahead)]);
             }
             let slot_idx = usize::try_from(dense[dense_idx]).expect("64-bit usize");
-            let row = &self.buckets[m.bucket_start + slot_idx * stride..];
-            keys_out[k * arity..k * arity + arity].copy_from_slice(&row[..arity]);
-            children_out[k] = match unpack_child(row[arity]) {
+            for word in 0..arity {
+                keys_out[k * arity + word] = self.buckets[m.key_word_at(slot_idx, word)];
+            }
+            children_out[k] = match unpack_child(self.buckets[m.child_at(slot_idx)]) {
                 Slot::Single(position) => Cursor::Row(position),
                 Slot::Node(child) => Cursor::Node(child),
             };
@@ -930,52 +975,80 @@ impl Colt {
         }
     }
 
-    /// The monomorphic walk: `A` is the key arity, so the compare unrolls
-    /// to `A` word compares with no call and no length test.
+    /// The monomorphic bucket walk (docs/silicon2/05): one aligned load
+    /// of the home bucket's 8 ctrl bytes, SWAR tag/empty masks, key
+    /// compares unrolled to `A` strided word compares per candidate.
+    /// Scalar in this PRD — the NEON candidate sweep is PRD 06. A miss
+    /// resolves at the bucket's first empty slot (inserts land there:
+    /// buckets fill left to right, so occupied slots are a prefix and a
+    /// match can never sit past an empty); a FULL bucket overflows to
+    /// the next (bucket-linear probing, negligible below 0.4 load).
     #[inline(always)]
     fn probe_walk<const A: usize>(&self, m: &Map, key: &[u64], hash: u64) -> (bool, usize) {
         debug_assert_eq!(key.len(), A);
         debug_assert_eq!(m.arity, A);
-        let mask = m.capacity - 1;
+        let nbm = m.nbuckets - 1;
         let wanted = ctrl_tag(hash);
-        let mut idx = usize::try_from(hash).expect("64-bit usize") & mask;
+        let mut b = usize::try_from(hash).expect("64-bit usize") & nbm;
         loop {
-            let c = self.ctrl[m.ctrl_start + idx];
-            if c == 0 {
-                return (false, idx);
-            }
-            if c == wanted {
-                let bucket = m.bucket_start + idx * (A + 1);
-                let stored = &self.buckets[bucket..bucket + A];
-                let mut matches = true;
+            let group = m.ctrl_start + b * 8;
+            let cw = u64::from_le_bytes(
+                self.ctrl[group..group + 8].try_into().expect("ctrl group"),
+            );
+            let mut matches = eq_byte_mask(cw, wanted);
+            while matches != 0 {
+                let slot = (matches.trailing_zeros() as usize) >> 3;
+                let base = m.bucket_start + b * (8 * A + 8);
+                let mut eq = true;
+                #[allow(clippy::needless_range_loop)] // 0..A is the unroll
+                // guarantee: A is const — iterating the runtime slice
+                // would bound the loop by its len and block it
                 for i in 0..A {
-                    matches &= stored[i] == key[i];
+                    eq &= self.buckets[base + i * 8 + slot] == key[i];
                 }
-                if matches {
-                    return (true, idx);
+                if eq {
+                    return (true, b * 8 + slot);
                 }
+                matches &= matches - 1;
             }
-            idx = (idx + 1) & mask;
+            let empties = zero_byte_mask(cw);
+            if empties != 0 {
+                let slot = (empties.trailing_zeros() as usize) >> 3;
+                return (false, b * 8 + slot);
+            }
+            b = (b + 1) & nbm;
         }
     }
 
     /// The rare wide-key fallback (arity > 4 — beyond every bench plan).
     fn probe_walk_general(&self, m: &Map, key: &[u64], hash: u64) -> (bool, usize) {
-        let mask = m.capacity - 1;
+        let nbm = m.nbuckets - 1;
         let wanted = ctrl_tag(hash);
-        let mut idx = usize::try_from(hash).expect("64-bit usize") & mask;
+        let mut b = usize::try_from(hash).expect("64-bit usize") & nbm;
         loop {
-            let c = self.ctrl[m.ctrl_start + idx];
-            if c == 0 {
-                return (false, idx);
-            }
-            if c == wanted {
-                let stored = &self.buckets[m.bucket_start + idx * m.stride()..];
-                if &stored[..m.arity] == key {
+            let group = m.ctrl_start + b * 8;
+            let cw = u64::from_le_bytes(
+                self.ctrl[group..group + 8].try_into().expect("ctrl group"),
+            );
+            let mut matches = eq_byte_mask(cw, wanted);
+            while matches != 0 {
+                let slot = (matches.trailing_zeros() as usize) >> 3;
+                let idx = b * 8 + slot;
+                let mut eq = true;
+                for (i, expected) in key.iter().enumerate() {
+                    eq &= self.buckets[m.key_word_at(idx, i)] == *expected;
+                }
+                if eq {
                     return (true, idx);
                 }
+                matches &= matches - 1;
             }
-            idx = (idx + 1) & mask;
+            let empties = zero_byte_mask(cw);
+            if empties != 0 {
+                let slot = (empties.trailing_zeros() as usize) >> 3;
+                return (false, b * 8 + slot);
+            }
+            b = (b + 1) & nbm;
         }
     }
 
@@ -989,11 +1062,13 @@ impl Colt {
             return;
         };
         let m = &self.maps[map as usize];
-        let idx = usize::try_from(hash).expect("64-bit usize") & (m.capacity - 1);
-        crate::exec::kernel::prefetch_read(&raw const self.ctrl[m.ctrl_start + idx]);
-        crate::exec::kernel::prefetch_read(
-            &raw const self.buckets[m.bucket_start + idx * m.stride()],
-        );
+        let b = usize::try_from(hash).expect("64-bit usize") & (m.nbuckets - 1);
+        crate::exec::kernel::prefetch_read(&raw const self.ctrl[m.ctrl_start + b * 8]);
+        let base = m.bucket_start + b * m.stride();
+        crate::exec::kernel::prefetch_read(&raw const self.buckets[base]);
+        // The children sub-block can sit on the bucket's second line
+        // (stride 8·arity + 8 words = 128 B at arity 1).
+        crate::exec::kernel::prefetch_read(&raw const self.buckets[base + 8 * m.arity]);
     }
 
     /// Single-pass force: iterate the node's positions once, decoding key
@@ -1009,27 +1084,25 @@ impl Colt {
             NodeState::Unforced(Positions::Chunks { count, .. }) => u64::from(count),
             NodeState::Forced { .. } => unreachable!("checked above"),
         };
-        // Initial capacity (docs/architecture/30-execution.md): distinct keys are unknown
-        // before the pass, so start from the deterministic guess
-        // `next_pow2(clamp(count/8, 16, 2*count))` — tiny nodes keep
-        // their old tight sizing, big skewed levels start 16x smaller
-        // than the old 2x-positions rule — and rehash-double at 75%
-        // load when the guess was short.
+        // Initial sizing (docs/silicon2/05): distinct keys are unknown
+        // before the pass, so start from the same deterministic guess as
+        // the linear layout — `clamp(count/8, 16, 2*count)` — and size
+        // buckets for ≤ 0.4 load (exp 16's occupancy-invariant band):
+        // `nbuckets = next_pow2(guess * 5 / 16)` (5/16 = 1/(8·0.4)),
+        // rehash-doubling in bucket units when the guess was short.
         let count_usize = usize::try_from(count).expect("64-bit usize");
-        let capacity = (count_usize / 8)
-            .max(16)
-            .min(count_usize.max(1) * 2)
-            .next_power_of_two();
+        let guess = (count_usize / 8).max(16).min(count_usize.max(1) * 2);
+        let nbuckets = (guess * 5 / 16).max(1).next_power_of_two();
         let map_idx = u32::try_from(self.maps.len()).expect("map count fits u32");
         let ctrl_start = self.ctrl.len();
         let bucket_start = self.buckets.len();
         let dense_start = self.dense.len();
-        self.ctrl.resize(ctrl_start + capacity, 0);
+        self.ctrl.resize(ctrl_start + nbuckets * 8, 0);
         self.buckets
-            .resize(bucket_start + capacity * (arity + 1), 0);
+            .resize(bucket_start + nbuckets * (8 * arity + 8), 0);
         let mut m = Map {
             arity,
-            capacity,
+            nbuckets,
             len: 0,
             ctrl_start,
             bucket_start,
@@ -1079,11 +1152,11 @@ impl Colt {
         // appends to an existing key can still trigger a double — an
         // over-size by at most one doubling step, closed by audit as
         // no-action: checking after the probe would probe the old table
-        // and insert into the new one.
-        if (usize::try_from(m.len).expect("64-bit usize") + 1) * 4 >= m.capacity * 3 {
+        // and insert into the new one. The trigger is the 0.4 max load
+        // (docs/silicon2/05): `(len + 1) > 0.4 · 8 · nbuckets`.
+        if (usize::try_from(m.len).expect("64-bit usize") + 1) * 5 > m.nbuckets * 16 {
             self.grow_map(m);
         }
-        let arity = m.arity;
         self.scratch.clear();
         for col in &self.schema_columns[level] {
             let w = self.word_at(*col, position);
@@ -1092,13 +1165,14 @@ impl Colt {
         let key = std::mem::take(&mut self.scratch);
         let hash = hash_words(&key);
         let (found, idx) = self.probe_hashed(m, &key, hash);
-        let row_at = m.bucket_start + idx * m.stride();
         if found {
-            self.append_child(row_at + arity, position);
+            self.append_child(m.child_at(idx), position);
         } else {
             self.ctrl[m.ctrl_start + idx] = ctrl_tag(hash);
-            self.buckets[row_at..row_at + arity].copy_from_slice(&key);
-            self.buckets[row_at + arity] = pack_child(Slot::Single(position));
+            for (i, w) in key.iter().enumerate() {
+                self.buckets[m.key_word_at(idx, i)] = *w;
+            }
+            self.buckets[m.child_at(idx)] = pack_child(Slot::Single(position));
             self.dense
                 .push(u32::try_from(idx).expect("slot index fits u32"));
             m.len += 1;
@@ -1115,28 +1189,47 @@ impl Colt {
     fn grow_map(&mut self, m: &mut Map) {
         let arity = m.arity;
         let stride = m.stride();
-        let new_capacity = m.capacity * 2;
+        let new_nbuckets = m.nbuckets * 2;
         let ctrl_start = self.ctrl.len();
         let bucket_start = self.buckets.len();
         let dense_start = self.dense.len();
-        self.ctrl.resize(ctrl_start + new_capacity, 0);
-        self.buckets.resize(bucket_start + new_capacity * stride, 0);
-        let mask = new_capacity - 1;
+        self.ctrl.resize(ctrl_start + new_nbuckets * 8, 0);
+        self.buckets.resize(bucket_start + new_nbuckets * stride, 0);
+        let nbm = new_nbuckets - 1;
+        // Keys are column-major in their buckets, so each gathers into
+        // the reused scratch for hashing (free here: force_ingest takes
+        // the scratch only after its growth check).
+        let mut key = std::mem::take(&mut self.scratch);
         for i in 0..usize::try_from(m.len).expect("64-bit usize") {
-            let old_slot = usize::try_from(self.dense[m.dense_start + i]).expect("64-bit usize");
-            let old_row_at = m.bucket_start + old_slot * stride;
-            let hash = hash_words(&self.buckets[old_row_at..old_row_at + arity]);
-            let mut idx = usize::try_from(hash).expect("64-bit usize") & mask;
-            while self.ctrl[ctrl_start + idx] != 0 {
-                idx = (idx + 1) & mask;
+            let old_idx = usize::try_from(self.dense[m.dense_start + i]).expect("64-bit usize");
+            key.clear();
+            for word in 0..arity {
+                key.push(self.buckets[m.key_word_at(old_idx, word)]);
             }
+            let hash = hash_words(&key);
+            let mut b = usize::try_from(hash).expect("64-bit usize") & nbm;
+            let idx = loop {
+                let group = ctrl_start + b * 8;
+                let cw = u64::from_le_bytes(
+                    self.ctrl[group..group + 8].try_into().expect("ctrl group"),
+                );
+                let empties = zero_byte_mask(cw);
+                if empties != 0 {
+                    break b * 8 + ((empties.trailing_zeros() as usize) >> 3);
+                }
+                b = (b + 1) & nbm;
+            };
             self.ctrl[ctrl_start + idx] = ctrl_tag(hash);
-            self.buckets
-                .copy_within(old_row_at..old_row_at + stride, bucket_start + idx * stride);
+            let new_base = bucket_start + (idx >> 3) * stride;
+            for (word, w) in key.iter().enumerate() {
+                self.buckets[new_base + word * 8 + (idx & 7)] = *w;
+            }
+            self.buckets[new_base + 8 * arity + (idx & 7)] = self.buckets[m.child_at(old_idx)];
             self.dense
                 .push(u32::try_from(idx).expect("slot index fits u32"));
         }
-        m.capacity = new_capacity;
+        self.scratch = key;
+        m.nbuckets = new_nbuckets;
         m.ctrl_start = ctrl_start;
         m.bucket_start = bucket_start;
         m.dense_start = dense_start;
@@ -1486,9 +1579,11 @@ mod tests {
         let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
         let root = Colt::root();
         colt.ensure_forced(root, 0);
-        // next_pow2(clamp(100_000 / 8, 16, 200_000)) = 16_384; 500 keys
-        // never cross 75% load, so no growth.
-        assert_eq!(colt.forced_capacity(root), Some(16_384));
+        // guess = clamp(100_000 / 8, 16, 200_000) = 12_500; nbuckets =
+        // next_pow2(12_500 * 5 / 16) = 4_096 → 32_768 slots
+        // (docs/silicon2/05's 0.4-load sizing); 500 keys never cross
+        // 0.4 load, so no growth.
+        assert_eq!(colt.forced_capacity(root), Some(32_768));
 
         // ceil(500 / 64) batches of 64 (last: the remainder), by count.
         let mut keys = vec![0u64; 64];
@@ -1520,9 +1615,12 @@ mod tests {
         let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
         let root = Colt::root();
         colt.ensure_forced(root, 0);
-        // Init next_pow2(clamp(1250, 16, 20_000)) = 2048, then doubles
-        // at 75% load: 4096, 8192, 16384 (10_000 < 12_288 stops there).
-        assert_eq!(colt.forced_capacity(root), Some(16_384));
+        // guess = clamp(1250, 16, 20_000) = 1250; init nbuckets =
+        // next_pow2(1250 * 5 / 16) = 512 (4,096 slots), then doubles at
+        // 0.4 load (grow when len + 1 > 3.2 · nbuckets): 1024 at 1,639,
+        // 2048 at 3,277, 4096 at 6,554 — 10,000 < 13,108 stops there,
+        // 32,768 slots (docs/silicon2/05).
+        assert_eq!(colt.forced_capacity(root), Some(32_768));
         let entries = drain(&mut colt, root, 0);
         assert_eq!(entries.len(), 10_000);
         let keys: Vec<u64> = entries.iter().map(|(k, _)| k[0]).collect();
@@ -1698,6 +1796,166 @@ mod tests {
         assert_eq!(colt.watermark(), before, "no forcing, no allocation");
         // Every child is a pinned row.
         assert!(entries.iter().all(|(_, c)| matches!(c, Cursor::Row(_))));
+    }
+
+    /// The bucket-overflow fixture (docs/silicon2/05): 12 keys chosen so
+    /// their hashes share one home bucket of the 8-bucket map — 8 fill
+    /// the home bucket, 4 chain to the next (bucket-linear probing) —
+    /// and every key still probes and drains correctly, with same-home
+    /// misses missing cleanly through the full bucket.
+    #[test]
+    fn overflowing_home_buckets_chain_to_the_next_and_round_trip() {
+        // 12 distinct keys with hash & 7 == 3 (the map below sizes to
+        // 8 buckets: count 12 → guess 16 → next_pow2(16·5/16) = 8).
+        let mut keys: Vec<u64> = Vec::new();
+        let mut candidate = 0u64;
+        while keys.len() < 12 {
+            if usize::try_from(hash_words(&[candidate])).expect("64-bit") & 7 == 3 {
+                keys.push(candidate);
+            }
+            candidate += 1;
+        }
+        let dir = TempDir::new("colt-bucket-overflow");
+        let schema = schema();
+        let rows: Vec<(u64, u64)> = keys.iter().enumerate().map(|(i, k)| (*k, i as u64)).collect();
+        let view = view_of(&dir, &schema, &rows);
+        let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+        let root = Colt::root();
+        colt.ensure_forced(root, 0);
+        assert_eq!(colt.forced_capacity(root), Some(64), "8 buckets");
+        // Every key probes to its (single) position — read from the
+        // image column: the store orders facts, not the fixture.
+        let column: Vec<u64> = view.column_words(0).to_vec();
+        for key in &keys {
+            let child = colt.get(root, 0, &[*key]).expect("overflowed key probes");
+            let position = column.iter().position(|w| w == key).expect("committed");
+            assert_eq!(
+                child,
+                Cursor::Row(u32::try_from(position).expect("small")),
+                "key {key}"
+            );
+        }
+        // Same-home misses walk the full home bucket and the overflow
+        // tail without a false hit.
+        let mut miss = candidate;
+        let mut checked = 0;
+        while checked < 4 {
+            if usize::try_from(hash_words(&[miss])).expect("64-bit") & 7 == 3 {
+                assert_eq!(colt.get(root, 0, &[miss]), None, "miss {miss}");
+                checked += 1;
+            }
+            miss += 1;
+        }
+        // The drain sees exactly the 12 keys, in ingest (image) order.
+        let drained: Vec<u64> = drain(&mut colt, root, 0).iter().map(|(k, _)| k[0]).collect();
+        assert_eq!(drained, column, "dense drain in ingest order");
+    }
+
+    /// The build-cost pin (docs/silicon2/05, contract corrected in its
+    /// Result): exp 16's 22%-cheaper build belonged to its ctrl-word-
+    /// IN-bucket layout (one line per insert); this PRD's spec keeps
+    /// ctrl in a separate slab (the probe-side choice), so an insert
+    /// touches ctrl + key + child lines and the build measured PARITY
+    /// at the DRAM-tier 100k shape (ratio 1.00) and ~1.5× slower at an
+    /// L2-resident 20k shape. The pin guards DRAM-tier parity — the
+    /// force-heavy ledger families gate the rest. Biased AGAINST the
+    /// shipped side: the reference consumes pre-decoded keys while
+    /// force() pays its own column decode. Ignored: a microbenchmark,
+    /// run explicitly for the Result section.
+    #[test]
+    #[ignore = "microbench pin: run explicitly with --ignored"]
+    fn bucketized_force_stays_at_parity_with_the_linear_build() {
+        let dir = TempDir::new("colt-build-pin");
+        let schema = schema();
+        let n = std::hint::black_box(100_000u64);
+        let rows: Vec<(u64, u64)> = (0..n)
+            .map(|i| (i.wrapping_mul(0x9E37_79B9_7F4A_7C15), i))
+            .collect();
+        let view = view_of(&dir, &schema, &rows);
+        let decoded: Vec<u64> = view.column_words(0).to_vec();
+
+        /// The pre-PRD build, reconstructed: linear probe over a ctrl
+        /// byte slab + row-major `(key, child)` rows, first-empty
+        /// insert, rehash-double at 75% — near-unique keys, so the
+        /// duplicate/chunk machinery never fires and is elided.
+        fn linear_build(keys: &[u64]) -> (Vec<u8>, Vec<u64>) {
+            let mut capacity = ((keys.len() / 8).max(16)).next_power_of_two();
+            let mut ctrl = vec![0u8; capacity];
+            let mut rows = vec![0u64; capacity * 2];
+            let mut len = 0usize;
+            let mut dense: Vec<u32> = Vec::with_capacity(keys.len());
+            for (pos, &k) in keys.iter().enumerate() {
+                if (len + 1) * 4 >= capacity * 3 {
+                    // Rehash-double, insertion order preserved.
+                    let new_capacity = capacity * 2;
+                    let mut new_ctrl = vec![0u8; new_capacity];
+                    let mut new_rows = vec![0u64; new_capacity * 2];
+                    let mask = new_capacity - 1;
+                    for d in &mut dense {
+                        let old = *d as usize;
+                        let key = rows[2 * old];
+                        let h = hash_words(&[key]);
+                        let mut idx = usize::try_from(h).expect("64-bit") & mask;
+                        while new_ctrl[idx] != 0 {
+                            idx = (idx + 1) & mask;
+                        }
+                        new_ctrl[idx] = ctrl_tag(h);
+                        new_rows[2 * idx] = key;
+                        new_rows[2 * idx + 1] = rows[2 * old + 1];
+                        *d = u32::try_from(idx).expect("fits");
+                    }
+                    capacity = new_capacity;
+                    ctrl = new_ctrl;
+                    rows = new_rows;
+                }
+                let h = hash_words(&[k]);
+                let mask = capacity - 1;
+                let wanted = ctrl_tag(h);
+                let mut idx = usize::try_from(h).expect("64-bit") & mask;
+                loop {
+                    let c = ctrl[idx];
+                    if c == 0 {
+                        ctrl[idx] = wanted;
+                        rows[2 * idx] = k;
+                        rows[2 * idx + 1] = pos as u64;
+                        dense.push(u32::try_from(idx).expect("fits"));
+                        len += 1;
+                        break;
+                    }
+                    if c == wanted && rows[2 * idx] == k {
+                        break; // duplicate: absorbed (near-unique corpus)
+                    }
+                    idx = (idx + 1) & mask;
+                }
+            }
+            std::hint::black_box(len);
+            (ctrl, rows)
+        }
+
+        let mut bucket_best = std::time::Duration::MAX;
+        let mut linear_best = std::time::Duration::MAX;
+        for _ in 0..5 {
+            let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+            let root = Colt::root();
+            let start = std::time::Instant::now();
+            colt.ensure_forced(root, 0);
+            bucket_best = bucket_best.min(start.elapsed());
+            assert!(matches!(colt.key_count(root), KeyCount::Exact(_)));
+
+            let start = std::time::Instant::now();
+            let built = linear_build(&decoded);
+            linear_best = linear_best.min(start.elapsed());
+            std::hint::black_box(&built);
+        }
+        let bucket_ns = u64::try_from(bucket_best.as_nanos()).expect("fits");
+        let linear_ns = u64::try_from(linear_best.as_nanos()).expect("fits");
+        #[allow(clippy::cast_precision_loss)] // both far below 2^52
+        let ratio = linear_ns as f64 / bucket_ns as f64;
+        println!("force build: bucket {bucket_ns} ns, linear-ref {linear_ns} ns, ratio {ratio:.2}");
+        assert!(
+            linear_ns * 10 >= bucket_ns * 9,
+            "bucketized build must stay within 1.11× of the linear reference: {bucket_ns} vs {linear_ns} ns"
+        );
     }
 
     #[test]
