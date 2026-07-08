@@ -145,3 +145,21 @@ families and bulk runs last (driver comment + debug assertion).
   work.
 - Every read family ≤ final.md (bimodal on p95): **YES** — see the
   table. ALL-WIN preserved on every run. Geomean −15.0% (gate ≥ 10%).
+
+## Addendum: the simplified tree (docs/silicon2/10)
+
+The re-simplification PRD landed after this table was pinned: four
+mechanisms deleted at measured < 2% (the prefetch footprint tier, the
+group-run memo, the shape-cache keying, the single-batch-word loop
+twins), one kept loudly (`ResolveMemo::last`: skew p95 +29.7% without
+it), the prehashed wordmap seam and one duplicate constant folded,
+engine net −173 lines. Neutrality was proven by same-session ablation
+A/B (every deletion within ±2% of an interleaved identical-ambient
+baseline; `bench-out/s2p10-*`); the absolute confirm of the final tree
+(`bench-out/s2p10f-*`, verify stamp `b7d08ce3`) ran under a live
+interactive co-tenant (browser + WindowServer, ~1.3 cores) that the
+proxy machinery flagged (14 blocks) and that had already shifted an
+identical-to-endgame control binary +6% on triangle — those absolute
+numbers are recorded in the PRD's Result with that context, and a
+quiet-machine re-confirm is the suite's one open follow-up. This
+table remains the denominator.

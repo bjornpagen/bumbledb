@@ -89,19 +89,6 @@ fn hash_core<const K: usize>(words: &[u64]) -> u64 {
     h
 }
 
-/// The probe hash for a key — public so callers can software-pipeline
-/// the hash ahead of the probe's branches (docs/silicon/04: the
-/// probe-exit mispredict flush kills a speculated next hash chain;
-/// computing h(i+1) before probe(i) recovers 60–65% of that exposure).
-#[must_use]
-#[inline(always)]
-#[allow(dead_code)] // the prehashed seam (docs/silicon2/02: kept for 03's
-// const-arity internals; only test callers remain — PRD 10's audit
-// ledger rules on it)
-pub fn hash_of(key: &[u64]) -> u64 {
-    hash_words(key)
-}
-
 /// The 7-bit hash tag a ctrl byte carries (bit 7 marks occupancy).
 fn tag(hash: u64) -> u8 {
     0x80 | u8::try_from(hash >> 57).expect("7 bits")
@@ -251,35 +238,6 @@ impl<V: Copy> WordMap<V> {
         self.entry_hashed_core::<K>(key, hash, make)
     }
 
-    /// [`WordMap::get_or_insert_with`] with the hash supplied by the
-    /// caller — the hash-ahead seam (docs/silicon/04). The hash MUST be
-    /// [`hash_of`] of `key`; a mismatched hash is a logic error that
-    /// corrupts nothing but finds nothing.
-    ///
-    /// # Panics
-    ///
-    /// Only on a programmer-invariant violation: `key.len() != arity`.
-    #[inline(always)]
-    pub fn get_or_insert_prehashed(
-        &mut self,
-        key: &[u64],
-        hash: u64,
-        make: impl FnOnce() -> V,
-    ) -> (&mut V, bool) {
-        assert_eq!(key.len(), self.arity);
-        // Same dispatch as `get_or_insert_with`, hash supplied: the probe,
-        // compare, and copy still monomorphize (docs/silicon2/03).
-        match self.arity {
-            1 => self.entry_hashed_core::<1>(key, hash, make),
-            2 => self.entry_hashed_core::<2>(key, hash, make),
-            3 => self.entry_hashed_core::<3>(key, hash, make),
-            4 => self.entry_hashed_core::<4>(key, hash, make),
-            6 => self.entry_hashed_core::<6>(key, hash, make),
-            8 => self.entry_hashed_core::<8>(key, hash, make),
-            _ => self.entry_dyn(key, hash, make),
-        }
-    }
-
     /// The monomorphic insert core: K straight-line word compares, K
     /// stores, strength-reduced `idx * K` slab indexing.
     #[inline(always)]
@@ -335,16 +293,6 @@ impl<V: Copy> WordMap<V> {
         V: Default,
     {
         self.get_or_insert_with(key, V::default).1
-    }
-
-    /// [`WordMap::insert`] with the hash supplied by the caller (the
-    /// hash-ahead seam, docs/silicon/04).
-    #[allow(dead_code)] // kept with the seam (docs/silicon2/02); PRD 10 rules
-    pub fn insert_prehashed(&mut self, key: &[u64], hash: u64) -> bool
-    where
-        V: Default,
-    {
-        self.get_or_insert_prehashed(key, hash, V::default).1
     }
 
     /// Iterates `(key words, value)` in insertion order — O(len) via the
@@ -616,25 +564,6 @@ mod tests {
         }
         assert_eq!(map.len(), 1);
         assert_eq!(map.iter().next().map(|(k, v)| (k.len(), *v)), Some((0, 5)));
-    }
-
-    /// The prehashed seam (docs/silicon/04) is behavior-identical to the
-    /// hashing form — same slots, same insertion flags — and a wrong
-    /// hash finds nothing (stated contract).
-    #[test]
-    fn prehashed_inserts_match_the_hashing_form() {
-        let mut a: WordMap<u64> = WordMap::new(2);
-        let mut b: WordMap<u64> = WordMap::new(2);
-        for i in 0..1_000u64 {
-            let key = [i % 97, i % 13];
-            let (va, ia) = a.get_or_insert_with(&key, || i);
-            let (vb, ib) = b.get_or_insert_prehashed(&key, hash_of(&key), || i);
-            assert_eq!((*va, ia), (*vb, ib), "key {key:?}");
-        }
-        assert_eq!(a.len(), b.len());
-        let ka: Vec<Vec<u64>> = a.iter().map(|(k, _)| k.to_vec()).collect();
-        let kb: Vec<Vec<u64>> = b.iter().map(|(k, _)| k.to_vec()).collect();
-        assert_eq!(ka, kb, "identical insertion order");
     }
 
     /// PRD 06 (docs/perf/): the tag-byte map is behavior-identical to a

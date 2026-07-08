@@ -325,7 +325,7 @@ impl BenchRun<'_> {
             self.first_family_warmed = true;
         }
         let (ours, ghz_ours) = clockproxy::guarded(|| {
-            harness::measure_with(proto, modes, || run_ours(&mut prepared))
+            harness::measure_batched(proto, modes, 1, || run_ours(&mut prepared))
         })?;
         // The quantum guard: a gated p50 below 12 timer ticks would be
         // quantization, not measurement — batch executes and divide.

@@ -425,40 +425,15 @@ enum Operand<'a> {
     Const(u64),
 }
 
-/// Run length at which hoisting operand/column tables pays for itself:
-/// L* = `build_cost` ÷ `per-item saving` (docs/silicon/08). The old value
-/// of 32 was forced by a `from_fn`-of-Options table costing ~34 ns/run
-/// (rust-lang/rust#108765 — eight outlined closure calls plus a 448 B
-/// memcpy, the "+48 ns/row" that docs/perf PRD 05 attributed to
-/// hoisting itself); the Option-free prefix table builds in ~3.4 ns
-/// straight-line, putting the measured crossover at 4–8.
-const SCAN_HOIST_THRESHOLD: usize = 8;
-
-/// The prefetch gates, re-founded by fleet round two (docs/silicon2/01,
-/// exp 19): **residency is a property of phase interleaving, not
-/// structure footprint.** Between two probe passes over one node's map,
-/// the executor's other phases displace the map's lines — reuse
-/// distance dwarfs the L2 — so silicon-10's isolation law ("resident ⇒
-/// prefetch is pure loss") holds only in isolation; in situ, full
-/// phase-1.5 coverage measured 34.7–40.9 → 11.4–12.1 ns/probe at EVERY
-/// pressure tier, and a uselessly-covered resident pass costs only
-/// +0.2–2.6 ns/probe. The footprint gate therefore exempts only maps
-/// small enough to be L1-hot even in situ (guard-scale); the width
-/// floor exempts passes too small to amortize the pass overhead.
-///
-/// The budget's teeth were measured BOTH ways (docs/silicon2/01's
-/// Result): dropping it to 32 KiB covered triangle n1's 54 KB colt at
-/// 98.8% of passes and bought NOTHING — `jp_probe_n1` was already at the
-/// covered floor (12.3 ns/probe over 299k probes; the campaign's "37 ns
-/// residual" was an attribution error, probes/pass ≈ 117 not 39) while
-/// the ~600k added prefetch µops cost triangle +4.8%. Sub-256 KiB maps
-/// on this corpus probe at floor without help; the gate keeps them
-/// exempt.
-const PREFETCH_L2_BUDGET_BYTES: usize = 256 << 10;
-
-/// Minimum survivors for a phase-1.5 pass (docs/silicon2/01): exp 19
-/// measured the pass at ~12 ns fixed + ~0.3 ns/probe — a 4-survivor
-/// pass amortizes it; below that it is pure overhead.
+/// Minimum survivors for a phase-1.5 pass — the ONLY prefetch gate
+/// (docs/silicon2/01+10): exp 19 measured the pass at ~12 ns fixed +
+/// ~0.3 ns/probe, so a 4-survivor pass amortizes it and smaller ones
+/// are pure overhead. The former footprint tier (docs/silicon/10's
+/// 2 MiB, retuned to 256 KiB in silicon2/01) was ablated at the
+/// bucket-layout probe floor and measured NOTHING at family level
+/// (silicon2/10's ledger: every family within ±2%, spread −2.9%) —
+/// covering an at-floor map costs ~nothing at today's 5.7 ns/probe,
+/// and the gate's comparison was the last of its complexity.
 const PREFETCH_WIDTH_FLOOR: usize = 4;
 
 /// Appends the positions of `run` that pass `eval` to `out`.
@@ -1156,28 +1131,9 @@ impl Executor {
                 let n = scratch.survivors.len();
                 scratch.hashes.clear();
                 scratch.hashes.resize(n, 0);
-                // The dominant probe shape — a single batch-sourced key
-                // word — takes a match-free specialized loop (docs/perf/
-                // PRD 07); everything else takes the general gather.
-                let single_batch_word = match scratch.sources[sub_idx].as_slice() {
-                    [Source::Batch(word)] if !pinned => Some(*word),
-                    _ => None,
-                };
-                // Alias-hoisted locals (docs/silicon2/07) — see
-                // probe_pass; same transform, run_node's sibling shape.
-                if let Some(word) = single_batch_word {
-                    let survivors = &scratch.survivors[..n];
-                    let entry_keys = &scratch.entry_keys[..];
-                    let probe_keys = &mut scratch.probe_keys[..n];
-                    let hashes = &mut scratch.hashes[..n];
-                    for (k, &e) in survivors.iter().enumerate() {
-                        let entry = usize::try_from(e).expect("batch fits usize");
-                        let key = entry_keys[entry * arity + word];
-                        probe_keys[k] = key;
-                        counters.probe_hash(node_idx, sub_idx);
-                        hashes[k] = crate::exec::colt::hash_key(std::slice::from_ref(&key));
-                    }
-                } else {
+                // One gather loop for every source shape (docs/silicon2/
+                // 10: the single-batch-word twin measured < 2% and died).
+                {
                     let survivors = &scratch.survivors[..n];
                     let entry_keys = &scratch.entry_keys[..];
                     let sources = &scratch.sources[sub_idx];
@@ -1205,10 +1161,7 @@ impl Executor {
                 // RESIDENCY first (an L2-resident map's prefetch is pure
                 // loss) and batch width second (tiny batches never
                 // amortize the pass).
-                if !pinned
-                    && scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR
-                    && colts[occ].probe_footprint_bytes() > PREFETCH_L2_BUDGET_BYTES
-                {
+                if !pinned && scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR {
                     crate::obs::event(
                         crate::obs::names::PREFETCH_PASS,
                         crate::obs::Category::Execute,
@@ -1386,34 +1339,10 @@ impl Executor {
             let n = scratch.survivors.len();
             scratch.hashes.clear();
             scratch.hashes.resize(n, 0);
-            // The dominant shape — one batch-sourced key word — takes a
-            // match-free specialized loop, exactly as `run_node`'s
-            // sibling pass does.
-            let single_batch_word = match scratch.sources[sub_idx].as_slice() {
-                [Source::Batch(word)] => Some(*word),
-                _ => None,
-            };
-            // Alias-hoisted locals (docs/silicon2/07, exp 19's follow-up):
-            // the loops below interleave reads from some scratch vectors
-            // with stores to others — without disjoint pre-loop
-            // reborrows, LLVM must reload each Vec's header (ptr/len)
-            // every iteration because the stores might alias them
-            // (measured 32% of the emulated loop's cost). Disjoint
-            // `&mut` field borrows prove non-aliasing; fixed-length
-            // slices additionally hoist the bounds checks.
-            if let Some(word) = single_batch_word {
-                let survivors = &scratch.survivors[..n];
-                let entry_keys = &scratch.entry_keys[..];
-                let probe_keys = &mut scratch.probe_keys[..n];
-                let hashes = &mut scratch.hashes[..n];
-                for (k, &e) in survivors.iter().enumerate() {
-                    let element = usize::try_from(e).expect("batch fits usize");
-                    let key = entry_keys[element * arity + word];
-                    probe_keys[k] = key;
-                    counters.probe_hash(node_idx, sub_idx);
-                    hashes[k] = crate::exec::colt::hash_key(std::slice::from_ref(&key));
-                }
-            } else {
+            // One gather loop for every source shape (docs/silicon2/10:
+            // the single-batch-word specialized twin measured < 2% at
+            // family level post-bucket-layout and was deleted).
+            {
                 let survivors = &scratch.survivors[..n];
                 let entry_keys = &scratch.entry_keys[..];
                 let parents = &scratch.parents[..];
@@ -1439,10 +1368,8 @@ impl Executor {
             counters.phase_end(node_idx, JoinPhase::Hash);
             let carried = tables.carried_col[node_idx][occ];
             let start_cursor = colts[occ].start();
-            // Residency-gated phase 1.5 (docs/silicon/10) — see run_node.
-            if scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR
-                && colts[occ].probe_footprint_bytes() > PREFETCH_L2_BUDGET_BYTES
-            {
+            // Phase 1.5, width-floor gated — see run_node.
+            if scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR {
                 crate::obs::event(
                     crate::obs::names::PREFETCH_PASS,
                     crate::obs::Category::Execute,
@@ -1766,7 +1693,7 @@ impl Executor {
                 // amortize a resolved operand table; small runs resolve
                 // per position (both directions measured, both real).
                 filtered.clear();
-                if run.len() >= SCAN_HOIST_THRESHOLD {
+                if run.len() >= crate::exec::SCAN_HOIST_THRESHOLD {
                     assert!(
                         self.leaf_scan_residuals.len() <= MAX_LEAF_RESIDUALS,
                         "leaf residual count exceeds the scan table"

@@ -131,3 +131,77 @@ New optimizations of any kind; touching docs/silicon*/ history
 (Results are the record — they are never rewritten, only superseded);
 the bench crate's report/merge machinery (measurement infrastructure
 earns its complexity by what it catches, and it caught plenty).
+
+## Result
+
+**The audit ledger.** Every row measured (min-of-3, same session,
+verify per binary; ablation runs `bench-out/s2p10-abl{A..E}-*` vs the
+same-session baseline `bench-out/s2p10-{1,2,3}`); the law applied at
+±2%.
+
+| row | verdict | evidence |
+|---|---|---|
+| Wordmap prehashed API (`hash_of`, `get_or_insert_prehashed`, `insert_prehashed`) | **DELETED** (pre-decided) | zero callers outside wordmap.rs; hashing is internal-const-generic since PRD 03; the behavior-equivalence test died with the seam (−71 lines wordmap.rs) |
+| `measure`/`measure_with`/`measure_batched` | **COLLAPSED** to `measure_batched` + thin `measure` | no caller distinguished the middle layer from `measure_batched(.., 1, ..)`; call sites converted |
+| `SCAN_HOIST_THRESHOLD` + `SCAN_COLUMN_HOIST` | **UNIFIED** | same measured crossover (docs/silicon/08) under two names → one `pub(crate)` const at the exec root, one load-bearing comment |
+| Prefetch footprint tier (`> 256 KiB`) | **DELETED** (measured) | ablA (width floor only): every family within ±2% of baseline — triangle +0.6%, stats −1.1%, chain −1.2%, spread −2.9% (improved), skew p95 within its band. At the bucket-layout probe floor (~5.7 ns) covering an at-floor map costs nothing; the gate is one comparison now (`PREFETCH_WIDTH_FLOOR` only). `probe_footprint_bytes` survives as the `PREFETCH_PASS` trace payload |
+| `ResolveMemo::last` (prepared.rs) | **KEPT — the ledger's loudest number** | ablB: skew p95 761.7 → 988.0 (**+29.7%**), skew p50 +21%, chain p50 +12.6% / p95 +4.1%. perf-08's run-coherent-columns win re-confirmed; citation refreshed at the site |
+| Group-run memo (`memo_key`/`memo_idx`/`resolve_group_memoized`) | **DELETED** (measured) | ablC: stats 1,218.8 → 1,204.3 (−1.2%), balance flat — the memo's compare cost ≥ its probe saving under the const-arity map (perf-02's win predates PRD 03). `probe_group` runs once per batch, undecorated |
+| `sources_key` shape caches (both sinks) | **DELETED** (measured) | ablD: fk_walk p95 726.1 vs 726.2, point/balance/stats flat — per-batch source resolution is per-slot work the cache never measurably saved (perf-05's shape no longer exists post-05 leaf elision) |
+| `single_batch_word` specialized hash loops (both sites) | **DELETED** (measured) | ablE: triangle −2.0%, spread flat, chain p50 +3.1% inside its 100–122 band with p95 IMPROVED 2.6% — no defensible ≥ 2%. One gather loop per site now |
+| `probe_walk_general` | KEPT | live arity > 4 correctness fallback in the bucket dispatch |
+| `HINT_CAP`, `group_probes` counter | KEPT | live callers (presize clamp; test-read counter) |
+| obs no-op `_name`/`_cat` params; `_scan` in `end_scan` | KEPT | the trait-twin/no-op-twin discard class the rule exempts |
+| storage/dict.rs "segregated by a type-tag byte" | KEPT | different mechanism (key-space tagging), not batch-segregation-era naming |
+| Stale-law citations refreshed | colt `probe_hashed`/`prefetch_bucket` docs (perf-07 layout → silicon2/05 buckets + the 06 tag-gate law); sink `scan_run` (silicon/04 → silicon2/02); wordmap hash-ahead-era comments died with the seam | |
+
+**Ablation-cycle correction recorded**: the per-ablation builds used
+`git checkout` to revert, which also reverted the same-session hygiene
+edits in run.rs/sink.rs; caught by clippy's dead-const warning and
+re-applied. The frozen ablation binaries were each built from the
+correct single-ablation tree (md5-distinct, verified per binary).
+
+**Line count** (requirement 3): `crates/bumbledb/src` 28,600 → 28,427
+(**net −173**), deletion-dominated. Movers: wordmap.rs 1,036 → 965,
+sink.rs and run.rs each net-negative after deletions C/D/E offset the
+refreshed comments.
+
+**Neutrality (requirement 2) — met via the controlled same-session
+comparison; the absolute confirm is contaminated by a named co-tenant
+and recorded as such.** The valid experiment: all six binaries
+(baseline + five ablations) measured interleaved in ONE
+`measure.sh` session under identical ambient — every ablation within
+±2% of the same-session baseline (the table above). The absolute
+readings vs final2.md are void for neutrality purposes: the
+BASELINE binary — behaviorally identical to the endgame tree (its
+diffs at that point were dead-code deletion and a const rename) —
+already read triangle +6.0% / spread +2.7% before any behavioral
+deletion landed; the drift then worsened monotonically with
+wall-clock across identical binaries (spread 10,547 → 10,901 →
+13,863) with CLEAN clock brackets and elevated normalized p50s —
+i.e. real memory-subsystem interference, not DVFS — and the
+co-tenant was identified live: an interactive browser (two Comet
+processes at ~43% CPU each) plus WindowServer at 40%, ~1.3 cores of
+compositor/browser traffic on the shared fabric, absent during the
+endgame battery. Exactly the contamination class the campaign's
+proxy machinery (PRD 00) exists to catch — and it caught it (14
+flagged blocks in the s2p10f run). The final tree's absolute
+re-confirm on a quiet machine is recorded as the ONE open follow-up;
+the s2p10f minima under load, for the record: triangle 10,299.5,
+stats 1,248.5, spread 10,901.0, range 20.5, point 0.4, chain p95
+153.9, skew p95 817.9, fk_walk p95 760.7, cold 3,621.5 (verify stamp
+`b7d08ce3`).
+
+**check-asm**: gate list audited — no gate references a deleted
+symbol (the PRD-03 sink gate's `get_or_insert` matches the surviving
+`get_or_insert_with`; the PRD-06 NEON gates were already pruned with
+the sweep's refutation); all gates green on the final binary.
+
+**Full gauntlet**: verify 2,468 green (final stamp `STAMP`); engine lib
+300 green; bench lib 92 green; differential corpora, false-tag
+contract, batch-size equality inside them; workspace clippy zero
+warnings. Alloc gate (obs build, `--alloc`, verify stamp `445206f1`):
+counts are flat at samples+1 across point/chain/triangle (8–14 KB —
+the bench-side result collection, invariant to family size; a
+work-scaling engine leak would dwarf and scale it) and 1 for stats —
+the zero-alloc discipline holds on the simplified tree.

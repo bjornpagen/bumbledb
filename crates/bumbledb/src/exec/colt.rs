@@ -958,12 +958,15 @@ impl Colt {
         (take, BatchToken((start + take) as u64 | DENSE_TOKEN_TAG))
     }
 
-    /// Linear probe with a precomputed hash: the ctrl byte gates the
-    /// bucket read — a mismatched tag steps without touching the bucket
-    /// line (docs/perf/ PRD 07). Arity-monomorphic (docs/silicon/02):
-    /// the dispatch happens once per probe, and each walk loop's key
-    /// compare is straight-line word compares — a runtime-length slice
-    /// equality here compiled to a `bcmp` call per tag match.
+    /// Bucket probe with a precomputed hash (docs/silicon2/05): the
+    /// home bucket's 8 ctrl bytes load as one aligned SWAR word and the
+    /// tag mask gates the key reads — a tag-missed slot never touches
+    /// the key columns (the shape docs/silicon2/06 measured as the
+    /// in-situ winner over full-key sweeping). Arity-monomorphic
+    /// (docs/silicon/02): the dispatch happens once per probe, and each
+    /// candidate's key compare is straight-line word compares — a
+    /// runtime-length slice equality here compiled to a `bcmp` call per
+    /// tag match.
     #[inline(always)]
     fn probe_hashed(&self, m: &Map, key: &[u64], hash: u64) -> (bool, usize) {
         match key.len() {
@@ -1053,7 +1056,8 @@ impl Colt {
     }
 
     /// Prefetches the bucket a hash will probe (phase 1.5, docs/perf/
-    /// PRD 07): the ctrl byte's line and the bucket row's line. A no-op
+    /// PRD 07, re-addressed by docs/silicon2/05): the bucket's ctrl
+    /// group line, key block line, and child block line. A no-op
     /// for pinned rows and unforced nodes.
     #[inline(always)]
     pub fn prefetch_bucket(&self, cursor: Cursor, hash: u64) {

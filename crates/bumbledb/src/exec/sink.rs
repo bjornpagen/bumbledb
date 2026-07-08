@@ -53,14 +53,12 @@ pub struct ProjectionSink {
     slots: Vec<usize>,
     seen: WordMap<()>,
     scratch: Vec<u64>,
-    /// Per-slot leaf-batch sources, recomputed only when the leaf shape
-    /// changes (PRD 05's pointer-keyed cache — pinned leaves emit
-    /// batches of one, so per-batch recomputation was per-row work):
-    /// `Some(word)` reads the batch keys, `None` the outer bindings.
+    /// Per-slot leaf-batch sources, recomputed at batch entry —
+    /// per-slot work, not per-row (docs/silicon2/10: the pointer-keyed
+    /// skip-if-same-shape cache from docs/perf/ PRD 05 measured < 2%
+    /// at family level and was deleted): `Some(word)` reads the batch
+    /// keys, `None` the outer bindings.
     batch_sources: Vec<Option<usize>>,
-    /// The cache key: `key_slots` pointer + length (stable per prepared
-    /// executor; invalidated on reset).
-    sources_key: (usize, usize),
     /// Rows consumed by the open scan (docs/perf/ PRD 05).
     scan_count: u64,
 }
@@ -85,7 +83,6 @@ impl ProjectionSink {
             seen: WordMap::with_capacity_hint(arity, hint),
             scratch: vec![0; arity],
             batch_sources: vec![None; arity],
-            sources_key: (0, 0),
             scan_count: 0,
         }
     }
@@ -112,7 +109,6 @@ impl ProjectionSink {
     /// Empties the sink for the next execution, retaining capacity.
     pub fn reset(&mut self) {
         self.seen.clear();
-        self.sources_key = (0, 0);
     }
 }
 
@@ -134,18 +130,14 @@ impl Sink for ProjectionSink {
     }
 
     fn emit_batch(&mut self, batch: &LeafBatch<'_>, stop_on_skip: bool) -> Flow {
-        // Sources cached on the leaf shape (pointer-keyed, PRD 05); the
+        // Sources resolved at batch entry (per-slot, not per-row); the
         // outer values refresh per batch (bindings vary per parent), the
         // row loop touches only the varying key words and the seen-set.
-        let key = (batch.key_slots.as_ptr() as usize, batch.key_slots.len());
-        if key != self.sources_key {
-            for (i, slot) in self.slots.iter().enumerate() {
-                self.batch_sources[i] = match batch.source_of(*slot) {
-                    LeafSource::Key(word) => Some(word),
-                    LeafSource::Outer => None,
-                };
-            }
-            self.sources_key = key;
+        for (i, slot) in self.slots.iter().enumerate() {
+            self.batch_sources[i] = match batch.source_of(*slot) {
+                LeafSource::Key(word) => Some(word),
+                LeafSource::Outer => None,
+            };
         }
         for (i, slot) in self.slots.iter().enumerate() {
             if self.batch_sources[i].is_none() {
@@ -189,12 +181,8 @@ impl Sink for ProjectionSink {
     /// that could skip (D2 leaves stay on the batch path), so every
     /// position inserts.
     fn begin_scan(&mut self, scan: &LeafScan<'_>) -> bool {
-        let key = (scan.key_slots.as_ptr() as usize, scan.key_slots.len());
-        if key != self.sources_key {
-            for (i, slot) in self.slots.iter().enumerate() {
-                self.batch_sources[i] = scan.key_slots.iter().position(|k| k == slot);
-            }
-            self.sources_key = key;
+        for (i, slot) in self.slots.iter().enumerate() {
+            self.batch_sources[i] = scan.key_slots.iter().position(|k| k == slot);
         }
         for (i, slot) in self.slots.iter().enumerate() {
             if self.batch_sources[i].is_none() {
@@ -207,19 +195,19 @@ impl Sink for ProjectionSink {
 
     fn scan_run(&mut self, scan: &LeafScan<'_>, run: SuffixRun<'_>) {
         self.scan_count += run.len() as u64;
-        // NO hash-ahead here, by measurement (docs/silicon/04 Result): a
-        // projection scan's inserts are nearly all first-sight misses,
-        // and with the window probe a clean miss stream's exit branch
-        // predicts — no flush, no exposed hash latency — so the pipeline
-        // ping-pong measured as pure overhead (range +10% while it was
-        // here). The mixed hit/miss dedup paths keep theirs and measured
-        // faster. Run-length-adaptive column resolution (docs/perf/
-        // PRD 05) splits the arms: big runs amortize a hoisted column
-        // table, fanout-sized runs resolve per position.
+        // Direct per-row inserts, like every sink path (docs/silicon2/
+        // 02, superseding docs/silicon/04): the pipeline ping-pong
+        // measured as pure overhead everywhere — here first (range +10%
+        // while it was here: a projection scan's inserts are nearly all
+        // first-sight misses, whose predicted exit branch exposes no
+        // hash latency), then on the dedup paths (exp 15's in-shape
+        // measurement). Run-length-adaptive column resolution (docs/
+        // perf/ PRD 05) splits the arms: big runs amortize a hoisted
+        // column table, fanout-sized runs resolve per position.
         let seen = &mut self.seen;
         let scratch = &mut self.scratch;
         let sources = &self.batch_sources;
-        if run.len() >= SCAN_COLUMN_HOIST {
+        if run.len() >= crate::exec::SCAN_HOIST_THRESHOLD {
             assert!(sources.len() <= 8, "projection arity cap");
             // Option-free hoist table built by a plain indexed loop
             // (docs/silicon/08): `array::from_fn` refuses to inline its
@@ -264,14 +252,6 @@ impl Sink for ProjectionSink {
     }
 }
 
-/// The projection scan's column-hoist threshold (docs/silicon/08):
-/// hoisting pays when `run_length` ≥ `build_cost` ÷ `per-item saving`. With
-/// the Option-free prefix table the build is ~3.4 ns (was ~34 with the
-/// `from_fn` Option table that forced the old threshold of 32), so the
-/// crossover lands at single digits; the in-tree derivation test
-/// (`scan_hoist_crossover_derivation`) records the measured curve.
-const SCAN_COLUMN_HOIST: usize = 8;
-
 /// One accumulator cell.
 #[derive(Debug, Clone, Copy)]
 enum Acc {
@@ -307,12 +287,6 @@ pub struct AggregateSink {
     seen: Option<WordMap<()>>,
     key_scratch: Vec<u64>,
     binding_scratch: Vec<u64>,
-    /// The group-run memo (docs/perf/ PRD 02): consecutive constant-group
-    /// batches within one node-entry run share their group — remember the
-    /// last key words and accumulator index and skip even the
-    /// once-per-batch probe when unchanged.
-    memo_key: Vec<u64>,
-    memo_idx: Option<usize>,
     /// Batch-fold accumulator staging: the group's row is copied here,
     /// folded, and written back once per batch.
     acc_scratch: Vec<Acc>,
@@ -332,7 +306,6 @@ pub struct AggregateSink {
     /// per batch was per-row work.
     cached_outer_slots: Vec<usize>,
     cached_constant_group: bool,
-    sources_key: (usize, usize),
     /// Group-map probes actually issued (the PRD 02 hoist observable).
     #[cfg(test)]
     group_probes: usize,
@@ -373,15 +346,12 @@ impl AggregateSink {
             key_scratch: vec![0; group_slots.len()],
             binding_scratch: vec![0; slot_count],
             seen: (!distinct_bindings).then(|| WordMap::with_capacity_hint(slot_count, hint)),
-            memo_key: vec![0; group_slots.len()],
-            memo_idx: None,
             acc_scratch: Vec::with_capacity(n_aggs),
             dedup_survivors: Vec::new(),
             scan_sources: Vec::with_capacity(n_aggs),
             scan_count: 0,
             cached_outer_slots: Vec::new(),
             cached_constant_group: false,
-            sources_key: (0, 0),
             #[cfg(test)]
             group_probes: 0,
             group_slots,
@@ -399,8 +369,6 @@ impl AggregateSink {
 
     /// Empties the sink for the next execution, retaining capacity.
     pub fn reset(&mut self) {
-        self.memo_idx = None;
-        self.sources_key = (0, 0);
         self.groups.clear();
         self.accs.clear();
         if let Some(seen) = &mut self.seen {
@@ -476,28 +444,11 @@ fn finalize(acc: Acc, find_idx: usize) -> Result<u64> {
 }
 
 impl AggregateSink {
-    /// The memoized group resolution (PRD 02): consecutive batches of one
-    /// run share their group — compare key words before hashing.
-    fn resolve_group_memoized(&mut self) -> usize {
-        match self.memo_idx {
-            Some(idx) if self.memo_key == self.key_scratch => idx,
-            _ => {
-                let idx = self.probe_group();
-                self.memo_key.copy_from_slice(&self.key_scratch);
-                self.memo_idx = Some(idx);
-                idx
-            }
-        }
-    }
-
     /// Refreshes the leaf-shape cache (outer slots + group constancy) —
     /// pointer-keyed on `key_slots`, so pinned batch-of-one leaves pay
     /// nothing after the first batch (PRD 05).
     fn refresh_shape_cache(&mut self, batch: &LeafBatch<'_>) {
-        let key = (batch.key_slots.as_ptr() as usize, batch.key_slots.len());
-        if key == self.sources_key {
-            return;
-        }
+
         self.cached_outer_slots.clear();
         for slot in 0..self.binding_scratch.len() {
             if matches!(batch.source_of(slot), LeafSource::Outer) {
@@ -508,7 +459,6 @@ impl AggregateSink {
             .group_slots
             .iter()
             .all(|slot| matches!(batch.source_of(*slot), LeafSource::Outer));
-        self.sources_key = key;
     }
 
     /// Probes the group map with the key currently in `key_scratch`,
@@ -660,7 +610,10 @@ impl AggregateSink {
         for (i, slot) in self.group_slots.iter().enumerate() {
             self.key_scratch[i] = batch.bindings.get(*slot);
         }
-        let group_idx = self.resolve_group_memoized();
+        // Once per batch (docs/silicon2/10: the group-run memo that
+        // skipped this probe measured < 2% under the const-arity map
+        // and was deleted — the probe IS the fast path now).
+        let group_idx = self.probe_group();
 
         let range = group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs;
         self.acc_scratch.clear();
@@ -954,7 +907,10 @@ impl Sink for AggregateSink {
         }
         // Merge the partials into the group's row (identity seeds make
         // the merge exact for every op).
-        let group_idx = self.resolve_group_memoized();
+        // Once per batch (docs/silicon2/10: the group-run memo that
+        // skipped this probe measured < 2% under the const-arity map
+        // and was deleted — the probe IS the fast path now).
+        let group_idx = self.probe_group();
         let range = group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs;
         for (acc, partial) in self.accs[range].iter_mut().zip(&self.acc_scratch) {
             match (acc, partial) {

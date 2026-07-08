@@ -108,7 +108,11 @@ pub struct Modes {
     pub proxy_per_rep: bool,
 }
 
-/// [`measure_with`] in plain timing mode.
+/// [`measure_batched`] in plain per-call timing mode — the thin
+/// convenience for the write/scenario families (docs/silicon2/10
+/// collapsed the former three-layer `measure`/`measure_with`/
+/// `measure_batched` stack to this pair: no caller distinguished the
+/// middle layer from `measure_batched(.., 1, ..)`).
 ///
 /// # Errors
 ///
@@ -117,22 +121,7 @@ pub fn measure<F>(proto: Protocol, f: F) -> Result<Measurement, String>
 where
     F: FnMut() -> Result<u64, String>,
 {
-    measure_with(proto, Modes::default(), f)
-}
-
-/// The one measurement loop: `warmups` untimed calls, then `samples`
-/// calls timed individually (`Instant::now` around exactly the call),
-/// their work counts black-boxed and summed.
-///
-/// # Errors
-///
-/// The closure's error; a request for both modes at once; an
-/// alloc-window request on a build without the `obs` feature.
-pub fn measure_with<F>(proto: Protocol, modes: Modes, f: F) -> Result<Measurement, String>
-where
-    F: FnMut() -> Result<u64, String>,
-{
-    measure_batched(proto, modes, 1, f)
+    measure_batched(proto, Modes::default(), 1, f)
 }
 
 /// The quantum floor (docs/silicon/00-baseline-and-harness.md): the
@@ -141,13 +130,14 @@ where
 /// batches executes per sample and divides.
 pub const QUANTUM_FLOOR_NS: u64 = 500;
 
-/// [`measure_with`] timing `batch` calls per sample and dividing the
+/// The one measurement loop, timing `batch` calls per sample and dividing the
 /// elapsed time — the quantum guard's mechanism. Work counts sum across
 /// every call; batch 1 is the plain protocol.
 ///
 /// # Errors
 ///
-/// As [`measure_with`].
+/// The closure's error; a request for both modes at once; an
+/// alloc-window request on a build without the `obs` feature.
 ///
 /// # Panics
 ///
@@ -470,20 +460,21 @@ mod tests {
             warmups: 1,
             samples: 8,
         };
-        let m = measure_with(
+        let m = measure_batched(
             proto,
             Modes {
                 alloc_window: false,
                 trace: false,
                 proxy_per_rep: true,
             },
+            1,
             || Ok(std::hint::black_box((0..10_000u64).sum::<u64>())),
         )
         .expect("measures");
         let norm = m.p50_norm.expect("per-rep mode populates p50_norm");
         // Normalization rescales toward the best clock: never above raw.
         assert!(norm <= m.stats.p50 + m.stats.p50 / 10);
-        let off = measure_with(proto, Modes::default(), || Ok(1)).expect("measures");
+        let off = measure_batched(proto, Modes::default(), 1, || Ok(1)).expect("measures");
         assert!(off.p50_norm.is_none(), "off by default");
     }
 
@@ -505,13 +496,14 @@ mod tests {
 
     #[test]
     fn the_modes_are_mutually_exclusive() {
-        let err = measure_with(
+        let err = measure_batched(
             Protocol::COLD,
             Modes {
                 alloc_window: true,
                 trace: true,
                 proxy_per_rep: false,
             },
+            1,
             || Ok(0),
         )
         .expect_err("must refuse");
@@ -525,13 +517,14 @@ mod tests {
             samples: 2,
         };
         let mut calls = 0u64;
-        let m = measure_with(
+        let m = measure_batched(
             proto,
             Modes {
                 alloc_window: false,
                 trace: true,
                 proxy_per_rep: false,
             },
+            1,
             || {
                 calls += 1;
                 Ok(1)
@@ -551,13 +544,14 @@ mod tests {
             warmups: 2,
             samples: 4,
         };
-        let m = measure_with(
+        let m = measure_batched(
             proto,
             Modes {
                 alloc_window: true,
                 trace: false,
                 proxy_per_rep: false,
             },
+            1,
             || Ok(std::hint::black_box(vec![1u8; 4096]).len() as u64),
         )
         .expect("measures");
@@ -569,13 +563,14 @@ mod tests {
     #[cfg(not(feature = "obs"))]
     #[test]
     fn the_alloc_window_refuses_without_the_feature() {
-        let err = measure_with(
+        let err = measure_batched(
             Protocol::COLD,
             Modes {
                 alloc_window: true,
                 trace: false,
                 proxy_per_rep: false,
             },
+            1,
             || Ok(0),
         )
         .expect_err("must refuse");
