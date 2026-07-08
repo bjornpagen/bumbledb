@@ -217,6 +217,12 @@ pub struct Schema {
     relations: Box<[Relation]>,
     /// The materialized statement list; [`StatementId`] indexes it.
     statements: Box<[Statement]>,
+    /// `target_key -> dependents`: per statement, the `Containment`
+    /// statements whose resolved [`Resolved::Containment::target_key`] is
+    /// that statement — the target-side reverse-edge check set
+    /// (`docs/architecture/30-dependencies.md` § enforcement). Empty for
+    /// every non-key statement. [`StatementId`] indexes it.
+    dependents: Box<[Box<[StatementId]>]>,
 }
 
 impl Schema {
@@ -258,5 +264,19 @@ impl Schema {
     #[must_use]
     pub fn statement(&self, id: StatementId) -> &Statement {
         &self.statements[usize::from(id.0)]
+    }
+
+    /// The `Containment` statements whose resolved target key is `id` —
+    /// the set the commit pipeline's target side walks when a key tuple is
+    /// disestablished (`docs/architecture/30-dependencies.md`
+    /// § enforcement). Empty unless `id` is a `Functionality` statement
+    /// some containment resolved to.
+    ///
+    /// # Panics
+    ///
+    /// On an out-of-range id — internal callers only.
+    #[must_use]
+    pub fn dependents(&self, id: StatementId) -> &[StatementId] {
+        &self.dependents[usize::from(id.0)]
     }
 }

@@ -11,7 +11,7 @@ mod display;
 
 use crate::ir::{ParamId, VarId};
 use crate::schema::fingerprint::SchemaFingerprint;
-use crate::schema::{FieldId, RelationId, ValueType};
+use crate::schema::{FieldId, RelationId, StatementId, ValueType};
 
 /// Corruption detected while decoding stored bytes — a hard error, never a
 /// skip, never a default (`docs/architecture/40-storage.md`).
@@ -64,9 +64,13 @@ pub enum CorruptionError {
 /// schema shape has a distinct variant; an invalid schema is
 /// unconstructible, not flagged.
 ///
-/// PRD 03 extends this enum with one variant per line of the statement
-/// validation roster (`docs/architecture/30-dependencies.md`); the current
-/// variants are the field-level checks.
+/// Statement variants implement the validation roster of
+/// `docs/architecture/30-dependencies.md` — one variant per roster line,
+/// no catch-all. Each doc comment cites its line. The roster's "FD with
+/// selection" and "non-key FD form" lines have no variants: PRD 02's
+/// [`crate::schema::StatementDescriptor::Functionality`] carries neither a
+/// selection nor a Y side, so both shapes are unrepresentable rather than
+/// rejected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaError {
     DuplicateRelationName {
@@ -94,21 +98,136 @@ pub enum SchemaError {
         relation: RelationId,
         field: FieldId,
     },
-}
 
-/// How a foreign-key constraint failed at commit.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FkViolation {
-    /// An inserted fact references a target unique key that does not exist
-    /// in the final state (forward check).
-    MissingTarget { fact_bytes: Box<[u8]> },
-    /// A deleted unique key still has a live referrer in the final state
-    /// (Restrict check); `relation`/`constraint` on the error name the
-    /// *target* side, this carries the referencing fact itself (storage row
-    /// ids never surface — `docs/architecture/10-data-model.md`).
-    RemainingReference {
-        source_relation: RelationId,
-        fact_bytes: Box<[u8]>,
+    // --- Statement roster (30-dependencies § validation roster) ---
+    /// Roster "unknown relation … ids": a statement names a relation
+    /// outside the schema.
+    StatementUnknownRelation {
+        statement: StatementId,
+        relation: RelationId,
+    },
+    /// Roster "unknown … field ids": a projection or selection names a
+    /// field outside its relation.
+    StatementUnknownField {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "empty … projections": a projection with no fields.
+    EmptyProjection {
+        statement: StatementId,
+        relation: RelationId,
+    },
+    /// Roster "duplicate-carrying projections": a field twice in one
+    /// projection.
+    DuplicateProjectionField {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "duplicate-carrying projections", the selection sibling: a
+    /// field bound twice in one selection σ (a set of bindings).
+    DuplicateSelectionField {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster ">1 interval position": two interval fields in one FD
+    /// projection would be 2-D exclusion, which the ordered guard cannot
+    /// answer. Carries the second interval field.
+    FunctionalityMultipleIntervals {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "interval not in final position": the neighbor probe needs
+    /// the scalar prefix as its group.
+    FunctionalityIntervalNotLast {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "duplicate statements", the Functionality-specific form: two
+    /// FDs over one field set on one relation assert one judgment — the
+    /// second guard is pure write amplification, and rejecting it makes
+    /// containment target-key resolution unambiguous.
+    DuplicateFunctionality {
+        statement: StatementId,
+        earlier: StatementId,
+    },
+    /// Roster "guard width overflow": Σ projected field widths exceeds
+    /// [`crate::storage::keys::MAX_GUARD_WIDTH`] — rejected at declaration,
+    /// never discovered at write time.
+    GuardKeyTooWide {
+        statement: StatementId,
+        width: usize,
+    },
+    /// Roster "arity mismatch between sides": |X| ≠ |Y|.
+    ContainmentArityMismatch {
+        statement: StatementId,
+        source: usize,
+        target: usize,
+    },
+    /// Roster "positional structural-type mismatch" — including its
+    /// called-out instance, an interval position against a scalar one.
+    ContainmentTypeMismatch {
+        statement: StatementId,
+        position: usize,
+    },
+    /// Roster "a selected field also projected": a constant column — write
+    /// the statement you mean.
+    SelectedFieldProjected {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "selection literal type mismatch": the literal's variant is
+    /// not the field's structural type.
+    SelectionLiteralTypeMismatch {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "selection literal type mismatch (including out-of-range
+    /// enum ordinals …)".
+    SelectionEnumOrdinalOutOfRange {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+        ordinal: u8,
+    },
+    /// Roster "selection literal type mismatch (… non-UTF-8 string
+    /// literals)".
+    SelectionLiteralNotUtf8 {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "selection literal type mismatch", the interval bound rule:
+    /// `start >= end` denotes no points, and a fact never denotes nothing.
+    SelectionIntervalEmpty {
+        statement: StatementId,
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "IND whose target projection matches no key of the target":
+    /// probe-ability requires Y to be a permutation of a declared key.
+    NoMatchingTargetKey {
+        statement: StatementId,
+        relation: RelationId,
+    },
+    /// Roster "IND … (or, with an interval position, no pointwise key
+    /// carrying it)": the coverage walk needs the target's own key to keep
+    /// its intervals disjoint and ordered.
+    NoPointwiseTargetKey {
+        statement: StatementId,
+        relation: RelationId,
+    },
+    /// Roster "duplicate statements (identical normalized sides and form —
+    /// write it once)": selections compare sorted by field id.
+    DuplicateStatement {
+        statement: StatementId,
+        earlier: StatementId,
     },
 }
 
@@ -271,20 +390,10 @@ pub enum Error {
     FactShape(FactShapeError),
 
     // --- Write errors ---
-    /// A foreign-key invariant would be violated by the committed state:
-    /// the whole transaction aborts.
-    ForeignKeyViolation {
-        relation: RelationId,
-        constraint: ConstraintId,
-        violation: FkViolation,
-    },
-    /// Two live facts claimed one unique key: the commit-time invariant is
-    /// violated and the whole transaction aborts.
-    UniqueViolation {
-        relation: RelationId,
-        constraint: ConstraintId,
-        fact_bytes: Box<[u8]>,
-    },
+    // The judgment-violation variants (a statement violated by the
+    // committed final state, carrying the StatementId and the offending
+    // fact's bytes) arrive with the commit pipeline, PRDs 07–09
+    // (`docs/architecture/30-dependencies.md` § judged on final states).
     /// A serial sequence reached `u64::MAX`; the generator can issue no
     /// further values for this field.
     SerialExhausted {

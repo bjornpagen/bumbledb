@@ -1,27 +1,32 @@
 //! Declaration validation: the boundary that turns a [`SchemaDescriptor`]
 //! into the sealed [`Schema`] witness.
 //!
-//! **PRD 03's site.** Statement validation — the roster and the acceptance
-//! gate of `docs/architecture/30-dependencies.md` — is not implemented yet.
-//! This placeholder keeps the field-level checks, materializes the statement
-//! list ([`SchemaDescriptor::materialized_statements`] owns the ordering
-//! rule), derives the per-relation statement indices, and seals. Every
-//! [`Resolved`] it attaches is a placeholder; PRD 03 computes the real
-//! enforcement data and nothing downstream reads it until then.
+//! Field checks first, then the statement roster and acceptance gate of
+//! `docs/architecture/30-dependencies.md` — exhaustive, one distinct
+//! [`SchemaError`] per roster line (the variant doc comments carry the
+//! citations). Every accepted statement leaves with its [`Resolved`]
+//! enforcement plan computed; downstream trusts it without re-checking.
+//!
+//! The roster's "FD with selection" and "non-key FD form" lines have no
+//! checks here: [`StatementDescriptor::Functionality`] carries neither a
+//! selection nor a Y side, so both shapes are unrepresentable rather than
+//! rejected (the PRD 02 descriptor decision; see PRD 03 § Conflict).
 
 use super::{
-    FactLayout, FieldDescriptor, FieldId, Generation, Relation, RelationDescriptor, RelationId,
-    Resolved, Schema, SchemaDescriptor, Statement, StatementDescriptor, StatementId, ValueType,
+    FactLayout, FieldDescriptor, FieldId, Generation, IntervalElement, LiteralValue, Relation,
+    RelationDescriptor, RelationId, Resolved, Schema, SchemaDescriptor, Side, Statement,
+    StatementDescriptor, StatementId, ValueType,
 };
 use crate::error::SchemaError;
+use crate::storage::keys::MAX_GUARD_WIDTH;
 
 impl SchemaDescriptor {
     /// Validates the declaration into the sealed [`Schema`] witness.
     ///
     /// # Errors
     ///
-    /// A distinct [`SchemaError`] per illegal shape; see the variant list.
-    /// The statement roster (PRD 03) is not checked yet.
+    /// A distinct [`SchemaError`] per illegal shape — the field checks and
+    /// the full statement roster; see the variant list.
     ///
     /// # Panics
     ///
@@ -46,7 +51,40 @@ impl SchemaDescriptor {
             }
         }
 
-        // Per-relation statement indices, derived from the materialized list.
+        // The statement roster, in materialized order. Duplicate checks
+        // look backward (earlier statements are already validated);
+        // containment target-key resolution looks at the whole list (a key
+        // may be declared after the containment that probes it).
+        let mut normalized: Vec<StatementDescriptor> = Vec::with_capacity(descriptors.len());
+        let mut resolutions: Vec<Resolved> = Vec::with_capacity(descriptors.len());
+        for (idx, descriptor) in descriptors.iter().enumerate() {
+            let id = StatementId(u16::try_from(idx).expect("statement count fits u16"));
+            let resolved = match descriptor {
+                StatementDescriptor::Functionality {
+                    relation,
+                    projection,
+                } => validate_functionality(id, *relation, projection, &relations, &descriptors)?,
+                StatementDescriptor::Containment { source, target } => {
+                    validate_containment(id, source, target, &relations, &descriptors)?
+                }
+            };
+            // Roster "duplicate statements": identical descriptors after
+            // normalization (selections sorted by FieldId). Identical FDs
+            // never reach this — `DuplicateFunctionality` (a set rule, so
+            // a superset of this equality) fired above.
+            let norm = normalize(descriptor);
+            if let Some(earlier) = normalized.iter().position(|n| *n == norm) {
+                return Err(SchemaError::DuplicateStatement {
+                    statement: id,
+                    earlier: StatementId(u16::try_from(earlier).expect("statement count fits u16")),
+                });
+            }
+            normalized.push(norm);
+            resolutions.push(resolved);
+        }
+
+        // Per-relation statement indices, derived from the materialized
+        // list — safe to index now, every relation id is validated.
         let mut keys: Vec<Vec<StatementId>> = vec![Vec::new(); relations.len()];
         let mut outgoing: Vec<Vec<StatementId>> = vec![Vec::new(); relations.len()];
         let mut incoming: Vec<Vec<StatementId>> = vec![Vec::new(); relations.len()];
@@ -70,34 +108,472 @@ impl SchemaDescriptor {
             relation.incoming = incoming.into_boxed_slice();
         }
 
-        // PRD 03: the statement roster and the acceptance gate run here and
-        // compute the real `Resolved` per statement. Placeholder resolution
-        // until then — nothing downstream reads it.
+        // `target_key -> dependents`: the target-side reverse-edge check
+        // set (`docs/architecture/30-dependencies.md` § enforcement).
+        let mut dependents: Vec<Vec<StatementId>> = vec![Vec::new(); resolutions.len()];
+        for (idx, resolved) in resolutions.iter().enumerate() {
+            if let Resolved::Containment { target_key, .. } = resolved {
+                dependents[usize::from(target_key.0)].push(StatementId(
+                    u16::try_from(idx).expect("statement count fits u16"),
+                ));
+            }
+        }
+
         let statements = descriptors
             .into_iter()
-            .map(|descriptor| {
-                let resolved = match &descriptor {
-                    StatementDescriptor::Functionality { .. } => Resolved::Functionality {
-                        interval_position: None,
-                    },
-                    StatementDescriptor::Containment { .. } => Resolved::Containment {
-                        target_key: StatementId(0),
-                        key_permutation: Box::new([]),
-                        interval_position: None,
-                    },
-                };
-                Statement {
-                    descriptor,
-                    resolved,
-                }
+            .zip(resolutions)
+            .map(|(descriptor, resolved)| Statement {
+                descriptor,
+                resolved,
             })
             .collect();
 
         Ok(Schema {
             relations: relations.into_boxed_slice(),
             statements,
+            dependents: dependents.into_iter().map(Vec::into_boxed_slice).collect(),
         })
     }
+}
+
+/// The descriptor with each selection sorted by [`FieldId`] — σ is a set of
+/// bindings, so its written order is not identity (roster "duplicate
+/// statements (identical normalized sides and form)").
+fn normalize(descriptor: &StatementDescriptor) -> StatementDescriptor {
+    fn side(side: &Side) -> Side {
+        let mut selection = side.selection.to_vec();
+        selection.sort_by_key(|(field, _)| *field);
+        Side {
+            relation: side.relation,
+            projection: side.projection.clone(),
+            selection: selection.into_boxed_slice(),
+        }
+    }
+    match descriptor {
+        StatementDescriptor::Functionality { .. } => descriptor.clone(),
+        StatementDescriptor::Containment { source, target } => StatementDescriptor::Containment {
+            source: side(source),
+            target: side(target),
+        },
+    }
+}
+
+/// Roster "FD …" lines: `R(X) -> R` under the acceptance gate. Returns the
+/// key's [`Resolved::Functionality`] (its interval position, if pointwise).
+fn validate_functionality(
+    id: StatementId,
+    relation_id: RelationId,
+    projection: &[FieldId],
+    relations: &[Relation],
+    descriptors: &[StatementDescriptor],
+) -> Result<Resolved, SchemaError> {
+    let relation = known_relation(id, relation_id, relations)?;
+    validate_projection(id, relation_id, projection, relation)?;
+
+    // Roster ">1 interval position" and "interval not in final position":
+    // the neighbor probe needs the scalar prefix as its group; two interval
+    // positions would be 2-D exclusion, which the ordered guard cannot
+    // answer.
+    let mut interval_position: Option<usize> = None;
+    for (pos, field) in projection.iter().enumerate() {
+        if matches!(
+            relation.fields[usize::from(field.0)].value_type,
+            ValueType::Interval { .. }
+        ) {
+            if interval_position.is_some() {
+                return Err(SchemaError::FunctionalityMultipleIntervals {
+                    statement: id,
+                    relation: relation_id,
+                    field: *field,
+                });
+            }
+            interval_position = Some(pos);
+        }
+    }
+    if let Some(pos) = interval_position {
+        if pos != projection.len() - 1 {
+            return Err(SchemaError::FunctionalityIntervalNotLast {
+                statement: id,
+                relation: relation_id,
+                field: projection[pos],
+            });
+        }
+    }
+
+    // Roster "duplicate statements", FD form: one field *set* per relation
+    // — a second FD over the same set (any order) asserts the same
+    // judgment, so its guard is pure write amplification, and rejecting it
+    // is what makes containment target-key resolution unambiguous.
+    let mut this_set = projection.to_vec();
+    this_set.sort_unstable();
+    for (idx, earlier) in descriptors[..usize::from(id.0)].iter().enumerate() {
+        if let StatementDescriptor::Functionality {
+            relation: r,
+            projection: p,
+        } = earlier
+        {
+            let mut earlier_set = p.to_vec();
+            earlier_set.sort_unstable();
+            if *r == relation_id && earlier_set == this_set {
+                return Err(SchemaError::DuplicateFunctionality {
+                    statement: id,
+                    earlier: StatementId(u16::try_from(idx).expect("statement count fits u16")),
+                });
+            }
+        }
+    }
+
+    // Roster "guard width overflow": Σ field widths (intervals count 16)
+    // must fit `MAX_GUARD_WIDTH` — rejected at declaration, never
+    // discovered at write time.
+    let width: usize = projection
+        .iter()
+        .map(|field| {
+            relation.fields[usize::from(field.0)]
+                .value_type
+                .type_desc()
+                .width()
+        })
+        .sum();
+    if width > MAX_GUARD_WIDTH {
+        return Err(SchemaError::GuardKeyTooWide {
+            statement: id,
+            width,
+        });
+    }
+
+    Ok(Resolved::Functionality { interval_position })
+}
+
+/// Roster "IND …" lines: `A(X | φ) <= B(Y | ψ)` under the acceptance gate.
+/// Returns the resolved target key, its permutation, and the shared
+/// interval position.
+fn validate_containment(
+    id: StatementId,
+    source: &Side,
+    target: &Side,
+    relations: &[Relation],
+    descriptors: &[StatementDescriptor],
+) -> Result<Resolved, SchemaError> {
+    validate_side_shape(id, source, relations)?;
+    validate_side_shape(id, target, relations)?;
+
+    // Roster "arity mismatch between sides": |X| = |Y|.
+    if source.projection.len() != target.projection.len() {
+        return Err(SchemaError::ContainmentArityMismatch {
+            statement: id,
+            source: source.projection.len(),
+            target: target.projection.len(),
+        });
+    }
+
+    // Roster "positional structural-type mismatch" — derive-eq on
+    // `ValueType`, which also covers the called-out interval-against-scalar
+    // case (`docs/architecture/10-data-model.md` structural equality).
+    let source_fields = &relations[source.relation.0 as usize].fields;
+    let target_fields = &relations[target.relation.0 as usize].fields;
+    for (position, (s, t)) in source
+        .projection
+        .iter()
+        .zip(target.projection.iter())
+        .enumerate()
+    {
+        if source_fields[usize::from(s.0)].value_type != target_fields[usize::from(t.0)].value_type
+        {
+            return Err(SchemaError::ContainmentTypeMismatch {
+                statement: id,
+                position,
+            });
+        }
+    }
+
+    validate_side_selection(id, source, relations)?;
+    validate_side_selection(id, target, relations)?;
+
+    resolve_target_key(id, target, relations, descriptors)
+}
+
+/// Roster "unknown relation … ids": the relation for a statement-named id.
+fn known_relation<'a>(
+    id: StatementId,
+    relation: RelationId,
+    relations: &'a [Relation],
+) -> Result<&'a Relation, SchemaError> {
+    relations
+        .get(relation.0 as usize)
+        .ok_or(SchemaError::StatementUnknownRelation {
+            statement: id,
+            relation,
+        })
+}
+
+/// Roster "unknown … field ids" and "empty or duplicate-carrying
+/// projections" for one projection.
+fn validate_projection(
+    id: StatementId,
+    relation_id: RelationId,
+    projection: &[FieldId],
+    relation: &Relation,
+) -> Result<(), SchemaError> {
+    if projection.is_empty() {
+        return Err(SchemaError::EmptyProjection {
+            statement: id,
+            relation: relation_id,
+        });
+    }
+    for (idx, field) in projection.iter().enumerate() {
+        if usize::from(field.0) >= relation.fields.len() {
+            return Err(SchemaError::StatementUnknownField {
+                statement: id,
+                relation: relation_id,
+                field: *field,
+            });
+        }
+        if projection[..idx].contains(field) {
+            return Err(SchemaError::DuplicateProjectionField {
+                statement: id,
+                relation: relation_id,
+                field: *field,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// One side's id and duplication shape: unknown relation/field ids, empty
+/// or duplicate projection, duplicate selection binding (σ is a set).
+fn validate_side_shape(
+    id: StatementId,
+    side: &Side,
+    relations: &[Relation],
+) -> Result<(), SchemaError> {
+    let relation = known_relation(id, side.relation, relations)?;
+    validate_projection(id, side.relation, &side.projection, relation)?;
+    for (idx, (field, _)) in side.selection.iter().enumerate() {
+        if usize::from(field.0) >= relation.fields.len() {
+            return Err(SchemaError::StatementUnknownField {
+                statement: id,
+                relation: side.relation,
+                field: *field,
+            });
+        }
+        if side.selection[..idx].iter().any(|(f, _)| f == field) {
+            return Err(SchemaError::DuplicateSelectionField {
+                statement: id,
+                relation: side.relation,
+                field: *field,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// One side's selection semantics: roster "a selected field also projected"
+/// (a constant column — write the statement you mean), then the literal
+/// checks against each selected field's structural type.
+fn validate_side_selection(
+    id: StatementId,
+    side: &Side,
+    relations: &[Relation],
+) -> Result<(), SchemaError> {
+    let relation = &relations[side.relation.0 as usize];
+    for (field, _) in &side.selection {
+        if side.projection.contains(field) {
+            return Err(SchemaError::SelectedFieldProjected {
+                statement: id,
+                relation: side.relation,
+                field: *field,
+            });
+        }
+    }
+    for (field, literal) in &side.selection {
+        validate_selection_literal(
+            id,
+            side.relation,
+            *field,
+            &relation.fields[usize::from(field.0)].value_type,
+            literal,
+        )?;
+    }
+    Ok(())
+}
+
+/// Roster "selection literal type mismatch (including out-of-range enum
+/// ordinals and non-UTF-8 string literals)", plus the interval bound rule
+/// `start < end` (an empty interval denotes no points, and a fact never
+/// denotes nothing).
+fn validate_selection_literal(
+    id: StatementId,
+    relation: RelationId,
+    field: FieldId,
+    value_type: &ValueType,
+    literal: &LiteralValue,
+) -> Result<(), SchemaError> {
+    match (value_type, literal) {
+        (ValueType::Bool, LiteralValue::Bool(_))
+        | (ValueType::U64, LiteralValue::U64(_))
+        | (ValueType::I64, LiteralValue::I64(_))
+        | (ValueType::Bytes, LiteralValue::Bytes(_)) => Ok(()),
+        (ValueType::Enum { variants }, LiteralValue::Enum(ordinal)) => {
+            if usize::from(*ordinal) < variants.len() {
+                Ok(())
+            } else {
+                Err(SchemaError::SelectionEnumOrdinalOutOfRange {
+                    statement: id,
+                    relation,
+                    field,
+                    ordinal: *ordinal,
+                })
+            }
+        }
+        (ValueType::String, LiteralValue::String(bytes)) => {
+            if std::str::from_utf8(bytes).is_ok() {
+                Ok(())
+            } else {
+                Err(SchemaError::SelectionLiteralNotUtf8 {
+                    statement: id,
+                    relation,
+                    field,
+                })
+            }
+        }
+        (
+            ValueType::Interval {
+                element: IntervalElement::U64,
+            },
+            LiteralValue::IntervalU64(start, end),
+        ) => {
+            if start < end {
+                Ok(())
+            } else {
+                Err(SchemaError::SelectionIntervalEmpty {
+                    statement: id,
+                    relation,
+                    field,
+                })
+            }
+        }
+        (
+            ValueType::Interval {
+                element: IntervalElement::I64,
+            },
+            LiteralValue::IntervalI64(start, end),
+        ) => {
+            if start < end {
+                Ok(())
+            } else {
+                Err(SchemaError::SelectionIntervalEmpty {
+                    statement: id,
+                    relation,
+                    field,
+                })
+            }
+        }
+        _ => Err(SchemaError::SelectionLiteralTypeMismatch {
+            statement: id,
+            relation,
+            field,
+        }),
+    }
+}
+
+/// Target-key resolution and the pointwise gate
+/// (`docs/architecture/30-dependencies.md` § the acceptance gate): the
+/// target projection, as a set, must equal the field set of some
+/// `Functionality` statement on the target relation — probe-ability, one
+/// guard get answers "is this tuple present". Unambiguous because duplicate
+/// field sets are rejected by [`SchemaError::DuplicateFunctionality`].
+fn resolve_target_key(
+    id: StatementId,
+    target: &Side,
+    relations: &[Relation],
+    descriptors: &[StatementDescriptor],
+) -> Result<Resolved, SchemaError> {
+    let target_fields = &relations[target.relation.0 as usize].fields;
+    let interval_positions: Vec<usize> = target
+        .projection
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| {
+            matches!(
+                target_fields[usize::from(field.0)].value_type,
+                ValueType::Interval { .. }
+            )
+        })
+        .map(|(pos, _)| pos)
+        .collect();
+
+    // Pointwise gate, "exactly one interval position": no key can carry
+    // two intervals (the FD gate rejects them), so with two or more there
+    // is no pointwise key to resolve — reject without searching.
+    if interval_positions.len() > 1 {
+        return Err(SchemaError::NoPointwiseTargetKey {
+            statement: id,
+            relation: target.relation,
+        });
+    }
+    let interval_position = interval_positions.first().copied();
+
+    let mut want = target.projection.to_vec();
+    want.sort_unstable();
+    let found = descriptors.iter().enumerate().find(|(_, descriptor)| {
+        if let StatementDescriptor::Functionality {
+            relation,
+            projection,
+        } = descriptor
+        {
+            let mut set = projection.to_vec();
+            set.sort_unstable();
+            *relation == target.relation && set == want
+        } else {
+            false
+        }
+    });
+
+    // Roster "IND whose target projection matches no key of the target
+    // (or, with an interval position, no pointwise key carrying it)".
+    let Some((key_idx, key)) = found else {
+        return Err(if interval_position.is_some() {
+            SchemaError::NoPointwiseTargetKey {
+                statement: id,
+                relation: target.relation,
+            }
+        } else {
+            SchemaError::NoMatchingTargetKey {
+                statement: id,
+                relation: target.relation,
+            }
+        });
+    };
+    // Set equality means the resolved key carries the interval field, and
+    // the key's own FD gate forces it last — the key *is* pointwise; the
+    // gate's "key carries its interval" demand is discharged by
+    // construction, not re-checked.
+
+    let StatementDescriptor::Functionality {
+        projection: key_projection,
+        ..
+    } = key
+    else {
+        unreachable!("resolution matched a Functionality");
+    };
+    let key_permutation = target
+        .projection
+        .iter()
+        .map(|field| {
+            let guard_pos = key_projection
+                .iter()
+                .position(|k| k == field)
+                .expect("set-equal key contains every projected field");
+            u16::try_from(guard_pos).expect("field count fits u16")
+        })
+        .collect();
+
+    Ok(Resolved::Containment {
+        target_key: StatementId(u16::try_from(key_idx).expect("statement count fits u16")),
+        key_permutation,
+        interval_position,
+    })
 }
 
 /// Field checks: duplicate names, enum shape, serial typing.

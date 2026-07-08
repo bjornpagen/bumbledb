@@ -34,6 +34,32 @@ fn side(relation: RelationId, projection: &[FieldId]) -> Side {
     }
 }
 
+/// A selected side: `R(X | σ)`.
+fn side_where(
+    relation: RelationId,
+    projection: &[FieldId],
+    selection: Vec<(FieldId, LiteralValue)>,
+) -> Side {
+    Side {
+        relation,
+        projection: projection.into(),
+        selection: selection.into_boxed_slice(),
+    }
+}
+
+/// `R(X) -> R`.
+fn fd(relation: RelationId, projection: &[FieldId]) -> StatementDescriptor {
+    StatementDescriptor::Functionality {
+        relation,
+        projection: projection.into(),
+    }
+}
+
+/// `source <= target`.
+fn containment(source: Side, target: Side) -> StatementDescriptor {
+    StatementDescriptor::Containment { source, target }
+}
+
 /// Holder(id serial, name string) + Account(id serial, holder u64, status enum),
 /// with the statement `Account(holder) <= Holder(id)`.
 fn ledger_slice() -> SchemaDescriptor {

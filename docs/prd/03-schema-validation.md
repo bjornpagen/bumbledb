@@ -55,6 +55,49 @@ it, nothing else.
 
 Fingerprint (PRD 04). IR validation (PRD 12). Enforcement (PRDs 07–09).
 
+## Roster checklist (ticked at execution)
+
+- [x] unknown relation ids — `SchemaError::StatementUnknownRelation`
+- [x] unknown field ids (projection and selection) — `StatementUnknownField`
+- [x] empty projections — `EmptyProjection`
+- [x] duplicate-carrying projections — `DuplicateProjectionField`; selection sibling `DuplicateSelectionField`
+- [x] arity mismatch between sides — `ContainmentArityMismatch`
+- [x] positional structural-type mismatch (incl. the interval-against-scalar callout) — `ContainmentTypeMismatch`
+- [x] selection literal type mismatch — `SelectionLiteralTypeMismatch`; enum ordinal `SelectionEnumOrdinalOutOfRange`; non-UTF-8 `SelectionLiteralNotUtf8`; `start >= end` `SelectionIntervalEmpty`
+- [x] a selected field also projected — `SelectedFieldProjected`
+- [ ] FD with selection — **unrepresentable, no check** (see Conflict)
+- [ ] non-key FD form — **unrepresentable, no check** (see Conflict)
+- [x] >1 interval position — `FunctionalityMultipleIntervals`
+- [x] interval not in final position — `FunctionalityIntervalNotLast`
+- [x] guard width overflow — `GuardKeyTooWide`
+- [x] IND whose target projection matches no key — `NoMatchingTargetKey`; interval flavor `NoPointwiseTargetKey`
+- [x] duplicate statements — `DuplicateStatement`; FD set-form `DuplicateFunctionality` (see Conflict)
+
+Also delivered here for PRD 09: the `target_key → Vec<StatementId>` reverse
+index on the sealed schema (`Schema::dependents`).
+
+## Conflict
+
+1. **"FD with selection" and "non-key FD form" are unrepresentable, not
+   rejected.** PRD 02 pinned `StatementDescriptor::Functionality { relation,
+   projection }` — no selection, no Y side (and `runtime.rs`'s macro-facing
+   `StatementDecl::Functionality` mirrors it). The roster says both shapes are
+   "rejected at schema validation, each with a distinct error", and this PRD's
+   passing criteria demand an FD-with-selection reject test asserting an exact
+   variant — neither is writable against a type that cannot carry the shape.
+   Executed as: no variants, no tests; the surface that could ever *utter*
+   these shapes is the `schema!` grammar, so their rejection belongs to PRD 05
+   parse errors. Owner to confirm (or to widen the descriptor, which would
+   contradict PRD 02's `[shape]` criterion).
+2. **Duplicate-Functionality is a field-*set* rule, not an ordered-projection
+   rule.** This PRD says "identical ordered projections", but the acceptance
+   gate resolves an IND target as a *permutation* of a declared key, and this
+   PRD's own note "Ambiguity is impossible (duplicate FDs are rejected above)"
+   only holds if two permuted keys over one field set cannot coexist. Permuted
+   keys also assert the same judgment (the order shapes only the guard), so the
+   write-amplification rationale applies unchanged. Implemented set-based;
+   `rejects_permuted_duplicate_functionality` pins it. Owner to confirm.
+
 ## Passing criteria
 
 - `[shape]` One `SchemaError` variant per roster line; no catch-all

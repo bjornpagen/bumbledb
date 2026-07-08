@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use super::{CorruptionError, Error, FactShapeError, FkViolation, SchemaError, ValidationError};
+use super::{CorruptionError, Error, FactShapeError, SchemaError, ValidationError};
 
 impl fmt::Display for FactShapeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -131,26 +131,158 @@ impl fmt::Display for SchemaError {
             } => {
                 write!(f, "relation {}, field {}: serial requires u64", r.0, fd.0)
             }
-        }
-    }
-}
-
-impl fmt::Display for FkViolation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingTarget { fact_bytes } => write!(
-                f,
-                "an inserted fact ({} bytes) references a missing target key",
-                fact_bytes.len()
-            ),
-            Self::RemainingReference {
-                source_relation,
-                fact_bytes,
+            Self::StatementUnknownRelation {
+                statement: s,
+                relation: r,
+            } => write!(f, "statement {}: unknown relation {}", s.0, r.0),
+            Self::StatementUnknownField {
+                statement: s,
+                relation: r,
+                field: fd,
             } => write!(
                 f,
-                "a deleted key is still referenced by a relation-{} fact ({} bytes)",
-                source_relation.0,
-                fact_bytes.len()
+                "statement {}: relation {} has no field {}",
+                s.0, r.0, fd.0
+            ),
+            Self::EmptyProjection {
+                statement: s,
+                relation: r,
+            } => write!(f, "statement {}: empty projection on relation {}", s.0, r.0),
+            Self::DuplicateProjectionField {
+                statement: s,
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "statement {}: field {} projected twice on relation {}",
+                s.0, fd.0, r.0
+            ),
+            Self::DuplicateSelectionField {
+                statement: s,
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "statement {}: field {} selected twice on relation {}",
+                s.0, fd.0, r.0
+            ),
+            Self::FunctionalityMultipleIntervals {
+                statement: s,
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "statement {}: second interval field {} on relation {} — the ordered guard answers one dimension",
+                s.0, fd.0, r.0
+            ),
+            Self::FunctionalityIntervalNotLast {
+                statement: s,
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "statement {}: interval field {} on relation {} must be the final projection position",
+                s.0, fd.0, r.0
+            ),
+            Self::DuplicateFunctionality {
+                statement: s,
+                earlier,
+            } => write!(
+                f,
+                "statement {}: statement {} already keys this field set",
+                s.0, earlier.0
+            ),
+            Self::GuardKeyTooWide { statement: s, width } => write!(
+                f,
+                "statement {}: {width}-byte guard key exceeds the key-size ceiling",
+                s.0
+            ),
+            Self::ContainmentArityMismatch {
+                statement: s,
+                source,
+                target,
+            } => write!(
+                f,
+                "statement {}: {source} source positions against {target} target positions",
+                s.0
+            ),
+            Self::ContainmentTypeMismatch {
+                statement: s,
+                position,
+            } => write!(
+                f,
+                "statement {}: structural type mismatch at position {position}",
+                s.0
+            ),
+            Self::SelectedFieldProjected {
+                statement: s,
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "statement {}: field {} on relation {} is both selected and projected",
+                s.0, fd.0, r.0
+            ),
+            Self::SelectionLiteralTypeMismatch {
+                statement: s,
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "statement {}: selection literal type mismatch at relation {}, field {}",
+                s.0, r.0, fd.0
+            ),
+            Self::SelectionEnumOrdinalOutOfRange {
+                statement: s,
+                relation: r,
+                field: fd,
+                ordinal,
+            } => write!(
+                f,
+                "statement {}: enum ordinal {ordinal} out of range at relation {}, field {}",
+                s.0, r.0, fd.0
+            ),
+            Self::SelectionLiteralNotUtf8 {
+                statement: s,
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "statement {}: string literal is not UTF-8 at relation {}, field {}",
+                s.0, r.0, fd.0
+            ),
+            Self::SelectionIntervalEmpty {
+                statement: s,
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "statement {}: interval literal start >= end at relation {}, field {}",
+                s.0, r.0, fd.0
+            ),
+            Self::NoMatchingTargetKey {
+                statement: s,
+                relation: r,
+            } => write!(
+                f,
+                "statement {}: target projection matches no key of relation {}",
+                s.0, r.0
+            ),
+            Self::NoPointwiseTargetKey {
+                statement: s,
+                relation: r,
+            } => write!(
+                f,
+                "statement {}: no pointwise key of relation {} carries the interval position",
+                s.0, r.0
+            ),
+            Self::DuplicateStatement {
+                statement: s,
+                earlier,
+            } => write!(
+                f,
+                "statement {}: duplicates statement {} — write it once",
+                s.0, earlier.0
             ),
         }
     }
@@ -236,13 +368,19 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::FormatMismatch { found, expected } => {
-                write!(f, "storage format version {found}, this build expects {expected}")
+                write!(
+                    f,
+                    "storage format version {found}, this build expects {expected}"
+                )
             }
             Self::SchemaMismatch { .. } => {
                 write!(f, "the compiled schema's fingerprint is not the stored one")
             }
             Self::AlreadyInitialized => {
-                write!(f, "the directory already holds an LMDB environment; open it instead")
+                write!(
+                    f,
+                    "the directory already holds an LMDB environment; open it instead"
+                )
             }
             Self::EnvironmentLocked => {
                 write!(f, "another live handle holds this environment's lock")
@@ -252,26 +390,6 @@ impl fmt::Display for Error {
             Self::Schema(err) => write!(f, "schema declaration: {err}"),
             Self::Validation(err) => write!(f, "query validation: {err}"),
             Self::FactShape(err) => write!(f, "dynamic fact: {err}"),
-            Self::ForeignKeyViolation {
-                relation,
-                constraint,
-                violation,
-            } => write!(
-                f,
-                "foreign key violation (relation {}, constraint {}): {violation}",
-                relation.0, constraint.0
-            ),
-            Self::UniqueViolation {
-                relation,
-                constraint,
-                fact_bytes,
-            } => write!(
-                f,
-                "unique violation (relation {}, constraint {}): a live fact ({} bytes) already claims the key",
-                relation.0,
-                constraint.0,
-                fact_bytes.len()
-            ),
             Self::SerialExhausted { relation, field } => write!(
                 f,
                 "serial sequence exhausted (relation {}, field {})",
@@ -284,7 +402,10 @@ impl fmt::Display for Error {
                 )
             }
             Self::ParamCountMismatch { expected, supplied } => {
-                write!(f, "{supplied} parameters supplied, the query takes {expected}")
+                write!(
+                    f,
+                    "{supplied} parameters supplied, the query takes {expected}"
+                )
             }
             Self::ParamTypeMismatch { param, expected } => {
                 write!(f, "parameter {}: expected {expected:?}", param.0)
@@ -293,7 +414,10 @@ impl fmt::Display for Error {
                 write!(f, "find {find}: aggregate result exceeds its type")
             }
             Self::ResultBytesOverflow => {
-                write!(f, "the result buffer's byte heap exceeds u32 offsets (4 GiB)")
+                write!(
+                    f,
+                    "the result buffer's byte heap exceeds u32 offsets (4 GiB)"
+                )
             }
             Self::Corruption(err) => write!(f, "corruption: {err}"),
         }

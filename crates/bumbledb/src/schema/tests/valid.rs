@@ -90,6 +90,183 @@ fn nullary_relation_constructs() {
     assert_eq!(schema.relation(RelationId(0)).layout().fact_width(), 0);
 }
 
+/// The `docs/architecture/30-dependencies.md` example schema — Holder /
+/// Account / SavingsTerms with its three declared statements (`==` lowered
+/// to two mirrored Containments) plus the serial auto-keys — validates,
+/// with every statement's `Resolved` exact. The mirrored pair (ids 3 and 4)
+/// pins independent per-direction resolution, and id 3 resolves a key
+/// declared *after* it (forward reference).
+#[test]
+fn example_schema_resolves_exactly() {
+    let savings = LiteralValue::Enum(1); // ["Checking", "Savings"]
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                name: "Holder".into(),
+                fields: vec![serial_field("id"), field("name", ValueType::String)],
+            },
+            RelationDescriptor {
+                name: "Account".into(),
+                fields: vec![
+                    serial_field("id"),
+                    field("holder", ValueType::U64),
+                    field("kind", enum_type(&["Checking", "Savings"])),
+                    field(
+                        "active",
+                        ValueType::Interval {
+                            element: IntervalElement::I64,
+                        },
+                    ),
+                ],
+            },
+            RelationDescriptor {
+                name: "SavingsTerms".into(),
+                fields: vec![
+                    field("account", ValueType::U64),
+                    field("rate_bps", ValueType::I64),
+                ],
+            },
+        ],
+        statements: vec![
+            // Account(holder) <= Holder(id)
+            containment(
+                side(RelationId(1), &[FieldId(1)]),
+                side(RelationId(0), &[FieldId(0)]),
+            ),
+            // Account(id | kind == Savings) == SavingsTerms(account), lowered:
+            containment(
+                side_where(
+                    RelationId(1),
+                    &[FieldId(0)],
+                    vec![(FieldId(2), savings.clone())],
+                ),
+                side(RelationId(2), &[FieldId(0)]),
+            ),
+            containment(
+                side(RelationId(2), &[FieldId(0)]),
+                side_where(RelationId(1), &[FieldId(0)], vec![(FieldId(2), savings)]),
+            ),
+            // SavingsTerms(account) -> SavingsTerms
+            fd(RelationId(2), &[FieldId(0)]),
+        ],
+    }
+    .validate()
+    .expect("the 30-dependencies example schema is valid");
+
+    let resolved: Vec<&Resolved> = schema.statements().iter().map(|s| &s.resolved).collect();
+    let scalar_key = Resolved::Functionality {
+        interval_position: None,
+    };
+    let probe = |target_key: u16| Resolved::Containment {
+        target_key: StatementId(target_key),
+        key_permutation: Box::new([0]),
+        interval_position: None,
+    };
+    assert_eq!(
+        resolved,
+        vec![
+            &scalar_key, // id 0: Holder(id), serial auto-key
+            &scalar_key, // id 1: Account(id), serial auto-key
+            &probe(0),   // id 2: Account(holder) <= Holder(id)
+            &probe(5),   // id 3: Account(id | Savings) <= SavingsTerms(account)
+            &probe(1),   // id 4: SavingsTerms(account) <= Account(id | Savings)
+            &scalar_key, // id 5: SavingsTerms(account) -> SavingsTerms
+        ]
+    );
+
+    // The target_key -> dependents reverse index (the target-side
+    // reverse-edge check set).
+    assert_eq!(schema.dependents(StatementId(0)), &[StatementId(2)]);
+    assert_eq!(schema.dependents(StatementId(1)), &[StatementId(4)]);
+    assert_eq!(schema.dependents(StatementId(5)), &[StatementId(3)]);
+    for id in [2, 3, 4] {
+        assert_eq!(schema.dependents(StatementId(id)), &[]);
+    }
+}
+
+/// Pointwise resolution: an interval key records its interval position, and
+/// an interval containment resolves to it with the shared position.
+#[test]
+fn pointwise_key_and_containment_resolve() {
+    let iv = ValueType::Interval {
+        element: IntervalElement::I64,
+    };
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                name: "Booking".into(),
+                fields: vec![field("room", ValueType::U64), field("during", iv.clone())],
+            },
+            RelationDescriptor {
+                name: "Request".into(),
+                fields: vec![field("room", ValueType::U64), field("span", iv)],
+            },
+        ],
+        statements: vec![
+            fd(RelationId(0), &[FieldId(0), FieldId(1)]),
+            containment(
+                side(RelationId(1), &[FieldId(0), FieldId(1)]),
+                side(RelationId(0), &[FieldId(0), FieldId(1)]),
+            ),
+        ],
+    }
+    .validate()
+    .expect("pointwise key and coverage containment are valid");
+
+    assert_eq!(
+        schema.statement(StatementId(0)).resolved,
+        Resolved::Functionality {
+            interval_position: Some(1)
+        }
+    );
+    assert_eq!(
+        schema.statement(StatementId(1)).resolved,
+        Resolved::Containment {
+            target_key: StatementId(0),
+            key_permutation: Box::new([0, 1]),
+            interval_position: Some(1)
+        }
+    );
+    assert_eq!(schema.dependents(StatementId(0)), &[StatementId(1)]);
+}
+
+/// The target projection may be any permutation of the key: the recorded
+/// permutation maps statement projection order to the key's guard order.
+#[test]
+fn permuted_target_projection_resolves_with_permutation() {
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                name: "T".into(),
+                fields: vec![field("a", ValueType::U64), field("b", ValueType::I64)],
+            },
+            RelationDescriptor {
+                name: "S".into(),
+                fields: vec![field("x", ValueType::I64), field("y", ValueType::U64)],
+            },
+        ],
+        statements: vec![
+            fd(RelationId(0), &[FieldId(0), FieldId(1)]), // guard order (a, b)
+            // S(x, y) <= T(b, a): projected against the key permuted.
+            containment(
+                side(RelationId(1), &[FieldId(0), FieldId(1)]),
+                side(RelationId(0), &[FieldId(1), FieldId(0)]),
+            ),
+        ],
+    }
+    .validate()
+    .expect("a permuted target projection resolves");
+
+    assert_eq!(
+        schema.statement(StatementId(1)).resolved,
+        Resolved::Containment {
+            target_key: StatementId(0),
+            key_permutation: Box::new([1, 0]),
+            interval_position: None
+        }
+    );
+}
+
 #[test]
 fn accepts_enum_with_exactly_256_variants() {
     let names: Vec<String> = (0..256).map(|i| format!("V{i}")).collect();
