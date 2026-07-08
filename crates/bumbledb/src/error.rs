@@ -259,6 +259,14 @@ pub enum FactShapeError {
         relation: RelationId,
         field: FieldId,
     },
+    /// [`crate::WriteTx::get_dyn`]'s statement id is not a `Functionality`
+    /// on the queried relation (out of range, a containment, or another
+    /// relation's key) — the dynamic point-read surface is data, so the
+    /// mismatch is a typed error, never an index panic.
+    NotAKeyStatement {
+        relation: RelationId,
+        statement: StatementId,
+    },
 }
 
 /// A query validation error (the IR boundary, the 20-query-ir doc): one variant per

@@ -41,6 +41,14 @@ impl fmt::Display for FactShapeError {
                 "relation {}, field {}: string bytes are not UTF-8",
                 relation.0, field.0
             ),
+            Self::NotAKeyStatement {
+                relation,
+                statement,
+            } => write!(
+                f,
+                "statement {} is not a key of relation {}",
+                statement.0, relation.0
+            ),
         }
     }
 }

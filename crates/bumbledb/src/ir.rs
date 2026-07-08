@@ -36,6 +36,13 @@ pub enum Value {
     String(Box<[u8]>),
     /// Raw bytes; interning as above.
     Bytes(Box<[u8]>),
+    /// A half-open `[start, end)` over U64 (`docs/architecture/20-query-ir.md`).
+    /// Dumb data by decision: `start < end` is a validation-boundary rule,
+    /// not a constructor invariant — hosts construct through the checked
+    /// [`crate::Interval`] type.
+    IntervalU64(u64, u64),
+    /// A half-open `[start, end)` over I64; bounds as [`Value::IntervalU64`].
+    IntervalI64(i64, i64),
 }
 
 /// How a [`Value`] failed to match an expected [`crate::schema::ValueType`]

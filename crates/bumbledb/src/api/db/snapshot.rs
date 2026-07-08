@@ -97,6 +97,8 @@ impl Snapshot<'_> {
                         ValueRef::Bytes(id) => {
                             Value::Bytes(Box::from(dict::resolve(&self.txn, id, dict::TAG_BYTES)?))
                         }
+                        ValueRef::IntervalU64(start, end) => Value::IntervalU64(start, end),
+                        ValueRef::IntervalI64(start, end) => Value::IntervalI64(start, end),
                     })
                 })
                 .collect()

@@ -28,18 +28,22 @@ impl Drop for WriterThreadReset<'_> {
 impl Db<'_> {
     /// Runs `f` as the single writer: takes the writer mutex, hands `f` a
     /// delta transaction, and commits on `Ok`. `Err` or panic drops the
-    /// delta — LMDB was never touched. Constraints are checked at commit
-    /// against the final state; a violation aborts the whole transaction.
+    /// delta — LMDB was never touched. Dependency statements are judged at
+    /// commit against the final state; a violation aborts the whole
+    /// transaction.
     ///
     /// Queries are not reachable from the write closure — [`WriteTx`]
-    /// simply offers none (forbidden by representation, `60-api.md`):
-    /// read-modify-write is a read transaction followed by a write
-    /// transaction.
+    /// simply offers none (forbidden by representation, `70-api.md`).
+    /// Read-modify-write is served by the point reads
+    /// ([`WriteTx::contains`] / [`WriteTx::get`] / [`WriteTx::get_dyn`]),
+    /// which observe the final-state view the judgment phase will judge —
+    /// check-then-act is race-free by construction (single writer, one
+    /// view).
     ///
     /// # Errors
     ///
-    /// `f`'s error, or commit-time `UniqueViolation` /
-    /// `ForeignKeyViolation` / `SerialExhausted` / `Lmdb` / `Io`.
+    /// `f`'s error, or commit-time `FunctionalityViolation` /
+    /// `ContainmentViolation` / `SerialExhausted` / `Lmdb` / `Io`.
     ///
     /// # Panics
     ///

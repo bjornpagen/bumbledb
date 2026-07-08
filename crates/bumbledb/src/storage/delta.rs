@@ -13,11 +13,12 @@
 use std::collections::BTreeMap;
 
 use crate::arena::{Arena, ArenaSlice};
-use crate::schema::{FieldId, RelationId, Schema};
+use crate::schema::{FieldId, RelationId, Schema, StatementId};
 
 mod accessors;
 mod alloc;
 mod delete;
+mod guards;
 mod insert;
 mod intern;
 mod new;
@@ -33,6 +34,28 @@ pub enum Disposition {
     Delete,
 }
 
+/// The net effect recorded for one key statement's guard tuple — the
+/// point-read index (`docs/architecture/50-storage.md` § `WriteTx`
+/// point reads): inserts record the establishing fact, deletes record absence;
+/// last disposition wins, mirroring the fact map — except that a delete
+/// never erases a record established by a *different* pending fact under
+/// the same key bytes (the `delete(old); insert(new)`-in-either-order
+/// idiom).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GuardDisposition {
+    Present(ArenaSlice),
+    Absent,
+}
+
+/// A guard-map hit, resolved for point readers: the pending fact that
+/// establishes the key tuple in the final state, or its recorded absence.
+/// A map miss (no overlay at all) means the committed state answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuardOverlay<'a> {
+    Present(&'a [u8]),
+    Absent,
+}
+
 /// The accumulated write transaction.
 pub struct WriteDelta<'s> {
     schema: &'s Schema,
@@ -42,6 +65,17 @@ pub struct WriteDelta<'s> {
     /// (collision axiom, `10-data-model.md`), and the `BTreeMap` gives the
     /// deterministic commit order the 40-storage doc requires.
     facts: BTreeMap<(RelationId, [u8; 32]), (ArenaSlice, Disposition)>,
+    /// `(key statement, guard bytes) → net disposition` — the point-read
+    /// index maintained beside the fact map by `insert`/`delete`
+    /// (`docs/architecture/50-storage.md` § `WriteTx` point reads). Guard
+    /// bytes are derived by the one shared slicer
+    /// ([`crate::storage::keys::guard_bytes`]), exactly as commit derives
+    /// them. No relation id in the key: statement ids are schema-global
+    /// and a `Functionality` statement determines its relation.
+    guards: BTreeMap<(StatementId, Box<[u8]>), GuardDisposition>,
+    /// Scratch for guard derivation, reused across `insert`/`delete` calls
+    /// (the write path may allocate, but not per key statement per fact).
+    guard_scratch: Vec<u8>,
     /// Serial next-values, lazily initialized from `Q` once per
     /// `(relation, field)` per transaction; a transaction sees its own
     /// allocations. The stored value is the *next* value to issue.

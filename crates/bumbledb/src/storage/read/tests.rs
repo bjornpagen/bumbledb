@@ -2,8 +2,8 @@ use super::*;
 use crate::encoding::{encode_fact, encode_u64, ValueRef};
 use crate::error::{CorruptionError, Error, Result};
 use crate::schema::{
-    ConstraintDescriptor, ConstraintId, FieldDescriptor, FieldId, Generation, RelationDescriptor,
-    RelationId, Schema, SchemaDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
+    StatementDescriptor, StatementId, ValueType,
 };
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
@@ -11,7 +11,9 @@ use crate::storage::env::Environment;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 use crate::testutil::TempDir;
 
-/// R(id serial, amount i64) with a declared unique on amount too.
+/// R(id serial, amount i64) with a declared key on amount too:
+/// statement 0 is the serial auto-key (materialized first), statement 1
+/// the declared `R(amount) -> R`.
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -28,10 +30,10 @@ fn schema() -> Schema {
                     generation: Generation::None,
                 },
             ],
-            constraints: vec![ConstraintDescriptor::Unique {
-                name: "amount".into(),
-                fields: Box::new([FieldId(1)]),
-            }],
+        }],
+        statements: vec![StatementDescriptor::Functionality {
+            relation: RelationId(0),
+            projection: Box::new([FieldId(1)]),
         }],
     }
     .validate()
@@ -97,27 +99,27 @@ fn membership_probe_hit_and_miss() {
 }
 
 #[test]
-fn unique_probe_hit_and_miss() {
-    let dir = TempDir::new("read-unique");
+fn guard_probe_hit_and_miss() {
+    let dir = TempDir::new("read-guard");
     let schema = schema();
     let env = fixture(&dir, &schema);
     let txn = env.read_txn().expect("txn");
     let row = fact_row(&txn, R, &fact(&schema, 2, 30))
         .expect("probe")
         .expect("present");
-    // The serial auto-unique (constraint 0) on id and the declared
-    // unique (constraint 1) on amount both resolve to the same row.
+    // The serial auto-key (statement 0) on id and the declared key
+    // (statement 1) on amount both resolve to the same row.
     assert_eq!(
-        unique_row(&txn, R, ConstraintId(0), &encode_u64(2)).expect("probe"),
+        guard_row(&txn, R, StatementId(0), &encode_u64(2)).expect("probe"),
         Some(row)
     );
     assert_eq!(
-        unique_row(&txn, R, ConstraintId(1), &crate::encoding::encode_i64(30)).expect("probe"),
+        guard_row(&txn, R, StatementId(1), &crate::encoding::encode_i64(30)).expect("probe"),
         Some(row)
     );
-    // The deleted fact's keys are gone.
+    // The deleted fact's guard tuples are gone.
     assert_eq!(
-        unique_row(&txn, R, ConstraintId(0), &encode_u64(1)).expect("probe"),
+        guard_row(&txn, R, StatementId(0), &encode_u64(1)).expect("probe"),
         None
     );
 }

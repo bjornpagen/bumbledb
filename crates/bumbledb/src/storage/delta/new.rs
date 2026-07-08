@@ -12,6 +12,8 @@ impl<'s> WriteDelta<'s> {
             schema,
             arena: Arena::new(),
             facts: BTreeMap::new(),
+            guards: BTreeMap::new(),
+            guard_scratch: Vec::new(),
             serial_next: BTreeMap::new(),
             serial_base: BTreeMap::new(),
             row_count_delta: BTreeMap::new(),

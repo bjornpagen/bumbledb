@@ -80,6 +80,33 @@ pub fn resolve_bytes(snap: &Snapshot<'_>, id: u64) -> Result<Vec<u8>> {
     Ok(dict::resolve(&snap.txn, id, dict::TAG_BYTES)?.to_vec())
 }
 
+/// Write-context sibling of [`resolve_string`], for the point-read decode:
+/// provisional ids minted this transaction resolve through the delta's
+/// pending map, committed ids through the dictionary.
+///
+/// # Errors
+///
+/// `Corruption` on a dangling id or non-UTF-8 stored bytes.
+pub fn resolve_string_write(tx: &WriteTx<'_>, id: u64) -> Result<String> {
+    let raw = match tx.delta.pending_raw(dict::TAG_STRING, id) {
+        Some(raw) => raw.to_vec(),
+        None => dict::resolve(&tx.view, id, dict::TAG_STRING)?.to_vec(),
+    };
+    String::from_utf8(raw).map_err(|_| Error::Corruption(CorruptionError::NonUtf8Intern(id)))
+}
+
+/// Write-context sibling of [`resolve_bytes`]; see [`resolve_string_write`].
+///
+/// # Errors
+///
+/// `Corruption` on a dangling id.
+pub fn resolve_bytes_write(tx: &WriteTx<'_>, id: u64) -> Result<Vec<u8>> {
+    Ok(match tx.delta.pending_raw(dict::TAG_BYTES, id) {
+        Some(raw) => raw.to_vec(),
+        None => dict::resolve(&tx.view, id, dict::TAG_BYTES)?.to_vec(),
+    })
+}
+
 /// Appends the canonical fact bytes for a write-context encode.
 pub fn encode_write_fact(
     tx: &WriteTx<'_>,
@@ -107,4 +134,19 @@ pub fn encode_read_fact(
 /// `Corruption` on undecodable bytes.
 pub fn decode(snap: &Snapshot<'_>, rel: RelationId, fact: &[u8], idx: usize) -> Result<ValueRef> {
     Ok(decode_field(fact, snap.schema.relation(rel).layout(), idx)?)
+}
+
+/// Write-context sibling of [`decode`] (the layout comes from the write
+/// transaction's schema).
+///
+/// # Errors
+///
+/// `Corruption` on undecodable bytes.
+pub fn decode_write(
+    tx: &WriteTx<'_>,
+    rel: RelationId,
+    fact: &[u8],
+    idx: usize,
+) -> Result<ValueRef> {
+    Ok(decode_field(fact, tx.schema.relation(rel).layout(), idx)?)
 }

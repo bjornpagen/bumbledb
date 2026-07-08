@@ -1,5 +1,5 @@
 use super::*;
-use crate::encoding::{encode_fact, ValueRef};
+use crate::encoding::{encode_fact, encode_u64, ValueRef};
 use crate::error::Error;
 use crate::schema::{FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType};
 use crate::storage::env::Environment;
@@ -23,8 +23,8 @@ fn schema() -> Schema {
                     generation: Generation::None,
                 },
             ],
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("valid fixture")
@@ -255,6 +255,84 @@ fn dirty_serial_marks_are_exactly_the_advanced_sequences() {
         dirty.dirty_serial_marks().collect::<Vec<_>>(),
         vec![(R, ID, 7)]
     );
+}
+
+#[test]
+fn guard_map_mirrors_the_fact_dispositions() {
+    let dir = TempDir::new("delta-guard-map");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    // The serial auto-key on `id` is StatementId(0) (materialized first).
+    const KEY: StatementId = StatementId(0);
+    let f = fact(&schema, 7, 700);
+    let guard = encode_u64(7);
+
+    // Untouched tuple: no overlay — the committed state answers.
+    assert_eq!(delta.guard_overlay(KEY, &guard), None);
+
+    // Insert records the establishing fact; delete records absence;
+    // last disposition wins, mirroring the fact map.
+    delta.insert(&view, R, &f).expect("insert");
+    assert_eq!(
+        delta.guard_overlay(KEY, &guard),
+        Some(GuardOverlay::Present(f.as_slice()))
+    );
+    delta.delete(&view, R, &f).expect("delete");
+    assert_eq!(delta.guard_overlay(KEY, &guard), Some(GuardOverlay::Absent));
+
+    // Delete + re-insert under the same key with a changed non-key field:
+    // the tuple is re-established by the *new* fact (the upsert shape).
+    let g = fact(&schema, 7, 999);
+    delta.insert(&view, R, &g).expect("insert");
+    assert_eq!(
+        delta.guard_overlay(KEY, &guard),
+        Some(GuardOverlay::Present(g.as_slice()))
+    );
+
+    // A no-op operation records nothing: deleting an absent fact must
+    // not shadow another fact's live key tuple.
+    let mut idle = WriteDelta::new(&schema);
+    assert!(!idle
+        .delete(&view, R, &fact(&schema, 9, 900))
+        .expect("delete"));
+    assert_eq!(idle.guard_overlay(KEY, &encode_u64(9)), None);
+}
+
+#[test]
+fn deleting_the_old_fact_never_erases_the_new_facts_guard_record() {
+    // `delete(old); insert(new)` is blessed in either order — a point
+    // read of the shared key tuple must see `new` whichever ran last.
+    let dir = TempDir::new("delta-guard-order");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let old = fact(&schema, 7, 700);
+    let new = fact(&schema, 7, 999);
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, R, &old).expect("insert");
+        drop(view);
+        crate::storage::commit::commit(delta, &env).expect("commit");
+    }
+    const KEY: StatementId = StatementId(0);
+    let view = env.read_txn().expect("txn");
+    for insert_first in [true, false] {
+        let mut delta = WriteDelta::new(&schema);
+        if insert_first {
+            delta.insert(&view, R, &new).expect("insert");
+            delta.delete(&view, R, &old).expect("delete");
+        } else {
+            delta.delete(&view, R, &old).expect("delete");
+            delta.insert(&view, R, &new).expect("insert");
+        }
+        assert_eq!(
+            delta.guard_overlay(KEY, &encode_u64(7)),
+            Some(GuardOverlay::Present(new.as_slice())),
+            "insert_first = {insert_first}"
+        );
+    }
 }
 
 #[test]

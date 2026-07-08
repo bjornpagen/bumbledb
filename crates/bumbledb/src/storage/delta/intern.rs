@@ -43,6 +43,18 @@ impl WriteDelta<'_> {
         self.resolve(view, crate::storage::dict::TAG_BYTES, value)
     }
 
+    /// Reverse lookup of a provisional intern id minted this transaction —
+    /// the decode side of the point reads (a fact inserted this
+    /// transaction carries pending ids the committed dictionary cannot
+    /// resolve). A linear scan: the pending map is value-keyed for the
+    /// hot forward probes, and a transaction's novel-value set is small.
+    #[must_use]
+    pub fn pending_raw(&self, tag: u8, id: u64) -> Option<&[u8]> {
+        self.pending_interns[usize::from(tag)]
+            .iter()
+            .find_map(|(raw, &candidate)| (candidate == id).then_some(raw.as_ref()))
+    }
+
     /// The non-minting sibling of [`Self::intern`], for the delete path:
     /// a pending-map hit returns the provisional id (insert-then-delete
     /// cancels byte-exactly), a committed-dict hit returns the committed

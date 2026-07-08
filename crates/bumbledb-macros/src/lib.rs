@@ -854,36 +854,41 @@ fn encode_exprs(field: &Field) -> (String, String, String) {
 }
 
 /// The struct-literal arm decoding one field out of canonical fact bytes.
-fn decode_arm(field: &Field, idx: usize) -> String {
+/// `ctx` is the decode context's binding (`snap`/`tx`) and `suffix` selects
+/// the plumbing family (`""` = snapshot decode, `"_write"` = the write
+/// transaction's pending-aware point-read decode).
+fn decode_arm(field: &Field, idx: usize, ctx: &str, suffix: &str) -> String {
     let wrap = |expr: &str| -> String {
         match &field.newtype {
             Some(newtype) => format!("{newtype}({expr})"),
             None => expr.to_owned(),
         }
     };
+    let decode =
+        format!("::bumbledb::__private::decode{suffix}({ctx}, Self::RELATION, fact, {idx})?");
     match &field.ty {
         FieldTy::Bool => format!(
-            "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::Bool(v) => v, _ => unreachable!(\"schema-typed\") }},",
+            "{}: match {decode} {{ ::bumbledb::__private::ValueRef::Bool(v) => v, _ => unreachable!(\"schema-typed\") }},",
             field.name
         ),
         FieldTy::U64 => format!(
-            "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::U64(v) => {}, _ => unreachable!(\"schema-typed\") }},",
+            "{}: match {decode} {{ ::bumbledb::__private::ValueRef::U64(v) => {}, _ => unreachable!(\"schema-typed\") }},",
             field.name,
             wrap("v")
         ),
         FieldTy::I64 => format!(
-            "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::I64(v) => {}, _ => unreachable!(\"schema-typed\") }},",
+            "{}: match {decode} {{ ::bumbledb::__private::ValueRef::I64(v) => {}, _ => unreachable!(\"schema-typed\") }},",
             field.name,
             wrap("v")
         ),
         FieldTy::Enum { name: enum_name, .. } => format!(
-            "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::Enum(o) => {enum_name}::from_ordinal(o).expect(\"decode_field range-checked the ordinal\"), _ => unreachable!(\"schema-typed\") }},",
+            "{}: match {decode} {{ ::bumbledb::__private::ValueRef::Enum(o) => {enum_name}::from_ordinal(o).expect(\"decode_field range-checked the ordinal\"), _ => unreachable!(\"schema-typed\") }},",
             field.name
         ),
         FieldTy::Interval(element) => {
             let el = element.rust();
             format!(
-                "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::Interval{}(start, end) => {}, _ => unreachable!(\"schema-typed\") }},",
+                "{}: match {decode} {{ ::bumbledb::__private::ValueRef::Interval{}(start, end) => {}, _ => unreachable!(\"schema-typed\") }},",
                 field.name,
                 element.suffix(),
                 wrap(&format!(
@@ -892,11 +897,11 @@ fn decode_arm(field: &Field, idx: usize) -> String {
             )
         }
         FieldTy::Str => format!(
-            "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::String(id) => ::bumbledb::__private::resolve_string(snap, id)?, _ => unreachable!(\"schema-typed\") }},",
+            "{}: match {decode} {{ ::bumbledb::__private::ValueRef::String(id) => ::bumbledb::__private::resolve_string{suffix}({ctx}, id)?, _ => unreachable!(\"schema-typed\") }},",
             field.name
         ),
         FieldTy::Bytes => format!(
-            "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::Bytes(id) => ::bumbledb::__private::resolve_bytes(snap, id)?, _ => unreachable!(\"schema-typed\") }},",
+            "{}: match {decode} {{ ::bumbledb::__private::ValueRef::Bytes(id) => ::bumbledb::__private::resolve_bytes{suffix}({ctx}, id)?, _ => unreachable!(\"schema-typed\") }},",
             field.name
         ),
     }
@@ -918,12 +923,18 @@ fn emit_fact_struct(out: &mut String, index: usize, relation: &Relation) {
     let mut delete_values = String::new();
     let mut read_values = String::new();
     let mut decode_fields = String::new();
+    let mut decode_write_fields = String::new();
     for (idx, field) in relation.fields.iter().enumerate() {
         let (write_expr, delete_expr, read_expr) = encode_exprs(field);
         let _ = write!(write_values, "{write_expr},");
         let _ = write!(delete_values, "{delete_expr},");
         let _ = write!(read_values, "{read_expr},");
-        let _ = write!(decode_fields, "{}", decode_arm(field, idx));
+        let _ = write!(decode_fields, "{}", decode_arm(field, idx, "snap", ""));
+        let _ = write!(
+            decode_write_fields,
+            "{}",
+            decode_arm(field, idx, "tx", "_write")
+        );
     }
 
     let _ = write!(
@@ -950,6 +961,9 @@ fn emit_fact_struct(out: &mut String, index: usize, relation: &Relation) {
              fn decode(snap: &::bumbledb::Snapshot<'_>, fact: &[u8]) -> ::bumbledb::Result<Self> {{\n\
                  Ok(Self {{ {decode_fields} }})\n\
              }}\n\
+             fn decode_write(tx: &::bumbledb::WriteTx<'_>, fact: &[u8]) -> ::bumbledb::Result<Self> {{\n\
+                 Ok(Self {{ {decode_write_fields} }})\n\
+             }}\n\
          }}\n",
     );
 
@@ -964,6 +978,25 @@ fn emit_fact_struct(out: &mut String, index: usize, relation: &Relation) {
                  const RELATION: ::bumbledb::schema::RelationId = ::bumbledb::schema::RelationId({index});\n\
                  const FIELD: ::bumbledb::schema::FieldId = ::bumbledb::schema::FieldId({field_idx});\n\
                  fn from_serial(raw: u64) -> Self {{ Self(raw) }}\n\
+                 fn serial(self) -> u64 {{ self.0 }}\n\
+             }}\n",
+        );
+    }
+
+    // Exactly one serial field: the typed point-read key
+    // (`WriteTx::get::<Fact>(id)`). Relations with zero or several serial
+    // fields have no single dominant key — those read through `get_dyn`
+    // (the multi-key typed shape is an OPEN item, 70-api.md).
+    let serials: Vec<&Field> = relation.fields.iter().filter(|f| f.serial).collect();
+    if let [serial_field] = serials.as_slice() {
+        let newtype = serial_field
+            .newtype
+            .as_ref()
+            .expect("parser demands `as NewType` on serial fields");
+        let _ = write!(
+            out,
+            "impl ::bumbledb::SerialKeyed for {name} {{\n\
+                 type SerialKey = {newtype};\n\
              }}\n",
         );
     }

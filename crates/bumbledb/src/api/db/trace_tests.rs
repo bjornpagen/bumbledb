@@ -13,8 +13,8 @@ fn schema() -> Schema {
                 value_type: ValueType::U64,
                 generation: Generation::None,
             }],
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("fixture")
@@ -56,8 +56,8 @@ fn write_path_traces_phases_with_counts() {
             [
                 obs::names::APPLY_DELETES,
                 obs::names::APPLY_INSERTS,
-                obs::names::FK_FORWARD,
-                obs::names::FK_RESTRICT,
+                obs::names::JUDGMENT_SOURCE,
+                obs::names::JUDGMENT_TARGET,
                 obs::names::COUNTERS_FLUSH,
                 obs::names::LMDB_COMMIT,
             ]
@@ -70,8 +70,8 @@ fn write_path_traces_phases_with_counts() {
         vec![
             obs::names::APPLY_DELETES,
             obs::names::APPLY_INSERTS,
-            obs::names::FK_FORWARD,
-            obs::names::FK_RESTRICT,
+            obs::names::JUDGMENT_SOURCE,
+            obs::names::JUDGMENT_TARGET,
             obs::names::COUNTERS_FLUSH,
             obs::names::LMDB_COMMIT,
         ],
@@ -120,8 +120,8 @@ fn a_noop_serial_commit_keeps_the_view_memo_valid() {
                     generation: Generation::None,
                 },
             ],
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("fixture");

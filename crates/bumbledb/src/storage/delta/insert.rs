@@ -29,6 +29,7 @@ impl WriteDelta<'_> {
         if changed {
             let slice = self.arena.alloc(fact_bytes);
             self.facts.insert((rel, hash), (slice, Disposition::Insert));
+            self.record_guards(rel, fact_bytes, Some(slice));
             *self.row_count_delta.entry(rel).or_insert(0) += 1;
         }
         Ok(changed)

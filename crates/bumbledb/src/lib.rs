@@ -64,7 +64,7 @@ pub(crate) mod plan;
 pub mod schema;
 pub(crate) mod storage;
 
-pub use api::db::{BulkLoadError, Db, Fact, Serial, Snapshot, WriteTx};
+pub use api::db::{BulkLoadError, Db, Fact, Serial, SerialKeyed, Snapshot, WriteTx};
 pub use api::prepared::{PreparedQuery, ResultBuffer, ResultValue, Row};
 pub use api::stats::{CoverStats, ExecutionStats, GuardStats, NodeStats};
 pub use error::{Error, Result};
@@ -120,9 +120,9 @@ pub use bumbledb_macros::schema;
 #[doc(hidden)]
 pub mod __private {
     pub use crate::api::db::plumbing::{
-        decode, encode_read_fact, encode_write_fact, intern_bytes_delete, intern_bytes_read,
-        intern_bytes_write, intern_str_delete, intern_str_read, intern_str_write, resolve_bytes,
-        resolve_string,
+        decode, decode_write, encode_read_fact, encode_write_fact, intern_bytes_delete,
+        intern_bytes_read, intern_bytes_write, intern_str_delete, intern_str_read,
+        intern_str_write, resolve_bytes, resolve_bytes_write, resolve_string, resolve_string_write,
     };
     pub use crate::encoding::ValueRef;
     pub use crate::schema::runtime::{

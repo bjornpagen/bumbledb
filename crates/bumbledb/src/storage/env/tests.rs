@@ -1,8 +1,7 @@
 use super::*;
-use crate::error::{Error, SchemaError};
+use crate::error::Error;
 use crate::schema::{
-    ConstraintDescriptor, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId,
-    Schema, SchemaDescriptor, ValueType,
+    FieldDescriptor, Generation, RelationDescriptor, Schema, SchemaDescriptor, ValueType,
 };
 use crate::testutil::TempDir;
 
@@ -15,8 +14,8 @@ fn schema() -> Schema {
                 value_type: ValueType::U64,
                 generation: Generation::Serial,
             }],
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("valid fixture")
@@ -27,8 +26,8 @@ fn other_schema() -> Schema {
         relations: vec![RelationDescriptor {
             name: "Other".into(),
             fields: vec![],
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("valid fixture")
@@ -138,36 +137,4 @@ fn a_corrupt_dict_counter_is_typed_corruption() {
             "dict next id"
         ))
     ));
-}
-
-#[test]
-fn oversized_guard_key_schema_rejected_at_construction() {
-    // 62 u64 fields in one unique constraint = 496 bytes > MAX_GUARD_WIDTH.
-    let fields: Vec<FieldDescriptor> = (0..62)
-        .map(|i| FieldDescriptor {
-            name: format!("f{i}").into(),
-            value_type: ValueType::U64,
-            generation: Generation::None,
-        })
-        .collect();
-    let err = SchemaDescriptor {
-        relations: vec![RelationDescriptor {
-            name: "Wide".into(),
-            fields,
-            constraints: vec![ConstraintDescriptor::Unique {
-                name: "all".into(),
-                fields: (0..62).map(FieldId).collect(),
-            }],
-        }],
-    }
-    .validate()
-    .unwrap_err();
-    assert_eq!(
-        err,
-        SchemaError::GuardKeyTooWide {
-            relation: RelationId(0),
-            constraint: crate::schema::ConstraintId(0),
-            width: 496
-        }
-    );
 }

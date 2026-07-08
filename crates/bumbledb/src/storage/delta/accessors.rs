@@ -1,10 +1,23 @@
-#[cfg(test)]
 use crate::encoding::fact_hash;
+use crate::error::Result;
 use crate::schema::{FieldId, RelationId};
+use crate::storage::env::ReadTxn;
 
 use super::{Disposition, WriteDelta};
 
 impl WriteDelta<'_> {
+    /// Effective membership of one fact in the final state: the delta's
+    /// own disposition if present, else an `M` probe against the committed
+    /// view — the read-only sibling of `insert`/`delete`'s changed report
+    /// (`docs/architecture/50-storage.md` § `WriteTx` point reads).
+    ///
+    /// # Errors
+    ///
+    /// `Lmdb` on a failed membership probe.
+    pub fn contains(&self, view: &ReadTxn<'_>, rel: RelationId, fact_bytes: &[u8]) -> Result<bool> {
+        self.present(view, rel, &fact_hash(fact_bytes))
+    }
+
     /// Iterates every recorded disposition in deterministic
     /// `(relation, fact_hash)` order with its fact bytes (reader: the 40-storage doc's
     /// commit apply).

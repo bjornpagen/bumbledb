@@ -1,6 +1,10 @@
 use super::*;
+use crate::error::{Error, FactShapeError};
 use crate::ir::Value;
-use crate::schema::{FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType};
+use crate::schema::{
+    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, StatementDescriptor,
+    StatementId, ValueType,
+};
 use crate::testutil::TempDir;
 
 /// Named(name str) — a string-carrying relation for dictionary tests.
@@ -13,8 +17,8 @@ fn named_schema() -> Schema {
                 value_type: ValueType::String,
                 generation: Generation::None,
             }],
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("fixture")
@@ -119,4 +123,197 @@ fn a_typo_delete_leaves_the_dictionary_unchanged() {
         Ok(())
     })
     .expect("real delete");
+}
+
+/// Entry(name str, amount i64) with `Entry(name) -> Entry` — a
+/// string-keyed relation for the dynamic point reads. The declared key is
+/// the schema's only statement: StatementId(0).
+fn entry_schema() -> Schema {
+    SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            name: "Entry".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "name".into(),
+                    value_type: ValueType::String,
+                    generation: Generation::None,
+                },
+                FieldDescriptor {
+                    name: "amount".into(),
+                    value_type: ValueType::I64,
+                    generation: Generation::None,
+                },
+            ],
+        }],
+        statements: vec![StatementDescriptor::Functionality {
+            relation: RelationId(0),
+            projection: Box::new([FieldId(0)]),
+        }],
+    }
+    .validate()
+    .expect("fixture")
+}
+
+const ENTRY: RelationId = RelationId(0);
+const ENTRY_KEY: StatementId = StatementId(0);
+
+fn entry(name: &str, amount: i64) -> Vec<Value> {
+    vec![Value::String(name.as_bytes().into()), Value::I64(amount)]
+}
+
+/// The dynamic read-your-writes matrix: every pre-commit `get_dyn` answer
+/// equals the post-commit one (the final-state view the judgment phase
+/// judges — `70-api.md`), including for a fact whose string key was
+/// interned in this very transaction.
+#[test]
+fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
+    let dir = TempDir::new("db-get-dyn-ryw");
+    let schema = entry_schema();
+    let db = Db::create(dir.path(), &schema).expect("create");
+
+    db.write(|tx| {
+        // Insert, then read back through the pending delta (the key
+        // string exists only as a provisional intern id here).
+        assert!(tx.insert_dyn(ENTRY, &entry("a", 1))?);
+        assert_eq!(
+            tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".as_bytes().into())])?,
+            Some(entry("a", 1))
+        );
+        // Delete: the guard map records absence.
+        assert!(tx.delete_dyn(ENTRY, &entry("a", 1))?);
+        assert_eq!(
+            tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".as_bytes().into())])?,
+            None
+        );
+        // Delete + reinsert(modified): the key tuple re-establishes with
+        // the new fact.
+        assert!(tx.insert_dyn(ENTRY, &entry("a", 2))?);
+        assert_eq!(
+            tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".as_bytes().into())])?,
+            Some(entry("a", 2))
+        );
+        Ok(())
+    })
+    .expect("write");
+
+    // The post-commit answer is byte-identical.
+    db.write(|tx| {
+        assert_eq!(
+            tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".as_bytes().into())])?,
+            Some(entry("a", 2))
+        );
+        Ok(())
+    })
+    .expect("read back");
+}
+
+/// Committed-state fallthrough: a fact committed in a prior transaction
+/// and untouched in this delta is found through the `U` → `F` path.
+#[test]
+fn get_dyn_falls_through_to_committed_state() {
+    let dir = TempDir::new("db-get-dyn-committed");
+    let schema = entry_schema();
+    let db = Db::create(dir.path(), &schema).expect("create");
+    db.write(|tx| tx.insert_dyn(ENTRY, &entry("seed", 42)).map(|_| ()))
+        .expect("seed");
+
+    db.write(|tx| {
+        // Touch a *different* tuple so the delta is nonempty but the
+        // probed key has no overlay.
+        tx.insert_dyn(ENTRY, &entry("other", 1))?;
+        assert_eq!(
+            tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("seed".as_bytes().into())])?,
+            Some(entry("seed", 42))
+        );
+        Ok(())
+    })
+    .expect("read");
+}
+
+/// A never-interned string key value proves no fact carries it: `Ok(None)`
+/// and the dictionary next-id is untouched (the delete-path mint-free
+/// contract, extended to point reads).
+#[test]
+fn get_dyn_with_a_never_interned_key_answers_none_without_minting() {
+    let dir = TempDir::new("db-get-dyn-mint-free");
+    let schema = entry_schema();
+    let db = Db::create(dir.path(), &schema).expect("create");
+    db.write(|tx| tx.insert_dyn(ENTRY, &entry("real", 1)).map(|_| ()))
+        .expect("seed");
+    let entries = dict_entries(&db);
+
+    db.write(|tx| {
+        assert_eq!(
+            tx.get_dyn(
+                ENTRY,
+                ENTRY_KEY,
+                &[Value::String("ghost".as_bytes().into())]
+            )?,
+            None
+        );
+        assert_eq!(
+            tx.delta.dict_next(),
+            None,
+            "the point read minted a provisional id"
+        );
+        Ok(())
+    })
+    .expect("probe");
+    assert_eq!(dict_entries(&db), entries, "the dictionary grew on a miss");
+}
+
+/// The dynamic surface is data: a wrong statement id, arity, or value
+/// type is a typed `FactShape` error, never a panic.
+#[test]
+fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
+    let dir = TempDir::new("db-get-dyn-shape");
+    let schema = entry_schema();
+    let db = Db::create(dir.path(), &schema).expect("create");
+    db.write(|tx| {
+        // Out-of-range statement id.
+        let err = tx
+            .get_dyn(
+                ENTRY,
+                StatementId(7),
+                &[Value::String("x".as_bytes().into())],
+            )
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FactShape(FactShapeError::NotAKeyStatement {
+                    relation: ENTRY,
+                    statement: StatementId(7),
+                })
+            ),
+            "{err:?}"
+        );
+        // Key arity mismatch.
+        let err = tx.get_dyn(ENTRY, ENTRY_KEY, &entry("x", 1)).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FactShape(FactShapeError::ArityMismatch {
+                    relation: ENTRY,
+                    expected: 1,
+                    supplied: 2,
+                })
+            ),
+            "{err:?}"
+        );
+        // Key value type mismatch.
+        let err = tx.get_dyn(ENTRY, ENTRY_KEY, &[Value::U64(3)]).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::FactShape(FactShapeError::TypeMismatch {
+                    relation: ENTRY,
+                    field: FieldId(0),
+                })
+            ),
+            "{err:?}"
+        );
+        Ok(())
+    })
+    .expect("probe");
 }
