@@ -1205,31 +1205,36 @@ impl Executor {
                     [Source::Batch(word)] if !pinned => Some(*word),
                     _ => None,
                 };
+                // Alias-hoisted locals (docs/silicon2/07) — see
+                // probe_pass; same transform, run_node's sibling shape.
                 if let Some(word) = single_batch_word {
-                    for (k, &e) in scratch.survivors.iter().enumerate() {
+                    let survivors = &scratch.survivors[..n];
+                    let entry_keys = &scratch.entry_keys[..];
+                    let probe_keys = &mut scratch.probe_keys[..n];
+                    let hashes = &mut scratch.hashes[..n];
+                    for (k, &e) in survivors.iter().enumerate() {
                         let entry = usize::try_from(e).expect("batch fits usize");
-                        let key = scratch.entry_keys[entry * arity + word];
-                        scratch.probe_keys[k] = key;
+                        let key = entry_keys[entry * arity + word];
+                        probe_keys[k] = key;
                         counters.probe_hash(node_idx, sub_idx);
-                        scratch.hashes[k] =
-                            crate::exec::colt::hash_key(std::slice::from_ref(&key));
+                        hashes[k] = crate::exec::colt::hash_key(std::slice::from_ref(&key));
                     }
                 } else {
-                    for (k, &e) in scratch.survivors.iter().enumerate() {
+                    let survivors = &scratch.survivors[..n];
+                    let entry_keys = &scratch.entry_keys[..];
+                    let sources = &scratch.sources[sub_idx];
+                    let probe_keys = &mut scratch.probe_keys[..n * sub_arity.max(1)];
+                    let hashes = &mut scratch.hashes[..n];
+                    for (k, &e) in survivors.iter().enumerate() {
                         let entry = usize::try_from(e).expect("batch fits usize");
                         for i in 0..sub_arity {
-                            scratch.probe_keys[k * sub_arity + i] = value_of(
-                                &scratch.sources[sub_idx],
-                                &scratch.entry_keys,
-                                bindings,
-                                entry,
-                                i,
-                            );
+                            probe_keys[k * sub_arity + i] =
+                                value_of(sources, entry_keys, bindings, entry, i);
                         }
                         if !pinned {
                             counters.probe_hash(node_idx, sub_idx);
-                            scratch.hashes[k] = crate::exec::colt::hash_key(
-                                &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
+                            hashes[k] = crate::exec::colt::hash_key(
+                                &probe_keys[k * sub_arity..(k + 1) * sub_arity],
                             );
                         }
                     }
@@ -1259,21 +1264,29 @@ impl Executor {
 
                 // Phase 2: all bucket loads — independent chains the
                 // out-of-order window overlaps — then kernel compaction.
+                // Alias-hoisted locals (docs/silicon2/07).
                 counters.phase_start(node_idx, JoinPhase::Probe);
                 scratch.mask.clear();
                 scratch.mask.resize(n, 0);
-                for k in 0..n {
-                    let e = scratch.survivors[k];
-                    let entry = usize::try_from(e).expect("batch fits usize");
-                    let hit = colts[occ].get_prehashed(
-                        s_cursor,
-                        s_level,
-                        &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
-                        scratch.hashes[k],
-                    );
-                    counters.probe(node_idx, sub_idx, hit.is_some());
-                    scratch.sibling_children[sub_idx][entry] = hit.unwrap_or(Cursor::Row(0));
-                    scratch.mask[k] = u8::from(hit.is_some());
+                {
+                    let survivors = &scratch.survivors[..n];
+                    let probe_keys = &scratch.probe_keys[..n * sub_arity.max(1)];
+                    let hashes = &scratch.hashes[..n];
+                    let sibling_children = &mut scratch.sibling_children[sub_idx][..];
+                    let mask = &mut scratch.mask[..n];
+                    let colt = &mut colts[occ];
+                    for k in 0..n {
+                        let entry = usize::try_from(survivors[k]).expect("batch fits usize");
+                        let hit = colt.get_prehashed(
+                            s_cursor,
+                            s_level,
+                            &probe_keys[k * sub_arity..(k + 1) * sub_arity],
+                            hashes[k],
+                        );
+                        counters.probe(node_idx, sub_idx, hit.is_some());
+                        sibling_children[entry] = hit.unwrap_or(Cursor::Row(0));
+                        mask[k] = u8::from(hit.is_some());
+                    }
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
                 counters.phase_end(node_idx, JoinPhase::Probe);
@@ -1422,31 +1435,46 @@ impl Executor {
                 [Source::Batch(word)] => Some(*word),
                 _ => None,
             };
+            // Alias-hoisted locals (docs/silicon2/07, exp 19's follow-up):
+            // the loops below interleave reads from some scratch vectors
+            // with stores to others — without disjoint pre-loop
+            // reborrows, LLVM must reload each Vec's header (ptr/len)
+            // every iteration because the stores might alias them
+            // (measured 32% of the emulated loop's cost). Disjoint
+            // `&mut` field borrows prove non-aliasing; fixed-length
+            // slices additionally hoist the bounds checks.
             if let Some(word) = single_batch_word {
-                for (k, &e) in scratch.survivors.iter().enumerate() {
+                let survivors = &scratch.survivors[..n];
+                let entry_keys = &scratch.entry_keys[..];
+                let probe_keys = &mut scratch.probe_keys[..n];
+                let hashes = &mut scratch.hashes[..n];
+                for (k, &e) in survivors.iter().enumerate() {
                     let element = usize::try_from(e).expect("batch fits usize");
-                    let key = scratch.entry_keys[element * arity + word];
-                    scratch.probe_keys[k] = key;
+                    let key = entry_keys[element * arity + word];
+                    probe_keys[k] = key;
                     counters.probe_hash(node_idx, sub_idx);
-                    scratch.hashes[k] =
-                        crate::exec::colt::hash_key(std::slice::from_ref(&key));
+                    hashes[k] = crate::exec::colt::hash_key(std::slice::from_ref(&key));
                 }
             } else {
-                for (k, &e) in scratch.survivors.iter().enumerate() {
+                let survivors = &scratch.survivors[..n];
+                let entry_keys = &scratch.entry_keys[..];
+                let parents = &scratch.parents[..];
+                let pending_bindings = &scratch.pending_bindings[..];
+                let sources = &scratch.sources[sub_idx][..];
+                let probe_keys = &mut scratch.probe_keys[..n * sub_arity];
+                let hashes = &mut scratch.hashes[..n];
+                for (k, &e) in survivors.iter().enumerate() {
                     let element = usize::try_from(e).expect("batch fits usize");
-                    let parent = scratch.parents[element] as usize;
+                    let parent = parents[element] as usize;
                     for i in 0..sub_arity {
-                        scratch.probe_keys[k * sub_arity + i] = match scratch.sources[sub_idx][i]
-                        {
-                            Source::Batch(word) => scratch.entry_keys[element * arity + word],
-                            Source::Slot(slot) => {
-                                scratch.pending_bindings[parent * slot_count + slot]
-                            }
+                        probe_keys[k * sub_arity + i] = match sources[i] {
+                            Source::Batch(word) => entry_keys[element * arity + word],
+                            Source::Slot(slot) => pending_bindings[parent * slot_count + slot],
                         };
                     }
                     counters.probe_hash(node_idx, sub_idx);
-                    scratch.hashes[k] = crate::exec::colt::hash_key(
-                        &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
+                    hashes[k] = crate::exec::colt::hash_key(
+                        &probe_keys[k * sub_arity..(k + 1) * sub_arity],
                     );
                 }
             }
@@ -1475,23 +1503,34 @@ impl Executor {
             counters.phase_start(node_idx, JoinPhase::Probe);
             scratch.mask.clear();
             scratch.mask.resize(n, 0);
-            for k in 0..n {
-                let e = scratch.survivors[k];
-                let element = usize::try_from(e).expect("batch fits usize");
-                let parent = scratch.parents[element] as usize;
-                let cursor = carried
-                    .map_or(start_cursor, |col| {
-                        scratch.pending_cursors[parent * carried_w + col]
-                    });
-                let hit = colts[occ].get_prehashed(
-                    cursor,
-                    s_level,
-                    &scratch.probe_keys[k * sub_arity..(k + 1) * sub_arity],
-                    scratch.hashes[k],
-                );
-                counters.probe(node_idx, sub_idx, hit.is_some());
-                scratch.sibling_children[sub_idx][element] = hit.unwrap_or(Cursor::Row(0));
-                scratch.mask[k] = u8::from(hit.is_some());
+            // The exp-19 shape itself (docs/silicon2/07): reads
+            // survivors/parents/pending_cursors/probe_keys/hashes,
+            // writes sibling_children/mask — all hoisted to disjoint
+            // locals so the stores cannot alias the read headers.
+            {
+                let survivors = &scratch.survivors[..n];
+                let parents = &scratch.parents[..];
+                let pending_cursors = &scratch.pending_cursors[..];
+                let probe_keys = &scratch.probe_keys[..n * sub_arity];
+                let hashes = &scratch.hashes[..n];
+                let sibling_children = &mut scratch.sibling_children[sub_idx][..];
+                let mask = &mut scratch.mask[..n];
+                let colt = &mut colts[occ];
+                for k in 0..n {
+                    let element = usize::try_from(survivors[k]).expect("batch fits usize");
+                    let parent = parents[element] as usize;
+                    let cursor = carried
+                        .map_or(start_cursor, |col| pending_cursors[parent * carried_w + col]);
+                    let hit = colt.get_prehashed(
+                        cursor,
+                        s_level,
+                        &probe_keys[k * sub_arity..(k + 1) * sub_arity],
+                        hashes[k],
+                    );
+                    counters.probe(node_idx, sub_idx, hit.is_some());
+                    sibling_children[element] = hit.unwrap_or(Cursor::Row(0));
+                    mask[k] = u8::from(hit.is_some());
+                }
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             counters.phase_end(node_idx, JoinPhase::Probe);

@@ -72,3 +72,45 @@ fold/dedup row loops).
 site resists, record it rather than reaching for raw pointers);
 restructuring NodeScratch itself (a follow-up if reborrow ergonomics
 demand it, not this PRD).
+
+## Result
+
+**Shipped**: pre-loop disjoint reborrows at all five sites — 
+`probe_pass`'s probe loop (site 1: survivors/parents/pending_cursors/
+probe_keys/hashes read-hoisted, sibling_children/mask write-hoisted,
+`colts[occ]` bound once), `probe_pass`'s two hash-gather arms (site 2),
+`run_node`'s sibling hash + probe loops (site 3), and the sink row
+loops (site 5: `emit_batch`'s batch_sources/scratch/seen,
+`fold_batch_dedup_constant_group`'s binding_scratch). Site 4 (descend
+routing) is cross-struct and already non-aliasing by construction;
+left as-is.
+
+**Measured** (min-of-3 vs post-05/06, `bench-out/s2p07-{1,2,3}`,
+verify stamp `d377adb8`):
+- **triangle 9,649.4 → 9,195.4 = −4.7%** (gate −3%) ✓
+- **stats 1,244.3 → 1,206.9 = −3.0%** (gate −2%) ✓
+- spread 10,235.5 (+2.2%, inside its ±3% run-to-run band) ✓;
+  skew p95 762.7 (~flat) ✓; cold_fk_walk 3,870.7 (best of the suite);
+  fk_walk p50 2.6 / range 20.6 / point/string/balance flat ✓.
+- chain 112.8 vs the 93.2 post-05 min — NOT ruled a regression: chain's
+  p50 is bimodal-volatile across this whole suite (the post-05 battery
+  itself spread 93.2/119.5/94.4 = 28% internally; 06b ran 116–122 with
+  a different hot path) while its p95 holds a tight 145–152 band in
+  every battery, 152.1 here. Chain joins fk_walk/balance/skew in
+  gating on p95 (doctrine rule), recorded for PRD 09's final table.
+
+**Requirement 1 (disassembly), the honest finding**: the outer-loop
+hoists landed (stores to mask/children can no longer alias the read
+slices), but the before/after loop-body excerpts are NOT dominated by
+scratch-header reloads — the remaining per-iteration header loads
+belong to the COLT (`maps` ptr/len at `[x20, #0x50/0x58]` right after
+the inlined force), and those are semantically required: 
+`get_prehashed` can force and grow the maps Vec mid-loop. probe_pass
+grew 8,834 → 9,058 asm lines (slice setup + panic paths at the
+reborrow sites); the win shows in the family numbers, which the PRD
+names as the mechanical gate. Exp 19's 32% was the emulated loop's
+non-memory cost; the engine's −3 to −5% is consistent with the reload
+class being one of several occupants of those slots.
+
+Verify 2,468 green; zero-alloc holds (reborrows, no allocation);
+check-asm green (no-`bl` gates unchanged).

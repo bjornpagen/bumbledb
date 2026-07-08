@@ -157,13 +157,19 @@ impl Sink for ProjectionSink {
         // this exact shape once the window probe removed the flush
         // exposure it was built to shadow; the deletion IS the
         // optimization.
+        // Alias-hoisted locals (docs/silicon2/07): the row loop reads
+        // `batch_sources` and writes `scratch` — disjoint reborrows
+        // taken once keep both headers in registers.
+        let batch_sources = &self.batch_sources[..];
+        let scratch = &mut self.scratch[..];
+        let seen = &mut self.seen;
         for &entry in batch.survivors {
-            for (i, source) in self.batch_sources.iter().enumerate() {
+            for (i, source) in batch_sources.iter().enumerate() {
                 if let Some(word) = source {
-                    self.scratch[i] = batch.key(entry, *word);
+                    scratch[i] = batch.key(entry, *word);
                 }
             }
-            self.seen.insert(&self.scratch);
+            seen.insert(scratch);
             if stop_on_skip {
                 // First-emit semantics (see `emit`): the remaining rows
                 // bind nothing sink-relevant — the executor unwinds.
@@ -632,11 +638,15 @@ impl AggregateSink {
         let mut survivors = std::mem::take(&mut self.dedup_survivors);
         survivors.clear();
         let seen = self.seen.as_mut().expect("dedup regime");
+        // Alias-hoisted (docs/silicon2/07): `binding_scratch` reborrowed
+        // once — the survivor pushes and seen-set writes can no longer
+        // alias its header.
+        let binding_scratch = &mut self.binding_scratch[..];
         for &entry in batch.survivors {
             for (word, slot) in batch.key_slots.iter().enumerate() {
-                self.binding_scratch[*slot] = batch.key(entry, word);
+                binding_scratch[*slot] = batch.key(entry, word);
             }
-            if seen.insert(&self.binding_scratch) {
+            if seen.insert(binding_scratch) {
                 survivors.push(entry);
             }
         }
