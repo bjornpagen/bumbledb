@@ -82,3 +82,71 @@ Wordmap bucketization (recorded follow-up); AMAC-style interleaving
 (exp 16: floors at 5.1 ns, dominated — considered-and-rejected);
 vertical/gather vectorization (Polychroniou-Ross needs gather hardware
 NEON lacks — rejected with citation).
+
+## Result
+
+**Not shipped — the sweep is an isolation win that inverts in situ.
+Measured three ways; the bucket-of-8 SWAR group walk from PRD 05 is
+the shipped probe.**
+
+**The pin passed, better than exp 16**: on the engine's own forced-map
+geometry (100k arity-1 keys, 4.2 MB map), the NEON sweep probed
+**2.91–3.37 ns/probe flat** (spread 0.46 ns) across hit rates
+{10, 50, 90}% and **2.67×** over the scalar walk at 50% hits — after
+two mechanism fixes over exp 16's kernel that are worth recording:
+(1) the lane-index dot product false-matches legal zero-valued keys
+against zeroed empty slots — replaced by a `vmovn`-narrowed byte mask
+ANDed with the SWAR tag mask (empties can never carry the wanted tag);
+(2) a hit/miss early-return branch mispredicts every other probe at
+50% hits (+5 ns measured, 9.23 vs 3.10) — resolution must stay csel.
+
+**The engine refuted it** (min-of-3 ledgers). First battery (sweep +
+two collateral changes): triangle +6.6%, chain +18%, spread +7.8%.
+The collateral decomposed and reverted: an UNCONDITIONAL child load in
+`probe_child_at` (touches the child line on every miss — miss-heavy
+chain paid a wasted line per probe) and the trimmed third
+`prefetch_bucket` line (covered DRAM-tier passes have no latency
+shadow for the hit-path child load to ride). Second battery (sweep
+ONLY, collateral fixed): triangle 9,649 → 10,073 (+4.4%), chain 93.2 →
+116.2 (+25%), spread +5.5%, skew p95 +6.6%, stats +1.2% — **no family
+improved**. Verify green both times (stamps `89772158`, `013fc564`).
+
+**Why the pin and the engine disagree** — two regimes, both against:
+- Chain's probes are arity-1 FK hops over L2-hot maps at ~100% hit
+  rate: retire-bound, perfectly predicted. The sweep's 2.5×
+  instruction bill buys nothing there — the layer law's own dieting
+  side.
+- Triangle/spread's displaced-tier probes (exp 19's law: phases
+  interleave, maps miss in situ regardless of footprint): the sweep
+  LOADS THE KEY BLOCK ON EVERY PROBE, while the tag-gated walk's
+  data-dependent key load never issues on a tag miss — one extra line
+  per miss at exactly the tier where lines are the bill. Exp 13 saw
+  this same inversion from the other side (branchy vs window at DRAM).
+  The pin's isolated loop keeps the map resident, so neither
+  mechanism exists there.
+- Exp 16's bucket kept ctrl INSIDE the bucket line, so its sweep
+  touched one line either way — its 3.5 ns flat does not transfer to
+  the separate-ctrl layout that PRD 05 shipped (and that layout choice
+  was right: it is what made the SWAR group walk and the −18% land).
+
+**Per-arity cutover decisions** (requirement 4): arity 1 — measured,
+REVERTED (above). Arity 2 — the NEON-first word-0 sweep measured
+16.12 ns vs the scalar walk's 11.84 ns at 50% hits (ratio 0.73, far
+under the 1.10 cutover bar); rejected, variant deleted (history:
+b193567..this commit). Arities 3–4 follow a fortiori (more scalar
+verification per candidate, same sweep overhead).
+
+**Gate rulings**: `jp_probe_n1` ≤ 1,100 and triangle ≤ 8,000 are
+**refuted premises, not misses** — they price a probe-layer mechanism
+that measures as a strict in-situ loss. The waterfall stands at:
+jp_probe_n1 2,445 µs = 8.2 ns/probe over the true 299k count
+(post-05, −34% from PRD 05 itself), triangle 9,649 — under PRD 01's
+twice-missed 9,800 gate at last. AMAC and gather-vectorization stay
+rejected as drafted; this Result closes the exp-16 thread: the
+instruction-buying law holds only where a mispredicted exit branch was
+the bill AND the touched-lines count does not grow — inside one
+resident bucket line (exp 16's layout), not across the shipped
+split-slab layout.
+
+30-execution.md's probe paragraph now carries the measured law; the
+sanctioned-shapes list is unchanged (nothing ships).

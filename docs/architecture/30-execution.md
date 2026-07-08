@@ -178,7 +178,16 @@ processed branchlessly**: probe misses and residual failures become survivor
 compaction (the scalar branchless cursor-write — NEON has no compress instruction;
 that is SVE, which Apple Silicon lacks), never per-tuple conditional control flow —
 on a >99%-accurate TAGE predictor, the data-dependent per-tuple branch is the only
-misprediction source left, so we remove it representationally. **No indirect
+misprediction source left, so we remove it representationally. The probe walk
+itself is the measured exception to naive vectorization (docs/silicon2/06): a
+full NEON candidate sweep — all 8 bucket keys compared per probe — ran 2.7×
+faster than the tag-gated scalar walk in an isolated resident-map loop and
+INVERTED in situ (chain +25%, triangle +4%), because the sweep touches the key
+block on every probe while the tag-gated walk's data-dependent key load never
+issues on a miss; under inter-phase displacement (exp 19's law) that is an
+extra line per miss, and on L2-hot always-hit paths the 2.5× instruction bill
+is retire-bound loss. The bucket-of-8 SWAR group walk (docs/silicon2/05) is
+the shipped shape. **No indirect
 dispatch exists in the hot path**: sinks, counters, and kernels are monomorphized
 generics, never `dyn`. NEON (`cfg(aarch64)`, 128-bit = 2×u64) is confined to the
 sanctioned kernel shapes (amended by the performance suite, docs/perf/):
