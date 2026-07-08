@@ -57,6 +57,23 @@ Same corpus, same queries, results verified identical against SQLite by a
 
 ![read families vs SQLite](assets/bench-vs-sqlite.svg)
 
+The same data as multiples — the ledger's ten read families, point lookups
+through the triangle join:
+
+![speedup over SQLite](assets/bench-speedup.svg)
+
+Latency is a distribution, not a number. p50 → p95 → p99 per family, both
+engines — the bimodal families show their true tails and still sit an order
+of magnitude inside SQLite's:
+
+![tail behavior](assets/bench-tails.svg)
+
+Beyond the ledger, the suite runs four non-ledger scenario worlds —
+JOB-shaped joins, a social graph, an OLAP star, and point-lookup surfaces —
+22 queries, each oracle-gated before timing. Geomean across all 22: **16×**:
+
+![scenario worlds](assets/bench-scenarios.svg)
+
 And the honest chart — durable writes are an fsync-latency product on both
 engines, and bulk load favors SQLite's write path; we publish it anyway:
 
@@ -73,7 +90,9 @@ this scale, not a production database. Regenerate everything yourself:
 cargo build --release -p bumbledb-bench
 target/release/bumbledb-bench gen && target/release/bumbledb-bench verify
 target/release/bumbledb-bench bench --out bench-out/run1   # ×3
-python3 scripts/bench_viz.py bench-out/run1 bench-out/run2 bench-out/run3
+target/release/bumbledb-bench scenarios --out bench-out/scen
+python3 scripts/bench_viz.py bench-out/run1 bench-out/run2 bench-out/run3 \
+        --scenarios bench-out/scen/scenarios.md
 ```
 
 ## Why it's fast
