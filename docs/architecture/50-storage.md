@@ -1,4 +1,4 @@
-# 40 — Storage
+# 50 — Storage
 
 LMDB is the only durable backend (decision recorded in `00-product.md`), accessed
 through `heed`. Durability (fsync per commit; no `NOSYNC`/`WRITEMAP`/`MAPASYNC`), write
@@ -17,17 +17,26 @@ column data into hundreds of thousands of LMDB point-gets — 80% of traced exec
 encoded fact is already a fixed-width row sliceable into columns for free — **one
 sequential scan of a row-major table yields every column.**
 
+New governing sentence (2026-07-08, the dependency redesign): **guard namespaces are
+derived accelerators for the dependency judgments (`30-dependencies.md`), not the
+judgments' definitions.** `U` exists so the functionality check is O(log n) per
+touched fact; `R` exists so the containment check's target side is O(log n) per
+touched key. A namespace is the *plan* an accepted statement promised at the
+acceptance gate — which is why statements without such a plan are rejected at
+declaration, never discovered here.
+
 ## Key layout (one `_data` database, first-byte namespaces)
 
 ```
 F | relation_id | row_id            -> fact_bytes     row-major facts   (reader: image builds, point-lookup fetch, export scan)
-M | relation_id | fact_hash         -> row_id         membership        (reader: insert/delete idempotence, point lookups)
-U | relation_id | constraint | key  -> row_id         unique guards     (reader: constraint checks, guard-probe lookups)
-R | target_rel  | constraint | key | source_rel | source_row -> ()      (reader: Restrict checks on delete)
+M | relation_id | fact_hash         -> row_id         membership        (reader: insert/delete idempotence, point lookups, WriteTx point reads)
+U | relation_id | statement | key   -> row_id         FD guards         (reader: functionality checks — put-conflict and neighbor probes —
+                                                      guard-probe lookups, WriteTx key reads, coverage walks)
+R | statement | key | source_rel | source_row -> ()   IND reverse edges (reader: target-side containment checks on delete/shrink)
 Q | relation_id | field_id          -> next_u64       serial sequences  (reader: alloc)
-S | relation_id | stat             -> u64            counters: stat 0 = row count (readers: the planner,
-                                                     and image build's cross-check against the F scan);
-                                                     stat 1 = row_id high-water (reader: commit's row-id assignment)
+S | relation_id | stat              -> u64            counters: stat 0 = row count (readers: the planner,
+                                                      and image build's cross-check against the F scan);
+                                                      stat 1 = row_id high-water (reader: commit's row-id assignment)
 ```
 
 Plus `_meta` (format version, schema fingerprint, storage tx id, and the dictionary
@@ -42,13 +51,28 @@ from read snapshots) and `_dict` (forward `blake3(tag‖bytes) → id`, reverse
   return only with a benchmark that demands them (OPEN, README).
 - `fact_bytes` = the canonical encoding owned by `10-data-model.md`; identity = bytes.
 - `fact_hash` = full 32-byte blake3 of `fact_bytes`; an `M` hit is trusted without
-  verification (collision axiom, recorded in `10-data-model.md`; v5 truncated to 16
-  bytes — we do not).
-- Key-component widths: `relation_id` u32, `field_id` u16, constraint id u16, `row_id`
-  u64 — all big-endian; ids assigned by schema declaration order and pinned by the
-  fingerprint.
+  verification (collision axiom, recorded in `10-data-model.md`).
+- **`U` guard keys** are the FD statement's projected fields' canonical encodings,
+  concatenated in statement order. An interval field (always last —
+  `30-dependencies.md` gate) contributes its 16 bytes, so within one scalar-prefix
+  group the guard B-tree is **ordered by interval start**: the property the
+  pointwise check and the coverage walk stand on. `MAX_GUARD_WIDTH` admits the
+  16-byte contribution; width overflow is a declaration-time error.
+- **`R` keys are statement-scoped**, not relation-scoped: `statement` is the
+  schema-global materialized statement id (`10-data-model.md` fingerprint), and
+  `key` is the *target-side* projection value the source fact requires. One source
+  fact contributes one `R` entry per containment statement whose selection it
+  satisfies — conditional containments write reverse edges only for facts inside
+  their σ, so the arm-validity and totality directions of a `==` each get exactly
+  the edges they need. Bidirectional statements are two statement ids, symmetric
+  entries.
+- Key-component widths: `relation_id` u32, `field_id` u16, statement id u16, `row_id`
+  u64 — all big-endian; ids assigned by declaration/materialized order and pinned by
+  the fingerprint.
 - Open-time checks, in order: storage format version, then schema fingerprint — each
-  mismatch is a hard failure.
+  mismatch is a hard failure. **The dependency redesign bumps the format version**;
+  pre-redesign stores do not open, and no migration path exists (ETL is the story,
+  `70-api.md` — and the compatibility break is deliberate, `00-product.md`).
 
 **Decision: one `_data` database with first-byte namespaces.** **Alternative:** one
 LMDB database per namespace (enables per-namespace append mode and integer-key layouts).
@@ -73,48 +97,76 @@ read-only get) plus the delta to compute the `changed: bool` return value, recor
 disposition. `alloc` reads `Q` once at first use per (relation, field) and increments
 in memory (a transaction sees its own allocations); explicit-value inserts advance the
 in-memory mark past the supplied value; mixed explicit/generated allocation tracks the
-running maximum. **Nothing touches an LMDB data page until commit** — an abort (error
-or panic) drops the arena and LMDB was never written, making "failed writes leave
-nothing" true by construction, not by rollback.
+running maximum. **WriteTx point reads** (`70-api.md`: existence of a fact, lookup
+through an FD key) are the same committed-state gets overlaid with the delta — they
+observe exactly the final-state view the judgment checker will judge, which is what
+makes read-modify-write idioms (upsert, check-then-act guards) sound without exposing
+query machinery to the write path. **Nothing touches an LMDB data page until commit**
+— an abort (error or panic) drops the arena and LMDB was never written, making
+"failed writes leave nothing" true by construction, not by rollback.
 
-**Commit applies the delta in one canonical order** — this is what makes constraint
-enforcement commit-time state-checking (`10-data-model.md`) with plain eager mechanics:
+**Commit applies the delta in one canonical order** — this is what makes dependency
+enforcement commit-time final-state judgment (`30-dependencies.md`) with plain eager
+mechanics:
 
 1. **Deletes**: per deleted fact — `M` get → row_id → delete `F`, `M`, its `U` entries
-   (guard keys re-derived by slicing constrained fields out of `fact_bytes` — never a
-   scan), and its outgoing `R` entries.
+   (guard keys re-derived by slicing projected fields out of `fact_bytes` — never a
+   scan), and its outgoing `R` entries. Deleted `U` keys are recorded per statement
+   (the target-side check set for step 3).
 2. **Inserts**: per inserted fact — `F` put (row_id from the in-memory high-water),
-   `M` put, `U` puts, `R` puts. Because every delete has already landed and the
-   insert-set is deduplicated, **a `U` conflict here is a genuine unique violation** →
-   typed error, whole transaction aborts. Deletes and inserts both check what they
-   touch: a live `M` entry whose `F` row or `U` guard is missing is the
-   membership-desync corruption, a hard error — never silently scrubbed.
-3. **FK validation** (final-state probes; LMDB write txns read their own writes):
-   forward — every inserted fact's FK targets resolve via `U`; Restrict — every unique
-   key deleted in step 1 and not re-inserted has no remaining `R` entries. Any failure
-   → typed error, abort.
+   `M` put, `U` puts, `R` puts (per containment statement whose selection the fact
+   satisfies). Because every delete has already landed and the insert-set is
+   deduplicated, a scalar `U` put conflict here **is** a functionality violation →
+   typed error, whole transaction aborts. For a **pointwise FD** (interval-carrying
+   guard), the put cannot conflict on exact bytes alone; the insert additionally
+   runs the **ordered-neighbor probe** — cursor-seek to (scalar prefix, start):
+   predecessor in the same prefix group with `end > start`, or successor with
+   `start < end`, is the violation. Two probes, O(log n), same B-tree. Deletes and
+   inserts both check what they touch: a live `M` entry whose `F` row or `U` guard
+   is missing is the membership-desync corruption, a hard error — never silently
+   scrubbed.
+3. **Judgment phase** (final-state probes; LMDB write txns read their own writes) —
+   one checker, statement-driven, restricted to delta-touched bindings:
+   - **Containment, source side:** every inserted fact satisfying a statement's
+     source selection probes the target's key guard for its projected tuple; the
+     found target fact is checked against the target selection (one `F` get when a
+     selection exists). For interval positions, the probe is the **coverage walk**:
+     from the guard entry at or before the source interval's start, walk start-
+     ordered entries of the prefix group, requiring no gap before the source's end
+     — O(log n + segments), sound because the target's pointwise key keeps its
+     intervals disjoint (`30-dependencies.md`).
+   - **Containment, target side:** every target key tuple deleted in step 1 and not
+     re-established in step 2 probes its statements' `R` prefixes for surviving
+     source entries; for interval positions the deleted-or-shrunk window's `R`
+     range is walked and each surviving source is re-checked for coverage against
+     the final target state. A surviving requirer → typed error naming the *source*
+     fact by its bytes.
+   - Bidirectional statements run both bullets with the sides swapped — the same
+     two code paths, no third.
+   Any failure → typed error carrying the statement id, abort. The probe primitive
+   ("does any fact match / does no fact match") is shared with the query executor's
+   anti-probe (`40-execution.md`) — one mechanism, two callers.
 4. **Counters flush**: row_id high-waters, row counts, `Q` sequences, the pending
-   dictionary entries and next-id (moved here from step 2 — equivalent inside one
-   atomic txn, since nothing between the phases reads `_dict`), storage tx id.
+   dictionary entries and next-id, storage tx id.
 5. **LMDB commit** (fsync).
 
 User operation order inside the closure is therefore semantically irrelevant; the
-delete-before-insert trap and FK insertion-ordering are unrepresentable. Crash
-consistency is LMDB atomicity — *tested* (crash/reopen family, `50-validation.md`).
+delete-before-insert trap and reference-insertion-ordering are unrepresentable. Crash
+consistency is LMDB atomicity — *tested* (crash/reopen family, `60-validation.md`).
 Dictionary entries are never removed (accepted leak; the delete path never *adds*
-one either — a never-interned value proves its fact absent, hardening PRD 01).
+one either — a never-interned value proves its fact absent).
 
 Two write-side asymmetries, recorded as decisions rather than left as surprises:
 **R-delete verification** — deleting a fact deletes its `R` entries without
 verifying they existed (unlike `F`/`M`/`U`, whose absence is the
 `MembershipDesync` hard error); a missing `R` entry is not independently
-detectable at delete time without re-deriving every FK guard, and the class is
-covered by the same offline-sweeper deferral as the rest of M↔F↔U↔R consistency.
-**Counter overflow guards** — the serial ceiling is guarded (`SerialExhausted` at
-`u64::MAX`, because hosts can supply explicit serial values), while the storage tx
-id and row-id high-waters are not: they advance by at most one per commit/insert,
-so wrapping needs ~2⁶⁴ commits — twelve orders beyond the scale axiom, and no host
-input can jump them. The asymmetry is chosen, not overlooked.
+detectable at delete time without re-deriving every statement's edges, and the
+class is covered by the same offline-sweeper deferral as the rest of M↔F↔U↔R
+consistency. **Counter overflow guards** — the serial ceiling is guarded
+(`SerialExhausted` at `u64::MAX`, because hosts can supply explicit serial values),
+while the storage tx id and row-id high-waters are not: they advance by at most one
+per commit/insert, so wrapping needs ~2⁶⁴ commits — twelve orders beyond the scale
+axiom, and no host input can jump them. The asymmetry is chosen, not overlooked.
 
 **Storage tx id:** advances **once per commit that changed logical state**; a commit
 whose delta is empty (all no-ops) does not advance it and does not invalidate any
@@ -125,28 +177,36 @@ counters-only LMDB transaction: the tx id identifies query-visible state (`F/M/U
 and `Q` marks are write-path bookkeeping no query reads, so every image and memo key
 stays valid. Pending interns of a no-op commit are dropped — intern ids never escape.
 
-Bulk load (`60-api.md` surface) is the same delta mechanism at scale — chunked into
+Bulk load (`70-api.md` surface) is the same delta mechanism at scale — chunked into
 multiple transactions (4096 facts each; a failing chunk aborts whole, prior chunks
-stay committed, and the error carries the committed count). The fresh-database
-append-order fast path was deliberately not built (decision: it saves only the
-membership probes on an empty database, and the normal insert path is the one with
-the invariants); it may return with a benchmark that demands it.
+stay committed, and the error carries the committed count). Chunking has a new
+stated consequence under bidirectional containments: **a `==` statement's cluster
+must be judged whole**, so a chunk boundary that splits a cluster mid-load fails
+that chunk's commit loudly (never silently); the documented import order —
+dependency-cluster order, owned by `70-api.md`'s ETL section — makes the failure
+unreachable for well-formed exports. The fresh-database append-order fast path
+stays deliberately unbuilt.
 
 **Corrupt data is a hard error, never a skip:** an `F` value whose length differs from
-the schema's fact width, a dangling intern id, an `M`/`F` disagreement, an out-of-range
-enum ordinal — any of these aborts the scan/query with a corruption error (v5 silently
-skipped undecodable rows and shrank query results — post-mortem §37). An offline
-integrity checker (M↔F↔U↔R sweep) is out of scope for v0, stated.
+the schema's fact width, a dangling intern id, an `M`/`F` disagreement, an
+out-of-range enum ordinal, an interval with `start ≥ end` — any of these aborts the
+scan/query with a corruption error (v5 silently skipped undecodable rows and shrank
+query results — post-mortem §37). An offline integrity checker (M↔F↔U↔R sweep) is out
+of scope for v0, stated.
 
 ## The columnar image cache (the hot representation)
 
-The bridge to paper-faithful execution (`30-execution.md` D1):
+The bridge to paper-faithful execution (`40-execution.md` D1):
 
 - A **relation image** is **all columns** of a relation, decoded from one sequential
   `F`-prefix scan into whole-slab, 128-byte-aligned SoA vectors (one allocation per
   store, freed as a whole — the arena discipline without the arena type), plus the
-  row count.
-  At ~60 GB/s of single-core scan bandwidth this is single-digit milliseconds per
+  row count. **An interval field decodes into two parallel 8-byte columns**
+  (start, end) — the image layer has no 16-byte column kind, membership and overlap
+  lower to word comparisons over the pair (`40-execution.md`), and every existing
+  kernel shape (predicate scan, compaction, gather, fold) applies unchanged. The
+  16-byte unit exists only in `fact_bytes` and guard keys, where ordering needs it.
+  At ~60 GB/s of single-core scan bandwidth a build is single-digit milliseconds per
   100 MB — the number that makes the whole cache design sound. **Column pitches are
   padded off 16 KiB multiples** (docs/silicon/11, superseding the stagger rule):
   measurement retired the old fear — L1D set congruence (256 sets × 64 B lines,
@@ -157,11 +217,10 @@ The bridge to paper-faithful execution (`30-execution.md` D1):
   lockstep scans (8.13 vs 1.78 ns/row, four pre-registered discriminators). The rule:
   when a column-to-column pitch within a slab is ≥ 64 KiB and lands within 384 B of a
   16 KiB multiple, round it up to the next exact multiple (exact multiples measured
-  clean — the poison is the small offset). The old stagger rule (odd 128 B
-  residues) *created* the pathology it meant to prevent.
-  Immutable once built. Positions in the image are **dense scan ordinals**; `row_id`s
-  exist only in LMDB keys and never appear in images (COLT offsets are image positions;
-  the guard-probe path reads `F` directly and never needs a translation).
+  clean — the poison is the small offset). Immutable once built. Positions in the
+  image are **dense scan ordinals**; `row_id`s exist only in LMDB keys and never
+  appear in images (COLT offsets are image positions; the guard-probe path reads `F`
+  directly and never needs a translation).
   **Decision: full-width images, cache key `(relation_id, storage_tx_id)`.**
   **Alternative:** per-field-scope images. **Why it lost:** scope keys are combinatorial
   (defeating sharing and the "tiny key space" claim), overlapping scopes duplicate
@@ -191,12 +250,12 @@ The bridge to paper-faithful execution (`30-execution.md` D1):
   resolved filters), so a warm re-execution skips even the in-memory re-scan.
 - Invariant test (from the v5 regression, post-mortem §26): two sequential read
   transactions with no intervening write share identical image instances; plus the
-  concurrent families in `50-validation.md`.
+  concurrent families in `60-validation.md`.
 
 ## Memory discipline
 
 Images are whole-slab allocations freed as wholes; no per-value heap objects in
-storage or images. Query scratch belongs to prepared queries (`30-execution.md`).
+storage or images. Query scratch belongs to prepared queries (`40-execution.md`).
 Steady-state process heap = LMDB's mmap + the newest generation's images +
 per-prepared-query pools + a constant. Prepared queries hold current-generation
 images only: prepare binds no image at all (`View::Unbound`), and each execution
@@ -206,11 +265,11 @@ reader or the first post-commit execution, whichever is later.
 ## Operations
 
 Backup = file copy of the environment (or `mdb_copy`) while the writer is quiesced.
-Compaction and space reclamation = ETL into a fresh database (`60-api.md` export/import
-surfaces). The LMDB file never shrinks; the dictionary leaks by accepted design. That
-is the entire operational story, deliberately.
+Compaction and space reclamation = ETL into a fresh database (`70-api.md`
+export/import surfaces). The LMDB file never shrinks; the dictionary leaks by
+accepted design. That is the entire operational story, deliberately.
 
-## Store-size anatomy and compaction (docs/architecture/40-storage.md, measured 2026-07-03)
+## Store-size anatomy and compaction (measured 2026-07-03; pre-redesign numbers)
 
 The S-scale corpus store measured 101 MB against SQLite's 13.6 MB for the same
 logical content. `mdb_stat` anatomy, so nobody re-derives it:
@@ -219,9 +278,11 @@ logical content. `mdb_stat` anatomy, so nobody re-derives it:
   the ~43 chunked bulk-load commits. LMDB never shrinks its file; length
   reflects peak usage.
 - **~5–6 `_data` entries per fact by design**: fact (`F`) + membership hash
-  (`M`) + unique guard (`U`) + one back-reference (`R`) per FK — 761,786
-  entries for ~152,700 facts. This is deliberate rent for O(1) commit-time
-  constraint checks and stays.
+  (`M`) + FD guard (`U`) + one reverse edge (`R`) per containment — 761,786
+  entries for ~152,700 facts. This is deliberate rent for O(log n) commit-time
+  judgment checks and stays. (Bidirectional statements add one edge per
+  direction; the redesign's re-measured anatomy lands with the new format's
+  first corpus.)
 - **16 KB pages** on Apple Silicon (LMDB uses the OS page size) — chunkier
   B-tree overhead than SQLite's 4 KB pages with varint-packed rows.
 
