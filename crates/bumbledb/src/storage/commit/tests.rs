@@ -11,11 +11,12 @@ mod apply;
 mod commit;
 mod functionality;
 mod judgment;
+mod target;
 
 /// Target(id serial) + Keyed(x u64, y i64; key x) +
 /// Booking(room u64, during interval<u64>, tag u64; key (room, during)) +
 /// Claim(holder u64; Claim(holder) <= Target(id)) — the containment gives
-/// Target's key a dependent, so its guards are recorded for PRD 09.
+/// Target's key a dependent, so its guards feed the target-side check.
 fn schema() -> Schema {
     let field = |name: &str, value_type: ValueType| FieldDescriptor {
         name: name.into(),

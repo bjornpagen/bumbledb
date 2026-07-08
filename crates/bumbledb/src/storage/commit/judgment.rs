@@ -1,15 +1,20 @@
-//! Phase 3, containment source side (`docs/architecture/50-storage.md`
-//! § commit step 3; `30-dependencies.md` § enforcement): every inserted
-//! fact satisfying a statement's source selection proves its target tuple
-//! exists in the final state — scalar tuples by one guard probe, interval
-//! positions by the coverage walk. LMDB write transactions read their own
-//! writes, so the probes see exactly the state the commit would persist.
+//! Phase 3, the containment judgment (`docs/architecture/50-storage.md`
+//! § commit step 3; `30-dependencies.md` § enforcement). Source side:
+//! every inserted fact satisfying a statement's source selection proves
+//! its target tuple exists in the final state — scalar tuples by one
+//! guard probe, interval positions by the coverage walk. Target side:
+//! every key tuple disestablished by this commit probes its dependent
+//! statements' `R` prefixes for surviving sources — a scalar survivor is
+//! the violation outright; an interval survivor re-runs the coverage walk
+//! against the final `U` state. LMDB write transactions read their own
+//! writes, so both sides see exactly the state the commit would persist.
 //!
 //! Also home of the selection machinery shared with the insert phase's
 //! `R`-puts: literals encode once per commit into [`Selections`]
 //! (never per fact), and [`satisfies`] is a straight byte compare of
 //! selected field slices.
 
+use std::collections::BTreeSet;
 use std::ops::Bound;
 
 use crate::encoding::{
@@ -151,7 +156,7 @@ pub(super) fn check_source(
     selections: &Selections,
 ) -> Result<()> {
     let schema = delta.schema();
-    let mut checker = SourceChecker {
+    let mut checker = Checker {
         txn,
         data,
         schema,
@@ -197,6 +202,7 @@ pub(super) fn check_source(
                 target_check: &checks.target,
                 key_bytes: &key_bytes,
                 fact_bytes,
+                side: Direction::SourceUnsatisfied,
             };
             if interval_position.is_some() {
                 checker.check_coverage(&probe)?;
@@ -210,8 +216,165 @@ pub(super) fn check_source(
     Ok(())
 }
 
-/// One satisfying (inserted fact, containment statement) pair: everything
-/// a target probe needs, borrowed from the driving loop.
+/// The target-side judgment: every key tuple deleted in phase 1 and not
+/// re-established in phase 2 — the set difference is the check set —
+/// probes its dependent containment statements' `R` prefixes for
+/// surviving sources. A scalar survivor convicts outright: the key
+/// statement's guard was the tuple's one holder and the final state no
+/// longer has it. An interval tuple is a disestablished
+/// *segment* `(prefix, ts, te)`: each surviving source of the prefix
+/// group whose interval intersects the segment re-runs the coverage walk
+/// against the final `U` state — a delete whose hole a same-delta insert
+/// covers is legal, and only a failed walk convicts.
+///
+/// Ported subtlety: a source deleted this commit cannot have a surviving
+/// `R` entry, because phase 1 removed its outgoing edges — so a survivor
+/// is always live in the final state, no disposition re-check is needed,
+/// and its `F` row must exist (a miss is corruption, never a race).
+pub(super) fn check_target(
+    txn: &WriteTxn<'_>,
+    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+    delta: &WriteDelta<'_>,
+    selections: &Selections,
+    deleted_guards: &BTreeSet<(StatementId, Vec<u8>)>,
+    inserted_guards: &BTreeSet<(StatementId, Vec<u8>)>,
+) -> Result<()> {
+    let schema = delta.schema();
+    let mut span = obs::span(obs::names::JUDGMENT_TARGET, obs::Category::Commit);
+    let mut scanned = 0u64;
+    let mut key: KeyBuf = [0; MAX_KEY];
+    // Affected sources of interval statements, deduped before any walk:
+    // the element is the full surviving `R` key — statement ‖ prefix
+    // group ‖ source interval ‖ source identity — so several
+    // disestablished segments of one (statement, prefix-group) collapse
+    // to one coverage walk per source.
+    let mut affected: BTreeSet<Vec<u8>> = BTreeSet::new();
+    for entry in deleted_guards.difference(inserted_guards) {
+        let (key_sid, guard) = entry;
+        scanned += 1;
+        for &sid in schema.dependents(*key_sid) {
+            let Resolved::Containment {
+                interval_position, ..
+            } = &schema.statement(sid).resolved
+            else {
+                unreachable!("validated schema: dependents name Containment statements")
+            };
+            if interval_position.is_none() {
+                // Scalar form: any surviving entry under the exact key
+                // bytes is a stranded source.
+                let p_len = keys::reverse_prefix(&mut key, sid, guard);
+                let survivor = data
+                    .get_greater_than_or_equal_to(txn.raw(), &key[..p_len])?
+                    .filter(|(k, _)| k.starts_with(&key[..p_len]));
+                if let Some((r_key, _)) = survivor {
+                    let (_, _, source_rel, source_row) = keys::parse_reverse_key(r_key).ok_or(
+                        Error::Corruption(CorruptionError::MalformedValue("R key shape")),
+                    )?;
+                    let fact = fetch_source_fact(data, txn, source_rel, source_row)?;
+                    return Err(Error::ContainmentViolation {
+                        statement: sid,
+                        side: Direction::TargetRequired,
+                        fact: fact.into(),
+                    });
+                }
+            } else {
+                // Interval form: conservatively scan the whole prefix
+                // group and filter by intersection. An optimized lower
+                // bound would need the maximum source-interval length,
+                // which we refuse to track — the group is small and this
+                // is the delete path.
+                let ts = &guard[guard.len() - 16..guard.len() - 8];
+                let te = &guard[guard.len() - 8..];
+                let p_len = keys::reverse_prefix(&mut key, sid, &guard[..guard.len() - 16]);
+                let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
+                    (Bound::Included(&key[..p_len]), Bound::Unbounded);
+                for group_entry in data.range(txn.raw(), &bounds)? {
+                    let (k, _) = group_entry?;
+                    if !k.starts_with(&key[..p_len]) {
+                        break;
+                    }
+                    let Some((_, key_bytes, _, _)) = keys::parse_reverse_key(k) else {
+                        return Err(Error::Corruption(CorruptionError::MalformedValue(
+                            "R key shape",
+                        )));
+                    };
+                    // Same statement, same target key: any other key-bytes
+                    // width is corrupt data, a hard error.
+                    if key_bytes.len() != guard.len() {
+                        return Err(Error::Corruption(CorruptionError::MalformedValue(
+                            "R key width",
+                        )));
+                    }
+                    // Half-open intersection of the source interval
+                    // `[ss, se)` with the disestablished `[ts, te)`:
+                    // `ss < te && ts < se`, byte compare on the 8-byte
+                    // order-preserving halves.
+                    let ss = &key_bytes[key_bytes.len() - 16..key_bytes.len() - 8];
+                    let se = &key_bytes[key_bytes.len() - 8..];
+                    if ss < te && ts < se {
+                        affected.insert(k.to_vec());
+                    }
+                }
+            }
+        }
+    }
+    // The deduped walks, each against the final `U` state.
+    let mut checker = Checker {
+        txn,
+        data,
+        schema,
+        key: [0; MAX_KEY],
+    };
+    for r_key in &affected {
+        let (sid, key_bytes, source_rel, source_row) =
+            keys::parse_reverse_key(r_key).expect("affected set holds parsed R keys");
+        let statement = schema.statement(sid);
+        let StatementDescriptor::Containment { target, .. } = &statement.descriptor else {
+            unreachable!("validated schema: dependents name Containment statements")
+        };
+        let Resolved::Containment { target_key, .. } = &statement.resolved else {
+            unreachable!("validated schema: Containment resolves as Containment")
+        };
+        let fact_bytes = fetch_source_fact(data, txn, source_rel, source_row)?;
+        let probe = Probe {
+            statement: sid,
+            target_relation: target.relation,
+            target_key: *target_key,
+            target_check: &selections.containment(sid).target,
+            key_bytes,
+            fact_bytes,
+            side: Direction::TargetRequired,
+        };
+        checker.check_coverage(&probe)?;
+    }
+    span.set_args(scanned, 0);
+    span.end();
+    Ok(())
+}
+
+/// Fetches a surviving source fact's canonical bytes by its `R`-entry
+/// identity — the violation payload (scalar form) or the coverage walk's
+/// subject (interval form). Borrowed from the transaction: the target
+/// side reads, never copies, until an error is built.
+fn fetch_source_fact<'t>(
+    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+    txn: &'t WriteTxn<'_>,
+    relation: RelationId,
+    row_id: u64,
+) -> Result<&'t [u8]> {
+    let mut key: KeyBuf = [0; MAX_KEY];
+    let f_len = keys::fact_key(&mut key, relation, row_id);
+    data.get(txn.raw(), &key[..f_len])?
+        .ok_or(Error::Corruption(CorruptionError::MissingFact {
+            relation,
+            row_id,
+        }))
+}
+
+/// One (source fact, containment statement) judgment pair: everything a
+/// target probe needs, borrowed from the driving loop. Both sides build
+/// these — the source side for each inserted fact inside σ, the target
+/// side for each surviving source whose required window a delete touched.
 struct Probe<'a> {
     statement: StatementId,
     target_relation: RelationId,
@@ -222,29 +385,33 @@ struct Probe<'a> {
     key_bytes: &'a [u8],
     /// The source fact — the violation payload.
     fact_bytes: &'a [u8],
+    /// Which side's judgment a miss convicts.
+    side: Direction,
 }
 
 impl Probe<'_> {
     /// The aborting error: the judgment speaks about sources, so the
-    /// payload is the source fact whose target is missing.
+    /// payload is the source fact — the inserted fact whose target is
+    /// missing, or the survivor whose required target was disestablished.
     fn unsatisfied(&self) -> Error {
         Error::ContainmentViolation {
             statement: self.statement,
-            side: Direction::SourceUnsatisfied,
+            side: self.side,
             fact: self.fact_bytes.into(),
         }
     }
 }
 
-/// Working state threaded through the source-side probes.
-struct SourceChecker<'a, 'env> {
+/// Working state threaded through the judgment probes — both sides share
+/// the scalar probe and the coverage walk.
+struct Checker<'a, 'env> {
     txn: &'a WriteTxn<'env>,
     data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
     schema: &'a Schema,
     key: KeyBuf,
 }
 
-impl SourceChecker<'_, '_> {
+impl Checker<'_, '_> {
     /// Scalar target probe: one `U` get on the target key's guard. A miss
     /// is the violation; a hit with a nonempty target selection
     /// additionally checks the found fact against σ (one `F` get).

@@ -64,3 +64,28 @@ Any new namespace. Any caching across commits.
   insert a replacement covering the hole in the same delta — commits.
 - `[test]` `==` demolition: parent + child deleted in one delta commits; child
   alone deleted aborts on the totality direction.
+
+## Conflict
+
+Found while implementing technical direction 1; implemented exactly as specified,
+flagged for the owner because the architecture is silent.
+
+The check set `deleted_guards − inserted_guards` treats a key tuple as
+re-established whenever *any* fact re-lands its guard bytes. A containment with a
+**target selection** requires a target satisfying ψ, and re-establishment does not
+check ψ: delete `Account(9, active=true)` + insert `Account(9, active=false)` in
+one delta re-establishes the key guard `(id=9)`, so the tuple leaves the check set
+— yet a surviving `Transfer(9)` under `Transfer(account) <= Account(id | active ==
+true)` is stranded in the committed final state. Neither side catches it (the
+source side probes only *inserted* source facts). The interval form has the same
+shape: delete + re-insert a byte-identical segment whose σ-relevant non-key field
+changed. Both this PRD ("the difference is the check set, exactly as the old
+restrict logic computed it" — correct pre-σ) and `50-storage.md`/
+`30-dependencies.md` ("deleted and not re-established") specify the unqualified
+subtraction, so `judgment::check_target` does the unqualified subtraction.
+
+A possible fix, not improvised here: refine per dependent statement — a
+re-established guard counts only if the establishing fact satisfies that
+statement's target σ (one `F` get per re-established guard per σ-carrying
+dependent; dependents with empty σ keep the plain subtraction, which is every
+currently-tested case).

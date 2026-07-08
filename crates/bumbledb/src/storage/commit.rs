@@ -10,8 +10,8 @@
 //! semantically irrelevant. Phases 1-2 also maintain the `R` reverse edges
 //! (one per containment statement whose source selection the fact
 //! satisfies), and phase 3 — the judgment phase (`judgment`) — proves every
-//! containment's source side against the final state; the target side
-//! lands with PRD 09.
+//! containment against the final state: the source side over inserted
+//! facts, the target side over disestablished key tuples.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -45,11 +45,12 @@ pub struct Applied<'env, 's> {
     /// 50-storage doc's phase 4).
     pub row_id_next: BTreeMap<RelationId, u64>,
     /// Guard keys deleted in phase 1, limited to key statements some
-    /// containment targets — the target-side check set (PRD 09).
+    /// containment targets — the target-side check set
+    /// (`judgment::check_target`).
     pub deleted_guards: BTreeSet<(StatementId, Vec<u8>)>,
     /// Guard keys established in phase 2 for containment-targeted key
     /// statements — subtracted from `deleted_guards` before the
-    /// target-side scan (PRD 09).
+    /// target-side scan.
     pub inserted_guards: BTreeSet<(StatementId, Vec<u8>)>,
     /// Selection literals pre-encoded once for this commit (phases 1-2
     /// gate the `R` writes with them; phase 3 reuses them for its source

@@ -343,8 +343,7 @@ fn scalar_target_failing_the_target_selection_aborts() {
 fn out_of_sigma_source_commits_without_a_target_and_writes_no_reverse_edge() {
     // A non-urgent report is outside the statement's source σ: no target
     // required, and — asserted by direct inspection of the committed `R`
-    // prefix (the follow-up-delete formulation needs PRD 09's target-side
-    // check) — no reverse edge written.
+    // prefix — no reverse edge written.
     let dir = TempDir::new("judg-conditional-outside");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
