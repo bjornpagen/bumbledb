@@ -29,7 +29,10 @@ mod tests;
 static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 
 /// Storage format version, checked before the schema fingerprint on open.
-pub const FORMAT_VERSION: u32 = 0;
+/// Version 1: statement-keyed `U` and statement-scoped `R` layouts
+/// (`docs/architecture/50-storage.md` § Key layout). No other version
+/// opens and no migration path exists — ETL is the story.
+pub const FORMAT_VERSION: u32 = 1;
 
 /// Fixed map size: comfortably above the 1 GB scale axiom, allocated
 /// sparsely by the OS. Not configurable — path-only public surface.

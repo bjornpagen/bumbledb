@@ -287,21 +287,25 @@ fn rejects_permuted_duplicate_functionality() {
     );
 }
 
-/// Roster "guard width overflow": 62 u64 fields = 496 bytes, over the
-/// 492-byte `MAX_GUARD_WIDTH`.
+/// Roster "guard width overflow": one u64 field more than
+/// `MAX_GUARD_WIDTH` (the storage-side constant, imported — never
+/// duplicated) admits.
 #[test]
 fn rejects_guard_overflow() {
-    let fields: Vec<FieldDescriptor> = (0..62)
+    let count = crate::storage::keys::MAX_GUARD_WIDTH / 8 + 1;
+    let fields: Vec<FieldDescriptor> = (0..count)
         .map(|i| field(&format!("f{i}"), ValueType::U64))
         .collect();
-    let projection: Vec<FieldId> = (0..62).map(FieldId).collect();
+    let projection: Vec<FieldId> = (0..count)
+        .map(|i| FieldId(u16::try_from(i).expect("field count fits u16")))
+        .collect();
     let mut decl = one_relation(fields);
     decl.statements.push(fd(RelationId(0), &projection));
     assert_eq!(
         decl.validate().unwrap_err(),
         SchemaError::GuardKeyTooWide {
             statement: StatementId(0),
-            width: 496
+            width: count * 8
         }
     );
 }

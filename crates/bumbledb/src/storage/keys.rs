@@ -1,20 +1,24 @@
-//! The `_data` key codec (docs/architecture/40-storage.md): first-byte namespaces, big-endian
-//! components (`docs/architecture/40-storage.md`).
+//! The `_data` key codec (`docs/architecture/50-storage.md` § Key layout):
+//! first-byte namespaces, big-endian components.
 //!
 //! ```text
-//! F | relation_id | row_id                                       facts
-//! M | relation_id | fact_hash                                    membership
-//! U | relation_id | constraint | guard_key                       unique guards
-//! R | target_rel  | constraint | guard_key | source_rel | source_row
-//! Q | relation_id | field_id                                     serial sequences
-//! S | relation_id | stat                                         counters
+//! F | relation_id | row_id                                  facts
+//! M | relation_id | fact_hash                               membership
+//! U | relation_id | statement | guard                      FD guards
+//! R | statement | key_bytes | source_rel | source_row      IND reverse edges
+//! Q | relation_id | field_id                                serial sequences
+//! S | relation_id | stat                                    counters
 //! ```
+//!
+//! `R` carries no target relation id: the statement id determines the
+//! target relation, so storing it again would be transcription.
 //!
 //! Writers fill a caller-provided `[u8; MAX_KEY]` scratch and return the
 //! written length — no oversized zeroing (post-mortem §25), and key types
 //! never derive `Ord` (LMDB byte order is the only order).
 
-use crate::schema::{ConstraintId, FieldId, RelationId};
+use crate::encoding::{field_bytes, FactLayout};
+use crate::schema::{FieldId, RelationId, StatementId};
 
 /// LMDB's default key-size ceiling; every encoded key fits.
 pub const MAX_KEY: usize = 511;
@@ -22,28 +26,35 @@ pub const MAX_KEY: usize = 511;
 /// Fixed scratch buffer for key writers.
 pub type KeyBuf = [u8; MAX_KEY];
 
-/// Byte overhead of a Restrict key beyond the guard bytes:
-/// `tag(1) + target_rel(4) + constraint(2) + source_rel(4) + source_row(8)`.
-const RESTRICT_OVERHEAD: usize = 1 + 4 + 2 + 4 + 8;
+/// Byte overhead of a reverse-edge (`R`) key beyond its embedded key bytes:
+/// `tag(1) + statement(2) + source_rel(4) + source_row(8)`.
+const R_OVERHEAD: usize = 1 + 2 + 4 + 8;
 
-/// Maximum guard-key width a schema may declare: the widest key embedding a
-/// guard is the Restrict key, so its overhead bounds every guard
-/// (schema-construction hook; rejection is `SchemaError::GuardKeyTooWide`).
-pub const MAX_GUARD_WIDTH: usize = MAX_KEY - RESTRICT_OVERHEAD;
+/// Maximum guard width a schema may declare.
+///
+/// Derivation: a guard value must embed whole in every key shape that
+/// carries one. The `U` key spends `tag(1) + relation(4) + statement(2)`
+/// = 7 bytes beside its guard; the `R` key embeds a whole target-key value
+/// as its key-bytes segment and spends [`R_OVERHEAD`] = 15 beside it. The
+/// `R` embedding is therefore the binding bound:
+/// `MAX_GUARD_WIDTH = MAX_KEY − R_OVERHEAD = 511 − 15 = 496`.
+///
+/// Schema-construction hook; rejection is `SchemaError::GuardKeyTooWide`
+/// (the validator imports this constant — the bound has one owner).
+pub const MAX_GUARD_WIDTH: usize = MAX_KEY - R_OVERHEAD;
 
 /// Namespace tags, one byte, first in every key.
 pub const NS_FACT: u8 = b'F';
 pub const NS_MEMBERSHIP: u8 = b'M';
-pub const NS_UNIQUE: u8 = b'U';
-pub const NS_RESTRICT: u8 = b'R';
+pub const NS_GUARD: u8 = b'U';
+pub const NS_REVERSE: u8 = b'R';
 pub const NS_SERIAL: u8 = b'Q';
 pub const NS_STAT: u8 = b'S';
 
 /// Which per-relation counter an `S` key addresses.
 ///
-/// `RowCount` is the planner's statistic (`40-storage.md`); `RowIdHighWater`
-/// is the delta core's row-id allocator (the 40-storage doc extends the `S` codec, noted
-/// in the doc).
+/// `RowCount` is the planner's statistic (`docs/architecture/50-storage.md`);
+/// `RowIdHighWater` is the commit pipeline's row-id allocator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatKind {
     RowCount = 0,
@@ -73,7 +84,7 @@ impl<'a> KeyWriter<'a> {
         self.put(&id.0.to_be_bytes())
     }
 
-    fn constraint(&mut self, id: ConstraintId) -> &mut Self {
+    fn statement(&mut self, id: StatementId) -> &mut Self {
         self.put(&id.0.to_be_bytes())
     }
 
@@ -91,6 +102,10 @@ pub const MEMBERSHIP_KEY_LEN: usize = 1 + 4 + 32;
 pub const SERIAL_KEY_LEN: usize = 1 + 4 + 2;
 /// `S` key width: tag + relation + stat kind.
 pub const STAT_KEY_LEN: usize = 1 + 4 + 1;
+/// `U` key width before the guard bytes: tag + relation + statement.
+pub const GUARD_KEY_HEADER_LEN: usize = 1 + 4 + 2;
+/// `R` key width after the key bytes: source_rel + source_row.
+pub const REVERSE_KEY_TAIL_LEN: usize = 4 + 8;
 
 pub fn fact_key(buf: &mut [u8], relation: RelationId, row_id: u64) -> usize {
     KeyWriter::new(buf, NS_FACT)
@@ -112,56 +127,59 @@ pub fn membership_key(buf: &mut [u8], relation: RelationId, fact_hash: &[u8; 32]
         .finish()
 }
 
-/// `U | relation | constraint | guard` — a unique-guard key. `guard` is the
-/// concatenated canonical encodings of the constrained fields in constraint
-/// field order (width-bounded at schema construction).
-pub fn unique_key(
+/// `U | relation | statement | guard` — an FD guard key. `guard` is the
+/// concatenated canonical encodings of the statement's projected fields in
+/// statement projection order ([`guard_bytes`]; width-bounded at schema
+/// construction).
+pub fn guard_key(
     buf: &mut KeyBuf,
     relation: RelationId,
-    constraint: ConstraintId,
+    statement: StatementId,
     guard: &[u8],
 ) -> usize {
     debug_assert!(guard.len() <= MAX_GUARD_WIDTH);
-    KeyWriter::new(buf, NS_UNIQUE)
+    KeyWriter::new(buf, NS_GUARD)
         .relation(relation)
-        .constraint(constraint)
+        .statement(statement)
         .put(guard)
         .finish()
 }
 
-/// `R | target_rel | constraint | guard | source_rel | source_row` — one
-/// reverse-reference entry (the Restrict check's reader).
-pub fn restrict_key(
+/// `U | relation | statement` — the prefix every guard of one statement on
+/// one relation shares (neighbor-probe and coverage-walk reader).
+pub fn guard_prefix(buf: &mut KeyBuf, relation: RelationId, statement: StatementId) -> usize {
+    KeyWriter::new(buf, NS_GUARD)
+        .relation(relation)
+        .statement(statement)
+        .finish()
+}
+
+/// `R | statement | key_bytes | source_rel | source_row` — one reverse-edge
+/// entry (target-side containment reader). Statement-scoped: the statement
+/// id determines the target relation, so none is stored.
+pub fn reverse_key(
     buf: &mut KeyBuf,
-    target_relation: RelationId,
-    target_constraint: ConstraintId,
-    guard: &[u8],
+    statement: StatementId,
+    key_bytes: &[u8],
     source_relation: RelationId,
     source_row: u64,
 ) -> usize {
-    debug_assert!(guard.len() <= MAX_GUARD_WIDTH);
-    KeyWriter::new(buf, NS_RESTRICT)
-        .relation(target_relation)
-        .constraint(target_constraint)
-        .put(guard)
+    debug_assert!(key_bytes.len() <= MAX_GUARD_WIDTH);
+    KeyWriter::new(buf, NS_REVERSE)
+        .statement(statement)
+        .put(key_bytes)
         .relation(source_relation)
         .put(&source_row.to_be_bytes())
         .finish()
 }
 
-/// `R | target_rel | constraint | guard` — the prefix shared by every
-/// referrer of one unique key (Restrict prefix-scan reader).
-pub fn restrict_prefix(
-    buf: &mut KeyBuf,
-    target_relation: RelationId,
-    target_constraint: ConstraintId,
-    guard: &[u8],
-) -> usize {
-    debug_assert!(guard.len() <= MAX_GUARD_WIDTH);
-    KeyWriter::new(buf, NS_RESTRICT)
-        .relation(target_relation)
-        .constraint(target_constraint)
-        .put(guard)
+/// `R | statement | key_bytes` — the prefix shared by every source fact
+/// requiring one target key value (reverse-edge prefix-scan reader).
+pub fn reverse_prefix(buf: &mut KeyBuf, statement: StatementId, key_bytes: &[u8]) -> usize {
+    debug_assert!(key_bytes.len() <= MAX_GUARD_WIDTH);
+    KeyWriter::new(buf, NS_REVERSE)
+        .statement(statement)
+        .put(key_bytes)
         .finish()
 }
 
@@ -181,9 +199,99 @@ pub fn stat_key(buf: &mut [u8], relation: RelationId, stat: StatKind) -> usize {
         .finish()
 }
 
+/// Splits a full `U` key into `(relation, statement, guard)` — the
+/// parse-back for readers that walk guard entries (neighbor probes,
+/// coverage walks). `None` on anything not shaped like a guard key:
+/// corrupt data, not a programmer error — callers raise a typed
+/// corruption error, never a panic.
+#[must_use]
+pub fn parse_guard_key(key: &[u8]) -> Option<(RelationId, StatementId, &[u8])> {
+    if key.len() < GUARD_KEY_HEADER_LEN || key[0] != NS_GUARD {
+        return None;
+    }
+    let relation = RelationId(u32::from_be_bytes(
+        key[1..5].try_into().expect("fixed-width slice"),
+    ));
+    let statement = StatementId(u16::from_be_bytes(
+        key[5..7].try_into().expect("fixed-width slice"),
+    ));
+    Some((relation, statement, &key[GUARD_KEY_HEADER_LEN..]))
+}
+
+/// Splits a full `R` key into `(statement, key_bytes, source_rel,
+/// source_row)`. The key bytes are everything between the statement id and
+/// the fixed 12-byte source tail — self-delimiting, no width table needed.
+/// `None` on anything not shaped like a reverse-edge key (corrupt data).
+#[must_use]
+pub fn parse_reverse_key(key: &[u8]) -> Option<(StatementId, &[u8], RelationId, u64)> {
+    if key.len() < R_OVERHEAD || key[0] != NS_REVERSE {
+        return None;
+    }
+    let statement = StatementId(u16::from_be_bytes(
+        key[1..3].try_into().expect("fixed-width slice"),
+    ));
+    let tail = key.len() - REVERSE_KEY_TAIL_LEN;
+    let key_bytes = &key[3..tail];
+    let source_relation = RelationId(u32::from_be_bytes(
+        key[tail..tail + 4].try_into().expect("fixed-width slice"),
+    ));
+    let source_row = u64::from_be_bytes(key[tail + 4..].try_into().expect("fixed-width slice"));
+    Some((statement, key_bytes, source_relation, source_row))
+}
+
+/// Concatenates the canonical encodings of `projection`'s fields, sliced
+/// out of `fact_bytes`, in statement projection order, into `out` — the
+/// guard segment of a `U` key, re-derived per fact, never a scan.
+///
+/// An interval field copies its whole 16-byte `start ‖ end` encoding in
+/// one piece (the slice width comes from the layout — never split here):
+/// the contiguity is what keeps the guard B-tree ordered by interval start
+/// within one scalar-prefix group.
+pub fn guard_bytes(
+    layout: &FactLayout,
+    projection: &[FieldId],
+    fact_bytes: &[u8],
+    out: &mut Vec<u8>,
+) {
+    out.clear();
+    for &field in projection {
+        out.extend_from_slice(field_bytes(fact_bytes, layout, usize::from(field.0)));
+    }
+}
+
+/// Like [`guard_bytes`], but lays the sliced fields down in the *target
+/// key's* guard order: `key_permutation[i]` is the guard position of
+/// projection element `i` (statement projection order → target key order,
+/// `Resolved::Containment::key_permutation`) — the key-bytes segment of an
+/// `R` key. Interval fields copy their whole 16 bytes, exactly as in
+/// [`guard_bytes`].
+pub fn permuted_guard_bytes(
+    layout: &FactLayout,
+    projection: &[FieldId],
+    key_permutation: &[u16],
+    fact_bytes: &[u8],
+    out: &mut Vec<u8>,
+) {
+    debug_assert_eq!(projection.len(), key_permutation.len());
+    out.clear();
+    for guard_pos in 0..key_permutation.len() {
+        let source_pos = key_permutation
+            .iter()
+            .position(|&p| usize::from(p) == guard_pos)
+            .expect("validated schema: key_permutation is a bijection");
+        out.extend_from_slice(field_bytes(
+            fact_bytes,
+            layout,
+            usize::from(projection[source_pos].0),
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::encoding::{encode_fact, encode_interval_u64, encode_u64, TypeDesc, ValueRef};
+    use crate::schema::IntervalElement;
 
     fn key(write: impl FnOnce(&mut KeyBuf) -> usize) -> Vec<u8> {
         let mut buf = [0u8; MAX_KEY];
@@ -194,7 +302,7 @@ mod tests {
     #[test]
     fn fact_key_round_trips_components() {
         let k = key(|b| fact_key(b, RelationId(7), 0x0102_0304_0506_0708));
-        assert_eq!(k.len(), 13);
+        assert_eq!(k.len(), FACT_KEY_LEN);
         assert_eq!(k[0], NS_FACT);
         assert_eq!(&k[1..5], &7u32.to_be_bytes());
         assert_eq!(&k[5..], &0x0102_0304_0506_0708u64.to_be_bytes());
@@ -213,24 +321,151 @@ mod tests {
     fn membership_key_embeds_full_hash() {
         let hash = [0xABu8; 32];
         let k = key(|b| membership_key(b, RelationId(1), &hash));
-        assert_eq!(k.len(), 37);
+        assert_eq!(k.len(), MEMBERSHIP_KEY_LEN);
         assert_eq!(k[0], NS_MEMBERSHIP);
         assert_eq!(&k[5..], &hash);
     }
 
     #[test]
-    fn unique_and_restrict_keys_embed_guard_bytes() {
+    fn guard_key_golden_bytes() {
+        // U | relation(u32) | statement(u16) | guard — exact byte sequence.
         let guard = [1u8, 2, 3];
-        let u = key(|b| unique_key(b, RelationId(2), ConstraintId(5), &guard));
-        assert_eq!(u.len(), 1 + 4 + 2 + 3);
-        assert_eq!(u[0], NS_UNIQUE);
-        assert_eq!(&u[7..], &guard);
+        let u = key(|b| guard_key(b, RelationId(2), StatementId(5), &guard));
+        assert_eq!(u, vec![NS_GUARD, 0, 0, 0, 2, 0, 5, 1, 2, 3]);
+        let prefix = key(|b| guard_prefix(b, RelationId(2), StatementId(5)));
+        assert!(u.starts_with(&prefix));
+    }
 
-        let r = key(|b| restrict_key(b, RelationId(2), ConstraintId(5), &guard, RelationId(9), 11));
-        assert_eq!(r.len(), RESTRICT_OVERHEAD + guard.len());
-        assert_eq!(r[0], NS_RESTRICT);
-        let prefix = key(|b| restrict_prefix(b, RelationId(2), ConstraintId(5), &guard));
+    #[test]
+    fn guard_key_with_16_byte_interval_guard_parses_back() {
+        // Guard = scalar u64 ‖ whole 16-byte interval, contiguous.
+        let mut guard = Vec::new();
+        guard.extend_from_slice(&encode_u64(0xAAAA_BBBB_CCCC_DDDD));
+        guard.extend_from_slice(&encode_interval_u64(10, 20));
+        assert_eq!(guard.len(), 24);
+
+        let k = key(|b| guard_key(b, RelationId(3), StatementId(9), &guard));
+        assert_eq!(k.len(), GUARD_KEY_HEADER_LEN + 24);
+        // The interval's 16 bytes sit unsplit at the guard's tail.
+        assert_eq!(&k[GUARD_KEY_HEADER_LEN + 8..], encode_interval_u64(10, 20));
+
+        let (rel, stmt, parsed) = parse_guard_key(&k).expect("well-formed guard key");
+        assert_eq!(rel, RelationId(3));
+        assert_eq!(stmt, StatementId(9));
+        assert_eq!(parsed, &guard[..]);
+    }
+
+    #[test]
+    fn reverse_key_golden_bytes_are_statement_scoped() {
+        // R | statement(u16) | key_bytes | source_rel(u32) | source_row(u64)
+        // — statement-scoped; the target relation id appears nowhere.
+        let key_bytes = [7u8, 8];
+        let r = key(|b| reverse_key(b, StatementId(5), &key_bytes, RelationId(9), 11));
+        assert_eq!(
+            r,
+            vec![NS_REVERSE, 0, 5, 7, 8, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 11]
+        );
+        assert_eq!(r.len(), R_OVERHEAD + key_bytes.len());
+        let prefix = key(|b| reverse_prefix(b, StatementId(5), &key_bytes));
         assert!(r.starts_with(&prefix));
+    }
+
+    #[test]
+    fn reverse_key_with_interval_bearing_key_bytes_parses_back() {
+        let mut key_bytes = Vec::new();
+        key_bytes.extend_from_slice(&encode_u64(4));
+        key_bytes.extend_from_slice(&encode_interval_u64(100, 200));
+
+        let r = key(|b| reverse_key(b, StatementId(2), &key_bytes, RelationId(6), 77));
+        let (stmt, parsed, src_rel, src_row) =
+            parse_reverse_key(&r).expect("well-formed reverse key");
+        assert_eq!(stmt, StatementId(2));
+        assert_eq!(parsed, &key_bytes[..]);
+        assert_eq!(src_rel, RelationId(6));
+        assert_eq!(src_row, 77);
+    }
+
+    #[test]
+    fn parsers_reject_other_namespace_and_truncated_keys() {
+        let guard = key(|b| guard_key(b, RelationId(1), StatementId(1), &[9]));
+        assert!(parse_reverse_key(&guard).is_none());
+        let reverse = key(|b| reverse_key(b, StatementId(1), &[9], RelationId(1), 1));
+        assert!(parse_guard_key(&reverse).is_none());
+        assert!(parse_guard_key(&guard[..3]).is_none());
+        assert!(parse_reverse_key(&reverse[..R_OVERHEAD - 1]).is_none());
+    }
+
+    /// Layout for the slicing tests: `f0` u64, `f1` interval, `f2` u64.
+    fn interval_layout() -> FactLayout {
+        FactLayout::new(&[
+            TypeDesc::U64,
+            TypeDesc::Interval {
+                element: IntervalElement::U64,
+            },
+            TypeDesc::U64,
+        ])
+    }
+
+    fn interval_fact() -> Vec<u8> {
+        let mut fact = Vec::new();
+        encode_fact(
+            &[
+                ValueRef::U64(0x1111_1111_1111_1111),
+                ValueRef::IntervalU64(3, 9),
+                ValueRef::U64(0x2222_2222_2222_2222),
+            ],
+            &interval_layout(),
+            &mut fact,
+        );
+        fact
+    }
+
+    #[test]
+    fn guard_bytes_slices_projection_order_and_copies_intervals_whole() {
+        let layout = interval_layout();
+        let fact = interval_fact();
+        let mut guard = Vec::new();
+        // Projection (f2, f1): scalar first, interval last, statement order.
+        guard_bytes(&layout, &[FieldId(2), FieldId(1)], &fact, &mut guard);
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&encode_u64(0x2222_2222_2222_2222));
+        expected.extend_from_slice(&encode_interval_u64(3, 9));
+        assert_eq!(guard, expected);
+    }
+
+    #[test]
+    fn permuted_guard_bytes_lay_fields_in_target_key_order() {
+        let layout = interval_layout();
+        let fact = interval_fact();
+        // Source projection order (f2, f0, f1); the target key's guard
+        // order is (f0, f2, interval): permutation maps projection
+        // position -> guard position.
+        let projection = [FieldId(2), FieldId(0), FieldId(1)];
+        let key_permutation = [1u16, 0, 2];
+        let mut key_bytes = Vec::new();
+        permuted_guard_bytes(
+            &layout,
+            &projection,
+            &key_permutation,
+            &fact,
+            &mut key_bytes,
+        );
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&encode_u64(0x1111_1111_1111_1111)); // f0
+        expected.extend_from_slice(&encode_u64(0x2222_2222_2222_2222)); // f2
+        expected.extend_from_slice(&encode_interval_u64(3, 9)); // f1, whole
+        assert_eq!(key_bytes, expected);
+
+        // The permutation-ordered R key round-trips through the parser.
+        let r = key(|b| reverse_key(b, StatementId(4), &key_bytes, RelationId(1), 5));
+        let (stmt, parsed, src_rel, src_row) =
+            parse_reverse_key(&r).expect("well-formed reverse key");
+        assert_eq!(
+            (stmt, parsed, src_rel, src_row),
+            (StatementId(4), &key_bytes[..], RelationId(1), 5)
+        );
     }
 
     #[test]
@@ -255,12 +490,13 @@ mod tests {
             key(|b| membership_key(b, RelationId(1), &[1u8; 32])),
             key(|b| serial_key(b, RelationId(1), FieldId(0))),
             key(|b| serial_key(b, RelationId(1), FieldId(1))),
-            key(|b| restrict_key(b, RelationId(1), ConstraintId(0), &[9], RelationId(0), 0)),
+            key(|b| reverse_key(b, StatementId(0), &[9], RelationId(0), 0)),
+            key(|b| reverse_key(b, StatementId(1), &[0], RelationId(0), 0)),
             key(|b| stat_key(b, RelationId(1), StatKind::RowCount)),
             key(|b| stat_key(b, RelationId(1), StatKind::RowIdHighWater)),
-            key(|b| unique_key(b, RelationId(1), ConstraintId(0), &[0])),
-            key(|b| unique_key(b, RelationId(1), ConstraintId(0), &[1])),
-            key(|b| unique_key(b, RelationId(1), ConstraintId(1), &[0])),
+            key(|b| guard_key(b, RelationId(1), StatementId(0), &[0])),
+            key(|b| guard_key(b, RelationId(1), StatementId(0), &[1])),
+            key(|b| guard_key(b, RelationId(1), StatementId(1), &[0])),
         ];
         let mut sorted = ordered.clone();
         sorted.sort();
@@ -268,11 +504,17 @@ mod tests {
     }
 
     #[test]
-    fn guard_width_bound_matches_restrict_overhead() {
-        assert_eq!(MAX_GUARD_WIDTH, 511 - 19);
-        // A maximal guard still fits both key shapes inside MAX_KEY.
+    fn guard_width_bound_matches_reverse_overhead() {
+        // MAX_KEY − (tag + statement + source_rel + source_row) = 511 − 15.
+        // schema::validate imports this same constant for its
+        // declaration-time rejection — the bound is never duplicated.
+        assert_eq!(MAX_GUARD_WIDTH, 511 - 15);
+        // A guard exactly at the limit builds, and the widest key shape —
+        // the R embedding — lands exactly on MAX_KEY.
         let guard = vec![0xEE; MAX_GUARD_WIDTH];
-        let r = key(|b| restrict_key(b, RelationId(0), ConstraintId(0), &guard, RelationId(0), 0));
+        let r = key(|b| reverse_key(b, StatementId(0), &guard, RelationId(0), 0));
         assert_eq!(r.len(), MAX_KEY);
+        let u = key(|b| guard_key(b, RelationId(0), StatementId(0), &guard));
+        assert!(u.len() <= MAX_KEY);
     }
 }
