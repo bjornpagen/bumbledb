@@ -85,3 +85,37 @@ Anything new. Scenario suite, L-scale, and the performance claim stay
 human-owned. The planner-side probe-count levers (semijoin
 pre-filters, degree-aware covers) and wordmap bucketization are the
 recorded openers for a THIRD suite, not late additions to this one.
+
+## Result
+
+**Shipped**: the spin-settle cold protocol (2 ms `clockproxy::warm_up`
+between touch and sample in `measure_cold` — never sleep), the
+write-order pin (driver comment + bulk-last debug assertion), the
+doctrine sweep (50-validation: exp 20's slide bound, the −99.6%
+latency-bound case, the sub-µs health warning, the commpage kind-3
+note; 30-execution: the layer-split law + the probe-shape law closing
+exps 13/16/18; silicon/README: the round-two appendix), and
+**`docs/silicon2/final2.md`** — the new denominator.
+
+**The final battery** (min-of-3 + traced, verify stamp `01bdd8ca`,
+`bench-out/s2p09-*`): ALL-WIN on every run; every read family ≤ its
+final.md number (bimodal families on p95); **geomean −15.0%**
+(gate ≥ 10%); triangle **9,445.5** (−19.6%), stats 1,203.5 (−35.7%),
+range 20.6 (−27.7%), chain p95 145.6, skew p95 794.0, fk_walk p95
+759.2, spread 10,269.9, cold_fk_walk **3,674.1** under the settle
+protocol (old-protocol 3,836.3 → the −4.2% delta was clock-cold).
+Traced: jp_probe_n1 1,716.9 µs (~5.7 ns/probe at the corrected 300k
+count — −54% from the anchor's 3,764) and **jp_probe_n0 853.2 µs:
+PRD 01's ≤ 900 µs gate, twice ruled at-floor, is MET on the final
+binary** (the bucket layout + alias hoisting moved the floor itself).
+
+**Gate rulings**: triangle ≤ 8,000 and jp_probe_n1 ≤ 1,100 are closed
+as REFUTED PREMISES via the PRD 06 waterfall (both priced the NEON
+stack that measured as a strict in-situ loss, atop the PRD 01
+attribution correction); the full arithmetic is in final2.md. stats
+≤ 1,200: met within noise (1,197.5 at PRD 08's battery, 1,203.5 here;
+band 1,197–1,215). point ≤ 0.5 holds (0.4). No-sleep grep clean; doc
+greps green ("payload latency", the sub-µs warning, the layer-split
+law; no live batch-mean claim outside superseded notes). Verify 2,468
+green; clippy clean; check-asm green on the accumulated gate set;
+zero-alloc holds.

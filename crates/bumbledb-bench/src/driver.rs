@@ -474,6 +474,8 @@ fn write_families(
             });
         }
     }
+    // bulk stays LAST (docs/silicon2/09): seconds of fsync — nothing
+    // may measure after it in this process.
     if selected("bulk") {
         eprintln!("bench: bulk");
         let proto = families::write_families()
@@ -495,6 +497,14 @@ fn write_families(
             ghz: Some(write_ghz(ghz)),
         });
     }
+    // The write-order pin (docs/silicon2/09): bulk's seconds of fsync
+    // leave the deepest clock shadow — nothing measures after it.
+    debug_assert!(
+        out.iter()
+            .position(|w| w.name == "bulk")
+            .is_none_or(|i| i == out.len() - 1),
+        "bulk must be the last write family"
+    );
     Ok(out)
 }
 
@@ -624,6 +634,11 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     let flames = std::mem::take(&mut run.flames);
     drop(run);
 
+    // Write families run AFTER every read family (docs/silicon2/09,
+    // exp 17): an fsync drops the core to its DVFS floor with
+    // demand-driven recovery, so any read family measured in that
+    // shadow reads slow-clock time. `bulk` (seconds of fsync) is last
+    // of all — asserted inside write_families.
     let writes = write_families(cfg, &out_dir.join("scratch"), &selected)?;
 
     // Cache residency needs the engine's trace feature (the obs build).

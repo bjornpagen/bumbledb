@@ -88,3 +88,11 @@ padding → 12 renewable reader → 13 on-demand stats → 14 endgame.
 independently. 06–09 are the execution-core campaign. 10–11 are the
 memory-system campaign. 12–13 are the fixed-cost campaign. 14 closes the
 inherited missed gates and records the final table.
+
+## Appendix: round two
+
+`docs/silicon2/` is the successor suite (fleet round two, exps 13–20):
+per-rep clock normalization, the const-arity wordmap, the bucket-of-8
+COLT layout, the batch-mean lever deletions, and the refutation Results
+for key-ahead prefetch and the NEON sweep. `docs/silicon2/final2.md` is
+the current denominator; this directory's final.md is the previous one.

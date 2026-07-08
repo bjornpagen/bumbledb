@@ -222,7 +222,21 @@ ends (an `isb` fence costs more than the slop it removes — measured +164% at
 4.6 ns worst case, slide-proof — half the price of `isb`'s 9.4 ns). Phase
 totals carry the stamp overhead of deep small-batch nodes, and short phases
 under-attribute up to ~7%. Therefore: **phase tables direct work; the
-untraced timing tables decide gates.** Traced samples are single warm
+untraced timing tables decide gates.**
+
+Round two sharpened the slide bound (bumblebench exp 20,
+docs/silicon2/00): the unfenced closing stamp slides by
+**min(remaining payload latency, scheduler drain)** — occupancy is only
+the ceiling. On a latency-bound span (a pointer chase mid-flight at the
+stamp) the slide reached −99.6% of the span; on throughput-bound spans
+it stays in the ≤ ~50 ns drain regime. `CNTVCTSS_EL0` closes held ±7%
+everywhere. The health rule: **attribution claims under ~1 µs require
+CNTVCTSS closes AND repetition; a latency-bound span's raw-stamped
+attribution is presumed wrong.** On the platform side, macOS's commpage
+kind-3 conversion means the libsystem clocks (`Instant`,
+`mach_absolute_time`) are slide-proof on M2 — the campaign's early "2×
+attribution error" was stamp cost + tick noise + ablation scope, never
+an `Instant` slide. Traced samples are single warm
 executions on the rotating param sets — for skewed families the sample may be
 the hot parameter; gates cite p95 where that matters.
 
