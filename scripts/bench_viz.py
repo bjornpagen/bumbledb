@@ -6,7 +6,6 @@ bench`), computes the min-of-N p50 per family (the suite's merge rule),
 and renders three charts into assets/:
 
   bench-vs-sqlite.svg   ours vs SQLite p50 per read family (log scale)
-  bench-campaign.svg    p50 across the four campaign epochs, normalized
   bench-writes.svg      the honest chart: writes + cold, where fsync physics rules
 
 Usage: python3 scripts/bench_viz.py bench-out/run1 bench-out/run2 ...
@@ -27,23 +26,6 @@ READ_ORDER = [
     "range", "chain", "stats", "spread", "triangle",
 ]
 WRITE_ORDER = ["commit_single", "commit_batch", "cold_fk_walk", "bulk"]
-
-# The campaign ledger (p50 microseconds), from the pinned tables:
-# docs/perf/baseline.md -> docs/silicon/final.md (baseline col = perf end)
-# -> docs/silicon/final.md (final col) -> docs/silicon2/final2.md.
-EPOCHS = ["first build", "docs/perf", "docs/silicon", "docs/silicon2"]
-CAMPAIGN = {
-    "point":    [1.1, 1.0, 0.4, 0.4],
-    "string":   [1.8, 1.5, 0.8, 0.7],
-    "balance":  [12.3, 1.4, 0.7, 0.7],
-    "fk_walk":  [12.8, 6.8, 2.9, 6.0],
-    "skew":     [59.5, 39.7, 35.8, 52.2],
-    "range":    [59.1, 28.5, 28.5, 20.6],
-    "chain":    [210.0, 134.4, 104.0, 100.9],
-    "stats":    [4130.9, 1886.0, 1872.5, 1203.5],
-    "spread":   [13415.1, 11281.6, 10725.8, 10269.9],
-    "triangle": [17480.9, 15064.0, 11742.5, 9445.5],
-}
 
 OURS, THEIRS, FG, DIM, GRID, BG = (
     "#f0b429", "#8b949e", "#e6edf3", "#9da7b3", "#2d333b", "#0d1117",
@@ -129,51 +111,6 @@ def chart_vs_sqlite(reads, out):
     plt.close(fig)
 
 
-def spread_labels(points, min_gap):
-    """De-overlap 1-D label positions (log10 space), preserving order."""
-    order = sorted(range(len(points)), key=lambda i: points[i], reverse=True)
-    placed = []
-    out = [0.0] * len(points)
-    for i in order:
-        y = points[i]
-        if placed and placed[-1] - y < min_gap:
-            y = placed[-1] - min_gap
-        placed.append(y)
-        out[i] = y
-    return out
-
-
-def chart_campaign(out):
-    import math
-    fig, ax = plt.subplots(figsize=(9.6, 5.4), facecolor=BG)
-    dark(ax)
-    cmap = plt.get_cmap("tab10")
-    names = list(CAMPAIGN)
-    rels = {n: [v / CAMPAIGN[n][0] for v in CAMPAIGN[n]] for n in names}
-    label_y = spread_labels([math.log10(rels[n][-1]) for n in names], 0.062)
-    for i, name in enumerate(names):
-        rel = rels[name]
-        color = OURS if name == "triangle" else cmap(i % 10)
-        lw = 2.6 if name in ("triangle", "stats") else 1.6
-        ax.plot(EPOCHS, rel, marker="o", markersize=4, linewidth=lw,
-                color=color, alpha=0.95)
-        ax.annotate(f"{name} {rel[-1] * 100:.0f}%", (3, 10 ** label_y[i]),
-                    xytext=(10, 0), textcoords="offset points",
-                    fontsize=8.5, color=color, family="monospace", va="center")
-    ax.set_yscale("log")
-    ax.set_yticks([1.0, 0.5, 0.25, 0.1, 0.05],
-                  ["100%", "50%", "25%", "10%", "5%"])
-    ax.set_xlim(-0.15, 3.9)
-    ax.grid(axis="y", color=GRID, linewidth=0.6, zorder=0)
-    ax.set_title("four campaigns of measured PRDs · read-family p50 relative to the first build",
-                 fontsize=12, loc="left", pad=14, family="monospace")
-    fig.text(0.01, 0.005, "every step min-of-3 under a measurement lock, gated by a 2,468-case differential oracle",
-             fontsize=8, color=DIM, family="monospace")
-    fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
-    plt.close(fig)
-
-
 def chart_writes(writes, out):
     names = [n for n in WRITE_ORDER if n in writes]
     fig, ax = plt.subplots(figsize=(9.6, 3.4), facecolor=BG)
@@ -196,7 +133,6 @@ def main():
     reads, writes = load(dirs)
     Path("assets").mkdir(exist_ok=True)
     chart_vs_sqlite(reads, "assets/bench-vs-sqlite.svg")
-    chart_campaign("assets/bench-campaign.svg")
     chart_writes(writes, "assets/bench-writes.svg")
     for name in READ_ORDER:
         if name in reads and "theirs" in reads[name]:

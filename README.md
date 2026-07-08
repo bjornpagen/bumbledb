@@ -57,13 +57,6 @@ Same corpus, same queries, results verified identical against SQLite by a
 
 ![read families vs SQLite](assets/bench-vs-sqlite.svg)
 
-Those constants weren't free — they're the residue of four optimization
-campaigns (~40 measured PRDs), each change gated on min-of-3 timing under a
-machine-wide measurement lock, with clock-frequency bracketing to reject
-contaminated runs:
-
-![the four campaigns](assets/bench-campaign.svg)
-
 And the honest chart — durable writes are an fsync-latency product on both
 engines, and bulk load favors SQLite's write path; we publish it anyway:
 
@@ -85,8 +78,8 @@ python3 scripts/bench_viz.py bench-out/run1 bench-out/run2 bench-out/run3
 
 ## Why it's fast
 
-Three design decisions do most of the work; the microarchitecture campaigns
-did the rest.
+Three design decisions do most of the work; deliberate microarchitecture
+does the rest.
 
 1. **Representation over control flow.** Relations live as columnar images
    (decoded once per generation, cached); queries run over a lazy trie
@@ -101,22 +94,18 @@ did the rest.
    obligations, idempotent writes — the algebra removes work before the
    machine ever sees it.
 
-On top of that sit the six microarchitectural mechanisms that survived
-measurement (bucket-of-8 tag-byte maps at occupancy-invariant load factors,
-SWAR window probes, const-generic key monomorphization, one software-prefetch
-pass, alias-hoisted loops, and a single run-coherence memo) — and, just as
-deliberately, a graveyard of mechanisms that were built, measured, refuted,
-and deleted. Every surviving optimization carries a citation to its measured
-win at its site; **"it was in a PRD" is not a defense** — two of the last
-campaign's own features were deleted by its final audit.
+On top of that sit six microarchitectural mechanisms, each earning its
+complexity with a measured, cited win at its site: bucket-of-8 tag-byte maps
+at occupancy-invariant load factors, SWAR window probes, const-generic key
+monomorphization, one software-prefetch pass, alias-hoisted loops, and a
+single run-coherence memo. Nothing else made the cut — an optimization that
+cannot cite its number does not ship.
 
 ## Architecture
 
-The design is documented before it is code. Five earlier implementations
-(v1–v5) were built and discarded; the current engine was rebuilt docs-first,
-decision by decision, from the documents below (the reset and its motivating
-review live in git history at `1b65ae8`). When code and these docs disagree,
-one of them is wrong and the repo is broken until they agree.
+The design is documented before it is code, and the docs are normative:
+when code and these docs disagree, one of them is wrong and the repo is
+broken until they agree.
 
 | doc | what it owns |
 |---|---|
@@ -132,11 +121,9 @@ The algorithmic reference is Wang, Willsey & Suciu, *Free Join: Unifying
 Worst-Case Optimal and Traditional Joins* (arXiv:2301.10841), vendored in
 [`docs/free-join-paper/`](docs/free-join-paper/).
 
-The performance work is a paper trail, not a changelog:
-
-- [`docs/perf/`](docs/perf/) — campaign one: finish the design's batching, fix the laziness bugs (stats −54%, chain −36%).
-- [`docs/silicon/`](docs/silicon/) — campaign two: map geometry, window probes, instruction diet ([final.md](docs/silicon/final.md): geomean −31%, ALL-WIN vs SQLite).
-- [`docs/silicon2/`](docs/silicon2/) — campaign three, driven by an eight-experiment microbenchmark fleet: const-arity monomorphization, the bucket-of-8 layout, and **three refutations with full evidence** ([final2.md](docs/silicon2/final2.md): geomean −15% further; [PRD 04](docs/silicon2/04-key-ahead-under-pressure.md) and [PRD 06](docs/silicon2/06-bucket-probe-neon-sweep.md) are the graves; [PRD 10](docs/silicon2/10-resimplify.md) is the audit that made deletion a first-class optimization).
+The current performance denominator — every family's pinned number, the
+phase tables, and the surviving-walls ledger — is
+[docs/silicon2/final2.md](docs/silicon2/final2.md).
 
 ## Measurement discipline
 
@@ -157,21 +144,9 @@ by machinery, not judgment:
   gate, not a code review.
 - **Microbench pins**: load-bearing mechanisms carry `#[ignore]`d in-tree
   benchmarks that re-assert their measured margins on demand.
-- **Refutation is a result.** When a mechanism measures as a loss, it is
-  reverted and its PRD documents the numbers and the mechanism of failure —
-  the third campaign's most valuable outputs were an attribution error it
-  caught in its own bookkeeping and two textbook cases of isolation wins
-  inverting in situ.
-
-## Code style
-
-The tree follows a Rust translation of the [skarnet](https://skarnet.org/software/)
-style: every module is a small "header" file (types, constants, invariant
-docs — no bodies) plus a directory of leaves, one mechanism per file, tests
-quarantined into their own leaves. 375 files, most under 100 lines; the four
-former godfiles (`run.rs`, `colt.rs`, `sink.rs`, `prepared.rs` — 10k lines
-between them) are now headers you can read in one screen. Doc comments carry
-the measurement citations; history lives in `docs/`, never in code comments.
+- **Refutation is a result.** A mechanism that measures as a loss is
+  reverted, and the record keeps the numbers and the failure mechanism —
+  deletion is gated exactly like addition.
 
 ## Repository layout
 
@@ -183,7 +158,7 @@ crates/bumbledb/         the engine (LMDB via heed + blake3 are the only deps)
   src/plan/, src/ir/     planner and query IR
 crates/bumbledb-macros/  the schema! proc macro (hand-rolled, no syn/quote)
 crates/bumbledb-bench/   the oracle + benchmark suite (gen/verify/bench/trace)
-docs/                    normative architecture + the campaign paper trail
+docs/                    the normative architecture + pinned measurement records
 scripts/                 measure.sh, check-asm.sh, check.sh, bench_viz.py
 ```
 
