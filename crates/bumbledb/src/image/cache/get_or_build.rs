@@ -1,0 +1,109 @@
+//! The read/build path: return the reader's image, building outside the
+//! lock on a miss (docs/architecture/40-storage.md).
+
+use std::sync::Arc;
+
+use crate::error::Result;
+use crate::image::{build, RelationImage};
+use crate::schema::{RelationId, Schema};
+use crate::storage::env::ReadTxn;
+
+use super::ImageCache;
+
+impl ImageCache {
+    /// Returns the image of `rel` at the reader's generation, building it
+    /// outside the lock on a miss. Two same-generation readers racing to
+    /// build may both build; insert-if-absent means the loser adopts the
+    /// winner's `Arc` and drops its own (accepted waste, no latch).
+    ///
+    /// # Errors
+    ///
+    /// Build errors (`Lmdb`, `Corruption`) propagate.
+    ///
+    /// # Panics
+    ///
+    /// Only on a poisoned cache mutex (a prior panic while holding it).
+    pub fn get_or_build(
+        &self,
+        txn: &ReadTxn<'_>,
+        schema: &Schema,
+        rel: RelationId,
+    ) -> Result<Arc<RelationImage>> {
+        let generation = txn.generation()?;
+        let key = (rel, generation);
+        let newest = {
+            let inner = self.inner.lock().expect("cache mutex");
+            if let Some(image) = inner.map.get(&key) {
+                #[cfg(feature = "trace")]
+                self.counters
+                    .hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                crate::obs::event(
+                    crate::obs::names::CACHE_HIT,
+                    crate::obs::Category::Cache,
+                    u64::from(rel.0),
+                    0,
+                );
+                return Ok(Arc::clone(image));
+            }
+            inner.newest
+        };
+        #[cfg(feature = "trace")]
+        self.counters
+            .misses
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        // Build outside the lock.
+        let image = {
+            let mut span = crate::obs::span_args(
+                crate::obs::names::IMAGE_BUILD,
+                crate::obs::Category::Image,
+                u64::from(rel.0),
+                0,
+            );
+            #[cfg(feature = "trace")]
+            self.counters
+                .builds
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let image = build(txn, schema, rel)?;
+            span.set_args(u64::from(rel.0), image.byte_size() as u64);
+            image
+        };
+
+        // An old-generation reader keeps its image query-local: inserting it
+        // would poison the map for nobody (its generation is already evicted).
+        if generation < newest {
+            crate::obs::event(
+                crate::obs::names::CACHE_QUERY_LOCAL,
+                crate::obs::Category::Cache,
+                u64::from(rel.0),
+                0,
+            );
+            return Ok(image);
+        }
+
+        let mut inner = self.inner.lock().expect("cache mutex");
+        // Re-check under the insert lock: a commit may have evicted this
+        // generation between the first lock and here — inserting against
+        // the stale `newest` would undo the eviction one entry at a time
+        // and leak the image until the next state-changing commit.
+        if generation < inner.newest {
+            return Ok(image);
+        }
+        match inner.map.entry(key) {
+            std::collections::hash_map::Entry::Occupied(winner) => {
+                crate::obs::event(
+                    crate::obs::names::CACHE_ADOPT,
+                    crate::obs::Category::Cache,
+                    u64::from(rel.0),
+                    0,
+                );
+                Ok(Arc::clone(winner.get()))
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(Arc::clone(&image));
+                Ok(image)
+            }
+        }
+    }
+}
