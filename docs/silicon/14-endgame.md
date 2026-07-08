@@ -111,3 +111,11 @@ Gates:
   triangle/spread, zero elsewhere), and the surviving walls with
   owners; verify green; zero-alloc green; clippy green; check-asm green
   on all accumulated gates.
+
+> **Superseded (docs/silicon2/08, 2026-07-07):** fleet exp 14 measured
+> the per-pass overhead these levers amortize at 11–30 ns — 20× below
+> the campaign's assumption — pricing cover-stable segregation (means
+> 37 → 39) and the 2×-batch cascade (probe passes −6%, time ±0%) as
+> ~1% effects. Both are deleted there; pump is back to the single
+> in-order pass with flush-on-cover-change, and cross-call fill carry
+> is rejected before construction (complete win 0.2–1.2% of triangle).

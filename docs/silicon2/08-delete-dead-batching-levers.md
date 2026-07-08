@@ -63,3 +63,34 @@ deletes it.
 
 Any new batching mechanism; touching the probe passes themselves
 (01/06/07 own those); pump's cancellation/origin machinery.
+
+## Result
+
+**Shipped**: pump is back to the single in-order pass — per-entry
+dynamic cover choice at processing time, `probe_pass` flushed on cover
+change; pass 1, the `entry_covers` scratch field (+ init), and the
+`seen_covers` two-level group loop are deleted. The cascade threshold
+reverted to one batch (`pending_len >= self.batch`) with the
+bounded-two-batches contract restored. Cross-call fill carry is
+recorded as rejected-by-measurement in the pump header comment.
+run.rs diff: **+80/−124 = net −44 lines, deletion-dominated** ✓.
+docs/silicon/14's Result carries the superseded-by note.
+
+**Grep gates**: zero `entry_covers` / `seen_covers` / `batch * 2` ✓.
+
+**Neutrality** (min-of-3 vs post-07, `bench-out/s2p08-{1,2,3}`, verify
+stamp `47280c43`): triangle 9,360.0 (+1.8%), stats 1,197.5 (−0.8%),
+spread 10,229.6 (−0.1%), range 20.5, chain p95 147.2 (improves),
+cold_fk_walk 3,836.3 (−0.9%), point/string/balance flat — all within
+±2%. skew p95 785.5 is +3.0% vs post-07's 762.7 and inside its
+demonstrated session band (749–798 across five batteries of unchanged
+skew-relevant code); ruled noise, not restoration bug. Exp 14's
+pricing confirmed end to end: two lever deletions, zero measurable
+cost.
+
+**Tripwires**: D2 randomized differential, both two-parent interleave
+fixtures, batch-size equality, and
+`pipelined_middle_nodes_probe_in_cross_parent_batches` all green
+UNCHANGED — the mean gate was already at the original ≥ 32 and the
+pending-capacity bound (≤ 2 batches) remains valid under the 1× trigger.
+Verify 2,468 green; zero-alloc holds; clippy clean; check-asm green.

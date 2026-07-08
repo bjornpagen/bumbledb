@@ -527,11 +527,6 @@ struct NodeScratch {
     /// Per pending entry: the D2 origin it descends from (docs/perf/
     /// PRD 10) — minted at the absorb node's routing, inherited below.
     pending_origins: Vec<u32>,
-    /// Per pending entry: the chosen cover (low 7 bits) and its
-    /// exactness flag (bit 7), precomputed by pump's pass 1
-    /// (docs/silicon/14 — cover-stable batch segregation); 0xFF =
-    /// cancelled at pass-1 time.
-    entry_covers: Vec<u8>,
     /// Per probe-batch element: the origin (aligned with `parents`).
     element_origins: Vec<u32>,
 }
@@ -770,7 +765,6 @@ impl Executor {
                     pending_cursors: Vec::new(),
                     pending_len: 0,
                     pending_origins: Vec::new(),
-                    entry_covers: Vec::new(),
                     element_origins: Vec::with_capacity(batch),
                 }
             })
@@ -903,29 +897,42 @@ impl Executor {
         let mut scratch = std::mem::take(&mut self.scratch[node_idx]);
         let carried_w = tables.carried[node_idx].len();
 
-        // Pass 1 (docs/silicon/14 — cover-stable batch segregation):
-        // the per-entry dynamic cover choice (the magnitude-first rule,
-        // held per parent) is PRECOMPUTED so pass 2 can process entries
-        // grouped by cover. Flush-on-cover-change over interleaved
-        // parents capped triangle's probe-batch means at ~37 of 128;
-        // grouping restores full batches. The choice itself is a
-        // performance heuristic — any cover is correct — so choosing
-        // from pass-1 colt state (a force during pass 2 could have
-        // flipped an Estimate to Exact) changes nothing semantic.
-        scratch.entry_covers.clear();
+        // One in-order pass (docs/silicon2/08): per-entry dynamic cover
+        // choice at processing time, probe_pass flushed on cover change.
+        // Cover-stable segregation (docs/silicon/14) precomputed covers
+        // and grouped entries to lift probe-batch means 37 → 39 — then
+        // exp 14 priced the per-pass overhead it amortizes at 11–30 ns,
+        // TWENTY TIMES below the campaign's assumption, making the whole
+        // batch-mean lever class a ~1% effect; the two-pass machinery is
+        // deleted. Cross-call fill carry is rejected by the same number
+        // before ever being built: lifting batch means to ~128 is worth
+        // 0.2–1.2% of triangle p50 at the measured pass overhead
+        // (bumblebench exp 14) — the lever class is closed. The cover
+        // choice itself is a performance heuristic — any cover is
+        // correct — so choosing from live colt state (a force during an
+        // earlier flush could have flipped an Estimate to Exact) changes
+        // nothing semantic.
+        let node = &plan.nodes()[node_idx];
+        let mut fill = 0usize;
+        // The open cover run: (cover_sub, arity, occ, level).
+        let mut group: Option<(usize, usize, usize, usize)> = None;
         for entry in 0..scratch.pending_len {
+            if self.all_cancelled {
+                break;
+            }
             // D2 (PRD 10): a cancelled origin's pending work is dead —
             // its outputs could only duplicate rows already seen. Origin
             // ids are meaningful strictly BELOW the absorb node (minted
             // at its routing); above it entries carry the meaningless
-            // seed and must never be filtered.
+            // seed and must never be filtered. Cancellation fired during
+            // an earlier entry's flush is seen here: the check runs at
+            // each entry's turn.
             if tables.absorb.is_some_and(|a| node_idx > a)
                 && self.origin_cancelled(scratch.pending_origins[entry])
             {
-                scratch.entry_covers.push(0xFF);
                 continue;
             }
-            let node = &plan.nodes()[node_idx];
+            counters.node_entry(node_idx);
             let mut best: Option<(usize, KeyCount)> = None;
             for &cover in &node.covers {
                 let sub_idx = usize::from(cover);
@@ -944,114 +951,65 @@ impl Executor {
                 }
             }
             let (cover_sub, count) = best.expect("validated plans have non-empty cover sets");
-            let exact = matches!(count, KeyCount::Exact(_));
-            scratch
-                .entry_covers
-                .push(u8::try_from(cover_sub).expect("covers fit u8") | if exact { 0x80 } else { 0 });
-        }
-
-        // Pass 2: per cover in first-appearance order, every live entry
-        // with that cover — cover-stable batches, one flush per group
-        // tail instead of one per parent flip.
-        let node = &plan.nodes()[node_idx];
-        let mut seen_covers = 0u64;
-        for first in 0..scratch.pending_len {
-            let tagged = scratch.entry_covers[first];
-            if tagged == 0xFF {
-                continue;
-            }
-            let group_cover = usize::from(tagged & 0x7F);
-            if seen_covers & (1 << group_cover) != 0 {
-                continue;
-            }
-            seen_covers |= 1 << group_cover;
-            let cover_sub = group_cover;
-            let cur_arity = node.subatoms[cover_sub].vars.len();
+            counters.cover_choice(node_idx, cover_sub, matches!(count, KeyCount::Exact(_)));
             let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
             let cover_level = tables.entry_level[node_idx][cover_occ];
-            let mut fill = 0usize;
-            for entry in first..scratch.pending_len {
-                if self.all_cancelled {
-                    break;
+            let cur_arity = node.subatoms[cover_sub].vars.len();
+            if let Some((open_sub, open_arity, _, _)) = group {
+                if open_sub != cover_sub && fill > 0 {
+                    self.probe_pass(
+                        tables, plan, node_idx, open_sub, open_arity, fill, &mut scratch,
+                        colts, bindings, sink, counters,
+                    );
+                    fill = 0;
                 }
-                let tagged = scratch.entry_covers[entry];
-                if tagged == 0xFF || usize::from(tagged & 0x7F) != cover_sub {
-                    continue;
-                }
-                // Cancellation can fire DURING pass 2 (a leaf skip in an
-                // earlier group): re-check per entry.
-                if tables.absorb.is_some_and(|a| node_idx > a)
-                    && self.origin_cancelled(scratch.pending_origins[entry])
-                {
-                    continue;
-                }
-                counters.node_entry(node_idx);
-                counters.cover_choice(node_idx, cover_sub, tagged & 0x80 != 0);
-                let cover_cursor = match tables.carried_col[node_idx][cover_occ] {
-                    Some(col) => scratch.pending_cursors[entry * carried_w + col],
-                    None => colts[cover_occ].start(),
-                };
-                let mut token = BatchToken::default();
-                loop {
-                    let want = self.batch - fill;
-                    let (yielded, next) = colts[cover_occ].iter_batch(
-                        cover_cursor,
-                        cover_level,
-                        token,
+            }
+            group = Some((cover_sub, cur_arity, cover_occ, cover_level));
+            let cover_cursor = match tables.carried_col[node_idx][cover_occ] {
+                Some(col) => scratch.pending_cursors[entry * carried_w + col],
+                None => colts[cover_occ].start(),
+            };
+            let mut token = BatchToken::default();
+            loop {
+                let want = self.batch - fill;
+                let (yielded, next) = colts[cover_occ].iter_batch(
+                    cover_cursor,
+                    cover_level,
+                    token,
                     &mut scratch.entry_keys[fill * cur_arity..],
                     &mut scratch.children[fill..],
                     want,
                 );
-                    counters.batch(node_idx, yielded);
-                    for _ in 0..yielded {
-                        scratch
-                            .parents
-                            .push(u32::try_from(entry).expect("pending fits u32"));
-                        scratch.element_origins.push(scratch.pending_origins[entry]);
-                    }
-                    fill += yielded;
-                    token = next;
-                    if fill == self.batch {
-                        self.probe_pass(
-                            tables,
-                            plan,
-                            node_idx,
-                            cover_sub,
-                            cur_arity,
-                            fill,
-                            &mut scratch,
-                            colts,
-                            bindings,
-                            sink,
-                            counters,
-                        );
-                        fill = 0;
-                        if yielded == want {
-                            continue; // the entry may have more; resume its token
-                        }
-                    }
-                    if yielded < want {
-                        break; // entry exhausted
+                counters.batch(node_idx, yielded);
+                for _ in 0..yielded {
+                    scratch
+                        .parents
+                        .push(u32::try_from(entry).expect("pending fits u32"));
+                    scratch.element_origins.push(scratch.pending_origins[entry]);
+                }
+                fill += yielded;
+                token = next;
+                if fill == self.batch {
+                    self.probe_pass(
+                        tables, plan, node_idx, cover_sub, cur_arity, fill, &mut scratch,
+                        colts, bindings, sink, counters,
+                    );
+                    fill = 0;
+                    if yielded == want {
+                        continue; // the entry may have more; resume its token
                     }
                 }
+                if yielded < want {
+                    break; // entry exhausted
+                }
             }
-            if fill > 0 {
+        }
+        if fill > 0 {
+            if let Some((open_sub, open_arity, _, _)) = group {
                 self.probe_pass(
-                    tables,
-                    plan,
-                    node_idx,
-                    cover_sub,
-                    cur_arity,
-                    fill,
-                    &mut scratch,
-                    colts,
-                    bindings,
-                    sink,
-                    counters,
+                    tables, plan, node_idx, open_sub, open_arity, fill, &mut scratch, colts,
+                    bindings, sink, counters,
                 );
-            }
-            if self.all_cancelled {
-                break;
             }
         }
         scratch.pending_len = 0;
@@ -1656,15 +1614,13 @@ impl Executor {
         counters.phase_end(node_idx, JoinPhase::Descend);
         scratch.parents.clear();
         scratch.element_origins.clear();
-        // Cascade at TWO accumulated batches (docs/silicon/14): the
-        // endgame trace showed pump-call granularity — not cover flips —
-        // capping probe-batch means at ~37 of 128 (each ~one-batch
-        // cascade yields ~one batch of rows, split across group tails).
-        // Doubling the pending accumulation doubles rows per pump call
-        // and halves the per-pass overhead. Bounded memory: the child
-        // holds at most three batches transiently (2×batch trigger plus
-        // one pass's appends before the next check).
-        if !leaf && self.scratch[node_idx + 1].pending_len >= self.batch * 2 {
+        // Cascade at one accumulated batch. Bounded memory: the child
+        // holds at most two batches transiently (the 1×batch trigger
+        // plus one pass's appends before the next check). The 2×-batch
+        // threshold (docs/silicon/14) measured 0.0–0.6% once exp 14
+        // priced the per-pass overhead at 11–30 ns — reverted to the
+        // simpler contract (docs/silicon2/08).
+        if !leaf && self.scratch[node_idx + 1].pending_len >= self.batch {
             self.pump(tables, plan, node_idx + 1, colts, bindings, sink, counters);
         }
     }
