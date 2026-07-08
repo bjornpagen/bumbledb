@@ -38,7 +38,7 @@ bumbledb::schema! {
   `==` for bidirectional. Projection lists are positional between the two sides;
   selections follow `|` as comma-separated `field == literal` pairs; literals are
   enum variant names, integer literals, `true`/`false`, string/byte literals, and
-  `[start, end)` interval literals. The macro lowers statements to descriptors and
+  `start..end` interval literals (half-open). The macro lowers statements to descriptors and
   performs no semantic validation beyond parse shape — the schema validation
   boundary (`30-dependencies.md` roster) is the judge, so macro-expansion errors
   are parse errors and everything semantic is a normal typed error with the

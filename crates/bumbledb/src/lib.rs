@@ -75,10 +75,44 @@ pub use interval::Interval;
 pub use ir::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
 pub use schema::{FieldId, RelationId, Schema};
 
-/// The declarative schema surface (docs/architecture/60-api.md). (The macro and the `schema`
+/// The declarative schema surface (docs/architecture/70-api.md). (The macro and the `schema`
 /// module share a name across disjoint namespaces — deliberate:
 /// `bumbledb::schema! {}` declares, `bumbledb::schema::…` are the
 /// descriptor types.)
+///
+/// The grammar is parse-shape only; semantics flow through schema
+/// validation. Three shapes the grammar itself refuses:
+///
+/// Field-level constraint words do not exist — everything relational is a
+/// statement:
+///
+/// ```compile_fail
+/// bumbledb::schema! {
+///     relation Holder { id: u64 as HolderId, serial, unique }
+/// }
+/// ```
+///
+/// An FD's right side is its own relation (`R(X) -> R`):
+///
+/// ```compile_fail
+/// bumbledb::schema! {
+///     relation Holder { id: u64 as HolderId, serial }
+///     relation Account { id: u64 as AccountId, serial, holder: u64 as HolderId }
+///     Account(holder) -> Holder;
+/// }
+/// ```
+///
+/// An FD takes no selection (the descriptor cannot represent one):
+///
+/// ```compile_fail
+/// bumbledb::schema! {
+///     relation Account {
+///         id: u64 as AccountId, serial,
+///         kind: enum Kind { Checking, Savings },
+///     }
+///     Account(id | kind == Savings) -> Account;
+/// }
+/// ```
 pub use bumbledb_macros::schema;
 
 /// `schema!` expansion plumbing. Not API: no stability promises, nothing
@@ -91,7 +125,10 @@ pub mod __private {
         resolve_string,
     };
     pub use crate::encoding::ValueRef;
-    pub use crate::schema::runtime::{build_schema, FieldDecl, FieldTy, RelationDecl};
+    pub use crate::schema::runtime::{
+        build_schema, FieldDecl, FieldTy, LiteralDecl, RelationDecl, SideDecl, StatementDecl,
+    };
+    pub use crate::schema::IntervalElement;
 }
 
 #[cfg(test)]

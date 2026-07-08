@@ -1,4 +1,4 @@
-//! The `schema!` proc-macro (docs/architecture/60-api.md): bumbledb's declarative schema
+//! The `schema!` proc-macro (docs/architecture/70-api.md): bumbledb's declarative schema
 //! surface. A small, rigid grammar — this is Rust-side declaration, not a
 //! query language — hand-parsed over the raw token stream (no `syn`, no
 //! `quote`: the grammar is not Rust syntax and the dependency would buy
@@ -6,24 +6,34 @@
 //!
 //! ```text
 //! schema! {
+//!     relation Holder  { id: u64 as HolderId, serial, name: str }
 //!     relation Account {
 //!         id:     u64 as AccountId, serial,
-//!         holder: u64 as HolderId,  fk(Holder.id),
-//!         status: enum Status { Active, Closed },
-//!         unique(holder, status),
+//!         holder: u64 as HolderId,
+//!         kind:   enum Kind { Checking, Savings },
+//!         active: interval<i64> as ActiveDuring,
 //!     }
-//!     relation Holder { id: u64 as HolderId, serial, name: str }
+//!     relation SavingsTerms { account: u64 as AccountId, rate_bps: i64 }
+//!
+//!     Account(holder) <= Holder(id);
+//!     Account(id | kind == Savings) == SavingsTerms(account);
+//!     SavingsTerms(account) -> SavingsTerms;
 //! }
 //! ```
 //!
 //! Types: `bool`, `u64`, `i64`, `str`, `bytes`, inline `enum Name { .. }`
 //! (the name names the generated Rust enum only — engine identity is the
-//! structural variant list). `as NewType` generates the host-side nominal
-//! newtype. `serial` implies the auto-unique (writing `unique` too is
-//! tolerated and ignored). Relation-level `unique(f, ..)` and
-//! `fk(f, .. -> Rel.target)` declare compound constraints; the target
-//! names a unique constraint (a serial field's auto-unique shares its
-//! field's name).
+//! structural variant list), `interval<i64>`, `interval<u64>`. `as NewType`
+//! generates the host-side nominal newtype (legal on u64, i64, and both
+//! intervals). `serial` auto-materializes `R(field) -> R` at schema
+//! resolution. **There are no field-level constraint modifiers** — everything
+//! relational is a dependency statement between the relation blocks
+//! (docs/architecture/30-dependencies.md): `R(X) -> R` (functionality),
+//! `A(X | σ) <= B(Y | ψ)` (containment), `==` lowered here to the two
+//! adjacent containments, `A <= B` first. Selection literals are typed
+//! against the selected field in the macro (every enum's variant list is in
+//! the same invocation, so variant names resolve to ordinals here); interval
+//! literals are written `start..end`, half-open.
 //!
 //! The macro validates only its own grammar (parse errors at the call
 //! site): expansion emits data plus calls into the library's runtime
@@ -36,6 +46,32 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::iter::Peekable;
 
+/// The element domain of an `interval<..>` field: closed to the two
+/// orderable scalars, mirroring the engine's `IntervalElement`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntervalElement {
+    U64,
+    I64,
+}
+
+impl IntervalElement {
+    /// The Rust scalar type the interval ranges over.
+    fn rust(self) -> &'static str {
+        match self {
+            Self::U64 => "u64",
+            Self::I64 => "i64",
+        }
+    }
+
+    /// The engine-side variant-name suffix (`IntervalU64` / `IntervalI64`).
+    fn suffix(self) -> &'static str {
+        match self {
+            Self::U64 => "U64",
+            Self::I64 => "I64",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum FieldTy {
     Bool,
@@ -44,6 +80,7 @@ enum FieldTy {
     Str,
     Bytes,
     Enum { name: String, variants: Vec<String> },
+    Interval(IntervalElement),
 }
 
 #[derive(Debug, Clone)]
@@ -52,19 +89,66 @@ struct Field {
     ty: FieldTy,
     newtype: Option<String>,
     serial: bool,
-    unique: bool,
-    /// `(target relation, target constraint/field name)`.
-    fk: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
 struct Relation {
     name: String,
     fields: Vec<Field>,
-    /// Compound uniques: field-name lists.
-    uniques: Vec<Vec<String>>,
-    /// Compound FKs: `(field names, target relation, target name)`.
-    fks: Vec<(Vec<String>, String, String)>,
+}
+
+/// A selection literal as written — classified by its own syntax, typed
+/// against the selected field's declaration at emission. Integer and
+/// string/byte-string token text is spliced verbatim into the generated
+/// `LiteralDecl`, so rustc polices the value itself.
+#[derive(Debug, Clone)]
+enum Literal {
+    Bool(bool),
+    /// `[-] int`.
+    Int {
+        negative: bool,
+        text: String,
+    },
+    /// A bare ident: an enum variant name, resolved to its ordinal here.
+    Variant(String),
+    /// A string literal's raw token text, quotes included.
+    Str(String),
+    /// A byte-string literal's raw token text.
+    Bytes(String),
+    /// `start..end`, half-open — each bound `[-] int`.
+    Interval {
+        start: (bool, String),
+        end: (bool, String),
+    },
+}
+
+/// One side of a dependency statement: `R(fields [ | field == literal, .. ])`.
+#[derive(Debug, Clone)]
+struct Side {
+    relation: String,
+    projection: Vec<String>,
+    selection: Vec<(String, Literal)>,
+}
+
+/// One parsed dependency statement. `==` never reaches here: it is lowered
+/// at parse into two adjacent `Containment`s, `A <= B` first.
+#[derive(Debug, Clone)]
+enum Statement {
+    Functionality {
+        relation: String,
+        projection: Vec<String>,
+    },
+    Containment {
+        source: Side,
+        target: Side,
+    },
+}
+
+/// The whole parsed invocation: relation blocks plus dependency statements,
+/// each list in source order.
+struct SchemaAst {
+    relations: Vec<Relation>,
+    statements: Vec<Statement>,
 }
 
 type Tokens = Peekable<proc_macro::token_stream::IntoIter>;
@@ -101,12 +185,23 @@ fn take_group(tokens: &mut Tokens, delimiter: Delimiter, what: &str) -> TokenStr
     }
 }
 
+/// The deleted field-modifier vocabulary never parses, anywhere
+/// (docs/architecture/30-dependencies.md — everything relational is a
+/// statement).
+fn reject_deleted_word(word: &str) {
+    assert!(
+        !matches!(word, "unique" | "fk"),
+        "schema!: field-level constraints do not exist; write a statement — \
+         see docs/architecture/30-dependencies.md"
+    );
+}
+
 /// Parses a comma-separated identifier list.
 fn ident_list(stream: TokenStream) -> Vec<String> {
     let mut names = Vec::new();
     let mut tokens = stream.into_iter().peekable();
     while tokens.peek().is_some() {
-        names.push(expect_ident(&mut tokens, "a field name"));
+        names.push(expect_ident(&mut tokens, "a name"));
         if peek_punct(&mut tokens, ',') {
             tokens.next();
         }
@@ -114,55 +209,19 @@ fn ident_list(stream: TokenStream) -> Vec<String> {
     names
 }
 
-/// Parses `Rel.target` out of an fk group's tail.
-fn fk_target(tokens: &mut Tokens) -> (String, String) {
-    let relation = expect_ident(tokens, "a target relation name");
-    expect_punct(tokens, '.');
-    let target = expect_ident(tokens, "a target constraint or field name");
-    (relation, target)
-}
-
-/// Parses one relation body.
+/// Parses one relation body: fields only — everything relational is a
+/// statement outside the block.
 fn parse_relation(name: String, body: TokenStream) -> Relation {
     let mut relation = Relation {
         name,
         fields: Vec::new(),
-        uniques: Vec::new(),
-        fks: Vec::new(),
     };
     let mut tokens = body.into_iter().peekable();
     while tokens.peek().is_some() {
-        let ident = expect_ident(&mut tokens, "a field name or clause");
-        match (ident.as_str(), tokens.peek()) {
-            // Relation-level compound clauses: `unique(..)` / `fk(.. -> R.t)`.
-            ("unique", Some(TokenTree::Group(g))) if g.delimiter() == Delimiter::Parenthesis => {
-                let group = take_group(&mut tokens, Delimiter::Parenthesis, "a field list");
-                relation.uniques.push(ident_list(group));
-            }
-            ("fk", Some(TokenTree::Group(g))) if g.delimiter() == Delimiter::Parenthesis => {
-                let group = take_group(&mut tokens, Delimiter::Parenthesis, "an fk clause");
-                let mut inner = group.into_iter().peekable();
-                let mut fields = Vec::new();
-                loop {
-                    fields.push(expect_ident(&mut inner, "a field name"));
-                    if peek_punct(&mut inner, ',') {
-                        inner.next();
-                        continue;
-                    }
-                    break;
-                }
-                expect_punct(&mut inner, '-');
-                expect_punct(&mut inner, '>');
-                let (target_relation, target) = fk_target(&mut inner);
-                relation.fks.push((fields, target_relation, target));
-            }
-            // A field entry.
-            _ => {
-                expect_punct(&mut tokens, ':');
-                let field = parse_field(ident, &mut tokens);
-                relation.fields.push(field);
-            }
-        }
+        let ident = expect_ident(&mut tokens, "a field name");
+        reject_deleted_word(&ident);
+        expect_punct(&mut tokens, ':');
+        relation.fields.push(parse_field(ident, &mut tokens));
         if peek_punct(&mut tokens, ',') {
             tokens.next();
         }
@@ -170,9 +229,10 @@ fn parse_relation(name: String, body: TokenStream) -> Relation {
     relation
 }
 
-/// Parses a field's type, optional newtype, and trailing modifiers.
+/// Parses a field's type, optional `as NewType`, and optional `, serial`.
 fn parse_field(name: String, tokens: &mut Tokens) -> Field {
-    let ty_name = expect_ident(tokens, "a type (bool/u64/i64/str/bytes/enum)");
+    let ty_name = expect_ident(tokens, "a type (bool/u64/i64/str/bytes/enum/interval)");
+    reject_deleted_word(&ty_name);
     let ty = match ty_name.as_str() {
         "bool" => FieldTy::Bool,
         "u64" => FieldTy::U64,
@@ -187,6 +247,16 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
                 variants: ident_list(body),
             }
         }
+        "interval" => {
+            expect_punct(tokens, '<');
+            let element = match expect_ident(tokens, "an interval element (i64/u64)").as_str() {
+                "u64" => IntervalElement::U64,
+                "i64" => IntervalElement::I64,
+                other => panic!("schema!: interval element must be i64 or u64, found `{other}`"),
+            };
+            expect_punct(tokens, '>');
+            FieldTy::Interval(element)
+        }
         other => panic!("schema!: unknown type `{other}`"),
     };
     let mut field = Field {
@@ -194,98 +264,238 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
         ty,
         newtype: None,
         serial: false,
-        unique: false,
-        fk: None,
     };
     if peek_ident(tokens).as_deref() == Some("as") {
         tokens.next();
         assert!(
-            matches!(field.ty, FieldTy::U64 | FieldTy::I64),
-            "schema!: `as NewType` applies to u64/i64 fields only"
+            matches!(field.ty, FieldTy::U64 | FieldTy::I64 | FieldTy::Interval(_)),
+            "schema!: `as NewType` applies to u64/i64/interval fields only"
         );
         field.newtype = Some(expect_ident(tokens, "a newtype name"));
     }
-    // Modifiers: `, serial` `, unique` `, fk(Rel.target)` until the next
-    // field (an ident followed by `:`), a relation-level clause, or the end.
-    loop {
-        if !peek_punct(tokens, ',') {
-            break;
-        }
+    // Trailing modifier: `, serial` — distinguished from the next field
+    // (an ident followed by `:`) by lookahead.
+    if peek_punct(tokens, ',') {
         let mut lookahead = tokens.clone();
         lookahead.next(); // the comma
-        match lookahead.peek() {
-            Some(TokenTree::Ident(ident)) => {
-                let word = ident.to_string();
-                lookahead.next();
-                let starts_clause = matches!(
-                    (word.as_str(), lookahead.peek()),
-                    ("unique" | "fk", Some(TokenTree::Group(g)))
-                        if g.delimiter() == Delimiter::Parenthesis
+        if let Some(TokenTree::Ident(ident)) = lookahead.peek() {
+            let word = ident.to_string();
+            lookahead.next();
+            let is_field_name =
+                matches!(lookahead.peek(), Some(TokenTree::Punct(p)) if p.as_char() == ':');
+            if !is_field_name {
+                reject_deleted_word(&word);
+                assert_eq!(
+                    word, "serial",
+                    "schema!: unknown field modifier `{word}` (the only modifier is `serial`)"
                 );
-                let is_modifier = !starts_clause
-                    && matches!(word.as_str(), "serial" | "unique")
-                    && !matches!(lookahead.peek(), Some(TokenTree::Punct(p)) if p.as_char() == ':');
-                let is_field_fk = word == "fk" && starts_clause && {
-                    // A field-level fk has exactly `Rel.target` inside;
-                    // compound (relation-level) fks carry a `->`. Peek the
-                    // group to distinguish.
-                    if let Some(TokenTree::Group(g)) = lookahead.peek() {
-                        !g.stream().to_string().contains("->")
-                    } else {
-                        false
-                    }
-                };
-                if is_modifier {
-                    tokens.next(); // comma
-                    tokens.next(); // the modifier word
-                    match word.as_str() {
-                        "serial" => {
-                            assert!(
-                                field.newtype.is_some(),
-                                "schema!: serial field `{}` needs `as NewType` — without it \
-                                 there is no typed alloc path (use the descriptor API for a \
-                                 raw-u64 serial)",
-                                field.name
-                            );
-                            field.serial = true;
-                        }
-                        "unique" => field.unique = true,
-                        _ => unreachable!(),
-                    }
-                } else if is_field_fk {
-                    tokens.next(); // comma
-                    tokens.next(); // `fk`
-                    let group = take_group(tokens, Delimiter::Parenthesis, "an fk target");
-                    let mut inner = group.into_iter().peekable();
-                    field.fk = Some(fk_target(&mut inner));
-                } else {
-                    break; // next field or relation-level clause
-                }
+                assert!(
+                    field.newtype.is_some(),
+                    "schema!: serial field `{}` needs `as NewType` — without it \
+                     there is no typed alloc path (use the descriptor API for a \
+                     raw-u64 serial)",
+                    field.name
+                );
+                field.serial = true;
+                tokens.next(); // the comma
+                tokens.next(); // `serial`
             }
-            _ => break,
         }
     }
     field
 }
 
-/// Parses the whole `schema!` body into relations.
-fn parse_schema(input: TokenStream) -> Vec<Relation> {
-    let mut relations = Vec::new();
+/// Parses one `[-] int`, returning the sign and the raw token text (spliced
+/// verbatim into the generated code — rustc polices range and form).
+fn parse_int(tokens: &mut Tokens, what: &str) -> (bool, String) {
+    let negative = peek_punct(tokens, '-');
+    if negative {
+        tokens.next();
+    }
+    match tokens.next() {
+        Some(TokenTree::Literal(lit)) => {
+            let text = lit.to_string();
+            assert!(
+                text.chars().next().is_some_and(|c| c.is_ascii_digit()) && !text.contains('.'),
+                "schema!: expected {what}, found `{text}`"
+            );
+            (negative, text)
+        }
+        other => panic!("schema!: expected {what}, found {other:?}"),
+    }
+}
+
+/// An integer already begun: either a scalar or, on `..`, the start of a
+/// half-open `start..end` interval literal.
+fn finish_int(tokens: &mut Tokens, negative: bool, text: String) -> Literal {
+    if peek_punct(tokens, '.') {
+        tokens.next();
+        expect_punct(tokens, '.');
+        let end = parse_int(tokens, "the interval literal's end bound");
+        Literal::Interval {
+            start: (negative, text),
+            end,
+        }
+    } else {
+        Literal::Int { negative, text }
+    }
+}
+
+/// Parses one selection literal: `int`, `-int`, `true`/`false`, a bare
+/// enum-variant ident, a string/byte-string literal, or `start..end`.
+fn parse_literal(tokens: &mut Tokens) -> Literal {
+    match tokens.peek() {
+        Some(TokenTree::Ident(_)) => {
+            let word = expect_ident(tokens, "a literal");
+            match word.as_str() {
+                "true" => Literal::Bool(true),
+                "false" => Literal::Bool(false),
+                _ => Literal::Variant(word),
+            }
+        }
+        Some(TokenTree::Punct(p)) if p.as_char() == '-' => {
+            let (negative, text) = parse_int(tokens, "an integer literal");
+            finish_int(tokens, negative, text)
+        }
+        Some(TokenTree::Literal(_)) => {
+            let Some(TokenTree::Literal(lit)) = tokens.next() else {
+                unreachable!("peeked a literal");
+            };
+            let text = lit.to_string();
+            if text.starts_with('"') {
+                Literal::Str(text)
+            } else if text.starts_with("b\"") {
+                Literal::Bytes(text)
+            } else {
+                assert!(
+                    text.chars().next().is_some_and(|c| c.is_ascii_digit()) && !text.contains('.'),
+                    "schema!: unsupported literal `{text}`"
+                );
+                finish_int(tokens, false, text)
+            }
+        }
+        other => panic!("schema!: expected a literal, found {other:?}"),
+    }
+}
+
+/// Parses `fields [ | field == literal, .. ]` out of one side's parens.
+fn parse_side(relation: String, group: TokenStream) -> Side {
+    let mut tokens = group.into_iter().peekable();
+    let mut projection = Vec::new();
+    while tokens.peek().is_some() && !peek_punct(&mut tokens, '|') {
+        projection.push(expect_ident(&mut tokens, "a field name"));
+        if peek_punct(&mut tokens, ',') {
+            tokens.next();
+        }
+    }
+    let mut selection = Vec::new();
+    if peek_punct(&mut tokens, '|') {
+        tokens.next();
+        while tokens.peek().is_some() {
+            let field = expect_ident(&mut tokens, "a selected field name");
+            expect_punct(&mut tokens, '=');
+            expect_punct(&mut tokens, '=');
+            selection.push((field, parse_literal(&mut tokens)));
+            if peek_punct(&mut tokens, ',') {
+                tokens.next();
+            }
+        }
+    }
+    Side {
+        relation,
+        projection,
+        selection,
+    }
+}
+
+/// Parses `Rel(...)` — the right-hand side of `<=` / `==`.
+fn parse_statement_side(tokens: &mut Tokens) -> Side {
+    let relation = expect_ident(tokens, "a relation name");
+    let group = take_group(tokens, Delimiter::Parenthesis, "a projection list");
+    parse_side(relation, group)
+}
+
+/// Parses one dependency statement, `relation` being its left relation name
+/// (already consumed). `==` lowers here to two adjacent `Containment`s,
+/// `A <= B` first (docs/architecture/30-dependencies.md).
+fn parse_statement(relation: String, tokens: &mut Tokens, statements: &mut Vec<Statement>) {
+    let group = take_group(tokens, Delimiter::Parenthesis, "a projection list");
+    let left = parse_side(relation, group);
+    match tokens.next() {
+        // `->`: functionality. The right side is the side's own relation,
+        // and the FD form takes no selection — the engine descriptor
+        // carries none by construction (the shape is unrepresentable, not
+        // rejected downstream), so the grammar is the judge here.
+        Some(TokenTree::Punct(p)) if p.as_char() == '-' => {
+            expect_punct(tokens, '>');
+            let right = expect_ident(tokens, "the FD's relation name");
+            assert!(
+                left.selection.is_empty(),
+                "schema!: an FD takes no selection — the FD form is `R(X) -> R` \
+                 (docs/architecture/30-dependencies.md)"
+            );
+            assert_eq!(
+                right, left.relation,
+                "schema!: an FD's right side is its own relation: R(X) -> R"
+            );
+            statements.push(Statement::Functionality {
+                relation: left.relation,
+                projection: left.projection,
+            });
+        }
+        // `<=`: containment.
+        Some(TokenTree::Punct(p)) if p.as_char() == '<' => {
+            expect_punct(tokens, '=');
+            let right = parse_statement_side(tokens);
+            statements.push(Statement::Containment {
+                source: left,
+                target: right,
+            });
+        }
+        // `==`: set equality, lowered to the two containments.
+        Some(TokenTree::Punct(p)) if p.as_char() == '=' => {
+            expect_punct(tokens, '=');
+            let right = parse_statement_side(tokens);
+            statements.push(Statement::Containment {
+                source: left.clone(),
+                target: right.clone(),
+            });
+            statements.push(Statement::Containment {
+                source: right,
+                target: left,
+            });
+        }
+        other => panic!("schema!: expected `->`, `<=`, or `==`, found {other:?}"),
+    }
+    expect_punct(tokens, ';');
+}
+
+/// Parses the whole `schema!` body: relation blocks and dependency
+/// statements, in any order.
+fn parse_schema(input: TokenStream) -> SchemaAst {
+    let mut schema = SchemaAst {
+        relations: Vec::new(),
+        statements: Vec::new(),
+    };
     let mut tokens = input.into_iter().peekable();
     while tokens.peek().is_some() {
-        let keyword = expect_ident(&mut tokens, "`relation`");
-        assert_eq!(keyword, "relation", "schema!: expected `relation`");
-        let name = expect_ident(&mut tokens, "a relation name");
-        let body = take_group(&mut tokens, Delimiter::Brace, "a relation body");
-        relations.push(parse_relation(name, body));
+        let ident = expect_ident(&mut tokens, "`relation` or a statement");
+        if ident == "relation" {
+            let name = expect_ident(&mut tokens, "a relation name");
+            let body = take_group(&mut tokens, Delimiter::Brace, "a relation body");
+            schema.relations.push(parse_relation(name, body));
+        } else {
+            parse_statement(ident, &mut tokens, &mut schema.statements);
+        }
     }
-    relations
+    schema
 }
 
 /// The declarative schema surface: expands to `fn schema()`, host-side
 /// newtypes and enums, and one typed fact struct per relation with
-/// `encode_write`/`encode_read`/`decode` boundaries. All real logic lives
-/// in `bumbledb::schema::runtime`; the expansion emits data and calls.
+/// `encode_write`/`encode_delete`/`encode_read`/`decode` boundaries. All
+/// real logic lives in `bumbledb::schema::runtime`; the expansion emits
+/// data and calls.
 ///
 /// # Panics
 ///
@@ -293,12 +503,12 @@ fn parse_schema(input: TokenStream) -> Vec<Relation> {
 /// site, reported with the offending token.
 #[proc_macro]
 pub fn schema(input: TokenStream) -> TokenStream {
-    let relations = parse_schema(input);
+    let schema = parse_schema(input);
     let mut out = String::new();
-    emit_schema_fn(&mut out, &relations);
-    emit_newtypes(&mut out, &relations);
-    emit_enums(&mut out, &relations);
-    for (index, relation) in relations.iter().enumerate() {
+    emit_schema_fn(&mut out, &schema);
+    emit_newtypes(&mut out, &schema.relations);
+    emit_enums(&mut out, &schema.relations);
+    for (index, relation) in schema.relations.iter().enumerate() {
         emit_fact_struct(&mut out, index, relation);
     }
     out.parse().expect("schema!: generated code parses")
@@ -312,61 +522,159 @@ fn ty_decl(ty: &FieldTy) -> String {
         FieldTy::Str => "::bumbledb::__private::FieldTy::Str".to_owned(),
         FieldTy::Bytes => "::bumbledb::__private::FieldTy::Bytes".to_owned(),
         FieldTy::Enum { variants, .. } => {
-            let list = variants
-                .iter()
-                .map(|v| format!("\"{v}\""))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("::bumbledb::__private::FieldTy::Enum(&[{list}])")
+            format!(
+                "::bumbledb::__private::FieldTy::Enum(&[{}])",
+                quoted_list(variants)
+            )
         }
+        FieldTy::Interval(element) => format!(
+            "::bumbledb::__private::FieldTy::Interval(::bumbledb::__private::IntervalElement::{})",
+            element.suffix()
+        ),
     }
 }
 
-fn emit_schema_fn(out: &mut String, relations: &[Relation]) {
+/// Renders `"a", "b", ..` for splicing a `&[&str]`.
+fn quoted_list(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|n| format!("\"{n}\""))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Looks up a selected field's declared type — selection literals are typed
+/// in the macro, so a selected relation must be declared in the same
+/// invocation (docs/architecture/70-api.md: enum variants resolve here).
+fn selected_field_ty<'a>(relations: &'a [Relation], relation: &str, field: &str) -> &'a FieldTy {
+    let declaration = relations
+        .iter()
+        .find(|r| r.name == relation)
+        .unwrap_or_else(|| {
+            panic!(
+                "schema!: selection on `{relation}.{field}` — relation `{relation}` \
+                 is not declared in this invocation"
+            )
+        });
+    &declaration
+        .fields
+        .iter()
+        .find(|f| f.name == field)
+        .unwrap_or_else(|| panic!("schema!: unknown selected field `{relation}.{field}`"))
+        .ty
+}
+
+/// Renders one signed integer bound.
+fn signed(bound: &(bool, String)) -> String {
+    let (negative, text) = bound;
+    if *negative {
+        format!("-{text}")
+    } else {
+        text.clone()
+    }
+}
+
+/// Renders one selection literal as a `LiteralDecl` expression, typed
+/// against the selected field's declaration.
+fn literal_decl(relations: &[Relation], relation: &str, field: &str, literal: &Literal) -> String {
+    let ty = selected_field_ty(relations, relation, field);
+    let decl = "::bumbledb::__private::LiteralDecl";
+    match (ty, literal) {
+        (FieldTy::Bool, Literal::Bool(v)) => format!("{decl}::Bool({v})"),
+        (
+            FieldTy::U64,
+            Literal::Int {
+                negative: false,
+                text,
+            },
+        ) => format!("{decl}::U64({text})"),
+        (FieldTy::I64, Literal::Int { negative, text }) => {
+            format!("{decl}::I64({})", signed(&(*negative, text.clone())))
+        }
+        (FieldTy::Enum { variants, .. }, Literal::Variant(name)) => {
+            let ordinal = variants.iter().position(|v| v == name).unwrap_or_else(|| {
+                panic!("schema!: enum field `{relation}.{field}` has no variant `{name}`")
+            });
+            let ordinal = u8::try_from(ordinal).expect("variant count fits u8");
+            format!("{decl}::Enum({ordinal})")
+        }
+        (FieldTy::Str, Literal::Str(text)) => format!("{decl}::Str({text})"),
+        (FieldTy::Bytes, Literal::Bytes(text)) => format!("{decl}::Bytes({text})"),
+        (
+            FieldTy::Interval(IntervalElement::U64),
+            Literal::Interval {
+                start: (false, start),
+                end: (false, end),
+            },
+        ) => format!("{decl}::IntervalU64({start}, {end})"),
+        (FieldTy::Interval(IntervalElement::I64), Literal::Interval { start, end }) => {
+            format!("{decl}::IntervalI64({}, {})", signed(start), signed(end))
+        }
+        _ => panic!(
+            "schema!: selection literal for `{relation}.{field}` does not fit \
+             the field's declared type"
+        ),
+    }
+}
+
+/// Renders one side as a `SideDecl` expression.
+fn side_decl(relations: &[Relation], side: &Side) -> String {
+    let mut selection = String::new();
+    for (field, literal) in &side.selection {
+        let _ = write!(
+            selection,
+            "(\"{field}\", {}),",
+            literal_decl(relations, &side.relation, field, literal)
+        );
+    }
+    format!(
+        "::bumbledb::__private::SideDecl {{ relation: \"{}\", projection: &[{}], selection: &[{selection}] }}",
+        side.relation,
+        quoted_list(&side.projection),
+    )
+}
+
+fn emit_schema_fn(out: &mut String, schema: &SchemaAst) {
     let mut decls = String::new();
-    for relation in relations {
+    for relation in &schema.relations {
         let mut fields = String::new();
         for field in &relation.fields {
-            let fk = match &field.fk {
-                Some((rel, target)) => format!("Some((\"{rel}\", \"{target}\"))"),
-                None => "None".to_owned(),
-            };
-            // `serial` implies the auto-unique: a redundant `unique` is
-            // tolerated and dropped (it would collide with the auto name).
-            let unique = field.unique && !field.serial;
             let _ = write!(
                 fields,
-                "::bumbledb::__private::FieldDecl {{ name: \"{}\", ty: {}, serial: {}, unique: {}, fk: {} }},",
+                "::bumbledb::__private::FieldDecl {{ name: \"{}\", ty: {}, serial: {} }},",
                 field.name,
                 ty_decl(&field.ty),
                 field.serial,
-                unique,
-                fk,
             );
-        }
-        let mut uniques = String::new();
-        for names in &relation.uniques {
-            let list = names
-                .iter()
-                .map(|n| format!("\"{n}\""))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let _ = write!(uniques, "&[{list}],");
-        }
-        let mut fks = String::new();
-        for (names, rel, target) in &relation.fks {
-            let list = names
-                .iter()
-                .map(|n| format!("\"{n}\""))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let _ = write!(fks, "(&[{list}], \"{rel}\", \"{target}\"),");
         }
         let _ = write!(
             decls,
-            "::bumbledb::__private::RelationDecl {{ name: \"{}\", fields: &[{fields}], uniques: &[{uniques}], fks: &[{fks}] }},",
+            "::bumbledb::__private::RelationDecl {{ name: \"{}\", fields: &[{fields}] }},",
             relation.name,
         );
+    }
+    let mut statements = String::new();
+    for statement in &schema.statements {
+        match statement {
+            Statement::Functionality {
+                relation,
+                projection,
+            } => {
+                let _ = write!(
+                    statements,
+                    "::bumbledb::__private::StatementDecl::Functionality {{ relation: \"{relation}\", projection: &[{}] }},",
+                    quoted_list(projection),
+                );
+            }
+            Statement::Containment { source, target } => {
+                let _ = write!(
+                    statements,
+                    "::bumbledb::__private::StatementDecl::Containment {{ source: {}, target: {} }},",
+                    side_decl(&schema.relations, source),
+                    side_decl(&schema.relations, target),
+                );
+            }
+        }
     }
     let _ = write!(
         out,
@@ -375,7 +683,7 @@ fn emit_schema_fn(out: &mut String, relations: &[Relation]) {
          pub fn schema() -> &'static ::bumbledb::schema::Schema {{\n\
              static SCHEMA: ::std::sync::OnceLock<::bumbledb::schema::Schema> = ::std::sync::OnceLock::new();\n\
              SCHEMA.get_or_init(|| {{\n\
-                 ::bumbledb::__private::build_schema(&[{decls}])\n\
+                 ::bumbledb::__private::build_schema(&[{decls}], &[{statements}])\n\
                      .unwrap_or_else(|e| panic!(\"schema! declaration is invalid: {{e}}\"))\n\
              }})\n\
          }}\n",
@@ -383,23 +691,42 @@ fn emit_schema_fn(out: &mut String, relations: &[Relation]) {
 }
 
 fn emit_newtypes(out: &mut String, relations: &[Relation]) {
-    let mut newtypes: BTreeMap<String, &'static str> = BTreeMap::new();
+    // name -> (inner Rust type, wraps an Interval). Intervals deliberately
+    // carry no order (an encoding accident, not semantics — the `Interval`
+    // doc), so their newtypes derive none either.
+    let mut newtypes: BTreeMap<String, (String, bool)> = BTreeMap::new();
     for relation in relations {
         for field in &relation.fields {
-            if let Some(name) = &field.newtype {
-                let inner = match field.ty {
-                    FieldTy::U64 => "u64",
-                    FieldTy::I64 => "i64",
-                    _ => unreachable!("parser restricts `as` to u64/i64"),
-                };
-                newtypes.insert(name.clone(), inner);
+            let Some(name) = &field.newtype else {
+                continue;
+            };
+            let inner = match field.ty {
+                FieldTy::U64 => ("u64".to_owned(), false),
+                FieldTy::I64 => ("i64".to_owned(), false),
+                FieldTy::Interval(element) => {
+                    (format!("::bumbledb::Interval<{}>", element.rust()), true)
+                }
+                _ => unreachable!("parser restricts `as` to u64/i64/interval"),
+            };
+            if let Some(existing) = newtypes.get(name) {
+                assert_eq!(
+                    existing, &inner,
+                    "schema!: newtype `{name}` declared twice with different inner types"
+                );
+                continue;
             }
+            newtypes.insert(name.clone(), inner);
         }
     }
-    for (name, inner) in newtypes {
+    for (name, (inner, wraps_interval)) in newtypes {
+        let order = if wraps_interval {
+            ""
+        } else {
+            ", PartialOrd, Ord"
+        };
         let _ = write!(
             out,
-            "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]\n\
+            "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash{order})]\n\
              pub struct {name}(pub {inner});\n",
         );
     }
@@ -452,6 +779,7 @@ fn rust_field_ty(field: &Field) -> String {
         FieldTy::Str => "String".to_owned(),
         FieldTy::Bytes => "Vec<u8>".to_owned(),
         FieldTy::Enum { name, .. } => name.clone(),
+        FieldTy::Interval(element) => format!("::bumbledb::Interval<{}>", element.rust()),
     }
 }
 
@@ -484,6 +812,13 @@ fn encode_exprs(field: &Field) -> (String, String, String) {
             let expr = format!(
                 "::bumbledb::__private::ValueRef::Enum(self.{}.ordinal())",
                 field.name
+            );
+            (expr.clone(), expr.clone(), expr)
+        }
+        FieldTy::Interval(element) => {
+            let expr = format!(
+                "::bumbledb::__private::ValueRef::Interval{}({access}.start(), {access}.end())",
+                element.suffix()
             );
             (expr.clone(), expr.clone(), expr)
         }
@@ -545,6 +880,17 @@ fn decode_arm(field: &Field, idx: usize) -> String {
             "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::Enum(o) => {enum_name}::from_ordinal(o).expect(\"decode_field range-checked the ordinal\"), _ => unreachable!(\"schema-typed\") }},",
             field.name
         ),
+        FieldTy::Interval(element) => {
+            let el = element.rust();
+            format!(
+                "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::Interval{}(start, end) => {}, _ => unreachable!(\"schema-typed\") }},",
+                field.name,
+                element.suffix(),
+                wrap(&format!(
+                    "::bumbledb::Interval::<{el}>::new(start, end).expect(\"stored intervals satisfy start < end\")"
+                ))
+            )
+        }
         FieldTy::Str => format!(
             "{}: match ::bumbledb::__private::decode(snap, Self::RELATION, fact, {idx})? {{ ::bumbledb::__private::ValueRef::String(id) => ::bumbledb::__private::resolve_string(snap, id)?, _ => unreachable!(\"schema-typed\") }},",
             field.name
