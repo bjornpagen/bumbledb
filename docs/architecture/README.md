@@ -27,9 +27,18 @@ there are no PRD suites, work packets, or compliance gates. Git history is the c
 6. History: the five discarded implementations (v1–v5) live in git before commit
    `1b65ae8`; the post-mortem that motivates many decisions is
    `docs/history/post-mortem.md`. The pre-redesign v0 engine and its measured record
-   (README charts, docs/silicon2/final2.md, the 2,468-case oracle stamp) are history
+   (README charts, the silicon campaigns, the 2,468-case oracle stamp) are history
    as of 2026-07-08 — cited as evidence about that engine, never as claims about this
-   one.
+   one. **The record directories are deleted, not archived** (owner ruling,
+   2026-07-08): `docs/audit/`, `docs/hardening/`, `docs/perf/`, `docs/silicon/`, and
+   `docs/silicon2/` were removed in the same change that voided their claims.
+   Citations of the form `docs/silicon/06`, `docs/perf/`, or `bumblebench exp N`
+   anywhere in this chapter set are **historical citations** — they resolve through
+   git history (the commit deleting them and earlier), exactly like a cited paper
+   that is not vendored. The *findings* those records established (the port-topology
+   law, the pitch-padding rule, the timer discipline, the probe-walk inversion)
+   remain normative where these chapters state them; a finding is re-litigated by
+   new measurement, never by deleting its citation.
 
 ## The documents
 
