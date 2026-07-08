@@ -1,19 +1,30 @@
 //! Canonical schema serialization and the blake3 fingerprint (docs/architecture/10-data-model.md).
 //!
 //! The fingerprint inputs are enumerated exhaustively in
-//! `docs/architecture/10-data-model.md`; that list is the contract. Every
-//! string and list is length-prefixed (u32 LE) so no two schemas can alias
-//! to one byte stream; ids are pinned by declaration order and therefore
-//! covered without being hashed separately.
+//! `docs/architecture/10-data-model.md`; that list is the contract
+//! ([`canonical_bytes`] reproduces it). Every string and list is
+//! length-prefixed (u32 LE) so no two schemas can alias to one byte stream;
+//! relation, field, and statement ids are pinned by declaration/materialized
+//! order and therefore covered without being hashed separately.
 //!
-//! **PRD 04's site.** The dependency statements in materialized order are a
-//! fingerprint input (`docs/architecture/10-data-model.md`) but are not
-//! serialized yet; PRD 04 adds them and bumps the format version label.
+//! [`Resolved`](super::Resolved) data (target keys, key permutations,
+//! interval positions) is **not** hashed: the acceptance gate computes it as
+//! a deterministic function of the hashed inputs, the same way materialized
+//! order leaves "statement ids … pinned by the fingerprint without being
+//! hashed separately" (`docs/architecture/10-data-model.md`).
 
-use super::{Generation, IntervalElement, Schema, ValueType};
+use super::{
+    FieldId, Generation, IntervalElement, LiteralValue, RelationId, Schema, Side,
+    StatementDescriptor, ValueType,
+};
+use crate::encoding::{
+    encode_bool, encode_i64, encode_interval_i64, encode_interval_u64, encode_u64,
+};
 
-/// Bumped whenever the canonical serialization format itself changes.
-const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v0";
+/// Bumped whenever the canonical serialization format itself changes. `v1`:
+/// the statement redesign — a different format even for schemas that would
+/// serialize identically under `v0` (none do).
+const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v1";
 
 /// Deterministic schema identity: blake3 of the canonical bytes. Stored at
 /// database creation; open compares fingerprints and mismatches are hard
@@ -21,7 +32,19 @@ const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v0";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SchemaFingerprint(pub [u8; 32]);
 
-/// Appends the canonical serialization of the schema to `out`.
+/// Appends the canonical serialization of the schema to `out` — one linear
+/// pass over the fingerprint inputs, exhaustively
+/// (`docs/architecture/10-data-model.md` § Schema):
+///
+/// - an encoding-format version label;
+/// - relations in declaration order — for each: name and fields in
+///   declaration order (name, structural type description — including the
+///   full ordered variant list for enums and the element type for intervals
+///   — and generation flag);
+/// - the dependency statements in **materialized order** — for each: the
+///   judgment form (Functionality = 0, Containment = 1) and its sides as
+///   (relation id, projection field-id list in statement order, selection
+///   list as (field id, literal value) pairs in statement order).
 pub fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
     put_bytes(out, FORMAT_VERSION_LABEL);
     put_len(out, schema.relations().len());
@@ -35,6 +58,27 @@ pub fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
                 Generation::None => 0,
                 Generation::Serial => 1,
             });
+        }
+    }
+    put_len(out, schema.statements().len());
+    for statement in schema.statements() {
+        match &statement.descriptor {
+            StatementDescriptor::Functionality {
+                relation,
+                projection,
+            } => {
+                out.push(0);
+                put_relation_id(out, *relation);
+                put_len(out, projection.len());
+                for field in projection {
+                    put_field_id(out, *field);
+                }
+            }
+            StatementDescriptor::Containment { source, target } => {
+                out.push(1);
+                put_side(out, source);
+                put_side(out, target);
+            }
         }
     }
 }
@@ -55,6 +99,27 @@ fn put_len(out: &mut Vec<u8>, len: usize) {
 fn put_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
     put_len(out, bytes.len());
     out.extend_from_slice(bytes);
+}
+
+fn put_relation_id(out: &mut Vec<u8>, id: RelationId) {
+    out.extend_from_slice(&id.0.to_le_bytes());
+}
+
+fn put_field_id(out: &mut Vec<u8>, id: FieldId) {
+    out.extend_from_slice(&id.0.to_le_bytes());
+}
+
+fn put_side(out: &mut Vec<u8>, side: &Side) {
+    put_relation_id(out, side.relation);
+    put_len(out, side.projection.len());
+    for field in &side.projection {
+        put_field_id(out, *field);
+    }
+    put_len(out, side.selection.len());
+    for (field, literal) in &side.selection {
+        put_field_id(out, *field);
+        put_literal(out, literal);
+    }
 }
 
 fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
@@ -81,6 +146,31 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
     }
 }
 
+/// A selection literal in the canonical per-type value encoding
+/// (`crate::encoding`) — never a `Debug` or ad-hoc format. No variant tag:
+/// the selected field's type is already in the stream (relations serialize
+/// before statements), so the literal's shape is a function of bytes already
+/// hashed and no two schemas can alias here. String/Bytes literals hash
+/// their raw bytes, length-prefixed — the fact encoding's intern id is
+/// per-database state, not schema identity.
+fn put_literal(out: &mut Vec<u8>, literal: &LiteralValue) {
+    match literal {
+        LiteralValue::Bool(value) => out.push(encode_bool(*value)),
+        LiteralValue::U64(value) => out.extend_from_slice(&encode_u64(*value)),
+        LiteralValue::I64(value) => out.extend_from_slice(&encode_i64(*value)),
+        // The canonical Enum encoding: the one-byte declaration-order
+        // ordinal (`crate::encoding::TypeDesc::Enum`).
+        LiteralValue::Enum(ordinal) => out.push(*ordinal),
+        LiteralValue::IntervalU64(start, end) => {
+            out.extend_from_slice(&encode_interval_u64(*start, *end));
+        }
+        LiteralValue::IntervalI64(start, end) => {
+            out.extend_from_slice(&encode_interval_i64(*start, *end));
+        }
+        LiteralValue::String(bytes) | LiteralValue::Bytes(bytes) => put_bytes(out, bytes),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{
@@ -88,13 +178,8 @@ mod tests {
     };
     use super::*;
 
-    fn schema_of(relations: Vec<RelationDescriptor>) -> Schema {
-        SchemaDescriptor {
-            relations,
-            statements: vec![],
-        }
-        .validate()
-        .expect("valid fixture")
+    fn schema_of(descriptor: SchemaDescriptor) -> Schema {
+        descriptor.validate().expect("valid fixture")
     }
 
     fn field(name: &str, value_type: ValueType, generation: Generation) -> FieldDescriptor {
@@ -111,25 +196,50 @@ mod tests {
         }
     }
 
-    /// The mutation fixture: two relations, an enum, a serial.
-    fn base() -> Vec<RelationDescriptor> {
-        vec![
-            RelationDescriptor {
-                name: "Holder".into(),
-                fields: vec![
-                    field("id", ValueType::U64, Generation::Serial),
-                    field("name", ValueType::String, Generation::None),
-                ],
-            },
-            RelationDescriptor {
-                name: "Account".into(),
-                fields: vec![
-                    field("id", ValueType::U64, Generation::Serial),
-                    field("holder", ValueType::U64, Generation::None),
-                    field("status", enum_type(&["Active", "Closed"]), Generation::None),
-                ],
-            },
-        ]
+    fn side(relation: u32, projection: &[u16], selection: &[(u16, LiteralValue)]) -> Side {
+        Side {
+            relation: RelationId(relation),
+            projection: projection.iter().copied().map(FieldId).collect(),
+            selection: selection
+                .iter()
+                .map(|(field, literal)| (FieldId(*field), literal.clone()))
+                .collect(),
+        }
+    }
+
+    /// The mutation fixture: two relations, an enum, two serials (each
+    /// materializing an auto-Functionality), a declared key, and a
+    /// containment with a selection.
+    fn base() -> SchemaDescriptor {
+        SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    name: "Holder".into(),
+                    fields: vec![
+                        field("id", ValueType::U64, Generation::Serial),
+                        field("name", ValueType::String, Generation::None),
+                    ],
+                },
+                RelationDescriptor {
+                    name: "Account".into(),
+                    fields: vec![
+                        field("id", ValueType::U64, Generation::Serial),
+                        field("holder", ValueType::U64, Generation::None),
+                        field("status", enum_type(&["Active", "Closed"]), Generation::None),
+                    ],
+                },
+            ],
+            statements: vec![
+                StatementDescriptor::Functionality {
+                    relation: RelationId(1),
+                    projection: Box::new([FieldId(1)]),
+                },
+                StatementDescriptor::Containment {
+                    source: side(1, &[1], &[(2, LiteralValue::Enum(0))]),
+                    target: side(0, &[0], &[]),
+                },
+            ],
+        }
     }
 
     fn base_fingerprint() -> SchemaFingerprint {
@@ -138,29 +248,42 @@ mod tests {
 
     #[test]
     fn identical_declarations_yield_identical_fingerprints() {
+        // Stability: two independently constructed identical descriptors —
+        // relations *and* statements — produce byte-identical fingerprints.
         assert_eq!(base_fingerprint(), fingerprint(&schema_of(base())));
     }
 
     #[test]
     fn reordering_two_fields_changes_the_fingerprint() {
-        let mut decl = base();
-        // Whole descriptors swap, so the serial rides along with `id` and the
-        // schema stays valid; only declaration order changes.
-        decl[0].fields.swap(0, 1);
-        assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
+        // Standalone: base()'s statements pin fields by id, so swapping
+        // fields there would change which fields the statements name, not
+        // just declaration order.
+        let of_fields = |names: [&str; 2]| {
+            fingerprint(&schema_of(SchemaDescriptor {
+                relations: vec![RelationDescriptor {
+                    name: "R".into(),
+                    fields: names
+                        .iter()
+                        .map(|name| field(name, ValueType::U64, Generation::None))
+                        .collect(),
+                }],
+                statements: vec![],
+            }))
+        };
+        assert_ne!(of_fields(["a", "b"]), of_fields(["b", "a"]));
     }
 
     #[test]
     fn renaming_a_field_changes_the_fingerprint() {
         let mut decl = base();
-        decl[0].fields[1].name = "full_name".into();
+        decl.relations[0].fields[1].name = "full_name".into();
         assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
     }
 
     #[test]
     fn adding_an_enum_variant_changes_the_fingerprint() {
         let mut decl = base();
-        decl[1].fields[2].value_type = enum_type(&["Active", "Closed", "Frozen"]);
+        decl.relations[1].fields[2].value_type = enum_type(&["Active", "Closed", "Frozen"]);
         // Closed domains are closed: adding a variant is a full ETL rebuild.
         assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
     }
@@ -168,28 +291,87 @@ mod tests {
     #[test]
     fn reordering_enum_variants_changes_the_fingerprint() {
         let mut decl = base();
-        decl[1].fields[2].value_type = enum_type(&["Closed", "Active"]);
+        decl.relations[1].fields[2].value_type = enum_type(&["Closed", "Active"]);
         assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
     }
 
     #[test]
     fn toggling_serial_generation_changes_the_fingerprint() {
         let mut decl = base();
-        decl[0].fields[0].generation = Generation::None;
+        // `Account.id`, not `Holder.id`: the containment's target key is
+        // Holder's serial auto-Functionality, which must stay materialized.
+        decl.relations[1].fields[0].generation = Generation::None;
         assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
+    }
+
+    #[test]
+    fn reordering_two_statements_changes_the_fingerprint() {
+        let mut decl = base();
+        // Declaration order is materialized order for declared statements;
+        // both orders validate (target-key resolution searches the whole
+        // list), so only the order differs.
+        decl.statements.swap(0, 1);
+        assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
+    }
+
+    #[test]
+    fn swapping_containment_sides_changes_the_fingerprint() {
+        let mut decl = base();
+        // `Holder(id) <= Account(holder | status = 0)`: still valid — the
+        // new target projection {holder} resolves to the declared key.
+        decl.statements[1] = StatementDescriptor::Containment {
+            source: side(0, &[0], &[]),
+            target: side(1, &[1], &[(2, LiteralValue::Enum(0))]),
+        };
+        assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
+    }
+
+    #[test]
+    fn changing_a_selection_literal_changes_the_fingerprint() {
+        let mut decl = base();
+        decl.statements[1] = StatementDescriptor::Containment {
+            source: side(1, &[1], &[(2, LiteralValue::Enum(1))]),
+            target: side(0, &[0], &[]),
+        };
+        assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
+    }
+
+    #[test]
+    fn reordering_a_projection_changes_the_fingerprint() {
+        // X is ordered (the order defines the guard key): the same field
+        // *set* in the other written order is a different schema.
+        let of_projection = |fields: [u16; 2]| {
+            fingerprint(&schema_of(SchemaDescriptor {
+                relations: vec![RelationDescriptor {
+                    name: "R".into(),
+                    fields: vec![
+                        field("a", ValueType::U64, Generation::None),
+                        field("b", ValueType::U64, Generation::None),
+                    ],
+                }],
+                statements: vec![StatementDescriptor::Functionality {
+                    relation: RelationId(0),
+                    projection: fields.iter().copied().map(FieldId).collect(),
+                }],
+            }))
+        };
+        assert_ne!(of_projection([0, 1]), of_projection([1, 0]));
     }
 
     #[test]
     fn changing_an_interval_element_changes_the_fingerprint() {
         let of_element = |element| {
-            fingerprint(&schema_of(vec![RelationDescriptor {
-                name: "R".into(),
-                fields: vec![field(
-                    "during",
-                    ValueType::Interval { element },
-                    Generation::None,
-                )],
-            }]))
+            fingerprint(&schema_of(SchemaDescriptor {
+                relations: vec![RelationDescriptor {
+                    name: "R".into(),
+                    fields: vec![field(
+                        "during",
+                        ValueType::Interval { element },
+                        Generation::None,
+                    )],
+                }],
+                statements: vec![],
+            }))
         };
         assert_ne!(
             of_element(IntervalElement::U64),
@@ -199,19 +381,23 @@ mod tests {
 
     #[test]
     fn golden_bytes_pin_the_canonical_serialization() {
-        // One relation R { x: u64 serial }. This golden is the anti-drift
-        // anchor: if it breaks, the format version label must be bumped and
-        // every stored fingerprint invalidated (full ETL).
-        let schema = schema_of(vec![RelationDescriptor {
-            name: "R".into(),
-            fields: vec![field("x", ValueType::U64, Generation::Serial)],
-        }]);
+        // One relation R { x: u64 serial }, whose serial materializes one
+        // auto-Functionality. This golden is the anti-drift anchor: if it
+        // breaks, the format version label must be bumped and every stored
+        // fingerprint invalidated (full ETL).
+        let schema = schema_of(SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "R".into(),
+                fields: vec![field("x", ValueType::U64, Generation::Serial)],
+            }],
+            statements: vec![],
+        });
         let mut bytes = Vec::new();
         canonical_bytes(&schema, &mut bytes);
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v0");
+        expected.extend_from_slice(b"bumbledb-schema-v1");
         expected.extend_from_slice(&1u32.to_le_bytes()); // relation count
         expected.extend_from_slice(&1u32.to_le_bytes()); // name len
         expected.extend_from_slice(b"R");
@@ -220,6 +406,90 @@ mod tests {
         expected.extend_from_slice(b"x");
         expected.push(2); // ValueType::U64 tag
         expected.push(1); // Generation::Serial tag
+        expected.extend_from_slice(&1u32.to_le_bytes()); // statement count
+        expected.push(0); // Functionality form tag
+        expected.extend_from_slice(&0u32.to_le_bytes()); // relation id
+        expected.extend_from_slice(&1u32.to_le_bytes()); // projection len
+        expected.extend_from_slice(&0u16.to_le_bytes()); // field id
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn golden_bytes_pin_the_statement_serialization() {
+        // `Account(holder | status = Closed) <= Holder(id)` over a declared
+        // key: pins the Containment form — side layout, selection pairs,
+        // and the canonical enum-ordinal literal encoding.
+        let schema = schema_of(SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    name: "Holder".into(),
+                    fields: vec![field("id", ValueType::U64, Generation::None)],
+                },
+                RelationDescriptor {
+                    name: "Account".into(),
+                    fields: vec![
+                        field("holder", ValueType::U64, Generation::None),
+                        field("status", enum_type(&["Active", "Closed"]), Generation::None),
+                    ],
+                },
+            ],
+            statements: vec![
+                StatementDescriptor::Functionality {
+                    relation: RelationId(0),
+                    projection: Box::new([FieldId(0)]),
+                },
+                StatementDescriptor::Containment {
+                    source: side(1, &[0], &[(1, LiteralValue::Enum(1))]),
+                    target: side(0, &[0], &[]),
+                },
+            ],
+        });
+        let mut bytes = Vec::new();
+        canonical_bytes(&schema, &mut bytes);
+
+        let mut expected: Vec<u8> = Vec::new();
+        expected.extend_from_slice(&18u32.to_le_bytes());
+        expected.extend_from_slice(b"bumbledb-schema-v1");
+        expected.extend_from_slice(&2u32.to_le_bytes()); // relation count
+        expected.extend_from_slice(&6u32.to_le_bytes());
+        expected.extend_from_slice(b"Holder");
+        expected.extend_from_slice(&1u32.to_le_bytes()); // field count
+        expected.extend_from_slice(&2u32.to_le_bytes());
+        expected.extend_from_slice(b"id");
+        expected.push(2); // ValueType::U64 tag
+        expected.push(0); // Generation::None tag
+        expected.extend_from_slice(&7u32.to_le_bytes());
+        expected.extend_from_slice(b"Account");
+        expected.extend_from_slice(&2u32.to_le_bytes()); // field count
+        expected.extend_from_slice(&6u32.to_le_bytes());
+        expected.extend_from_slice(b"holder");
+        expected.push(2); // ValueType::U64 tag
+        expected.push(0); // Generation::None tag
+        expected.extend_from_slice(&6u32.to_le_bytes());
+        expected.extend_from_slice(b"status");
+        expected.push(1); // ValueType::Enum tag
+        expected.extend_from_slice(&2u32.to_le_bytes()); // variant count
+        expected.extend_from_slice(&6u32.to_le_bytes());
+        expected.extend_from_slice(b"Active");
+        expected.extend_from_slice(&6u32.to_le_bytes());
+        expected.extend_from_slice(b"Closed");
+        expected.push(0); // Generation::None tag
+        expected.extend_from_slice(&2u32.to_le_bytes()); // statement count
+        expected.push(0); // Functionality form tag
+        expected.extend_from_slice(&0u32.to_le_bytes()); // relation id
+        expected.extend_from_slice(&1u32.to_le_bytes()); // projection len
+        expected.extend_from_slice(&0u16.to_le_bytes()); // field id
+        expected.push(1); // Containment form tag
+        expected.extend_from_slice(&1u32.to_le_bytes()); // source relation id
+        expected.extend_from_slice(&1u32.to_le_bytes()); // projection len
+        expected.extend_from_slice(&0u16.to_le_bytes()); // field id
+        expected.extend_from_slice(&1u32.to_le_bytes()); // selection len
+        expected.extend_from_slice(&1u16.to_le_bytes()); // selected field id
+        expected.push(1); // enum ordinal literal
+        expected.extend_from_slice(&0u32.to_le_bytes()); // target relation id
+        expected.extend_from_slice(&1u32.to_le_bytes()); // projection len
+        expected.extend_from_slice(&0u16.to_le_bytes()); // field id
+        expected.extend_from_slice(&0u32.to_le_bytes()); // selection len
         assert_eq!(bytes, expected);
     }
 
@@ -227,14 +497,17 @@ mod tests {
     fn length_prefixes_prevent_name_aliasing() {
         // Without length prefixes, ("AB" + "C") and ("A" + "BC") would
         // concatenate to identical streams.
-        let one = schema_of(vec![RelationDescriptor {
-            name: "AB".into(),
-            fields: vec![field("C", ValueType::U64, Generation::None)],
-        }]);
-        let two = schema_of(vec![RelationDescriptor {
-            name: "A".into(),
-            fields: vec![field("BC", ValueType::U64, Generation::None)],
-        }]);
+        let of_names = |relation: &str, field_name: &str| {
+            schema_of(SchemaDescriptor {
+                relations: vec![RelationDescriptor {
+                    name: relation.into(),
+                    fields: vec![field(field_name, ValueType::U64, Generation::None)],
+                }],
+                statements: vec![],
+            })
+        };
+        let one = of_names("AB", "C");
+        let two = of_names("A", "BC");
         let (mut a, mut b) = (Vec::new(), Vec::new());
         canonical_bytes(&one, &mut a);
         canonical_bytes(&two, &mut b);

@@ -13,7 +13,9 @@ mod layout;
 mod tests;
 
 pub use decode::{decode_bool, decode_enum, decode_field, decode_u64, field_bytes};
-pub use encode::{encode_bool, encode_fact, encode_i64, encode_u64};
+pub use encode::{
+    encode_bool, encode_fact, encode_i64, encode_interval_i64, encode_interval_u64, encode_u64,
+};
 pub use fact_hash::fact_hash;
 
 use crate::schema::IntervalElement;
