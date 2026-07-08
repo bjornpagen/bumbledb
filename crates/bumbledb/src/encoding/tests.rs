@@ -1,6 +1,21 @@
-use super::decode::decode_i64;
+use super::decode::{decode_i64, decode_interval_i64, decode_interval_u64};
+use super::encode::{encode_interval_i64, encode_interval_u64};
 use super::*;
 use crate::error::CorruptionError;
+use crate::schema::IntervalElement;
+
+/// A deterministic LCG so the property sweeps are reproducible.
+struct Lcg(u64);
+
+impl Lcg {
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        self.0
+    }
+}
 
 #[test]
 fn bool_round_trip_and_strictness() {
@@ -96,7 +111,8 @@ fn i64_order_preservation_across_sign_boundary() {
     }
 }
 
-/// A mixed 1/8-byte layout: Bool, Enum, U64, I64, String, Bytes.
+/// A mixed 1/8/16-byte layout: Bool, Enum, U64, I64, String, Bytes, and
+/// both Interval elements.
 fn mixed_layout() -> FactLayout {
     FactLayout::new(&[
         TypeDesc::Bool,
@@ -105,21 +121,30 @@ fn mixed_layout() -> FactLayout {
         TypeDesc::I64,
         TypeDesc::String,
         TypeDesc::Bytes,
+        TypeDesc::Interval {
+            element: IntervalElement::U64,
+        },
+        TypeDesc::Interval {
+            element: IntervalElement::I64,
+        },
     ])
 }
 
 #[test]
 fn layout_offsets_are_cumulative_widths_with_no_padding() {
     let layout = mixed_layout();
-    assert_eq!(layout.field_count(), 6);
-    // 1 + 1 + 8 + 8 + 8 + 8 — 1-byte fields sit flush against 8-byte ones.
+    assert_eq!(layout.field_count(), 8);
+    // 1 + 1 + 8 + 8 + 8 + 8 + 16 + 16 — 1-byte fields sit flush against
+    // 8- and 16-byte ones.
     assert_eq!(layout.field_offset(0), 0);
     assert_eq!(layout.field_offset(1), 1);
     assert_eq!(layout.field_offset(2), 2);
     assert_eq!(layout.field_offset(3), 10);
     assert_eq!(layout.field_offset(4), 18);
     assert_eq!(layout.field_offset(5), 26);
-    assert_eq!(layout.fact_width(), 34);
+    assert_eq!(layout.field_offset(6), 34);
+    assert_eq!(layout.field_offset(7), 50);
+    assert_eq!(layout.fact_width(), 66);
 }
 
 fn mixed_values() -> Vec<ValueRef> {
@@ -130,6 +155,8 @@ fn mixed_values() -> Vec<ValueRef> {
         ValueRef::I64(i64::MIN),
         ValueRef::String(7),
         ValueRef::Bytes(9),
+        ValueRef::IntervalU64(3, u64::MAX),
+        ValueRef::IntervalI64(i64::MIN, -5),
     ]
 }
 
@@ -145,6 +172,8 @@ fn encode_fact_matches_independent_field_encodings() {
     expected.extend_from_slice(&encode_i64(i64::MIN));
     expected.extend_from_slice(&encode_u64(7));
     expected.extend_from_slice(&encode_u64(9));
+    expected.extend_from_slice(&encode_interval_u64(3, u64::MAX));
+    expected.extend_from_slice(&encode_interval_i64(i64::MIN, -5));
     assert_eq!(fact, expected);
 }
 
@@ -160,6 +189,14 @@ fn field_bytes_slices_equal_independent_encodings() {
     assert_eq!(field_bytes(&fact, &layout, 3), encode_i64(i64::MIN));
     assert_eq!(field_bytes(&fact, &layout, 4), encode_u64(7));
     assert_eq!(field_bytes(&fact, &layout, 5), encode_u64(9));
+    assert_eq!(
+        field_bytes(&fact, &layout, 6),
+        encode_interval_u64(3, u64::MAX)
+    );
+    assert_eq!(
+        field_bytes(&fact, &layout, 7),
+        encode_interval_i64(i64::MIN, -5)
+    );
 }
 
 #[test]
@@ -192,6 +229,136 @@ fn decode_field_surfaces_corruption() {
             variant_count: 3
         })
     );
+    fact[1] = 0x02;
+    // Invert the IntervalU64 field (offset 34): end half below its start.
+    fact[42..50].copy_from_slice(&encode_u64(0));
+    let corrupt: [u8; 16] = fact[34..50].try_into().expect("16-byte field");
+    assert_eq!(
+        decode_field(&fact, &layout, 6),
+        Err(CorruptionError::InvalidInterval(corrupt))
+    );
+}
+
+/// A random valid U64 interval: two distinct draws, ordered.
+fn rand_interval_u64(rng: &mut Lcg) -> (u64, u64) {
+    loop {
+        let (a, b) = (rng.next(), rng.next());
+        if a != b {
+            return (a.min(b), a.max(b));
+        }
+    }
+}
+
+/// A random valid U64 interval pinned to `start` (exercises the end
+/// tiebreak, which random starts would never hit).
+fn rand_interval_u64_from(rng: &mut Lcg, start: u64) -> (u64, u64) {
+    loop {
+        let end = rng.next();
+        if end > start {
+            return (start, end);
+        }
+    }
+}
+
+#[test]
+fn interval_round_trip_edges_and_random_pairs() {
+    // Edges: extreme starts, MAX_END ends, and minimal width (start + 1 == end).
+    for (start, end) in [
+        (i64::MIN, i64::MAX),
+        (i64::MIN, i64::MIN + 1),
+        (i64::MAX - 1, i64::MAX),
+        (0, 1),
+        (-1, i64::MAX),
+    ] {
+        assert_eq!(
+            decode_interval_i64(encode_interval_i64(start, end)),
+            Ok((start, end))
+        );
+    }
+    for (start, end) in [(0, u64::MAX), (0, 1), (u64::MAX - 1, u64::MAX)] {
+        assert_eq!(
+            decode_interval_u64(encode_interval_u64(start, end)),
+            Ok((start, end))
+        );
+    }
+    // Random pairs, ordered into valid intervals, both element types.
+    let mut rng = Lcg(0x0101);
+    for _ in 0..1_000 {
+        let (start, end) = rand_interval_u64(&mut rng);
+        assert_eq!(
+            decode_interval_u64(encode_interval_u64(start, end)),
+            Ok((start, end))
+        );
+        let (start, end) = (
+            start.cast_signed().min(end.cast_signed()),
+            start.cast_signed().max(end.cast_signed()),
+        );
+        assert_eq!(
+            decode_interval_i64(encode_interval_i64(start, end)),
+            Ok((start, end))
+        );
+    }
+}
+
+#[test]
+fn interval_encoding_orders_by_start_then_end() {
+    // Byte-wise comparison of encodings must equal `(start, end)` tuple
+    // comparison under the element order — the property the storage
+    // layer's neighbor probes stand on (docs/architecture/50-storage.md).
+    let mut rng = Lcg(0x0202);
+    for i in 0..1_000 {
+        let x = rand_interval_u64(&mut rng);
+        // Every other pair shares a start so the end tiebreak is exercised.
+        let y = if i % 2 == 0 {
+            rand_interval_u64(&mut rng)
+        } else {
+            rand_interval_u64_from(&mut rng, x.0)
+        };
+        assert_eq!(
+            encode_interval_u64(x.0, x.1).cmp(&encode_interval_u64(y.0, y.1)),
+            x.cmp(&y),
+            "u64 encoding order diverges from tuple order for {x:?} vs {y:?}"
+        );
+        let (xi, yi) = (
+            (x.0.cast_signed(), x.1.cast_signed()),
+            (y.0.cast_signed(), y.1.cast_signed()),
+        );
+        // Sign-casting both halves of a valid u64 interval keeps start < end
+        // exactly when both halves land on the same side of zero — skip the
+        // pairs it inverts.
+        if xi.0 < xi.1 && yi.0 < yi.1 {
+            assert_eq!(
+                encode_interval_i64(xi.0, xi.1).cmp(&encode_interval_i64(yi.0, yi.1)),
+                xi.cmp(&yi),
+                "i64 encoding order diverges from tuple order for {xi:?} vs {yi:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn interval_decode_rejects_start_at_or_beyond_end() {
+    // Equal and inverted bounds, both element types: corruption, never a
+    // value — the encoding boundary enforces `start < end` exactly as it
+    // enforces Bool's strict 0/1.
+    for (start, end) in [(5u64, 5u64), (9, 3), (u64::MAX, 0)] {
+        let mut bytes = [0; 16];
+        bytes[..8].copy_from_slice(&encode_u64(start));
+        bytes[8..].copy_from_slice(&encode_u64(end));
+        assert_eq!(
+            decode_interval_u64(bytes),
+            Err(CorruptionError::InvalidInterval(bytes))
+        );
+    }
+    for (start, end) in [(-2i64, -2i64), (4, -4), (i64::MAX, i64::MIN)] {
+        let mut bytes = [0; 16];
+        bytes[..8].copy_from_slice(&encode_i64(start));
+        bytes[8..].copy_from_slice(&encode_i64(end));
+        assert_eq!(
+            decode_interval_i64(bytes),
+            Err(CorruptionError::InvalidInterval(bytes))
+        );
+    }
 }
 
 #[test]

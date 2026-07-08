@@ -29,6 +29,15 @@ pub struct FieldId(pub u16);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ConstraintId(pub u16);
 
+/// The element domain of an Interval: closed to the two orderable scalars.
+/// A flat enum, deliberately — no `Interval(Box<ValueType>)` recursion, so
+/// illegal elements are unrepresentable rather than rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IntervalElement {
+    U64,
+    I64,
+}
+
 /// A structural value type: the description *is* the identity — structural
 /// equality of the description is type equality, and there is no name field
 /// anywhere (`docs/architecture/10-data-model.md`).
@@ -44,6 +53,12 @@ pub enum ValueType {
     I64,
     String,
     Bytes,
+    /// A half-open `[start, end)` over the element domain, strictly
+    /// `start < end` — a finite set of points, written as its bounds
+    /// (`docs/architecture/10-data-model.md`).
+    Interval {
+        element: IntervalElement,
+    },
 }
 
 /// Field generation: a storage behavior, not a type

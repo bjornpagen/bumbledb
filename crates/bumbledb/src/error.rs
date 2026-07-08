@@ -21,6 +21,10 @@ pub enum CorruptionError {
     InvalidBool(u8),
     /// An Enum ordinal at or beyond the declared variant count.
     EnumOrdinalOutOfRange { ordinal: u8, variant_count: u16 },
+    /// Interval bytes whose `start >= end` — the empty interval is
+    /// unrepresentable (a fact never denotes nothing), so a stored one is
+    /// corruption, not a value. Carries the raw 16 bytes.
+    InvalidInterval([u8; 16]),
     /// The `_meta` database or one of its required keys is absent or
     /// malformed: the environment is not a usable bumbledb database.
     MetaMissing,

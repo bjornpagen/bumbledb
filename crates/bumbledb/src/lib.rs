@@ -57,6 +57,7 @@ pub(crate) mod encoding;
 pub mod error;
 pub(crate) mod exec;
 pub(crate) mod image;
+mod interval;
 pub mod ir;
 pub mod obs;
 pub(crate) mod plan;
@@ -67,6 +68,7 @@ pub use api::db::{BulkLoadError, Db, Fact, Serial, Snapshot, WriteTx};
 pub use api::prepared::{PreparedQuery, ResultBuffer, ResultValue, Row};
 pub use api::stats::{CoverStats, ExecutionStats, GuardStats, NodeStats};
 pub use error::{Error, Result};
+pub use interval::Interval;
 // The IR vocabulary a host needs to build a `Query`, and the id types that
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.

@@ -1,6 +1,6 @@
 //! The encode side: canonical per-type encoders and the fact encoder.
 
-use super::{FactLayout, TypeDesc, ValueRef, I64_SIGN_BIT};
+use super::{FactLayout, IntervalElement, TypeDesc, ValueRef, I64_SIGN_BIT};
 
 /// Encodes a Bool as its canonical single byte.
 #[must_use]
@@ -19,6 +19,37 @@ pub const fn encode_u64(value: u64) -> [u8; 8] {
 #[must_use]
 pub const fn encode_i64(value: i64) -> [u8; 8] {
     (value.cast_unsigned() ^ I64_SIGN_BIT).to_be_bytes()
+}
+
+/// Encodes an Interval over U64 as `start ‖ end`, each half [`encode_u64`].
+///
+/// Because each half is order-preserving, the 16 bytes sort
+/// lexicographically by `(start, end)` — load-bearing for the storage
+/// layer's neighbor probes (`docs/architecture/50-storage.md`).
+///
+/// `start < end` is a programmer invariant here (`debug_assert!`): the
+/// public [`Interval`](crate::Interval) type makes the violation
+/// unconstructible.
+#[must_use]
+pub fn encode_interval_u64(start: u64, end: u64) -> [u8; 16] {
+    debug_assert!(start < end);
+    concat_halves(encode_u64(start), encode_u64(end))
+}
+
+/// Encodes an Interval over I64 as `start ‖ end`, each half [`encode_i64`].
+/// The same `(start, end)` lexicographic-sort and `start < end` contracts
+/// as [`encode_interval_u64`].
+#[must_use]
+pub fn encode_interval_i64(start: i64, end: i64) -> [u8; 16] {
+    debug_assert!(start < end);
+    concat_halves(encode_i64(start), encode_i64(end))
+}
+
+fn concat_halves(start: [u8; 8], end: [u8; 8]) -> [u8; 16] {
+    let mut out = [0; 16];
+    out[..8].copy_from_slice(&start);
+    out[8..].copy_from_slice(&end);
+    out
 }
 
 /// Appends the canonical encoding of a full fact to `out`.
@@ -57,6 +88,24 @@ pub fn encode_fact(values: &[ValueRef], layout: &FactLayout, out: &mut Vec<u8>) 
             ValueRef::Bytes(id) => {
                 debug_assert_eq!(desc, TypeDesc::Bytes);
                 out.extend_from_slice(&encode_u64(id));
+            }
+            ValueRef::IntervalU64(start, end) => {
+                debug_assert_eq!(
+                    desc,
+                    TypeDesc::Interval {
+                        element: IntervalElement::U64
+                    }
+                );
+                out.extend_from_slice(&encode_interval_u64(start, end));
+            }
+            ValueRef::IntervalI64(start, end) => {
+                debug_assert_eq!(
+                    desc,
+                    TypeDesc::Interval {
+                        element: IntervalElement::I64
+                    }
+                );
+                out.extend_from_slice(&encode_interval_i64(start, end));
             }
         }
     }

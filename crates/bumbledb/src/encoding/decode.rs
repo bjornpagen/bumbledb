@@ -1,7 +1,7 @@
 //! The decode side: canonical per-type decoders, field slicing, and the
 //! corruption-checked field decoder.
 
-use super::{FactLayout, TypeDesc, ValueRef, I64_SIGN_BIT};
+use super::{FactLayout, IntervalElement, TypeDesc, ValueRef, I64_SIGN_BIT};
 use crate::error::CorruptionError;
 
 /// Decodes a canonical Bool byte.
@@ -45,6 +45,51 @@ pub const fn decode_i64(bytes: [u8; 8]) -> i64 {
     (u64::from_be_bytes(bytes) ^ I64_SIGN_BIT).cast_signed()
 }
 
+/// Decodes an Interval-over-U64's `start ‖ end` bytes, validating strict
+/// `start < end`.
+///
+/// # Errors
+///
+/// [`CorruptionError::InvalidInterval`] when `start >= end` — a stored
+/// empty or inverted interval denotes nothing, exactly as corrupt as a
+/// non-0/1 Bool byte.
+pub const fn decode_interval_u64(bytes: [u8; 16]) -> Result<(u64, u64), CorruptionError> {
+    let (start_bytes, end_bytes) = split_halves(bytes);
+    let (start, end) = (decode_u64(start_bytes), decode_u64(end_bytes));
+    if start < end {
+        Ok((start, end))
+    } else {
+        Err(CorruptionError::InvalidInterval(bytes))
+    }
+}
+
+/// Decodes an Interval-over-I64's `start ‖ end` bytes, validating strict
+/// `start < end`.
+///
+/// # Errors
+///
+/// [`CorruptionError::InvalidInterval`], as [`decode_interval_u64`].
+pub const fn decode_interval_i64(bytes: [u8; 16]) -> Result<(i64, i64), CorruptionError> {
+    let (start_bytes, end_bytes) = split_halves(bytes);
+    let (start, end) = (decode_i64(start_bytes), decode_i64(end_bytes));
+    if start < end {
+        Ok((start, end))
+    } else {
+        Err(CorruptionError::InvalidInterval(bytes))
+    }
+}
+
+const fn split_halves(bytes: [u8; 16]) -> ([u8; 8], [u8; 8]) {
+    let (mut start, mut end) = ([0; 8], [0; 8]);
+    let mut i = 0;
+    while i < 8 {
+        start[i] = bytes[i];
+        end[i] = bytes[i + 8];
+        i += 1;
+    }
+    (start, end)
+}
+
 /// Slices one field's bytes out of an encoded fact in O(1).
 #[must_use]
 pub fn field_bytes<'a>(fact_bytes: &'a [u8], layout: &FactLayout, field_idx: usize) -> &'a [u8] {
@@ -57,8 +102,9 @@ pub fn field_bytes<'a>(fact_bytes: &'a [u8], layout: &FactLayout, field_idx: usi
 ///
 /// # Errors
 ///
-/// [`CorruptionError`] on a Bool byte that is not `0x00`/`0x01` or an Enum
-/// ordinal outside the declared variant list — never a skip, never a default.
+/// [`CorruptionError`] on a Bool byte that is not `0x00`/`0x01`, an Enum
+/// ordinal outside the declared variant list, or an Interval whose
+/// `start >= end` — never a skip, never a default.
 ///
 /// # Panics
 ///
@@ -82,5 +128,16 @@ pub fn decode_field(
         ))),
         TypeDesc::String => Ok(ValueRef::String(word(bytes))),
         TypeDesc::Bytes => Ok(ValueRef::Bytes(word(bytes))),
+        TypeDesc::Interval { element } => {
+            let bytes: [u8; 16] = bytes.try_into().expect("16-byte field slice");
+            match element {
+                IntervalElement::U64 => {
+                    decode_interval_u64(bytes).map(|(s, e)| ValueRef::IntervalU64(s, e))
+                }
+                IntervalElement::I64 => {
+                    decode_interval_i64(bytes).map(|(s, e)| ValueRef::IntervalI64(s, e))
+                }
+            }
+        }
     }
 }

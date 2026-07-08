@@ -16,6 +16,8 @@ pub use decode::{decode_bool, decode_enum, decode_field, decode_u64, field_bytes
 pub use encode::{encode_bool, encode_fact, encode_i64, encode_u64};
 pub use fact_hash::fact_hash;
 
+use crate::schema::IntervalElement;
+
 /// Encoding-level description of a field's type: exactly what is needed to
 /// size, encode, and corruption-check its bytes. No names anywhere — a type
 /// is an encoding and nothing else (`docs/architecture/10-data-model.md`).
@@ -36,15 +38,23 @@ pub enum TypeDesc {
     String,
     /// 8 bytes in facts: the interned dictionary id, big-endian.
     Bytes,
+    /// 16 bytes: `start ‖ end`, each half in the element's order-preserving
+    /// encoding, strictly `start < end`.
+    Interval {
+        /// The element domain: one of the two orderable scalars.
+        element: IntervalElement,
+    },
 }
 
 impl TypeDesc {
-    /// Encoded width in bytes: 1 for `Bool`/`Enum`, 8 for everything else.
+    /// Encoded width in bytes: 1 for `Bool`/`Enum`, 16 for `Interval`,
+    /// 8 for everything else.
     #[must_use]
     pub const fn width(self) -> usize {
         match self {
             Self::Bool | Self::Enum { .. } => 1,
             Self::U64 | Self::I64 | Self::String | Self::Bytes => 8,
+            Self::Interval { .. } => 16,
         }
     }
 }
@@ -64,6 +74,10 @@ pub enum ValueRef {
     String(u64),
     /// Intern id of a byte sequence.
     Bytes(u64),
+    /// Interval over U64: `(start, end)`, strictly `start < end`.
+    IntervalU64(u64, u64),
+    /// Interval over I64: `(start, end)`, strictly `start < end`.
+    IntervalI64(i64, i64),
 }
 
 const I64_SIGN_BIT: u64 = 1 << 63;

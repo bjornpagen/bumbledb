@@ -53,6 +53,9 @@ impl fmt::Display for CorruptionError {
                 ordinal,
                 variant_count,
             } => write!(f, "enum ordinal {ordinal} beyond {variant_count} variants"),
+            Self::InvalidInterval(bytes) => {
+                write!(f, "interval bytes {bytes:02x?}: start >= end")
+            }
             Self::MetaMissing => write!(f, "the _meta database is absent or malformed"),
             Self::DanglingInternId(id) => write!(f, "intern id {id} has no dictionary entry"),
             Self::MissingFact { relation, row_id } => {

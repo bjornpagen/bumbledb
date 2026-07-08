@@ -22,6 +22,7 @@ impl ValueType {
             Self::I64 => TypeDesc::I64,
             Self::String => TypeDesc::String,
             Self::Bytes => TypeDesc::Bytes,
+            Self::Interval { element } => TypeDesc::Interval { element: *element },
         }
     }
 }
