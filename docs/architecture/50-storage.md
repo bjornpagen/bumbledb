@@ -139,7 +139,14 @@ mechanics:
      source entries; for interval positions the deleted-or-shrunk window's `R`
      range is walked and each surviving source is re-checked for coverage against
      the final target state. A surviving requirer → typed error naming the *source*
-     fact by its bytes.
+     fact by its bytes. **Re-establishment is per statement, ψ-qualified:** for a
+     dependent statement with a nonempty target selection, a re-landed guard tuple
+     counts as re-established only if the establishing fact satisfies that
+     statement's ψ (one `F` get per re-established tuple per ψ-carrying dependent;
+     empty-ψ dependents use the plain set difference). Without the qualification,
+     delete + re-insert of identical key bytes with a changed selection field
+     strands sources in a committed state — the unqualified difference is unsound
+     under selections.
    - Bidirectional statements run both bullets with the sides swapped — the same
      two code paths, no third.
    Any failure → typed error carrying the statement id, abort. The probe primitive

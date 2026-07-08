@@ -201,7 +201,8 @@ because an untouched binding cannot change a judgment's truth:
 - IND, source side: per inserted A-fact satisfying φ, probe B's key guard (plus the
   selection-literal check on the found fact, and the coverage walk for interval
   positions).
-- IND, target side: per deleted-and-not-reestablished B key tuple, probe the
+- IND, target side: per deleted-and-not-reestablished B key tuple
+  (re-establishment ψ-qualified per statement — `50-storage.md`), probe the
   statement's reverse-edge namespace for surviving A-facts that still require it
   (interval positions: the touched window).
 - `==`: both directions, symmetric machinery.
