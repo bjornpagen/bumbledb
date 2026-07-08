@@ -217,12 +217,17 @@ Rejected at schema validation, each with a distinct error: unknown relation/fiel
 ids; empty or duplicate-carrying projections; arity mismatch between sides;
 positional structural-type mismatch; selection literal type mismatch (including
 out-of-range enum ordinals and non-UTF-8 string literals); a selected field also
-projected; FD with selection, non-key FD form, >1 interval position, interval not in
+projected; FD with >1 interval position, interval not in
 final position, or guard width overflow; IND whose target projection matches no key
 of the target (or, with an interval position, no pointwise key carrying it);
-duplicate statements (identical normalized sides and form — write it once);
+duplicate statements (identical normalized sides and form — write it once), where
+two FDs over one field *set* are duplicates regardless of projection order (the
+order shapes only the guard, and key resolution is by set);
 a statement referencing an interval position against a scalar position (that is the
 type-mismatch case, called out because it is the one migration authors will hit).
+FD-with-selection and non-key FD forms are not rejected here — they are
+**unrepresentable**: the descriptor cannot carry them, and the macro grammar
+rejects the utterance (`70-api.md`).
 
 ## What this system says that SQL cannot (and refuses that SQL offers)
 
