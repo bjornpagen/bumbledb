@@ -6,21 +6,23 @@ use crate::storage::delta::{Disposition, WriteDelta};
 use crate::storage::env::Environment;
 use crate::storage::keys::MAX_KEY;
 
-use super::{Applied, Applier, FkProbes};
+use super::{Applied, Applier};
 
 /// Applies the delta to LMDB in canonical order: phase 1 all deletes, then
 /// phase 2 all inserts. Opens the LMDB write transaction here — nothing
-/// touched a data page before this call (the 40-storage doc's lock-window rule).
+/// touched a data page before this call (the 50-storage doc's lock-window
+/// rule).
 ///
 /// # Errors
 ///
-/// `UniqueViolation` when two live facts claim one unique key; `Lmdb` on
-/// storage failure; `Corruption` on malformed base state. On any error the
-/// transaction is dropped — nothing persists.
+/// `FunctionalityViolation` when two live facts claim one key — the same
+/// guard (scalar) or overlapping intervals in one scalar-prefix group
+/// (pointwise); `Lmdb` on storage failure; `Corruption` on malformed base
+/// state. On any error the transaction is dropped — nothing persists.
 ///
 /// # Panics
 ///
-/// Only on programmer-invariant violations (validated-schema id widths).
+/// Only on programmer-invariant violations (validated-schema shapes).
 pub fn apply<'env, 's>(delta: WriteDelta<'s>, env: &'env Environment) -> Result<Applied<'env, 's>> {
     let txn = env.write_txn()?;
     let mut applier = Applier {
@@ -30,7 +32,6 @@ pub fn apply<'env, 's>(delta: WriteDelta<'s>, env: &'env Environment) -> Result<
         row_id_next: BTreeMap::new(),
         deleted_guards: BTreeSet::new(),
         inserted_guards: BTreeSet::new(),
-        fk_probes: FkProbes::new(),
         key: [0; MAX_KEY],
         guard: Vec::new(),
     };
@@ -67,7 +68,6 @@ pub fn apply<'env, 's>(delta: WriteDelta<'s>, env: &'env Environment) -> Result<
         row_id_next,
         deleted_guards,
         inserted_guards,
-        fk_probes,
         ..
     } = applier;
     Ok(Applied {
@@ -77,6 +77,5 @@ pub fn apply<'env, 's>(delta: WriteDelta<'s>, env: &'env Environment) -> Result<
         row_id_next,
         deleted_guards,
         inserted_guards,
-        fk_probes,
     })
 }

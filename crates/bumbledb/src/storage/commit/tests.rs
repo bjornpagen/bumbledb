@@ -1,18 +1,26 @@
 use super::*;
 use crate::encoding::{encode_fact, ValueRef};
 use crate::schema::{
-    ConstraintDescriptor, FieldDescriptor, FieldId, Generation, RelationDescriptor, Schema,
-    SchemaDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, Schema,
+    SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 use crate::storage::env::Environment;
 use crate::storage::keys::{KeyBuf, MAX_KEY};
 
 mod apply;
 mod commit;
+mod functionality;
 
-/// Target(id serial) + Source(id serial, t u64 fk -> Target.id) +
-/// Keyed(x u64 unique, y i64).
+/// Target(id serial) + Keyed(x u64, y i64; key x) +
+/// Booking(room u64, during interval<u64>, tag u64; key (room, during)) +
+/// Claim(holder u64; Claim(holder) <= Target(id)) — the containment gives
+/// Target's key a dependent, so its guards are recorded for PRD 09.
 fn schema() -> Schema {
+    let field = |name: &str, value_type: ValueType| FieldDescriptor {
+        name: name.into(),
+        value_type,
+        generation: Generation::None,
+    };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -22,47 +30,49 @@ fn schema() -> Schema {
                     value_type: ValueType::U64,
                     generation: Generation::Serial,
                 }],
-                constraints: vec![],
-            },
-            RelationDescriptor {
-                name: "Source".into(),
-                fields: vec![
-                    FieldDescriptor {
-                        name: "id".into(),
-                        value_type: ValueType::U64,
-                        generation: Generation::Serial,
-                    },
-                    FieldDescriptor {
-                        name: "t".into(),
-                        value_type: ValueType::U64,
-                        generation: Generation::None,
-                    },
-                ],
-                constraints: vec![ConstraintDescriptor::ForeignKey {
-                    name: "source_target".into(),
-                    fields: Box::new([FieldId(1)]),
-                    target_relation: RelationId(0),
-                    target_constraint: ConstraintId(0),
-                }],
             },
             RelationDescriptor {
                 name: "Keyed".into(),
+                fields: vec![field("x", ValueType::U64), field("y", ValueType::I64)],
+            },
+            RelationDescriptor {
+                name: "Booking".into(),
                 fields: vec![
-                    FieldDescriptor {
-                        name: "x".into(),
-                        value_type: ValueType::U64,
-                        generation: Generation::None,
-                    },
-                    FieldDescriptor {
-                        name: "y".into(),
-                        value_type: ValueType::I64,
-                        generation: Generation::None,
-                    },
+                    field("room", ValueType::U64),
+                    field(
+                        "during",
+                        ValueType::Interval {
+                            element: IntervalElement::U64,
+                        },
+                    ),
+                    field("tag", ValueType::U64),
                 ],
-                constraints: vec![ConstraintDescriptor::Unique {
-                    name: "x".into(),
-                    fields: Box::new([FieldId(0)]),
-                }],
+            },
+            RelationDescriptor {
+                name: "Claim".into(),
+                fields: vec![field("holder", ValueType::U64)],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: KEYED,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: BOOKING,
+                projection: Box::new([FieldId(0), FieldId(1)]),
+            },
+            StatementDescriptor::Containment {
+                source: Side {
+                    relation: CLAIM,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
+                target: Side {
+                    relation: TARGET,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
             },
         ],
     }
@@ -71,9 +81,15 @@ fn schema() -> Schema {
 }
 
 const TARGET: RelationId = RelationId(0);
-const SOURCE: RelationId = RelationId(1);
-const KEYED: RelationId = RelationId(2);
-const C0: ConstraintId = ConstraintId(0);
+const KEYED: RelationId = RelationId(1);
+const BOOKING: RelationId = RelationId(2);
+const CLAIM: RelationId = RelationId(3);
+
+/// Materialized statement order: Target's serial auto-key first, then the
+/// declared statements in declaration order.
+const TARGET_KEY: StatementId = StatementId(0);
+const KEYED_KEY: StatementId = StatementId(1);
+const BOOKING_KEY: StatementId = StatementId(2);
 
 fn target_fact(schema: &Schema, id: u64) -> Vec<u8> {
     let mut b = Vec::new();
@@ -85,21 +101,27 @@ fn target_fact(schema: &Schema, id: u64) -> Vec<u8> {
     b
 }
 
-fn source_fact(schema: &Schema, id: u64, t: u64) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(
-        &[ValueRef::U64(id), ValueRef::U64(t)],
-        schema.relation(SOURCE).layout(),
-        &mut b,
-    );
-    b
-}
-
 fn keyed_fact(schema: &Schema, x: u64, y: i64) -> Vec<u8> {
     let mut b = Vec::new();
     encode_fact(
         &[ValueRef::U64(x), ValueRef::I64(y)],
         schema.relation(KEYED).layout(),
+        &mut b,
+    );
+    b
+}
+
+/// A Booking fact: `during = [start, end)`; `tag` distinguishes facts
+/// sharing a key guard (an exact-duplicate key on distinct facts).
+fn booking_fact(schema: &Schema, room: u64, start: u64, end: u64, tag: u64) -> Vec<u8> {
+    let mut b = Vec::new();
+    encode_fact(
+        &[
+            ValueRef::U64(room),
+            ValueRef::IntervalU64(start, end),
+            ValueRef::U64(tag),
+        ],
+        schema.relation(BOOKING).layout(),
         &mut b,
     );
     b

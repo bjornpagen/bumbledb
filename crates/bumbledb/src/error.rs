@@ -390,10 +390,22 @@ pub enum Error {
     FactShape(FactShapeError),
 
     // --- Write errors ---
-    // The judgment-violation variants (a statement violated by the
-    // committed final state, carrying the StatementId and the offending
-    // fact's bytes) arrive with the commit pipeline, PRDs 07–09
+    // The containment-violation variants arrive with PRDs 08–09
     // (`docs/architecture/30-dependencies.md` § judged on final states).
+    /// A `Functionality` statement violated by the committed final state:
+    /// two live facts claim one key — the same guard bytes (scalar
+    /// put-conflict), or overlapping intervals within one scalar-prefix
+    /// group (the pointwise neighbor probe). Payloads are canonical fact
+    /// bytes, never row ids (`docs/architecture/10-data-model.md`).
+    FunctionalityViolation {
+        statement: StatementId,
+        /// The fact whose insert violated the statement.
+        fact: Box<[u8]>,
+        /// The already-standing fact, for the pointwise arm — the probe
+        /// names both parties. `None` for a scalar put-conflict, where
+        /// the guard bytes inside `fact` already identify the collision.
+        incumbent: Option<Box<[u8]>>,
+    },
     /// A serial sequence reached `u64::MAX`; the generator can issue no
     /// further values for this field.
     SerialExhausted {

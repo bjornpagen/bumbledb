@@ -1,28 +1,26 @@
 use std::collections::BTreeMap;
 
-use crate::error::{CorruptionError, Error, FkViolation, Result};
+use crate::error::{CorruptionError, Error, Result};
 use crate::obs;
 use crate::schema::RelationId;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{Environment, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
 
-use super::restrict::check_restrict;
 use super::{apply, Applied, CommitReport};
 
-/// The full commit (docs/architecture/40-storage.md): apply (phases 1-2), FK validation against the
-/// final state (phase 3), counter flush (phase 4), LMDB commit (phase 5).
-/// Any error anywhere aborts — nothing persists.
+/// The full commit (docs/architecture/50-storage.md): apply (phases 1-2),
+/// the judgment phase (phase 3, PRDs 08-09), counter flush (phase 4), LMDB
+/// commit (phase 5). Any error anywhere aborts — nothing persists.
 ///
 /// # Errors
 ///
-/// `UniqueViolation`/`ForeignKeyViolation` on constraint violations in the
-/// final state; `Lmdb`/`Corruption` on storage failure.
+/// `FunctionalityViolation` on a key statement violated by the final
+/// state; `Lmdb`/`Corruption` on storage failure.
 ///
 /// # Panics
 ///
-/// Only on programmer-invariant violations (validated-schema id widths,
-/// well-formed R keys this same commit wrote).
+/// Only on programmer-invariant violations (validated-schema shapes).
 pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> {
     // An all-no-op delta commits without touching query-visible state:
     // the tx id does not advance and no cached image is invalidated. But
@@ -63,38 +61,12 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         mut txn,
         delta,
         row_id_next,
-        deleted_guards,
-        inserted_guards,
-        fk_probes,
         ..
     } = applied;
-    let data = env.data();
-    let mut key: KeyBuf = [0; MAX_KEY];
 
-    // Phase 3a: forward FK validation — every inserted fact's targets must
-    // resolve in the final state (the write txn reads its own writes).
-    let forward_span = obs::span_args(
-        obs::names::FK_FORWARD,
-        obs::Category::Commit,
-        fk_probes.len() as u64,
-        0,
-    );
-    for ((target_relation, target_constraint, guard), probe) in &fk_probes {
-        let u_len = keys::unique_key(&mut key, *target_relation, *target_constraint, guard);
-        if data.get(txn.raw(), &key[..u_len])?.is_none() {
-            return Err(Error::ForeignKeyViolation {
-                relation: probe.source_relation,
-                constraint: probe.source_constraint,
-                violation: FkViolation::MissingTarget {
-                    fact_bytes: probe.fact_bytes.clone().into_boxed_slice(),
-                },
-            });
-        }
-    }
-
-    forward_span.end();
-
-    check_restrict(&txn, data, &mut key, &deleted_guards, &inserted_guards)?;
+    // Phase 3, the judgment phase — containment source side (PRD 08) and
+    // target side over `deleted_guards`/`inserted_guards` (PRD 09) — lands
+    // here, final-state probes inside this same write transaction.
 
     // Phase 4: counters — row counts, row-id high-waters, serial sequences,
     // pending dictionary entries and the dictionary next-id.

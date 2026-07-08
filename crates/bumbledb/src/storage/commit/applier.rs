@@ -1,12 +1,11 @@
-use crate::encoding::field_bytes;
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::{ConstraintDescriptor, ConstraintId, Relation, RelationId, Schema};
+use crate::schema::{RelationId, Resolved, Schema, Statement, StatementDescriptor};
 use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
 
-use super::{Applier, FkProbe};
+use super::Applier;
 
 impl Applier<'_> {
-    /// Phase-1 step: removes one fact's F/M/U/R entries if it exists in
+    /// Phase-1 step: removes one fact's F/M/U entries if it exists in
     /// base state (else the delete is a no-op by construction).
     pub(super) fn delete_fact(
         &mut self,
@@ -25,7 +24,7 @@ impl Applier<'_> {
         let f_len = keys::fact_key(&mut self.key, rel, row_id);
         // A live M entry MUST have its F row (and every U guard below):
         // a miss is the M/F-disagreement corruption class, a hard error —
-        // never silently scrubbed (docs/architecture/40-storage.md).
+        // never silently scrubbed (docs/architecture/50-storage.md).
         if !self.data.delete(self.txn.raw_mut(), &self.key[..f_len])? {
             return Err(Error::Corruption(CorruptionError::MembershipDesync {
                 relation: rel,
@@ -33,53 +32,37 @@ impl Applier<'_> {
             }));
         }
 
-        // Guard keys are re-derived by slicing constrained fields out of
-        // fact_bytes — never a scan.
-        for &cid in relation.unique_constraints() {
-            derive_guard(
-                relation,
-                relation.constraint(cid).fields(),
+        // Guard keys are re-derived by slicing projected fields out of
+        // fact_bytes — never a scan; interval fields slice as their whole
+        // 16 bytes (`keys::guard_bytes`).
+        for &sid in relation.keys() {
+            let statement = schema.statement(sid);
+            keys::guard_bytes(
+                relation.layout(),
+                key_projection(statement),
                 fact_bytes,
                 &mut self.guard,
             );
-            let u_len = keys::unique_key(&mut self.key, rel, cid, &self.guard);
+            let u_len = keys::guard_key(&mut self.key, rel, sid, &self.guard);
             if !self.data.delete(self.txn.raw_mut(), &self.key[..u_len])? {
                 return Err(Error::Corruption(CorruptionError::MembershipDesync {
                     relation: rel,
                     row_id,
                 }));
             }
-            if relation.fk_targeted().contains(&cid) {
-                self.deleted_guards.insert((rel, cid, self.guard.clone()));
+            if !schema.dependents(sid).is_empty() {
+                self.deleted_guards.insert((sid, self.guard.clone()));
             }
         }
-        for constraint in relation.constraints() {
-            let ConstraintDescriptor::ForeignKey {
-                target_relation,
-                target_constraint,
-                fields,
-                ..
-            } = constraint
-            else {
-                continue;
-            };
-            derive_guard(relation, fields, fact_bytes, &mut self.guard);
-            let r_len = keys::restrict_key(
-                &mut self.key,
-                *target_relation,
-                *target_constraint,
-                &self.guard,
-                rel,
-                row_id,
-            );
-            self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;
-        }
+        // Outgoing R entries: PRD 08 (source-side containment) owns the
+        // R namespace; deletion of this fact's reverse edges lands there.
         self.changed = true;
         Ok(())
     }
 
-    /// Phase-2 step: lands one fact's F/M/U/R entries if it is not in base
-    /// state (else the insert is a no-op).
+    /// Phase-2 step: lands one fact's F/M/U entries if it is not in base
+    /// state (else the insert is a no-op), enforcing every key statement —
+    /// scalar by put-conflict, pointwise by the ordered-neighbor probe.
     pub(super) fn insert_fact(
         &mut self,
         schema: &Schema,
@@ -102,22 +85,36 @@ impl Applier<'_> {
         self.data
             .put(self.txn.raw_mut(), &self.key[..f_len], fact_bytes)?;
 
-        for &cid in relation.unique_constraints() {
-            derive_guard(
-                relation,
-                relation.constraint(cid).fields(),
+        for &sid in relation.keys() {
+            let statement = schema.statement(sid);
+            let Resolved::Functionality { interval_position } = &statement.resolved else {
+                unreachable!("validated schema: relation keys resolve as Functionality")
+            };
+            let pointwise = interval_position.is_some();
+            keys::guard_bytes(
+                relation.layout(),
+                key_projection(statement),
                 fact_bytes,
                 &mut self.guard,
             );
-            let u_len = keys::unique_key(&mut self.key, rel, cid, &self.guard);
+            let u_len = keys::guard_key(&mut self.key, rel, sid, &self.guard);
             // Every delete already landed and the insert set is
             // deduplicated, so an occupied guard here is a genuine
-            // violation of the commit-time invariant.
-            if self.data.get(self.txn.raw(), &self.key[..u_len])?.is_some() {
-                return Err(Error::UniqueViolation {
-                    relation: rel,
-                    constraint: cid,
-                    fact_bytes: fact_bytes.into(),
+            // violation of the final-state judgment. On a pointwise key
+            // this exact-bytes conflict is the exact-duplicate-interval
+            // case; the incumbent is named via its row_id (cold aborting
+            // path — one extra get, docs/architecture/50-storage.md).
+            if let Some(value) = self.data.get(self.txn.raw(), &self.key[..u_len])? {
+                let incumbent = if pointwise {
+                    let incumbent_row = decode_row_id(value)?;
+                    Some(self.fetch_fact(rel, incumbent_row)?)
+                } else {
+                    None
+                };
+                return Err(Error::FunctionalityViolation {
+                    statement: sid,
+                    fact: fact_bytes.into(),
+                    incumbent,
                 });
             }
             self.data.put(
@@ -125,44 +122,108 @@ impl Applier<'_> {
                 &self.key[..u_len],
                 row_id.to_le_bytes().as_slice(),
             )?;
-            if relation.fk_targeted().contains(&cid) {
-                self.inserted_guards.insert((rel, cid, self.guard.clone()));
+            if pointwise {
+                // The exact put cannot detect overlap — only equality —
+                // so a pointwise key additionally probes its ordered
+                // neighbors within the scalar-prefix group.
+                self.probe_neighbors(rel, sid, u_len, fact_bytes)?;
+            }
+            if !schema.dependents(sid).is_empty() {
+                self.inserted_guards.insert((sid, self.guard.clone()));
             }
         }
-        for (con_idx, constraint) in relation.constraints().iter().enumerate() {
-            let ConstraintDescriptor::ForeignKey {
-                target_relation,
-                target_constraint,
-                fields,
-                ..
-            } = constraint
-            else {
-                continue;
-            };
-            derive_guard(relation, fields, fact_bytes, &mut self.guard);
-            let r_len = keys::restrict_key(
-                &mut self.key,
-                *target_relation,
-                *target_constraint,
-                &self.guard,
-                rel,
-                row_id,
-            );
-            // R puts are unconditional; target validation is the 40-storage doc's.
-            self.data
-                .put(self.txn.raw_mut(), &self.key[..r_len], [].as_slice())?;
-            self.fk_probes
-                .entry((*target_relation, *target_constraint, self.guard.clone()))
-                .or_insert_with(|| FkProbe {
-                    source_relation: rel,
-                    source_constraint: ConstraintId(
-                        u16::try_from(con_idx).expect("validated schema: constraint ids fit u16"),
-                    ),
-                    fact_bytes: fact_bytes.to_vec(),
-                });
-        }
+        // R puts per outgoing containment: PRD 08 (source-side
+        // containment) owns the R namespace.
         self.changed = true;
         Ok(())
+    }
+
+    /// The ordered-neighbor probe for a pointwise key: after the exact `U`
+    /// put at `self.key[..u_len]`, checks the two adjacent guard entries of
+    /// the same scalar-prefix group for interval overlap. Two probes,
+    /// O(log n), same write transaction — LMDB write txns read their own
+    /// writes, so intra-delta overlaps are caught identically.
+    ///
+    /// Comparison directions, derived once from half-open semantics: a
+    /// guard is `prefix ‖ start ‖ end` with order-preserving 8-byte halves,
+    /// so byte order within the group is `(start, end)` order, and byte
+    /// comparison of halves is numeric comparison. Two half-open intervals
+    /// `[s, e)` and `[x, y)` share a point iff `x < e && s < y`. The
+    /// predecessor sorts strictly below the inserted key, so `ps <= s < e`
+    /// and its test reduces to `pe > s`; the successor sorts strictly
+    /// above, so `ne > ns >= s` and its test reduces to `ns < e`. Both
+    /// comparisons are strict: `pe == s` and `ns == e` are adjacency,
+    /// legal by half-open construction — no epsilon, no widening.
+    fn probe_neighbors(
+        &mut self,
+        rel: RelationId,
+        statement: crate::schema::StatementId,
+        u_len: usize,
+        fact_bytes: &[u8],
+    ) -> Result<()> {
+        let inserted = &self.key[..u_len];
+        let prefix = &inserted[..u_len - 16];
+        let start = &inserted[u_len - 16..u_len - 8];
+        let end = &inserted[u_len - 8..u_len];
+
+        let mut incumbent_row: Option<u64> = None;
+        if let Some((pk, pv)) = self.data.get_lower_than(self.txn.raw(), inserted)? {
+            if pk.starts_with(prefix) {
+                // Same statement, same guard width: a prefix-sharing key
+                // of any other length is corrupt data, a hard error.
+                if pk.len() != u_len {
+                    return Err(Error::Corruption(CorruptionError::MalformedValue(
+                        "U guard key length",
+                    )));
+                }
+                // Predecessor `[ps, pe)`: violation iff `pe > s`.
+                if &pk[u_len - 8..] > start {
+                    incumbent_row = Some(decode_row_id(pv)?);
+                }
+            }
+        }
+        if incumbent_row.is_none() {
+            if let Some((nk, nv)) = self.data.get_greater_than(self.txn.raw(), inserted)? {
+                if nk.starts_with(prefix) {
+                    if nk.len() != u_len {
+                        return Err(Error::Corruption(CorruptionError::MalformedValue(
+                            "U guard key length",
+                        )));
+                    }
+                    // Successor `[ns, ne)`: violation iff `ns < e`.
+                    if &nk[u_len - 16..u_len - 8] < end {
+                        incumbent_row = Some(decode_row_id(nv)?);
+                    }
+                }
+            }
+        }
+        let Some(row) = incumbent_row else {
+            return Ok(());
+        };
+        // Cold aborting path: name the incumbent by its fact bytes via
+        // row_id → F get (errors carry facts, never row ids).
+        let incumbent = self.fetch_fact(rel, row)?;
+        Err(Error::FunctionalityViolation {
+            statement,
+            fact: fact_bytes.into(),
+            incumbent: Some(incumbent),
+        })
+    }
+
+    /// Fetches a fact's canonical bytes by row id — the incumbent lookup
+    /// of an aborting violation (cold path; one sanctioned extra get).
+    fn fetch_fact(&self, rel: RelationId, row_id: u64) -> Result<Box<[u8]>> {
+        // Own scratch: `self.key` still holds the caller's guard key.
+        let mut key: KeyBuf = [0; MAX_KEY];
+        let f_len = keys::fact_key(&mut key, rel, row_id);
+        Ok(self
+            .data
+            .get(self.txn.raw(), &key[..f_len])?
+            .ok_or(Error::Corruption(CorruptionError::MissingFact {
+                relation: rel,
+                row_id,
+            }))?
+            .into())
     }
 
     /// Assigns the next row id for `rel`, lazily initializing from the
@@ -191,22 +252,13 @@ impl Applier<'_> {
     }
 }
 
-/// Concatenates the canonical encodings of the given constraint fields, in
-/// field order, into `out` — the guard key body for both `U` and `R` keys.
-fn derive_guard(
-    relation: &Relation,
-    fields: &[crate::schema::FieldId],
-    fact_bytes: &[u8],
-    out: &mut Vec<u8>,
-) {
-    out.clear();
-    for &field in fields {
-        out.extend_from_slice(field_bytes(
-            fact_bytes,
-            relation.layout(),
-            usize::from(field.0),
-        ));
-    }
+/// The projection of a key statement (programmer invariant: every id in
+/// `Relation::keys` names a `Functionality` statement).
+fn key_projection(statement: &Statement) -> &[crate::schema::FieldId] {
+    let StatementDescriptor::Functionality { projection, .. } = &statement.descriptor else {
+        unreachable!("validated schema: relation keys are Functionality statements")
+    };
+    projection
 }
 
 fn decode_row_id(bytes: &[u8]) -> Result<u64> {

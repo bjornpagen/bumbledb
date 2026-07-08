@@ -1,15 +1,14 @@
 use super::*;
 
-use crate::encoding::encode_u64;
-use crate::error::{CorruptionError, Error, FkViolation};
-use crate::schema::{ConstraintId, FieldId, RelationId};
+use crate::error::Error;
+use crate::schema::{FieldId, RelationId};
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
 use crate::testutil::TempDir;
 
-// ---------- the 40-storage doc: full commit ----------
+// ---------- 50-storage § Write path: full commit ----------
 
 fn commit_facts(env: &Environment, schema: &Schema, facts: &[(RelationId, Vec<u8>)]) {
     let view = env.read_txn().expect("txn");
@@ -22,45 +21,28 @@ fn commit_facts(env: &Environment, schema: &Schema, facts: &[(RelationId, Vec<u8
 }
 
 #[test]
-fn insert_referencing_same_delta_target_commits() {
-    let dir = TempDir::new("commit8-order-irrelevance");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    // Referrer inserted before its target: order is irrelevant.
-    delta
-        .insert(&view, SOURCE, &source_fact(&schema, 1, 5))
-        .expect("insert");
-    delta
-        .insert(&view, TARGET, &target_fact(&schema, 5))
-        .expect("insert");
-    drop(view);
-    let report = commit(delta, &env).expect("commit succeeds");
-    assert!(report.changed);
-    assert_eq!(report.new_generation, 1);
-}
-
-#[test]
-fn insert_referencing_missing_target_aborts_with_fk_violation() {
-    let dir = TempDir::new("commit8-missing-target");
+fn scalar_key_conflict_in_one_delta_aborts_with_the_statement_id() {
+    let dir = TempDir::new("commit-scalar-in-delta");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let before = committed_data(&env);
+
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    let orphan = source_fact(&schema, 1, 99);
-    delta.insert(&view, SOURCE, &orphan).expect("insert");
+    let a = keyed_fact(&schema, 1, 10);
+    let b = keyed_fact(&schema, 1, 20);
+    delta.insert(&view, KEYED, &a).expect("insert");
+    delta.insert(&view, KEYED, &b).expect("insert");
     drop(view);
     let err = commit(delta, &env).unwrap_err();
     assert!(
         matches!(
             &err,
-            Error::ForeignKeyViolation {
-                relation: SOURCE,
-                constraint: ConstraintId(1),
-                violation: FkViolation::MissingTarget { fact_bytes },
-            } if **fact_bytes == orphan[..]
+            Error::FunctionalityViolation {
+                statement: KEYED_KEY,
+                incumbent: None,
+                fact,
+            } if **fact == a[..] || **fact == b[..]
         ),
         "{err:?}"
     );
@@ -68,99 +50,57 @@ fn insert_referencing_missing_target_aborts_with_fk_violation() {
 }
 
 #[test]
-fn deleting_a_referenced_target_alone_is_a_restrict_violation() {
-    let dir = TempDir::new("commit8-restrict");
+fn scalar_key_conflict_across_deltas_aborts_with_the_statement_id() {
+    let dir = TempDir::new("commit-scalar-cross-delta");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    commit_facts(
-        &env,
-        &schema,
-        &[
-            (TARGET, target_fact(&schema, 5)),
-            (SOURCE, source_fact(&schema, 1, 5)),
-        ],
-    );
+    commit_facts(&env, &schema, &[(KEYED, keyed_fact(&schema, 1, 10))]);
+    let before = committed_data(&env);
+
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    delta
-        .delete(&view, TARGET, &target_fact(&schema, 5))
-        .expect("delete");
+    let contender = keyed_fact(&schema, 1, 20);
+    delta.insert(&view, KEYED, &contender).expect("insert");
     drop(view);
     let err = commit(delta, &env).unwrap_err();
     assert!(
         matches!(
-            err,
-            Error::ForeignKeyViolation {
-                relation: TARGET,
-                constraint: C0,
-                violation: FkViolation::RemainingReference {
-                    source_relation: SOURCE,
-                    ..
-                },
-            }
+            &err,
+            Error::FunctionalityViolation {
+                statement: KEYED_KEY,
+                incumbent: None,
+                fact,
+            } if **fact == contender[..]
         ),
         "{err:?}"
     );
+    assert_eq!(committed_data(&env), before);
 }
 
 #[test]
-fn deleting_target_and_all_referrers_in_one_delta_commits() {
-    let dir = TempDir::new("commit8-cascade-by-hand");
+fn delete_and_reinsert_of_the_same_fact_is_a_noop() {
+    let dir = TempDir::new("commit-reestablish");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    commit_facts(
-        &env,
-        &schema,
-        &[
-            (TARGET, target_fact(&schema, 5)),
-            (SOURCE, source_fact(&schema, 1, 5)),
-        ],
-    );
+    commit_facts(&env, &schema, &[(KEYED, keyed_fact(&schema, 1, 10))]);
+    // Delete then re-insert the same fact: last disposition wins, and an
+    // Insert of a base-present fact is a no-op delta.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     delta
-        .delete(&view, TARGET, &target_fact(&schema, 5))
+        .delete(&view, KEYED, &keyed_fact(&schema, 1, 10))
         .expect("delete");
     delta
-        .delete(&view, SOURCE, &source_fact(&schema, 1, 5))
-        .expect("delete");
-    drop(view);
-    commit(delta, &env).expect("deleting target and referrers together passes");
-}
-
-#[test]
-fn delete_and_reinsert_of_referenced_unique_key_commits() {
-    let dir = TempDir::new("commit8-reestablish");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    commit_facts(
-        &env,
-        &schema,
-        &[
-            (TARGET, target_fact(&schema, 5)),
-            (SOURCE, source_fact(&schema, 1, 5)),
-        ],
-    );
-    // Replace the target fact wholesale, re-supplying its unique key —
-    // Restrict sees the re-established key and passes.
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    delta
-        .delete(&view, TARGET, &target_fact(&schema, 5))
-        .expect("delete");
-    delta
-        .insert(&view, TARGET, &target_fact(&schema, 5))
+        .insert(&view, KEYED, &keyed_fact(&schema, 1, 10))
         .expect("insert");
     drop(view);
-    // Net effect: delete then insert of the same fact is a no-op delta
-    // (last disposition wins → Insert of a base-present fact).
     let report = commit(delta, &env).expect("commit");
     assert!(!report.changed);
 }
 
 #[test]
 fn tx_id_advances_once_per_state_changing_commit_only() {
-    let dir = TempDir::new("commit8-tx-id");
+    let dir = TempDir::new("commit-tx-id");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let f = target_fact(&schema, 5);
@@ -191,7 +131,7 @@ fn tx_id_advances_once_per_state_changing_commit_only() {
 
 #[test]
 fn counters_after_reopen_match_a_recount_of_f_entries() {
-    let dir = TempDir::new("commit8-reopen-counters");
+    let dir = TempDir::new("commit-reopen-counters");
     let schema = schema();
     {
         let env = Environment::create(dir.path(), &schema).expect("create");
@@ -310,58 +250,9 @@ fn a_noop_commit_with_clean_serial_marks_touches_nothing() {
     assert_eq!(committed_data(&env), before);
 }
 
-/// PRD 06 (docs/hardening): a bare-prefix R key (the audit's shape —
-/// no 12-byte source tail) is typed Corruption from the delete's
-/// commit, and the store stays reopenable — nothing torn.
-#[test]
-fn a_malformed_r_key_is_typed_corruption_at_delete() {
-    let dir = TempDir::new("commit-corrupt-r-key");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    commit_facts(&env, &schema, &[(TARGET, target_fact(&schema, 5))]);
-
-    // Plant an R key that is exactly the restrict prefix for the
-    // target's guard — a well-formed key carries 12 more bytes.
-    {
-        let mut wtxn = env.write_txn().expect("txn");
-        let mut key: KeyBuf = [0; MAX_KEY];
-        let p_len = keys::restrict_prefix(&mut key, TARGET, C0, &encode_u64(5));
-        env.data()
-            .put(wtxn.raw_mut(), &key[..p_len], [].as_slice())
-            .expect("plant");
-        wtxn.commit().expect("commit");
-    }
-
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    delta
-        .delete(&view, TARGET, &target_fact(&schema, 5))
-        .expect("record delete");
-    drop(view);
-    let err = commit(delta, &env).unwrap_err();
-    assert!(
-        matches!(
-            err,
-            Error::Corruption(CorruptionError::MalformedValue("R key length"))
-        ),
-        "{err:?}"
-    );
-    // The commit aborted cleanly: the fact is still live and the
-    // store keeps working.
-    let view = env.read_txn().expect("txn");
-    let delta = WriteDelta::new(&schema);
-    assert_eq!(
-        delta.disposition(TARGET, &target_fact(&schema, 5)),
-        None,
-        "nothing recorded"
-    );
-    drop(view);
-    commit_facts(&env, &schema, &[(TARGET, target_fact(&schema, 6))]);
-}
-
 #[test]
 fn serials_allocated_in_an_aborted_txn_are_reissued() {
-    let dir = TempDir::new("commit8-serial-abort");
+    let dir = TempDir::new("commit-serial-abort");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     {
@@ -391,7 +282,7 @@ fn serials_allocated_in_an_aborted_txn_are_reissued() {
 
 #[test]
 fn pending_interns_flush_at_commit_and_advance_the_counter() {
-    let dir = TempDir::new("commit8-pending-interns");
+    let dir = TempDir::new("commit-pending-interns");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let view = env.read_txn().expect("txn");

@@ -1,7 +1,7 @@
 use super::*;
 use std::collections::BTreeSet;
 
-use crate::encoding::encode_u64;
+use crate::encoding::{encode_interval_u64, encode_u64};
 use crate::error::{CorruptionError, Error};
 use crate::storage::commit::apply;
 use crate::storage::delta::WriteDelta;
@@ -15,41 +15,37 @@ fn insert_lands_exactly_the_expected_key_set() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let t = target_fact(&schema, 5);
-    let s = source_fact(&schema, 9, 5);
+    let k = keyed_fact(&schema, 9, -3);
     {
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, TARGET, &t).expect("insert");
-        delta.insert(&view, SOURCE, &s).expect("insert");
+        delta.insert(&view, KEYED, &k).expect("insert");
         drop(view);
         let applied = apply(delta, &env).expect("apply");
 
         let t_hash = crate::encoding::fact_hash(&t);
-        let s_hash = crate::encoding::fact_hash(&s);
+        let k_hash = crate::encoding::fact_hash(&k);
         let expected: BTreeSet<Vec<u8>> = [
             key(|b| keys::fact_key(b, TARGET, 0)),
             key(|b| keys::membership_key(b, TARGET, &t_hash)),
-            key(|b| keys::unique_key(b, TARGET, C0, &encode_u64(5))),
-            key(|b| keys::fact_key(b, SOURCE, 0)),
-            key(|b| keys::membership_key(b, SOURCE, &s_hash)),
-            key(|b| keys::unique_key(b, SOURCE, C0, &encode_u64(9))),
-            key(|b| keys::restrict_key(b, TARGET, C0, &encode_u64(5), SOURCE, 0)),
+            key(|b| keys::guard_key(b, TARGET, TARGET_KEY, &encode_u64(5))),
+            key(|b| keys::fact_key(b, KEYED, 0)),
+            key(|b| keys::membership_key(b, KEYED, &k_hash)),
+            key(|b| keys::guard_key(b, KEYED, KEYED_KEY, &encode_u64(9))),
         ]
         .into_iter()
         .collect();
         assert_eq!(all_data_keys(&applied.txn, &env), expected);
 
-        // Bookkeeping: one forward probe for the FK, no deleted guards,
-        // the inserted target guard recorded for the FK-targeted
-        // constraint.
-        assert_eq!(applied.fk_probes.len(), 1);
-        let (target_rel, target_cid, guard) = applied.fk_probes.keys().next().expect("one probe");
-        assert_eq!((*target_rel, *target_cid), (TARGET, C0));
-        assert_eq!(guard.as_slice(), encode_u64(5));
+        // Bookkeeping: no deleted guards; the inserted Target guard is
+        // recorded because a containment targets its key, and Keyed's
+        // guard is not (no dependents).
         assert!(applied.deleted_guards.is_empty());
+        assert_eq!(applied.inserted_guards.len(), 1);
         assert!(applied
             .inserted_guards
-            .contains(&(TARGET, C0, encode_u64(5).to_vec())));
+            .contains(&(TARGET_KEY, encode_u64(5).to_vec())));
         assert!(applied.changed);
         // Abort: drop the txn without committing.
     }
@@ -61,7 +57,7 @@ fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
     // Craft the M/F disagreement: commit a fact, raw-delete its F row
     // behind the codec's back, then delta-delete it. The write path
     // must raise the hard corruption error, never silently scrub the
-    // M entry (docs/architecture/40-storage.md).
+    // M entry (docs/architecture/50-storage.md).
     let dir = TempDir::new("commit-desync");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -105,20 +101,72 @@ fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
 }
 
 #[test]
+fn deleting_a_fact_with_a_scrubbed_interval_guard_is_corruption() {
+    // The same desync class on a 16-byte-field guard: scrub the Booking
+    // key's U entry (scalar prefix ‖ whole interval) and delta-delete
+    // the fact — the guard re-derivation must land on the missing key
+    // and hard-error.
+    let dir = TempDir::new("commit-desync-interval-guard");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let booked = booking_fact(&schema, 1, 10, 20, 0);
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, BOOKING, &booked).expect("insert");
+        drop(view);
+        apply(delta, &env)
+            .expect("apply")
+            .txn
+            .commit()
+            .expect("commit");
+    }
+    {
+        let mut guard = Vec::new();
+        guard.extend_from_slice(&encode_u64(1));
+        guard.extend_from_slice(&encode_interval_u64(10, 20));
+        let mut wtxn = env.write_txn().expect("wtxn");
+        let mut key: KeyBuf = [0; MAX_KEY];
+        let u_len = keys::guard_key(&mut key, BOOKING, BOOKING_KEY, &guard);
+        assert!(env
+            .data()
+            .delete(wtxn.raw_mut(), &key[..u_len])
+            .expect("del"));
+        wtxn.commit().expect("commit");
+    }
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    delta
+        .delete(&view, BOOKING, &booked)
+        .expect("record delete");
+    drop(view);
+    let Err(err) = apply(delta, &env).map(|_| ()) else {
+        panic!("apply must fail on a scrubbed U guard");
+    };
+    assert!(matches!(
+        err,
+        Error::Corruption(CorruptionError::MembershipDesync {
+            relation: BOOKING,
+            row_id: 0
+        })
+    ));
+}
+
+#[test]
 fn delete_removes_exactly_its_entries() {
     let dir = TempDir::new("commit-delete-keys");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let t5 = target_fact(&schema, 5);
     let t6 = target_fact(&schema, 6);
-    let s = source_fact(&schema, 9, 5);
-    // Commit a base state: two targets, one source referencing t5.
+    let k = keyed_fact(&schema, 9, 4);
+    // Commit a base state: two targets and one keyed fact.
     {
         let view = env.read_txn().expect("txn");
         let mut delta = WriteDelta::new(&schema);
         delta.insert(&view, TARGET, &t5).expect("insert");
         delta.insert(&view, TARGET, &t6).expect("insert");
-        delta.insert(&view, SOURCE, &s).expect("insert");
+        delta.insert(&view, KEYED, &k).expect("insert");
         drop(view);
         apply(delta, &env)
             .expect("apply")
@@ -128,19 +176,18 @@ fn delete_removes_exactly_its_entries() {
     }
     let before = committed_data(&env);
 
-    // Delete the source fact: exactly its F/M/U/R entries disappear.
+    // Delete the keyed fact: exactly its F/M/U entries disappear.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    delta.delete(&view, SOURCE, &s).expect("delete");
+    delta.delete(&view, KEYED, &k).expect("delete");
     drop(view);
     let applied = apply(delta, &env).expect("apply");
 
-    let s_hash = crate::encoding::fact_hash(&s);
+    let k_hash = crate::encoding::fact_hash(&k);
     let removed: BTreeSet<Vec<u8>> = [
-        key(|b| keys::fact_key(b, SOURCE, 0)),
-        key(|b| keys::membership_key(b, SOURCE, &s_hash)),
-        key(|b| keys::unique_key(b, SOURCE, C0, &encode_u64(9))),
-        key(|b| keys::restrict_key(b, TARGET, C0, &encode_u64(5), SOURCE, 0)),
+        key(|b| keys::fact_key(b, KEYED, 0)),
+        key(|b| keys::membership_key(b, KEYED, &k_hash)),
+        key(|b| keys::guard_key(b, KEYED, KEYED_KEY, &encode_u64(9))),
     ]
     .into_iter()
     .collect();
@@ -150,12 +197,12 @@ fn delete_removes_exactly_its_entries() {
         .filter(|k| !removed.contains(k))
         .collect();
     assert_eq!(all_data_keys(&applied.txn, &env), expected);
-    // Source's own serial unique is not FK-targeted; nothing to scan.
+    // Keyed's key has no containment dependents; nothing to record.
     assert!(applied.deleted_guards.is_empty());
 }
 
 #[test]
-fn deleting_an_fk_targeted_fact_records_its_guard() {
+fn deleting_a_containment_targeted_key_records_its_guard() {
     let dir = TempDir::new("commit-deleted-guard");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -178,11 +225,11 @@ fn deleting_an_fk_targeted_fact_records_its_guard() {
     let applied = apply(delta, &env).expect("apply");
     assert!(applied
         .deleted_guards
-        .contains(&(TARGET, C0, encode_u64(5).to_vec())));
+        .contains(&(TARGET_KEY, encode_u64(5).to_vec())));
 }
 
 #[test]
-fn delete_plus_insert_of_same_unique_key_succeeds_in_either_user_order() {
+fn delete_plus_insert_of_same_key_succeeds_in_either_user_order() {
     let dir = TempDir::new("commit-swap-order");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -208,39 +255,8 @@ fn delete_plus_insert_of_same_unique_key_succeeds_in_either_user_order() {
     drop(view);
     let applied = apply(delta, &env).expect("apply");
     // The guard key survives, now pointing at the new row.
-    let u = key(|b| keys::unique_key(b, KEYED, C0, &encode_u64(1)));
+    let u = key(|b| keys::guard_key(b, KEYED, KEYED_KEY, &encode_u64(1)));
     assert!(all_data_keys(&applied.txn, &env).contains(&u));
-}
-
-#[test]
-fn two_facts_claiming_one_unique_key_is_a_violation_and_base_stays_intact() {
-    let dir = TempDir::new("commit-unique-violation");
-    let schema = schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    let before = committed_data(&env);
-
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    let a = keyed_fact(&schema, 1, 10);
-    let b = keyed_fact(&schema, 1, 20);
-    delta.insert(&view, KEYED, &a).expect("insert");
-    delta.insert(&view, KEYED, &b).expect("insert");
-    drop(view);
-    let Err(err) = apply(delta, &env) else {
-        panic!("expected a unique violation");
-    };
-    assert!(
-        matches!(
-            err,
-            Error::UniqueViolation {
-                relation: KEYED,
-                constraint: C0,
-                ..
-            }
-        ),
-        "{err:?}"
-    );
-    assert_eq!(committed_data(&env), before);
 }
 
 #[test]
@@ -248,28 +264,32 @@ fn rederived_guard_keys_match_independent_computation() {
     let dir = TempDir::new("commit-guard-derivation");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    let s = source_fact(&schema, 42, 7);
+    let k = keyed_fact(&schema, 42, 7);
+    let booked = booking_fact(&schema, 3, 100, 200, 1);
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    delta.insert(&view, SOURCE, &s).expect("insert");
+    delta.insert(&view, KEYED, &k).expect("insert");
+    delta.insert(&view, BOOKING, &booked).expect("insert");
     drop(view);
     let applied = apply(delta, &env).expect("apply");
 
-    // The serial auto-unique guard is the canonical encoding of `id`,
-    // and the FK guard is the canonical encoding of `t` — computed here
-    // independently of `derive_guard`.
+    // The scalar guard is the canonical encoding of `x`; the pointwise
+    // guard is `room ‖ during` with the interval's whole 16 bytes —
+    // computed here independently of the applier's slicing.
     let keys_present = all_data_keys(&applied.txn, &env);
-    assert!(keys_present.contains(&key(|b| keys::unique_key(b, SOURCE, C0, &encode_u64(42)))));
-    assert!(keys_present.contains(&key(|b| keys::restrict_key(
+    assert!(keys_present.contains(&key(|b| keys::guard_key(
         b,
-        TARGET,
-        C0,
-        &encode_u64(7),
-        SOURCE,
-        0
+        KEYED,
+        KEYED_KEY,
+        &encode_u64(42)
     ))));
-    assert_eq!(
-        applied.fk_probes.keys().next().expect("one probe").2,
-        encode_u64(7).to_vec()
-    );
+    let mut booking_guard = Vec::new();
+    booking_guard.extend_from_slice(&encode_u64(3));
+    booking_guard.extend_from_slice(&encode_interval_u64(100, 200));
+    assert!(keys_present.contains(&key(|b| keys::guard_key(
+        b,
+        BOOKING,
+        BOOKING_KEY,
+        &booking_guard
+    ))));
 }

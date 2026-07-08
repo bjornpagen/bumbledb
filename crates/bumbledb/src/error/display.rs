@@ -390,6 +390,11 @@ impl fmt::Display for Error {
             Self::Schema(err) => write!(f, "schema declaration: {err}"),
             Self::Validation(err) => write!(f, "query validation: {err}"),
             Self::FactShape(err) => write!(f, "dynamic fact: {err}"),
+            Self::FunctionalityViolation { statement, .. } => write!(
+                f,
+                "statement {}: functionality violated — two live facts claim one key",
+                statement.0
+            ),
             Self::SerialExhausted { relation, field } => write!(
                 f,
                 "serial sequence exhausted (relation {}, field {})",
