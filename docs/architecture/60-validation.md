@@ -1,56 +1,66 @@
-# 50 — Validation
+# 60 — Validation
 
-**Status ledger (2026-07-03).** In-repo today: the negative-validation corpus, the
+**Status ledger (2026-07-08, the dependency redesign).** Everything below the oracle
+section describes the validation system the redesign requires; the paragraphs in
+*this* ledger record what exists versus what the redesign resets. In-repo from the
+pre-redesign engine and still true in kind: the negative-validation corpus, the
 deterministic property/golden content as unit tests, the randomized
 executor-vs-nested-loop differential family, kill-during-commit crash injection, the
 concurrent reader/writer families (incl. the pinned-at-T reads), the ETL family, the
-allocation gate (allocations *and* deallocations), and the EXPLAIN family (cover
-choice + batching engaged). Also in-repo now (`crates/bumbledb-bench`,
-docs/architecture/50-validation.md): the SQLite oracle (`bumbledb-bench verify`), the IR→SQL
-translator, and the ledger benchmark (`bumbledb-bench bench`). **The oracle was
-built as 2-way agreement plus hand-written goldens, not the 3-way reference-engine
-design below:** the translator's output is pinned byte-for-byte against
-hand-written SQL for every family, and those goldens arbitrate engine-vs-SQLite
-disagreements — the reference engine's tie-breaking role is filled by a human
-reading the semantics docs against the golden, at the cost of a third independent
-executor. The deviation stands until a disagreement the goldens cannot arbitrate
-appears; then the reference engine gets built. Still external and unbuilt: the
-reference engine, the versioned golden corpus artifact, and fuzz targets proper.
-The benchmark is built; **the performance claim is pending a human L-scale ALL-WIN
-run** — nothing here makes it. The first S-scale report (2026-07-03, FAIL:
-fk_walk/balance/string lost) drove the perf work (landed the
-same week; the PRD process is retired — git history has it): selection-level probes, the view-memo LRU, the finalize intern
-memo, dense COLT iteration, magnitude-first covers, honest planner
-cardinalities, fullfsync parity, and store compaction — each enforced by the
-structural tripwires in `crates/bumbledb-bench/src/tripwires.rs`, never by
-wall clock. The old report is stale evidence; the claim is re-earned by a
-human re-run of `scripts/bench.sh`.
+allocation gate (allocations *and* deallocations), the EXPLAIN family, the SQLite
+oracle (`bumbledb-bench verify`), the IR→SQL translator, and the ledger benchmark
+(`bumbledb-bench bench`). **The redesign voids the oracle stamp and the performance
+claim wholesale:** the 2,468-case count, the S-scale reports, and the pinned
+denominators (docs/silicon2/final2.md and the README charts) are historical evidence
+about the pre-redesign engine — kept, never re-cited as current. Every count is
+re-derived and every claim re-earned on the new format; the discipline (this
+chapter) is the thing that carries over. **The reference engine is promoted from
+deferred tie-breaker to required infrastructure** (below) — the redesign's judgment
+semantics cannot be validated any other way.
 
 The old repo's best asset was its correctness discipline; the worst was its gate
 theater. We keep the former and refuse the latter.
 
-## The oracle
+## The two oracles
 
-**SQLite is the external correctness oracle** — never infrastructure. Every benchmark
-and golden query is executed against SQLite and bumbledb's result set must equal
-SQLite's **exactly, by value**, before any timing claim.
+**SQLite is the external oracle for query results** — never infrastructure. Every
+benchmark and golden query *expressible in SQLite* is executed against it and
+bumbledb's result set must equal SQLite's **exactly, by value**, before any timing
+claim.
 **Decision.** **Alternative:** reference-engine-only validation. **Why it lost:** an
 independent, battle-tested implementation catches whole bug classes a same-author
 reference shares. **Reverses if:** never.
 
-**Durability parity under `synchronous=FULL` (docs/architecture/50-validation.md).** Both engines
-flush **to media** on the timing machine: LMDB does unconditionally on macOS
-(`lmdb-master-sys` `mdb.c:171` — `MDB_FDATASYNC(fd)` is `fcntl(fd, F_FULLFSYNC)`
-under `__APPLE__`), while SQLite's default `fullfsync=OFF` issues a plain
-`fsync(2)` that macOS does not propagate through the drive cache (the bundled
-amalgamation's `unixSync` issues `F_FULLFSYNC` only when the pragma is on). The
-bench session therefore pins `PRAGMA fullfsync=ON` and
-`PRAGMA checkpoint_fullfsync=ON`, and `FairnessCheck` asserts both — the first
-benchmark run's 41× commit_single gap was this asymmetry, not engine work.
+**The naive model is the oracle for dependency semantics** — the in-memory reference
+engine (naive loops + BTreeSets, obviously correct), promoted to required
+infrastructure by the redesign because SQLite cannot express the judgments
+(`30-dependencies.md`): pointwise keys, conditional containments, totality. The
+naive model implements chapter 30 literally — after every commit in a differential
+run it evaluates **every statement by brute force over the full final state** and
+must agree with the engine's accept/abort verdict *and* the violating statement id
+on abort. It also executes every query IR (negation, membership, param sets, and
+Arg-restriction included) by nested loops, closing the expressibility gaps in the
+SQLite lane. The naive model is the executable form of the semantics chapters: when
+engine, model, and docs disagree, the docs arbitrate and the loser is fixed in the
+same change.
+**Decision.** **Alternative:** emulate judgments in SQLite via triggers. **Why it
+lost:** trigger emulation is a second nontrivial implementation of the semantics
+*in a language nobody here trusts for it*, validated by nothing; the naive model is
+smaller than its triggers would be and doubles as the query-gap oracle.
+**Reverses if:** never — three-way beats two-way and the model was always the plan.
+
+**Durability parity under `synchronous=FULL`.** Both engines flush **to media** on
+the timing machine: LMDB does unconditionally on macOS (`lmdb-master-sys`
+`mdb.c:171` — `MDB_FDATASYNC(fd)` is `fcntl(fd, F_FULLFSYNC)` under `__APPLE__`),
+while SQLite's default `fullfsync=OFF` issues a plain `fsync(2)` that macOS does not
+propagate through the drive cache. The bench session therefore pins
+`PRAGMA fullfsync=ON` and `PRAGMA checkpoint_fullfsync=ON`, and `FairnessCheck`
+asserts both — the first benchmark run's 41× commit_single gap was this asymmetry,
+not engine work.
 
 **The value mapping is normative** (the v5 oracle parsed CLI text with
-`parse().unwrap_or(0)`, silently coercing everything — post-mortem-adjacent; never
-again). Comparison uses the **typed rusqlite API**, never CLI text:
+`parse().unwrap_or(0)`, silently coercing everything — never again). Comparison uses
+the **typed rusqlite API**, never CLI text:
 
 | bumbledb | SQLite | note |
 |---|---|---|
@@ -58,122 +68,167 @@ again). Comparison uses the **typed rusqlite API**, never CLI text:
 | U64 | INTEGER | generator constrains oracle-checked data to `< 2^63`; full-range U64 is covered by non-oracle property tests (encode/decode, guards) |
 | I64 | INTEGER | |
 | Enum | INTEGER (ordinal) | Min/Max never apply (equality-only type) |
+| Interval | two INTEGER columns (start, end) | value equality = pairwise; `Overlaps`/`Contains`/membership translate to endpoint comparisons — fully expressible in SQL; the *judgments* over intervals are the naive model's lane |
 | String | TEXT | intern ids decoded to bytes **before** comparison, outside any timed region |
 | Bytes | BLOB | never TEXT — DISTINCT distinguishes `X'41'` from `'A'` |
 
 **Projection queries:** `SELECT DISTINCT` over the join with all find variables.
-**Aggregate queries (normative template):** the aggregate applied over a
-`SELECT DISTINCT <all bound query variables>` subquery — never a bare `GROUP BY` over
-the joined bag (which folds witness multiplicity) and never `SUM(DISTINCT x)` (which
-folds distinct values). `Count` = `COUNT(*)` over that subquery. **Empty-input global
-aggregates:** bumbledb yields the empty set; SQLite yields one NULL/0 row; the harness
-rule is that the oracle SQL wraps ungrouped aggregates to drop the empty-input row —
-a documented translation rule, not an ad-hoc comparison patch.
+**Negation:** `NOT EXISTS` correlated subqueries — the translator owns the
+correlation variable mapping. **Param sets:** SQL `IN` lists expanded per execution
+(the translator re-renders; prepared-statement parity is not claimed for set-bound
+families, stated). **Aggregate queries (normative template):** the aggregate applied
+over a `SELECT DISTINCT <all bound query variables>` subquery — never a bare
+`GROUP BY` over the joined bag (which folds witness multiplicity) and never
+`SUM(DISTINCT x)` (which folds distinct values). `Count` = `COUNT(*)` over that
+subquery; `CountDistinct(x)` = `COUNT(DISTINCT x)` over it. **Arg-restriction:** the
+subquery joined back against its per-group extreme (`WHERE (group, key) IN (SELECT
+group, MAX(key) ...)`) — ties survive on both sides by construction, matching the
+set-honest semantics. **Empty-input global aggregates:** bumbledb yields the empty
+set; SQLite yields one NULL/0 row; the harness rule is that the oracle SQL wraps
+ungrouped aggregates to drop the empty-input row — a documented translation rule,
+not an ad-hoc comparison patch.
 
 **The IR→SQL translator is named infrastructure** with its own tests: hand-written SQL
 goldens pin its output for known queries. Arbitration for 3-way disagreements
-(engine vs reference vs SQLite): the hand-verified golden answers decide; a
-disagreement on a non-golden query becomes a minimized golden before it is "fixed."
+(engine vs model vs SQLite): the hand-verified golden answers decide; a disagreement
+on a non-golden query becomes a minimized golden before it is "fixed."
 
 **Negative validation** has no oracle (SQLite accepts what we reject): a corpus of
-invalid IR with pinned error kinds asserts the validation roster in `20-query-ir.md`.
+invalid IR *and invalid dependency statements* with pinned error kinds asserts the
+validation rosters in `20-query-ir.md` and `30-dependencies.md`.
 
 ## The primary benchmark: ledger
 
-Owned here (00-product describes shape; this doc owns the schema):
+Owned here (00-product describes shape; this doc owns the schema — restated in the
+statement notation, with the redesign's temporal surface added):
 
 ```
-Holder(id serial, name string)
-Account(id serial, holder u64→Holder, currency enum)
-Instrument(id serial, symbol string)
-JournalEntry(id serial, source enum, created_at i64)
-Posting(id serial, entry u64→JournalEntry, account u64→Account,
-        instrument u64→Instrument, amount i64, at i64)
-PostingTag(posting u64→Posting, tag enum)
-Org(id serial, name string)
-OrgParent(child u64→Org, parent u64→Org)
+relation Holder       { id: u64, serial, name: str }
+relation Account      { id: u64, serial, holder: u64, currency: enum }
+relation Instrument   { id: u64, serial, symbol: str }
+relation JournalEntry { id: u64, serial, source: enum, created_at: i64 }
+relation Posting      { id: u64, serial, entry: u64, account: u64,
+                        instrument: u64, amount: i64, at: i64 }
+relation PostingTag   { posting: u64, tag: enum }
+relation Org          { id: u64, serial, name: str }
+relation OrgParent    { child: u64, parent: u64 }
+relation Mandate      { account: u64, org: u64, active: interval<i64> }
+
+Account(holder)      <= Holder(id);
+Posting(entry)       <= JournalEntry(id);
+Posting(account)     <= Account(id);
+Posting(instrument)  <= Instrument(id);
+PostingTag(posting)  <= Posting(id);
+OrgParent(child)     <= Org(id);   OrgParent(parent) <= Org(id);
+Mandate(account)     <= Account(id);   Mandate(org) <= Org(id);
+Mandate(account, active) -> Mandate;                    // pointwise key: one mandate per account per instant
 ```
 
-Families: unique-key point lookups; postings for a holder/account over a time range;
-entries touching an account set (host-side union convention, documented); multi-hop
-joins across holders/accounts/postings/instruments/entries; balance-style aggregates by
-account and instrument (in the suite before any "beats SQLite" claim); a cyclic-ish
-join for WCOJ honesty; a duplicate-witness projection. Data: seeded, reproducible,
-generated at 10⁵–10⁷ facts.
+Families: key point lookups; postings for a holder/account over a time range;
+entries touching an account set (**param-set family** — the host-side union
+convention is retired with `ParamSet`); multi-hop joins across
+holders/accounts/postings/instruments/entries; balance-style aggregates by account
+and instrument; **latest-posting-per-account (Arg-restriction family)**;
+**postings-with-no-tag (negation family)**; **mandate-at-instant and
+mandate-overlap (interval families — membership probe and Overlaps join)**; a
+cyclic-ish join for WCOJ honesty; a duplicate-witness projection. Data: seeded,
+reproducible, generated at 10⁵–10⁷ facts; the mandate generator emits both disjoint
+and adjacent intervals (the neighbor-probe boundary is a data case, not just a unit
+test).
 
 **Protocol (success criterion 2 is measured exactly this way):** SQLite file-backed,
-WAL, `synchronous=FULL`, **fully indexed per family** (the honest opponent), prepared
-statements reused, `ANALYZE` run; `SELECT DISTINCT` (or the aggregate template)
-included in the timed SQL — same semantics both sides; timed region = execution +
-result materialization on both sides, decode excluded per the mapping table; warmup
-then repeats; statistic = per-family **median**; **every family must win**; warm timing
-gates, cold-after-commit reported alongside; canonical machine = the owner's. The suite
-is an explicit versioned query list in-repo; **the claim is void until the aggregate
-families are in it**. The "ratchet" is a manually re-run report per meaningful change —
-not a CI gate. JOB and friends may be run for curiosity; they gate nothing.
+WAL, `synchronous=FULL`, **fully indexed per family** (the honest opponent — interval
+families get `(account, start, end)` composite indexes, the best SQL can do),
+prepared statements reused, `ANALYZE` run; `SELECT DISTINCT` (or the aggregate
+template) included in the timed SQL — same semantics both sides; timed region =
+execution + result materialization on both sides, decode excluded per the mapping
+table; warmup then repeats; statistic = per-family **median**; **every family must
+win**; warm timing gates, cold-after-commit reported alongside; canonical machine =
+the owner's. The suite is an explicit versioned query list in-repo; **the claim is
+void until re-earned on the new format**. The "ratchet" is a manually re-run report
+per meaningful change — not a CI gate. JOB and friends may be run for curiosity; they
+gate nothing.
 
 ## Differential and property tests
 
-- A tiny **in-memory reference engine** (naive loops + BTreeSets, obviously correct)
-  executes the same IR; randomized queries over randomized ledger-shaped data must
-  agree three ways (engine, reference, SQLite).
+- The **naive model** (promoted above) executes the same IR and judges the same
+  commits; randomized queries and randomized write sequences over randomized
+  ledger-shaped data must agree three ways (engine, model, SQLite) where SQLite can
+  express the case and two ways where it cannot — with the inexpressible set
+  enumerated in the harness, never silently skipped.
 - **The generator has a feature-coverage contract, itself asserted** (the exact
   form the coverage test pins at n = 1000): every shape within ±30% of its weight;
   every *legal* cell of the per-(operator, type) comparison matrix nonzero (`Eq`/`Ne`
-  over all six types — u64, i64, enum, bool, string, bytes; order operators over the
-  two integer types) and every illegal cell zero; repeated in-atom variables;
-  self-joins with cross-atom ordered residuals; zero-binding gate atoms drawn from
-  more than one relation (including under aggregates); params re-bound across
-  executions with per-type miss policies (string and bytes out of vocabulary, u64
-  out of domain) and boundary sets alternating domain minima and maxima; aggregates
-  of every op over both integer types (u64 generators must bound reachable sums
-  below 2⁶³ — the Sum-range corollary, stated where the bound is derived);
-  multi-aggregate find lists; and **duplicate-witness data that exercises the D2
-  subtree skip and the aggregate-sink binding dedup** (the two places a
-  set-semantics bug would hide). Empty relations are covered by the verify run's
-  **empty-store pass**: every family plus a seeded randomized slice (with a
-  structurally-asserted gate-bearing query) runs against a zero-row store pair each
+  over all seven types; order operators over the two integer types;
+  `Overlaps`/`Contains` over both interval element types, including the
+  adjacent-touching boundary `[a,b) [b,c)` in both polarities) and every illegal
+  cell zero (order-on-interval prominently); repeated in-atom variables; self-joins
+  with cross-atom ordered residuals; zero-binding gate atoms drawn from more than
+  one relation (including under aggregates, including **negated** gates); negated
+  atoms across the binding-shape space (key-covered and not, with params and sets);
+  param sets across sizes {0, 1, 2, boundary-large} with per-type miss policies and
+  duplicate elements (dedup asserted); membership bindings against literals,
+  params, and variables (each anchoring the element type); aggregates of every op
+  over their legal types (u64 generators must bound reachable sums below 2⁶³);
+  CountDistinct over every type; Arg-restriction with and without ties (tie data
+  constructed, not hoped for) and with the key projected; multi-aggregate find
+  lists; and **duplicate-witness data that exercises the D2 subtree skip and the
+  aggregate-sink binding dedup** (the two places a set-semantics bug would hide).
+  Empty relations are covered by the verify run's **empty-store pass**: every
+  family plus a seeded randomized slice runs against a zero-row store pair each
   verify — every gate false, every scan empty, every aggregate folding nothing.
-  Out by decision, with reasons: three-plus occurrences of one relation in the
-  *generator* (the triangle family pins the cyclic class deterministically —
-  randomizing it buys planner fuzzing at real verify-time cost).
+- **Dependency-judgment property family** (new, the redesign's write-side core):
+  random statement sets over random schemas (within the acceptance gate), random
+  write sequences; assert engine-vs-model verdict agreement; targeted subfamilies
+  pin the theorems — union exclusivity (two arms fighting over one id must abort),
+  totality (parent without child must abort; parent-with-child in one delta must
+  commit), same-delta cluster demolition (must commit), pointwise-key
+  adjacent-vs-overlapping boundaries, coverage with exact-abutment segment chains,
+  and the sentinel end (`MAX`) at every boundary position.
 - Operation-sequence property tests for the write path: random insert/delete/alloc
-  interleavings with constraint checks, asserting idempotence, guard consistency, and
-  serial monotonicity across commits and aborts.
+  interleavings with judgment checks, asserting idempotence, guard consistency,
+  reverse-edge consistency, and serial monotonicity across commits and aborts —
+  **plus WriteTx point reads asserted against the delta-overlaid view** (a read
+  inside the transaction equals the post-commit read, on every interleaving).
 - Scalar/vectorized (batch-size 1 vs 2/64/256/partial/empty) equality on every fixture.
 - **Crash and reopen:** kill-during-commit (LMDB atomicity actually exercised) and
   reopen-after-commit asserting F/M/U/R/Q/S mutual consistency and counter truth —
-  the deferred-counter-flush design (`40-storage.md`) makes reopen the only test that
+  the deferred-counter-flush design (`50-storage.md`) makes reopen the only test that
   can catch a never-persisted high-water.
 - **Concurrent reader/writer families:** long-lived reader pinned at generation T
   across commits T+1..T+n (its images survive; results stay at T); two readers racing
-  to build one image (single shared instance or benign duplicate — per 40's rule);
+  to build one image (single shared instance or benign duplicate — per 50's rule);
   rapid write/read interleaving (a reader never sees a mismatched generation — the
   snapshot-sourced tx-id rule under test).
 - **ETL family:** bulk-load ≡ sequential-insert equivalence (full-relation set
   equality); explicit-serial/high-water property tests; chunk-boundary and mid-stream
-  failure semantics (prior chunks committed, count carried on the error); full
-  round-trip (export → fresh database → import → oracle-equal results). Append mode
-  no longer exists to misuse (`40-storage.md` records the decision not to build the
-  fast path); the misuse-rejection item is closed with it. ETL is the migration
-  story; an ETL bug is a data-loss bug.
+  failure semantics (prior chunks committed, count carried on the error) — including
+  the bidirectional-statement cluster-straddle case, which must fail loudly
+  (`50-storage.md`); full round-trip (export → fresh database → import in
+  dependency-cluster order → oracle-equal results). ETL is the migration story; an
+  ETL bug is a data-loss bug.
 - **Encoding round-trip fuzzing is retained** (decision: the one fuzz target that
   earns its place — order-preserving encodings and composite guard keys are where a
-  boundary bug corrupts sort order silently; i64::MIN, empty bytes, max-length values).
-  Executor differential fuzzing is subsumed by the seeded generator above.
+  boundary bug corrupts sort order silently; i64::MIN, empty bytes, max-length
+  values, and now interval starts/ends at element extremes and `start+1 == end`
+  minimal intervals). Executor differential fuzzing is subsumed by the seeded
+  generator above.
 
 ## Golden set
 
 Hand-written queries with hand-verified expected results over a fixed dataset — the
 anchor when the 3-way differential disagrees. Must cover: duplicate witnesses (the
 set-semantics signature), exact projection sets, duplicate insert no-ops, absent delete
-no-ops, constraint violations, aggregate folds with collapsing-vs-distinguished
-bindings (`10#footgun`), and empty-input aggregates.
+no-ops, judgment violations of both forms (with the statement id pinned), the union
+theorems by hand (exclusivity, totality, demolition), pointwise-key boundary cases
+(abutting passes, one-point overlap aborts), aggregate folds with
+collapsing-vs-distinguished bindings, Arg-restriction ties, negation against empty
+and nonempty relations, and empty-input aggregates.
 
 ## The allocation gate
 
 The one numeric gate: a counting allocator asserts the zero-warm-allocation contract
-under the exact protocol defined in `30-execution.md` (single-threaded, N warmups over
+under the exact protocol defined in `40-execution.md` (single-threaded, N warmups over
 a fixed param set, M measured runs, arena growth counted, caller-provided result
 buffer). It is a boolean, not a budget file.
 
@@ -244,6 +299,7 @@ the hot parameter; gates cite p95 where that matters.
 
 Line-count gates. PRD-map checks. Banned-identifier greps. Coverage percentages.
 Allocation budget *tables*. Failpoint matrices (the crash/reopen family above replaces
-them with fewer, sharper tests). The gate surface is: `cargo fmt` / `clippy -D
-warnings` / `cargo test`, the oracle, the differential suite, the allocation boolean,
-and the EXPLAIN family. A gate earns its place by catching a real bug class.
+them with fewer, sharper tests). Trigger-emulated constraints in the oracle. The gate
+surface is: `cargo fmt` / `clippy -D warnings` / `cargo test`, the two oracles, the
+differential suite, the allocation boolean, and the EXPLAIN family. A gate earns its
+place by catching a real bug class.
