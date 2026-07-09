@@ -1,75 +1,95 @@
-# PRD set — reconciling the code against the 2026-07-08 architecture
+# PRD set — the correctness and elegance pass
 
-This directory is the complete, ordered work plan that takes the current code to
-the architecture documented in `docs/architecture/`. When a PRD and an architecture
-chapter disagree, **the chapter wins** and the PRD is amended.
+This directory is the complete, ordered work plan for the 2026-07-09 review
+findings, the two Postgres-transfer features, and the rebuild-seam refactor. It
+supersedes the retired `docs/todo/` ledger and the previous (fully executed) PRD
+set — both live only in git history. When a PRD and an architecture chapter
+disagree, **the chapter wins** and the PRD is amended.
 
 ## Policy (read before executing any PRD)
 
 1. **A PRD is a work-organizational unit, not an atomic passing-code state.** The
-   tree is *expected* not to compile between PRDs. Never write a transitional shim,
-   a compatibility alias, a deprecated re-export, or a feature flag to keep old and
-   new worlds coexisting. Rip the old thing out and cut directly to the end state;
-   downstream breakage is the next PRD's job.
-2. **Passing criteria are evaluated when the criterion's dependencies exist**, not
-   necessarily at the PRD's own completion. Criteria marked `[shape]` are checkable
-   immediately (the code exists and has the stated form — verifiable by reading or
-   grep). Criteria marked `[test]` are unit tests written *in this PRD* that must
-   pass once the tree compiles again. Criteria marked `[gate]` hold at the end of
-   the whole plan (`cargo fmt --check`, `clippy -D warnings`, `cargo test`).
-3. **No migrations, ever.** Pre-redesign stores do not open (format version bump,
-   PRD 06). Do not write conversion code. ETL is a human decision.
+   tree may be broken between PRDs. Never write a transitional shim, a
+   compatibility alias, or a feature flag to keep old and new coexisting. Rip the
+   old thing out and cut directly to the end state; downstream breakage is the
+   next PRD's job. (This campaign is smaller-grained than the rebuild — most PRDs
+   here *will* leave the tree green — but green-between-PRDs is never a
+   requirement, only a coincidence.)
+2. **Passing criteria are typed.** `[shape]` — checkable by reading or grep the
+   moment the PRD lands. `[test]` — unit tests written *in this PRD* that pass
+   once their dependencies exist. `[gate]` — holds when the campaign closes:
+   `cargo fmt --all --check`, `clippy --workspace --all-targets -- -D warnings`,
+   `cargo test --workspace`, `scripts/check.sh`.
+3. **No migrations, ever.** No PRD may write store-conversion code.
 4. **No smoke-test or end-to-end-test PRDs.** Unit tests co-located with the code
-   they pin are in scope and required where a PRD says so. Running the verify/bench
-   harness, wiring CI, and judging results is human work.
-5. **Vocabulary discipline is a requirement, not a style preference.** New code
-   never introduces the deleted words (`unique`, `foreign key`, `fk`, `primary key`,
-   `constraint`, `cascade`, `restrict`) as identifiers or doc-comment concepts;
-   PRD 25 purges the survivors. The replacement vocabulary: *statement*,
-   *functionality / key (FD)*, *containment (IND)*, *judgment*, *guard*,
-   *reverse edge*.
-6. **Deviation handling:** if executing a PRD reveals the architecture docs are
-   wrong or silent, stop, record the conflict in the PRD file under a `## Conflict`
-   heading, and leave the decision to the owner. Do not improvise semantics.
+   they pin are in scope and required where a PRD says so. Running the
+   verify/bench harness and judging its results is orchestrator/human work — a
+   PRD may *require* that a verify run happens after it (07/09 do), but running
+   it is not PRD content.
+5. **Vocabulary discipline:** never introduce `unique`, `fk`, `foreign`,
+   `primary key`, `constraint`, `cascade`, `restrict` as identifiers or concepts.
+   The vocabulary is *statement*, *functionality/key (FD)*, *containment (IND)*,
+   *judgment*, *guard*, *reverse edge*.
+6. **Conflict protocol:** if executing a PRD reveals the architecture docs are
+   wrong or silent, stop, record the conflict in the PRD file under `## Conflict`,
+   and leave the decision to the owner. Do not improvise semantics.
+7. **A finished PRD is deleted from this folder in its landing commit**, and the
+   README table drops its row.
 
 ## Execution order
 
-Strict order within phases; phases are ordered. Do not start a PRD whose
-dependencies are unfinished.
+Strict order. Two hard sequencing rules: **11 runs after 02** (its G-item test
+uses 02's applied-inserts machinery), and **the full two-oracle verify runs green
+immediately after 09 lands** (the chase is the only real regression risk) before
+anything stacks on top. The campaign closes with re-earned benchmarks and
+regenerated charts (hot paths move), which is orchestrator work, not a PRD.
 
 | Phase | PRDs | What exists at the end |
 |---|---|---|
-| A — type & schema foundation | 01 02 03 04 05 | Interval type; statement descriptors; validation + acceptance gate; fingerprint; the new `schema!` |
-| B — storage & judgments | 06 07 08 09 10 | New key layout + format bump; FD enforcement (scalar + pointwise); containment both sides; WriteTx point reads |
-| C — query surface | 11 12 13 14 15 16 17 18 19 | New IR; validation; lowering; interval images; planner; anti-probes; param sets; new sinks; point-lookup path |
-| D — API boundary | 20 | Error taxonomy, statement rendering, param-set binding |
-| E — oracle & bench infrastructure | 21 22 23 24 | The naive model; SQL translator extensions; generator coverage; new ledger |
-| F — closure | 25 | Vocabulary sweep; root README example updated |
+| A — correctness | 01 02 03 | No reachable panic from valid input; oracles agree on every verdict label |
+| B — contract & hardening | 04 05 | The allocation contract states its true invariant and the gate can see violations; reopen trust bounded; reader cap configured |
+| C — the sweeper | 06 07 | `Db::verify_store`: full store coherence + global judgment re-verification, CLI-wrapped |
+| D — the chase | 08 09 | Containment-implied occurrence elimination, EXPLAIN'd, differentially covered |
+| E — staleness | 10 | Pull-based plan-drift signal |
+| F — sweep | 11 | The minor findings, each to its pinned verdict |
+| G — elegance | 12 13 14 15 16 17 | The rebuild seams removed, subsystem by subsystem, behavior-preserving |
 
 ## The PRDs
 
-- [01 — Interval value type and encoding](01-interval-value-type.md)
-- [02 — Statement descriptors replace constraints](02-statement-descriptors.md)
-- [03 — Schema validation: the roster and the acceptance gate](03-schema-validation.md)
-- [04 — Fingerprint over statements](04-fingerprint.md)
-- [05 — The `schema!` macro: statement grammar](05-schema-macro.md)
-- [06 — Storage keys and format version](06-storage-keys-format.md)
-- [07 — Commit: functionality enforcement](07-commit-functionality.md)
-- [08 — Commit: containment, source side](08-commit-containment-source.md)
-- [09 — Commit: containment, target side](09-commit-containment-target.md)
-- [10 — WriteTx point reads](10-writetx-point-reads.md)
-- [11 — IR shape](11-ir-shape.md)
-- [12 — IR validation roster](12-ir-validation.md)
-- [13 — Normalization and lowering](13-ir-normalization.md)
-- [14 — Images: interval columns](14-image-interval-columns.md)
-- [15 — Planner over statements](15-planner-statements.md)
-- [16 — Executor: anti-probes](16-executor-anti-probe.md)
-- [17 — Executor: param sets and membership](17-executor-paramset-membership.md)
-- [18 — Sinks: CountDistinct and Arg-restriction](18-sinks-aggregates.md)
-- [19 — Guard-probe point lookups over statements](19-guard-point-lookups.md)
-- [20 — API: errors, rendering, binding](20-api-errors-render-bind.md)
-- [21 — The naive model](21-naive-model.md)
-- [22 — IR→SQL translator extensions](22-sql-translator.md)
-- [23 — Query generator coverage](23-querygen-coverage.md)
-- [24 — The new ledger benchmark schema and families](24-bench-ledger.md)
-- [25 — Vocabulary sweep](25-vocabulary-sweep.md)
+- [01 — Hoist-path eligibility](01-hoist-eligibility.md)
+- [02 — Applied inserts and judgment direction](02-applied-inserts-direction.md)
+- [03 — `alloc_dyn` typed error](03-alloc-dyn-typed-error.md)
+- [04 — The high-water allocation contract](04-alloc-highwater-contract.md)
+- [05 — Storage hardening](05-storage-hardening.md)
+- [06 — `verify_store`: namespace coherence](06-verify-store-namespaces.md)
+- [07 — `verify_store`: global judgments + CLI](07-verify-store-judgments.md)
+- [08 — The chase: analysis and rewrite](08-chase-rewrite.md)
+- [09 — The chase: surfaces and coverage](09-chase-surfaces.md)
+- [10 — Plan staleness signal](10-staleness-signal.md)
+- [11 — Minor findings sweep](11-minor-sweep.md)
+- [12 — Elegance: schema, encoding, error](12-elegance-schema.md)
+- [13 — Elegance: storage](13-elegance-storage.md)
+- [14 — Elegance: IR and plan](14-elegance-ir-plan.md)
+- [15 — Elegance: exec and image](15-elegance-exec-image.md)
+- [16 — Elegance: api and macros](16-elegance-api-macros.md)
+- [17 — Elegance: bench crate](17-elegance-bench.md)
+
+## Elegance-pass constraints (bind PRDs 12–17 jointly)
+
+Strictly behavior-preserving: no semantics change, no new features, no
+error-shape changes; no test *assertion* changes (test code may restructure;
+expected values may not). The unsafe-allowlisted hot modules (`exec/kernel.rs`,
+`exec/colt.rs` gather/probe, `exec/wordmap.rs`, `exec/run.rs` leaf/batch,
+`image.rs` decode, `obs.rs` fast clock) are touch-only-with-cause: a hot-path
+refactor needs a reason stronger than taste, and any change that could plausibly
+move a measured number is flagged in the commit body for the closing re-bench.
+Each PRD's commit body carries a findings summary — what was deduplicated, what
+moved, what died — so review is of decisions, not diffs. The known seam classes
+to hunt, in priority order: near-duplicate helpers across module boundaries
+(EXCEPTION: the naive model's independence from engine algorithms is a design
+requirement, never a seam); idiom drift (error construction, iterator style,
+`expect` messages, doc-comment voice, test naming/fixtures); altitude
+misplacements (caller logic belonging in the callee's type; over-wide signatures
+threading state a struct should own); dead weight (parameters no caller varies,
+variants no site constructs, `pub` with one internal caller, comments narrating
+the obvious); test overlap (merge and redirect, never just delete).
