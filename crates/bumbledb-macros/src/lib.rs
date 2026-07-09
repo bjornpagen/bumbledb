@@ -35,11 +35,12 @@
 //! the same invocation, so variant names resolve to ordinals here); interval
 //! literals are written `start..end`, half-open.
 //!
-//! The macro validates only its own grammar (parse errors at the call
-//! site): expansion emits data plus calls into the library's runtime
-//! resolution, and every schema error surfaces at the first `schema()`
-//! call (memoized in a `OnceLock`) as a panic carrying the typed
-//! `SchemaError`'s rendering.
+//! The macro validates only its own grammar plus name-to-id resolution
+//! (both are compile errors at the call site): expansion emits
+//! `SchemaDescriptor` construction directly, ids resolved at expansion
+//! time from declaration order. Everything semantic beyond names surfaces
+//! at the first `schema()` call (memoized in a `OnceLock`) as a panic
+//! carrying the typed `SchemaError`'s rendering.
 
 use proc_macro::{Delimiter, TokenStream, TokenTree};
 use std::collections::BTreeMap;
@@ -100,7 +101,7 @@ struct Relation {
 /// A selection literal as written — classified by its own syntax, typed
 /// against the selected field's declaration at emission. Integer and
 /// string/byte-string token text is spliced verbatim into the generated
-/// `LiteralDecl`, so rustc polices the value itself.
+/// `Value`, so rustc polices the value itself.
 #[derive(Debug, Clone)]
 enum Literal {
     Bool(bool),
@@ -493,14 +494,16 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
 
 /// The declarative schema surface: expands to `fn schema()`, host-side
 /// newtypes and enums, and one typed fact struct per relation with
-/// `encode_write`/`encode_delete`/`encode_read`/`decode` boundaries. All
-/// real logic lives in `bumbledb::schema::runtime`; the expansion emits
-/// data and calls.
+/// `encode_write`/`encode_delete`/`encode_read`/`decode` boundaries. The
+/// expansion constructs `SchemaDescriptor` directly — ids resolved here
+/// from declaration order — and semantic validation runs at the first
+/// `schema()` call.
 ///
 /// # Panics
 ///
-/// On malformed `schema!` grammar — a compile error at the macro call
-/// site, reported with the offending token.
+/// On malformed `schema!` grammar or an unresolvable relation/field/variant
+/// name — a compile error at the macro call site, reported with the
+/// offending token or name.
 #[proc_macro]
 pub fn schema(input: TokenStream) -> TokenStream {
     let schema = parse_schema(input);
@@ -514,54 +517,52 @@ pub fn schema(input: TokenStream) -> TokenStream {
     out.parse().expect("schema!: generated code parses")
 }
 
-fn ty_decl(ty: &FieldTy) -> String {
-    match ty {
-        FieldTy::Bool => "::bumbledb::__private::FieldTy::Bool".to_owned(),
-        FieldTy::U64 => "::bumbledb::__private::FieldTy::U64".to_owned(),
-        FieldTy::I64 => "::bumbledb::__private::FieldTy::I64".to_owned(),
-        FieldTy::Str => "::bumbledb::__private::FieldTy::Str".to_owned(),
-        FieldTy::Bytes => "::bumbledb::__private::FieldTy::Bytes".to_owned(),
-        FieldTy::Enum { variants, .. } => {
-            format!(
-                "::bumbledb::__private::FieldTy::Enum(&[{}])",
-                quoted_list(variants)
+/// Resolves a statement-named relation to its declaration index — the
+/// `RelationId`, by the declaration-order rule.
+fn relation_index(relations: &[Relation], name: &str) -> usize {
+    relations
+        .iter()
+        .position(|r| r.name == name)
+        .unwrap_or_else(|| panic!("schema!: relation `{name}` is not declared in this invocation"))
+}
+
+/// Resolves a statement-named field to its declaration index within its
+/// relation — the `FieldId`.
+fn field_index(declaration: &Relation, field: &str) -> usize {
+    declaration
+        .fields
+        .iter()
+        .position(|f| f.name == field)
+        .unwrap_or_else(|| {
+            panic!(
+                "schema!: relation `{}` has no field `{field}`",
+                declaration.name
             )
+        })
+}
+
+/// Renders one field's structural type as a `ValueType` expression.
+fn value_type_expr(ty: &FieldTy) -> String {
+    let value_type = "::bumbledb::schema::ValueType";
+    match ty {
+        FieldTy::Bool => format!("{value_type}::Bool"),
+        FieldTy::U64 => format!("{value_type}::U64"),
+        FieldTy::I64 => format!("{value_type}::I64"),
+        FieldTy::Str => format!("{value_type}::String"),
+        FieldTy::Bytes => format!("{value_type}::Bytes"),
+        FieldTy::Enum { variants, .. } => {
+            let list = variants
+                .iter()
+                .map(|v| format!("::std::boxed::Box::from(\"{v}\")"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{value_type}::Enum {{ variants: ::std::boxed::Box::new([{list}]) }}")
         }
         FieldTy::Interval(element) => format!(
-            "::bumbledb::__private::FieldTy::Interval(::bumbledb::__private::IntervalElement::{})",
+            "{value_type}::Interval {{ element: ::bumbledb::schema::IntervalElement::{} }}",
             element.suffix()
         ),
     }
-}
-
-/// Renders `"a", "b", ..` for splicing a `&[&str]`.
-fn quoted_list(names: &[String]) -> String {
-    names
-        .iter()
-        .map(|n| format!("\"{n}\""))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// Looks up a selected field's declared type — selection literals are typed
-/// in the macro, so a selected relation must be declared in the same
-/// invocation (docs/architecture/70-api.md: enum variants resolve here).
-fn selected_field_ty<'a>(relations: &'a [Relation], relation: &str, field: &str) -> &'a FieldTy {
-    let declaration = relations
-        .iter()
-        .find(|r| r.name == relation)
-        .unwrap_or_else(|| {
-            panic!(
-                "schema!: selection on `{relation}.{field}` — relation `{relation}` \
-                 is not declared in this invocation"
-            )
-        });
-    &declaration
-        .fields
-        .iter()
-        .find(|f| f.name == field)
-        .unwrap_or_else(|| panic!("schema!: unknown selected field `{relation}.{field}`"))
-        .ty
 }
 
 /// Renders one signed integer bound.
@@ -574,41 +575,49 @@ fn signed(bound: &(bool, String)) -> String {
     }
 }
 
-/// Renders one selection literal as a `LiteralDecl` expression, typed
-/// against the selected field's declaration.
-fn literal_decl(relations: &[Relation], relation: &str, field: &str, literal: &Literal) -> String {
-    let ty = selected_field_ty(relations, relation, field);
-    let decl = "::bumbledb::__private::LiteralDecl";
+/// Renders one selection literal as a shared `Value` expression, typed
+/// against the selected field's declaration (enum variants resolve to
+/// ordinals here — every variant list is in the same invocation). Integer
+/// and string/byte-string token text is spliced verbatim, so rustc polices
+/// the value itself.
+fn value_expr(declaration: &Relation, field: &str, literal: &Literal) -> String {
+    let relation = &declaration.name;
+    let ty = &declaration.fields[field_index(declaration, field)].ty;
+    let value = "::bumbledb::Value";
     match (ty, literal) {
-        (FieldTy::Bool, Literal::Bool(v)) => format!("{decl}::Bool({v})"),
+        (FieldTy::Bool, Literal::Bool(v)) => format!("{value}::Bool({v})"),
         (
             FieldTy::U64,
             Literal::Int {
                 negative: false,
                 text,
             },
-        ) => format!("{decl}::U64({text})"),
+        ) => format!("{value}::U64({text})"),
         (FieldTy::I64, Literal::Int { negative, text }) => {
-            format!("{decl}::I64({})", signed(&(*negative, text.clone())))
+            format!("{value}::I64({})", signed(&(*negative, text.clone())))
         }
         (FieldTy::Enum { variants, .. }, Literal::Variant(name)) => {
             let ordinal = variants.iter().position(|v| v == name).unwrap_or_else(|| {
                 panic!("schema!: enum field `{relation}.{field}` has no variant `{name}`")
             });
             let ordinal = u8::try_from(ordinal).expect("variant count fits u8");
-            format!("{decl}::Enum({ordinal})")
+            format!("{value}::Enum({ordinal})")
         }
-        (FieldTy::Str, Literal::Str(text)) => format!("{decl}::Str({text})"),
-        (FieldTy::Bytes, Literal::Bytes(text)) => format!("{decl}::Bytes({text})"),
+        (FieldTy::Str, Literal::Str(text)) => {
+            format!("{value}::String(::std::boxed::Box::from({text}.as_bytes()))")
+        }
+        (FieldTy::Bytes, Literal::Bytes(text)) => {
+            format!("{value}::Bytes(::std::boxed::Box::from(&{text}[..]))")
+        }
         (
             FieldTy::Interval(IntervalElement::U64),
             Literal::Interval {
                 start: (false, start),
                 end: (false, end),
             },
-        ) => format!("{decl}::IntervalU64({start}, {end})"),
+        ) => format!("{value}::IntervalU64({start}, {end})"),
         (FieldTy::Interval(IntervalElement::I64), Literal::Interval { start, end }) => {
-            format!("{decl}::IntervalI64({}, {})", signed(start), signed(end))
+            format!("{value}::IntervalI64({}, {})", signed(start), signed(end))
         }
         _ => panic!(
             "schema!: selection literal for `{relation}.{field}` does not fit \
@@ -617,39 +626,63 @@ fn literal_decl(relations: &[Relation], relation: &str, field: &str, literal: &L
     }
 }
 
-/// Renders one side as a `SideDecl` expression.
-fn side_decl(relations: &[Relation], side: &Side) -> String {
+/// Renders `FieldId(i), ..` for a statement-named field list.
+fn field_id_list(declaration: &Relation, fields: &[String]) -> String {
+    fields
+        .iter()
+        .map(|f| {
+            format!(
+                "::bumbledb::schema::FieldId({})",
+                field_index(declaration, f)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Renders one side as a `Side` expression, ids pre-resolved.
+fn side_expr(relations: &[Relation], side: &Side) -> String {
+    let relation = relation_index(relations, &side.relation);
+    let declaration = &relations[relation];
     let mut selection = String::new();
     for (field, literal) in &side.selection {
         let _ = write!(
             selection,
-            "(\"{field}\", {}),",
-            literal_decl(relations, &side.relation, field, literal)
+            "(::bumbledb::schema::FieldId({}), {}),",
+            field_index(declaration, field),
+            value_expr(declaration, field, literal)
         );
     }
     format!(
-        "::bumbledb::__private::SideDecl {{ relation: \"{}\", projection: &[{}], selection: &[{selection}] }}",
-        side.relation,
-        quoted_list(&side.projection),
+        "::bumbledb::schema::Side {{ \
+             relation: ::bumbledb::schema::RelationId({relation}), \
+             projection: ::std::boxed::Box::new([{}]), \
+             selection: ::std::boxed::Box::new([{selection}]) }}",
+        field_id_list(declaration, &side.projection),
     )
 }
 
 fn emit_schema_fn(out: &mut String, schema: &SchemaAst) {
-    let mut decls = String::new();
+    let mut relations = String::new();
     for relation in &schema.relations {
         let mut fields = String::new();
         for field in &relation.fields {
             let _ = write!(
                 fields,
-                "::bumbledb::__private::FieldDecl {{ name: \"{}\", ty: {}, serial: {} }},",
+                "::bumbledb::schema::FieldDescriptor {{ \
+                     name: ::std::boxed::Box::from(\"{}\"), \
+                     value_type: {}, \
+                     generation: ::bumbledb::schema::Generation::{} }},",
                 field.name,
-                ty_decl(&field.ty),
-                field.serial,
+                value_type_expr(&field.ty),
+                if field.serial { "Serial" } else { "None" },
             );
         }
         let _ = write!(
-            decls,
-            "::bumbledb::__private::RelationDecl {{ name: \"{}\", fields: &[{fields}] }},",
+            relations,
+            "::bumbledb::schema::RelationDescriptor {{ \
+                 name: ::std::boxed::Box::from(\"{}\"), \
+                 fields: ::std::vec![{fields}] }},",
             relation.name,
         );
     }
@@ -660,18 +693,21 @@ fn emit_schema_fn(out: &mut String, schema: &SchemaAst) {
                 relation,
                 projection,
             } => {
+                let index = relation_index(&schema.relations, relation);
                 let _ = write!(
                     statements,
-                    "::bumbledb::__private::StatementDecl::Functionality {{ relation: \"{relation}\", projection: &[{}] }},",
-                    quoted_list(projection),
+                    "::bumbledb::schema::StatementDescriptor::Functionality {{ \
+                         relation: ::bumbledb::schema::RelationId({index}), \
+                         projection: ::std::boxed::Box::new([{}]) }},",
+                    field_id_list(&schema.relations[index], projection),
                 );
             }
             Statement::Containment { source, target } => {
                 let _ = write!(
                     statements,
-                    "::bumbledb::__private::StatementDecl::Containment {{ source: {}, target: {} }},",
-                    side_decl(&schema.relations, source),
-                    side_decl(&schema.relations, target),
+                    "::bumbledb::schema::StatementDescriptor::Containment {{ source: {}, target: {} }},",
+                    side_expr(&schema.relations, source),
+                    side_expr(&schema.relations, target),
                 );
             }
         }
@@ -683,8 +719,12 @@ fn emit_schema_fn(out: &mut String, schema: &SchemaAst) {
          pub fn schema() -> &'static ::bumbledb::schema::Schema {{\n\
              static SCHEMA: ::std::sync::OnceLock<::bumbledb::schema::Schema> = ::std::sync::OnceLock::new();\n\
              SCHEMA.get_or_init(|| {{\n\
-                 ::bumbledb::__private::build_schema(&[{decls}], &[{statements}])\n\
-                     .unwrap_or_else(|e| panic!(\"schema! declaration is invalid: {{e}}\"))\n\
+                 ::bumbledb::schema::SchemaDescriptor {{\n\
+                     relations: ::std::vec![{relations}],\n\
+                     statements: ::std::vec![{statements}],\n\
+                 }}\n\
+                 .validate()\n\
+                 .unwrap_or_else(|e| panic!(\"schema! declaration is invalid: {{e}}\"))\n\
              }})\n\
          }}\n",
     );

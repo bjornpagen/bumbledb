@@ -81,8 +81,9 @@ pub use schema::{FieldId, RelationId, Schema, StatementId};
 /// `bumbledb::schema! {}` declares, `bumbledb::schema::…` are the
 /// descriptor types.)
 ///
-/// The grammar is parse-shape only; semantics flow through schema
-/// validation. Three shapes the grammar itself refuses:
+/// The grammar is parse-shape only and names resolve to ids at expansion;
+/// semantics beyond names flow through schema validation. Four shapes the
+/// macro itself refuses:
 ///
 /// Field-level constraint words do not exist — everything relational is a
 /// statement:
@@ -114,6 +115,17 @@ pub use schema::{FieldId, RelationId, Schema, StatementId};
 ///     Account(id | kind == Savings) -> Account;
 /// }
 /// ```
+///
+/// An unknown field name in a statement — expansion resolves names to
+/// declaration-order ids, so the error names the relation and field
+/// (``schema!: relation `Holder` has no field `nope` ``):
+///
+/// ```compile_fail
+/// bumbledb::schema! {
+///     relation Holder { id: u64 as HolderId, serial }
+///     Holder(nope) -> Holder;
+/// }
+/// ```
 pub use bumbledb_macros::schema;
 
 /// `schema!` expansion plumbing. Not API: no stability promises, nothing
@@ -126,10 +138,6 @@ pub mod __private {
         intern_str_write, resolve_bytes, resolve_bytes_write, resolve_string, resolve_string_write,
     };
     pub use crate::encoding::ValueRef;
-    pub use crate::schema::runtime::{
-        build_schema, FieldDecl, FieldTy, LiteralDecl, RelationDecl, SideDecl, StatementDecl,
-    };
-    pub use crate::schema::IntervalElement;
 }
 
 #[cfg(test)]

@@ -53,7 +53,7 @@ orchestrator work, not a PRD.
 
 | Phase | PRDs | What exists at the end |
 |---|---|---|
-| R — representation collapse | 02 03 | One `Value` (landed); the macro emits descriptors directly (the decl mirror-world deleted); `==` pairing is a sealed fact, not a render-time search |
+| R — representation collapse | 03 | One `Value` (landed); the macro emits descriptors directly (landed); `==` pairing is a sealed fact, not a render-time search |
 | A — correctness | 04 05 06 | No reachable panic from valid input; oracles agree on every verdict label — each fixed by deleting the representation that made the case expressible, not by guarding it |
 | B — contract & hardening | 07 08 | The allocation contract states its true invariant and the gate can see violations; reopen trust bounded; reader cap configured |
 | C — the sweeper | 09 10 | `Db::verify_store`: full store coherence + global judgment re-verification, CLI-wrapped |
@@ -65,7 +65,6 @@ orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [02 — Kill the decl layer](02-kill-decl-layer.md)
 - [03 — The materialized mirror](03-materialized-mirror.md)
 - [04 — Hoist-path scratch: delete the caps](04-hoist-scratch.md)
 - [05 — Net-disposition delta](05-net-disposition-delta.md)

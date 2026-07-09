@@ -38,11 +38,13 @@ bumbledb::schema! {
   `==` for bidirectional. Projection lists are positional between the two sides;
   selections follow `|` as comma-separated `field == literal` pairs; literals are
   enum variant names, integer literals, `true`/`false`, string/byte literals, and
-  `start..end` interval literals (half-open). The macro lowers statements to descriptors and
-  performs no semantic validation beyond parse shape — the schema validation
-  boundary (`30-dependencies.md` roster) is the judge, so macro-expansion errors
-  are parse errors and everything semantic is a normal typed error with the
-  statement rendered back.
+  `start..end` interval literals (half-open). The macro emits descriptors directly —
+  relation/field names resolve to declaration-order ids at expansion time, so an
+  unresolvable name is a compile error naming the relation and field — and
+  performs no semantic validation beyond parse shape and name-to-id resolution:
+  the schema validation boundary (`30-dependencies.md` roster) is the judge, and
+  everything semantic beyond names is a normal typed error with the statement
+  rendered back.
 - The macro generates: relation descriptors, dependency statement descriptors, the
   host newtypes, per-relation fact structs (`Account { id, holder, kind, active }`),
   and the `schema()` constructor the `Db` functions take.
