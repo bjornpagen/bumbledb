@@ -114,6 +114,10 @@ fn apply(b: &mut Builder, rng: &mut Rng, template: Template) {
                 ])
                 .expect("template gated on anchor");
             let atom = b.negated_atom(ids::MANDATE);
+            // The account equality binding comes FIRST and always: a
+            // negated atom whose only bindings are memberships is the
+            // Cartesian degenerate (`40-execution.md`) — the cost-bound
+            // rule makes the membership-only form unemittable here.
             b.bind_negated(atom, ids::mandate::ACCOUNT, Term::Var(v));
             // Membership inside negation: a positive-bound i64 point
             // when one exists (no mandate covers the instant).

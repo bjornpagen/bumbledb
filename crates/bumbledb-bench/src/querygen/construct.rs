@@ -48,7 +48,7 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
         }
         Shape::Aggregate => aggregate(&mut b, rng),
         Shape::Membership => membership(&mut b, rng, cfg, domains),
-        Shape::IntervalJoin => interval_join(&mut b, rng, cfg),
+        Shape::IntervalJoin => interval_join(&mut b, rng, cfg, domains),
         Shape::Boundary => boundary(&mut b, rng, cfg, domains),
         Shape::CountDistinct => count_distinct(&mut b, rng),
         Shape::Arg => arg(&mut b, rng),

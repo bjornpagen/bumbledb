@@ -224,6 +224,14 @@ pub struct Coverage {
     /// In-vocabulary / out-of-vocabulary bytes literals.
     pub bytes_hits: u64,
     pub bytes_misses: u64,
+    /// Equality-spine cost-bound violations
+    /// (`docs/architecture/60-validation.md` § the generator contract):
+    /// an atom carrying a var-point membership or a cross-atom
+    /// `Overlaps`/`Contains` occurrence with neither an equality join
+    /// variable nor an equality selection, or a negated atom whose only
+    /// bindings are memberships. Asserted **zero** — the Cartesian
+    /// degenerate (`40-execution.md`) must be unemittable.
+    pub spine_violations: u64,
     /// Comparison counts per `(CMP_OPS index, CMP_TYPES index)`.
     pub matrix: [[u64; 7]; 8],
 }

@@ -126,6 +126,105 @@ fn element_of(ty: &ValueType) -> Option<IntervalElement> {
     }
 }
 
+/// The equality-spine cost-bound check
+/// (`docs/architecture/60-validation.md` § the generator contract;
+/// `40-execution.md` names the degenerate): every atom carrying a
+/// var-point membership binding or an interval-typed side of a
+/// cross-atom `Overlaps`/`Contains` must share an equality join
+/// variable with another atom or carry an equality selection
+/// (literal/param/set) on a scalar field; a negated atom whose only
+/// bindings are memberships is the same Cartesian. Returns the count of
+/// violating atoms — asserted zero by the contract test.
+fn spine_violations(query: &Query, t: &Typing) -> u64 {
+    use std::collections::BTreeSet;
+    // Equality positions: a var at a scalar field, or an interval-typed
+    // var at an interval field (value equality). A membership position
+    // (element-typed var at an interval field) is not an equality.
+    let mut eq_atoms: HashMap<VarId, BTreeSet<usize>> = HashMap::new();
+    for (index, atom) in query.atoms.iter().enumerate() {
+        for (field, term) in &atom.bindings {
+            let Term::Var(var) = term else { continue };
+            let field_interval = matches!(field_type(atom, *field), ValueType::Interval { .. });
+            let var_interval = matches!(t.var_types.get(var), Some(ValueType::Interval { .. }));
+            if !field_interval || var_interval {
+                eq_atoms.entry(*var).or_default().insert(index);
+            }
+        }
+    }
+    let has_eq_edge = |index: usize| {
+        eq_atoms
+            .values()
+            .any(|atoms| atoms.contains(&index) && atoms.len() >= 2)
+    };
+    let has_eq_selection = |atom: &Atom| {
+        atom.bindings.iter().any(|(field, term)| {
+            !matches!(field_type(atom, *field), ValueType::Interval { .. })
+                && matches!(term, Term::Literal(_) | Term::Param(_) | Term::ParamSet(_))
+        })
+    };
+    // The atoms the rule binds: var-point membership occurrences…
+    let mut needs: BTreeSet<usize> = BTreeSet::new();
+    for (index, atom) in query.atoms.iter().enumerate() {
+        for (field, term) in &atom.bindings {
+            if !matches!(field_type(atom, *field), ValueType::Interval { .. }) {
+                continue;
+            }
+            if let Term::Var(var) = term {
+                if !matches!(t.var_types.get(var), Some(ValueType::Interval { .. })) {
+                    needs.insert(index);
+                }
+            }
+        }
+    }
+    // …and interval-typed sides of cross-atom Overlaps/Contains.
+    for comparison in &query.predicates {
+        if !matches!(comparison.op, CmpOp::Overlaps | CmpOp::Contains) {
+            continue;
+        }
+        if let (Term::Var(lhs), Term::Var(rhs)) = (&comparison.lhs, &comparison.rhs) {
+            if t.var_atoms[lhs]
+                .iter()
+                .any(|a| t.var_atoms[rhs].contains(a))
+            {
+                continue; // a same-atom pair is a filter, not a join
+            }
+            for var in [lhs, rhs] {
+                if matches!(t.var_types.get(var), Some(ValueType::Interval { .. })) {
+                    needs.extend(t.var_atoms[var].iter().copied());
+                }
+            }
+        }
+    }
+    let mut violations = needs
+        .into_iter()
+        .filter(|index| !has_eq_edge(*index) && !has_eq_selection(&query.atoms[*index]))
+        .count() as u64;
+    for atom in &query.negated {
+        let mut memberships = 0usize;
+        let mut others = 0usize;
+        for (field, term) in &atom.bindings {
+            let field_interval = matches!(field_type(atom, *field), ValueType::Interval { .. });
+            let is_membership = field_interval
+                && match term {
+                    Term::Var(var) => {
+                        !matches!(t.var_types.get(var), Some(ValueType::Interval { .. }))
+                    }
+                    Term::Literal(bumbledb::Value::U64(_) | bumbledb::Value::I64(_)) => true,
+                    _ => false,
+                };
+            if is_membership {
+                memberships += 1;
+            } else {
+                others += 1;
+            }
+        }
+        if memberships > 0 && others == 0 {
+            violations += 1;
+        }
+    }
+    violations
+}
+
 impl Coverage {
     fn record_shape(&mut self, shape: Shape) {
         match shape {
@@ -406,6 +505,7 @@ impl Coverage {
         self.neg_and_aggregate += u64::from(has_negation && has_aggregate);
         self.set_and_negation += u64::from(has_negation && uses_set);
         self.membership_and_overlaps += u64::from(has_membership && has_overlaps);
+        self.spine_violations += spine_violations(query, &t);
     }
 }
 

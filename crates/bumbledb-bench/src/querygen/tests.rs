@@ -139,6 +139,14 @@ fn the_coverage_contract_holds_at_a_thousand() {
         cov.membership_and_overlaps > 0,
         "membership ∧ Overlaps missing"
     );
+    // The equality-spine cost bound (60-validation.md § the generator
+    // contract): every emitted membership/overlap construct rides an
+    // equality-connected spine — the keyless Cartesian degenerate
+    // (40-execution.md) is unemittable.
+    assert_eq!(
+        cov.spine_violations, 0,
+        "a membership/overlap construct escaped the equality spine"
+    );
 }
 
 /// The grammar never emits a NUL — the translator rejects NUL string

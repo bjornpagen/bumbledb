@@ -8,12 +8,23 @@
 //! interval-typed terms; order operators never touch these shapes: the
 //! illegal (operator, type) matrix cells are unemittable by
 //! construction.
+//!
+//! **The equality-spine cost bound** (`docs/architecture/60-validation.md`
+//! § the generator contract; `40-execution.md` names the degenerate): a
+//! var-point membership binding or a cross-atom `Overlaps`/`Contains`
+//! join whose interval occurrence shares **no** equality variable with
+//! the rest of the query is a Cartesian with a filter — O(bindings × n).
+//! Every such construct here is built on a spine: the Mandate lane joins
+//! through its account/org group key, and every Transfer occurrence in a
+//! var-point or var-vs-var construct carries an equality selection
+//! ([`pin_transfer`] — Transfers have no scalar join key). The unbounded
+//! shape is unemittable, not filtered after.
 
 use bumbledb::{CmpOp, Comparison, Term, Value, VarId};
 
 use crate::gen::{GenConfig, Rng};
 use crate::querygen::interval_data;
-use crate::querygen::target::{ids, Domains};
+use crate::querygen::target::{self, ids, Domains};
 use crate::querygen::Builder;
 
 /// The collision-group pool query literals draw from — small enough
@@ -54,26 +65,61 @@ fn u64_interval(cfg: GenConfig, rng: &mut Rng) -> Value {
     Value::IntervalU64(start, end)
 }
 
+/// The cost-bound rule's equality selection for a Transfer occurrence
+/// (Transfers carry no scalar join key, so a var-point or var-vs-var
+/// interval construct over one must pin it): the serial id bound to a
+/// param, or the extref bound to a recomputed in-vocabulary literal.
+/// Returns a projected payload var so the occurrence contributes to the
+/// find set.
+fn pin_transfer(
+    b: &mut Builder,
+    rng: &mut Rng,
+    cfg: GenConfig,
+    domains: &Domains,
+    transfer: usize,
+) -> VarId {
+    if rng.chance(1, 2) {
+        let param = b.fresh_param();
+        b.bind(transfer, ids::transfer::ID, Term::Param(param));
+        let extref = b.bind_var(transfer, ids::transfer::EXTREF);
+        b.find_var(extref);
+        extref
+    } else {
+        b.bytes_hit = true;
+        b.bind(
+            transfer,
+            ids::transfer::EXTREF,
+            Term::Literal(target::extref(cfg, rng.range(domains.transfers))),
+        );
+        let id = b.bind_var(transfer, ids::transfer::ID);
+        b.find_var(id);
+        id
+    }
+}
+
 /// Point membership against an interval field. The point term is a
 /// literal, a param, or a variable — and the var and param cases
 /// **construct** their scalar anchor (a Posting scalar binding) first,
 /// deliberately: a point term with no enumerable domain is invalid by
-/// the roster, so the anchor is never left to chance.
+/// the roster, so the anchor is never left to chance. Var-point
+/// occurrences ride the equality spine (module doc).
 pub(super) fn membership(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
     if rng.chance(3, 5) {
         membership_i64(b, rng, cfg, domains);
     } else {
-        membership_u64(b, rng, cfg);
+        membership_u64(b, rng, cfg, domains);
     }
 }
 
 /// Mandate-at-instant over the I64 element lane:
 /// `Posting(account = a, at = t), Mandate(account = a, active ∋ t)` and
-/// its param/literal-point variants.
+/// its param/literal-point variants. The spine is the shared account
+/// variable (the group key real interval workloads carry).
 fn membership_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
     let org;
     match rng.range(3) {
-        // Var point: `at` is the scalar anchor, constructed here.
+        // Var point: `at` is the scalar anchor, constructed here; the
+        // Mandate occurrence equality-joins on account.
         0 => {
             let posting = b.atom(ids::POSTING);
             let account = b.bind_var(posting, ids::posting::ACCOUNT);
@@ -119,7 +165,7 @@ fn membership_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
     b.find_var(org);
     // The membership ∧ Overlaps composition (one of the three the
     // contract asserts per run): a second Mandate occurrence joined on
-    // org whose interval must overlap an in-data literal.
+    // org (the spine) whose interval must overlap an in-data literal.
     if rng.chance(7, 20) {
         let second = b.atom(ids::MANDATE);
         b.bind(second, ids::mandate::ORG, Term::Var(org));
@@ -132,20 +178,24 @@ fn membership_i64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
     }
 }
 
-/// Window membership over the U64 element lane.
-fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) {
+/// Window membership over the U64 element lane. Every Transfer
+/// occurrence in a var-point construct is pinned ([`pin_transfer`]):
+/// `Posting(account = v) × Transfer(window ∋ v)` without the pin is the
+/// named Cartesian degenerate.
+fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
     match rng.range(3) {
-        // Var point: the account id anchors as the scalar domain.
+        // Var point: the account id anchors as the scalar domain; the
+        // window's occurrence carries an equality selection.
         0 => {
             let posting = b.atom(ids::POSTING);
             let account = b.bind_var(posting, ids::posting::ACCOUNT);
             let transfer = b.atom(ids::TRANSFER);
-            let id = b.bind_var(transfer, ids::transfer::ID);
+            let _payload = pin_transfer(b, rng, cfg, domains, transfer);
             b.bind(transfer, ids::transfer::WINDOW, Term::Var(account));
-            b.find_var(id);
             b.find_var(account);
         }
-        // Param point, anchored at the Posting.account scalar binding.
+        // Param point, anchored at the Posting.account scalar binding
+        // (no var rides the membership — the rule does not apply).
         1 => {
             let point = b.fresh_param();
             let posting = b.atom(ids::POSTING);
@@ -168,11 +218,12 @@ fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) {
         }
     }
     // The composition, U64 lane: a second window overlapping a literal.
+    // The occurrence is pinned — with no scalar join key it would
+    // otherwise cross-product against the membership part.
     if rng.chance(7, 20) {
         let second = b.atom(ids::TRANSFER);
-        let id = b.bind_var(second, ids::transfer::ID);
+        let _payload = pin_transfer(b, rng, cfg, domains, second);
         let window = b.bind_var(second, ids::transfer::WINDOW);
-        b.find_var(id);
         b.predicates.push(Comparison {
             op: CmpOp::Overlaps,
             lhs: Term::Var(window),
@@ -181,66 +232,75 @@ fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) {
     }
 }
 
+/// The right-hand side of an interval comparison.
+enum Right {
+    /// A second interval occurrence (a cross-atom join — spine-bound).
+    Var,
+    /// An in-data interval literal (a filter).
+    Literal,
+    /// An element-typed literal (point membership as a predicate).
+    Element,
+}
+
 /// An interval-vs-interval (or interval-vs-literal) comparison over one
 /// element lane: `Overlaps`, `Contains` (both the same-element interval
 /// and the element-typed right side), and interval `Eq`/`Ne` — the
-/// (Eq/Ne, interval) matrix cells.
-pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig) {
-    if rng.chance(1, 2) {
-        // I64 lane: two Mandate occurrences joined on account.
+/// (Eq/Ne, interval) matrix cells. Var-vs-var joins build the second
+/// occurrence **on the spine**: the Mandate lane equality-joins on
+/// account; the Transfer lane pins each occurrence. Var-vs-literal
+/// filters build no second occurrence at all.
+pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
+    let (op, right) = match rng.range(10) {
+        0..=2 => (CmpOp::Overlaps, Right::Var),
+        3 => (CmpOp::Overlaps, Right::Literal),
+        4 | 5 => (CmpOp::Contains, Right::Var),
+        6 => (CmpOp::Contains, Right::Literal),
+        // Contains with an element-typed right side: point membership
+        // as a predicate.
+        7 => (CmpOp::Contains, Right::Element),
+        8 => (CmpOp::Eq, Right::Var),
+        _ => (CmpOp::Ne, Right::Var),
+    };
+    let (lhs, rhs) = if rng.chance(1, 2) {
+        // I64 lane: Mandate occurrences joined on account (the spine).
         let first = b.atom(ids::MANDATE);
         let account = b.bind_var(first, ids::mandate::ACCOUNT);
         let lhs = b.bind_var(first, ids::mandate::ACTIVE);
-        let second = b.atom(ids::MANDATE);
-        b.bind(second, ids::mandate::ACCOUNT, Term::Var(account));
-        let org = b.bind_var(second, ids::mandate::ORG);
-        let rhs = b.bind_var(second, ids::mandate::ACTIVE);
+        let org = b.bind_var(first, ids::mandate::ORG);
         b.find_var(account);
         b.find_var(org);
-        let literal = i64_interval(cfg, rng);
-        let element = Value::I64(i64_point(cfg, rng));
-        push_interval_cmp(b, rng, lhs, rhs, literal, element);
+        let rhs = match right {
+            Right::Var => {
+                let second = b.atom(ids::MANDATE);
+                b.bind(second, ids::mandate::ACCOUNT, Term::Var(account));
+                let active = b.bind_var(second, ids::mandate::ACTIVE);
+                Term::Var(active)
+            }
+            Right::Literal => Term::Literal(i64_interval(cfg, rng)),
+            Right::Element => Term::Literal(Value::I64(i64_point(cfg, rng))),
+        };
+        (lhs, rhs)
     } else {
-        // U64 lane: two Transfer windows.
+        // U64 lane: every occurrence pinned (no scalar join key exists).
         let first = b.atom(ids::TRANSFER);
-        let x = b.bind_var(first, ids::transfer::ID);
+        let _payload = pin_transfer(b, rng, cfg, domains, first);
         let lhs = b.bind_var(first, ids::transfer::WINDOW);
-        let second = b.atom(ids::TRANSFER);
-        let y = b.bind_var(second, ids::transfer::ID);
-        let rhs = b.bind_var(second, ids::transfer::WINDOW);
-        b.find_var(x);
-        b.find_var(y);
-        let literal = u64_interval(cfg, rng);
-        let element = Value::U64(u64_point(cfg, rng));
-        push_interval_cmp(b, rng, lhs, rhs, literal, element);
-    }
-}
-
-/// The operator roster of an interval join — every operator here is
-/// typed at intervals; nothing else can reach these variables.
-fn push_interval_cmp(
-    b: &mut Builder,
-    rng: &mut Rng,
-    lhs: VarId,
-    rhs: VarId,
-    literal: Value,
-    element: Value,
-) {
-    let (op, right) = match rng.range(10) {
-        0..=2 => (CmpOp::Overlaps, Term::Var(rhs)),
-        3 => (CmpOp::Overlaps, Term::Literal(literal)),
-        4 | 5 => (CmpOp::Contains, Term::Var(rhs)),
-        6 => (CmpOp::Contains, Term::Literal(literal)),
-        // Contains with an element-typed right side: point membership
-        // as a predicate.
-        7 => (CmpOp::Contains, Term::Literal(element)),
-        8 => (CmpOp::Eq, Term::Var(rhs)),
-        _ => (CmpOp::Ne, Term::Var(rhs)),
+        let rhs = match right {
+            Right::Var => {
+                let second = b.atom(ids::TRANSFER);
+                let _payload = pin_transfer(b, rng, cfg, domains, second);
+                let window = b.bind_var(second, ids::transfer::WINDOW);
+                Term::Var(window)
+            }
+            Right::Literal => Term::Literal(u64_interval(cfg, rng)),
+            Right::Element => Term::Literal(Value::U64(u64_point(cfg, rng))),
+        };
+        (lhs, rhs)
     };
     b.predicates.push(Comparison {
         op,
         lhs: Term::Var(lhs),
-        rhs: right,
+        rhs,
     });
 }
 
@@ -250,7 +310,8 @@ fn push_interval_cmp(
 /// query — in both polarities (the literal ends at a corpus start;
 /// the literal starts at a corpus end). Half the probes are `Overlaps`
 /// (adjacency must NOT overlap); half are `Contains` with the touch
-/// point itself (`b ∉ [a,b)`, `b ∈ [b,c)`).
+/// point itself (`b ∉ [a,b)`, `b ∈ [b,c)`). Single-occurrence filters:
+/// the accepted O(n) scan, not the Cartesian shape.
 pub(super) fn boundary(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
     let group = rng.range(GROUP_POOL);
     let left = rng.chance(1, 2);
