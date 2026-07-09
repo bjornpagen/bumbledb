@@ -1,6 +1,6 @@
-# PRD 06 — `verify_store`: namespace coherence
+# PRD 09 — `verify_store`: namespace coherence
 
-**Depends on:** nothing (07 builds on this).
+**Depends on:** nothing (10 builds on this).
 **Modules:** new `crates/bumbledb/src/verify_store.rs` (+ submodule dir), reading
 through `crates/bumbledb/src/storage/{keys.rs,read/,env/}` and
 `crates/bumbledb/src/schema.rs`.
@@ -17,7 +17,7 @@ target-side judgment **trusts** `R` prefixes as the survivor authority
 (`storage/commit/judgment.rs:300-317`). The one unverified namespace is one that
 commit verdicts lean on. **Placement decided: engine-side** — the sweeper's
 knowledge (key layouts, guard slicing, statement resolution) is engine knowledge;
-a bench-side copy would drift. This PRD builds the namespace sweeps; PRD 07 adds
+a bench-side copy would drift. This PRD builds the namespace sweeps; PRD 10 adds
 the global judgment re-verification and the CLI wrapper.
 
 ## Technical direction
@@ -73,4 +73,4 @@ mode, no parallelism.
 
 ## Doc amendments (rule 5)
 
-Deferred to PRD 07 (one amendment covering the whole tool once the CLI exists).
+Deferred to PRD 10 (one amendment covering the whole tool once the CLI exists).

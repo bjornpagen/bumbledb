@@ -1,4 +1,4 @@
-# PRD 04 — The high-water allocation contract
+# PRD 07 — The high-water allocation contract
 
 **Depends on:** nothing.
 **Modules:** `crates/bumbledb/tests/alloc_gate.rs`, `scripts/check.sh`,

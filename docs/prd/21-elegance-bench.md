@@ -1,6 +1,6 @@
-# PRD 17 — Elegance: bench crate
+# PRD 21 — Elegance: bench crate
 
-**Depends on:** 16. Final PRD; the campaign closes after it with the
+**Depends on:** 20. Final PRD; the campaign closes after it with the
 orchestrator's re-bench (hot paths moved across 12–16) and chart regeneration —
 which are not PRD content.
 **Binding constraints:** the README's elegance-pass block, plus one crate-local
@@ -16,7 +16,7 @@ report, compare, tripwires, clockproxy, json, writebench, scenarios.
 ## Subsystem-specific hunt list (verify, don't assume)
 
 - **Three eras of family definitions:** the ported ten, the five new, and the
-  chase-coverage shapes (PRD 09 of this set) — converge the family-definition
+  chase-coverage shapes (PRD 12) — converge the family-definition
   shape (IR constructor + SQL golden + rotation + index DDL) into one table-
   driven registration if the current registration repeats boilerplate per
   family; the family list appears in families, driver, report, tripwires, and
@@ -37,12 +37,12 @@ report, compare, tripwires, clockproxy, json, writebench, scenarios.
   delete every such comment; test helpers that existed only to dodge
   then-broken modules get inlined or removed.
 - **CLI/help drift:** help text, README recipe, and actual flags — one pass to
-  confirm they agree (the help text is user-facing surface; PRD 07 of this set
+  confirm they agree (the help text is user-facing surface; PRD 10
   added a subcommand).
 
 ## Passing criteria
 
-As PRD 12's, applied to this crate. Additionally:
+As PRD 16's, applied to this crate. Additionally:
 - `[shape]` The family list is spelled in exactly one place (or the findings
   list justifies each additional spelling).
 - `[shape]` `naive/` imports nothing beyond schema/IR/value types (grep), and

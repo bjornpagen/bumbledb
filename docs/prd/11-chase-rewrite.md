@@ -1,4 +1,4 @@
-# PRD 08 — The chase: analysis and rewrite
+# PRD 11 — The chase: analysis and rewrite
 
 **Depends on:** nothing in this set (reads the post-rebuild planner as-is).
 **The only PRD pair with real regression risk — after 09 lands, the full
@@ -18,7 +18,7 @@ decades because deferred constraints make FKs untrustworthy at plan time. This
 engine deleted the objection: no deferral modes exist and every readable
 snapshot satisfies every statement, so the rewrite is *always* sound here when
 its conditions hold. Classical name: the chase. This PRD builds the analysis and
-the rewrite; PRD 09 builds the surfaces.
+the rewrite; PRD 12 builds the surfaces.
 
 ## The rewrite (conditions are normative — implement exactly)
 
@@ -57,22 +57,26 @@ therefore bit-identical under both sinks.
    planner entry, run **as a fixpoint** (removing one occurrence can make
    another removable; chains `A<=B<=C` are real; ≤20 occurrences makes the loop
    trivially cheap).
-2. **Elimination is a mark, not a removal.** Index-shifting removal
-   (`remove_occurrence` with centralized re-indexing) was considered and
-   **rejected**: dense indices that move on removal are the off-by-one
-   coordinate system — the re-indexing bug class exists only because of that
-   representation. Instead the occurrence entry gains
-   `eliminated: Option<StatementId>` (`None` = live). Occurrence ids never
-   move; every structure that references occurrences by index stays valid by
-   construction. The DP already excludes negated occurrences via its
-   occurrence-filtering boundary — eliminated occurrences ride the **same
-   accessor** (one "participates in planning" predicate: positive ∧ not
-   eliminated), so downstream sees a smaller problem through the mechanism it
-   already trusts. Audit the witness-construction and stats paths for any
-   iteration that does NOT go through that predicate and route it through
-   (this audit replaces the rejected design's re-indexing round-trip test).
-3. **`eliminated` doubles as the record:** PRD 09's EXPLAIN surface and the
-   tests read the marks directly; no separate eliminated-list is kept.
+2. **Elimination is a Role, not a removal and not a flag pair.** Two designs
+   were considered and **rejected**: index-shifting removal (dense indices that
+   move are the off-by-one coordinate system — the centralized-re-indexing
+   function and its bug class exist only because of that representation), and
+   a polarity field plus `eliminated: Option<StatementId>` (two fields admit
+   negated ∧ eliminated, a state the conditions forbid — a guard would have to
+   police what the representation should refuse to spell). The occurrence's
+   planning state becomes one sum type:
+   ```rust
+   enum Role { Positive, Negated, Eliminated(StatementId) }
+   ```
+   replacing the existing polarity field. Occurrence ids never move; the
+   forbidden combination is unwritable; the "participates in planning"
+   predicate is a single match, and the DP's existing negated-exclusion
+   boundary becomes that predicate. Audit the witness-construction and stats
+   paths for any occurrence iteration that does not go through it and route it
+   through (this audit replaces the rejected design's re-indexing round-trip
+   test).
+3. **`Role::Eliminated` doubles as the record:** PRD 12's EXPLAIN surface and
+   the tests read the marks directly; no separate eliminated-list is kept.
 4. **The proof-shaped precedent:** model the condition-checking code on
    `plan/provably_distinct.rs` (same move: plan-time proof from schema
    statements). Read it first; match its style. Conditions 1–4 as separate,
@@ -84,11 +88,11 @@ therefore bit-identical under both sinks.
 
 ## Passing criteria
 
-- `[shape]` Conditions 1–4 as named predicates; `eliminated` is an
-  `Option<StatementId>` on the occurrence entry; exactly one
-  participates-in-planning predicate exists and planner/stats/witness paths
-  consume it (grep the iteration sites); no index re-mapping code exists; no
-  public off switch.
+- `[shape]` Conditions 1–4 as named predicates; the occurrence carries one
+  `Role` sum (no polarity field and no eliminated Option survive alongside
+  it); exactly one participates-in-planning predicate exists and
+  planner/stats/witness paths consume it (grep the iteration sites); no index
+  re-mapping code exists; no public off switch.
 - `[test]` Positive cases: the existence-walk shape eliminates; the DU
   one-sided `==` query eliminates the header; a chain `A<=B<=C` eliminates
   both in fixpoint. Assert the marks and that the DP saw the reduced count.

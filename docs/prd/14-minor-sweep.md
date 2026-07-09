@@ -1,6 +1,6 @@
-# PRD 11 — Minor findings sweep
+# PRD 14 — Minor findings sweep
 
-**Depends on:** 02 (item G leans on the net-disposition delta: a pure-no-op
+**Depends on:** 05 (item G leans on the net-disposition delta: a pure-no-op
 transaction is now an *empty delta* by representation, which is exactly what
 G's test asserts the consequences of).
 **Modules:** per item below.

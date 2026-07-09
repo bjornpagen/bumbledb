@@ -1,4 +1,4 @@
-# PRD 01 — Hoist-path scratch: delete the caps, not guard them
+# PRD 04 — Hoist-path scratch: delete the caps, not guard them
 
 **Depends on:** nothing. **Severity: highest in the set** — a valid query panics,
 data-dependently: it works while every leaf run is short and dies the first time

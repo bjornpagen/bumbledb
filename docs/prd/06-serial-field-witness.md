@@ -1,4 +1,4 @@
-# PRD 03 — `alloc_dyn`: parse, don't validate (ETL-surface panic)
+# PRD 06 — `alloc_dyn`: parse, don't validate (ETL-surface panic)
 
 **Depends on:** nothing.
 **Modules:** `crates/bumbledb/src/api/db/alloc.rs`,

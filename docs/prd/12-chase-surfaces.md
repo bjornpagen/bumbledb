@@ -1,6 +1,6 @@
-# PRD 09 — The chase: surfaces and coverage
+# PRD 12 — The chase: surfaces and coverage
 
-**Depends on:** 08. **After this PRD lands, the orchestrator runs the full
+**Depends on:** 11. **After this PRD lands, the orchestrator runs the full
 two-oracle verify and it must be green before any later PRD starts.**
 **Modules:** `crates/bumbledb/src/exec/explain/` + the stats surface
 (`api/stats.rs`), `crates/bumbledb-bench/src/querygen/`,
@@ -11,8 +11,8 @@ two-oracle verify and it must be green before any later PRD starts.**
 ## Technical direction
 
 1. **EXPLAIN/stats:** eliminated occurrences surface in the EXPLAIN report and
-   the structured stats, read directly from PRD 08's `eliminated` marks (no
-   separate list exists) — occurrence, relation name, and the licensing
+   the structured stats, read directly from PRD 11's `Role::Eliminated` marks
+   (no separate list exists) — occurrence, relation name, and the licensing
    statement id rendered through `schema/render.rs` (e.g.
    `eliminated: Grading via Grading(id | kind == Deterministic) == DeterministicGrading(grading)`).
    The reader is EXPLAIN plus the DP (which sees a smaller problem) — say so in
@@ -29,7 +29,7 @@ two-oracle verify and it must be green before any later PRD starts.**
    change — the naive model computes the unrewritten query, which *is* the
    differential test. Add the explicit dual-run check where it is cheap: in the
    bench crate's differential unit tests (not the harness), run each eliminable
-   fixture through the engine twice via PRD 08's test-only switch (chase on /
+   fixture through the engine twice via PRD 11's test-only switch (chase on /
    off) and three-way compare with the model.
 4. **The decision block** (rule 5, into `40-execution.md`): chase-based
    occurrence elimination under accepted statements — placement, the four

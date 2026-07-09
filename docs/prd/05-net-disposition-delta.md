@@ -1,6 +1,7 @@
-# PRD 02 — Net-disposition delta (judgment direction by construction)
+# PRD 05 — Net-disposition delta (judgment direction by construction)
 
-**Depends on:** nothing (PRD 11 depends on this).
+**Depends on:** 01 (selection-literal pre-encoding goes through the one
+canonical `Value` path). PRDs 14 and 15 depend on this.
 **Modules:** `crates/bumbledb/src/storage/delta/` (the representation change),
 `crates/bumbledb/src/storage/commit/{applier.rs,judgment.rs,write.rs}`
 (simplifications it licenses), `crates/bumbledb-bench/src/verify/` (op-stream

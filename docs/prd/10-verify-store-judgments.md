@@ -1,6 +1,6 @@
-# PRD 07 — `verify_store`: global judgments + CLI
+# PRD 10 — `verify_store`: global judgments + CLI
 
-**Depends on:** 06.
+**Depends on:** 09.
 **Modules:** `crates/bumbledb/src/verify_store/` (extends 06),
 `crates/bumbledb-bench/src/cli/` + `driver/` (the subcommand wrapper),
 `crates/bumbledb/src/storage/commit/applier.rs` (one comment).
@@ -9,7 +9,7 @@ re-verify literally), `60-validation.md` (the validation story it joins).
 
 ## Context
 
-PRD 06 verifies the namespaces agree with each other; this PRD verifies the
+PRD 09 verifies the namespaces agree with each other; this PRD verifies the
 *judgments* hold globally — both forms, over the full committed state, not
 delta-restricted. This catches the class no incremental check can see: "the
 incremental form was wrong once, long ago, and every commit since preserved the
@@ -21,7 +21,7 @@ corruption." It is the naive model's semantics run against the real store.
    (it is grouped by guard bytes by construction): duplicate scalar guards are
    impossible by LMDB key uniqueness — so the *real* check is the F-side one PRD
    06 already does (every fact's guard present) plus, for pointwise keys, the
-   per-group disjointness walk (already PRD 06 §3). This PRD adds only the
+   per-group disjointness walk (already PRD 09 §3). This PRD adds only the
    **cross-check comment** and the report wiring: functionality findings are
    namespace findings; say so in the module doc rather than duplicating sweeps.
 2. **Global containment:** per containment statement, for every source fact

@@ -1,6 +1,6 @@
-# PRD 12 — Elegance: schema, encoding, error
+# PRD 16 — Elegance: schema, encoding, error
 
-**Depends on:** 01–11 (the elegance passes run last, over settled code).
+**Depends on:** 01–15 (the elegance passes run last, over settled code).
 **Binding constraints:** the README's elegance-pass block — strictly
 behavior-preserving; no assertion changes; findings summary in the commit body.
 **Modules:** `crates/bumbledb/src/schema.rs` + `schema/` (all),
@@ -8,7 +8,7 @@ behavior-preserving; no assertion changes; findings summary in the commit body.
 `crates/bumbledb/src/error.rs` + `error/`, `crates/bumbledb/src/digest.rs`,
 `crates/bumbledb/src/lib.rs`.
 
-## Method (identical for PRDs 12–17; stated once fully here)
+## Method (identical for PRDs 16–21; stated once fully here)
 
 1. **Read the whole subsystem before any edit** — every file, tests included.
    Build the findings list first; then apply. The commit body carries the list:
@@ -21,10 +21,11 @@ behavior-preserving; no assertion changes; findings summary in the commit body.
      `schema.rs`/`validate.rs`/`runtime.rs` — check for duplicated
      field-lookup/type-equality helpers and for roster checks that re-derive
      what materialization already computed.
-   - **Literal encoding:** `LiteralValue` encoding for selections (commit's
-     pre-encoded literals, fingerprint serialization, render.rs formatting) —
-     three consumers; confirm one canonical encode path in `encoding/` serves
-     all three, hoist if not.
+   - **Value-collapse residue:** PRDs 01–03 landed the shared `Value`, the
+     decl-layer deletion, and the materialized mirror — sweep for their
+     residue: helper functions or match arms that survived the collapse with
+     one caller, conversion shims someone left "temporarily," and doc comments
+     still describing the old three-type world.
    - **Error enum ergonomics:** the schema/validation error enums grew ~30
      variants across three PRDs — check Display arms for copy-paste drift,
      payload field-name inconsistency (`statement` vs `statement_id`), and

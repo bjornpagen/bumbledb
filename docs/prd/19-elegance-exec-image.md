@@ -1,6 +1,6 @@
-# PRD 15 — Elegance: exec and image
+# PRD 19 — Elegance: exec and image
 
-**Depends on:** 14. **The hot-module pass — the README's touch-only-with-cause
+**Depends on:** 18. **The hot-module pass — the README's touch-only-with-cause
 discipline binds hardest here.** Every unsafe-allowlisted module change needs a
 stated cause in the findings list and a re-bench flag.
 **Modules:** `crates/bumbledb/src/exec.rs` + `exec/` (run, colt, sink, kernel,
@@ -9,6 +9,14 @@ wordmap, dispatch, explain), `crates/bumbledb/src/image.rs` + `image/`,
 
 ## Subsystem-specific hunt list (verify, don't assume)
 
+- **Recorded refusal — the three per-node rejection lists stay split.** Word
+  residuals, membership probes, and anti-probes look like one
+  `RejectionPredicate` enum begging to exist; the merge is **refused**:
+  grouped-by-kind is the *representation of the batching law* — word residuals
+  are pure ALU, probes are two-phase batched with prefetch between phases, and
+  one interleaved list would force per-item dispatch where phase-grouped
+  batches now run. Mandate: a comment at the three lists' definition site
+  records this refusal so nobody re-litigates it.
 - **The two probe passes:** `run_node.rs` and `probe_pass.rs` both host
   membership-probe and anti-probe evaluation loops with near-identical
   batch/mask/compact structure (visible in their parallel point-check
@@ -41,7 +49,7 @@ wordmap, dispatch, explain), `crates/bumbledb/src/image.rs` + `image/`,
 
 ## Passing criteria
 
-As PRD 12's, applied to this subsystem. Additionally:
+As PRD 16's, applied to this subsystem. Additionally:
 - `[shape]` Every hot-module diff hunk is justified by name in the findings
   list and carries the re-bench flag.
 - `[gate]` `scripts/check-asm.sh` green on a release build after the pass (the

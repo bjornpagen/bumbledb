@@ -1,4 +1,4 @@
-# PRD 10 — Plan staleness signal (host-owned, zero hot-path cost)
+# PRD 13 — Plan staleness signal (host-owned, zero hot-path cost)
 
 **Depends on:** nothing.
 **Modules:** `crates/bumbledb/src/api/prepared/` (`build.rs`, the prepared-query
@@ -53,7 +53,7 @@ thresholds, background anything.
 - `[test]` Foreign snapshot returns `ForeignPreparedQuery`.
 - `[shape]` No engine code calls `staleness`; no threshold constant exists;
   execution paths are untouched (the pin record is written at build, read
-  never) — the alloc gate and its escalating variant (PRD 04) pass unchanged.
+  never) — the alloc gate and its escalating variant (PRD 07) pass unchanged.
 - `[test]` The stats surface carries the pinned-rows field (golden on one
   EXPLAIN report).
 - `[gate]` Workspace gates green.

@@ -1,4 +1,4 @@
-# PRD 05 — Storage hardening: reopen-trust ceiling and the reader-slot cap
+# PRD 08 — Storage hardening: reopen-trust ceiling and the reader-slot cap
 
 **Depends on:** nothing.
 **Modules:** `crates/bumbledb/src/image/build.rs`,

@@ -1,6 +1,6 @@
-# PRD 16 — Elegance: api and macros
+# PRD 20 — Elegance: api and macros
 
-**Depends on:** 15.
+**Depends on:** 19.
 **Binding constraints:** the README's elegance-pass block.
 **Modules:** `crates/bumbledb/src/api.rs` + `api/` (db, prepared, stats),
 `crates/bumbledb-macros/src/lib.rs`, `crates/bumbledb/src/alloc_counter.rs`,
@@ -9,12 +9,12 @@ the engine crate's integration tests (`crates/bumbledb/tests/`).
 ## Subsystem-specific hunt list (verify, don't assume)
 
 - **The dyn/typed surface pairs:** `insert`/`insert_dyn`, `delete`/`delete_dyn`,
-  `get`/`get_dyn`, `alloc`/`alloc_dyn` (typed error fresh from PRD 03) — the
+  `get`/`get_dyn`, `alloc`/`alloc_at` (the `SerialField` witness fresh from PRD 06) — the
   typed halves should be thin wrappers over one shared core per operation;
   check for validation logic duplicated between halves, and for encode-scratch
   handling that differs per pair when it should be one discipline.
 - **Bind path layering:** scalar params, param sets (`ParamArg`), intern
-  resolution, and the staleness pin record (PRD 10 of this set) all live on the
+  resolution, and the staleness pin record (PRD 13) all live on the
   prepared query — check the bind path for sequential re-walks of the same
   param list that could be one pass, and for error-position bookkeeping
   duplicated between arity/type/set-shape checks.
@@ -35,7 +35,7 @@ the engine crate's integration tests (`crates/bumbledb/tests/`).
 
 ## Passing criteria
 
-As PRD 12's, applied to this subsystem. Additionally:
+As PRD 16's, applied to this subsystem. Additionally:
 - `[shape]` Each dyn/typed pair shares one core (grep-checkable: the validation
   logic appears once per operation).
 - `[gate]` Workspace gates green; the macro's compile_fail doctests still pass

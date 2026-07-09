@@ -1,6 +1,6 @@
-# PRD 14 — Elegance: IR and plan
+# PRD 18 — Elegance: IR and plan
 
-**Depends on:** 13.
+**Depends on:** 17.
 **Binding constraints:** the README's elegance-pass block.
 **Modules:** `crates/bumbledb/src/ir.rs` + `ir/` (validate, normalize),
 `crates/bumbledb/src/plan.rs` + `plan/` (planner, fj, selectivity, chase,
@@ -22,14 +22,14 @@ provably_distinct).
   enums).
 - **Attachment logic:** `earliest_bound_node` serves residuals, word residuals,
   and anti-probes (and had a bug found by PRD 16 of the rebuild) — confirm it
-  is one function with one test module, and that the chase's occurrence
-  re-indexing (PRD 08 of this set) composes with it rather than duplicating
-  index bookkeeping.
+  is one function with one test module, and that the chase's Role marks
+  (PRD 11) compose with it rather than duplicating
+  occurrence-state bookkeeping.
 - **The witness's width bookkeeping:** slot widths, key widths, ColumnSpans —
   three width maps flowed in from different PRDs. Check whether they are
   derivable from one source at witness construction; if two are projections of
   the third, derive them and delete the stored copies.
-- **`chase.rs` freshness:** built last (PRD 08 of this set) against the code
+- **`chase.rs` freshness:** built by PRD 11 against the code
   as-it-was — after 12/13's normalizations, re-read it for idiom fit.
 - **Validation roster tests:** the reject corpus grew per-PRD; converge fixture
   styles and kill duplicate coverage (same rejection asserted from two eras'
@@ -37,7 +37,7 @@ provably_distinct).
 
 ## Passing criteria
 
-As PRD 12's, applied to this subsystem. Additionally:
+As PRD 16's, applied to this subsystem. Additionally:
 - `[shape]` One filter-shape enum consumed by both evaluators, or the findings
   list justifies why two remain.
 - `[shape]` `earliest_bound_node` remains single-definition with its regression
