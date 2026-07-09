@@ -16,6 +16,7 @@ pub mod families;
 pub mod gen;
 pub mod harness;
 pub mod json;
+pub mod naive;
 pub mod querygen;
 pub mod report;
 pub mod scenarios;
