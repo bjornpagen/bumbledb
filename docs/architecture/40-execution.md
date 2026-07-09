@@ -262,6 +262,18 @@ walks is often 1–10 — large batches are reliably available only at the root;
 cross-node-entry batch accumulation is future work, not assumed. **Reverses if:**
 measured equal-or-worse than scalar on the ledger suite after honest tuning.
 
+**The scan-fold pushdown is column-hoisted.** When the last plan node is a single
+subatom over an unforced suffix, positions stream to the sink as runs — no key
+batch materializes. Long runs (past `SCAN_HOIST_THRESHOLD`, a measured cost
+threshold and the path's only constant) run column-outer, the same shape the
+gather kernels won with: each projected source column resolves its view once and
+writes the run's span into the sink's row-major staging rows; each leaf residual
+resolves its two operands once and compacts surviving positions in place, exactly
+like the batch path's residual passes. Projection width and residual count are
+therefore **unbounded by construction** — both loops iterate plan-witness lists,
+so no fixed-width scratch and no eligibility branch exist to cap them. Short
+(fanout-sized) runs resolve per position — both directions measured, both real.
+
 **COLT force is single-pass with chunked child lists:** forcing pushes each offset into
 its key's child list, chunked (64 offsets per arena chunk, chained by chunk — bounded
 pointer-chase, independent loads within a chunk), rather than the paper's growable

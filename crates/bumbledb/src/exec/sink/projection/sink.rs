@@ -93,36 +93,57 @@ impl Sink for ProjectionSink {
         // first-sight misses, whose predicted exit branch exposes no
         // hash latency), then on the dedup paths (the in-shape
         // measurement). Run-length-adaptive column resolution
-        // splits the arms: big runs amortize a hoisted
-        // column table, fanout-sized runs resolve per position.
+        // splits the arms: big runs resolve each column once
+        // (column-hoisted), fanout-sized runs resolve per position.
         let seen = &mut self.seen;
         let scratch = &mut self.scratch;
         let sources = &self.batch_sources;
         if run.len() >= crate::exec::SCAN_HOIST_THRESHOLD {
-            assert!(sources.len() <= 8, "projection arity cap");
-            // Option-free hoist table built by a plain indexed loop
-            // (measured): `array::from_fn` refuses to inline its
-            // element closure (rust-lang/rust#108765) — measured ~34 ns
-            // per 8-entry Option table (eight outlined calls + a 448 B
-            // memcpy) vs ~3.4 ns for straight-line stores. `sources[i]`
-            // already gates which entries are live; no Option needed.
-            let mut cols: [ColumnView<'_>; 8] = [ColumnView::Words(&[]); 8];
+            // Column-hoisted emit (the gather kernels' idiom — columns
+            // outer, positions inner): each projected leaf column
+            // resolves its view once and writes the run's span into the
+            // row-major staging rows; outer slots broadcast their
+            // prefilled scratch word. No fixed-width scratch exists —
+            // the staging buffer is `run × arity` words (retained
+            // capacity), so the projection width is unbounded by
+            // construction.
+            let arity = sources.len();
+            let rows = &mut self.scan_rows;
+            rows.resize(run.len() * arity, 0);
             for (i, source) in sources.iter().enumerate() {
                 if let Some(word) = *source {
-                    cols[i] = scan.colt.suffix_column(scan.level, word);
-                }
-            }
-            run_positions(run, &mut |position: u32| {
-                for (i, source) in sources.iter().enumerate() {
-                    if source.is_some() {
-                        scratch[i] = match cols[i] {
-                            ColumnView::Words(w) => w[position as usize],
-                            ColumnView::Bytes(b) => u64::from(b[position as usize]),
-                        };
+                    match (scan.colt.suffix_column(scan.level, word), run) {
+                        (ColumnView::Words(w), SuffixRun::Identity { start, len }) => {
+                            for (k, value) in w[start..start + len].iter().enumerate() {
+                                rows[k * arity + i] = *value;
+                            }
+                        }
+                        (ColumnView::Words(w), SuffixRun::Positions(positions)) => {
+                            for (k, position) in positions.iter().enumerate() {
+                                rows[k * arity + i] = w[*position as usize];
+                            }
+                        }
+                        (ColumnView::Bytes(bytes), SuffixRun::Identity { start, len }) => {
+                            for (k, value) in bytes[start..start + len].iter().enumerate() {
+                                rows[k * arity + i] = u64::from(*value);
+                            }
+                        }
+                        (ColumnView::Bytes(bytes), SuffixRun::Positions(positions)) => {
+                            for (k, position) in positions.iter().enumerate() {
+                                rows[k * arity + i] = u64::from(bytes[*position as usize]);
+                            }
+                        }
+                    }
+                } else {
+                    let word = scratch[i];
+                    for row in rows.chunks_exact_mut(arity) {
+                        row[i] = word;
                     }
                 }
-                seen.insert(scratch);
-            });
+            }
+            for row in rows.chunks_exact(arity) {
+                seen.insert(row);
+            }
         } else {
             run_positions(run, &mut |position: u32| {
                 for (i, source) in sources.iter().enumerate() {

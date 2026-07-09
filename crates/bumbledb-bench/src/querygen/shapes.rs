@@ -97,6 +97,29 @@ pub(super) fn star(b: &mut Builder, rng: &mut Rng) {
         let projected = b.bind_var(satellite, payload);
         b.find_var(projected);
     }
+    // The wide-scalar projection (a quarter of stars): every remaining
+    // Posting field joins the find list, pushing the projected word
+    // count past 8 — the executor's hoist paths are width-unbounded by
+    // construction (docs/architecture/40-execution.md, scan-fold
+    // pushdown), and the differential oracle keeps that class covered.
+    // Before `repeat_var`, so `at` is a fresh variable, never the
+    // already-projected amount: 9–11 projected words, all scalar.
+    if rng.chance(1, 4) {
+        for field in [
+            ids::posting::ID,
+            ids::posting::ENTRY,
+            ids::posting::ACCOUNT,
+            ids::posting::INSTRUMENT,
+            ids::posting::AT,
+            ids::posting::MEMO,
+            ids::posting::RECONCILED,
+        ] {
+            let var = b
+                .var_at(posting, field)
+                .expect("star binds posting fields to variables only");
+            b.find_var(var);
+        }
+    }
     repeat_var(b, rng, posting);
 }
 

@@ -23,6 +23,7 @@ impl ProjectionSink {
             seen: WordMap::with_capacity_hint(arity, hint),
             scratch: vec![0; arity],
             batch_sources: vec![None; arity],
+            scan_rows: Vec::new(),
             scan_count: 0,
         }
     }

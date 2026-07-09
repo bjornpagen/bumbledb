@@ -112,6 +112,11 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("cross_residuals", cov.cross_residuals),
         ("bytes_hits", cov.bytes_hits),
         ("bytes_misses", cov.bytes_misses),
+        // Wide projections (the >8-word class the executor's hoist
+        // paths must never cap): all-scalar width and the
+        // ≥4-interval-find flavor, both drawn per run.
+        ("wide_scalar", cov.wide_scalar),
+        ("wide_interval", cov.wide_interval),
     ] {
         assert!(count > 0, "{name} never generated");
     }

@@ -34,6 +34,10 @@ impl Colt {
         max: usize,
     ) -> (usize, BatchToken) {
         let arity = self.arity_at(level);
+        // Caller-buffer contract — a plan-shape invariant, never data:
+        // the executor sizes its per-node `entry_keys`/`children`
+        // scratch to `batch × level arity` at construction
+        // (`Executor::with_batch_size`), the one caller class.
         assert!(keys_out.len() >= max * arity && children_out.len() >= max);
         match cursor {
             Cursor::Row(position) => {

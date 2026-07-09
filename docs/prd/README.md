@@ -64,7 +64,6 @@ orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [04 — Hoist-path scratch: delete the caps](04-hoist-scratch.md)
 - [05 — Net-disposition delta](05-net-disposition-delta.md)
 - [06 — `alloc_dyn`: parse, don't validate](06-serial-field-witness.md)
 - [07 — The high-water allocation contract](07-alloc-highwater-contract.md)

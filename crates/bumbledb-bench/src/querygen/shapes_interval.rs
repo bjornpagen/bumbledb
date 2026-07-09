@@ -233,6 +233,7 @@ fn membership_u64(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Doma
 }
 
 /// The right-hand side of an interval comparison.
+#[derive(Clone, Copy)]
 enum Right {
     /// A second interval occurrence (a cross-atom join — spine-bound).
     Var,
@@ -263,23 +264,11 @@ pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, doma
     };
     let (lhs, rhs) = if rng.chance(1, 2) {
         // I64 lane: Mandate occurrences joined on account (the spine).
-        let first = b.atom(ids::MANDATE);
-        let account = b.bind_var(first, ids::mandate::ACCOUNT);
-        let lhs = b.bind_var(first, ids::mandate::ACTIVE);
-        let org = b.bind_var(first, ids::mandate::ORG);
-        b.find_var(account);
-        b.find_var(org);
-        let rhs = match right {
-            Right::Var => {
-                let second = b.atom(ids::MANDATE);
-                b.bind(second, ids::mandate::ACCOUNT, Term::Var(account));
-                let active = b.bind_var(second, ids::mandate::ACTIVE);
-                Term::Var(active)
-            }
-            Right::Literal => Term::Literal(i64_interval(cfg, rng)),
-            Right::Element => Term::Literal(Value::I64(i64_point(cfg, rng))),
-        };
-        (lhs, rhs)
+        if matches!(right, Right::Var) && rng.chance(1, 3) {
+            wide_mandate_join(b)
+        } else {
+            mandate_join(b, rng, cfg, right)
+        }
     } else {
         // U64 lane: every occurrence pinned (no scalar join key exists).
         let first = b.atom(ids::TRANSFER);
@@ -302,6 +291,55 @@ pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, doma
         lhs: Term::Var(lhs),
         rhs,
     });
+}
+
+/// [`interval_join`]'s I64 lane: Mandate occurrences joined on account
+/// (the spine).
+fn mandate_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, right: Right) -> (VarId, Term) {
+    let first = b.atom(ids::MANDATE);
+    let account = b.bind_var(first, ids::mandate::ACCOUNT);
+    let lhs = b.bind_var(first, ids::mandate::ACTIVE);
+    let org = b.bind_var(first, ids::mandate::ORG);
+    b.find_var(account);
+    b.find_var(org);
+    let rhs = match right {
+        Right::Var => {
+            let second = b.atom(ids::MANDATE);
+            b.bind(second, ids::mandate::ACCOUNT, Term::Var(account));
+            let active = b.bind_var(second, ids::mandate::ACTIVE);
+            Term::Var(active)
+        }
+        Right::Literal => Term::Literal(i64_interval(cfg, rng)),
+        Right::Element => Term::Literal(Value::I64(i64_point(cfg, rng))),
+    };
+    (lhs, rhs)
+}
+
+/// The wide interval projection (the ≥4-interval-find, >8-word class):
+/// four Mandate occurrences, each pinned to ONE account param — the
+/// eq-selection spine; a shared-var four-way join would be
+/// accounts × `PER_GROUP`⁴ — and each projecting its `active`, so the
+/// find list carries four interval finds (8 words) plus the org var.
+/// The executor's hoist paths are width-unbounded by construction
+/// (docs/architecture/40-execution.md, scan-fold pushdown); the
+/// differential oracle keeps this class covered.
+fn wide_mandate_join(b: &mut Builder) -> (VarId, Term) {
+    let account = b.fresh_param();
+    let first = b.atom(ids::MANDATE);
+    b.bind(first, ids::mandate::ACCOUNT, Term::Param(account));
+    let org = b.bind_var(first, ids::mandate::ORG);
+    let lhs = b.bind_var(first, ids::mandate::ACTIVE);
+    b.find_var(org);
+    b.find_var(lhs);
+    let mut rhs = lhs;
+    for _ in 0..3 {
+        let occurrence = b.atom(ids::MANDATE);
+        b.bind(occurrence, ids::mandate::ACCOUNT, Term::Param(account));
+        let active = b.bind_var(occurrence, ids::mandate::ACTIVE);
+        b.find_var(active);
+        rhs = active;
+    }
+    (lhs, Term::Var(rhs))
 }
 
 /// The adjacent-touching boundary probe: the query literal is

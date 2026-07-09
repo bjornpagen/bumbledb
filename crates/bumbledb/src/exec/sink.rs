@@ -98,6 +98,12 @@ pub struct ProjectionSink {
     /// at family level and was deleted): `Some(word)` reads the batch
     /// keys, `None` the outer bindings.
     batch_sources: Vec<Option<usize>>,
+    /// Row-major staging rows of one hoisted scan run — the
+    /// column-outer gather's target, `run length × arity` words with
+    /// retained capacity (the allocation contract's touched-data
+    /// bound). Sized by the run, never by a width cap: the projection
+    /// arity is unbounded by construction.
+    scan_rows: Vec<u64>,
     /// Rows consumed by the open scan.
     scan_count: u64,
 }

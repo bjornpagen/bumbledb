@@ -221,6 +221,12 @@ pub struct Coverage {
     pub membership_and_overlaps: u64,
     /// Var-vs-var comparisons whose variables bind in different atoms.
     pub cross_residuals: u64,
+    /// Wide projections — the >8-projected-word class the executor's
+    /// hoist paths must never cap (docs/architecture/40-execution.md,
+    /// scan-fold pushdown): all-scalar find lists past 8 words, and
+    /// find lists carrying ≥4 interval-typed finds (≥8 interval words).
+    pub wide_scalar: u64,
+    pub wide_interval: u64,
     /// In-vocabulary / out-of-vocabulary bytes literals.
     pub bytes_hits: u64,
     pub bytes_misses: u64,

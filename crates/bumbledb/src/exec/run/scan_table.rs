@@ -2,7 +2,7 @@
 
 use super::{
     Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, LeafScan, Operand, Sink, Source,
-    ValidatedPlan, MAX_LEAF_RESIDUALS,
+    ValidatedPlan,
 };
 
 impl Executor {
@@ -61,53 +61,51 @@ impl Executor {
                 }
                 // Filter positions through the leaf residuals — run-
                 // length-adaptive (see SCAN_HOIST_THRESHOLD): big runs
-                // amortize a resolved operand table; small runs resolve
-                // per position (both directions measured, both real).
+                // resolve each residual's operands once; small runs
+                // resolve per position (both directions measured, both
+                // real).
                 filtered.clear();
                 if run.len() >= crate::exec::SCAN_HOIST_THRESHOLD {
-                    assert!(
-                        self.leaf_scan_residuals.len() <= MAX_LEAF_RESIDUALS,
-                        "leaf residual count exceeds the scan table"
-                    );
-                    // Option-free prefix table, plain indexed loop
-                    // (measured): `array::from_fn` refuses to
-                    // inline its element closure (rust-lang/rust#108765)
-                    // — this exact table measured ~34 ns/run as a
-                    // from_fn-of-Options (eight outlined calls + a 448 B
-                    // memcpy, +48 ns/row at fanout runs) vs ~3.4 ns as
-                    // straight-line stores. `n_residuals` is the length
-                    // prefix; slots past it stay at the placeholder.
-                    let placeholder = (crate::ir::CmpOp::Eq, Operand::Const(0), Operand::Const(0));
-                    let mut resolved = [placeholder; MAX_LEAF_RESIDUALS];
-                    for (i, (op, lhs, rhs)) in self.leaf_scan_residuals.iter().enumerate() {
+                    // Residual-hoisted evaluation (the column-hoisted
+                    // idiom turned on the plan's own list): each leaf
+                    // residual resolves its two operands ONCE per run —
+                    // a live column view or the outer constant — then
+                    // filters positions, survivors compacting in place
+                    // exactly like the batch path's residual passes. No
+                    // fixed-size residual table exists: the witness
+                    // list is iterated directly, at any length.
+                    for (idx, (op, lhs_src, rhs_src)) in self.leaf_scan_residuals.iter().enumerate()
+                    {
                         let side = |src: &Source| match *src {
                             Source::Batch(word) => {
                                 Operand::Col(scan.colt.suffix_column(scan.level, word))
                             }
                             Source::Slot(slot) => Operand::Const(bindings.get(slot)),
                         };
-                        resolved[i] = (*op, side(lhs), side(rhs));
-                    }
-                    let mut eval = |position: u32| {
-                        for (op, lhs, rhs) in resolved.iter().take(n_residuals) {
-                            let value = |operand: &Operand<'_>| match operand {
-                                Operand::Col(crate::image::ColumnView::Words(w)) => {
-                                    w[position as usize]
-                                }
-                                Operand::Col(crate::image::ColumnView::Bytes(b)) => {
-                                    u64::from(b[position as usize])
-                                }
-                                Operand::Const(word) => *word,
-                            };
-                            let pass = op.compare(&value(lhs), &value(rhs));
-                            counters.residual(node_idx, pass);
-                            if !pass {
-                                return false;
+                        let (lhs, rhs) = (side(lhs_src), side(rhs_src));
+                        let value = |operand: &Operand<'_>, position: u32| match operand {
+                            Operand::Col(crate::image::ColumnView::Words(w)) => {
+                                w[position as usize]
                             }
+                            Operand::Col(crate::image::ColumnView::Bytes(b)) => {
+                                u64::from(b[position as usize])
+                            }
+                            Operand::Const(word) => *word,
+                        };
+                        let mut eval = |position: u32| {
+                            let pass = op.compare(&value(&lhs, position), &value(&rhs, position));
+                            counters.residual(node_idx, pass);
+                            pass
+                        };
+                        if idx == 0 {
+                            push_surviving(run, &mut filtered, &mut eval);
+                        } else {
+                            retain_surviving(&mut filtered, &mut eval);
                         }
-                        true
-                    };
-                    push_surviving(run, &mut filtered, &mut eval);
+                        if filtered.is_empty() {
+                            break;
+                        }
+                    }
                 } else {
                     let mut eval = |position: u32| {
                         for (op, lhs_src, rhs_src) in &self.leaf_scan_residuals {
@@ -171,4 +169,19 @@ fn push_surviving(
             }
         }
     }
+}
+
+/// Compacts `out` in place, keeping the positions that pass `eval` —
+/// [`push_surviving`]'s in-place twin for the residuals past the first
+/// (one residual's survivors are the next one's input).
+fn retain_surviving(out: &mut Vec<u32>, eval: &mut impl FnMut(u32) -> bool) {
+    let mut kept = 0;
+    for idx in 0..out.len() {
+        let position = out[idx];
+        if eval(position) {
+            out[kept] = position;
+            kept += 1;
+        }
+    }
+    out.truncate(kept);
 }

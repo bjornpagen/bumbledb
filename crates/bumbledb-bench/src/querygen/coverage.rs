@@ -392,9 +392,19 @@ impl Coverage {
         let mut has_var_find = false;
         let mut arg_key: Option<VarId> = None;
         let mut arg_key_projected = false;
+        let mut projected_words = 0u64;
+        let mut interval_finds = 0u64;
         for term in &query.finds {
             match term {
-                FindTerm::Var(_) => has_var_find = true,
+                FindTerm::Var(var) => {
+                    has_var_find = true;
+                    if matches!(t.var_types.get(var), Some(ValueType::Interval { .. })) {
+                        interval_finds += 1;
+                        projected_words += 2;
+                    } else {
+                        projected_words += 1;
+                    }
+                }
                 FindTerm::Aggregate { op, over } => {
                     aggregates += 1;
                     match op {
@@ -444,6 +454,10 @@ impl Coverage {
             }
         }
         self.multi_aggregate += u64::from(aggregates > 1);
+        // The wide-projection classes (the executor's hoist paths are
+        // width-unbounded; the >8-word class stays oracle-covered).
+        self.wide_scalar += u64::from(interval_finds == 0 && projected_words > 8);
+        self.wide_interval += u64::from(interval_finds >= 4);
         aggregates > 0
     }
 

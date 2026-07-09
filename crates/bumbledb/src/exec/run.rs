@@ -305,9 +305,10 @@ fn word_base(
     None
 }
 
-/// A leaf-scan residual operand resolved for one big run: a live
-/// column view or the outer binding's constant word.
-/// Small runs skip the table. [`SCAN_HOIST_THRESHOLD`] splits them.
+/// A leaf-scan residual operand, resolved once per residual per hoisted
+/// run: a live column view or the outer binding's constant word.
+/// Small runs resolve per position; [`SCAN_HOIST_THRESHOLD`]
+/// splits the arms.
 #[derive(Clone, Copy)]
 enum Operand<'a> {
     Col(crate::image::ColumnView<'a>),
@@ -323,9 +324,6 @@ enum Operand<'a> {
 /// covering an at-floor map costs ~nothing at today's 5.7 ns/probe,
 /// and the gate's comparison was the last of its complexity.
 const PREFETCH_WIDTH_FLOOR: usize = 4;
-
-/// Residual specs one scan can hold; the resolve site asserts.
-const MAX_LEAF_RESIDUALS: usize = 8;
 
 /// Per-node reusable scratch: each node's frame is active at most once in
 /// the recursion (frames advance strictly by node index), so scratch is
