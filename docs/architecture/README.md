@@ -58,10 +58,16 @@ documents themselves describe **only the current reality**.
   latency-budget violation.*
 - **Declared range/stabbing accelerators**: time-range, point-membership, and
   overlap scans are O(n) by decision; accelerators return only with a benchmark that
-  demands them. *Trigger: latency budget violation on a range/interval family.*
-- **Dictionary GC**: interned values are never reclaimed (accepted leak,
-  `10-data-model.md`). *Trigger: measured dictionary growth dominating store size on
-  a real churn workload.*
+  demands them. Candidate mechanism on trigger: guard skip scan (cursor `set_range`
+  prefix-hopping over existing `U` namespaces, O(distinct-prefix × log n)) — for
+  non-prefix guard lookups and low-cardinality-leading range scans; interval
+  stabbing needs the coverage-walk shape instead (`40-execution.md`). *Trigger:
+  latency budget violation on a range/interval family.*
+- **Dictionary GC**: interned values are never reclaimed — including ids no
+  committed fact ever referenced (a no-op insert's interns flush with any
+  state-changing commit; accepted leak, `10-data-model.md`). *Trigger: measured
+  dictionary growth — both classes counted — dominating store size on a real churn
+  workload.*
 - **Incremental image maintenance**: images rebuild whole per state-changing commit
   by design (the write design point amortizes it). *Trigger: traced rebuild cost
   violating the latency budget despite the cache — recorded with D1's reversal.*

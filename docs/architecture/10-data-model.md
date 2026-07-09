@@ -248,9 +248,13 @@ monotonic, never reused, append-only; interning happens only inside write transa
 Strings are validated UTF-8 at intern time (parse, don't validate). On the read path,
 query literals resolve by read-only lookup — a dictionary miss means the literal cannot
 match any fact: **empty result, never an insert, never an error** (resolved
-per-execution; see `20-query-ir.md`). Known accepted limitation: no GC — deleted facts
-leak their interned values; at design scale this is noise (revisit trigger recorded in
-the README OPEN list).
+per-execution; see `20-query-ir.md`). Known accepted limitation: no GC — deleted
+facts leak their interned values, and a value interned for an insert that turned
+out to be a storage no-op leaks even though no committed fact ever referenced it
+(pending interns flush with any state-changing commit; filtering them would be
+commit-path machinery spent against an accepted leak). At design scale both
+classes are noise (revisit trigger recorded in the README OPEN list, counting
+both).
 
 Consequence: string equality is cheap (id compare); string ordering, prefix search, and
 text search are unsupported and would require explicit ordered text indexes if ever

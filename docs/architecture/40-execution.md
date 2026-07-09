@@ -28,7 +28,13 @@ interval occurrence shares **no equality variable** with the rest of the query i
 Cartesian with a filter — O(bindings × n), like any Cartesian, and only a stabbing
 structure could do better. Real interval workloads carry their group key
 (per-account, per-room); the randomized generator bounds itself to that shape
-(`60-validation.md`). Interval predicates lower to word comparisons over the start/end column
+(`60-validation.md`). Candidate mechanism recorded for trigger day: **guard skip
+scan** — `U` guards are already ordered composite keys of fixed per-statement
+width, so a non-prefix guard lookup or a range scan under a low-cardinality
+leading field (enums, discriminators) is servable with zero new structures by
+cursor `set_range` prefix-hopping (O(distinct-leading-prefixes × log n)); not
+applicable to interval stabbing, whose pointwise layout needs the coverage-walk
+shape. Interval predicates lower to word comparisons over the start/end column
 pair (`50-storage.md` image layout), so the filter kernels are the existing 8-byte
 shapes; no new NEON widths exist.
 

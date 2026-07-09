@@ -1,17 +1,11 @@
 # 02 — Engine vs naive-model direction divergence on no-op re-insert + target delete
 
 **Kind:** latent verify-red — the two oracles disagree on a verdict *label* for an
-op pattern the generator can legally emit. Not a soundness bug: both sides agree
-the transaction must abort; they disagree on `Direction`.
-
-## Context
-
-The differential runner compares whole `Verdict`s, including the violated statement
-id **and** `Direction` (`crates/bumbledb-bench/src/naive/differential.rs:86`). The
-engine and the naive model classify one case differently, so the first generated op
-stream hitting the pattern turns `verify` red on a label mismatch. The two-oracle
-construction is normative (`60-validation.md`) and `bench` refuses to time without
-the stamp — this blocks the ratchet the day it fires.
+op pattern the generator can legally emit. Not a soundness bug (both sides abort);
+a red verify on a label is still a red verify, and `bench` refuses to time without
+the stamp. **Decided: the naive model is normative** — "source side" means *facts
+this transaction actually added*; the model is implementation-blind by design and
+stays that way.
 
 ## Current behavior
 
@@ -21,40 +15,35 @@ present) and `delete(b)`.
 
 - **Engine:** the apply phase short-circuits the no-op insert against storage
   (`storage/commit/applier.rs:85-87`) but the delta entry keeps
-  `Disposition::Insert`. The source-side judgment iterates **all** insert-disposition
-  entries (`storage/commit/judgment.rs:168-169`), so `a` is judged source-side;
-  source runs before target (`storage/commit/write.rs:79-80`) and reports
-  `ContainmentViolation { direction: SourceUnsatisfied }`
-  (`judgment.rs:198-211`).
-- **Naive model:** computes genuine inserts against the pre-state
-  (`crates/bumbledb-bench/src/naive.rs:110-116`) and skips already-present facts in
-  pass two (`naive.rs:150-166,173`), so `a` is not judged source-side; the delete of
-  `b` is judged target-side and reports `direction: TargetRequired`
-  (`naive.rs:168-185`).
+  `Disposition::Insert`; the source-side judgment iterates **all** insert-disposition
+  entries (`storage/commit/judgment.rs:168-169`), runs before the target side
+  (`storage/commit/write.rs:79-80`), and reports
+  `ContainmentViolation { direction: SourceUnsatisfied }`.
+- **Naive model:** computes genuine inserts against the pre-state and skips
+  already-present facts, so `a` is never judged source-side; the delete of `b` is
+  judged target-side: `direction: TargetRequired`.
 
 Same statement, same abort, different `Direction`.
 
 ## The work
 
-Decide which semantics is normative, then align the other side and pin it:
+**Mechanism (decided): the apply phase produces the genuinely-applied-inserts list
+as its output, and the judgment phase consumes that** — not raw delta dispositions,
+and not a mutated per-entry flag. Judgment reads what apply *did*, not what the
+host *asked*; the phases stay one-directional. The applier already knows (it
+short-circuited); today it drops the knowledge.
 
-- **Option A (recommended): the naive model is right.** "Source side" means *facts
-  this transaction actually added*; a no-op re-insert added nothing, and the
-  violation is genuinely caused by the target's disappearance. Fix: the engine's
-  source-side iteration skips delta entries whose apply was a storage no-op. The
-  applier already knows (it short-circuited); it needs to record that fact — either
-  flip the entry's disposition to a `NoopInsert` state or carry a per-entry
-  applied flag into the judgment phase. This also removes over-broad source-side
-  work: today every redundant insert is re-judged (harmless but wasted probes,
-  counted in `JUDGMENT_SOURCE`).
-- **Option B: the engine is right** (any insert-disposition entry is source-judged).
-  Then the naive model must judge re-inserts source-side too. This is worse: it
-  bakes an implementation artifact (delta disposition) into the semantic model, and
-  the model exists precisely to be implementation-blind.
+Consequences to carry through:
 
-Note the error-payload consequence of A: the violation fact bytes reported switch
-from `a` to `b`'s key tuple — check `error.rs` payload expectations and any tests
-pinning the message.
+- Source-side judgment iterates applied inserts only. This also deletes the wasted
+  work of re-judging every redundant insert (visible in `JUDGMENT_SOURCE` probe
+  counts).
+- The reported violation for the pattern becomes target-side, naming the *source
+  fact stranded by the delete* through the R-edge path — check `error.rs` payload
+  expectations and any tests pinning the previous message.
+- The `==`/totality corner is already correct under this rule (verified in
+  review): a no-op parent re-insert plus child delete is caught target-side
+  through the parent's standing R edge.
 
 ## Acceptance
 
@@ -64,8 +53,7 @@ pinning the message.
 - The op-stream generator gains the pattern class (redundant insert alongside a
   delete of its containment target) so it stays covered under randomization.
 - `JUDGMENT_SOURCE` probe counts drop for deltas containing redundant inserts
-  (observable via the trace names in `obs.rs`) — evidence the over-broad iteration
-  is gone, if Option A.
+  (observable via the trace names in `obs.rs`).
 
 ## Doc amendments (rule 5)
 

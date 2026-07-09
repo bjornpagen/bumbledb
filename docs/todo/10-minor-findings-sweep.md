@@ -1,7 +1,9 @@
 # 10 — Minor findings sweep
 
-**Kind:** batch of small, independent items from the 2026-07-09 review. None is
-urgent; each is cheap. Sweep in one change or cherry-pick.
+**Kind:** batch of small, independent items. Verdicts pinned per the 2026-07-09
+audit; F was resolved as a doc amendment and removed from this list (see git
+history); G is downgraded to prove-unreachable. Sequencing: run after item 02
+(G's test uses the applied-inserts fixture shape 02 introduces).
 
 ## A — Containment ndistinct rung takes the first match, not the tightest
 
@@ -16,55 +18,48 @@ One-line fold instead of early return; a unit test with two containments pins it
 `colt/force.rs:79` and the `colt.rs` map docstring say "rehash-doubling at 75%
 load"; the code enforces max load 0.4 (`force.rs:87`,
 `(len+1)*5 > nbuckets*16`), consistent with the bucket-of-8 design. Fix the two
-comments — sizing-sensitive structure, misleading for maintainers. (Also
-`40-execution.md` "measured mechanisms" repeats the 75% figure — amend per rule 5.)
+comments — sizing-sensitive structure, misleading for maintainers. Also
+`40-execution.md` "measured mechanisms" repeats the 75% figure — amend per rule 5
+(current reality is the code's 0.4).
 
-## C — `next_origin: u32` unchecked growth
+## C — `next_origin: u32` unchecked growth — **decided: checked increment**
 
 `self.next_origin += 1` (`exec/run.rs:446`, minted at
 `probe_pass.rs:296-298`) overflows beyond 2³² absorb-node survivors: debug panic,
 release wrap → wrong origin cancelled → **silently dropped valid rows**. Beyond
-the ≤10⁷ scale axiom (intermediates can exceed base cardinality, but not by 400×
-at this scale) — still, wrap-to-wrong-results is the worst failure shape. A
-checked increment returning a typed overflow error (the `Overflow` variant
-exists) costs nothing measurable at batch granularity; or a
-`const_assert`-style justification comment if refused.
+the scale axiom, but wrap-to-wrong-results is the worst failure shape in the
+taxonomy and a checked increment returning the existing typed `Overflow` variant
+costs nothing measurable at batch granularity. Take the checked increment; the
+justification-comment alternative is rejected — no comment fixes silent wrong
+results.
 
-## D — `From<BulkLoadError> for Error` drops the committed-chunk count
+## D — `From<BulkLoadError> for Error` drops the committed-chunk count — **decided: carry the payload**
 
 `api/db/write.rs:176-181` discards `committed` for `?` ergonomics — but the count
 is the whole reason the type carries it (resumable partial imports; prior chunks
-stay committed by design, `write.rs:119-157`). Either carry it into the `Error`
-variant's payload or document loudly on `bulk_load` that resumability requires
-matching `BulkLoadError` before `?`.
+stay committed by design). Carry it into the `Error` variant's payload —
+structured payloads are the house error doctrine; documenting the footgun instead
+is rejected.
 
-## E — `Error::source()` chains only for `Io`/`Lmdb`
+## E — `Error::source()` chains only for `Io`/`Lmdb` — **decided: document the decision**
 
 `error/convert.rs:41-49`. `Corruption`/`Schema`/`Validation`/`FactShape` carry
-structured payloads invisible to `std::error::Error` chain-walking (anyhow/eyre
-`.chain()`). Intentional (payloads are structured, not nested errors) — if kept,
-one doc sentence on `Error` saying so, so it reads as a decision rather than an
-omission.
+structured payloads invisible to `std::error::Error` chain-walking. This is a
+decision (payloads are structured data, not nested errors) — one rustdoc sentence
+on `Error` saying so, so it reads as a decision rather than an omission.
 
-## F — Dict leak is broader than "deleted facts leak"
+## G — `advance_serial_marks` before the idempotence check — **decided: prove unreachable**
 
-`flush_counters` writes **all** `pending_interns` on any state-changing commit
-(`storage/commit/write.rs:180`, `delta/intern.rs:71`): a novel string interned for
-a fact whose insert turned out to be a no-op still lands in `_dict` when any other
-fact changed state — an id no committed fact ever referenced. Within the
-accepted-leak axiom (`10-data-model.md`), but the OPEN item's trigger metric
-("dictionary growth dominating store size") should count this class too. Either
-filter pending interns to applied facts at flush, or amend the accepted-leak
-sentence to cover never-referenced ids. Amending is fine; filtering is ~a set
-intersection at flush time if the no-op information from TODO item 02 lands.
-
-## G — `advance_serial_marks` before the idempotence check
-
-`delta/insert.rs:26` advances serial marks even for base no-op inserts; a purely
-no-op transaction inserting an unseen explicit serial value can dirty a mark and
-trigger a counters-only commit. Harmless (marks never regress committed state) —
-either reorder after the no-op determination where cheap, or add the one-line
-comment saying it is deliberate.
+`delta/insert.rs:26` advances serial marks even for base no-op inserts. The
+review proposed reorder-or-comment; the audit's position is that the dirty-mark
+scenario is **unreachable**: the committed high-water covers every committed
+serial value (explicit inserts advance past their value at their original
+commit), and a no-op insert means the fact is already committed, so its serial
+value is already covered — the mark cannot newly dirty. The work: verify this
+invariant against the code; if it holds, state it as a comment at the advance
+site **plus a test** proving a pure-no-op transaction never triggers a
+counters-only commit. If the code falsifies the reasoning, reorder the advance
+after the no-op determination and say so in the commit.
 
 ## Verified-sound notes (do not re-audit)
 
