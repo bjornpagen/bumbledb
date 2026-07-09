@@ -2,8 +2,10 @@ use crate::exec::sink::ProjectionSink;
 use crate::exec::wordmap::WordMap;
 
 impl ProjectionSink {
-    /// `slots`: the projected variables' binding slots, in find order
-    /// (tests; production sinks are hint-sized).
+    /// `slots`: the projected binding slots in find-**word** order — an
+    /// interval find contributes both its consecutive slots (the
+    /// `SlotWidth` layout; callers expand widths through the plan's layout
+    /// map). (Tests; production sinks are hint-sized.)
     #[cfg(test)]
     #[must_use]
     pub fn new(slots: Vec<usize>) -> Self {

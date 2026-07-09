@@ -57,10 +57,17 @@ pub enum ResultValue<'a> {
     Enum(u8),
     String(&'a str),
     Bytes(&'a [u8]),
+    /// An interval find, rematerialized through the checked host type
+    /// (the stored `start < end` invariant makes the re-parse
+    /// infallible — the comment lives at the materialization site).
+    IntervalU64(crate::interval::Interval<u64>),
+    IntervalI64(crate::interval::Interval<i64>),
 }
 
 /// One stored cell: fixed-width values inline, String/Bytes as ranges into
-/// the buffer's byte heap.
+/// the buffer's byte heap. An interval find is ONE cell (the buffer's
+/// arity counts find terms, not words — the two-word slot span collapses
+/// at materialization).
 #[derive(Debug, Clone, Copy)]
 enum Cell {
     Bool(bool),
@@ -69,6 +76,8 @@ enum Cell {
     Enum(u8),
     String { start: usize, len: usize },
     Bytes { start: usize, len: usize },
+    IntervalU64(crate::interval::Interval<u64>),
+    IntervalI64(crate::interval::Interval<i64>),
 }
 
 /// The caller-owned, reusable result buffer: columns are the find terms in

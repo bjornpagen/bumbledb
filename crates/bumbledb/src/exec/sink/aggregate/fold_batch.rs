@@ -1,11 +1,13 @@
 use crate::exec::run::{LeafBatch, LeafSource};
-use crate::exec::sink::{word_to_i64, Acc, AggregateSink, FindSpec};
-use crate::ir::AggOp;
+use crate::exec::sink::{word_to_i64, Acc, AggregateSink, FindSpec, FoldOp};
 
 impl AggregateSink {
     /// The per-row batch arm: outer slots prefilled once, leaf key slots
     /// overwritten per row, each full binding folded through the scratch
-    /// (dedup and varying-group regimes).
+    /// (dedup, varying-group, and row-fold — `CountDistinct`/Arg —
+    /// regimes). `key_slots` is word-level (an interval variable's pair
+    /// appears as two entries), so the scratch fill is layout-correct by
+    /// construction.
     pub(super) fn fold_batch_rows(&mut self, batch: &LeafBatch<'_>) {
         for &slot in &self.cached_outer_slots {
             self.binding_scratch[slot] = batch.bindings.get(slot);
@@ -60,9 +62,9 @@ impl AggregateSink {
     }
 
     pub(super) fn fold_batch_constant_group(&mut self, batch: &LeafBatch<'_>, survivors: &[u32]) {
-        for (i, slot) in self.group_slots.iter().enumerate() {
-            self.key_scratch[i] = batch.bindings.get(*slot);
-        }
+        super::groups::load_group_key(&mut self.key_scratch, &self.group_spans, |slot| {
+            batch.bindings.get(slot)
+        });
         // Once per batch (docs/silicon2/10: the group-run memo that
         // skipped this probe measured < 2% under the const-arity map
         // and was deleted — the probe IS the fast path now).
@@ -79,6 +81,7 @@ impl AggregateSink {
                 op,
                 over_slot,
                 signed,
+                ..
             } = find
             else {
                 continue;
@@ -87,8 +90,8 @@ impl AggregateSink {
             cursor += 1;
             match (op, acc) {
                 // Count is arithmetic, never a loop.
-                (AggOp::Count, Acc::Count(n)) => *n += count,
-                (AggOp::Sum, Acc::SumSigned(total)) => {
+                (FoldOp::Count, Acc::Count(n)) => *n += count,
+                (FoldOp::Sum, Acc::SumSigned(total)) => {
                     debug_assert!(*signed);
                     let slot = over_slot.expect("validated: Sum has a variable");
                     *total += match batch.source_of(slot) {
@@ -102,7 +105,7 @@ impl AggregateSink {
                         }
                     };
                 }
-                (AggOp::Sum, Acc::SumUnsigned(total)) => {
+                (FoldOp::Sum, Acc::SumUnsigned(total)) => {
                     let slot = over_slot.expect("validated: Sum has a variable");
                     *total += match batch.source_of(slot) {
                         LeafSource::Outer => {
@@ -113,7 +116,7 @@ impl AggregateSink {
                         }
                     };
                 }
-                (AggOp::Min, Acc::Min(best)) => {
+                (FoldOp::Min, Acc::Min(best)) => {
                     let slot = over_slot.expect("validated: Min has a variable");
                     let word = match batch.source_of(slot) {
                         LeafSource::Outer => batch.bindings.get(slot),
@@ -123,7 +126,7 @@ impl AggregateSink {
                     };
                     *best = (*best).min(word);
                 }
-                (AggOp::Max, Acc::Max(best)) => {
+                (FoldOp::Max, Acc::Max(best)) => {
                     let slot = over_slot.expect("validated: Max has a variable");
                     let word = match batch.source_of(slot) {
                         LeafSource::Outer => batch.bindings.get(slot),
@@ -132,6 +135,9 @@ impl AggregateSink {
                         }
                     };
                     *best = (*best).max(word);
+                }
+                (FoldOp::CountDistinct, _) => {
+                    unreachable!("row-fold ops take the per-row path (emit_batch gates)")
                 }
                 _ => unreachable!("accumulators are seeded per op"),
             }

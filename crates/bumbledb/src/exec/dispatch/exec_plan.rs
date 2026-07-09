@@ -19,6 +19,22 @@ impl ExecPlan {
         }
     }
 
+    /// A variable's slot width in words — the layout map's companion to
+    /// [`Self::slot_of`] (2 for an interval variable, the `SlotWidth`
+    /// layout). Guard-plan slots are field-indexed and one word wide
+    /// (the statement-driven guard path is PRD 19's).
+    ///
+    /// # Panics
+    ///
+    /// On a programmer-invariant violation: a variable outside the plan.
+    #[must_use]
+    pub fn width_of(&self, var: VarId) -> usize {
+        match self {
+            Self::GuardProbe(_) => 1,
+            Self::FreeJoin(plan) => plan.width_of(var),
+        }
+    }
+
     /// The distinct-bindings elision flag (trivially true for a guard
     /// probe: at most one binding exists).
     #[must_use]

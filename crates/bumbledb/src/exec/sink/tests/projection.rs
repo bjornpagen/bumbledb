@@ -13,18 +13,19 @@ fn projection_scan_filters_residuals_like_the_oracle() {
         .map(|i| (i, i % 5, i64::try_from(i * 7 % 23).expect("small")))
         .collect();
     let views = views_of(&dir, &schema, &postings, &[]);
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        &schema,
+        vec![
             occurrence(0, POSTING, &[(1, 0), (2, 1)]),
             occurrence(1, POSTING, &[(1, 0), (2, 2)]),
         ],
-        residuals: vec![crate::ir::normalize::PlacedComparison {
+        vec![crate::ir::normalize::PlacedComparison {
             op: crate::ir::CmpOp::Lt,
             lhs: VarId(1),
             rhs: VarId(2),
         }],
-    };
-    let plan = planned(&normalized, &schema, &[0, 1], &[1, 2]);
+    );
+    let plan = planned(&schema, &normalized, &[0, 1], &[1, 2]);
     let views2 = vec![views[0].clone(), views[0].clone()];
     let mut expected = BTreeSet::new();
     for (_, ka, va) in &postings {
@@ -36,7 +37,7 @@ fn projection_scan_filters_residuals_like_the_oracle() {
     }
     for batch in [1usize, 128] {
         let mut colts = colts_for(&plan, &views2);
-        let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
+        let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(1)), plan.slot_of(VarId(2))]);
         Executor::with_batch_size(&plan, batch).execute(
             &plan,
@@ -64,17 +65,18 @@ fn pinned_leaf_skips_preserve_d2() {
     let tags: Vec<(u64, u64)> = (0..40).map(|i| (i, 900 + i)).collect();
     let views = views_of(&dir, &schema, &postings, &tags);
     // Q(account) :- Posting(id=p, account=a), PostingTag(posting=p, tag=t).
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        &schema,
+        vec![
             occurrence(0, POSTING, &[(0, 0), (1, 1)]),
             occurrence(1, TAG, &[(0, 0), (1, 2)]),
         ],
-        residuals: vec![],
-    };
-    let plan = planned(&normalized, &schema, &[0, 1], &[1]);
+        vec![],
+    );
+    let plan = planned(&schema, &normalized, &[0, 1], &[1]);
     for batch in [1usize, 128] {
         let mut colts = colts_for(&plan, &views);
-        let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
+        let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(1))]);
         let mut counters = SkipCounter::default();
         Executor::with_batch_size(&plan, batch).execute(
@@ -109,18 +111,19 @@ fn duplicate_witness_projection_dedups_and_skips_suffixes() {
     let tags: Vec<(u64, u64)> = (0..50).map(|t| (1, t)).collect();
     let views = views_of(&dir, &schema, &postings, &tags);
     // Q(account) :- Posting(id=p, account=a), PostingTag(posting=p).
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        &schema,
+        vec![
             occurrence(0, POSTING, &[(0, 0), (1, 1)]),
             occurrence(1, TAG, &[(0, 0), (1, 2)]),
         ],
-        residuals: vec![],
-    };
+        vec![],
+    );
     // Sink-relevant vars: just the account (var 1).
-    let plan = planned(&normalized, &schema, &[0, 1], &[1]);
+    let plan = planned(&schema, &normalized, &[0, 1], &[1]);
     for batch in [1usize, 2, 128] {
         let mut colts = colts_for(&plan, &views);
-        let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
+        let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(1))]);
         let mut counters = SkipCounter::default();
         Executor::with_batch_size(&plan, batch).execute(
@@ -137,5 +140,48 @@ fn duplicate_witness_projection_dedups_and_skips_suffixes() {
             counters.skips > 0,
             "batch {batch}: the tag suffix must be skipped after the first witness"
         );
+    }
+}
+
+/// PRD 18: an interval find flows through the projection sink as its
+/// two-slot span — the word-level `slots` expansion — and the emitted
+/// word rows carry both bounds of every stored fact.
+#[test]
+fn interval_projection_carries_both_slot_words() {
+    let dir = TempDir::new("sink-projection-interval");
+    let schema = schema();
+    let rows = vec![
+        (1u64, 10u64, (5i64, 9i64)),
+        (2, 10, (-3, 4)),
+        (3, 11, (5, 9)),
+    ];
+    let views = payroll_views_of(&dir, &schema, &rows);
+    // Q(emp, during) :- Payroll(id, emp, during).
+    let normalized = normalized(
+        &schema,
+        vec![occurrence(0, PAYROLL, &[(0, 0), (1, 1), (2, 2)])],
+        vec![],
+    );
+    let plan = planned(&schema, &normalized, &[0], &[1, 2]);
+    assert_eq!(plan.width_of(VarId(2)), 2, "interval vars are two slots");
+    let expected: BTreeSet<Vec<u64>> = rows
+        .iter()
+        .map(|(_, emp, (start, end))| vec![*emp, i64_to_word(*start), i64_to_word(*end)])
+        .collect();
+    for batch in [1usize, 128] {
+        let mut colts = colts_for(&plan, &views);
+        let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
+        // The word-level expansion make_sink performs in production.
+        let during = plan.slot_of(VarId(2));
+        let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(1)), during, during + 1]);
+        Executor::with_batch_size(&plan, batch).execute(
+            &plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut crate::exec::run::NoopCounters,
+        );
+        let got: BTreeSet<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
+        assert_eq!(got, expected, "batch {batch}");
     }
 }

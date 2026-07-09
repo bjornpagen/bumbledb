@@ -1,9 +1,8 @@
 use crate::exec::colt::SuffixRun;
 use crate::exec::kernel;
 use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, Sink};
-use crate::exec::sink::{word_to_i64, Acc, AggregateSink, FindSpec};
+use crate::exec::sink::{word_to_i64, Acc, AggregateSink, FindSpec, FoldOp};
 use crate::image::ColumnView;
-use crate::ir::AggOp;
 
 impl Sink for AggregateSink {
     fn emit(&mut self, bindings: &Bindings) -> Flow {
@@ -23,10 +22,18 @@ impl Sink for AggregateSink {
         if self.seen.is_some() {
             return false;
         }
+        // CountDistinct and Arg-restriction fold per row (set-valued
+        // group state — no fold kernel exists); their leaves stay on
+        // the batch path.
+        if self.row_fold_only {
+            return false;
+        }
+        // Group spans checked word-wise: an interval group variable is
+        // scan-constant only if neither of its words is a leaf key.
         if self
-            .group_slots
+            .group_spans
             .iter()
-            .any(|slot| scan.key_slots.contains(slot))
+            .any(|(slot, width)| (*slot..slot + width).any(|word| scan.key_slots.contains(&word)))
         {
             return false;
         }
@@ -54,18 +61,21 @@ impl Sink for AggregateSink {
         for find in &self.finds {
             if let FindSpec::Agg { op, signed, .. } = find {
                 self.acc_scratch.push(match (op, signed) {
-                    (AggOp::Sum, true) => Acc::SumSigned(0),
-                    (AggOp::Sum, false) => Acc::SumUnsigned(0),
-                    (AggOp::Min, _) => Acc::Min(u64::MAX),
-                    (AggOp::Max, _) => Acc::Max(u64::MIN),
-                    (AggOp::Count, _) => Acc::Count(0),
+                    (FoldOp::Sum, true) => Acc::SumSigned(0),
+                    (FoldOp::Sum, false) => Acc::SumUnsigned(0),
+                    (FoldOp::Min, _) => Acc::Min(u64::MAX),
+                    (FoldOp::Max, _) => Acc::Max(u64::MIN),
+                    (FoldOp::Count, _) => Acc::Count(0),
+                    (FoldOp::CountDistinct, _) => {
+                        unreachable!("row-fold ops declined the scan above")
+                    }
                 });
             }
         }
         self.scan_count = 0;
-        for (i, slot) in self.group_slots.iter().enumerate() {
-            self.key_scratch[i] = scan.bindings.get(*slot);
-        }
+        super::groups::load_group_key(&mut self.key_scratch, &self.group_spans, |slot| {
+            scan.bindings.get(slot)
+        });
         true
     }
 
@@ -86,28 +96,28 @@ impl Sink for AggregateSink {
                 unreachable!("begin_scan declined byte columns")
             };
             match (op, acc, run) {
-                (AggOp::Sum, Acc::SumSigned(total), SuffixRun::Identity { start, len }) => {
+                (FoldOp::Sum, Acc::SumSigned(total), SuffixRun::Identity { start, len }) => {
                     *total += kernel::fold_sum_biased_i64(col, 1, start, len);
                 }
-                (AggOp::Sum, Acc::SumSigned(total), SuffixRun::Positions(p)) => {
+                (FoldOp::Sum, Acc::SumSigned(total), SuffixRun::Positions(p)) => {
                     *total += kernel::fold_sum_biased_i64_idx(col, 1, 0, p);
                 }
-                (AggOp::Sum, Acc::SumUnsigned(total), SuffixRun::Identity { start, len }) => {
+                (FoldOp::Sum, Acc::SumUnsigned(total), SuffixRun::Identity { start, len }) => {
                     *total += kernel::fold_sum_u64(col, 1, start, len);
                 }
-                (AggOp::Sum, Acc::SumUnsigned(total), SuffixRun::Positions(p)) => {
+                (FoldOp::Sum, Acc::SumUnsigned(total), SuffixRun::Positions(p)) => {
                     *total += kernel::fold_sum_u64_idx(col, 1, 0, p);
                 }
-                (AggOp::Min, Acc::Min(best), SuffixRun::Identity { start, len }) => {
+                (FoldOp::Min, Acc::Min(best), SuffixRun::Identity { start, len }) => {
                     *best = (*best).min(kernel::fold_min_max_u64(col, 1, start, len).0);
                 }
-                (AggOp::Min, Acc::Min(best), SuffixRun::Positions(p)) => {
+                (FoldOp::Min, Acc::Min(best), SuffixRun::Positions(p)) => {
                     *best = (*best).min(kernel::fold_min_max_u64_idx(col, 1, 0, p).0);
                 }
-                (AggOp::Max, Acc::Max(best), SuffixRun::Identity { start, len }) => {
+                (FoldOp::Max, Acc::Max(best), SuffixRun::Identity { start, len }) => {
                     *best = (*best).max(kernel::fold_min_max_u64(col, 1, start, len).1);
                 }
-                (AggOp::Max, Acc::Max(best), SuffixRun::Positions(p)) => {
+                (FoldOp::Max, Acc::Max(best), SuffixRun::Positions(p)) => {
                     *best = (*best).max(kernel::fold_min_max_u64_idx(col, 1, 0, p).1);
                 }
                 _ => unreachable!("accumulators are seeded per op; Count has no source"),
@@ -133,20 +143,20 @@ impl Sink for AggregateSink {
                 continue;
             }
             match (op, acc) {
-                (AggOp::Count, Acc::Count(n)) => *n += count,
-                (AggOp::Sum, Acc::SumSigned(total)) => {
+                (FoldOp::Count, Acc::Count(n)) => *n += count,
+                (FoldOp::Sum, Acc::SumSigned(total)) => {
                     let slot = over_slot.expect("validated: Sum has a variable");
                     *total += i128::from(word_to_i64(scan.bindings.get(slot))) * i128::from(count);
                 }
-                (AggOp::Sum, Acc::SumUnsigned(total)) => {
+                (FoldOp::Sum, Acc::SumUnsigned(total)) => {
                     let slot = over_slot.expect("validated: Sum has a variable");
                     *total += u128::from(scan.bindings.get(slot)) * u128::from(count);
                 }
-                (AggOp::Min, Acc::Min(best)) => {
+                (FoldOp::Min, Acc::Min(best)) => {
                     let slot = over_slot.expect("validated: Min has a variable");
                     *best = (*best).min(scan.bindings.get(slot));
                 }
-                (AggOp::Max, Acc::Max(best)) => {
+                (FoldOp::Max, Acc::Max(best)) => {
                     let slot = over_slot.expect("validated: Max has a variable");
                     *best = (*best).max(scan.bindings.get(slot));
                 }
@@ -184,6 +194,13 @@ impl Sink for AggregateSink {
         // group slot outer means the whole batch folds into ONE
         // accumulator row — the trie already grouped it (PRD 02).
         self.refresh_shape_cache(batch);
+        // CountDistinct and Arg-restriction fold per row: their group
+        // state is a set, not a scalar accumulator, so no gather kernel
+        // applies — the per-row scratch fold is the correctness path.
+        if self.row_fold_only {
+            self.fold_batch_rows(batch);
+            return Flow::Continue;
+        }
         match (self.seen.is_some(), self.cached_constant_group) {
             // Dedup required (the plan could not prove distinctness):
             // the seen-set pass runs per row, but the group probe still

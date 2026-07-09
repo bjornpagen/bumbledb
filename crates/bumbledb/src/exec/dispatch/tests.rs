@@ -300,7 +300,7 @@ fn guard_and_free_join_paths_agree_by_construction() {
         })
         .collect();
     let mut colts = vec![Colt::new(view, &[], columns)];
-    let mut bindings = Bindings::new(plan.slots().len());
+    let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = ProjectionSink::new(
         [VarId(0), VarId(1)]
             .iter()

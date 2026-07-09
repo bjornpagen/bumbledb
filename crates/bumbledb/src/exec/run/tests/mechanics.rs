@@ -52,7 +52,7 @@ fn dynamic_cover_prefers_the_forced_small_side() {
     let mut colts = colts_for(&plan, &views);
     let s_root = Colt::root();
     colts[1].get(s_root, 0, &[0]);
-    let mut bindings = Bindings::new(plan.slots().len());
+    let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let mut counters = RecordingCounters::default();
     Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
@@ -126,7 +126,7 @@ fn backtracking_restores_sources_across_sequential_executions() {
     );
     let plan = planned(&normalized, &schema, &[0, 1]);
     let mut colts = colts_for(&plan, &views);
-    let mut bindings = Bindings::new(plan.slots().len());
+    let mut bindings = Bindings::new(plan.slot_count());
     let mut executor = Executor::new(&plan);
 
     let mut first = CollectSink::default();
@@ -206,7 +206,7 @@ fn phase_one_hashes_the_whole_batch_before_any_phase_two_probe() {
     );
     let plan = planned(&normalized, &schema, &[0, 1]);
     let mut colts = colts_for(&plan, &views);
-    let mut bindings = Bindings::new(plan.slots().len());
+    let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let mut counters = PhaseOrderCounters::default();
     Executor::with_batch_size(&plan, 128).execute(
@@ -296,7 +296,7 @@ fn pinned_siblings_probe_without_hashing() {
     let plan =
         validate(&plan, &normalized, &schema, vec![0; 2], &BTreeSet::new()).expect("valid plan");
     let mut colts = colts_for(&plan, &views);
-    let mut bindings = Bindings::new(plan.slots().len());
+    let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let mut counters = PhaseOrderCounters::default();
     Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);

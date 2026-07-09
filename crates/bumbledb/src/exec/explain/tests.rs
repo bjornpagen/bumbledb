@@ -186,7 +186,7 @@ fn estimates_and_actuals_populate_for_a_join_fixture() {
     .expect("valid plan");
 
     let mut colts = colts_for(&plan, &views);
-    let mut bindings = Bindings::new(plan.slots().len());
+    let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(2))]);
     let mut counters = CountingCounters::new(&plan);
     Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
@@ -253,7 +253,7 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
     // Pre-force the tiny side so its Exact(2) beats Estimate(500).
     let s_root = Colt::root();
     colts[1].get(s_root, 0, &[0]);
-    let mut bindings = Bindings::new(plan.slots().len());
+    let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(0))]);
     let mut counters = CountingCounters::new(&plan);
     Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
@@ -329,7 +329,7 @@ fn the_counted_execution_shows_batching_engaged() {
     .expect("valid plan");
 
     let mut colts = colts_for(&plan, &views);
-    let mut bindings = Bindings::new(plan.slots().len());
+    let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = ProjectionSink::new(vec![
         plan.slot_of(VarId(0)),
         plan.slot_of(VarId(1)),
@@ -388,7 +388,7 @@ fn anti_probe_selectivity_populates_the_counted_execution() {
     .expect("valid plan");
 
     let mut colts = colts_for(&plan, &views);
-    let mut bindings = Bindings::new(plan.slots().len());
+    let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = ProjectionSink::new(vec![plan.slot_of(VarId(0)), plan.slot_of(VarId(1))]);
     let mut counters = CountingCounters::new(&plan);
     Executor::new(&plan).execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);

@@ -1,6 +1,8 @@
 use super::{Cell, ResolveMemo, ResultBuffer, ResultValue, Row, ValueType};
 
 use crate::error::Result;
+use crate::interval::Interval;
+use crate::schema::IntervalElement;
 use crate::storage::dict;
 use crate::storage::env::ReadTxn;
 
@@ -59,6 +61,8 @@ impl ResultBuffer {
                     .expect("validated at materialization"),
             ),
             Cell::Bytes { start, len } => ResultValue::Bytes(&self.bytes[start..start + len]),
+            Cell::IntervalU64(interval) => ResultValue::IntervalU64(interval),
+            Cell::IntervalI64(interval) => ResultValue::IntervalI64(interval),
         }
     }
 
@@ -84,6 +88,34 @@ impl ResultBuffer {
             ValueType::I64 => Cell::I64((word ^ (1 << 63)).cast_signed()),
             ValueType::String | ValueType::Bytes => {
                 unreachable!("interned finds take the resolving path")
+            }
+            ValueType::Interval { .. } => {
+                unreachable!("interval finds take the two-word path (interval_cell)")
+            }
+        }
+    }
+
+    /// Materializes an interval find's two slot words as one cell,
+    /// re-encoded through the checked host type. The `expect` is a
+    /// stored invariant, not a runtime hope: every stored interval was
+    /// parsed through `Interval::new` at the write boundary (`start <
+    /// end` — 10-data-model), the image columns carry the encoded words
+    /// unchanged, and the executor and sinks move slot words whole — so
+    /// bounds arriving here out of order name corruption, and panicking
+    /// is the honest report.
+    pub(super) fn interval_cell(element: IntervalElement, start: u64, end: u64) -> Cell {
+        match element {
+            IntervalElement::U64 => Cell::IntervalU64(
+                Interval::<u64>::new(start, end).expect("stored invariant: start < end"),
+            ),
+            IntervalElement::I64 => {
+                // Both words are the sign-flipped biased form (the
+                // order-preserving I64 encoding) — decode each bound.
+                let decode = |word: u64| (word ^ (1 << 63)).cast_signed();
+                Cell::IntervalI64(
+                    Interval::<i64>::new(decode(start), decode(end))
+                        .expect("stored invariant: start < end"),
+                )
             }
         }
     }
@@ -111,6 +143,9 @@ impl ResultBuffer {
             ValueType::Bytes => {
                 let (start, len) = memo.resolve(txn, word, dict::TAG_BYTES, self, false)?;
                 Cell::Bytes { start, len }
+            }
+            ValueType::Interval { .. } => {
+                unreachable!("interval finds take the two-word path (interval_cell)")
             }
         };
         self.cells.push(cell);

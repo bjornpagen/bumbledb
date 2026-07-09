@@ -1,8 +1,9 @@
-use crate::exec::sink::{AggregateSink, FindSpec};
+use crate::exec::sink::{AggregateSink, ArgSpec, FindSpec, FoldOp};
 use crate::exec::wordmap::WordMap;
 
 impl AggregateSink {
-    /// Builds the sink. `slot_count` is the plan's binding-slot count;
+    /// Builds the sink. `slot_count` is the plan's binding-slot count in
+    /// **words** (an interval variable holds two — the `SlotWidth` layout);
     /// `distinct_bindings` is the plan's elision flag (30-execution): when
     /// set, the seen-set is skipped entirely.
     /// Unhinted construction (tests; production sinks are hint-sized).
@@ -23,17 +24,56 @@ impl AggregateSink {
         distinct_bindings: bool,
         hint: usize,
     ) -> Self {
-        let group_slots: Vec<usize> = finds
+        let group_spans: Vec<(usize, usize)> = finds
             .iter()
             .filter_map(|f| match f {
-                FindSpec::Var { slot } => Some(*slot),
-                FindSpec::Agg { .. } => None,
+                FindSpec::Var { slot, width } => Some((*slot, *width)),
+                FindSpec::Agg { .. } | FindSpec::Arg { .. } => None,
             })
             .collect();
-        let n_aggs = finds.len() - group_slots.len();
+        let key_words: usize = group_spans.iter().map(|(_, width)| width).sum();
+        let n_aggs = finds
+            .iter()
+            .filter(|f| matches!(f, FindSpec::Agg { .. }))
+            .count();
+        let carry_words: usize = finds
+            .iter()
+            .filter_map(|f| match f {
+                FindSpec::Arg { width, .. } => Some(*width),
+                FindSpec::Var { .. } | FindSpec::Agg { .. } => None,
+            })
+            .sum();
+        // Validation guarantees every Arg term names one key and one
+        // direction (20-query-ir § aggregation), so the first spec is
+        // THE spec.
+        let arg = finds.iter().find_map(|f| match f {
+            FindSpec::Arg { key_slot, max, .. } => Some(ArgSpec {
+                key_slot: *key_slot,
+                max: *max,
+            }),
+            FindSpec::Var { .. } | FindSpec::Agg { .. } => None,
+        });
+        debug_assert!(
+            finds.iter().all(|f| match f {
+                FindSpec::Arg { key_slot, max, .. } =>
+                    arg.is_some_and(|spec| spec.key_slot == *key_slot && spec.max == *max),
+                FindSpec::Var { .. } | FindSpec::Agg { .. } => true,
+            }),
+            "validated: all Arg terms share one key and one direction"
+        );
+        let row_fold_only = arg.is_some()
+            || finds.iter().any(|f| {
+                matches!(
+                    f,
+                    FindSpec::Agg {
+                        op: FoldOp::CountDistinct,
+                        ..
+                    }
+                )
+            });
         Self {
-            groups: WordMap::with_capacity_hint(group_slots.len(), hint.min(4096)),
-            key_scratch: vec![0; group_slots.len()],
+            groups: WordMap::with_capacity_hint(key_words, hint.min(4096)),
+            key_scratch: vec![0; key_words],
             binding_scratch: vec![0; slot_count],
             seen: (!distinct_bindings).then(|| WordMap::with_capacity_hint(slot_count, hint)),
             acc_scratch: Vec::with_capacity(n_aggs),
@@ -42,9 +82,17 @@ impl AggregateSink {
             scan_count: 0,
             cached_outer_slots: Vec::new(),
             cached_constant_group: false,
+            value_sets: Vec::new(),
+            value_sets_live: 0,
+            arg,
+            arg_best: Vec::new(),
+            arg_rows: Vec::new(),
+            carry_words,
+            carry_scratch: Vec::with_capacity(carry_words),
+            row_fold_only,
             #[cfg(test)]
             group_probes: 0,
-            group_slots,
+            group_spans,
             finds,
             accs: Vec::new(),
             n_aggs,
@@ -57,10 +105,35 @@ impl AggregateSink {
         self.groups.len()
     }
 
-    /// Empties the sink for the next execution, retaining capacity.
+    /// Whether the binding seen-set is elided (the plan proved distinct
+    /// bindings) — the elision observable. `CountDistinct`'s value sets and
+    /// the Arg row-dedup are different sets and are NEVER elided.
+    #[cfg(test)]
+    #[must_use]
+    pub fn seen_elided(&self) -> bool {
+        self.seen.is_none()
+    }
+
+    /// Distinct values held across every live `CountDistinct` set — the
+    /// value-dedup observable the elision fixture asserts alongside
+    /// [`Self::seen_elided`].
+    #[cfg(test)]
+    #[must_use]
+    pub fn distinct_values_held(&self) -> usize {
+        self.value_sets[..self.value_sets_live]
+            .iter()
+            .map(WordMap::len)
+            .sum()
+    }
+
+    /// Empties the sink for the next execution, retaining capacity —
+    /// value sets and Arg row sets stay pooled (cleared on reuse at
+    /// group creation, never dropped).
     pub fn reset(&mut self) {
         self.groups.clear();
         self.accs.clear();
+        self.value_sets_live = 0;
+        self.arg_best.clear();
         if let Some(seen) = &mut self.seen {
             seen.clear();
         }

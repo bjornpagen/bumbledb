@@ -20,4 +20,21 @@ impl ValidatedPlan {
         }
         panic!("validated plan binds every variable")
     }
+
+    /// A variable's slot width in words (2 for an interval variable —
+    /// the [`crate::ir::normalize::SlotWidth`] layout): the layout map's
+    /// companion to [`Self::slot_of`], so slot consumers never assume
+    /// width 1.
+    ///
+    /// # Panics
+    ///
+    /// On a programmer-invariant violation: a variable outside the plan.
+    #[must_use]
+    pub fn width_of(&self, var: VarId) -> usize {
+        self.slots
+            .iter()
+            .find(|(candidate, _)| *candidate == var)
+            .map(|(_, width)| width.slots())
+            .expect("validated plan binds every variable")
+    }
 }

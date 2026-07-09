@@ -223,8 +223,7 @@ fn negation_over_variables_bound_at_different_nodes() {
 /// surviving binding set.
 #[test]
 fn negation_under_an_aggregate_excludes_rejected_bindings() {
-    use crate::exec::sink::{AggregateSink, FindSpec};
-    use crate::ir::AggOp;
+    use crate::exec::sink::{AggregateSink, FindSpec, FoldOp};
 
     let dir = TempDir::new("run-anti-aggregate");
     let schema = schema(2);
@@ -243,13 +242,15 @@ fn negation_under_an_aggregate_excludes_rejected_bindings() {
     let plan = planned_with_sinks(&normalized, &schema, &[0], &all_vars(&normalized));
     let finds = vec![
         FindSpec::Agg {
-            op: AggOp::Sum,
+            op: FoldOp::Sum,
             over_slot: Some(plan.slot_of(VarId(1))),
+            over_width: 1,
             signed: false,
         },
         FindSpec::Agg {
-            op: AggOp::Count,
+            op: FoldOp::Count,
             over_slot: None,
+            over_width: 1,
             signed: false,
         },
     ];
@@ -265,8 +266,8 @@ fn negation_under_an_aggregate_excludes_rejected_bindings() {
 
     for batch in [1usize, 2, 7, 64, 256] {
         let mut colts = colts_for(&plan, &views);
-        let mut bindings = Bindings::new(plan.slots().len());
-        let mut sink = AggregateSink::new(finds.clone(), plan.slots().len(), false);
+        let mut bindings = Bindings::new(plan.slot_count());
+        let mut sink = AggregateSink::new(finds.clone(), plan.slot_count(), false);
         Executor::with_batch_size(&plan, batch).execute(
             &plan,
             &mut colts,

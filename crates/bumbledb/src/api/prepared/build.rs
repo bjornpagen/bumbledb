@@ -232,8 +232,11 @@ fn build_view_memo(exec_plan: &ExecPlan) -> ViewMemo {
     memo
 }
 
-/// Derives per-find output specs (slots + result types) from the witness
-/// and the classified plan.
+/// Derives per-find output specs (slot spans + result types) from the
+/// witness and the classified plan. Slots and widths both come from the
+/// plan's binding-slot layout (`slot_of`/`width_of` — the `SlotWidth` map):
+/// an interval variable's find spans two words, and no consumer assumes
+/// width 1.
 fn find_specs(
     query: &Query,
     witness: &crate::ir::validate::ValidatedQuery,
@@ -246,30 +249,57 @@ fn find_specs(
             FindTerm::Var(var) => (
                 FindSpec::Var {
                     slot: exec_plan.slot_of(*var),
+                    width: exec_plan.width_of(*var),
                 },
                 witness.var_type(*var).clone(),
             ),
-            FindTerm::Aggregate { op, over } => {
-                let (over_slot, ty) = match over {
-                    Some(var) => (
-                        Some(exec_plan.slot_of(*var)),
-                        witness.var_type(*var).clone(),
-                    ),
-                    None => (None, ValueType::U64), // Count
-                };
-                (
-                    FindSpec::Agg {
-                        op: *op,
-                        over_slot,
-                        signed: matches!(ty, ValueType::I64),
-                    },
-                    if *op == AggOp::Count {
-                        ValueType::U64
-                    } else {
-                        ty
-                    },
-                )
-            }
+            FindTerm::Aggregate { op, over } => match op {
+                // Arg-restriction: the carry's span plus the shared key
+                // slot (orderable — validated U64/I64, one word).
+                AggOp::ArgMax { key } | AggOp::ArgMin { key } => {
+                    let carry = over.expect("validated: Arg carries a variable");
+                    (
+                        FindSpec::Arg {
+                            slot: exec_plan.slot_of(carry),
+                            width: exec_plan.width_of(carry),
+                            key_slot: exec_plan.slot_of(*key),
+                            max: matches!(op, AggOp::ArgMax { .. }),
+                        },
+                        witness.var_type(carry).clone(),
+                    )
+                }
+                AggOp::Sum | AggOp::Min | AggOp::Max | AggOp::Count | AggOp::CountDistinct => {
+                    let (over_slot, over_width, over_ty) = match over {
+                        Some(var) => (
+                            Some(exec_plan.slot_of(*var)),
+                            exec_plan.width_of(*var),
+                            witness.var_type(*var).clone(),
+                        ),
+                        None => (None, 1, ValueType::U64), // Count
+                    };
+                    let (fold, result_ty) = match op {
+                        AggOp::Sum => (crate::exec::sink::FoldOp::Sum, over_ty.clone()),
+                        AggOp::Min => (crate::exec::sink::FoldOp::Min, over_ty.clone()),
+                        AggOp::Max => (crate::exec::sink::FoldOp::Max, over_ty.clone()),
+                        AggOp::Count => (crate::exec::sink::FoldOp::Count, ValueType::U64),
+                        AggOp::CountDistinct => {
+                            (crate::exec::sink::FoldOp::CountDistinct, ValueType::U64)
+                        }
+                        AggOp::ArgMax { .. } | AggOp::ArgMin { .. } => {
+                            unreachable!("handled above")
+                        }
+                    };
+                    (
+                        FindSpec::Agg {
+                            op: fold,
+                            over_slot,
+                            over_width,
+                            signed: matches!(over_ty, ValueType::I64),
+                        },
+                        result_ty,
+                    )
+                }
+            },
         })
         .collect()
 }
@@ -284,8 +314,9 @@ fn guard_find_table(
         ExecPlan::GuardProbe(guard) => finds
             .iter()
             .map(|(spec, ty)| match spec {
-                FindSpec::Var { slot } => Some((guard.vars[*slot].0, ty.clone())),
-                FindSpec::Agg { .. } => None, // aggregate guards keep the sink path
+                FindSpec::Var { slot, .. } => Some((guard.vars[*slot].0, ty.clone())),
+                // aggregate guards keep the sink path
+                FindSpec::Agg { .. } | FindSpec::Arg { .. } => None,
             })
             .collect::<Option<Vec<_>>>(),
         ExecPlan::FreeJoin(_) => None,
@@ -300,26 +331,28 @@ fn make_sink(
     distinct: bool,
     hint: usize,
 ) -> EitherSink {
-    let has_aggregates = finds
+    let all_plain = finds
         .iter()
-        .any(|(spec, _)| matches!(spec, FindSpec::Agg { .. }));
-    if has_aggregates {
+        .all(|(spec, _)| matches!(spec, FindSpec::Var { .. }));
+    if all_plain {
+        // Word-level slot expansion through the layout map: an interval
+        // find contributes its two consecutive slots, so the projection
+        // sink's rows are word rows the finalize pass re-assembles by
+        // find type.
+        let slots = finds
+            .iter()
+            .flat_map(|(spec, _)| match spec {
+                FindSpec::Var { slot, width } => *slot..slot + width,
+                FindSpec::Agg { .. } | FindSpec::Arg { .. } => unreachable!("no aggregates here"),
+            })
+            .collect();
+        EitherSink::Projection(ProjectionSink::with_capacity_hint(slots, hint))
+    } else {
         EitherSink::Aggregate(Box::new(AggregateSink::with_capacity_hint(
             finds.iter().map(|(spec, _)| *spec).collect(),
             slot_count,
             distinct,
             hint,
         )))
-    } else {
-        EitherSink::Projection(ProjectionSink::with_capacity_hint(
-            finds
-                .iter()
-                .map(|(spec, _)| match spec {
-                    FindSpec::Var { slot } => *slot,
-                    FindSpec::Agg { .. } => unreachable!("no aggregates here"),
-                })
-                .collect(),
-            hint,
-        ))
     }
 }

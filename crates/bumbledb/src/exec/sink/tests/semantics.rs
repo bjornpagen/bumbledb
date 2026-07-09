@@ -11,40 +11,30 @@ fn sum_distinguishes_bound_serials_and_collapses_unbound_ones() {
     let views = views_of(&dir, &schema, &postings, &[]);
 
     // Serials bound: two distinct bindings -> Sum = 200.
-    let normalized = NormalizedQuery {
-        occurrences: vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
-        residuals: vec![],
-    };
-    let plan = planned(&normalized, &schema, &[0], &[1]);
+    let normalized_bound = normalized(
+        &schema,
+        vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
+        vec![],
+    );
+    let plan = planned(&schema, &normalized_bound, &[0], &[1]);
     let finds = vec![
-        FindSpec::Var {
-            slot: plan.slot_of(VarId(1)),
-        },
-        FindSpec::Agg {
-            op: AggOp::Sum,
-            over_slot: Some(plan.slot_of(VarId(2))),
-            signed: true,
-        },
+        var_spec(&plan, 1),
+        agg_spec(&plan, FoldOp::Sum, Some(2), true),
     ];
     let rows = run_aggregate(&plan, &views[..1], finds).expect("rows");
     assert_eq!(rows, vec![vec![7, i64_to_word(200)]]);
 
     // Serials unbound: the two facts collapse to one binding -> 100.
     // This documents the set-semantics footgun deliberately.
-    let normalized = NormalizedQuery {
-        occurrences: vec![occurrence(0, POSTING, &[(1, 0), (2, 1)])],
-        residuals: vec![],
-    };
-    let plan = planned(&normalized, &schema, &[0], &[0]);
+    let normalized_unbound = normalized(
+        &schema,
+        vec![occurrence(0, POSTING, &[(1, 0), (2, 1)])],
+        vec![],
+    );
+    let plan = planned(&schema, &normalized_unbound, &[0], &[0]);
     let finds = vec![
-        FindSpec::Var {
-            slot: plan.slot_of(VarId(0)),
-        },
-        FindSpec::Agg {
-            op: AggOp::Sum,
-            over_slot: Some(plan.slot_of(VarId(1))),
-            signed: true,
-        },
+        var_spec(&plan, 0),
+        agg_spec(&plan, FoldOp::Sum, Some(1), true),
     ];
     let rows = run_aggregate(&plan, &views[..1], finds).expect("rows");
     assert_eq!(rows, vec![vec![7, i64_to_word(100)]]);
@@ -59,23 +49,18 @@ fn joining_a_three_tag_relation_triples_the_sum() {
     let views = views_of(&dir, &schema, &postings, &tags);
     // Sum(amount) by account joined with tags: the 3 tag bindings
     // multiply the binding set — exactly the documented footgun.
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        &schema,
+        vec![
             occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)]),
             occurrence(1, TAG, &[(0, 0), (1, 3)]),
         ],
-        residuals: vec![],
-    };
-    let plan = planned(&normalized, &schema, &[0, 1], &[1]);
+        vec![],
+    );
+    let plan = planned(&schema, &normalized, &[0, 1], &[1]);
     let finds = vec![
-        FindSpec::Var {
-            slot: plan.slot_of(VarId(1)),
-        },
-        FindSpec::Agg {
-            op: AggOp::Sum,
-            over_slot: Some(plan.slot_of(VarId(2))),
-            signed: true,
-        },
+        var_spec(&plan, 1),
+        agg_spec(&plan, FoldOp::Sum, Some(2), true),
     ];
     let rows = run_aggregate(&plan, &views, finds).expect("rows");
     assert_eq!(rows, vec![vec![7, i64_to_word(300)]]);
@@ -87,29 +72,24 @@ fn distinct_flag_elision_matches_the_seen_set_path() {
     let schema = schema();
     let postings = vec![(1u64, 7u64, 10i64), (2, 7, 20), (3, 8, 30)];
     let views = views_of(&dir, &schema, &postings, &[]);
-    let normalized = NormalizedQuery {
-        occurrences: vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
-        residuals: vec![],
-    };
-    let plan = planned(&normalized, &schema, &[0], &[1]);
+    let normalized = normalized(
+        &schema,
+        vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
+        vec![],
+    );
+    let plan = planned(&schema, &normalized, &[0], &[1]);
     assert!(plan.distinct_bindings(), "serials are bound");
     let finds = |plan: &ValidatedPlan| {
         vec![
-            FindSpec::Var {
-                slot: plan.slot_of(VarId(1)),
-            },
-            FindSpec::Agg {
-                op: AggOp::Sum,
-                over_slot: Some(plan.slot_of(VarId(2))),
-                signed: true,
-            },
+            var_spec(plan, 1),
+            agg_spec(plan, FoldOp::Sum, Some(2), true),
         ]
     };
 
     // Elided path (as the plan proves) vs forced seen-set path.
     let mut colts = colts_for(&plan, &views);
-    let mut bindings = crate::exec::run::Bindings::new(plan.slots().len());
-    let mut elided = AggregateSink::new(finds(&plan), plan.slots().len(), true);
+    let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
+    let mut elided = AggregateSink::new(finds(&plan), plan.slot_count(), true);
     Executor::new(&plan).execute(
         &plan,
         &mut colts,
@@ -118,7 +98,7 @@ fn distinct_flag_elision_matches_the_seen_set_path() {
         &mut crate::exec::run::NoopCounters,
     );
     let mut colts = colts_for(&plan, &views);
-    let mut checked = AggregateSink::new(finds(&plan), plan.slots().len(), false);
+    let mut checked = AggregateSink::new(finds(&plan), plan.slot_count(), false);
     Executor::new(&plan).execute(
         &plan,
         &mut colts,
@@ -139,26 +119,24 @@ fn global_aggregate_over_empty_input_yields_zero_rows() {
     let dir = TempDir::new("sink-empty-global");
     let schema = schema();
     let views = views_of(&dir, &schema, &[], &[]);
-    let normalized = NormalizedQuery {
-        occurrences: vec![occurrence(0, POSTING, &[(0, 0), (2, 1)])],
-        residuals: vec![],
-    };
-    let plan = planned(&normalized, &schema, &[0], &[]);
+    let normalized = normalized(
+        &schema,
+        vec![occurrence(0, POSTING, &[(0, 0), (2, 1)])],
+        vec![],
+    );
+    let plan = planned(&schema, &normalized, &[0], &[]);
     let finds = vec![
-        FindSpec::Agg {
-            op: AggOp::Sum,
-            over_slot: Some(plan.slot_of(VarId(1))),
-            signed: true,
-        },
-        FindSpec::Agg {
-            op: AggOp::Count,
-            over_slot: None,
-            signed: false,
-        },
+        agg_spec(&plan, FoldOp::Sum, Some(1), true),
+        agg_spec(&plan, FoldOp::Count, None, false),
     ];
     let rows = run_aggregate(&plan, &views[..1], finds).expect("rows");
     // The empty set — not a [NULL] or [0] row (documented divergence
     // from SQL's ungrouped-aggregate behavior).
+    assert!(rows.is_empty());
+
+    // Same for the Arg regime: no bindings, no groups, no rows.
+    let finds = vec![arg_spec(&plan, 1, 0, true)];
+    let rows = run_aggregate(&plan, &views[..1], finds).expect("rows");
     assert!(rows.is_empty());
 }
 
@@ -166,17 +144,15 @@ fn global_aggregate_over_empty_input_yields_zero_rows() {
 fn sum_is_order_independent_near_the_boundary() {
     // {i64::MAX, 1, -2} sums to MAX-1 under any fold order thanks to
     // i128 accumulation; {MAX, 1} overflows deterministically.
+    let sum_find = FindSpec::Agg {
+        op: FoldOp::Sum,
+        over_slot: Some(0),
+        over_width: 1,
+        signed: true,
+    };
     for order in [[0usize, 1, 2], [2, 1, 0], [1, 2, 0]] {
         let values = [i64::MAX, 1, -2];
-        let mut sink = AggregateSink::new(
-            vec![FindSpec::Agg {
-                op: AggOp::Sum,
-                over_slot: Some(0),
-                signed: true,
-            }],
-            1,
-            true,
-        );
+        let mut sink = AggregateSink::new(vec![sum_find], 1, true);
         let mut bindings = Bindings::new(1);
         bindings.reset();
         for idx in order {
@@ -188,15 +164,7 @@ fn sum_is_order_independent_near_the_boundary() {
     }
     for order in [[0usize, 1], [1, 0]] {
         let values = [i64::MAX, 1];
-        let mut sink = AggregateSink::new(
-            vec![FindSpec::Agg {
-                op: AggOp::Sum,
-                over_slot: Some(0),
-                signed: true,
-            }],
-            1,
-            true,
-        );
+        let mut sink = AggregateSink::new(vec![sum_find], 1, true);
         let mut bindings = Bindings::new(1);
         bindings.reset();
         for idx in order {
@@ -213,13 +181,15 @@ fn min_and_max_honor_logical_i64_order_across_the_sign_boundary() {
     let mut sink = AggregateSink::new(
         vec![
             FindSpec::Agg {
-                op: AggOp::Min,
+                op: FoldOp::Min,
                 over_slot: Some(0),
+                over_width: 1,
                 signed: true,
             },
             FindSpec::Agg {
-                op: AggOp::Max,
+                op: FoldOp::Max,
                 over_slot: Some(0),
+                over_width: 1,
                 signed: true,
             },
         ],
@@ -234,4 +204,28 @@ fn min_and_max_honor_logical_i64_order_across_the_sign_boundary() {
     }
     let rows = sink.into_rows().expect("rows");
     assert_eq!(rows, vec![vec![i64_to_word(-100), i64_to_word(42)]]);
+}
+
+/// PRD 18: Arg keys compare by encoded word for I64 too — the
+/// sign-flipped biased form is order-preserving, so a negative key
+/// never beats a positive one under `ArgMax`.
+#[test]
+fn arg_keys_honor_logical_i64_order_across_the_sign_boundary() {
+    // Two slots: slot 0 = the I64 key, slot 1 = a U64 carry.
+    let finds = vec![FindSpec::Arg {
+        slot: 1,
+        width: 1,
+        key_slot: 0,
+        max: true,
+    }];
+    let mut sink = AggregateSink::new(finds, 2, true);
+    let mut bindings = Bindings::new(2);
+    bindings.reset();
+    for (key, carry) in [(-5i64, 10u64), (3, 20), (-100, 30), (0, 40)] {
+        bindings.set(0, i64_to_word(key));
+        bindings.set(1, carry);
+        sink.emit(&bindings);
+    }
+    let rows = sink.into_rows().expect("rows");
+    assert_eq!(rows, vec![vec![20]], "key 3 is the logical maximum");
 }

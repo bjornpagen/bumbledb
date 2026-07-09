@@ -12,6 +12,7 @@ use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
 
+mod aggregates;
 mod buffer;
 mod correctness;
 mod explain;

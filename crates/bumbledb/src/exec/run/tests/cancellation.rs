@@ -32,7 +32,7 @@ fn pipelined_d2_cancels_one_origin_and_spares_the_rest() {
     for batch in [1usize, 2, 128] {
         let mut executor = Executor::with_batch_size(&plan, batch);
         let mut colts = colts_for(&plan, &views);
-        let mut bindings = Bindings::new(plan.slots().len());
+        let mut bindings = Bindings::new(plan.slot_count());
         let mut sink = ProjectionSinkForTest::new(vec![plan.slot_of(VarId(0))]);
         let mut counters = SkipCounterRun::default();
         executor.execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
@@ -149,7 +149,7 @@ fn randomized_subset_projections_match_the_oracle_under_d2() {
         for batch in [1usize, 7, 128] {
             let mut executor = Executor::with_batch_size(&plan, batch);
             let mut colts = colts_for(&plan, &views);
-            let mut bindings = Bindings::new(plan.slots().len());
+            let mut bindings = Bindings::new(plan.slot_count());
             let mut sink =
                 ProjectionSinkForTest::new(keep.iter().map(|v| plan.slot_of(*v)).collect());
             executor.execute(

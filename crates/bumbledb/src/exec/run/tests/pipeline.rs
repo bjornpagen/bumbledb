@@ -59,7 +59,7 @@ fn pipelined_executor_matches_recursive_and_oracle() {
             let mut executor = Executor::with_batch_size(&pipe_plan, batch);
             assert!(executor.pipe.is_some(), "pipeline dispatched");
             let mut colts = colts_for(&pipe_plan, &views);
-            let mut bindings = Bindings::new(pipe_plan.slots().len());
+            let mut bindings = Bindings::new(pipe_plan.slot_count());
             let mut sink = CollectSink::default();
             executor.execute(
                 &pipe_plan,
@@ -143,7 +143,7 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
     let mut executor = Executor::new(&plan);
     assert!(executor.pipe.is_some());
     let mut colts = colts_for(&plan, &views);
-    let mut bindings = Bindings::new(plan.slots().len());
+    let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let mut counters = ProbeBatches {
         node: 1,
@@ -164,7 +164,7 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
     for scratch in &executor.scratch {
         assert!(
             scratch.pending_bindings.capacity()
-                <= 2 * BATCH * plan.slots().len() + plan.slots().len()
+                <= 2 * BATCH * plan.slot_count() + plan.slot_count()
         );
     }
 }
