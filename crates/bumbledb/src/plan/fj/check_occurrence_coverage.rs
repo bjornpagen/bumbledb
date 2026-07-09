@@ -1,18 +1,19 @@
 use super::{FjPlan, PlanError};
-use crate::ir::normalize::{NormalizedQuery, Polarity};
+use crate::ir::normalize::NormalizedQuery;
 
 /// The occurrence-coverage half of the boundary: every subatom resolves
-/// to a **positive** occurrence of this query (an unknown `OccId` would
-/// reach the executor as an out-of-range COLT index; a negated one would
-/// join a node negation must never join), and every positive occurrence
-/// appears in at least one subatom. The partition check is vacuous for a
-/// zero-variable (gate) occurrence — empty seen == empty expected — so
-/// the appearance check is what keeps a dropped gate from silently
-/// skipping its nonemptiness test (wrong results on a validated plan).
-/// Gates are legal only as an empty-vars subatom in some node, exactly
-/// what `binary2fj` emits; the all-gates/empty-plan degenerate fails
-/// here too. Negated occurrences are covered by anti-probe attachment,
-/// never by subatoms.
+/// to a **participating** occurrence of this query (an unknown `OccId`
+/// would reach the executor as an out-of-range COLT index; a negated or
+/// chase-eliminated one would join a node it must never join), and every
+/// participating occurrence appears in at least one subatom. The
+/// partition check is vacuous for a zero-variable (gate) occurrence —
+/// empty seen == empty expected — so the appearance check is what keeps
+/// a dropped gate from silently skipping its nonemptiness test (wrong
+/// results on a validated plan). Gates are legal only as an empty-vars
+/// subatom in some node, exactly what `binary2fj` emits; the
+/// all-gates/empty-plan degenerate fails here too. Negated occurrences
+/// are covered by anti-probe attachment, never by subatoms; eliminated
+/// occurrences are covered by their containment proof (`plan/chase.rs`).
 pub(super) fn check_occurrence_coverage(
     plan: &FjPlan,
     normalized: &NormalizedQuery,
@@ -30,8 +31,8 @@ pub(super) fn check_occurrence_coverage(
                         occ: subatom.occ,
                     })
                 }
-                Some(occurrence) if occurrence.polarity == Polarity::Negated => {
-                    return Err(PlanError::NegatedOccurrenceInNode {
+                Some(occurrence) if !occurrence.role.participates() => {
+                    return Err(PlanError::NonParticipatingOccurrenceInNode {
                         node: node_idx,
                         occ: subatom.occ,
                     })
@@ -41,7 +42,7 @@ pub(super) fn check_occurrence_coverage(
         }
     }
     for occurrence in &normalized.occurrences {
-        if occurrence.polarity == Polarity::Negated {
+        if !occurrence.role.participates() {
             continue;
         }
         let appears = plan

@@ -119,7 +119,7 @@ fn a_subatom_over_a_negated_occurrence_is_rejected() {
         validate(&plan, &query, &schema(2, 3), vec![0], &BTreeSet::new())
             .map(|_| ())
             .unwrap_err(),
-        PlanError::NegatedOccurrenceInNode {
+        PlanError::NonParticipatingOccurrenceInNode {
             node: 0,
             occ: OccId(1)
         }

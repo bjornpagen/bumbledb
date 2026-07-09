@@ -9,7 +9,7 @@ use crate::storage::dict::{TAG_BYTES, TAG_STRING};
 /// literals lower to their two encoded column words (each half exactly as
 /// the scalar of its element type, so u64 word order is value order —
 /// `docs/architecture/50-storage.md`).
-pub(super) fn lower_literal(value: &Value) -> Const {
+pub(crate) fn lower_literal(value: &Value) -> Const {
     match value {
         Value::Bool(b) => Const::Byte(encode_bool(*b)),
         Value::Enum(ordinal) => Const::Byte(*ordinal),

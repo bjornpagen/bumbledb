@@ -1,14 +1,16 @@
 use crate::image::view::{Const, FilterPredicate};
-use crate::ir::normalize::{NormalizedQuery, Polarity};
+use crate::ir::normalize::NormalizedQuery;
 use crate::schema::{Schema, StatementDescriptor};
 use std::collections::BTreeSet;
 
-/// The distinct-bindings elision check (40-execution): every positive
+/// The distinct-bindings elision check (40-execution): every participating
 /// occurrence's bound fields — variable-bound or equality-pinned to one
 /// constant — cover the projection of one of its keys (`Functionality`
 /// statements), so distinct facts imply distinct bindings and the
-/// aggregate sink may skip its seen-set. Negated occurrences bind
-/// nothing (they only reject), so they cannot break the proof.
+/// aggregate sink may skip its seen-set. Only participating occurrences
+/// are quantified: negated occurrences bind nothing (they only reject)
+/// and chase-eliminated occurrences contribute no facts at all
+/// (`plan/chase.rs`), so neither can break the proof.
 ///
 /// Two guards keep the proof honest:
 /// - **Pointwise keys**: coverage requires the interval field bound **by
@@ -24,7 +26,7 @@ pub(super) fn provably_distinct(normalized: &NormalizedQuery, schema: &Schema) -
     normalized
         .occurrences
         .iter()
-        .filter(|occurrence| occurrence.polarity == Polarity::Positive)
+        .filter(|occurrence| occurrence.role.participates())
         .all(|occurrence| {
             let relation = schema.relation(occurrence.relation);
             let bound_fields: BTreeSet<crate::schema::FieldId> = occurrence

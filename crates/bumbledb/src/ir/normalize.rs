@@ -1,6 +1,6 @@
 //! Normalization (docs/architecture/20-query-ir.md): lowers a [`ValidatedQuery`] into the paper-form
 //! conjunctive query execution consumes — distinct-variable atom
-//! occurrences (positive and negated, one table with a polarity), per-atom
+//! occurrences (positive and negated, one table with a [`Role`]), per-atom
 //! filters (membership and interval predicates included), and the residual
 //! list: cross-atom comparisons, decomposed interval word comparisons, and
 //! anti-probe descriptors (`docs/architecture/20-query-ir.md`, Deviation
@@ -14,13 +14,14 @@ use std::collections::BTreeMap;
 
 use crate::image::view::FilterPredicate;
 use crate::ir::{CmpOp, VarId};
-use crate::schema::{FieldId, RelationId, ValueType};
+use crate::schema::{FieldId, RelationId, StatementId, ValueType};
 
 mod lower_literal;
 #[allow(clippy::module_inception)]
 mod normalize;
 mod place_comparisons;
 
+pub(crate) use lower_literal::lower_literal;
 pub use normalize::normalize;
 
 /// Dense atom-occurrence id. Everything downstream (plan validity, trie
@@ -30,15 +31,39 @@ pub use normalize::normalize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct OccId(pub u16);
 
-/// Whether an occurrence joins the plan or only rejects bindings. One
-/// occurrence table holds both — plan validity quantifies over **positive**
-/// occurrences only; a negated occurrence joins no plan node and is reached
-/// exclusively through its [`AntiProbe`] descriptor
-/// (`docs/architecture/20-query-ir.md`, § normalization step 4).
+/// An occurrence's planning state — one sum, deliberately: a polarity
+/// flag plus an `eliminated: Option<StatementId>` would admit
+/// negated ∧ eliminated, a state the chase's conditions forbid
+/// (`plan/chase.rs`), and index-shifting removal would move every
+/// [`OccId`] downstream. One occurrence table holds all three states;
+/// occurrence ids never move.
+///
+/// - `Positive`: joins the plan — the only role
+///   [`Role::participates`] admits.
+/// - `Negated`: joins no plan node; reached exclusively through its
+///   [`AntiProbe`] descriptor (`docs/architecture/20-query-ir.md`,
+///   § normalization step 4).
+/// - `Eliminated`: a positive occurrence the chase removed — the mark
+///   carries the containment statement that justified it and doubles
+///   as the EXPLAIN record; no separate eliminated-list exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Polarity {
+pub enum Role {
     Positive,
     Negated,
+    Eliminated(StatementId),
+}
+
+impl Role {
+    /// **The** participates-in-planning predicate: whether the
+    /// occurrence joins the plan — enters the DP, appears in subatoms,
+    /// binds variables, and counts toward plan validity. Negated
+    /// occurrences only reject bindings; eliminated occurrences are
+    /// proven redundant (`plan/chase.rs`). Every planner, stats, and
+    /// witness iteration routes through this one match.
+    #[must_use]
+    pub fn participates(self) -> bool {
+        matches!(self, Self::Positive)
+    }
 }
 
 /// One atom occurrence in paper form: distinct variables only, plus the
@@ -49,7 +74,7 @@ pub enum Polarity {
 pub struct Occurrence {
     pub occ_id: OccId,
     pub relation: RelationId,
-    pub polarity: Polarity,
+    pub role: Role,
     /// Distinct variables with the field each is read from (a repeated
     /// variable keeps its first field; later positions became filters).
     /// A membership-bound point variable is **not** a variable of the
@@ -128,8 +153,8 @@ pub struct PlacedWordComparison {
 /// binding (`docs/architecture/40-execution.md`, § anti-probe filters).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AntiProbe {
-    /// The negated occurrence (polarity [`Polarity::Negated`] in the one
-    /// occurrence table).
+    /// The negated occurrence ([`Role::Negated`] in the one occurrence
+    /// table).
     pub occurrence: OccId,
     /// The occurrence's variable bindings — the probe's key fields, and
     /// the variable set the plan attaches by.

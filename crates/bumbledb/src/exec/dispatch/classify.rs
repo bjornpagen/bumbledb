@@ -1,6 +1,6 @@
 use super::{GuardPlan, GuardVar};
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
-use crate::ir::normalize::{NormalizedQuery, Polarity};
+use crate::ir::normalize::NormalizedQuery;
 use crate::ir::CmpOp;
 use crate::schema::{FieldId, Schema, StatementDescriptor, StatementId};
 
@@ -25,10 +25,10 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
     let [occurrence] = normalized.occurrences.as_slice() else {
         return None;
     };
-    debug_assert_eq!(
-        occurrence.polarity,
-        Polarity::Positive,
-        "validated: at least one positive atom, and positives order first"
+    debug_assert!(
+        occurrence.role.participates(),
+        "validated: at least one positive atom, positives order first, and \
+         the chase cannot eliminate a sourceless single occurrence"
     );
     if !normalized.residuals.is_empty() || !normalized.word_residuals.is_empty() {
         return None;

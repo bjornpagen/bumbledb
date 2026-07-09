@@ -78,14 +78,14 @@ fn interval_pair_query(word_residuals: Vec<PlacedWordComparison>) -> NormalizedQ
         Occurrence {
             occ_id: OccId(0),
             relation: RelationId(0),
-            polarity: Polarity::Positive,
+            role: Role::Positive,
             vars: vec![(FieldId(0), VarId(0)), (FieldId(1), VarId(1))],
             filters: vec![],
         },
         Occurrence {
             occ_id: OccId(1),
             relation: RelationId(1),
-            polarity: Polarity::Positive,
+            role: Role::Positive,
             vars: vec![(FieldId(0), VarId(2)), (FieldId(1), VarId(3))],
             filters: vec![],
         },
@@ -305,7 +305,7 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
         Occurrence {
             occ_id: OccId(0),
             relation: RelationId(0),
-            polarity: Polarity::Positive,
+            role: Role::Positive,
             vars: vec![(FieldId(0), x)],
             filters: vec![FilterPredicate::PointIn {
                 field: FieldId(1),
@@ -315,7 +315,7 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
         Occurrence {
             occ_id: OccId(1),
             relation: RelationId(1),
-            polarity: Polarity::Positive,
+            role: Role::Positive,
             vars: vec![(FieldId(0), x), (FieldId(1), t)],
             filters: vec![],
         },
@@ -463,7 +463,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
         Occurrence {
             occ_id: OccId(0),
             relation: RelationId(0),
-            polarity: Polarity::Positive,
+            role: Role::Positive,
             vars: vec![(FieldId(0), x)],
             filters: vec![FilterPredicate::PointIn {
                 field: FieldId(1),
@@ -473,14 +473,14 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
         Occurrence {
             occ_id: OccId(1),
             relation: RelationId(1),
-            polarity: Polarity::Positive,
+            role: Role::Positive,
             vars: vec![(FieldId(0), x), (FieldId(1), d)],
             filters: vec![],
         },
         Occurrence {
             occ_id: OccId(2),
             relation: RelationId(2),
-            polarity: Polarity::Positive,
+            role: Role::Positive,
             vars: vec![(FieldId(0), x), (FieldId(1), t)],
             filters: vec![],
         },
@@ -568,14 +568,14 @@ fn negated_membership_rejects_only_covered_events() {
         Occurrence {
             occ_id: OccId(0),
             relation: RelationId(1),
-            polarity: Polarity::Positive,
+            role: Role::Positive,
             vars: vec![(FieldId(0), x), (FieldId(1), t)],
             filters: vec![],
         },
         Occurrence {
             occ_id: OccId(1),
             relation: RelationId(0),
-            polarity: Polarity::Negated,
+            role: Role::Negated,
             vars: vec![(FieldId(0), x)],
             filters: vec![FilterPredicate::PointIn {
                 field: FieldId(1),

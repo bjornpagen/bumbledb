@@ -1,5 +1,5 @@
 use super::*;
-use crate::ir::normalize::{NormalizedQuery, Occurrence, Polarity};
+use crate::ir::normalize::{NormalizedQuery, Occurrence, Role};
 use crate::plan::planner::JoinOrder;
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, Schema, SchemaDescriptor, ValueType,
@@ -48,7 +48,7 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, VarId)]) -> Occurrence {
     Occurrence {
         occ_id: OccId(occ),
         relation: RelationId(relation),
-        polarity: Polarity::Positive,
+        role: Role::Positive,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), *v)).collect(),
         filters: vec![],
     }
@@ -56,7 +56,7 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, VarId)]) -> Occurrence {
 
 fn negated(occ: u16, relation: u32, vars: &[(u16, VarId)]) -> Occurrence {
     Occurrence {
-        polarity: Polarity::Negated,
+        role: Role::Negated,
         ..occurrence(occ, relation, vars)
     }
 }
@@ -68,7 +68,7 @@ fn negated(occ: u16, relation: u32, vars: &[(u16, VarId)]) -> Occurrence {
 fn normalized(occurrences: Vec<Occurrence>, residuals: Vec<PlacedComparison>) -> NormalizedQuery {
     let anti_probes = occurrences
         .iter()
-        .filter(|o| o.polarity == Polarity::Negated)
+        .filter(|o| o.role == Role::Negated)
         .map(|o| AntiProbe {
             occurrence: o.occ_id,
             probe_bindings: o.vars.clone(),

@@ -150,7 +150,7 @@ impl PreparedQuery<'_> {
         // The empty set matches nothing — the `Eq`-miss
         // short-circuit machinery, applied where sound
         // (positive occurrences; `resolve_predicates` reads the
-        // polarity).
+        // role).
         self.missed_params[idx] = words.is_empty();
         self.resolved_params[idx] = Const::WordSet(words);
         Ok(())

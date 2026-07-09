@@ -3,7 +3,7 @@ use crate::ir::normalize::Occurrence;
 use crate::ir::VarId;
 use crate::schema::{Schema, StatementDescriptor};
 
-/// Densifies the positive occurrences into bitset form, resolving stats
+/// Densifies the participating occurrences into bitset form, resolving stats
 /// and translating key (`Functionality` statement) projections to
 /// variable sets.
 pub(super) fn densify(
@@ -28,7 +28,7 @@ pub(super) fn densify(
             let stat = stats
                 .iter()
                 .find(|s| s.occ_id == occurrence.occ_id)
-                .expect("stats cover every positive occurrence");
+                .expect("stats cover every participating occurrence");
             let rows = stat.rows;
             let mut vars = 0u128;
             for (_, var) in &occurrence.vars {

@@ -103,6 +103,7 @@ fn a_leaked_eq_filter_fails_selection_validation() {
     let bad = PlanOccurrence {
         occ_id: OccId(3),
         relation: RelationId(0),
+        role: crate::ir::normalize::Role::Positive,
         vars: vec![],
         selections: vec![],
         filters: vec![FilterPredicate::Compare {

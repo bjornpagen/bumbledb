@@ -54,6 +54,13 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
         "Eq-constant predicates never reach a positive occurrence's view filters"
     );
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
+        // A chase-eliminated occurrence is unreachable at execution — no
+        // subatom, no anti-probe — so it earns no view and, above all,
+        // no image build (`plan/chase.rs`: skipping this build is the
+        // rewrite's payoff).
+        if matches!(occurrence.role, crate::ir::normalize::Role::Eliminated(_)) {
+            continue;
+        }
         // Warm fast path: an active or parked binding for this exact
         // (generation, resolved residual filters) pair — the COLT's view
         // is still exactly right, and so are its forced tries (selections
@@ -91,6 +98,16 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
     // empty and the join never runs (the sink stays reset: a zero-emit
     // execution).
     for (occ_idx, keys) in resolved_selections.iter().enumerate() {
+        if matches!(
+            plan.occurrences()[occ_idx].role,
+            crate::ir::normalize::Role::Eliminated(_)
+        ) {
+            debug_assert!(
+                keys.is_empty(),
+                "eliminated occurrences carry no selections"
+            );
+            continue;
+        }
         let hit = memo.colts[occ_idx].select(keys).is_some();
         obs::event(
             obs::names::SELECT_PROBE,

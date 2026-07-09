@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::exec::colt::Colt;
 use crate::exec::run::{Counters, Executor};
 use crate::image::view::apply;
-use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence, Polarity, SlotWidth};
+use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence, Role, SlotWidth};
 use crate::ir::VarId;
 use crate::plan::fj::{binary2fj, factor, validate, ValidatedPlan};
 use crate::plan::planner::JoinOrder;
@@ -216,7 +216,7 @@ fn occurrence(occ: u16, relation: RelationId, vars: &[(u16, u16)]) -> Occurrence
     Occurrence {
         occ_id: OccId(occ),
         relation,
-        polarity: Polarity::Positive,
+        role: Role::Positive,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters: vec![],
     }

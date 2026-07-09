@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use super::{
     lower_literal::{lower_literal, point_word},
     place_comparisons::place_comparisons,
-    AntiProbe, NormalizedQuery, OccId, Occurrence, Polarity, SlotWidth,
+    AntiProbe, NormalizedQuery, OccId, Occurrence, Role, SlotWidth,
 };
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::validate::ValidatedQuery;
@@ -22,14 +22,14 @@ pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> NormalizedQuery {
     let mut occurrences: Vec<Occurrence> =
         Vec::with_capacity(positive + query.query().negated.len());
     for (idx, atom) in query.query().atoms.iter().enumerate() {
-        occurrences.push(lower_atom(schema, query, idx, Polarity::Positive, atom));
+        occurrences.push(lower_atom(schema, query, idx, Role::Positive, atom));
     }
     for (idx, atom) in query.query().negated.iter().enumerate() {
         occurrences.push(lower_atom(
             schema,
             query,
             positive + idx,
-            Polarity::Negated,
+            Role::Negated,
             atom,
         ));
     }
@@ -64,7 +64,7 @@ pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> NormalizedQuery {
         .all(|(lhs, rhs)| {
             !occurrences
                 .iter()
-                .filter(|occ| occ.polarity == Polarity::Positive)
+                .filter(|occ| occ.role.participates())
                 .any(|occ| {
                     occ.vars.iter().any(|(_, v)| *v == lhs)
                         && occ.vars.iter().any(|(_, v)| *v == rhs)
@@ -90,14 +90,14 @@ fn is_membership(field_type: &ValueType, term_type: &ValueType) -> bool {
 }
 
 /// Lowers one atom (positive or negated — the rules are identical; only
-/// the polarity differs) into an occurrence: variable positions plus the
+/// the role differs) into an occurrence: variable positions plus the
 /// filters lowered out of its constant, repeated-variable, and membership
 /// bindings.
 fn lower_atom(
     schema: &Schema,
     query: &ValidatedQuery,
     idx: usize,
-    polarity: Polarity,
+    role: Role,
     atom: &Atom,
 ) -> Occurrence {
     let occ_id = OccId(u16::try_from(idx).expect("validated: occurrence count fits u16"));
@@ -215,7 +215,7 @@ fn lower_atom(
     Occurrence {
         occ_id,
         relation: atom.relation,
-        polarity,
+        role,
         vars,
         filters,
     }

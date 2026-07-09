@@ -226,7 +226,7 @@ mod tests {
     use super::*;
     use crate::encoding::{encode_fact, ValueRef};
     use crate::image::view::Const;
-    use crate::ir::normalize::{OccId, Polarity};
+    use crate::ir::normalize::{OccId, Role};
     use crate::schema::{
         FieldDescriptor, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
         ValueType,
@@ -338,7 +338,7 @@ mod tests {
         Occurrence {
             occ_id: OccId(0),
             relation: occ_relation,
-            polarity: Polarity::Positive,
+            role: Role::Positive,
             vars: vec![],
             filters: vec![FilterPredicate::Compare {
                 field: FieldId(field),

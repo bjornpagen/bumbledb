@@ -2,7 +2,7 @@ use super::densify::densify;
 use super::estimate::estimate;
 use super::*;
 use crate::image::view::{Const, FilterPredicate};
-use crate::ir::normalize::{NormalizedQuery, Occurrence, Polarity, SlotWidth};
+use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
 use crate::ir::CmpOp as ViewCmp;
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
@@ -40,7 +40,7 @@ fn occurrence(occ: u16, relation: u32, vars: Vec<(u16, u16)>) -> Occurrence {
     Occurrence {
         occ_id: OccId(occ),
         relation: RelationId(relation),
-        polarity: Polarity::Positive,
+        role: Role::Positive,
         vars: vars
             .into_iter()
             .map(|(f, v)| (FieldId(f), VarId(v)))
@@ -352,7 +352,7 @@ fn negated_occurrences_enter_no_dp_state() {
         occurrence(1, 1, vec![(0, 0)]),
     ];
     occurrences.push(Occurrence {
-        polarity: Polarity::Negated,
+        role: Role::Negated,
         ..occurrence(2, 2, vec![(1, 0)])
     });
     let query = normalized(occurrences);

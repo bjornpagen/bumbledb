@@ -1,30 +1,32 @@
 use super::{densify::densify, estimate::estimate, JoinOrder, OccStats, State, MAX_OCCURRENCES};
-use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence, Polarity};
+use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence};
 use crate::schema::Schema;
 
-/// Plans a left-deep join order by exhaustive DP over **positive**
+/// Plans a left-deep join order by exhaustive DP over **participating**
 /// occurrence subsets, minimizing the sum of intermediate-result
 /// estimates. Negated occurrences enter no DP state — they never join;
 /// they only shrink results, and the planner treats them as free filters
-/// (docs/architecture/40-execution.md). Deterministic: ties break toward
+/// (docs/architecture/40-execution.md). Chase-eliminated occurrences left
+/// planning entirely (`plan/chase.rs`). Deterministic: ties break toward
 /// the smaller trailing occurrence id, independent of `stats` input order.
 ///
 /// # Panics
 ///
-/// Only on programmer-invariant violations: `stats` missing a positive
-/// occurrence, or a query over the caps the validation boundary enforces.
+/// Only on programmer-invariant violations: `stats` missing a
+/// participating occurrence, or a query over the caps the validation
+/// boundary enforces.
 pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -> JoinOrder {
-    let positive: Vec<&Occurrence> = normalized
+    let participating: Vec<&Occurrence> = normalized
         .occurrences
         .iter()
-        .filter(|o| o.polarity == Polarity::Positive)
+        .filter(|o| o.role.participates())
         .collect();
-    let n = positive.len();
+    let n = participating.len();
     debug_assert!(
         n <= MAX_OCCURRENCES,
         "validation rejects over-cap queries at the boundary"
     );
-    let occs = densify(&positive, schema, stats);
+    let occs = densify(&participating, schema, stats);
 
     // Exhaustive left-deep DP; the cost is the sum of every prefix estimate
     // including the base relation's rows (the root iteration is real work,
@@ -82,7 +84,7 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
     let mut mask = full;
     for step in (0..n).rev() {
         let chosen = best[mask as usize].expect("full DP table");
-        order[step] = positive[usize::from(chosen.last)].occ_id;
+        order[step] = participating[usize::from(chosen.last)].occ_id;
         estimates[step] = chosen.est;
         mask &= !(1 << chosen.last);
     }

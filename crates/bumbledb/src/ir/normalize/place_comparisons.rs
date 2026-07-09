@@ -1,6 +1,6 @@
 use super::{
     lower_literal::{lower_literal, point_word},
-    IntervalWord, Occurrence, PlacedComparison, PlacedWordComparison, Polarity, VarWord,
+    IntervalWord, Occurrence, PlacedComparison, PlacedWordComparison, VarWord,
 };
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::validate::ValidatedQuery;
@@ -47,7 +47,7 @@ fn field_of(occurrences: &[Occurrence], var: VarId) -> (usize, FieldId) {
     occurrences
         .iter()
         .enumerate()
-        .filter(|(_, occ)| occ.polarity == Polarity::Positive)
+        .filter(|(_, occ)| occ.role.participates())
         .find_map(|(occ_idx, occ)| {
             occ.vars
                 .iter()
@@ -81,7 +81,7 @@ pub(super) fn place_comparisons(
             (Term::Var(lhs), Term::Var(rhs)) => {
                 let same_atom = occurrences
                     .iter()
-                    .filter(|occ| occ.polarity == Polarity::Positive)
+                    .filter(|occ| occ.role.participates())
                     .find_map(|occ| {
                         let left = occ.vars.iter().find(|(_, v)| v == lhs);
                         let right = occ.vars.iter().find(|(_, v)| v == rhs);

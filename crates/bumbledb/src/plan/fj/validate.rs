@@ -4,7 +4,7 @@ use super::{
     PlanError, PlanOccurrence, PointProbe, ValidatedPlan,
 };
 use crate::image::view::{FilterPredicate, ResolvedWordSource};
-use crate::ir::normalize::{NormalizedQuery, Occurrence, Polarity, SlotWidth};
+use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
 use crate::ir::VarId;
 use crate::schema::{FieldId, Schema};
 use std::collections::BTreeSet;
@@ -44,7 +44,10 @@ fn is_point_filter(filter: &FilterPredicate) -> bool {
 /// The execution-facing occurrence table. Trie schemas: a positive
 /// occurrence's subatom var-lists in node order (§3.3); a negated
 /// occurrence's single probe level — all its variables in binding (slot)
-/// order, exactly the shape of a fully-hoisted positive lookup. Key
+/// order, exactly the shape of a fully-hoisted positive lookup; a
+/// chase-eliminated occurrence's empty schema — no level is ever forced
+/// or probed, and its selections and filters are likewise empty so the
+/// bind and view paths have nothing to resolve (`plan/chase.rs`). Key
 /// widths per level: the sum of the level's variables' slot widths (an
 /// interval join variable is one variable with a two-word key). Spans:
 /// the relation's field→column map, built once per witness.
@@ -58,15 +61,15 @@ fn build_occurrences(
         .occurrences
         .iter()
         .map(|occurrence| {
-            let trie_schema: Vec<Vec<VarId>> = match occurrence.polarity {
-                Polarity::Positive => plan
+            let trie_schema: Vec<Vec<VarId>> = match occurrence.role {
+                Role::Positive => plan
                     .nodes
                     .iter()
                     .flat_map(|n| n.subatoms.iter())
                     .filter(|s| s.occ == occurrence.occ_id)
                     .map(|s| s.vars.clone())
                     .collect(),
-                Polarity::Negated => {
+                Role::Negated => {
                     let occ_vars: BTreeSet<VarId> =
                         occurrence.vars.iter().map(|(_, v)| *v).collect();
                     vec![slots
@@ -75,6 +78,7 @@ fn build_occurrences(
                         .filter(|v| occ_vars.contains(v))
                         .collect()]
                 }
+                Role::Eliminated(_) => Vec::new(),
             };
             let key_widths: Vec<u16> = trie_schema
                 .iter()
@@ -102,22 +106,28 @@ fn build_occurrences(
             // (docs/architecture/40-execution.md, § anti-probe filters).
             // A selection's miss contract — "the whole conjunctive query
             // is empty" — holds for positive occurrences only; an empty
-            // negated view just means the anti-probe never rejects.
+            // negated view just means the anti-probe never rejects. A
+            // chase-eliminated occurrence carries nothing: its filters
+            // are implied by the containment and the key, so nothing is
+            // resolved, probed, or scanned for it (`plan/chase.rs`).
             // Var-sourced membership filters leave the view filter list
-            // entirely (both polarities): they execute inside the join.
+            // entirely (positive and negated): they execute inside the
+            // join.
             let view_filters: Vec<FilterPredicate> = occurrence
                 .filters
                 .iter()
                 .filter(|f| !is_point_filter(f))
                 .cloned()
                 .collect();
-            let (selections, filters) = match occurrence.polarity {
-                Polarity::Positive => split_filters(&view_filters),
-                Polarity::Negated => (Vec::new(), view_filters),
+            let (selections, filters) = match occurrence.role {
+                Role::Positive => split_filters(&view_filters),
+                Role::Negated => (Vec::new(), view_filters),
+                Role::Eliminated(_) => (Vec::new(), Vec::new()),
             };
             PlanOccurrence {
                 occ_id: occurrence.occ_id,
                 relation: occurrence.relation,
+                role: occurrence.role,
                 vars: occurrence.vars.clone(),
                 selections,
                 filters,
@@ -153,10 +163,10 @@ fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usiz
 ///
 /// # Errors
 ///
-/// [`PlanError`] when the plan does not partition the query's positive
-/// occurrences, joins a negated occurrence, duplicates an occurrence
-/// within a node, lacks a cover, or leaves a residual or anti-probe
-/// unplaced.
+/// [`PlanError`] when the plan does not partition the query's
+/// participating occurrences, joins a non-participating occurrence,
+/// duplicates an occurrence within a node, lacks a cover, or leaves a
+/// residual or anti-probe unplaced.
 ///
 /// # Panics
 ///
@@ -173,11 +183,11 @@ pub fn validate(
     sink_vars: &BTreeSet<VarId>,
 ) -> Result<ValidatedPlan, PlanError> {
     check_occurrence_coverage(plan, normalized)?;
-    // Partition property, per positive occurrence: subatom vars are
-    // disjoint and union to the occurrence's var set. (Negated
-    // occurrences appear in no subatom — enforced above.)
+    // Partition property, per participating occurrence: subatom vars are
+    // disjoint and union to the occurrence's var set. (Negated and
+    // eliminated occurrences appear in no subatom — enforced above.)
     for occurrence in &normalized.occurrences {
-        if occurrence.polarity == Polarity::Negated {
+        if !occurrence.role.participates() {
             continue;
         }
         let mut seen: BTreeSet<VarId> = BTreeSet::new();
@@ -256,13 +266,14 @@ pub fn validate(
         nodes[node].anti_probes.push(anti_probe.clone());
     }
 
-    // Membership-probe attachment (positive occurrences): the earliest
-    // node where every point variable is bound AND the occurrence's trie
-    // is fully descended — only then are its remaining positions exactly
-    // the facts consistent with the binding, and the existential check
-    // `∃ fact: every membership holds` is per-binding correct.
+    // Membership-probe attachment (participating occurrences): the
+    // earliest node where every point variable is bound AND the
+    // occurrence's trie is fully descended — only then are its remaining
+    // positions exactly the facts consistent with the binding, and the
+    // existential check `∃ fact: every membership holds` is per-binding
+    // correct.
     for occurrence in &normalized.occurrences {
-        if occurrence.polarity == Polarity::Negated {
+        if !occurrence.role.participates() {
             continue;
         }
         let filters = point_filters_of(occurrence);
@@ -312,16 +323,18 @@ pub fn validate(
     // these occurrences, so no Eq-constant can sit in `filters`. The real
     // producers `check_selections` guards against are hand-built
     // `PlanOccurrence`s (tests, future callers); the executor-side twin
-    // is a debug_assert too. Positive occurrences only (they lead the
-    // table): a negated occurrence's Eq-constants legitimately live in
-    // its filter list (see `build_occurrences`).
+    // is a debug_assert too. The leading non-negated region only
+    // (normalization numbers positives first, and elimination never
+    // reorders): a negated occurrence's Eq-constants legitimately live
+    // in its filter list, and an eliminated occurrence's lists are empty
+    // (see `build_occurrences`).
     debug_assert!({
-        let positive = normalized
+        let leading = normalized
             .occurrences
             .iter()
-            .filter(|o| o.polarity == Polarity::Positive)
+            .take_while(|o| o.role != Role::Negated)
             .count();
-        check_selections(&occurrences[..positive]).is_ok()
+        check_selections(&occurrences[..leading]).is_ok()
     });
 
     let distinct_bindings = provably_distinct(normalized, schema);

@@ -55,7 +55,7 @@ orchestrator work, not a PRD.
 | A — correctness | 04 05 06 | No reachable panic from valid input; oracles agree on every verdict label — each fixed by deleting the representation that made the case expressible, not by guarding it |
 | B — contract & hardening | 07 08 | The allocation contract states its true invariant and the gate can see violations; reopen trust bounded; reader cap configured |
 | C — the sweeper | 09 10 | `Db::verify_store`: full store coherence + global judgment re-verification, CLI-wrapped |
-| D — the chase | 11 12 | Containment-implied occurrence elimination via the `Role` sum, EXPLAIN'd, differentially covered |
+| D — the chase | 12 | Containment-implied occurrence elimination via the `Role` sum, EXPLAIN'd, differentially covered |
 | E — staleness | 13 | Pull-based plan-drift signal |
 | F — sweep | 14 | The minor findings, each to its pinned verdict |
 | G — commit as data | 15 | `CommitPlan`: the commit's bookkeeping computed as a pure function, the applier a dumb executor |
@@ -63,7 +63,6 @@ orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [11 — The chase: analysis and rewrite](11-chase-rewrite.md)
 - [12 — The chase: surfaces and coverage](12-chase-surfaces.md)
 - [13 — Plan staleness signal](13-staleness-signal.md)
 - [14 — Minor findings sweep](14-minor-sweep.md)

@@ -8,7 +8,9 @@
 
 use crate::image::view::{Const, FilterPredicate};
 use crate::image::ColumnSpan;
-use crate::ir::normalize::{AntiProbe, OccId, PlacedComparison, PlacedWordComparison, SlotWidth};
+use crate::ir::normalize::{
+    AntiProbe, OccId, PlacedComparison, PlacedWordComparison, Role, SlotWidth,
+};
 use crate::ir::VarId;
 use crate::schema::RelationId;
 
@@ -60,20 +62,23 @@ pub struct FjPlan {
 /// data anyone can construct.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanError {
-    /// A positive occurrence's subatoms do not partition its variable set.
+    /// A participating occurrence's subatoms do not partition its
+    /// variable set.
     BrokenPartition { occ: OccId },
-    /// A positive occurrence of the query appears in no subatom of any
-    /// node. A zero-variable (gate) occurrence dropped this way would
+    /// A participating occurrence of the query appears in no subatom of
+    /// any node. A zero-variable (gate) occurrence dropped this way would
     /// silently skip its nonemptiness check — wrong results on a
     /// validated plan.
     MissingOccurrence { occ: OccId },
     /// A subatom references an occurrence outside the normalized query —
     /// the executor would index past its COLT array.
     UnknownOccurrence { node: usize, occ: OccId },
-    /// A subatom references a **negated** occurrence — negated
-    /// occurrences join no node; the executor reaches them exclusively
-    /// through anti-probes (docs/architecture/40-execution.md).
-    NegatedOccurrenceInNode { node: usize, occ: OccId },
+    /// A subatom references a non-participating occurrence — a negated
+    /// occurrence joins no node (the executor reaches it exclusively
+    /// through anti-probes, docs/architecture/40-execution.md) and a
+    /// chase-eliminated occurrence joins nothing at all
+    /// (`plan/chase.rs`).
+    NonParticipatingOccurrenceInNode { node: usize, occ: OccId },
     /// Two subatoms of one node share an occurrence.
     DuplicateOccurrenceInNode { node: usize, occ: OccId },
     /// A node has no cover: no subatom contains all its new variables.
@@ -124,14 +129,20 @@ pub struct PointProbe {
     pub filters: Vec<(crate::schema::FieldId, VarId)>,
 }
 
-/// One occurrence's execution-facing description — positive and negated
-/// occurrences alike live in the one table ([`OccId`]s are indices);
-/// polarity is a plan-shape fact: negated occurrences appear in no
-/// subatom and are probed through the nodes' `anti_probes`.
+/// One occurrence's execution-facing description — every role lives in
+/// the one table ([`OccId`]s are indices): negated occurrences appear in
+/// no subatom and are probed through the nodes' `anti_probes`;
+/// chase-eliminated occurrences appear nowhere at all and their view is
+/// never built (`plan/chase.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanOccurrence {
     pub occ_id: OccId,
     pub relation: RelationId,
+    /// The occurrence's planning state, carried from normalization —
+    /// execution's view-bind and predicate-resolution loops read it to
+    /// skip eliminated occurrences, and PRD 12's EXPLAIN reads the
+    /// `Eliminated` marks directly.
+    pub role: Role,
     /// The field each variable reads from.
     pub vars: Vec<(crate::schema::FieldId, VarId)>,
     /// Probeable equalities, ordered by field id (deterministic plans).
@@ -263,16 +274,12 @@ impl ValidatedPlan {
         self.slots.iter().map(|(_, width)| width.slots()).sum()
     }
 
-    /// Whether an occurrence is negated — the plan-shape fact: a negated
-    /// occurrence appears in no subatom and is reached exclusively
-    /// through the nodes' `anti_probes`.
+    /// Whether an occurrence is negated — a role read, never a subatom
+    /// search: a chase-eliminated occurrence also appears in no subatom,
+    /// so absence stopped being evidence of negation (`plan/chase.rs`).
     #[must_use]
     pub fn is_negated(&self, occ: OccId) -> bool {
-        !self
-            .nodes
-            .iter()
-            .flat_map(|node| &node.subatoms)
-            .any(|subatom| subatom.occ == occ)
+        self.occurrences[usize::from(occ.0)].role == Role::Negated
     }
 
     #[must_use]

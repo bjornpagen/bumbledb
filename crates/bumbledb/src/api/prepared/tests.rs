@@ -14,6 +14,7 @@ use crate::testutil::TempDir;
 
 mod aggregates;
 mod buffer;
+mod chase;
 mod correctness;
 mod explain;
 mod guard;

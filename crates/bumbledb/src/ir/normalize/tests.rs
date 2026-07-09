@@ -112,7 +112,7 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
         vec![],
     );
     let norm = normalized(&query);
-    assert_eq!(norm.occurrences[0].polarity, Polarity::Positive);
+    assert_eq!(norm.occurrences[0].role, Role::Positive);
     assert_eq!(norm.occurrences[0].vars, vec![(FieldId(1), VarId(0))]);
     assert_eq!(
         norm.occurrences[0].filters,
@@ -536,7 +536,7 @@ fn same_atom_overlaps_lowers_to_the_fixed_word_composition() {
 #[test]
 fn negated_atom_with_literal_binding_lowers_to_anti_probe() {
     // Golden (c): R(id = v0), ¬S(x = v0, y = -7) — the negated atom is an
-    // occurrence with Negated polarity in the one table; its literal
+    // occurrence with the Negated role in the one table; its literal
     // binding is its own filter list (evaluated inside the probe); the
     // descriptor carries the occurrence and its variable set.
     let query = query(
@@ -557,7 +557,7 @@ fn negated_atom_with_literal_binding_lowers_to_anti_probe() {
     assert_eq!(norm.occurrences.len(), 2);
     let negated = &norm.occurrences[1];
     assert_eq!(negated.occ_id, OccId(1));
-    assert_eq!(negated.polarity, Polarity::Negated);
+    assert_eq!(negated.role, Role::Negated);
     assert_eq!(negated.relation, S);
     assert_eq!(negated.vars, vec![(FieldId(0), VarId(0))]);
     assert_eq!(
@@ -941,7 +941,7 @@ fn assert_residuals_cross_atom(norm: &NormalizedQuery) {
             !norm
                 .occurrences
                 .iter()
-                .filter(|occ| occ.polarity == Polarity::Positive)
+                .filter(|occ| occ.role == Role::Positive)
                 .any(|occ| {
                     occ.vars.iter().any(|(_, v)| *v == lhs)
                         && occ.vars.iter().any(|(_, v)| *v == rhs)

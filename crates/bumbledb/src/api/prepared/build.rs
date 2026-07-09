@@ -40,10 +40,16 @@ pub(crate) fn prepare<'s>(
         let _s = obs::span(obs::names::VALIDATE, obs::Category::Prepare);
         validate(schema, query)?
     };
-    let normalized = {
+    let mut normalized = {
         let _s = obs::span(obs::names::NORMALIZE, obs::Category::Prepare);
         normalize(schema, &witness)
     };
+    // The chase (plan/chase.rs): containment-implied occurrence
+    // elimination, after normalization and before statistics and the DP
+    // (docs/architecture/40-execution.md planner placement). Eliminated
+    // occurrences keep their ids and are skipped by every downstream
+    // path through the one participates-in-planning predicate.
+    crate::plan::chase::chase(&mut normalized, schema, &query.finds);
 
     // Classification first: a guard probe needs no statistics or planning.
     let classified = {
@@ -57,9 +63,16 @@ pub(crate) fn prepare<'s>(
         // shaped by the selectivity ladder — key-exact counts,
         // resident-image distinct counts (peek only: prepare never
         // builds an image for statistics), documented bounds and floors.
+        // Participating occurrences only: negated occurrences enter no
+        // DP state and chase-eliminated occurrences left planning
+        // entirely, so neither earns a statistics read.
         let mut stats_span = obs::span(obs::names::STATS, obs::Category::Prepare);
         let mut stats = Vec::with_capacity(normalized.occurrences.len());
-        for occurrence in &normalized.occurrences {
+        for occurrence in normalized
+            .occurrences
+            .iter()
+            .filter(|o| o.role.participates())
+        {
             let rows = read::row_count(txn, occurrence.relation)?;
             stats.push(crate::plan::selectivity::occurrence_stats(
                 txn, cache, schema, occurrence, rows,

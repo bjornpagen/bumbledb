@@ -5,7 +5,7 @@ use crate::exec::dispatch::classify;
 use crate::exec::run::{Bindings, Executor, NoopCounters};
 use crate::exec::sink::ProjectionSink;
 use crate::image::view::{apply, Const, FilterPredicate};
-use crate::ir::normalize::{AntiProbe, NormalizedQuery, OccId, Occurrence, Polarity, SlotWidth};
+use crate::ir::normalize::{AntiProbe, NormalizedQuery, OccId, Occurrence, Role, SlotWidth};
 use crate::ir::{CmpOp, VarId};
 use crate::plan::fj::{binary2fj, factor, validate, ValidatedPlan};
 use crate::plan::planner::JoinOrder;
@@ -115,7 +115,7 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
     Occurrence {
         occ_id: OccId(occ),
         relation: RelationId(relation),
-        polarity: Polarity::Positive,
+        role: Role::Positive,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters: vec![],
     }
@@ -124,7 +124,7 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
 /// A negated occurrence: joins no node, probed through its anti-probe.
 fn negated(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
     Occurrence {
-        polarity: Polarity::Negated,
+        role: Role::Negated,
         ..occurrence(occ, relation, vars)
     }
 }
@@ -135,7 +135,7 @@ fn negated(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
 fn normalized(occurrences: Vec<Occurrence>) -> NormalizedQuery {
     let anti_probes = occurrences
         .iter()
-        .filter(|o| o.polarity == Polarity::Negated)
+        .filter(|o| o.role == Role::Negated)
         .map(|o| AntiProbe {
             occurrence: o.occ_id,
             probe_bindings: o.vars.clone(),
@@ -274,7 +274,7 @@ fn guard_probe_queries_report_their_classification() {
     let normalized = normalized(vec![Occurrence {
         occ_id: OccId(0),
         relation: RelationId(0),
-        polarity: Polarity::Positive,
+        role: Role::Positive,
         vars: vec![(FieldId(1), VarId(0))],
         filters: vec![FilterPredicate::Compare {
             field: FieldId(0),

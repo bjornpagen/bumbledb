@@ -23,9 +23,10 @@ pub use plan::plan;
 /// envelope is "≤ ~12 atoms" (amendment recorded in
 /// docs/architecture/40-execution.md), where both are kilobytes. The
 /// validation-boundary roster cap counts negated occurrences too (they
-/// consume plan-time work), but only positive occurrences enter the DP
-/// state — negated occurrences never join (docs/architecture/40-execution.md,
-/// § search).
+/// consume plan-time work), but only participating occurrences enter the
+/// DP state — negated occurrences never join
+/// (docs/architecture/40-execution.md, § search) and chase-eliminated
+/// occurrences left planning entirely (`plan/chase.rs`).
 pub const MAX_OCCURRENCES: usize = 20;
 
 /// Distinct-variable cap for the planner's dense var bitsets.
@@ -46,8 +47,10 @@ pub struct OccStats {
 }
 
 /// The chosen left-deep join order, with per-step estimates retained for
-/// EXPLAIN (docs/architecture/40-execution.md). Positive occurrences only —
-/// negated occurrences join nothing and reach execution as anti-probes.
+/// EXPLAIN (docs/architecture/40-execution.md). Participating occurrences
+/// only — negated occurrences join nothing and reach execution as
+/// anti-probes, and chase-eliminated occurrences left planning entirely
+/// (`plan/chase.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinOrder {
     /// Occurrences in join order (first = the iterated relation).
