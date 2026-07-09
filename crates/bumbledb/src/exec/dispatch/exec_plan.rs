@@ -2,7 +2,7 @@ use super::ExecPlan;
 use crate::ir::VarId;
 
 impl ExecPlan {
-    /// The slot index of a variable.
+    /// The first slot index of a variable.
     ///
     /// # Panics
     ///
@@ -10,19 +10,21 @@ impl ExecPlan {
     #[must_use]
     pub fn slot_of(&self, var: VarId) -> usize {
         match self {
-            Self::GuardProbe(guard) => guard
-                .vars
-                .iter()
-                .position(|(_, v)| *v == var)
-                .expect("guard plans bind every variable"),
+            Self::GuardProbe(guard) => {
+                guard
+                    .vars
+                    .iter()
+                    .find(|v| v.var == var)
+                    .expect("guard plans bind every variable")
+                    .slot
+            }
             Self::FreeJoin(plan) => plan.slot_of(var),
         }
     }
 
     /// A variable's slot width in words — the layout map's companion to
     /// [`Self::slot_of`] (2 for an interval variable, the `SlotWidth`
-    /// layout). Guard-plan slots are field-indexed and one word wide
-    /// (the statement-driven guard path is PRD 19's).
+    /// layout; guard plans carry it per decoded variable).
     ///
     /// # Panics
     ///
@@ -30,7 +32,14 @@ impl ExecPlan {
     #[must_use]
     pub fn width_of(&self, var: VarId) -> usize {
         match self {
-            Self::GuardProbe(_) => 1,
+            Self::GuardProbe(guard) => {
+                guard
+                    .vars
+                    .iter()
+                    .find(|v| v.var == var)
+                    .expect("guard plans bind every variable")
+                    .width
+            }
             Self::FreeJoin(plan) => plan.width_of(var),
         }
     }

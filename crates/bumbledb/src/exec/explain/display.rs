@@ -7,8 +7,8 @@ impl fmt::Display for Report<'_> {
             Self::GuardProbe { plan } => {
                 writeln!(f, "access path: guard probe")?;
                 writeln!(f, "  relation: {}", plan.relation.0)?;
-                match plan.constraint {
-                    Some(c) => writeln!(f, "  unique constraint: {}", c.0)?,
+                match plan.statement {
+                    Some(s) => writeln!(f, "  key statement: {}", s.0)?,
                     None => writeln!(f, "  full-fact membership probe")?,
                 }
                 writeln!(

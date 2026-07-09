@@ -183,7 +183,17 @@ impl PreparedQuery<'_> {
         };
         out.cells.reserve(guard_finds.len());
         for (field, ty) in guard_finds {
-            let word = crate::exec::dispatch::fact_word(self.schema, guard, fact, *field);
+            if let ValueType::Interval { element } = ty {
+                let crate::exec::dispatch::FactOperand::Pair(start, end) =
+                    crate::exec::dispatch::fact_operand(self.schema, guard.relation, fact, *field)
+                else {
+                    unreachable!("validated: interval finds read interval fields")
+                };
+                out.cells
+                    .push(ResultBuffer::interval_cell(*element, start, end));
+                continue;
+            }
+            let word = crate::exec::dispatch::fact_word(self.schema, guard.relation, fact, *field);
             match ty {
                 ValueType::String | ValueType::Bytes => {
                     out.push_word(txn, ty, word, &mut self.resolve_memo)?;

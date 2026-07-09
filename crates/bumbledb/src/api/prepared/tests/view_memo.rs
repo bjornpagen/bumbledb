@@ -1,8 +1,9 @@
+#![cfg(feature = "trace")] // every test here reads obs captures
+
 use super::*;
 
 /// The view-memo LRU (docs/architecture/30-execution.md): four rotating residual bindings
 /// all memoize; a fifth evicts exactly the least recently used.
-#[cfg(feature = "trace")]
 #[test]
 fn residual_bindings_memoize_under_lru() {
     use crate::obs;
@@ -90,7 +91,6 @@ fn residual_bindings_memoize_under_lru() {
 
 /// A generation bump invalidates every memoized binding, and the
 /// rebuilt view reflects the new fact.
-#[cfg(feature = "trace")]
 #[test]
 fn a_generation_bump_invalidates_the_memo() {
     use crate::obs;
@@ -128,7 +128,6 @@ fn a_generation_bump_invalidates_the_memo() {
 }
 
 /// PRD 03's read-path capture contract (feature `trace`).
-#[cfg(feature = "trace")]
 #[test]
 fn read_path_traces_phases_memo_hits_and_guard() {
     use crate::obs;

@@ -1,11 +1,11 @@
-use super::{fact_word, guard_probe_fact, GuardPlan};
+use super::{fact_operand, guard_probe_fact, FactOperand, GuardPlan};
 use crate::error::Result;
 use crate::exec::run::{Bindings, Sink};
 use crate::image::view::Const;
 use crate::schema::Schema;
 use crate::storage::env::ReadTxn;
 
-/// Executes the guard probe: guard key from constants, one `U`/`M` get,
+/// Executes the guard probe: key bytes from constants, one `U`/`M` get,
 /// one `F` fetch, remaining filters on the fact bytes, then the single
 /// binding through the ordinary sink (sinks are reused, not special-cased).
 ///
@@ -27,10 +27,17 @@ pub fn execute_guard<S: Sink>(
     };
     // The single binding, through the ordinary sink (the aggregate-find
     // guard path; plain-variable guards take the direct lane, docs/perf/
-    // PRD 11).
+    // PRD 11). Interval variables occupy their two-slot span.
     bindings.reset();
-    for (slot, (field, _)) in plan.vars.iter().enumerate() {
-        bindings.set(slot, fact_word(schema, plan, fact, *field));
+    for var in &plan.vars {
+        match fact_operand(schema, plan.relation, fact, var.field) {
+            FactOperand::Word(word) => bindings.set(var.slot, word),
+            FactOperand::Pair(start, end) => {
+                debug_assert_eq!(var.width, 2, "the SlotWidth layout");
+                bindings.set(var.slot, start);
+                bindings.set(var.slot + 1, end);
+            }
+        }
     }
     sink.emit(bindings);
     Ok(())

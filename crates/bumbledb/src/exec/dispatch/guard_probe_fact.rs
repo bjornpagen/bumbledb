@@ -1,16 +1,20 @@
-use super::{fact_word, GuardPlan};
-use crate::encoding::encode_u64;
+use super::fact_word::{fact_operand, FactOperand};
+use super::GuardPlan;
 use crate::error::Result;
-use crate::image::view::{Const, FilterPredicate};
+use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
+use crate::ir::CmpOp;
 use crate::obs;
 use crate::schema::Schema;
 use crate::storage::env::ReadTxn;
 use crate::storage::{dict, read};
 
-/// Resolves a constant to its canonical guard-key bytes. A `PendingIntern`
-/// that missed the dictionary resolves to the never-minted sentinel id —
-/// the ensuing `U`/`M` probe then misses (empty result), never an insert,
-/// never an error.
+/// Resolves a constant to its canonical key-segment bytes — per field, the
+/// same canonical encoding [`crate::storage::keys::guard_bytes`] slices out
+/// of a stored fact (`U` guards and `M` fact bytes share it, so an
+/// interval constant contributes its whole 16-byte `start ‖ end` piece).
+/// A `PendingIntern` that missed the dictionary resolves to the
+/// never-minted sentinel id — the ensuing `U`/`M` probe then misses (empty
+/// result), never an insert, never an error.
 fn const_bytes(
     txn: &ReadTxn<'_>,
     value: &Const,
@@ -20,34 +24,150 @@ fn const_bytes(
     match value {
         Const::Word(w) => out.extend_from_slice(&w.to_be_bytes()),
         Const::Byte(b) => out.push(*b),
+        Const::Interval { start, end } => {
+            out.extend_from_slice(&start.to_be_bytes());
+            out.extend_from_slice(&end.to_be_bytes());
+        }
         Const::Param(p) => {
             return const_bytes(txn, &params[usize::from(p.0)], params, out);
         }
+        Const::ParamSet(_) | Const::WordSet(_) => {
+            unreachable!("classification: a param-set binding never reaches the guard path")
+        }
         Const::PendingIntern { tag, bytes } => {
             let id = dict::lookup_tagged(txn, *tag, bytes)?.unwrap_or(dict::SENTINEL_ID);
-            out.extend_from_slice(&encode_u64(id));
+            out.extend_from_slice(&id.to_be_bytes());
         }
     }
     Ok(())
 }
 
-/// The constant's column word (for filter checks on the fetched fact). A
+/// A filter constant in column form (for checks on the fetched fact). A
 /// dictionary miss resolves to the sentinel id, so `Eq` filters fail and
 /// `Ne` filters pass — per-operator miss semantics with no special cases.
-fn const_word(txn: &ReadTxn<'_>, value: &Const, params: &[Const]) -> Result<u64> {
+/// Bytes widen to words like [`FactOperand`], so scalar comparison is one
+/// word shape.
+fn const_operand(txn: &ReadTxn<'_>, value: &Const, params: &[Const]) -> Result<FactOperand> {
     match value {
-        Const::Word(w) => Ok(*w),
-        Const::Byte(b) => Ok(u64::from(*b)),
-        Const::Param(p) => const_word(txn, &params[usize::from(p.0)], params),
-        Const::PendingIntern { tag, bytes } => {
-            Ok(dict::lookup_tagged(txn, *tag, bytes)?.unwrap_or(dict::SENTINEL_ID))
+        Const::Word(w) => Ok(FactOperand::Word(*w)),
+        Const::Byte(b) => Ok(FactOperand::Word(u64::from(*b))),
+        Const::Interval { start, end } => Ok(FactOperand::Pair(*start, *end)),
+        Const::Param(p) => const_operand(txn, &params[usize::from(p.0)], params),
+        Const::ParamSet(_) | Const::WordSet(_) => {
+            unreachable!("classification: a param-set binding never reaches the guard path")
+        }
+        Const::PendingIntern { tag, bytes } => Ok(FactOperand::Word(
+            dict::lookup_tagged(txn, *tag, bytes)?.unwrap_or(dict::SENTINEL_ID),
+        )),
+    }
+}
+
+/// A membership filter's resolved point word (never var-sourced here:
+/// classification routes var points to Free Join).
+fn point_word(point: &ResolvedWordSource, params: &[Const]) -> u64 {
+    match point {
+        ResolvedWordSource::Word(word) => *word,
+        ResolvedWordSource::Param(param) => match &params[usize::from(param.0)] {
+            Const::Word(word) => *word,
+            _ => unreachable!("validated: a point param resolves to a word"),
+        },
+        ResolvedWordSource::Var(_) => {
+            unreachable!("classification: a var-sourced point never reaches the guard path")
         }
     }
 }
 
-/// The probe half of the guard: key from constants, one `U`/`M` get, one
-/// `F` fetch, remaining filters on the fact bytes. `None` = miss or a
-/// failed filter — an empty result, never an error.
+/// Point membership under the half-open interval: `start ≤ p AND p < end`.
+const fn contains_point(start: u64, end: u64, p: u64) -> bool {
+    start <= p && p < end
+}
+
+/// Evaluates one residual filter on the fetched fact's bytes — the same
+/// word compositions the view evaluator runs over image columns
+/// (`image::view::apply`), sourced from [`fact_operand`] instead.
+fn fact_matches(
+    txn: &ReadTxn<'_>,
+    schema: &Schema,
+    plan: &GuardPlan,
+    fact: &[u8],
+    filter: &FilterPredicate,
+    params: &[Const],
+) -> Result<bool> {
+    let operand = |field| fact_operand(schema, plan.relation, fact, field);
+    let pair = |field| match operand(field) {
+        FactOperand::Pair(start, end) => (start, end),
+        FactOperand::Word(_) => unreachable!("validated: interval predicates read interval fields"),
+    };
+    let word = |field| match operand(field) {
+        FactOperand::Word(word) => word,
+        FactOperand::Pair(..) => unreachable!("validated: point operands are scalar fields"),
+    };
+    Ok(match filter {
+        FilterPredicate::Compare { field, op, value } => {
+            match (operand(*field), const_operand(txn, value, params)?) {
+                (FactOperand::Word(w), FactOperand::Word(c)) => op.compare(&w, &c),
+                // The interval-vs-interval-constant compositions: fixed
+                // word comparisons over the (start, end) pair.
+                (FactOperand::Pair(s, e), FactOperand::Pair(start, end)) => match op {
+                    CmpOp::Eq => s == start && e == end,
+                    CmpOp::Ne => s != start || e != end,
+                    CmpOp::Overlaps => s < end && start < e,
+                    CmpOp::Contains => s <= start && end <= e,
+                    _ => unreachable!("validated: no order comparison over intervals"),
+                },
+                _ => unreachable!("validated: filter constants match their field's shape"),
+            }
+        }
+        FilterPredicate::FieldsCompare { left, right, op } => {
+            match (operand(*left), operand(*right)) {
+                (FactOperand::Word(a), FactOperand::Word(b)) => op.compare(&a, &b),
+                // Interval fields compare pairwise; validation admits
+                // Eq/Ne only.
+                (FactOperand::Pair(a_s, a_e), FactOperand::Pair(b_s, b_e)) => match op {
+                    CmpOp::Eq => a_s == b_s && a_e == b_e,
+                    CmpOp::Ne => a_s != b_s || a_e != b_e,
+                    _ => unreachable!("validated: no order comparison over intervals"),
+                },
+                _ => unreachable!("same-fact comparison joins same-typed fields"),
+            }
+        }
+        FilterPredicate::PointIn { field, point } => {
+            let (start, end) = pair(*field);
+            contains_point(start, end, point_word(point, params))
+        }
+        FilterPredicate::AnyPointIn { .. } => {
+            unreachable!("classification: a param-set binding never reaches the guard path")
+        }
+        FilterPredicate::FieldsOverlap { left, right } => {
+            let (l_start, l_end) = pair(*left);
+            let (r_start, r_end) = pair(*right);
+            l_start < r_end && r_start < l_end
+        }
+        FilterPredicate::FieldsContain { outer, inner } => {
+            let (o_start, o_end) = pair(*outer);
+            let (i_start, i_end) = pair(*inner);
+            o_start <= i_start && i_end <= o_end
+        }
+        FilterPredicate::FieldsContainPoint { interval, point } => {
+            let (start, end) = pair(*interval);
+            contains_point(start, end, word(*point))
+        }
+        FilterPredicate::FieldWithin { field, outer } => {
+            let FactOperand::Pair(start, end) = const_operand(txn, outer, params)? else {
+                unreachable!("validated: the outer side is an interval constant")
+            };
+            match operand(*field) {
+                FactOperand::Word(w) => contains_point(start, end, w),
+                FactOperand::Pair(f_start, f_end) => start <= f_start && f_end <= end,
+            }
+        }
+    })
+}
+
+/// The probe half of the guard: key bytes from constants, one `U` get
+/// through the matched key statement (or the full-fact `M` get), one `F`
+/// fetch, remaining filters on the fact bytes. `None` = miss or a failed
+/// filter — an empty result, never an error.
 ///
 /// # Errors
 ///
@@ -59,16 +179,18 @@ pub(crate) fn guard_probe_fact<'t>(
     params: &[Const],
     key_scratch: &mut Vec<u8>,
 ) -> Result<Option<&'t [u8]>> {
-    // Build the guard key in the caller's reused scratch; a dictionary
-    // miss lands the sentinel id in the key, and the probe below misses.
+    // Build the key bytes in the caller's reused scratch — the statement's
+    // projection order for a `U` guard, full canonical fact bytes for `M`.
+    // A dictionary miss lands the sentinel id in the key, and the probe
+    // below misses.
     key_scratch.clear();
     for (_, value) in &plan.key {
         const_bytes(txn, value, params, key_scratch)?;
     }
 
     let mut probe_span = obs::span(obs::names::GUARD_PROBE, obs::Category::Execute);
-    let row_id = match plan.constraint {
-        Some(constraint) => read::unique_row(txn, plan.relation, constraint, key_scratch)?,
+    let row_id = match plan.statement {
+        Some(statement) => read::guard_row(txn, plan.relation, statement, key_scratch)?,
         None => read::fact_row(txn, plan.relation, key_scratch)?,
     };
     probe_span.set_args(u64::from(row_id.is_some()), 0);
@@ -79,17 +201,7 @@ pub(crate) fn guard_probe_fact<'t>(
 
     // Remaining filters run on the fact bytes.
     for filter in &plan.remaining_filters {
-        let pass = match filter {
-            FilterPredicate::Compare { field, op, value } => {
-                let expected = const_word(txn, value, params)?;
-                op.compare(&fact_word(schema, plan, fact, *field), &expected)
-            }
-            FilterPredicate::FieldsCompare { left, right, op } => op.compare(
-                &fact_word(schema, plan, fact, *left),
-                &fact_word(schema, plan, fact, *right),
-            ),
-        };
-        if !pass {
+        if !fact_matches(txn, schema, plan, fact, filter, params)? {
             return Ok(None);
         }
     }

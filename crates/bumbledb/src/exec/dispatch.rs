@@ -1,7 +1,7 @@
-//! Guard-probe access path dispatch (docs/architecture/30-execution.md): the point-lookup fast path
-//! that routes qualifying queries around the join machinery entirely
-//! (`docs/architecture/30-execution.md` — access paths; `40-storage.md`'s
-//! `U`/`M` read-side readers).
+//! Guard-probe access path dispatch (docs/architecture/40-execution.md,
+//! § access paths): the point-lookup fast path that routes qualifying
+//! queries around the join machinery entirely (`50-storage.md`'s `U`/`M`
+//! read-side readers).
 //!
 //! The dispatch is a **representation**, not a runtime mode: classification
 //! happens once at prepare time into the two-variant [`ExecPlan`]; the
@@ -12,7 +12,7 @@
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::VarId;
 use crate::plan::fj::ValidatedPlan;
-use crate::schema::{ConstraintId, FieldId, RelationId};
+use crate::schema::{FieldId, RelationId, StatementId};
 
 mod classify;
 mod exec_plan;
@@ -24,7 +24,7 @@ mod tests;
 
 pub use classify::classify;
 pub use execute_guard::execute_guard;
-pub(crate) use fact_word::fact_word;
+pub(crate) use fact_word::{fact_operand, fact_word, FactOperand};
 pub(crate) use guard_probe_fact::guard_probe_fact;
 
 /// The prepared execution plan: either the guard-probe fast path or the
@@ -35,20 +35,43 @@ pub enum ExecPlan {
     FreeJoin(ValidatedPlan),
 }
 
+/// One variable a guard plan decodes from the fetched fact: the field it
+/// reads and its binding-slot span (the `SlotWidth` layout — an interval
+/// variable spans two consecutive word slots).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GuardVar {
+    pub field: FieldId,
+    pub var: VarId,
+    /// First binding slot.
+    pub slot: usize,
+    /// Width in words: 2 for an interval variable, 1 otherwise.
+    pub width: usize,
+}
+
 /// The point-lookup plan: one `U`-guard (or `M`-membership) get, one `F`
 /// fetch, a decode — no images, no COLT, no plan search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuardPlan {
     pub relation: RelationId,
-    /// The probed unique constraint; `None` means every field is constant
-    /// and the probe is a full-fact `M` membership check.
-    pub constraint: Option<ConstraintId>,
-    /// The key constants in guard-key field order.
+    /// The matched key (`Functionality`) statement, probed through its `U`
+    /// guard; `None` means every field is bound by value and the probe is
+    /// the full-fact `M` membership check.
+    pub statement: Option<StatementId>,
+    /// The key constants in guard-byte order: the statement's projection
+    /// order for a `U` probe, field declaration order for the `M` path.
     pub key: Vec<(FieldId, Const)>,
     /// Filters not consumed by the key, checked on the fetched fact
-    /// (fields outside the unique key may still be constrained).
+    /// (fields outside the key's projection may still be constrained).
     pub remaining_filters: Vec<FilterPredicate>,
-    /// Variables decoded from the fetched fact: `(field, var)`; slot order
-    /// is this order.
-    pub vars: Vec<(FieldId, VarId)>,
+    /// Variables decoded from the fetched fact; slot layout follows this
+    /// order through each entry's `(slot, width)` span.
+    pub vars: Vec<GuardVar>,
+}
+
+impl GuardPlan {
+    /// Total binding-slot words (the `SlotWidth` layout over `vars`).
+    #[must_use]
+    pub fn slot_count(&self) -> usize {
+        self.vars.last().map_or(0, |v| v.slot + v.width)
+    }
 }

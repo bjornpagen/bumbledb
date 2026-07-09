@@ -8,7 +8,7 @@ fn selection_params_rotate_differentially() {
     let dir = TempDir::new("prepared-select-diff");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    // Seeded rows over 8 memo values, amounts unique per row.
+    // Seeded rows over 8 memo values, amounts distinct per row.
     let mut state = 0xDEAD_BEEF_u64;
     let mut next = move || {
         state = state

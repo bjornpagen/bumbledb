@@ -54,7 +54,7 @@ pub(crate) fn prepare<'s>(
         ExecPlan::GuardProbe(guard)
     } else {
         // Per-occurrence input estimates (docs/architecture/30-execution.md): row counters
-        // shaped by the selectivity ladder — schema-exact uniques,
+        // shaped by the selectivity ladder — key-exact counts,
         // resident-image distinct counts (peek only: prepare never
         // builds an image for statistics), documented bounds and floors.
         let mut stats_span = obs::span(obs::names::STATS, obs::Category::Prepare);
@@ -109,7 +109,7 @@ pub(crate) fn prepare<'s>(
             plan.slot_count(),
             plan.occurrences().len(),
         ),
-        ExecPlan::GuardProbe(guard) => (None, guard.vars.len(), 1),
+        ExecPlan::GuardProbe(guard) => (None, guard.slot_count(), 1),
     };
 
     // BUILD_COLTS is pure column-schema construction since the unbound-
@@ -314,7 +314,14 @@ fn guard_find_table(
         ExecPlan::GuardProbe(guard) => finds
             .iter()
             .map(|(spec, ty)| match spec {
-                FindSpec::Var { slot, .. } => Some((guard.vars[*slot].0, ty.clone())),
+                FindSpec::Var { slot, .. } => {
+                    let var = guard
+                        .vars
+                        .iter()
+                        .find(|v| v.slot == *slot)
+                        .expect("find slots come from the guard plan's layout");
+                    Some((var.field, ty.clone()))
+                }
                 // aggregate guards keep the sink path
                 FindSpec::Agg { .. } | FindSpec::Arg { .. } => None,
             })

@@ -158,7 +158,7 @@ fn normalized(occurrences: Vec<Occurrence>) -> NormalizedQuery {
 fn estimates_and_actuals_populate_for_a_join_fixture() {
     let dir = TempDir::new("explain-join");
     let schema = schema(2);
-    // R0: 5 rows; R1: joins on R0's serial (FK-walk shape).
+    // R0: 5 rows; R1: joins on R0's serial (reference-walk shape).
     let r0: Vec<(u64, u64)> = (0..5).map(|i| (i, i * 10)).collect();
     let r1: Vec<(u64, u64)> = (0..20).map(|i| (i, i % 5)).collect();
     let views = views_of(&dir, &schema, &[r0, r1]);
@@ -286,7 +286,7 @@ fn guard_probe_queries_report_their_classification() {
     let report = Report::GuardProbe { plan: &guard };
     let text = format!("{report}");
     assert!(text.contains("guard probe"));
-    assert!(text.contains("unique constraint: 0"));
+    assert!(text.contains("key statement: 0"));
 }
 
 #[test]
