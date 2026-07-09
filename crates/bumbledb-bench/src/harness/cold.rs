@@ -19,13 +19,13 @@ where
     let mut work = 0u64;
     for round in 0..proto.warmups + proto.samples {
         touch()?;
-        // Spin-settle (docs/silicon2/09, exp 17): the touch's commit
+        // Spin-settle (measured): the touch's commit
         // fsync just down-clocked this core (DVFS floor 1.05–1.46 GHz,
         // demand-driven recovery) — 2 ms of spin demand reaches the
         // ramp's knee, so the sample measures cold CACHE at working
         // CLOCK instead of conflating the two. NEVER sleep here: the
-        // E-core wake lottery (25–40% at ≥ 5 ms) is exp 17's sharpest
-        // trap.
+        // E-core wake lottery (25–40% at ≥ 5 ms, measured) is the
+        // sharpest trap.
         crate::clockproxy::warm_up(std::time::Duration::from_millis(2));
         let start = Instant::now();
         let count = f()?;

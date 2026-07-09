@@ -1,6 +1,6 @@
-//! The explicit-SIMD and unrolled-fold kernels (docs/architecture/40-execution.md;
-//! sanctioned shapes amended by docs/perf/): fixed-width predicate scans,
-//! survivor compaction, and — PRD 03 — the fold/accumulate kernels behind
+//! The explicit-SIMD and unrolled-fold kernels (docs/architecture/40-execution.md):
+//! fixed-width predicate scans,
+//! survivor compaction, and the fold/accumulate kernels behind
 //! the aggregate sink's batch path, all behind scalar-identical
 //! signatures.
 //!
@@ -13,8 +13,8 @@
 //! against, bit for bit (an aarch64 release build omits them: dead code
 //! is disallowed).
 //!
-//! Fold doctrine (30-execution, rewritten by docs/silicon/06 from
-//! bumblebench exps 03/04): **port topology decides, not lane count.**
+//! Fold doctrine (30-execution, rewritten from measurement): **port
+//! topology decides, not lane count.**
 //! Every flag-writing scalar op (`adds/adcs/cmp/csel`) is confined to 3
 //! of the M2's 6 integer ALUs, so exact scalar summation caps at ~2.8
 //! flag-µops/cycle while the frontend idles; NEON escapes the triad and
@@ -26,8 +26,7 @@
 //! at 60.6 GB/s single-core), so dense folds take NEON unconditionally.
 //! The prior scalar-ILP-first doctrine rested on a 2.45 rows/ns scalar
 //! measurement that reproduces on no core/cache combination of the
-//! reference host — a frequency-contamination artifact, kept on record
-//! (docs/silicon/README, law table) rather than erased. Sum semantics
+//! reference host — a frequency-contamination artifact. Sum semantics
 //! are exact i128/u128 accumulation — bit-identical to the naive fold at
 //! any association, since fewer than 2^64 i64 terms cannot wrap i128;
 //! the NEON sum counts unsigned carries (`vcgtq_u64(old, new)`) into a

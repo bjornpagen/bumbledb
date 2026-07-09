@@ -15,7 +15,7 @@ impl Colt {
     /// probe): the load chain starts here; the hash was phase-1 ALU work.
     /// `level` is a join level.
     ///
-    /// Inlined into the executor's probe loops (docs/silicon/02): an
+    /// Inlined into the executor's probe loops (measured): an
     /// L2-resident probe stream's surviving cost class is instructions
     /// retired per probe — call ceremony here was first on the bill.
     #[inline(always)]
@@ -48,7 +48,7 @@ impl Colt {
                 .then_some(Cursor::Row(position)),
             Cursor::Node(node) => {
                 let map = self.force(node, level);
-                // By reference (docs/silicon/02): `Map` is a 48-byte
+                // By reference (measured): `Map` is a 48-byte
                 // Copy struct — a by-value bind here was one stack copy
                 // per probe, a first-class suspect in the emulation that
                 // reproduced the 55–60 ns plateau.
@@ -73,12 +73,12 @@ impl Colt {
         }
     }
 
-    /// Bucket probe with a precomputed hash (docs/silicon2/05): the
+    /// Bucket probe with a precomputed hash: the
     /// home bucket's 8 ctrl bytes load as one aligned SWAR word and the
     /// tag mask gates the key reads — a tag-missed slot never touches
-    /// the key columns (the shape docs/silicon2/06 measured as the
+    /// the key columns (the shape measured as the
     /// in-situ winner over full-key sweeping). Arity-monomorphic
-    /// (docs/silicon/02): the dispatch happens once per probe, and each
+    /// (measured): the dispatch happens once per probe, and each
     /// candidate's key compare is straight-line word compares — a
     /// runtime-length slice equality here compiled to a `bcmp` call per
     /// tag match.
@@ -93,10 +93,10 @@ impl Colt {
         }
     }
 
-    /// The monomorphic bucket walk (docs/silicon2/05): one aligned load
+    /// The monomorphic bucket walk: one aligned load
     /// of the home bucket's 8 ctrl bytes, SWAR tag/empty masks, key
     /// compares unrolled to `A` strided word compares per candidate.
-    /// Scalar in this PRD — the NEON candidate sweep is PRD 06. A miss
+    /// Scalar — the measured in-situ winner over a NEON sweep. A miss
     /// resolves at the bucket's first empty slot (inserts land there:
     /// buckets fill left to right, so occupied slots are a prefix and a
     /// match can never sit past an empty); a FULL bucket overflows to

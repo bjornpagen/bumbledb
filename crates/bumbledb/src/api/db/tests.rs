@@ -24,7 +24,7 @@ fn named_schema() -> Schema {
     .expect("fixture")
 }
 
-/// The reader cache (docs/silicon/12), semantics pinned:
+/// The reader cache, semantics pinned:
 /// (a) a commit between reads is visible to the next read (the
 ///     parked snapshot is invalidated by the commit sequence);
 /// (b) reads with no intervening commit reuse the parked snapshot
@@ -92,7 +92,7 @@ fn dict_entries(db: &Db<'_>) -> u64 {
     db.env.dict().len(rtxn.raw()).expect("len")
 }
 
-/// PRD 01 (docs/hardening): the delete path never mints — a typo'd
+/// The delete path never mints — a typo'd
 /// delete leaves `_dict` byte-identical, at the storage level.
 #[test]
 fn a_typo_delete_leaves_the_dictionary_unchanged() {

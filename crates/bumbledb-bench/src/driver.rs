@@ -1,6 +1,6 @@
 //! Command orchestration (docs/architecture/60-validation.md): the digest-keyed corpus
 //! cache, verify-before-time enforcement, and the bench run that turns
-//! measurements into PRD 18 artifacts. Every failure message names the
+//! measurements into report artifacts. Every failure message names the
 //! next action.
 
 use std::path::PathBuf;
@@ -52,8 +52,8 @@ struct BenchRun<'a> {
     alloc: bool,
     trace: bool,
     proxy_per_rep: bool,
-    /// Whether the process-start warm discipline ran (docs/silicon2/00):
-    /// the FIRST measured family additionally absorbs the 1.45–1.97 GHz
+    /// Whether the process-start warm discipline ran: the FIRST
+    /// measured family additionally absorbs the 1.45–1.97 GHz
     /// process-start band with extra discarded iterations.
     first_family_warmed: bool,
     trace_dir: PathBuf,

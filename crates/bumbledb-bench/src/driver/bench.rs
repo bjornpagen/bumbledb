@@ -111,7 +111,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         sqlite_run::open_for_bench(&paths.oracle).map_err(|e| format!("open oracle: {e}"))?;
     sqlite_run::FairnessCheck::run(&conn)?;
 
-    // The DVFS ramp eater (docs/silicon/00): ≥ 200 ms of warm work before
+    // The DVFS ramp eater (measured): ≥ 200 ms of warm work before
     // the first family, so opening samples measure a settled clock.
     eprintln!("bench: warming clocks (200 ms spin)");
     clockproxy::warm_up(std::time::Duration::from_millis(200));
@@ -141,8 +141,8 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     let flames = std::mem::take(&mut run.flames);
     drop(run);
 
-    // Write families run AFTER every read family (docs/silicon2/09,
-    // exp 17): an fsync drops the core to its DVFS floor with
+    // Write families run AFTER every read family (measured): an
+    // fsync drops the core to its DVFS floor with
     // demand-driven recovery, so any read family measured in that
     // shadow reads slow-clock time. `bulk` (seconds of fsync) is last
     // of all — asserted inside write_families.

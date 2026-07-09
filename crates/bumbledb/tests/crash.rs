@@ -115,7 +115,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
     }
 }
 
-/// The counters-only child (hardening PRD 01): every write is a no-op
+/// The counters-only child: every write is a no-op
 /// commit that flushes only dirty `Q` marks — one LMDB value in one
 /// transaction. Run only via the parent test below.
 #[test]
@@ -134,7 +134,7 @@ fn crash_child_alloc_loop() {
     }
 }
 
-/// Hardening PRD 01: kill during the counters-only commit shape. The
+/// Kill during the counters-only commit shape. The
 /// reopened `Q` mark is either an old or a new committed value, never
 /// torn — a torn 8-byte counter would surface as `Corruption` (or a
 /// non-monotonic allocation) on the very next alloc.

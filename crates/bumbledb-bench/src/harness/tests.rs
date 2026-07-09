@@ -58,7 +58,7 @@ fn measure_calls_exactly_warmups_plus_samples_and_sums_work() {
 }
 
 /// The per-rep normalization unmasks contamination the block
-/// bracket misses (docs/silicon2/00): a sample that ran at 2.0 GHz
+/// bracket misses: a sample that ran at 2.0 GHz
 /// reads 1.75x slow raw; normalized to the cohort's 3.5 GHz it
 /// rejoins the population — and a GENUINELY slow sample stays slow.
 #[test]
@@ -90,7 +90,7 @@ fn normalization_corrects_slow_clock_samples_and_keeps_real_ones() {
 /// End-to-end: the per-rep mode populates `p50_norm`. Ignored:
 /// timing-adjacent (runs ~200 us of proxy per sample).
 #[test]
-#[ignore = "per-rep proxy e2e (docs/silicon2/00 gate); run manually"]
+#[ignore = "per-rep proxy e2e gate; run manually"]
 fn per_rep_proxy_mode_populates_the_normalized_p50() {
     let proto = Protocol {
         warmups: 1,

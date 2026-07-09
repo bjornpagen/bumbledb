@@ -26,8 +26,8 @@ pub fn execute_guard<S: Sink>(
         return Ok(());
     };
     // The single binding, through the ordinary sink (the aggregate-find
-    // guard path; plain-variable guards take the direct lane, docs/perf/
-    // PRD 11). Interval variables occupy their two-slot span.
+    // guard path; plain-variable guards take the direct lane).
+    // Interval variables occupy their two-slot span.
     bindings.reset();
     for var in &plan.vars {
         match fact_operand(schema, plan.relation, fact, var.field) {

@@ -25,7 +25,7 @@ impl<V: Copy> WordMap<V> {
         );
         self.ctrl = vec![0; new_capacity + WINDOW - 1];
         // The rehash re-probes every key, so it rides the same const-
-        // arity dispatch as the entry points (docs/silicon2/03).
+        // arity dispatch as the entry points.
         match self.arity {
             1 => self.rehash_core::<1>(&old_keys, &old_values),
             2 => self.rehash_core::<2>(&old_keys, &old_values),

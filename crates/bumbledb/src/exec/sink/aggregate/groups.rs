@@ -23,7 +23,7 @@ pub(super) fn load_group_key(
 impl AggregateSink {
     /// Refreshes the leaf-shape cache (outer slots + group constancy) —
     /// pointer-keyed on `key_slots`, so pinned batch-of-one leaves pay
-    /// nothing after the first batch (PRD 05).
+    /// nothing after the first batch.
     pub(super) fn refresh_shape_cache(&mut self, batch: &LeafBatch<'_>) {
         self.cached_outer_slots.clear();
         for slot in 0..self.binding_scratch.len() {

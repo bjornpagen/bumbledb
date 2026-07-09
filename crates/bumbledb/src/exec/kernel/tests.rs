@@ -139,7 +139,7 @@ fn results_preserve_ascending_position_order() {
     assert_eq!(out.len(), 200);
 }
 
-/// PRD 03 (docs/perf/): the fold kernels are bit-identical to naive
+/// The fold kernels are bit-identical to naive
 /// folds across strides, boundary words, duplicate and reversed
 /// indices, and lane-boundary lengths.
 #[test]
@@ -222,11 +222,11 @@ fn fold_kernels_match_the_naive_folds_bit_for_bit() {
     }
 }
 
-/// Fold-throughput evidence (docs/silicon/06 gate; ignored: a timing
+/// Fold-throughput evidence (a gate; ignored: a timing
 /// test runs only by hand —
 /// `cargo test -p bumbledb --release fold_throughput -- --ignored --nocapture`).
 /// The gates: ≥ 7 rows/ns exact dense sums on the reference host
-/// (bumblebench measured the kernel ceiling at 8.8; scalar-era
+/// (the measured kernel ceiling is 8.8; scalar-era
 /// baseline was 2.45–4.6).
 #[test]
 #[ignore = "timing evidence, run by hand on the reference host"]

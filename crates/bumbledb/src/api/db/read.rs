@@ -4,7 +4,7 @@ use crate::error::Result;
 impl Db<'_> {
     /// Runs `f` over one LMDB read snapshot: a consistent generation for
     /// every query and scan inside. Reuses the parked reader when no
-    /// commit intervened (docs/silicon/12) — same snapshot bits, no
+    /// commit intervened — same snapshot bits, no
     /// `mdb_txn_begin`.
     ///
     /// # Errors

@@ -79,7 +79,7 @@ pub(super) fn write_families(
             });
         }
     }
-    // bulk stays LAST (docs/silicon2/09): seconds of fsync — nothing
+    // bulk stays LAST: seconds of fsync — nothing
     // may measure after it in this process.
     if selected("bulk") {
         eprintln!("bench: bulk");
@@ -102,7 +102,7 @@ pub(super) fn write_families(
             ghz: Some(write_ghz(ghz)),
         });
     }
-    // The write-order pin (docs/silicon2/09): bulk's seconds of fsync
+    // The write-order pin (measured): bulk's seconds of fsync
     // leave the deepest clock shadow — nothing measures after it.
     debug_assert!(
         out.iter()

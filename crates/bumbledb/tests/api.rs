@@ -913,8 +913,7 @@ fn compaction_drops_the_freelist_and_preserves_content() {
     );
 }
 
-/// PRD 00 (docs/hardening): the audit's CRITICAL repro, verbatim — a
-/// prepared query executes only against snapshots of the database that
+/// A prepared query executes only against snapshots of the database that
 /// prepared it. Before the environment-instance check, executing A's
 /// prepared query against B (same schema, same generation) returned B's
 /// data through A's memo keys.
@@ -993,7 +992,7 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
     let _ = std::fs::remove_dir_all(&dir_b);
 }
 
-/// PRD 00: the wipe-and-recreate variant — same path, new environment,
+/// The wipe-and-recreate variant — same path, new environment,
 /// new identity. The old prepared query is foreign to the recreated
 /// store even though every byte of the path matches.
 #[test]
@@ -1034,7 +1033,7 @@ fn a_recreated_store_is_foreign_to_old_prepared_queries() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// PRD 00: the advisory lock — a second live handle on the same path is
+/// The advisory lock — a second live handle on the same path is
 /// a loud open-time error; dropping the first releases it.
 #[test]
 fn a_second_handle_on_a_live_path_is_locked_out() {
@@ -1053,7 +1052,7 @@ fn a_second_handle_on_a_live_path_is_locked_out() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// PRD 00: `create` refuses a directory holding someone else's LMDB
+/// `create` refuses a directory holding someone else's LMDB
 /// environment (named databases, no `_meta`), while the half-created
 /// bumbledb recovery case — an empty root — still proceeds.
 #[test]
@@ -1101,7 +1100,7 @@ fn create_refuses_a_foreign_lmdb_environment() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// PRD 00: `Db::write` is non-reentrant — a nested call on the same
+/// `Db::write` is non-reentrant — a nested call on the same
 /// thread panics with the named message instead of deadlocking forever,
 /// and the guard clears for the next (sequential) write.
 #[test]
@@ -1132,7 +1131,7 @@ fn nested_write_panics_instead_of_deadlocking() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// PRD 00 (the audit's requested concurrency family): prepared queries on
+/// The concurrency family: prepared queries on
 /// reader threads race a writer that moves two facts together every
 /// commit. Every execution must observe both rows at one generation —
 /// equal balances, always — never a torn mix of two generations.
@@ -1222,7 +1221,7 @@ fn prepared_executions_observe_exactly_one_generation() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// PRD 01 (docs/hardening): a *successful* commit persists every serial
+/// A *successful* commit persists every serial
 /// value it issued, even when no facts changed — an id the closure
 /// returned to the host is never re-issued. Both no-op shapes: the
 /// empty delta (alloc, nothing else) and the nets-to-nothing delta
@@ -1287,7 +1286,7 @@ fn escaped_serials_survive_noop_commits() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// PRD 01: deleting a fact whose string was never interned is a proven
+/// Deleting a fact whose string was never interned is a proven
 /// no-op — the fact's bytes would embed an id that was never minted —
 /// and the dictionary does not grow. A later insert of that value must
 /// still treat it as novel (both engine-visible effects of not minting).
@@ -1360,7 +1359,7 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// PRD 06 (docs/hardening): an out-of-range relation id at the dynamic
+/// An out-of-range relation id at the dynamic
 /// (ETL) surface is a typed `FactShape` error at every public boundary —
 /// `insert_dyn`, `delete_dyn`, `bulk_load`, and `scan` — never a panic.
 #[test]

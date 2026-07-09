@@ -34,7 +34,7 @@ fn the_stamp_tracks_every_ingredient() {
     assert_ne!(stamp_value(&cases), baseline, "case count is an ingredient");
 }
 
-/// PRD 07 (docs/hardening): the stamp is bound to the binary that
+/// The stamp is bound to the binary that
 /// earned it. The fingerprint ingredient is blake3 of the running
 /// executable, and flipping it flips the stamp — a stamp computed
 /// under any other fingerprint is rejected.
@@ -64,7 +64,7 @@ fn the_stamp_is_bound_to_the_binary() {
     let _ = std::fs::remove_dir_all(&base.out_dir);
 }
 
-/// PRD 07: one side erroring where the other answers is a mismatch
+/// One side erroring where the other answers is a mismatch
 /// bundle with an `ERROR:` artifact — never a panic, never a stamp.
 #[test]
 fn divergence_by_error_is_a_bundle_not_a_panic() {

@@ -1,4 +1,4 @@
-//! The leaf fast-path dispatcher and the pinned-row arm (docs/perf/ PRD 05).
+//! The leaf fast-path dispatcher and the pinned-row arm.
 
 use super::{
     Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, LeafBatch, Sink, Source,
@@ -6,7 +6,7 @@ use super::{
 };
 
 impl Executor {
-    /// The leaf fast paths (docs/perf/ PRD 05). `None` = declined —
+    /// The leaf fast paths. `None` = declined —
     /// multi-position forced nodes the sink cannot scan, sinks without
     /// scan support, byte-column folds — and the generic batch path runs
     /// instead (conservative by construction: correctness never depends

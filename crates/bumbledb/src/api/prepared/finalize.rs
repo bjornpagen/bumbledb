@@ -20,7 +20,7 @@ pub(super) fn finalize(
     out: &mut ResultBuffer,
 ) -> Result<()> {
     memo.clear();
-    // The all-words fast path (docs/perf/ PRD 08): one reservation, then
+    // The all-words fast path: one reservation, then
     // infallible cell writes — no Result, no dictionary plumbing per
     // cell (intervals are word-backed and stay on it). Interned finds
     // keep the resolving path (the per-cell memo probe is the resolution

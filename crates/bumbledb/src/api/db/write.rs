@@ -64,7 +64,7 @@ impl Db<'_> {
         let _guard = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
         self.writer_thread.store(caller, Ordering::Release);
         let _owner = WriterThreadReset(&self.writer_thread);
-        // Drop the parked reader before writing (docs/silicon/12): a
+        // Drop the parked reader before writing: a
         // pinned old snapshot blocks LMDB page reuse for the writer.
         drop(
             self.read_cache

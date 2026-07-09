@@ -216,7 +216,7 @@ mod tests {
     }
 
     /// Both loads at S scale, then the cross-store equality sweep — the
-    /// PRD's passing gate in one test (S is the test scale by design).
+    /// passing gate in one test (S is the test scale by design).
     #[test]
     fn both_stores_load_the_same_corpus() {
         let dir = scratch("corpus-load");

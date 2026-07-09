@@ -228,13 +228,12 @@ pub mod names {
     /// One sink-map rehash inside a measured execution. (new capacity, arity)
     pub const WORDMAP_GROW: &str = "wordmap_grow";
 
-    /// One residency-gated phase-1.5 prefetch pass ran (docs/silicon/10).
+    /// One residency-gated phase-1.5 prefetch pass ran.
     /// (survivors hinted, probed colt's forced footprint in bytes)
     pub const PREFETCH_PASS: &str = "prefetch_pass";
 }
 
-/// The trace-mode fast clock, under the measured cost model
-/// (docs/silicon/01-timer-discipline.md, bumblebench exp 11): a raw
+/// The trace-mode fast clock, under the measured cost model: a raw
 /// `cntvct_el0` read costs 0.30 ns (1/cycle — the instrument is free;
 /// the 24 MHz / 41.67 ns tick granularity is the real limit), and
 /// an unfenced closing stamp can read up to ~50 ns early (bounded by
@@ -277,7 +276,7 @@ mod imp {
         fastclock::ticks_to_ns(fastclock::ticks().wrapping_sub(anchor))
     }
 
-    /// The closing stamp: self-synchronized (docs/silicon/01) — a raw
+    /// The closing stamp: self-synchronized — a raw
     /// closing stamp can read up to ~50 ns early, which is −83% on a
     /// 28 ns span; `CNTVCTSS` cannot slide.
     pub(super) fn now_ns_ss() -> u64 {

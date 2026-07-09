@@ -17,10 +17,10 @@ impl<V: Copy> WordMap<V> {
         }
     }
 
-    /// An empty map presized for ~`hint` entries (docs/perf/ PRD 06): one
+    /// An empty map presized for ~`hint` entries: one
     /// allocation up front instead of a rehash ladder inside the first
     /// measured execution. The map still grows if the hint was short.
-    /// Sizing covers the hint at the shipped max load (docs/silicon/03).
+    /// Sizing covers the hint at the shipped max load.
     #[must_use]
     pub fn with_capacity_hint(arity: usize, hint: usize) -> Self {
         let mut map = Self::new(arity);

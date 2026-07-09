@@ -15,8 +15,8 @@ mod pitch;
 
 pub use build::build;
 
-/// The 16 KiB granule two hardware structures key on (measured,
-/// docs/silicon/11): the L1D's set congruence (256 sets × 64 B lines,
+/// The 16 KiB granule two hardware structures key on (measured):
+/// the L1D's set congruence (256 sets × 64 B lines,
 /// index bits 6–13 — a mild ≤1.55× on real lockstep scans) and the
 /// stream-prefetch trackers' page-number bits (the severe one: 4–6× on
 /// DRAM lockstep scans when pitches sit near a multiple). The layout
@@ -28,7 +28,7 @@ const SET_STRIDE: usize = 16_384;
 
 /// Column base alignment: 128 B is the L2/SLC/DRAM transfer granule
 /// (the L1D manages 64 B lines behind it — both numbers are real,
-/// docs/silicon/11); alignment to the outer granule serves both.
+/// measured); alignment to the outer granule serves both.
 const LINE: usize = 128;
 
 /// One decoded column: a range into the image's backing store. Positions
@@ -125,7 +125,7 @@ pub enum ColumnView<'a> {
 pub struct RelationImage {
     row_count: usize,
     /// Per-column exact distinct-value counts, computed LAZILY on first
-    /// planner demand (docs/silicon/13): the eager per-column pass was
+    /// planner demand: the eager per-column pass was
     /// the cold path's dominant fixed cost (~1.8 ms per 150k rows,
     /// paid before the first query could run — even a guard probe that
     /// needs no estimates). The image is generation-keyed by the cache,
@@ -210,8 +210,8 @@ impl RelationImage {
     }
 }
 
-/// Column pitches padded away from prefetch-tracker aliasing
-/// (docs/silicon/11, bumblebench exp 10). The measured law: the L1D's
+/// Column pitches padded away from prefetch-tracker aliasing.
+/// The measured law: the L1D's
 /// 16 KiB set congruence costs AT MOST 1.55× on real lockstep scans —
 /// but stream-prefetch trackers alias on low 16 KiB page-number bits,
 /// so power-of-two-ish pitches with small (1–3 line) staggers cost

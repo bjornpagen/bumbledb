@@ -29,7 +29,7 @@ pub fn stats(samples: &mut [u64]) -> Stats {
     }
 }
 
-/// The per-rep normalization (docs/silicon2/00): each sample's elapsed
+/// The per-rep normalization: each sample's elapsed
 /// time is rescaled to the cohort's best observed clock
 /// (`ns × ghz / ghz_ref`), so a sample that ran slow only because the
 /// clock was low stops hiding structural findings — and a sample that

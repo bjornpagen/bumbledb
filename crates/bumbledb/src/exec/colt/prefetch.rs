@@ -1,8 +1,8 @@
 use super::{Colt, Cursor, NodeState};
 
 impl Colt {
-    /// Prefetches the bucket a hash will probe (phase 1.5, docs/perf/
-    /// PRD 07, re-addressed by docs/silicon2/05): the bucket's ctrl
+    /// Prefetches the bucket a hash will probe (phase 1.5): the
+    /// bucket's ctrl
     /// group line, key block line, and child block line. A no-op
     /// for pinned rows and unforced nodes.
     #[inline(always)]

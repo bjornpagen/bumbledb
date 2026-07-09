@@ -26,7 +26,7 @@ fn names(events: &[obs::TraceEvent]) -> Vec<&'static str> {
     events.iter().map(|e| e.name).collect()
 }
 
-/// PRD 04's write-path capture contract.
+/// The write-path capture contract.
 #[test]
 fn write_path_traces_phases_with_counts() {
     let dir = TempDir::new("db-trace-write");
@@ -100,7 +100,7 @@ fn write_path_traces_phases_with_counts() {
     assert!(!noop_names.contains(&obs::names::APPLY_DELETES));
 }
 
-/// PRD 01 (docs/hardening): a serial-only no-op commit does not move
+/// A serial-only no-op commit does not move
 /// the generation, so a prepared query's next execution memo-hits —
 /// the counters-only flush invalidated nothing.
 #[test]

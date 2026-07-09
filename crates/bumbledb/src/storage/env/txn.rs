@@ -7,9 +7,9 @@ use super::{Environment, ReadTxn, WriteTxn};
 impl Environment {
     /// Begins a read snapshot. The underlying LMDB transaction is the
     /// `'static` form (the heed env is `Arc`-backed and rides inside it)
-    /// so [`Db`](crate::Db)'s reader cache can hold one across calls
-    /// (docs/silicon/12) — the per-read `mdb_txn_begin` was the point
-    /// path's last fixed cost.
+    /// so [`Db`](crate::Db)'s reader cache can hold one across calls —
+    /// the per-read `mdb_txn_begin` was the point path's last fixed
+    /// cost.
     ///
     /// # Errors
     ///

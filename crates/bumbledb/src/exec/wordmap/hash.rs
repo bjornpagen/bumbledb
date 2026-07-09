@@ -13,8 +13,8 @@ pub(super) fn hash_words(words: &[u64]) -> u64 {
 /// hash-identical (pinned by test). Under const K, LLVM fully unrolls
 /// the fold, hoists prefix hashes of batch-constant words out of the
 /// caller's row loop, and fuses the key gather with the hash — the
-/// free transformations runtime arity blocks (docs/silicon2/03,
-/// exp 15: hand-fused variants measured redundant or worse).
+/// free transformations runtime arity blocks (hand-fused variants
+/// measured redundant or worse).
 #[inline(always)]
 pub(super) fn hash_core<const K: usize>(words: &[u64]) -> u64 {
     debug_assert_eq!(words.len(), K);

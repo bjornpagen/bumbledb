@@ -17,7 +17,7 @@ pub(super) fn gen_config(corpus: &CorpusArgs) -> GenConfig {
 }
 
 /// Resolves the digest-keyed directory for a corpus config (the digest
-/// is the corpus identity — PRD 07).
+/// is the corpus identity).
 #[must_use]
 pub fn corpus_paths(dir: &Path, cfg: GenConfig) -> CorpusPaths {
     let digest = gen::digest_hex(&gen::corpus_digest(cfg));

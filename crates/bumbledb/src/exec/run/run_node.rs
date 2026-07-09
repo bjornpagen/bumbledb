@@ -18,7 +18,7 @@ impl Executor {
         sink: &mut S,
         counters: &mut C,
     ) -> Flow {
-        // The one caller class (docs/perf/ PRD 10): the LAST node — the
+        // The one caller class: the LAST node — the
         // pipeline pumps every middle node, single-node plans call this
         // directly. Zero-node plans are unrepresentable (validation
         // rule 14 rejects atom-less queries).
@@ -26,7 +26,7 @@ impl Executor {
             node_idx + 1 == plan.nodes().len(),
             "run_node is the leaf pass; middle nodes pump"
         );
-        // The leaf fast paths (docs/perf/ PRD 05): pinned-row elision and
+        // The leaf fast paths: pinned-row elision and
         // the scan-fold pushdown. A `None` decline falls through to the
         // generic batch machinery with no counters fired.
         if self.leaf_single && node_idx + 1 == plan.nodes().len() {
@@ -159,8 +159,8 @@ impl Executor {
                 let n = scratch.survivors.len();
                 scratch.hashes.clear();
                 scratch.hashes.resize(n, 0);
-                // One gather loop for every source shape (docs/silicon2/
-                // 10: the single-batch-word twin measured < 2% and died).
+                // One gather loop for every source shape (the
+                // single-batch-word twin measured < 2% and died).
                 {
                     let survivors = &scratch.survivors[..n];
                     let entry_keys = &scratch.entry_keys[..];
@@ -183,8 +183,7 @@ impl Executor {
                 }
                 counters.phase_end(node_idx, JoinPhase::Hash);
 
-                // Phase 1.5 (docs/perf/ PRD 07, re-gated by docs/silicon/
-                // 10): the prefetch pass — every bucket the batch will
+                // Phase 1.5: the prefetch pass — every bucket the batch will
                 // probe gets its ctrl and bucket lines hinted. Gated on
                 // RESIDENCY first (an L2-resident map's prefetch is pure
                 // loss) and batch width second (tiny batches never
@@ -203,7 +202,7 @@ impl Executor {
 
                 // Phase 2: all bucket loads — independent chains the
                 // out-of-order window overlaps — then kernel compaction.
-                // Alias-hoisted locals (docs/silicon2/07).
+                // Alias-hoisted locals.
                 counters.phase_start(node_idx, JoinPhase::Probe);
                 scratch.mask.clear();
                 scratch.mask.resize(n, 0);
@@ -341,7 +340,7 @@ impl Executor {
                 counters,
             );
 
-            // The leaf (docs/perf/ PRD 01): the last plan node hands its
+            // The leaf: the last plan node hands its
             // surviving batch to the sink whole. No recursion, no journal,
             // no cursor writes — nothing below reads them — and no
             // binding stores for the leaf's own vars (the batch carries

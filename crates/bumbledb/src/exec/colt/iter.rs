@@ -75,7 +75,7 @@ impl Colt {
     /// u64 (0 = start, high half 1 = exhausted) so a drain is O(k), never
     /// the O(k²/64) of re-walking the chain per position.
     ///
-    /// Gathers are column-hoisted and unchecked (docs/perf/ PRD 04): each
+    /// Gathers are column-hoisted and unchecked: each
     /// key column resolves its slice once per segment, positions are
     /// debug-asserted in-bounds once, and the interior runs bare loads —
     /// ~1 load per (position, column) instead of an enum match and two
@@ -185,7 +185,7 @@ impl Colt {
         let start = usize::try_from(token.0 & !DENSE_TOKEN_TAG).expect("64-bit usize");
         let len = usize::try_from(m.len).expect("64-bit usize");
         let take = max.min(len.saturating_sub(start));
-        // Hoisted slices (docs/perf/ PRD 04): the dense walk touches the
+        // Hoisted slices: the dense walk touches the
         // occupied list, the key slab, and the slot array — resolved once,
         // with the key line prefetched a few entries ahead (insertion
         // order scatters slots across the map).

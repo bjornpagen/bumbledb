@@ -4,7 +4,7 @@
 //! Aliasing safety is representational: nodes, chunks, map slots, and key
 //! words live in index-addressed pools (`NodeRef`-style u32 indices, never
 //! pointers) — the fix for v5's `UnsafeCell` aliasing UB (post-mortem
-//! §36). Since docs/perf/ PRD 04 the *bounds* checks on iteration
+//! §36). The *bounds* checks on iteration
 //! gathers are debug-asserted once per batch segment and elided in
 //! release (`get_unchecked` per the 00-product unsafe policy: this
 //! module is on the allowlist, and every unchecked read sits behind a
@@ -17,7 +17,7 @@
 //! re-probing the map just enumerated is inexpressible through this API
 //! (post-mortem §34).
 //!
-//! The probe path is `#[inline(always)]` end to end (docs/silicon/02):
+//! The probe path is `#[inline(always)]` end to end (measured):
 //! an L2-resident probe stream's surviving cost class is instructions
 //! retired per probe, and call ceremony was first on the bill. The
 //! lint's "usually a bad idea" is measured wrong here, and the inlining
@@ -65,7 +65,7 @@ pub enum Cursor {
     Row(u32),
 }
 
-/// One position run under an unforced suffix node (docs/perf/ PRD 05):
+/// One position run under an unforced suffix node:
 /// either the all-rows identity range (positions are the indices) or a
 /// borrowed position slice (survivor roots, chunk-chain segments).
 #[derive(Debug, Clone, Copy)]
@@ -142,7 +142,7 @@ struct Chunk {
     next: u32,
 }
 
-/// A decoded occupied-slot child (PRD 07: emptiness lives in the ctrl
+/// A decoded occupied-slot child (emptiness lives in the ctrl
 /// bytes; a bucket's packed child word is always one of these).
 #[derive(Debug, Clone, Copy)]
 enum Slot {
@@ -153,16 +153,16 @@ enum Slot {
 }
 
 /// One forced level's open-addressed map, bucket-of-8 layout
-/// (docs/silicon2/05, exp 16): 8 slots per bucket — 8 ctrl bytes as one
+/// (measured): 8 slots per bucket — 8 ctrl bytes as one
 /// aligned word in the ctrl slab, then `8 × arity` key words
 /// **column-major within the bucket** (key word 0 of all 8 slots
 /// contiguous — the NEON sweep's natural shape) and 8 packed child
 /// words, contiguous in the bucket slab with stride `8·arity + 8`. A
 /// probe loads the bucket ONCE and resolves all 8 candidates from it;
-/// overflow steps to the NEXT bucket (bucket-linear probing — exp 16
+/// overflow steps to the NEXT bucket (bucket-linear probing —
 /// measured displacement negligible below 0.4 load). No tombstones
 /// (build-once, never deleted from). Sizing targets ≤ 0.4 load — the
-/// occupancy-invariant band (exp 16: flat probes 0.15–0.4) — from the
+/// measured occupancy-invariant band (flat probes 0.15–0.4) — from the
 /// position-count guess, rehash-doubling in bucket units when short;
 /// iteration never touches the slot array — it walks the dense
 /// occupied list. Slot indices everywhere (dense entries, probe
@@ -247,8 +247,7 @@ fn ctrl_tag(hash: u64) -> u8 {
 }
 
 /// SWAR zero-byte mask over a bucket's ctrl word: bit 7 of each zero
-/// (empty) byte sets (docs/silicon2/05; same masks as the wordmap's
-/// window probe, docs/silicon/03).
+/// (empty) byte sets (same masks as the wordmap's window probe).
 #[inline(always)]
 fn zero_byte_mask(w: u64) -> u64 {
     w.wrapping_sub(0x0101_0101_0101_0101) & !w & 0x8080_8080_8080_8080
@@ -323,7 +322,7 @@ pub struct Colt {
     nodes: Vec<NodeState>,
     chunks: Vec<Chunk>,
     maps: Vec<Map>,
-    /// Ctrl bytes for every forced map, range per map (PRD 07).
+    /// Ctrl bytes for every forced map, range per map.
     ctrl: Vec<u8>,
     /// Interleaved bucket rows for every forced map, range per map.
     buckets: Vec<u64>,

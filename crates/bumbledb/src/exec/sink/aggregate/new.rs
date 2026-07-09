@@ -13,7 +13,7 @@ impl AggregateSink {
         Self::with_capacity_hint(finds, slot_count, distinct_bindings, 0)
     }
 
-    /// Presized construction (docs/perf/ PRD 06): the dedup seen-set
+    /// Presized construction: the dedup seen-set
     /// takes the plan's output estimate; the group map takes a small
     /// clamp of it (groups are few — the estimate bounds bindings, not
     /// groups).
@@ -99,7 +99,7 @@ impl AggregateSink {
         }
     }
 
-    /// Groups held (finalize's reservation, docs/perf/ PRD 08).
+    /// Groups held (finalize's reservation).
     #[must_use]
     pub fn group_count(&self) -> usize {
         self.groups.len()

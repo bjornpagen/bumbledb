@@ -74,7 +74,7 @@ impl ResultBuffer {
     }
 
     /// Converts a fixed-width word to its cell — infallible by schema
-    /// invariant (docs/perf/ PRD 08: the all-words finalize path carries
+    /// invariant (the all-words finalize path carries
     /// no `Result` and no dictionary plumbing per cell).
     pub(super) fn word_cell(ty: &ValueType, word: u64) -> Cell {
         match ty {

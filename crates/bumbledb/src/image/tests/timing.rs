@@ -9,7 +9,7 @@ use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
 
-/// PRD 12's profile split (ignored: timing evidence, run by hand):
+/// The image-build profile split (ignored: timing evidence, run by hand):
 /// the LMDB cursor walk alone vs the full build, on a Posting-shaped
 /// 150k-row relation.
 #[test]

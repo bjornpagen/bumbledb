@@ -16,7 +16,7 @@ fn skewed_maps_size_by_the_formula_and_iterate_densely() {
     colt.ensure_forced(root, 0);
     // guess = clamp(100_000 / 8, 16, 200_000) = 12_500; nbuckets =
     // next_pow2(12_500 * 5 / 16) = 4_096 → 32_768 slots
-    // (docs/silicon2/05's 0.4-load sizing); 500 keys never cross
+    // (the 0.4-load sizing); 500 keys never cross
     // 0.4 load, so no growth.
     assert_eq!(colt.forced_capacity(root), Some(32_768));
 
@@ -54,7 +54,7 @@ fn near_distinct_maps_grow_to_the_pinned_capacity() {
     // next_pow2(1250 * 5 / 16) = 512 (4,096 slots), then doubles at
     // 0.4 load (grow when len + 1 > 3.2 · nbuckets): 1024 at 1,639,
     // 2048 at 3,277, 4096 at 6,554 — 10,000 < 13,108 stops there,
-    // 32,768 slots (docs/silicon2/05).
+    // 32,768 slots.
     assert_eq!(colt.forced_capacity(root), Some(32_768));
     let entries = drain(&mut colt, root, 0);
     assert_eq!(entries.len(), 10_000);
@@ -123,7 +123,7 @@ fn chunked_lists_round_trip_far_beyond_one_chunk() {
     assert_eq!(got, (0..300).collect::<Vec<u64>>());
 }
 
-/// PRD 04 (docs/hardening): a resume token minted under positions
+/// A resume token minted under positions
 /// iteration is refused after its node is forced — the release
 /// assert fires instead of silently reinterpreting the token as a
 /// dense index (the omission wrong-results class). A fresh token
@@ -168,7 +168,7 @@ fn a_token_that_outlives_a_force_is_refused() {
     assert_eq!(values, (0..200).collect::<Vec<u64>>());
 }
 
-/// PRD 04: `Cursor::Row` iteration honors `max` — `max = 0` yields
+/// `Cursor::Row` iteration honors `max` — `max = 0` yields
 /// nothing into zero-sized buffers (no panic, no over-yield).
 #[test]
 fn row_cursor_iteration_honors_max() {

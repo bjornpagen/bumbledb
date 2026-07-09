@@ -93,12 +93,12 @@ pub struct ProjectionSink {
     seen: WordMap<()>,
     scratch: Vec<u64>,
     /// Per-slot leaf-batch sources, recomputed at batch entry —
-    /// per-slot work, not per-row (docs/silicon2/10: the pointer-keyed
-    /// skip-if-same-shape cache from docs/perf/ PRD 05 measured < 2%
+    /// per-slot work, not per-row (the pointer-keyed
+    /// skip-if-same-shape cache measured < 2%
     /// at family level and was deleted): `Some(word)` reads the batch
     /// keys, `None` the outer bindings.
     batch_sources: Vec<Option<usize>>,
-    /// Rows consumed by the open scan (docs/perf/ PRD 05).
+    /// Rows consumed by the open scan.
     scan_count: u64,
 }
 
@@ -133,7 +133,7 @@ struct ArgSpec {
 /// skip is illegal under aggregation (any new bound variable multiplies
 /// the binding set the fold is defined over). The illegality is also
 /// encoded structurally: aggregate plans mark every node sink-relevant
-/// (hardening PRD 05; run.rs's skip-absorption arm), so even a skip
+/// (run.rs's skip-absorption arm), so even a skip
 /// signaled by mistake would be absorbed at its producing node.
 #[derive(Debug)]
 pub struct AggregateSink {
@@ -192,7 +192,7 @@ pub struct AggregateSink {
     /// whose full binding was first-seen this batch, gather-folded after
     /// the dedup pass exactly like the elided path.
     dedup_survivors: Vec<u32>,
-    /// The open scan's per-aggregate leaf-word sources (PRD 05):
+    /// The open scan's per-aggregate leaf-word sources:
     /// `Some(word)` folds a column, `None` finishes from the constant
     /// outer value at `end_scan`.
     scan_sources: Vec<Option<usize>>,
@@ -204,7 +204,7 @@ pub struct AggregateSink {
     /// per batch was per-row work.
     cached_outer_slots: Vec<usize>,
     cached_constant_group: bool,
-    /// Group-map probes actually issued (the PRD 02 hoist observable).
+    /// Group-map probes actually issued (the group-probe hoist observable).
     #[cfg(test)]
     group_probes: usize,
 }

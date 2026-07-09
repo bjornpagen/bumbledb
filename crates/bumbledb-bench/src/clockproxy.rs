@@ -1,11 +1,11 @@
-//! The serial-ALU clock proxy (docs/silicon/00-baseline-and-harness.md):
-//! a dependent `mul` chain whose cycle count is known by construction
+//! The serial-ALU clock proxy: a dependent `mul` chain whose cycle
+//! count is known by construction
 //! (8 muls × latency 3 = 24 cycles per iteration on the reference core),
 //! timed over a loop-amortized window. Wall time over known cycles is an
 //! effective-frequency estimate — the discriminator that separates "the
 //! code got slower" from "the clock got slower" (co-tenant builds swing
 //! P-cores 2.4–3.5 GHz and manufactured fake 2× findings before this
-//! control existed; bumblebench exp 02).
+//! control existed — measured).
 //!
 //! Contamination is any wall-time inflation of the fixed-cycle chain:
 //! DVFS, E-core scheduling, and preemption all read as a low GHz
@@ -250,9 +250,9 @@ mod tests {
     /// machine with spin threads, and the measuring thread's wall time
     /// inflates (preemption, E-core placement, DVFS) — the proxy reads
     /// below its own quiet floor. Ignored: needs a quiet-then-loaded
-    /// machine and several seconds; run per the PRD 00 gate.
+    /// machine and several seconds; run manually.
     #[test]
-    #[ignore = "spin-load detector demonstration (PRD 00 gate); run manually"]
+    #[ignore = "spin-load detector demonstration; run manually"]
     fn the_detector_fires_under_spin_load() {
         warm_up(Duration::from_millis(200));
         let quiet = (0..20).map(|_| effective_ghz()).fold(f64::MAX, f64::min);

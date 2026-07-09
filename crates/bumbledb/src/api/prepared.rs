@@ -105,7 +105,7 @@ pub struct ResultBuffer {
 struct ResolveMemo {
     /// `(word, tag)` → packed `(start, len)` into the buffer's bytes.
     ranges: crate::exec::wordmap::WordMap<(u32, u32)>,
-    /// The last resolution (docs/perf/ PRD 08): run-coherent columns
+    /// The last resolution: run-coherent columns
     /// (few distinct interns, clustered rows) skip even the map probe.
     last: Option<((u64, u8), (usize, usize))>,
 }
@@ -173,10 +173,10 @@ pub struct PreparedQuery<'s> {
     sink: EitherSink,
     /// Aggregate-finalization row scratch.
     row_scratch: Vec<u64>,
-    /// No interned finds (docs/perf/ PRD 08): finalize takes the
+    /// No interned finds: finalize takes the
     /// infallible all-words blit.
     all_words: bool,
-    /// The guard fast lane's find table (docs/perf/ PRD 11): each output
+    /// The guard fast lane's find table: each output
     /// column's fact field and type, in find order. `Some` for guard
     /// plans whose finds are all plain variables; aggregate-find guards
     /// keep the sink path.
@@ -241,10 +241,10 @@ struct ViewMemo {
 #[allow(clippy::large_enum_variant)] // Projection stays unboxed: it is
                                      // the hot variant (per-item emit paths reach through it), one prepared
                                      // query holds exactly one sink, and the pipeline scratch rows
-                                     // (docs/silicon/04) that tripped the lint are the working set itself.
+                                     // that tripped the lint are the working set itself.
 enum EitherSink {
     Projection(ProjectionSink),
-    /// Boxed: the batch-fold scratch (PRD 02) grew the sink past the
+    /// Boxed: the batch-fold scratch grew the sink past the
     /// variant-size lint; one prepared query holds one sink, and the
     /// indirection is paid once per batch, never per row.
     Aggregate(Box<AggregateSink>),

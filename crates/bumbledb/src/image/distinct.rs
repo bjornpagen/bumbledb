@@ -1,4 +1,4 @@
-//! Lazy per-column exact distinct-value counts (docs/silicon/13): computed
+//! Lazy per-column exact distinct-value counts: computed
 //! on first planner demand and memoized on the image's per-column
 //! `OnceLock`.
 
@@ -11,9 +11,8 @@ impl RelationImage {
     /// String/Bytes column's word distincts are its value distincts.
     /// Column indices come from [`ColumnSpan`](crate::image::ColumnSpan)s —
     /// an interval field has two counts, one per word column.
-    /// Computed on first demand and memoized on the image
-    /// (docs/silicon/13); a plan that never asks — every guard probe —
-    /// never pays the walk.
+    /// Computed on first demand and memoized on the image; a plan that
+    /// never asks — every guard probe — never pays the walk.
     #[must_use]
     pub fn distinct(&self, column: usize) -> u64 {
         *self.distincts[column].get_or_init(|| match self.column(column) {

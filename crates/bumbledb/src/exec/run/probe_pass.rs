@@ -1,4 +1,4 @@
-//! One cross-parent probe pass (docs/perf/ PRD 09).
+//! One cross-parent probe pass.
 
 use super::anti_probe::anti_probe_pass;
 use super::{
@@ -7,7 +7,7 @@ use super::{
 };
 
 impl Executor {
-    /// One cross-parent probe pass (docs/perf/ PRD 09): hashes, prefetch,
+    /// One cross-parent probe pass: hashes, prefetch,
     /// probes, and residuals run over `fill` elements drawn from many
     /// pending entries; survivors either append to the child's pending
     /// (middle child — flushed when a full batch accumulates) or run the
@@ -39,7 +39,7 @@ impl Executor {
             .extend(0..u32::try_from(fill).expect("batch fits u32"));
 
         // Sibling passes: per-parent Slot reads and per-parent cursors.
-        // Instruction diet (docs/silicon/02): value sources resolve once
+        // Instruction diet (measured): value sources resolve once
         // per (pass, subatom) — never a per-element variable search —
         // loop invariants (carried column, start cursor) hoist, and the
         // inner loops write pre-sized buffers by index (a `Vec::push`'s
@@ -72,8 +72,8 @@ impl Executor {
             let n = scratch.survivors.len();
             scratch.hashes.clear();
             scratch.hashes.resize(n, 0);
-            // One gather loop for every source shape (docs/silicon2/10:
-            // the single-batch-word specialized twin measured < 2% at
+            // One gather loop for every source shape (the
+            // single-batch-word specialized twin measured < 2% at
             // family level post-bucket-layout and was deleted).
             {
                 let survivors = &scratch.survivors[..n];
@@ -120,7 +120,7 @@ impl Executor {
             counters.phase_start(node_idx, JoinPhase::Probe);
             scratch.mask.clear();
             scratch.mask.resize(n, 0);
-            // The exp-19 shape itself (docs/silicon2/07): reads
+            // The measured alias-hoist shape: reads
             // survivors/parents/pending_cursors/probe_keys/hashes,
             // writes sibling_children/mask — all hoisted to disjoint
             // locals so the stores cannot alias the read headers.
@@ -279,7 +279,7 @@ impl Executor {
             counters,
         );
 
-        // Survivor routing. Origins (PRD 10): the absorb node mints one
+        // Survivor routing. Origins: the absorb node mints one
         // fresh origin per routed survivor — the cancellation unit is
         // exactly "one absorb-element's subtree"; deeper nodes inherit.
         counters.phase_start(node_idx, JoinPhase::Descend);
@@ -382,9 +382,8 @@ impl Executor {
         // Flush downstream at one accumulated batch. Bounded memory: the child
         // holds at most two batches transiently (the 1×batch trigger
         // plus one pass's appends before the next check). The 2×-batch
-        // threshold (docs/silicon/14) measured 0.0–0.6% once exp 14
-        // priced the per-pass overhead at 11–30 ns — reverted to the
-        // simpler contract (docs/silicon2/08).
+        // threshold measured 0.0–0.6% once the per-pass overhead was
+        // priced at 11–30 ns — reverted to the simpler contract.
         if !leaf && self.scratch[node_idx + 1].pending_len >= self.batch {
             self.pump(tables, plan, node_idx + 1, colts, bindings, sink, counters);
         }

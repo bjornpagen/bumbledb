@@ -64,7 +64,7 @@ fn twelve_column_bases_are_aligned_and_stagger_distinctly() {
     for (i, addr) in addrs.iter().enumerate() {
         assert_eq!(addr % LINE, 0, "column {i} base must be 128-byte aligned");
     }
-    // The pitch rule (docs/silicon/11): no big same-slab pitch lands
+    // The pitch rule (measured): no big same-slab pitch lands
     // within the tracker-aliasing tolerance of a 16 KiB multiple.
     // (At 100 rows every pitch is far below PAD_MIN_PITCH — assert
     // the rule vacuously holds here and structurally in
@@ -81,7 +81,7 @@ fn twelve_column_bases_are_aligned_and_stagger_distinctly() {
     }
 }
 
-/// The pitch rule under DRAM-scale spans (docs/silicon/11): a
+/// The pitch rule under DRAM-scale spans (measured): a
 /// power-of-two row span — the exact shape the old stagger rule
 /// turned into a 4–6× DRAM-scan pathology — lays out with every
 /// same-slab pitch clear of the 16 KiB tracker band.

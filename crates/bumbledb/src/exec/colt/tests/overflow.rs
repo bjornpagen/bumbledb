@@ -1,6 +1,6 @@
 use super::*;
 
-/// The bucket-overflow fixture (docs/silicon2/05): 12 keys chosen so
+/// The bucket-overflow fixture: 12 keys chosen so
 /// their hashes share one home bucket of the 8-bucket map — 8 fill
 /// the home bucket, 4 chain to the next (bucket-linear probing) —
 /// and every key still probes and drains correctly, with same-home

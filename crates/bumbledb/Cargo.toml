@@ -7,7 +7,7 @@ publish = false
 [features]
 trace = []
 # Test-support: global-allocator counting for the zero-warm-allocation
-# gate (PRD 26). Never enabled in production builds.
+# gate. Never enabled in production builds.
 alloc-counter = []
 
 [dependencies]

@@ -1,5 +1,5 @@
 //! The pitch-padding placement mechanism for [`PitchPadder`]
-//! (docs/silicon/11, bumblebench exp 10).
+//! (measured).
 
 use super::{PitchPadder, LINE, PAD_MIN_PITCH, PAD_TOLERANCE, SET_STRIDE};
 
@@ -25,7 +25,7 @@ impl PitchPadder {
         if let Some(prev) = self.prev_start_by_width[slab] {
             let pitch = (idx - prev) * elem_size;
             let residue = pitch % SET_STRIDE;
-            // The measured band (exp 10's discriminators): EXACT 16 KiB
+            // The measured band: EXACT 16 KiB
             // multiples are the fast configuration (stagger 16,384 ran
             // clean); the poison is a small NONZERO offset from one
             // (stagger 8/32 mild, 64/128 severe). Cure by rounding the

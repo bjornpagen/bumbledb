@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::{json, report};
 
 /// `merge`: N run directories' `report.json` → the min-of-runs table on
-/// stdout (docs/silicon/00-baseline-and-harness.md).
+/// stdout.
 ///
 /// # Errors
 ///

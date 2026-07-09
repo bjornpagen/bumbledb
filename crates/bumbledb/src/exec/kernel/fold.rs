@@ -5,7 +5,7 @@ use super::neon;
 /// Contiguous strided sum of biased-i64 words over
 /// `values[offset], values[offset + stride], ..` for `count` elements —
 /// the dense-survivor fast form (no index loads). Stride 1 takes the
-/// NEON carry-count path (docs/silicon/06) through the bias identity:
+/// NEON carry-count path through the bias identity:
 /// each biased word is `value + 2^63 (mod 2^64)`, so
 /// `Σ value = Σ word − count·2^63` exactly in i128.
 ///
@@ -44,7 +44,7 @@ pub fn fold_sum_biased_i64(values: &[u64], stride: usize, offset: usize, count: 
 }
 
 /// Contiguous strided sum of u64 words (see [`fold_sum_biased_i64`]).
-/// Stride 1 takes the NEON carry-count path (docs/silicon/06).
+/// Stride 1 takes the NEON carry-count path.
 ///
 /// # Panics
 ///

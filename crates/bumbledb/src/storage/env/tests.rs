@@ -101,7 +101,7 @@ fn generation_is_zero_on_fresh_database() {
     assert_eq!(rtxn.generation().expect("generation"), 0);
 }
 
-/// PRD 06 (docs/hardening): a stored `u64::MAX` dictionary counter —
+/// A stored `u64::MAX` dictionary counter —
 /// the miss sentinel, never mintable — is typed Corruption at the
 /// read, not an assert.
 #[test]

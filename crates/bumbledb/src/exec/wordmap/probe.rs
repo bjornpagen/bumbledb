@@ -20,7 +20,7 @@ fn eq_byte_mask(w: u64, needle: u8) -> u64 {
 impl<V: Copy> WordMap<V> {
     /// Whether the stored key at `slot` equals `key` — a manual word
     /// loop: a runtime-length slice compare here compiles to a `bcmp`
-    /// call inside the probe loop (docs/silicon/02's law, same as colt).
+    /// call inside the probe loop (the measured law, same as colt).
     #[inline(always)]
     fn key_at_matches(&self, slot: usize, key: &[u64]) -> bool {
         let stored = &self.keys[slot * self.arity..slot * self.arity + key.len()];
@@ -32,8 +32,7 @@ impl<V: Copy> WordMap<V> {
     }
 
     /// [`WordMap::key_at_matches`] with the width fixed at K: the loop
-    /// unrolls to K straight-line compares, `slot * K` strength-reduces
-    /// (docs/silicon2/03).
+    /// unrolls to K straight-line compares, `slot * K` strength-reduces.
     #[inline(always)]
     fn key_at_matches_core<const K: usize>(&self, slot: usize, key: &[u64]) -> bool {
         let stored = &self.keys[slot * K..slot * K + K];
@@ -45,7 +44,7 @@ impl<V: Copy> WordMap<V> {
     }
 
     /// Slot index for `key`: the match, or the empty slot to fill.
-    /// Branchless window scan (docs/silicon/03): eight ctrl bytes load as
+    /// Branchless window scan: eight ctrl bytes load as
     /// one word; SWAR masks mark empties and tag matches; candidates
     /// resolve in slot order. One well-predicted exit branch per window
     /// replaces one branch per slot — the measured 4.6× at hit-rate 0,
@@ -55,7 +54,7 @@ impl<V: Copy> WordMap<V> {
     }
 
     /// [`WordMap::probe`] with the key width fixed at K — the compare is
-    /// K straight-line words (docs/silicon2/03).
+    /// K straight-line words.
     #[inline(always)]
     pub(super) fn probe_core<const K: usize>(&self, key: &[u64], hash: u64) -> (bool, usize) {
         self.probe_with(hash, |slot| self.key_at_matches_core::<K>(slot, key))

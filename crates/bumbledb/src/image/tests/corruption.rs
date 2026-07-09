@@ -39,7 +39,7 @@ fn scan_corruption_aborts_the_build() {
     );
 }
 
-/// PRD 06 (docs/hardening): a corrupt (astronomical) stored `S` row
+/// A corrupt (astronomical) stored `S` row
 /// count is typed Corruption before any slab allocation is
 /// attempted — never an OOM abort.
 #[test]

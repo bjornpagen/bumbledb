@@ -92,7 +92,7 @@ fn reset_retains_selection_capacity() {
     assert_eq!(colt.watermark(), first, "same shape, same footprint");
 }
 
-/// PRD 04: starting a selection-bearing colt before `select()` is a
+/// Starting a selection-bearing colt before `select()` is a
 /// release panic — silently dropped selections are wrong results.
 #[test]
 fn start_before_select_panics() {

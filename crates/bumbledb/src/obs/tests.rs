@@ -46,11 +46,11 @@ fn nothing_records_outside_capture() {
     assert!(events.is_empty());
 }
 
-/// The stamp-cost pin (docs/silicon/01-timer-discipline.md): raw
+/// The stamp-cost pin (measured): raw
 /// `cntvct` reads are ~0.30 ns (1/cycle) and `CNTVCTSS` back-to-back
 /// ~4.6 ns on the reference host; the gates leave headroom for load.
 #[test]
-#[ignore = "stamp-cost pin (docs/silicon/01 gate); timing-sensitive, run manually"]
+#[ignore = "stamp-cost pin gate; timing-sensitive, run manually"]
 fn stamp_costs_match_the_measured_model() {
     use super::fastclock;
     let n = 1_000_000u64;

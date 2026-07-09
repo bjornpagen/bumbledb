@@ -1,13 +1,13 @@
 //! An open-addressed map over inline u64 word tuples (docs/architecture/40-execution.md): the sink
-//! machinery's seen-sets and group maps. Rebuilt by docs/perf/ PRD 06 as
-//! a tag-byte-controlled single-probe-line map: a control byte per slot
+//! machinery's seen-sets and group maps. A tag-byte-controlled
+//! single-probe-line map: a control byte per slot
 //! (0 = empty, else `0x80 | top-7-hash-bits`) means a probe step
 //! usually touches ONE ctrl line, key words load only on a tag match
 //! (~1/128 of collisions falsely), and values are uninitialized until
 //! occupied — no `Option` in the slot array.
 //!
-//! Geometry and probe shape follow the measured law (docs/silicon/03,
-//! bumblebench exps 01/02): these maps are MISS-heavy by construction —
+//! Geometry and probe shape follow the measured law: these maps are
+//! MISS-heavy by construction —
 //! a seen-set's first sight of every distinct key is a miss — and misses
 //! cost more than hits in open addressing (walk length plus a
 //! mispredicted exit branch). Two consequences, built in:
@@ -27,7 +27,7 @@
 //!
 #![allow(unsafe_code)] // 00-product unsafe policy: this module is allowlisted
 #![allow(clippy::inline_always)]
-// docs/silicon/03/04: the probe path's
+// The probe path's
 // inlining is load-bearing (per-element call ceremony was measured cost)
 // and machine-checked by scripts/check-asm.sh, not trusted to attributes.
 //! `unsafe` per the 00-product policy (this module is allowlisted): the
@@ -61,14 +61,14 @@ pub struct WordMap<V> {
     len: usize,
 }
 
-/// The presizing clamp (docs/perf/ PRD 06): hints are planner estimates —
+/// The presizing clamp: hints are planner estimates —
 /// trusted enough to kill rehash storms, capped so a wild estimate cannot
 /// balloon a sink.
 const HINT_CAP: usize = 1 << 21;
 
-/// Max load as `len × LOAD_DEN ≤ capacity` — 3 = 33% (docs/silicon/03,
-/// justified by the {50, 33, 25}% family-ledger sweep recorded in that
-/// PRD's Result: 50% loses badly on spread (+28%), 25% costs triangle
+/// Max load as `len × LOAD_DEN ≤ capacity` — 3 = 33% (justified by
+/// the measured {50, 33, 25}% family-ledger
+/// sweep: 50% loses badly on spread (+28%), 25% costs triangle
 /// +7%; 33% is best-or-near-best everywhere. Misses pay for walks, and
 /// these maps are miss-heavy).
 const LOAD_DEN: usize = 3;

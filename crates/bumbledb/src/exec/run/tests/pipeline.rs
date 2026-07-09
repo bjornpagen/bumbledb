@@ -1,6 +1,6 @@
 use super::*;
 
-/// PRD 09 (docs/perf/): the pipelined executor — dispatched exactly
+/// The pipelined executor — dispatched exactly
 /// for skip-free plans with middle nodes — matches the recursive
 /// executor and the nested-loop oracle bit for bit, across batch
 /// sizes that stress fill boundaries (pending exactly at, one under,
@@ -82,7 +82,7 @@ fn pipelined_executor_matches_recursive_and_oracle() {
     }
 }
 
-/// PRD 09's counter-proven batching: a triangle-shaped skip-free plan
+/// Counter-proven batching: a triangle-shaped skip-free plan
 /// whose middle node used to probe once per parent now probes in
 /// cross-parent batches with mean length well above the gate.
 #[test]

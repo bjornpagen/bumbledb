@@ -2,7 +2,7 @@ use super::*;
 use crate::ir::CmpOp;
 use std::collections::BTreeSet;
 
-/// PRD 05 (docs/hardening): the sink-relevance bits encode aggregate
+/// The sink-relevance bits encode aggregate
 /// skip-illegality. A projection over one variable leaves deeper
 /// nodes skippable (the D2 win); the all-variables sink set an
 /// aggregate plan passes marks every variable-binding node relevant.
@@ -36,7 +36,7 @@ fn aggregate_sink_vars_mark_every_node_relevant() {
     );
 }
 
-/// PRD 03 (docs/hardening): a plan that drops a zero-variable (gate)
+/// A plan that drops a zero-variable (gate)
 /// occurrence must not validate — the executor would skip the
 /// nonemptiness check and return all of R instead of the empty set.
 #[test]
@@ -80,7 +80,7 @@ fn a_plan_dropping_a_gate_occurrence_is_rejected() {
         .expect("a gate subatom is the legal form");
 }
 
-/// PRD 03: a subatom referencing an occurrence outside the query is a
+/// A subatom referencing an occurrence outside the query is a
 /// typed rejection, not an executor index panic.
 #[test]
 fn a_subatom_with_an_unknown_occurrence_is_rejected() {

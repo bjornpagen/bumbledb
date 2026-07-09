@@ -25,7 +25,7 @@ fn pinned_plan_reads_fresh_data_at_newer_generations() {
     assert_eq!(out.len(), 2);
 }
 
-/// PRD 02 (docs/hardening): prepare pins no image — the refcount
+/// Prepare pins no image — the refcount
 /// proof. Executions bind views; a commit plus one execution at the
 /// new generation reaps every stale binding, releasing the old
 /// image entirely (only the test's own Arc survives).
@@ -78,7 +78,7 @@ fn prepare_pins_no_images_and_reaping_releases_them() {
     );
 }
 
-/// PRD 02: prepare on a cold cache builds no images — zero
+/// Prepare on a cold cache builds no images — zero
 /// `image_build`/`cache_hit` events; the first execution pays the
 /// build exactly where a cold execution always paid it.
 #[cfg(feature = "trace")]

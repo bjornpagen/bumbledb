@@ -235,7 +235,7 @@ fn phase_one_hashes_the_whole_batch_before_any_phase_two_probe() {
     assert!(!sink.rows.is_empty());
 }
 
-/// PRD 05 (docs/hardening): a pinned sibling (`Cursor::Row`) probes
+/// A pinned sibling (`Cursor::Row`) probes
 /// by field equality — phase 1 computes no hash for it, and EXPLAIN's
 /// `hashes` counts only hashes computed for map probes. Probes still
 /// count; results are unchanged.

@@ -1,6 +1,6 @@
 use super::*;
 
-/// The hash-quality contract (docs/silicon/05, bumblebench exp 02):
+/// The hash-quality contract (measured):
 /// **false-tag rate — not probe length — is the sensitive quality
 /// metric** for tagged tables. A single-multiply fold hash passes
 /// probe-length vetting (avg 1.40) while collapsing the 7-bit tag to
@@ -144,7 +144,7 @@ fn adversarial_false_tag_rates(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, f6
         .collect()
 }
 
-/// The const-arity contract (docs/silicon2/03): `hash_core::<K>` is
+/// The const-arity contract: `hash_core::<K>` is
 /// hash-IDENTICAL to `hash_words` — same seed, fold order, constants
 /// — so the monomorph and dyn arms land keys in the same slots and
 /// the false-tag gate covers both.
@@ -171,8 +171,8 @@ fn hash_core_is_identical_to_hash_words() {
     check::<8>(&mut next);
 }
 
-/// Probe-step evidence for the Result section: average probe steps
-/// at the shipped max load stay near 1 (docs/silicon/03 gate: ≤ 1.2).
+/// Probe-step evidence: average probe steps
+/// at the shipped max load stay near 1 (gate: ≤ 1.2).
 #[test]
 fn probe_steps_stay_near_one_at_max_load() {
     let mut map: WordMap<()> = WordMap::with_capacity_hint(2, 32_768);

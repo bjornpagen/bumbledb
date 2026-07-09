@@ -1,7 +1,7 @@
 use super::*;
 use crate::error::Error;
 
-/// PRD 02 (docs/perf/): the constant-group fast path — one group
+/// The constant-group fast path — one group
 /// probe per run (memoized across batches), gather folds for every
 /// op — is value-identical to the per-row seen path at every batch
 /// size, on the stats shape (group key bound above the leaf).
@@ -79,7 +79,7 @@ fn constant_group_batches_fold_once_per_run() {
     }
 }
 
-/// PRD 02: the dedup-then-gather arm — duplicate full bindings
+/// The dedup-then-gather arm — duplicate full bindings
 /// collapse before the fold, identically at every batch size, with
 /// the group probe still hoisted.
 #[test]
@@ -133,7 +133,7 @@ fn dedup_constant_group_collapses_duplicates_before_folding() {
     }
 }
 
-/// PRD 02: an aggregate over a slot bound above the leaf folds as
+/// An aggregate over a slot bound above the leaf folds as
 /// value x count (i128/u128 — identical to count additions),
 /// including the deterministic finalize-time overflow.
 #[test]
@@ -200,7 +200,7 @@ fn constant_over_slot_folds_value_times_count() {
     }
 }
 
-/// PRD 01 (docs/perf/): the aggregate leaf batch folds bit-identically
+/// The aggregate leaf batch folds bit-identically
 /// to the scalar degenerate case at every batch size, including the
 /// deterministic-overflow class at the i64 boundary.
 #[test]

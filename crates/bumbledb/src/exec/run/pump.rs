@@ -25,17 +25,17 @@ impl Executor {
         let mut scratch = std::mem::take(&mut self.scratch[node_idx]);
         let carried_w = tables.carried[node_idx].len();
 
-        // One in-order pass (docs/silicon2/08): per-entry dynamic cover
+        // One in-order pass: per-entry dynamic cover
         // choice at processing time, probe_pass flushed on cover change.
-        // Cover-stable segregation (docs/silicon/14) precomputed covers
+        // Cover-stable segregation precomputed covers
         // and grouped entries to lift probe-batch means 37 → 39 — then
-        // exp 14 priced the per-pass overhead it amortizes at 11–30 ns,
-        // TWENTY TIMES below the campaign's assumption, making the whole
+        // the per-pass overhead it amortizes was priced at 11–30 ns,
+        // TWENTY TIMES below the assumption behind it, making the whole
         // batch-mean lever class a ~1% effect; the two-pass machinery is
         // deleted. Cross-call fill carry is rejected by the same number
         // before ever being built: lifting batch means to ~128 is worth
         // 0.2–1.2% of triangle p50 at the measured pass overhead
-        // (bumblebench exp 14) — the lever class is closed. The cover
+        // — the lever class is closed. The cover
         // choice itself is a performance heuristic — any cover is
         // correct — so choosing from live colt state (a force during an
         // earlier flush could have flipped an Estimate to Exact) changes
@@ -48,7 +48,7 @@ impl Executor {
             if self.all_cancelled {
                 break;
             }
-            // D2 (PRD 10): a cancelled origin's pending work is dead —
+            // D2: a cancelled origin's pending work is dead —
             // its outputs could only duplicate rows already seen. Origin
             // ids are meaningful strictly BELOW the absorb node (minted
             // at its routing); above it entries carry the meaningless

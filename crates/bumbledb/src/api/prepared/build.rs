@@ -76,7 +76,7 @@ pub(crate) fn prepare<'s>(
         factor(&mut fj);
         // Group key for projections; every variable for aggregates —
         // skip-illegality under a fold is encoded in the bits themselves
-        // (hardening PRD 05; `ValidatedQuery::sink_vars`).
+        // (`ValidatedQuery::sink_vars`).
         let sink_vars = witness.sink_vars();
         let validated = crate::plan::fj::validate(
             &fj,
@@ -119,7 +119,7 @@ pub(crate) fn prepare<'s>(
         let _s = obs::span(obs::names::BUILD_COLTS, obs::Category::Prepare);
         build_view_memo(&exec_plan)
     };
-    // Sink presizing (docs/perf/ PRD 06): the last node's planner
+    // Sink presizing: the last node's planner
     // estimate bounds the binding stream the sink consumes.
     let output_hint = match &exec_plan {
         ExecPlan::FreeJoin(plan) => {
@@ -304,7 +304,7 @@ fn find_specs(
         .collect()
 }
 
-/// The guard fast lane's find table (docs/perf/ PRD 11): `Some` for
+/// The guard fast lane's find table: `Some` for
 /// guard plans whose finds are all plain variables.
 fn guard_find_table(
     exec_plan: &ExecPlan,

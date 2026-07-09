@@ -44,7 +44,7 @@ impl Colt {
     }
 
     /// Bytes a probe of this trie's forced maps can touch — the
-    /// residency proxy for the prefetch tier decision (docs/silicon/10):
+    /// residency proxy for the prefetch tier decision (measured):
     /// software prefetch pays only when the probed structure misses L2
     /// (+7–12% pure loss when it is resident), and the LIVE forced
     /// footprint is a better tier signal than any prepare-time estimate.

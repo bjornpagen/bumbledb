@@ -14,10 +14,10 @@ impl Colt {
             NodeState::Unforced(Positions::Chunks { count, .. }) => u64::from(count),
             NodeState::Forced { .. } => unreachable!("checked above"),
         };
-        // Initial sizing (docs/silicon2/05): distinct keys are unknown
+        // Initial sizing: distinct keys are unknown
         // before the pass, so start from the same deterministic guess as
         // the linear layout — `clamp(count/8, 16, 2*count)` — and size
-        // buckets for ≤ 0.4 load (exp 16's occupancy-invariant band):
+        // buckets for ≤ 0.4 load (the measured occupancy-invariant band):
         // `nbuckets = next_pow2(guess * 5 / 16)` (5/16 = 1/(8·0.4)),
         // rehash-doubling in bucket units when the guess was short.
         let count_usize = usize::try_from(count).expect("64-bit usize");
@@ -83,7 +83,7 @@ impl Colt {
         // over-size by at most one doubling step, closed by audit as
         // no-action: checking after the probe would probe the old table
         // and insert into the new one. The trigger is the 0.4 max load
-        // (docs/silicon2/05): `(len + 1) > 0.4 · 8 · nbuckets`.
+        // (measured): `(len + 1) > 0.4 · 8 · nbuckets`.
         if (usize::try_from(m.len).expect("64-bit usize") + 1) * 5 > m.nbuckets * 16 {
             self.grow_map(m);
         }

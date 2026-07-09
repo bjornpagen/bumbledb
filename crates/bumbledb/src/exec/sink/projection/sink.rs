@@ -13,8 +13,8 @@ impl Sink for ProjectionSink {
         // tuple lands — new or duplicate — the current suffix can only
         // multiply witnesses. The executor's sink_relevant gating
         // (run.rs's skip-absorption arm) decides how far the skip
-        // unwinds — for projections the bits come from the group key
-        // (hardening PRD 05); signaling on the *first* emit (not the
+        // unwinds — for projections the bits come from the group key;
+        // signaling on the *first* emit (not the
         // first duplicate) saves one full suffix descent per distinct
         // output tuple.
         Flow::SkipSuffix
@@ -35,12 +35,12 @@ impl Sink for ProjectionSink {
                 self.scratch[i] = batch.bindings.get(*slot);
             }
         }
-        // Direct per-row insert — NO hash-ahead pipeline (docs/silicon2/
-        // 02, fleet exp 15): the ping-pong measured +1.2–2.4 ns/row in
+        // Direct per-row insert — NO hash-ahead pipeline (measured):
+        // the ping-pong measured +1.2–2.4 ns/row in
         // this exact shape once the window probe removed the flush
         // exposure it was built to shadow; the deletion IS the
         // optimization.
-        // Alias-hoisted locals (docs/silicon2/07): the row loop reads
+        // Alias-hoisted locals: the row loop reads
         // `batch_sources` and writes `scratch` — disjoint reborrows
         // taken once keep both headers in registers.
         let batch_sources = &self.batch_sources[..];
@@ -66,7 +66,7 @@ impl Sink for ProjectionSink {
         true
     }
 
-    /// The projection scan (docs/perf/ PRD 05): positions insert straight
+    /// The projection scan: positions insert straight
     /// into the seen-set — outer slots prefilled once, leaf words read
     /// live from the columns. The executor never opens a scan on a leaf
     /// that could skip (D2 leaves stay on the batch path), so every
@@ -86,14 +86,14 @@ impl Sink for ProjectionSink {
 
     fn scan_run(&mut self, scan: &LeafScan<'_>, run: SuffixRun<'_>) {
         self.scan_count += run.len() as u64;
-        // Direct per-row inserts, like every sink path (docs/silicon2/
-        // 02, superseding docs/silicon/04): the pipeline ping-pong
+        // Direct per-row inserts, like every sink path (measured):
+        // the pipeline ping-pong
         // measured as pure overhead everywhere — here first (range +10%
         // while it was here: a projection scan's inserts are nearly all
         // first-sight misses, whose predicted exit branch exposes no
-        // hash latency), then on the dedup paths (exp 15's in-shape
-        // measurement). Run-length-adaptive column resolution (docs/
-        // perf/ PRD 05) splits the arms: big runs amortize a hoisted
+        // hash latency), then on the dedup paths (the in-shape
+        // measurement). Run-length-adaptive column resolution
+        // splits the arms: big runs amortize a hoisted
         // column table, fanout-sized runs resolve per position.
         let seen = &mut self.seen;
         let scratch = &mut self.scratch;
@@ -101,7 +101,7 @@ impl Sink for ProjectionSink {
         if run.len() >= crate::exec::SCAN_HOIST_THRESHOLD {
             assert!(sources.len() <= 8, "projection arity cap");
             // Option-free hoist table built by a plain indexed loop
-            // (docs/silicon/08): `array::from_fn` refuses to inline its
+            // (measured): `array::from_fn` refuses to inline its
             // element closure (rust-lang/rust#108765) — measured ~34 ns
             // per 8-entry Option table (eight outlined calls + a 448 B
             // memcpy) vs ~3.4 ns for straight-line stores. `sources[i]`

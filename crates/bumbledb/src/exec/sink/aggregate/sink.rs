@@ -13,7 +13,7 @@ impl Sink for AggregateSink {
         Flow::Continue
     }
 
-    /// The scan-fold pushdown (docs/perf/ PRD 05): supported for the
+    /// The scan-fold pushdown: supported for the
     /// elided constant-group regime over word columns — positions fold
     /// straight through the kernels with no key batch materialized.
     /// Partials are identity-seeded and merged at `end_scan`, so an
@@ -165,7 +165,7 @@ impl Sink for AggregateSink {
         }
         // Merge the partials into the group's row (identity seeds make
         // the merge exact for every op).
-        // Once per batch (docs/silicon2/10: the group-run memo that
+        // Once per batch (the group-run memo that
         // skipped this probe measured < 2% under the const-arity map
         // and was deleted — the probe IS the fast path now).
         let group_idx = self.probe_group();
@@ -184,15 +184,15 @@ impl Sink for AggregateSink {
     }
 
     fn emit_batch(&mut self, batch: &LeafBatch<'_>, stop_on_skip: bool) -> Flow {
-        // Aggregate plans mark every node sink-relevant (hardening
-        // PRD 05), so the executor never asks a fold to stop on skip.
+        // Aggregate plans mark every node sink-relevant, so the
+        // executor never asks a fold to stop on skip.
         debug_assert!(!stop_on_skip, "folds never stop on skip");
         if batch.survivors.is_empty() {
             return Flow::Continue;
         }
         // Group-key classification, cached on the leaf shape: every
         // group slot outer means the whole batch folds into ONE
-        // accumulator row — the trie already grouped it (PRD 02).
+        // accumulator row — the trie already grouped it.
         self.refresh_shape_cache(batch);
         // CountDistinct and Arg-restriction fold per row: their group
         // state is a set, not a scalar accumulator, so no gather kernel

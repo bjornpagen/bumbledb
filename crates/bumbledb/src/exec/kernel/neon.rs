@@ -67,7 +67,7 @@ pub(super) fn filter_range_u64(col: &[u64], lo: u64, hi: u64, out: &mut Vec<u32>
 #[allow(clippy::inline_always)]
 // the fused pass exists to keep the mask
 // closures from becoming outlined calls
-// per two-lane chunk (docs/silicon/02's
+// per two-lane chunk (the
 // instruction-diet law)
 #[inline(always)]
 unsafe fn filter_pair_u64(
@@ -215,7 +215,7 @@ pub(super) fn filter_within_u64(
     }
 }
 
-/// Dense exact-u128 sum via carry counting (docs/silicon/06): four
+/// Dense exact-u128 sum via carry counting: four
 /// 2-lane accumulators take wrapping `vaddq_u64` adds while a
 /// parallel counter lane counts carries — unsigned overflow iff
 /// `new < old`, i.e. `vcgtq_u64(old, new)` all-ones, subtracted to

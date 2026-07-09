@@ -227,7 +227,7 @@ fn corrupted_fact_width_is_an_error_never_a_skip() {
     assert!(fetch(&txn, &schema, R, victim).is_err());
 }
 
-/// PRD 06 (docs/hardening): a 5-byte F key — the bare prefix, the
+/// A 5-byte F key — the bare prefix, the
 /// audit's shape — is typed Corruption from `scan`, never a panic.
 #[test]
 fn a_short_f_key_is_typed_corruption_from_scan() {

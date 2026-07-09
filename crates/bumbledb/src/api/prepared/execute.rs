@@ -81,7 +81,7 @@ impl PreparedQuery<'_> {
     ) -> Result<()> {
         match &self.plan {
             ExecPlan::GuardProbe(guard) => {
-                // The point fast lane (docs/perf/ PRD 11): one probe, one
+                // The point fast lane: one probe, one
                 // fetch, cells decoded straight into the buffer — no
                 // sink, no bindings, no finalize pass. Aggregate-find
                 // guards (rare) keep the sink path below.
@@ -162,7 +162,7 @@ impl PreparedQuery<'_> {
         )
     }
 
-    /// The point fast lane's body (docs/perf/ PRD 11): probe + fetch +
+    /// The point fast lane's body: probe + fetch +
     /// direct cell decode, no sink machinery.
     fn execute_guard_direct(&mut self, txn: &ReadTxn<'_>, out: &mut ResultBuffer) -> Result<()> {
         let ExecPlan::GuardProbe(guard) = &self.plan else {

@@ -1,9 +1,9 @@
-//! D2 origin cancellation bookkeeping (docs/perf/ PRD 10).
+//! D2 origin cancellation bookkeeping.
 
 use super::Executor;
 
 impl Executor {
-    /// Whether an origin's subtree was cancelled (PRD 10).
+    /// Whether an origin's subtree was cancelled.
     pub(super) fn origin_cancelled(&self, origin: u32) -> bool {
         self.cancelled
             .get(origin as usize)

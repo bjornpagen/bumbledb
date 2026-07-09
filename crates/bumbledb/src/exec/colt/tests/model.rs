@@ -1,6 +1,6 @@
 use super::*;
 
-/// PRD 07 (docs/perf/): the ctrl-gated bucket probe is behavior-
+/// The ctrl-gated bucket probe is behavior-
 /// identical to a model across adversarial keys (equal low bits —
 /// same slot, different tags), probe hits AND misses, singleton
 /// upgrades, and growth across the 75% boundary.
@@ -50,7 +50,7 @@ fn bucket_probes_match_the_model_under_adversarial_keys() {
     }
 }
 
-/// PRD 04 (docs/perf/): the column-hoisted unchecked gathers are
+/// The column-hoisted unchecked gathers are
 /// bit-identical to a first-principles per-position reference, across
 /// word and byte columns, the identity (all-rows) root, chunked
 /// children, and resume-token splits at every batch size.

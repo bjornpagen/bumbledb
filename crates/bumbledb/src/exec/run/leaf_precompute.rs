@@ -1,4 +1,4 @@
-//! The single-subatom-leaf precompute (docs/perf/ PRD 05).
+//! The single-subatom-leaf precompute.
 
 use super::{LeafPrecompute, PlacedComparison, Source, ValidatedPlan};
 

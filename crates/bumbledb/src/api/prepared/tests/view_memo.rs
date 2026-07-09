@@ -127,7 +127,7 @@ fn a_generation_bump_invalidates_the_memo() {
     );
 }
 
-/// PRD 03's read-path capture contract (feature `trace`).
+/// The read-path capture contract (feature `trace`).
 #[test]
 fn read_path_traces_phases_memo_hits_and_guard() {
     use crate::obs;

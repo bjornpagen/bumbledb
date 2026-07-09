@@ -139,13 +139,13 @@ pub struct Db<'s> {
     /// `write` on the same thread would self-deadlock on the writer
     /// mutex forever, so it panics loudly instead.
     writer_thread: std::sync::atomic::AtomicU64,
-    /// The reader cache (docs/silicon/12): one parked LMDB read
+    /// The reader cache: one parked LMDB read
     /// transaction, reused while no commit has intervened. Sound because
     /// this handle is the environment's ONLY writer (exclusive lock at
     /// open): if [`Db::commit_seq`] is unchanged since the parked
     /// snapshot began, the parked snapshot is bit-identical to a fresh
     /// one — and the per-read `mdb_txn_begin` (the point path's last
-    /// fixed cost, docs/perf PRD 11) is skipped entirely. Readers
+    /// fixed cost) is skipped entirely. Readers
     /// `try_lock`: contended readers fall back to a fresh transaction,
     /// never block.
     read_cache: Mutex<Option<ParkedReader>>,

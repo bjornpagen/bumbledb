@@ -1,20 +1,19 @@
 use super::*;
 
-/// The build-cost pin (docs/silicon2/05, contract corrected in its
-/// Result): exp 16's 22%-cheaper build belonged to its ctrl-word-
-/// IN-bucket layout (one line per insert); this PRD's spec keeps
-/// ctrl in a separate slab (the probe-side choice), so an insert
-/// touches ctrl + key + child lines and the build measured PARITY
-/// at the DRAM-tier 100k shape (ratio 1.00) and ~1.5× slower at an
-/// L2-resident 20k shape. The pin guards DRAM-tier parity — the
+/// The build-cost pin (measured): the 22%-cheaper build belonged to
+/// a ctrl-word-IN-bucket layout (one line per insert); the shipped
+/// spec keeps ctrl in a separate slab (the probe-side choice), so an
+/// insert touches ctrl + key + child lines and the build measured
+/// PARITY at the DRAM-tier 100k shape (ratio 1.00) and ~1.5× slower
+/// at an L2-resident 20k shape. The pin guards DRAM-tier parity — the
 /// force-heavy ledger families gate the rest. Biased AGAINST the
 /// shipped side: the reference consumes pre-decoded keys while
 /// `force()` pays its own column decode. Ignored: a microbenchmark,
-/// run explicitly for the Result section.
+/// run explicitly.
 #[test]
 #[ignore = "microbench pin: run explicitly with --ignored"]
 fn bucketized_force_stays_at_parity_with_the_linear_build() {
-    /// The pre-PRD build, reconstructed: linear probe over a ctrl
+    /// The prior build, reconstructed: linear probe over a ctrl
     /// byte slab + row-major `(key, child)` rows, first-empty
     /// insert, rehash-double at 75% — near-distinct keys, so the
     /// duplicate/chunk machinery never fires and is elided.

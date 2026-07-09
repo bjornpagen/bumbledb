@@ -1,6 +1,6 @@
 use super::*;
 
-/// PRD 05: the projection scan with leaf residuals (the spread
+/// The projection scan with leaf residuals (the spread
 /// shape) — positions filter through the residual, insert into the
 /// seen-set, and match the brute-force pair set exactly.
 #[test]
@@ -51,7 +51,7 @@ fn projection_scan_filters_residuals_like_the_oracle() {
     }
 }
 
-/// PRD 05: the pinned-leaf elision preserves D2 exactly — a fanout-1
+/// The pinned-leaf elision preserves D2 exactly — a fanout-1
 /// leaf that binds nothing sink-relevant skips per parent element,
 /// and the parent's absorption still runs, at every batch size.
 #[test]
@@ -105,7 +105,7 @@ fn duplicate_witness_projection_dedups_and_skips_suffixes() {
     // suffix multiplies witnesses without changing the projection.
     // The tag node is the LEAF and is not sink-relevant: at batch
     // size 128 all 50 tags arrive in one leaf batch and the batch
-    // emit must stop at the first row (PRD 01's stop_on_skip) — the
+    // emit must stop at the first row (`stop_on_skip`) — the
     // same skip the recursive path signaled per-row.
     let postings = vec![(1u64, 7u64, 100i64)];
     let tags: Vec<(u64, u64)> = (0..50).map(|t| (1, t)).collect();

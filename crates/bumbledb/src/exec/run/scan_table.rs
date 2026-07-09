@@ -1,4 +1,4 @@
-//! The scan-pushdown leaf arm and its residual position filter (docs/perf/ PRD 05).
+//! The scan-pushdown leaf arm and its residual position filter.
 
 use super::{
     Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, LeafScan, Operand, Sink, Source,
@@ -70,7 +70,7 @@ impl Executor {
                         "leaf residual count exceeds the scan table"
                     );
                     // Option-free prefix table, plain indexed loop
-                    // (docs/silicon/08): `array::from_fn` refuses to
+                    // (measured): `array::from_fn` refuses to
                     // inline its element closure (rust-lang/rust#108765)
                     // — this exact table measured ~34 ns/run as a
                     // from_fn-of-Options (eight outlined calls + a 448 B

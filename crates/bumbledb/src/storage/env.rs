@@ -103,7 +103,7 @@ impl ReadTxn<'_> {
         self.env.instance
     }
 
-    /// Unwraps the raw transaction for the reader cache (docs/silicon/12):
+    /// Unwraps the raw transaction for the reader cache:
     /// the snapshot stays open, parked for the next same-generation read.
     pub(crate) fn into_raw_txn(self) -> RoTxn<'static, WithoutTls> {
         self.txn

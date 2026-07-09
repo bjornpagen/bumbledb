@@ -20,12 +20,12 @@ impl AggregateSink {
         }
     }
 
-    /// The constant-group fast path (docs/perf/ PRD 02): one group probe
+    /// The constant-group fast path: one group probe
     /// per batch (memoized across consecutive batches of the same run),
     /// accumulators staged out of the group row, per-op dispatch outside
-    /// the row loop, and the row loops themselves shaped as the gather
-    /// folds PRD 03 kernelizes.
-    /// The dedup-regime batch arm (docs/perf/ PRD 02): the seen-set pass
+    /// the row loop, and the row loops themselves shaped as the
+    /// kernelized gather folds.
+    /// The dedup-regime batch arm: the seen-set pass
     /// runs per row (semantically required — the plan could not prove
     /// distinct bindings), collecting first-seen entries; those then
     /// gather-fold through the same constant-group core as the elided
@@ -33,8 +33,8 @@ impl AggregateSink {
     pub(super) fn fold_batch_dedup_constant_group(&mut self, batch: &LeafBatch<'_>) {
         // The dedup key is the full binding: outer slots constant,
         // prefilled once (cached shape); key slots overwritten per row.
-        // Direct per-row insert — NO hash-ahead pipeline (docs/silicon2/
-        // 02, fleet exp 15: the pipeline measured a strict loss in this
+        // Direct per-row insert — NO hash-ahead pipeline (the
+        // pipeline measured a strict loss in this
         // exact shape, including on mixed hit/miss streams, once the
         // window probe landed).
         for &slot in &self.cached_outer_slots {
@@ -43,7 +43,7 @@ impl AggregateSink {
         let mut survivors = std::mem::take(&mut self.dedup_survivors);
         survivors.clear();
         let seen = self.seen.as_mut().expect("dedup regime");
-        // Alias-hoisted (docs/silicon2/07): `binding_scratch` reborrowed
+        // Alias-hoisted: `binding_scratch` reborrowed
         // once — the survivor pushes and seen-set writes can no longer
         // alias its header.
         let binding_scratch = &mut self.binding_scratch[..];
@@ -65,7 +65,7 @@ impl AggregateSink {
         super::groups::load_group_key(&mut self.key_scratch, &self.group_spans, |slot| {
             batch.bindings.get(slot)
         });
-        // Once per batch (docs/silicon2/10: the group-run memo that
+        // Once per batch (the group-run memo that
         // skipped this probe measured < 2% under the const-arity map
         // and was deleted — the probe IS the fast path now).
         let group_idx = self.probe_group();
@@ -146,7 +146,7 @@ impl AggregateSink {
     }
 }
 
-/// The batch gather folds, kerneled (docs/perf/ PRD 03): dense survivor
+/// The batch gather folds, kerneled: dense survivor
 /// runs (ascending with no gaps — the common all-survived batch) take
 /// the contiguous strided kernels with zero index loads; everything
 /// else takes the `_idx` gather kernels. All take non-empty survivor

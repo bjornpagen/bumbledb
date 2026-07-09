@@ -75,7 +75,7 @@ impl Colt {
     ///
     /// Only on programmer-invariant violations: undersized caller buffers.
     /// Gathers one pinned row's key words at a join level into `out`
-    /// (docs/perf/ PRD 05's pinned-leaf elision: the executor skips the
+    /// (the pinned-leaf elision: the executor skips the
     /// batch machinery for `Cursor::Row` leaves and reads the row
     /// directly).
     ///
@@ -95,7 +95,7 @@ impl Colt {
 
     /// The column view backing one key word of a join level — the
     /// scan-fold pushdown reads columns directly instead of copying key
-    /// batches (docs/perf/ PRD 05).
+    /// batches.
     #[must_use]
     pub fn suffix_column(&self, level: usize, word: usize) -> ColumnView<'_> {
         self.view
@@ -104,7 +104,7 @@ impl Colt {
     }
 
     /// Whether a cursor is an unforced node at a suffix — the scan-fold
-    /// pushdown's cheap pre-check (docs/perf/ PRD 05), so a fallback to
+    /// pushdown's cheap pre-check, so a fallback to
     /// the batch path never has to unwind a half-opened scan.
     #[must_use]
     pub fn suffix_scannable(&self, cursor: Cursor) -> bool {
@@ -156,7 +156,7 @@ impl Colt {
     }
 
     /// Column-hoisted gather of one position segment into
-    /// `keys_out[out_base..]` + pinned-row children (PRD 04's interior).
+    /// `keys_out[out_base..]` + pinned-row children (the unchecked-gather interior).
     #[allow(unsafe_code)]
     pub(super) fn gather_segment(
         &self,

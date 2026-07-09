@@ -32,7 +32,7 @@ impl Bindings {
     }
 
     /// Loads a complete binding row (the pipelined executor's parent
-    /// rows, docs/perf/ PRD 09): every slot becomes bound.
+    /// rows): every slot becomes bound.
     pub fn load_row(&mut self, row: &[u64]) {
         self.slots.copy_from_slice(row);
         #[cfg(debug_assertions)]

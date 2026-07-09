@@ -34,7 +34,7 @@ fn merge_rows(parsed: &json::Value, key: &str) -> Vec<(String, MergeRow)> {
         .collect()
 }
 
-/// The cross-run merge (docs/silicon/00-baseline-and-harness.md): N
+/// The cross-run merge: N
 /// parsed `report.json` documents → one markdown table per family with
 /// each run's p50 and the min-of-runs p50/p95. Blocks whose clock-proxy
 /// bracket stayed contaminated are excluded from the minima, and the

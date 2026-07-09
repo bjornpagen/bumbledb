@@ -1,6 +1,6 @@
 use super::*;
 
-/// PRD 08 (docs/perf/): a finalize-time Overflow leaves the buffer
+/// A finalize-time Overflow leaves the buffer
 /// discardable — the same prepared query re-executes cleanly into
 /// the same buffer (deterministic error), and a passing query then
 /// fills that buffer with exactly its own rows.

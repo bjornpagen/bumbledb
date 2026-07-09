@@ -60,8 +60,8 @@ pub struct ExecDigest {
     pub emits: u64,
 }
 
-/// The clock-proxy bracket around one family's measurement block
-/// (docs/silicon/00-baseline-and-harness.md): effective GHz before and
+/// The clock-proxy bracket around one family's measurement block:
+/// effective GHz before and
 /// after, whether the block was re-measured once, and whether the final
 /// bracket still read contaminated.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -84,7 +84,7 @@ pub struct ReadFamilyReport {
     pub exec: Option<ExecDigest>,
     pub p99_within_budget: bool,
     pub ghz: Option<GhzReport>,
-    /// Per-rep-normalized p50 (docs/silicon2/00), when `--proxy-per-rep`
+    /// Per-rep-normalized p50, when `--proxy-per-rep`
     /// ran: samples rescaled to the cohort's best clock before the
     /// percentile — the confirm-run column that unmasks contamination
     /// hiding inside a block.

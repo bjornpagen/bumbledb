@@ -2,7 +2,7 @@
 //! dependency quarantine forbids serde). Shared by the trace writer and
 //! the report's JSON renderer — one escaping rule, one number format —
 //! plus a minimal parser for reading our own `report.json` back (the
-//! cross-run merge, docs/silicon/00-baseline-and-harness.md).
+//! cross-run merge).
 
 use std::fmt::Write as _;
 

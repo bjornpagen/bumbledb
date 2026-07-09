@@ -46,7 +46,7 @@ pub struct BenchArgs {
     pub samples: Option<u32>,
     pub trace: bool,
     pub alloc: bool,
-    /// Per-rep proxy stamps + normalized p50 (docs/silicon2/00) — the
+    /// Per-rep proxy stamps + normalized p50 — the
     /// confirm-run mode for suspicious findings.
     pub proxy_per_rep: bool,
     pub out: Option<PathBuf>,

@@ -1,4 +1,4 @@
-//! Per-fact decode (docs/perf/ PRD 12): the hoisted per-column decode plan
+//! Per-fact decode: the hoisted per-column decode plan
 //! and the scan loop that fills the structure-of-arrays slabs through it.
 
 use crate::encoding::{decode_bool, decode_enum, TypeDesc};
@@ -9,7 +9,7 @@ use crate::storage::read;
 
 use super::{Column, ColumnSpan, ColumnWidth};
 
-/// One field's hoisted decode step (docs/perf/ PRD 12): static offset,
+/// One field's hoisted decode step: static offset,
 /// validation arm resolved once — the row loop runs bare loads/stores.
 pub(super) enum Decode {
     Word {

@@ -1,4 +1,4 @@
-//! The pipelined executor's static shape tables (docs/perf/ PRD 09).
+//! The pipelined executor's static shape tables.
 
 use super::{PipeTables, ValidatedPlan};
 

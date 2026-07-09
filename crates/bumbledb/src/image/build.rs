@@ -78,7 +78,7 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
     let mut bytes = vec![0u8; byte_len];
 
     // Lay out column bases: 128-byte aligned, pitches padded off 16 KiB
-    // multiples (docs/silicon/11 — the tracker-aliasing rule).
+    // multiples (the tracker-aliasing rule, measured).
     let words_addr = words.as_ptr().addr();
     let bytes_addr = bytes.as_ptr().addr();
     let mut stagger = PitchPadder::new();
@@ -109,7 +109,7 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
     }
 
     // One sequential scan fills every column (positions = scan ordinals),
-    // through the hoisted decode plan (docs/perf/ PRD 12).
+    // through the hoisted decode plan.
     let plan = decode_plan(&field_types, &spans, &columns, layout);
     let position = fill_columns(
         txn,
@@ -128,7 +128,7 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
         }));
     }
 
-    // Distinct counts are NOT computed here (docs/silicon/13): the
+    // Distinct counts are NOT computed here: the
     // eager pass was the cold path's fixed cost. Each column's count
     // materializes on first planner demand ([`RelationImage::distinct`]).
     let distincts: Vec<std::sync::OnceLock<u64>> =

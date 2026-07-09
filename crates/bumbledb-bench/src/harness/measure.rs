@@ -5,10 +5,10 @@ use super::traced::traced_sample;
 use super::{Measurement, Modes, Protocol};
 
 /// [`measure_batched`] in plain per-call timing mode — the thin
-/// convenience for the write/scenario families (docs/silicon2/10
-/// collapsed the former three-layer `measure`/`measure_with`/
-/// `measure_batched` stack to this pair: no caller distinguished the
-/// middle layer from `measure_batched(.., 1, ..)`).
+/// convenience for the write/scenario families (the former three-layer
+/// `measure`/`measure_with`/`measure_batched` stack collapsed to this
+/// pair: no caller distinguished the middle layer from
+/// `measure_batched(.., 1, ..)`).
 ///
 /// # Errors
 ///

@@ -4,7 +4,7 @@ use crate::ir::{AggOp, ParamId};
 use crate::schema::{IntervalElement, StatementDescriptor};
 use crate::storage::dict;
 
-/// PRD 11 (docs/perf/): the guard fast lane — hit, miss, and a
+/// The guard fast lane — hit, miss, and a
 /// param-type error, with an interned find exercising the resolving
 /// column beside the word blits.
 #[test]
@@ -60,7 +60,7 @@ fn guard_fast_lane_hits_misses_and_type_errors() {
     assert!(matches!(err, Error::ParamTypeMismatch { .. }), "{err:?}");
 }
 
-/// The guard lane is stats-free end to end (docs/silicon/13): a
+/// The guard lane is stats-free end to end: a
 /// guard prepare + execute builds NO image — and the lazy distinct
 /// counts live on images, so no image means no stats walk, ever.
 /// This is the isolation gate in its strongest form.

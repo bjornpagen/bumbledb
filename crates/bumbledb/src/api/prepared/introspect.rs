@@ -121,7 +121,7 @@ impl PreparedQuery<'_> {
     /// buffer itself stays typeless: stamping owned types per execution
     /// would allocate on the warm path.
     /// Whether every plan node binds a sink-relevant variable — the
-    /// pipelined executor's eligibility (docs/perf/ PRD 09); `None` for
+    /// pipelined executor's eligibility; `None` for
     /// guard plans (no join runs at all).
     #[must_use]
     pub fn skip_free(&self) -> Option<bool> {
@@ -133,7 +133,7 @@ impl PreparedQuery<'_> {
 
     /// Whether the plan proved distinct bindings (the aggregate sink's
     /// seen-set elision, 30-execution) — the regime observable for the
-    /// batch-fold fast path (docs/perf/ PRD 02).
+    /// batch-fold fast path.
     #[must_use]
     pub fn distinct_bindings(&self) -> bool {
         self.plan.distinct_bindings()

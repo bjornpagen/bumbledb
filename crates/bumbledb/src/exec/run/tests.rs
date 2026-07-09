@@ -231,8 +231,7 @@ fn planned(normalized: &NormalizedQuery, schema: &Schema, order: &[u16]) -> Vali
 }
 
 /// A plan with explicit sink vars — all-vars sets make every node
-/// sink-relevant, i.e. skip-free: the pipelined executor's shapes
-/// (docs/perf/ PRD 09).
+/// sink-relevant, i.e. skip-free: the pipelined executor's shapes.
 fn planned_with_sinks(
     normalized: &NormalizedQuery,
     schema: &Schema,

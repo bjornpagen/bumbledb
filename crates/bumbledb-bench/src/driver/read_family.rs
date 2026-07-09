@@ -94,7 +94,7 @@ impl BenchRun<'_> {
             proxy_per_rep: self.proxy_per_rep,
         };
         let proto = self.proto;
-        // Process-start warm discipline (docs/silicon2/00): the first
+        // Process-start warm discipline: the first
         // family absorbs the start-band beyond its own warmups.
         if !self.first_family_warmed {
             for _ in 0..32 {

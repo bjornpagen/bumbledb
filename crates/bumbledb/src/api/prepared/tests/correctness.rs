@@ -1,6 +1,6 @@
 use super::*;
 
-/// PRD 09 (docs/hardening): u64 ordered comparisons and cross-atom
+/// u64 ordered comparisons and cross-atom
 /// residuals — the generator's new constructs — each pinned against
 /// an independent nested-loop reference, no `SQLite` in sight.
 #[test]
@@ -107,7 +107,7 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
     );
 }
 
-/// PRD 05 (docs/hardening): an aggregate whose body has a node
+/// An aggregate whose body has a node
 /// binding only existential (non-projected, non-aggregated)
 /// variables folds every distinct full binding — pinned against an
 /// independent nested-loop reference. The plan's sink-relevance bits

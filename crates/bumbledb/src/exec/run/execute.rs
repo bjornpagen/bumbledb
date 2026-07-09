@@ -290,7 +290,7 @@ impl Executor {
         // (docs/architecture/40-execution.md).
         self.cursors
             .extend(colts.iter().map(|colt| (colt.start(), 0usize)));
-        // The one executor (docs/perf/ PRD 09/10): multi-node plans
+        // The one executor: multi-node plans
         // pipeline — probes batch ACROSS parent entries, D2 skips cancel
         // origins — and single-node plans are one leaf pass. The
         // recursive per-survivor executor is gone.
@@ -301,7 +301,7 @@ impl Executor {
         }
     }
 
-    /// The pipelined executor (docs/perf/ PRD 09): pending binding rows
+    /// The pipelined executor: pending binding rows
     /// and carried cursor sets flow node to node; each middle node
     /// expands pending entries into shared probe batches (flushed on
     /// cover change), probes every sibling across parents, and appends
@@ -324,7 +324,7 @@ impl Executor {
             scratch.pending_origins.clear();
             scratch.pending_len = 0;
         }
-        // D2 state (PRD 10): a fresh epoch outlives any prior execution's
+        // D2 state: a fresh epoch outlives any prior execution's
         // cancellations without clearing the high-water table.
         self.cancel_epoch = self.cancel_epoch.wrapping_add(1);
         self.next_origin = 0;

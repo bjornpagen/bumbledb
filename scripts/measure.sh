@@ -1,5 +1,5 @@
 #!/bin/sh
-# The measurement mutex (docs/silicon/00-baseline-and-harness.md): wraps
+# The measurement mutex: wraps
 # any timing command in an exclusive machine-wide lock so two agents'
 # measurements never overlap (the clock proxy catches contamination; this
 # prevents the self-inflicted kind). mkdir is atomic; the lock dir names

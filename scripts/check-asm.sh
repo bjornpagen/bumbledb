@@ -1,5 +1,5 @@
 #!/bin/sh
-# Disassembly gates (docs/silicon/README.md rule 7): machine-code
+# Disassembly gates: machine-code
 # properties of hot symbols, asserted mechanically. The gate is the
 # machine code, not the source — an #[inline(always)] that stopped
 # working fails here, not in review.
@@ -50,7 +50,7 @@ no_calls_inside() {
     fi
 }
 
-# --- PRD 02 (docs/silicon/02): the probe path is call-free per element.
+# --- The probe path is call-free per element (measured).
 # The Descend arm may call run_node/pump/sink machinery; what may NOT
 # appear is a call in the per-element probe class: the colt probe chain,
 # the hash, and any runtime-length memory compare. `probe_walk17h`
@@ -58,16 +58,16 @@ no_calls_inside() {
 # `probe_walk_general` is the deliberately-outlined arity>4 cold arm —
 # a `bl` to it is dead weight for every real plan, like a panic call.
 PROBE_CLASS='bcmp|memcmp|get_prehashed|probe_child_at|probe_hashed|probe_walk17h|hash_key|hash_words|position_matches|unpack_child|prefetch_bucket'
-no_calls_inside "probe_pass" "$PROBE_CLASS" "prd02 probe_pass"
-no_calls_inside "run_node"   "$PROBE_CLASS" "prd02 run_node"
+no_calls_inside "probe_pass" "$PROBE_CLASS" "probe probe_pass"
+no_calls_inside "run_node"   "$PROBE_CLASS" "probe run_node"
 
-# --- silicon2 PRD 03: the sink row loops carry the const-arity insert
+# --- The sink row loops carry the const-arity insert
 # chain fully inlined — no hash call, no runtime-length compare, no
 # WordMap call ceremony per row. The dyn fallback (exotic widths) is
 # deliberately outlined as entry_dyn_hashing — a call to IT is legal;
 # calls to the hash or the general compare are not.
 SINK_CLASS='bcmp|memcmp|hash_words|hash_core|get_or_insert|6insert17h|entry_core|entry_hashed_core|probe_with|key_at_matches'
-no_calls_inside "emit_batch" "$SINK_CLASS" "s2prd03 sink emit_batch"
+no_calls_inside "emit_batch" "$SINK_CLASS" "sink emit_batch"
 
 if [ "$FAIL" -ne 0 ]; then
     echo "check-asm: FAILURES (see above)"

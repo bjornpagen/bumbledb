@@ -1,5 +1,5 @@
-//! The pipelined Free Join executor (the architecture docs; docs/perf/
-//! PRDs 01–10) — vectorized execution is the default and only path;
+//! The pipelined Free Join executor (the architecture docs) —
+//! vectorized execution is the default and only path;
 //! batch size 1 is merely its degenerate setting, never a mode
 //! (`docs/architecture/40-execution.md` D4, post-mortem §31).
 //!
@@ -33,7 +33,7 @@ pub enum Flow {
     SkipSuffix,
 }
 
-/// One leaf batch, borrowed from the executor (docs/perf/ PRD 01): the
+/// One leaf batch, borrowed from the executor: the
 /// last plan node's surviving cover entries, handed to the sink whole —
 /// the per-row recursion that used to carry them one binding at a time
 /// is gone. A sink reads each output slot either from the batch's cover
@@ -81,7 +81,7 @@ impl LeafBatch<'_> {
     }
 }
 
-/// A fused leaf scan (docs/perf/ PRD 05): the last node's suffix
+/// A fused leaf scan: the last node's suffix
 /// positions handed to the sink as runs over live column views — no key
 /// batch is materialized at all. The sink reads leaf words through
 /// [`Colt::suffix_column`] and outer slots through `bindings`.
@@ -114,7 +114,7 @@ pub trait Sink {
 
     /// Whether this sink can ever signal [`Flow::SkipSuffix`]. D2 is
     /// legal for projections only; aggregate plans additionally mark
-    /// every node sink-relevant (hardening PRD 05), so a skip under a
+    /// every node sink-relevant, so a skip under a
     /// fold is absorbed at the node that produced it — this method
     /// backs the debug tripwire that a skip never *crosses* a node
     /// unless the sink is allowed to skip at all.
@@ -122,7 +122,7 @@ pub trait Sink {
         false
     }
 
-    /// Opens a fused leaf scan (docs/perf/ PRD 05). `false` — the
+    /// Opens a fused leaf scan. `false` — the
     /// default, and an honest capability report, not a shim — sends the
     /// executor to the batch path. A `true` return is followed by any
     /// number of [`Sink::scan_run`] calls and exactly one
@@ -305,8 +305,8 @@ fn word_base(
     None
 }
 
-/// A leaf-scan residual operand resolved for one big run (docs/perf/
-/// PRD 05): a live column view or the outer binding's constant word.
+/// A leaf-scan residual operand resolved for one big run: a live
+/// column view or the outer binding's constant word.
 /// Small runs skip the table. [`SCAN_HOIST_THRESHOLD`] splits them.
 #[derive(Clone, Copy)]
 enum Operand<'a> {
@@ -314,13 +314,12 @@ enum Operand<'a> {
     Const(u64),
 }
 
-/// Minimum survivors for a phase-1.5 pass — the ONLY prefetch gate
-/// (docs/silicon2/01+10): exp 19 measured the pass at ~12 ns fixed +
-/// ~0.3 ns/probe, so a 4-survivor pass amortizes it and smaller ones
-/// are pure overhead. The former footprint tier (docs/silicon/10's
-/// 2 MiB, retuned to 256 KiB in silicon2/01) was ablated at the
-/// bucket-layout probe floor and measured NOTHING at family level
-/// (silicon2/10's ledger: every family within ±2%, spread −2.9%) —
+/// Minimum survivors for a phase-1.5 pass — the ONLY prefetch gate:
+/// the pass measured at ~12 ns fixed + ~0.3 ns/probe, so a
+/// 4-survivor pass amortizes it and smaller ones are pure overhead.
+/// The former footprint tier (2 MiB, retuned to 256 KiB) was ablated
+/// at the bucket-layout probe floor and measured NOTHING at family
+/// level (every family within ±2%, spread −2.9%) —
 /// covering an at-floor map costs ~nothing at today's 5.7 ns/probe,
 /// and the gate's comparison was the last of its complexity.
 const PREFETCH_WIDTH_FLOOR: usize = 4;
@@ -366,7 +365,7 @@ struct NodeScratch {
     point_checks: Vec<(usize, usize, u64)>,
     /// Per-entry survivor mask for the compaction kernel.
     mask: Vec<u8>,
-    /// Pipeline probe-batch parent indices (docs/perf/ PRD 09): the
+    /// Pipeline probe-batch parent indices: the
     /// pending entry each batch element expanded from.
     parents: Vec<u32>,
     /// Pending binding rows awaiting this node, entry-major
@@ -377,8 +376,8 @@ struct NodeScratch {
     pending_cursors: Vec<Cursor>,
     /// Entries in the pending buffers.
     pending_len: usize,
-    /// Per pending entry: the D2 origin it descends from (docs/perf/
-    /// PRD 10) — minted at the absorb node's routing, inherited below.
+    /// Per pending entry: the D2 origin it descends from — minted at
+    /// the absorb node's routing, inherited below.
     pending_origins: Vec<u32>,
     /// Per probe-batch element: the origin (aligned with `parents`).
     element_origins: Vec<u32>,
@@ -414,7 +413,7 @@ pub struct Executor {
     /// `residual_slots`.
     anti_probe_slots: Vec<Vec<AntiProbeSpec>>,
     scratch: Vec<NodeScratch>,
-    /// The leaf fast paths (docs/perf/ PRD 05) apply when the last node
+    /// The leaf fast paths apply when the last node
     /// has exactly one subatom — its cover is fixed, so the per-entry
     /// source resolution is precomputed here once.
     leaf_single: bool,
@@ -430,13 +429,13 @@ pub struct Executor {
     /// One pinned row's gathered key words (the pinned-leaf elision's
     /// only buffer).
     leaf_row: Vec<u64>,
-    /// Residual-surviving positions of one scan run (docs/perf/ PRD 05:
-    /// leaf residuals filter positions before the sink folds them).
+    /// Residual-surviving positions of one scan run (leaf residuals
+    /// filter positions before the sink folds them).
     scan_filter: Vec<u32>,
-    /// The pipelined executor's shape tables (docs/perf/ PRD 09/10):
+    /// The pipelined executor's shape tables:
     /// `Some` for every multi-node plan — the one executor.
     pipe: Option<PipeTables>,
-    /// D2 origin cancellation (docs/perf/ PRD 10), epoch-stamped:
+    /// D2 origin cancellation, epoch-stamped:
     /// `cancelled[origin] == cancel_epoch` marks a dead subtree. Grows
     /// to the per-execution origin high-water and is never cleared.
     cancelled: Vec<u32>,
@@ -446,7 +445,7 @@ pub struct Executor {
     all_cancelled: bool,
 }
 
-/// The pipelined executor's static shape tables (docs/perf/ PRD 09):
+/// The pipelined executor's static shape tables:
 /// levels and carried-cursor columns are plan facts, derived once.
 struct PipeTables {
     /// `[node][occ]` — the join level an occurrence's cursor sits at when
@@ -458,7 +457,7 @@ struct PipeTables {
     carried: Vec<Vec<usize>>,
     /// `[node][occ]` — the carried column, aligned with `carried[node]`.
     carried_col: Vec<Vec<Option<usize>>>,
-    /// The D2 absorb node (docs/perf/ PRD 10): the deepest sink-relevant
+    /// The D2 absorb node: the deepest sink-relevant
     /// node — a leaf skip cancels the subtree of one of its elements.
     /// `Some(N-1)` (the leaf itself) means skips never cross a node;
     /// `None` means a skip ends the whole execution. Skips only exist
@@ -499,7 +498,7 @@ struct PointProbeSpec {
     parts: Vec<(usize, usize, crate::ir::VarId, usize)>,
 }
 
-/// The single-subatom-leaf precompute (docs/perf/ PRD 05): everything
+/// The single-subatom-leaf precompute: everything
 /// the leaf fast paths would otherwise re-derive per node entry.
 struct LeafPrecompute {
     single: bool,

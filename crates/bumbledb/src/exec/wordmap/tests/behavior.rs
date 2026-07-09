@@ -62,7 +62,7 @@ fn values_accumulate_through_get_or_insert() {
     assert_eq!(totals, vec![(0, 135), (1, 145), (2, 155)]);
 }
 
-/// PRD 04 (docs/hardening): a rehash never changes the entry count,
+/// A rehash never changes the entry count,
 /// so `grow` rewrites the dense list in place — same buffer, same
 /// capacity, insertion order and values intact.
 #[test]
@@ -101,13 +101,13 @@ fn zero_arity_keys_share_one_group() {
     assert_eq!(map.iter().next().map(|(k, v)| (k.len(), *v)), Some((0, 5)));
 }
 
-/// PRD 06 (docs/perf/): the tag-byte map is behavior-identical to a
+/// The tag-byte map is behavior-identical to a
 /// reference model (`HashMap` + insertion-order list) across randomized
 /// operation sequences — inserted flags, values, iteration order,
 /// lengths — including growth boundaries, adversarial equal-low-bits
 /// keys, clear cycles, and every arity in use: all six monomorph
-/// widths plus a dyn-arm width (5) per docs/silicon2/03. The window
-/// probe (docs/silicon/03) rides the same differential: the
+/// widths plus a dyn-arm width (5). The window
+/// probe rides the same differential: the
 /// reference IS the portable implementation of record.
 #[test]
 fn differential_against_the_reference_model() {
@@ -190,9 +190,9 @@ fn the_ctrl_mirror_tracks_the_head() {
     assert!(map.ctrl.iter().all(|&c| c == 0), "clear emptied every byte");
 }
 
-/// PRD 06's presizing gate: a hint covering the workload means ZERO
+/// The presizing gate: a hint covering the workload means ZERO
 /// growth — the map allocated once and never rehashed (now at the
-/// 25% load target, docs/silicon/03).
+/// 25% load target).
 #[test]
 fn a_covering_hint_never_grows() {
     let mut map: WordMap<()> = WordMap::with_capacity_hint(2, 100_000);

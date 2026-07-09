@@ -12,7 +12,7 @@ impl ProjectionSink {
         Self::with_capacity_hint(slots, 0)
     }
 
-    /// Presized construction (docs/perf/ PRD 06): `hint` is the plan's
+    /// Presized construction: `hint` is the plan's
     /// output-cardinality estimate — the seen-set allocates once instead
     /// of rehash-doubling through the first measured execution.
     #[must_use]
@@ -33,7 +33,7 @@ impl ProjectionSink {
         self.seen.iter().map(|(key, ())| key)
     }
 
-    /// Distinct rows held (finalize's reservation, docs/perf/ PRD 08).
+    /// Distinct rows held (finalize's reservation).
     #[must_use]
     pub fn len(&self) -> usize {
         self.seen.len()

@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------
-// The fold kernels (docs/perf/ PRD 03). Two access shapes each:
+// The fold kernels. Two access shapes each:
 // `_idx` gathers `values[idx as usize * stride + offset]` per index (the
-// leaf batch's entry-major keys, and PRD 05's position gathers at
-// stride 1 / offset 0); the contiguous form walks a strided slice
+// leaf batch's entry-major keys, and the scan pushdown's position
+// gathers at stride 1 / offset 0); the contiguous form walks a strided slice
 // directly (dense survivor runs — no index loads at all).
 // ---------------------------------------------------------------------
 

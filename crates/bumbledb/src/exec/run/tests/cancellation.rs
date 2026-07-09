@@ -1,6 +1,6 @@
 use super::*;
 
-/// PRD 10 (docs/perf/): D2 under the pipeline — two parents
+/// D2 under the pipeline — two parents
 /// interleave in one batch, one parent's suffix skips, and the other
 /// parent's rows all emit. The absorb node sits above a
 /// non-sink-relevant middle node, so cancellation crosses a level.
@@ -43,7 +43,7 @@ fn pipelined_d2_cancels_one_origin_and_spares_the_rest() {
     }
 }
 
-/// PRD 10's randomized differential: subset projections force real
+/// The randomized D2 differential: subset projections force real
 /// D2 skips through the pipeline — random instances, orders, and
 /// batch sizes against the nested-loop oracle's projected sets.
 /// (This is the harness specified to catch origin-tagging bugs.)

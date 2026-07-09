@@ -60,7 +60,7 @@ pub struct Stats {
 pub struct Measurement {
     pub stats: Stats,
     pub work: u64,
-    /// The per-rep-normalized p50 (docs/silicon2/00), when
+    /// The per-rep-normalized p50, when
     /// [`Modes::proxy_per_rep`] ran: computed here, where the pre-sort
     /// sample/GHz alignment still exists.
     pub p50_norm: Option<u64>,
@@ -81,16 +81,15 @@ pub struct Measurement {
 pub struct Modes {
     pub alloc_window: bool,
     pub trace: bool,
-    /// Record an effective-GHz proxy reading after EVERY sample
-    /// (docs/silicon2/00): co-tenant contamination arrives as
-    /// seconds-long 2.0–2.4 GHz spans that survive min-of-reps between
-    /// clean block-bracket proxies (fleet exp 15's phantom-finding
-    /// machinery). Costs ~200 µs/sample — a confirm-run tool, not a
+    /// Record an effective-GHz proxy reading after EVERY sample:
+    /// co-tenant contamination arrives as seconds-long 2.0–2.4 GHz
+    /// spans that survive min-of-reps between clean block-bracket
+    /// proxies (measured). Costs ~200 µs/sample — a confirm-run tool, not a
     /// routine gate mode.
     pub proxy_per_rep: bool,
 }
 
-/// The quantum floor (docs/silicon/00-baseline-and-harness.md): the
+/// The quantum floor (measured): the
 /// 24 MHz counter behind `Instant` quantizes at 41.67 ns, so a gated
 /// per-sample time must be at least 12 ticks — below it, the driver
 /// batches executes per sample and divides.

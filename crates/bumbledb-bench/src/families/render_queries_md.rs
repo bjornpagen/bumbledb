@@ -2,7 +2,7 @@ use crate::families::{all, digest, Kind};
 use crate::gen;
 
 /// The human-readable versioned query list: IR + SQL + param policy per
-/// family (PRD 18 emits this into the repo as QUERIES.md).
+/// family (emitted into the repo as QUERIES.md).
 #[must_use]
 pub fn render_queries_md() -> String {
     use std::fmt::Write as _;
