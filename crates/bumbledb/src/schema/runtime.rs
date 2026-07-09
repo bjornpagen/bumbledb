@@ -8,8 +8,8 @@
 
 use crate::error::SchemaError;
 use crate::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, LiteralValue, RelationDescriptor,
-    RelationId, Schema, SchemaDescriptor, Side, StatementDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
+    SchemaDescriptor, Side, StatementDescriptor, Value, ValueType,
 };
 
 /// A field's declared type, name-based (macro-facing).
@@ -95,16 +95,16 @@ fn value_type(ty: FieldTy) -> ValueType {
     }
 }
 
-fn literal_value(literal: LiteralDecl) -> LiteralValue {
+fn literal_value(literal: LiteralDecl) -> Value {
     match literal {
-        LiteralDecl::Bool(v) => LiteralValue::Bool(v),
-        LiteralDecl::U64(v) => LiteralValue::U64(v),
-        LiteralDecl::I64(v) => LiteralValue::I64(v),
-        LiteralDecl::Enum(ordinal) => LiteralValue::Enum(ordinal),
-        LiteralDecl::IntervalU64(start, end) => LiteralValue::IntervalU64(start, end),
-        LiteralDecl::IntervalI64(start, end) => LiteralValue::IntervalI64(start, end),
-        LiteralDecl::Str(s) => LiteralValue::String(s.as_bytes().into()),
-        LiteralDecl::Bytes(b) => LiteralValue::Bytes(b.into()),
+        LiteralDecl::Bool(v) => Value::Bool(v),
+        LiteralDecl::U64(v) => Value::U64(v),
+        LiteralDecl::I64(v) => Value::I64(v),
+        LiteralDecl::Enum(ordinal) => Value::Enum(ordinal),
+        LiteralDecl::IntervalU64(start, end) => Value::IntervalU64(start, end),
+        LiteralDecl::IntervalI64(start, end) => Value::IntervalI64(start, end),
+        LiteralDecl::Str(s) => Value::String(s.as_bytes().into()),
+        LiteralDecl::Bytes(b) => Value::Bytes(b.into()),
     }
 }
 

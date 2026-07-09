@@ -98,7 +98,7 @@ fn nullary_relation_constructs() {
 /// declared *after* it (forward reference).
 #[test]
 fn example_schema_resolves_exactly() {
-    let savings = LiteralValue::Enum(1); // ["Checking", "Savings"]
+    let savings = Value::Enum(1); // ["Checking", "Savings"]
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {

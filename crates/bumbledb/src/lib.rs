@@ -63,6 +63,7 @@ pub mod obs;
 pub(crate) mod plan;
 pub mod schema;
 pub(crate) mod storage;
+mod value;
 
 pub use api::db::{BulkLoadError, Db, Fact, Serial, SerialKeyed, Snapshot, WriteTx};
 pub use api::prepared::{ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row};

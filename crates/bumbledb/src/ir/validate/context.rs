@@ -4,10 +4,10 @@ use crate::ir::{CmpOp, Comparison, ParamId, Query, Term, Value, VarId};
 use crate::schema::{FieldId, IntervalElement, Schema, ValueType};
 
 /// The structural type of a literal, for matching against a field or
-/// variable type — the shared [`crate::ir::value_matches`] check, so a
+/// variable type — the shared [`crate::schema::value_matches`] check, so a
 /// non-UTF-8 `String` literal is a type mismatch here exactly as it is at
 /// bind time and on the dynamic write path.
-use crate::ir::{value_matches as literal_matches, ValueMismatch as LiteralMismatch};
+use crate::schema::{value_matches as literal_matches, ValueMismatch as LiteralMismatch};
 
 /// The scalar type of an interval's element domain.
 fn element_type(element: IntervalElement) -> ValueType {

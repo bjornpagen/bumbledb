@@ -81,6 +81,22 @@ impl Interval<i64> {
     }
 }
 
+impl From<Interval<u64>> for crate::value::Value {
+    /// Hosts construct interval literals through the checked
+    /// [`Interval`] type, so a converted literal already satisfies
+    /// `start < end`.
+    fn from(interval: Interval<u64>) -> Self {
+        Self::IntervalU64(interval.start(), interval.end())
+    }
+}
+
+impl From<Interval<i64>> for crate::value::Value {
+    /// Bounds discipline as [`From<Interval<u64>>`].
+    fn from(interval: Interval<i64>) -> Self {
+        Self::IntervalI64(interval.start(), interval.end())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Interval;

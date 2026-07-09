@@ -9,8 +9,11 @@
 pub(crate) mod normalize;
 pub(crate) mod validate;
 
-use crate::interval::Interval;
 use crate::schema::{FieldId, RelationId};
+
+/// The one literal-value sum, shared with statement selections — the
+/// normative IR block in `docs/architecture/20-query-ir.md` names it here.
+pub use crate::value::Value;
 
 /// Dense query-variable id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -19,124 +22,6 @@ pub struct VarId(pub u16);
 /// Dense parameter id; values are supplied positionally at execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ParamId(pub u16);
-
-/// A literal value. Exactly one variant per data-model type — no universal
-/// integer (U64 and I64 literals are exact-typed; out-of-range is
-/// unrepresentable rather than truncated), and Bytes exists by construction
-/// (the v5 hole, post-mortem §13).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Value {
-    Bool(bool),
-    U64(u64),
-    I64(i64),
-    /// Declaration-order ordinal; range-checked against the bound field's
-    /// variant list at validation.
-    Enum(u8),
-    /// Raw UTF-8 bytes; interning is the engine's job (resolved to an
-    /// intern id per execution — a dictionary miss means empty result).
-    String(Box<[u8]>),
-    /// Raw bytes; interning as above.
-    Bytes(Box<[u8]>),
-    /// A half-open `[start, end)` over U64 (`docs/architecture/20-query-ir.md`).
-    /// Dumb data by decision: `start < end` is a validation-boundary rule,
-    /// not a constructor invariant — hosts construct through the checked
-    /// [`crate::Interval`] type.
-    IntervalU64(u64, u64),
-    /// A half-open `[start, end)` over I64; bounds as [`Value::IntervalU64`].
-    IntervalI64(i64, i64),
-}
-
-impl From<Interval<u64>> for Value {
-    /// Hosts construct interval literals through the checked
-    /// [`crate::Interval`] type, so a converted literal already satisfies
-    /// `start < end`.
-    fn from(interval: Interval<u64>) -> Self {
-        Self::IntervalU64(interval.start(), interval.end())
-    }
-}
-
-impl From<Interval<i64>> for Value {
-    /// Bounds discipline as [`From<Interval<u64>>`].
-    fn from(interval: Interval<i64>) -> Self {
-        Self::IntervalI64(interval.start(), interval.end())
-    }
-}
-
-/// How a [`Value`] failed to match an expected [`crate::schema::ValueType`]
-/// — the shared vocabulary of the three checking boundaries (query
-/// literals, bound params, dynamic facts).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ValueMismatch {
-    /// Wrong structural kind.
-    Type,
-    /// Enum ordinal at or beyond the variant count.
-    EnumOrdinal(u8),
-    /// `Value::String` bytes are not UTF-8 (the type's contract).
-    Utf8,
-    /// Interval bounds with `start >= end` — the empty interval denotes
-    /// no points and is unrepresentable
-    /// (`docs/architecture/10-data-model.md`).
-    IntervalEmpty,
-}
-
-/// The one `Value` ↔ `ValueType` compatibility check (kind, enum ordinal
-/// range, String UTF-8, interval non-emptiness) — validation, bind-time,
-/// and the dynamic write path all call this so the rules cannot drift
-/// apart. Note the membership rule is *not* here: an element-typed value
-/// against an `Interval` field is a kind mismatch to this check, and the
-/// IR validation boundary owns that bivalence
-/// (`ir::validate`, the bivalent-anchor resolution).
-pub(crate) fn value_matches(
-    value: &Value,
-    expected: &crate::schema::ValueType,
-) -> Result<(), ValueMismatch> {
-    use crate::schema::{IntervalElement, ValueType};
-    match (value, expected) {
-        (Value::Bool(_), ValueType::Bool)
-        | (Value::U64(_), ValueType::U64)
-        | (Value::I64(_), ValueType::I64)
-        | (Value::Bytes(_), ValueType::Bytes) => Ok(()),
-        (Value::String(raw), ValueType::String) => {
-            if std::str::from_utf8(raw).is_ok() {
-                Ok(())
-            } else {
-                Err(ValueMismatch::Utf8)
-            }
-        }
-        (Value::Enum(ordinal), ValueType::Enum { variants }) => {
-            if usize::from(*ordinal) < variants.len() {
-                Ok(())
-            } else {
-                Err(ValueMismatch::EnumOrdinal(*ordinal))
-            }
-        }
-        (
-            Value::IntervalU64(start, end),
-            ValueType::Interval {
-                element: IntervalElement::U64,
-            },
-        ) => {
-            if start < end {
-                Ok(())
-            } else {
-                Err(ValueMismatch::IntervalEmpty)
-            }
-        }
-        (
-            Value::IntervalI64(start, end),
-            ValueType::Interval {
-                element: IntervalElement::I64,
-            },
-        ) => {
-            if start < end {
-                Ok(())
-            } else {
-                Err(ValueMismatch::IntervalEmpty)
-            }
-        }
-        _ => Err(ValueMismatch::Type),
-    }
-}
 
 /// One term of an atom binding or comparison.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -289,6 +174,7 @@ pub struct Query {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interval::Interval;
 
     // These constructions double as documentation of the doc's example
     // query shapes over the ledger schema (Account, Posting, ...).

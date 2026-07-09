@@ -44,7 +44,7 @@ Those collapse **first**, so every later PRD lands on clean ground.
 
 ## Execution order
 
-Strict order. Hard sequencing rules: **05 requires 01**, **14 requires 05**,
+Strict order. Hard sequencing rules: **14 requires 05**,
 **15 requires 05 and 10**, and **the full two-oracle verify runs green
 immediately after 12 lands** (the chase is the only real regression risk)
 before anything stacks on top. The campaign closes with re-earned benchmarks
@@ -53,7 +53,7 @@ orchestrator work, not a PRD.
 
 | Phase | PRDs | What exists at the end |
 |---|---|---|
-| R — representation collapse | 01 02 03 | One `Value` (two parallel sums deleted, ~40 match arms gone); the macro emits descriptors directly (the decl mirror-world deleted); `==` pairing is a sealed fact, not a render-time search |
+| R — representation collapse | 02 03 | One `Value` (landed); the macro emits descriptors directly (the decl mirror-world deleted); `==` pairing is a sealed fact, not a render-time search |
 | A — correctness | 04 05 06 | No reachable panic from valid input; oracles agree on every verdict label — each fixed by deleting the representation that made the case expressible, not by guarding it |
 | B — contract & hardening | 07 08 | The allocation contract states its true invariant and the gate can see violations; reopen trust bounded; reader cap configured |
 | C — the sweeper | 09 10 | `Db::verify_store`: full store coherence + global judgment re-verification, CLI-wrapped |
@@ -65,7 +65,6 @@ orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [01 — One Value](01-one-value.md)
 - [02 — Kill the decl layer](02-kill-decl-layer.md)
 - [03 — The materialized mirror](03-materialized-mirror.md)
 - [04 — Hoist-path scratch: delete the caps](04-hoist-scratch.md)

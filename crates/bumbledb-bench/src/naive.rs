@@ -28,7 +28,7 @@ pub use tuple::Tuple;
 
 use std::collections::BTreeSet;
 
-use bumbledb::schema::{LiteralValue, SchemaDescriptor, Side, StatementDescriptor, ValueType};
+use bumbledb::schema::{SchemaDescriptor, Side, StatementDescriptor, ValueType};
 use bumbledb::{Direction, RelationId, StatementId, Value};
 
 use tuple::{endpoints, overlaps};
@@ -298,28 +298,14 @@ impl NaiveDb {
 }
 
 /// Does the fact satisfy a side's σ — plain value equality per selected
-/// field?
-fn satisfies_selection(fact: &Tuple, selection: &[(bumbledb::FieldId, LiteralValue)]) -> bool {
+/// field? σ literals *are* decoded values (the one shared [`Value`] sum),
+/// so the comparison is structural, no conversion anywhere.
+fn satisfies_selection(fact: &Tuple, selection: &[(bumbledb::FieldId, Value)]) -> bool {
     selection
         .iter()
-        .all(|(field, literal)| fact.0[field.0 as usize] == literal_value(literal))
+        .all(|(field, literal)| fact.0[field.0 as usize] == *literal)
 }
 
 fn statement_id(index: usize) -> StatementId {
     StatementId(u16::try_from(index).expect("statement count fits u16"))
-}
-
-/// A selection literal as a plain [`Value`] — the model compares decoded
-/// values, so σ literals convert once and compare structurally.
-fn literal_value(literal: &LiteralValue) -> Value {
-    match literal {
-        LiteralValue::Bool(v) => Value::Bool(*v),
-        LiteralValue::U64(v) => Value::U64(*v),
-        LiteralValue::I64(v) => Value::I64(*v),
-        LiteralValue::Enum(v) => Value::Enum(*v),
-        LiteralValue::IntervalU64(start, end) => Value::IntervalU64(*start, *end),
-        LiteralValue::IntervalI64(start, end) => Value::IntervalI64(*start, *end),
-        LiteralValue::String(bytes) => Value::String(bytes.clone()),
-        LiteralValue::Bytes(bytes) => Value::Bytes(bytes.clone()),
-    }
 }

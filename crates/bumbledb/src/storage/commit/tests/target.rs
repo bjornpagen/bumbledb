@@ -14,13 +14,14 @@
 use crate::encoding::{encode_fact, ValueRef};
 use crate::error::{Direction, Error, Result};
 use crate::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, LiteralValue, RelationDescriptor,
-    RelationId, Schema, SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
+    SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
 };
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
+use crate::value::Value;
 
 use super::committed_data;
 
@@ -76,7 +77,7 @@ fn schema() -> Schema {
     let selected = |relation: RelationId, projection: &[u16], field: u16, literal: bool| Side {
         relation,
         projection: projection.iter().map(|&f| FieldId(f)).collect(),
-        selection: Box::new([(FieldId(field), LiteralValue::Bool(literal))]),
+        selection: Box::new([(FieldId(field), Value::Bool(literal))]),
     };
     SchemaDescriptor {
         relations: vec![

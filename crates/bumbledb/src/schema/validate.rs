@@ -13,12 +13,13 @@
 //! rejected (the PRD 02 descriptor decision; see PRD 03 § Conflict).
 
 use super::{
-    FactLayout, FieldDescriptor, FieldId, Generation, IntervalElement, LiteralValue, Relation,
-    RelationDescriptor, RelationId, Resolved, Schema, SchemaDescriptor, Side, Statement,
-    StatementDescriptor, StatementId, ValueType,
+    value_matches, FactLayout, FieldDescriptor, FieldId, Generation, Relation, RelationDescriptor,
+    RelationId, Resolved, Schema, SchemaDescriptor, Side, Statement, StatementDescriptor,
+    StatementId, ValueMismatch, ValueType,
 };
 use crate::error::SchemaError;
 use crate::storage::keys::MAX_GUARD_WIDTH;
+use crate::value::Value;
 
 impl SchemaDescriptor {
     /// Validates the declaration into the sealed [`Schema`] witness.
@@ -401,80 +402,38 @@ fn validate_side_selection(
 /// Roster "selection literal type mismatch (including out-of-range enum
 /// ordinals and non-UTF-8 string literals)", plus the interval bound rule
 /// `start < end` (an empty interval denotes no points, and a fact never
-/// denotes nothing).
+/// denotes nothing) — the one shared [`value_matches`] check, so the σ
+/// rules cannot drift from the query-literal and dynamic-fact boundaries.
 fn validate_selection_literal(
     id: StatementId,
     relation: RelationId,
     field: FieldId,
     value_type: &ValueType,
-    literal: &LiteralValue,
+    literal: &Value,
 ) -> Result<(), SchemaError> {
-    match (value_type, literal) {
-        (ValueType::Bool, LiteralValue::Bool(_))
-        | (ValueType::U64, LiteralValue::U64(_))
-        | (ValueType::I64, LiteralValue::I64(_))
-        | (ValueType::Bytes, LiteralValue::Bytes(_)) => Ok(()),
-        (ValueType::Enum { variants }, LiteralValue::Enum(ordinal)) => {
-            if usize::from(*ordinal) < variants.len() {
-                Ok(())
-            } else {
-                Err(SchemaError::SelectionEnumOrdinalOutOfRange {
-                    statement: id,
-                    relation,
-                    field,
-                    ordinal: *ordinal,
-                })
-            }
-        }
-        (ValueType::String, LiteralValue::String(bytes)) => {
-            if std::str::from_utf8(bytes).is_ok() {
-                Ok(())
-            } else {
-                Err(SchemaError::SelectionLiteralNotUtf8 {
-                    statement: id,
-                    relation,
-                    field,
-                })
-            }
-        }
-        (
-            ValueType::Interval {
-                element: IntervalElement::U64,
-            },
-            LiteralValue::IntervalU64(start, end),
-        ) => {
-            if start < end {
-                Ok(())
-            } else {
-                Err(SchemaError::SelectionIntervalEmpty {
-                    statement: id,
-                    relation,
-                    field,
-                })
-            }
-        }
-        (
-            ValueType::Interval {
-                element: IntervalElement::I64,
-            },
-            LiteralValue::IntervalI64(start, end),
-        ) => {
-            if start < end {
-                Ok(())
-            } else {
-                Err(SchemaError::SelectionIntervalEmpty {
-                    statement: id,
-                    relation,
-                    field,
-                })
-            }
-        }
-        _ => Err(SchemaError::SelectionLiteralTypeMismatch {
+    value_matches(literal, value_type).map_err(|mismatch| match mismatch {
+        ValueMismatch::Type => SchemaError::SelectionLiteralTypeMismatch {
             statement: id,
             relation,
             field,
-        }),
-    }
+        },
+        ValueMismatch::EnumOrdinal(ordinal) => SchemaError::SelectionEnumOrdinalOutOfRange {
+            statement: id,
+            relation,
+            field,
+            ordinal,
+        },
+        ValueMismatch::Utf8 => SchemaError::SelectionLiteralNotUtf8 {
+            statement: id,
+            relation,
+            field,
+        },
+        ValueMismatch::IntervalEmpty => SchemaError::SelectionIntervalEmpty {
+            statement: id,
+            relation,
+            field,
+        },
+    })
 }
 
 /// Target-key resolution and the pointwise gate

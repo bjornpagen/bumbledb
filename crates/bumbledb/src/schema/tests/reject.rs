@@ -191,8 +191,8 @@ fn rejects_duplicate_selection_field() {
                 RelationId(0),
                 &[FieldId(0)],
                 vec![
-                    (FieldId(1), LiteralValue::Bool(true)),
-                    (FieldId(1), LiteralValue::Bool(true)),
+                    (FieldId(1), Value::Bool(true)),
+                    (FieldId(1), Value::Bool(true)),
                 ],
             ),
             side(RelationId(1), &[FieldId(0)]),
@@ -389,7 +389,7 @@ fn rejects_selected_field_also_projected() {
             side_where(
                 RelationId(0),
                 &[FieldId(0)],
-                vec![(FieldId(0), LiteralValue::U64(1))],
+                vec![(FieldId(0), Value::U64(1))],
             ),
             side(RelationId(1), &[FieldId(0)]),
         )],
@@ -414,7 +414,7 @@ fn rejects_selection_literal_type_mismatch() {
             side_where(
                 RelationId(0),
                 &[FieldId(0)],
-                vec![(FieldId(1), LiteralValue::U64(1))],
+                vec![(FieldId(1), Value::U64(1))],
             ),
             side(RelationId(1), &[FieldId(0)]),
         )],
@@ -442,7 +442,7 @@ fn rejects_out_of_range_enum_selection_literal() {
             side_where(
                 RelationId(0),
                 &[FieldId(0)],
-                vec![(FieldId(1), LiteralValue::Enum(2))],
+                vec![(FieldId(1), Value::Enum(2))],
             ),
             side(RelationId(1), &[FieldId(0)]),
         )],
@@ -468,7 +468,7 @@ fn rejects_non_utf8_string_selection_literal() {
             side_where(
                 RelationId(0),
                 &[FieldId(0)],
-                vec![(FieldId(1), LiteralValue::String(Box::new([0xFF])))],
+                vec![(FieldId(1), Value::String(Box::new([0xFF])))],
             ),
             side(RelationId(1), &[FieldId(0)]),
         )],
@@ -502,7 +502,7 @@ fn rejects_empty_interval_selection_literal() {
             side_where(
                 RelationId(0),
                 &[FieldId(0)],
-                vec![(FieldId(1), LiteralValue::IntervalU64(5, 5))],
+                vec![(FieldId(1), Value::IntervalU64(5, 5))],
             ),
             side(RelationId(1), &[FieldId(0)]),
         )],
@@ -594,16 +594,16 @@ fn rejects_duplicate_statement_up_to_selection_order() {
         RelationId(0),
         &[FieldId(0)],
         vec![
-            (FieldId(1), LiteralValue::Bool(true)),
-            (FieldId(2), LiteralValue::Bool(false)),
+            (FieldId(1), Value::Bool(true)),
+            (FieldId(2), Value::Bool(false)),
         ],
     );
     let b = side_where(
         RelationId(0),
         &[FieldId(0)],
         vec![
-            (FieldId(2), LiteralValue::Bool(false)),
-            (FieldId(1), LiteralValue::Bool(true)),
+            (FieldId(2), Value::Bool(false)),
+            (FieldId(1), Value::Bool(true)),
         ],
     );
     let decl = two_relations(

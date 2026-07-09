@@ -451,7 +451,7 @@ fn convert_scalar(
 ) -> Result<Option<(Const, bool)>> {
     // The shared compatibility check (kind, enum range, UTF-8) — one rule
     // with validation and the dynamic write path.
-    if crate::ir::value_matches(value, expected).is_err() {
+    if crate::schema::value_matches(value, expected).is_err() {
         return Ok(None);
     }
     let resolved = match value {

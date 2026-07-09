@@ -32,7 +32,7 @@ fn side_of(relation: u32, projection: &[u16]) -> Side {
     }
 }
 
-fn side_where(relation: u32, projection: &[u16], selection: Vec<(u16, LiteralValue)>) -> Side {
+fn side_where(relation: u32, projection: &[u16], selection: Vec<(u16, Value)>) -> Side {
     Side {
         selection: selection
             .into_iter()
@@ -46,7 +46,7 @@ fn side_where(relation: u32, projection: &[u16], selection: Vec<(u16, LiteralVal
 /// interval-selected containment (Shift/Roster). Materialized ids: 0/1
 /// the serial auto-FDs, 2.. the declared statements below in order.
 fn example() -> SchemaDescriptor {
-    let savings = LiteralValue::Enum(1); // ["Checking", "Savings"]
+    let savings = Value::Enum(1); // ["Checking", "Savings"]
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -126,7 +126,7 @@ fn example() -> SchemaDescriptor {
             },
             // id 7: Shift(worker | span == 0..86400) <= Roster(worker)
             StatementDescriptor::Containment {
-                source: side_where(4, &[0], vec![(1, LiteralValue::IntervalU64(0, 86_400))]),
+                source: side_where(4, &[0], vec![(1, Value::IntervalU64(0, 86_400))]),
                 target: side_of(3, &[0]),
             },
         ],

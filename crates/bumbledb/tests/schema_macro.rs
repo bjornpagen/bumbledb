@@ -10,10 +10,10 @@
 
 use bumbledb::schema::fingerprint::fingerprint;
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, LiteralValue, RelationDescriptor,
-    RelationId, SchemaDescriptor, Side, StatementDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
+    SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
-use bumbledb::{Db, Fact, Interval};
+use bumbledb::{Db, Fact, Interval, Value};
 
 bumbledb::schema! {
     relation Holder  { id: u64 as HolderId, serial, name: str }
@@ -52,7 +52,7 @@ fn savings_accounts() -> Side {
     Side {
         relation: RelationId(1),
         projection: Box::new([FieldId(0)]),
-        selection: Box::new([(FieldId(2), LiteralValue::Enum(1))]),
+        selection: Box::new([(FieldId(2), Value::Enum(1))]),
     }
 }
 
@@ -316,7 +316,8 @@ mod interval_newtype {
 }
 
 mod selection_literals {
-    use bumbledb::schema::{FieldId, LiteralValue, StatementDescriptor};
+    use bumbledb::schema::{FieldId, StatementDescriptor};
+    use bumbledb::Value;
 
     bumbledb::schema! {
         relation Sensor {
@@ -342,11 +343,11 @@ mod selection_literals {
         assert_eq!(
             target.selection[..],
             [
-                (FieldId(1), LiteralValue::IntervalI64(-10, 10)),
-                (FieldId(2), LiteralValue::I64(-3)),
-                (FieldId(3), LiteralValue::Bool(true)),
-                (FieldId(4), LiteralValue::String(Box::from(&b"north"[..]))),
-                (FieldId(5), LiteralValue::Bytes(Box::from(&b"\x01"[..]))),
+                (FieldId(1), Value::IntervalI64(-10, 10)),
+                (FieldId(2), Value::I64(-3)),
+                (FieldId(3), Value::Bool(true)),
+                (FieldId(4), Value::String(Box::from(&b"north"[..]))),
+                (FieldId(5), Value::Bytes(Box::from(&b"\x01"[..]))),
             ]
         );
     }

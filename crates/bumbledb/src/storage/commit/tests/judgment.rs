@@ -10,14 +10,15 @@
 use crate::encoding::{encode_fact, encode_u64, ValueRef};
 use crate::error::{Direction, Error, Result};
 use crate::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, LiteralValue, RelationDescriptor,
-    RelationId, Schema, SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
+    SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
 };
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::storage::keys;
 use crate::testutil::TempDir;
+use crate::value::Value;
 
 use super::{committed_data, key};
 
@@ -60,15 +61,14 @@ fn schema() -> Schema {
         projection: projection.iter().map(|&f| FieldId(f)).collect(),
         selection: Box::new([]),
     };
-    let selected =
-        |relation: RelationId, projection: &[u16], selection: &[(u16, LiteralValue)]| Side {
-            relation,
-            projection: projection.iter().map(|&f| FieldId(f)).collect(),
-            selection: selection
-                .iter()
-                .map(|(f, literal)| (FieldId(*f), literal.clone()))
-                .collect(),
-        };
+    let selected = |relation: RelationId, projection: &[u16], selection: &[(u16, Value)]| Side {
+        relation,
+        projection: projection.iter().map(|&f| FieldId(f)).collect(),
+        selection: selection
+            .iter()
+            .map(|(f, literal)| (FieldId(*f), literal.clone()))
+            .collect(),
+    };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -144,7 +144,7 @@ fn schema() -> Schema {
             },
             StatementDescriptor::Containment {
                 source: side(TRANSFER, &[0]),
-                target: selected(ACCOUNT, &[0], &[(1, LiteralValue::Bool(true))]),
+                target: selected(ACCOUNT, &[0], &[(1, Value::Bool(true))]),
             },
             StatementDescriptor::Containment {
                 source: side(SESSION, &[0, 1]),
@@ -152,10 +152,10 @@ fn schema() -> Schema {
             },
             StatementDescriptor::Containment {
                 source: side(REST, &[0, 1]),
-                target: selected(SHIFT, &[0, 1], &[(2, LiteralValue::Bool(true))]),
+                target: selected(SHIFT, &[0, 1], &[(2, Value::Bool(true))]),
             },
             StatementDescriptor::Containment {
-                source: selected(REPORT, &[0], &[(1, LiteralValue::Bool(true))]),
+                source: selected(REPORT, &[0], &[(1, Value::Bool(true))]),
                 target: side(ACCOUNT, &[0]),
             },
         ],

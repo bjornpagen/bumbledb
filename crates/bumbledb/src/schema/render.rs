@@ -10,8 +10,8 @@
 use std::fmt;
 
 use super::{
-    FieldDescriptor, FieldId, LiteralValue, RelationId, Schema, SchemaDescriptor, Side,
-    StatementDescriptor, StatementId, ValueType,
+    FieldDescriptor, FieldId, RelationId, Schema, SchemaDescriptor, Side, StatementDescriptor,
+    StatementId, Value, ValueType,
 };
 
 /// Renders one sealed statement in the exact macro notation: an FD as
@@ -188,7 +188,7 @@ fn side_parts(
     names: &dyn Names,
     relation: RelationId,
     projection: &[FieldId],
-    selection: &[(FieldId, LiteralValue)],
+    selection: &[(FieldId, Value)],
 ) -> fmt::Result {
     relation_name(f, names, relation)?;
     write!(f, "(")?;
@@ -221,13 +221,13 @@ fn literal(
     names: &dyn Names,
     relation: RelationId,
     field: FieldId,
-    value: &LiteralValue,
+    value: &Value,
 ) -> fmt::Result {
     match value {
-        LiteralValue::Bool(v) => write!(f, "{v}"),
-        LiteralValue::U64(v) => write!(f, "{v}"),
-        LiteralValue::I64(v) => write!(f, "{v}"),
-        LiteralValue::Enum(ordinal) => {
+        Value::Bool(v) => write!(f, "{v}"),
+        Value::U64(v) => write!(f, "{v}"),
+        Value::I64(v) => write!(f, "{v}"),
+        Value::Enum(ordinal) => {
             let variant =
                 names
                     .field(relation, field)
@@ -240,16 +240,16 @@ fn literal(
                 None => write!(f, "{ordinal}"),
             }
         }
-        LiteralValue::IntervalU64(start, end) => write!(f, "{start}..{end}"),
-        LiteralValue::IntervalI64(start, end) => write!(f, "{start}..{end}"),
-        LiteralValue::String(bytes) => {
+        Value::IntervalU64(start, end) => write!(f, "{start}..{end}"),
+        Value::IntervalI64(start, end) => write!(f, "{start}..{end}"),
+        Value::String(bytes) => {
             write!(f, "\"")?;
             for c in String::from_utf8_lossy(bytes).chars() {
                 write!(f, "{}", c.escape_debug())?;
             }
             write!(f, "\"")
         }
-        LiteralValue::Bytes(bytes) => {
+        Value::Bytes(bytes) => {
             write!(f, "b\"")?;
             for byte in bytes.as_ref() {
                 write!(f, "{}", byte.escape_ascii())?;

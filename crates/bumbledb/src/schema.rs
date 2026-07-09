@@ -15,6 +15,7 @@ mod type_desc;
 mod validate;
 
 use crate::encoding::FactLayout;
+use crate::value::Value;
 
 /// Dense relation id: the relation's index in schema declaration order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -82,20 +83,76 @@ pub struct FieldDescriptor {
     pub generation: Generation,
 }
 
-/// A selection literal: one variant per structural type
-/// (`docs/architecture/30-dependencies.md` — any type's literal binds in σ).
-/// Enum carries the resolved ordinal; String carries UTF-8 bytes; Interval
-/// carries `(start, end)` in the element domain.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LiteralValue {
-    Bool(bool),
-    U64(u64),
-    I64(i64),
-    Enum(u8),
-    IntervalU64(u64, u64),
-    IntervalI64(i64, i64),
-    String(Box<[u8]>),
-    Bytes(Box<[u8]>),
+/// How a [`Value`] failed to match an expected [`ValueType`] — the shared
+/// vocabulary of the checking boundaries (query literals, bound params,
+/// dynamic facts, statement selections).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ValueMismatch {
+    /// Wrong structural kind.
+    Type,
+    /// Enum ordinal at or beyond the variant count.
+    EnumOrdinal(u8),
+    /// `Value::String` bytes are not UTF-8 (the type's contract).
+    Utf8,
+    /// Interval bounds with `start >= end` — the empty interval denotes
+    /// no points and is unrepresentable
+    /// (`docs/architecture/10-data-model.md`).
+    IntervalEmpty,
+}
+
+/// The one `Value` ↔ `ValueType` compatibility check (kind, enum ordinal
+/// range, String UTF-8, interval non-emptiness) — IR validation, bind-time,
+/// the dynamic write path, and selection validation all call this so the
+/// rules cannot drift apart. Note the membership rule is *not* here: an
+/// element-typed value against an `Interval` field is a kind mismatch to
+/// this check, and the IR validation boundary owns that bivalence
+/// (`ir::validate`, the bivalent-anchor resolution).
+pub(crate) fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMismatch> {
+    match (value, expected) {
+        (Value::Bool(_), ValueType::Bool)
+        | (Value::U64(_), ValueType::U64)
+        | (Value::I64(_), ValueType::I64)
+        | (Value::Bytes(_), ValueType::Bytes) => Ok(()),
+        (Value::String(raw), ValueType::String) => {
+            if std::str::from_utf8(raw).is_ok() {
+                Ok(())
+            } else {
+                Err(ValueMismatch::Utf8)
+            }
+        }
+        (Value::Enum(ordinal), ValueType::Enum { variants }) => {
+            if usize::from(*ordinal) < variants.len() {
+                Ok(())
+            } else {
+                Err(ValueMismatch::EnumOrdinal(*ordinal))
+            }
+        }
+        (
+            Value::IntervalU64(start, end),
+            ValueType::Interval {
+                element: IntervalElement::U64,
+            },
+        ) => {
+            if start < end {
+                Ok(())
+            } else {
+                Err(ValueMismatch::IntervalEmpty)
+            }
+        }
+        (
+            Value::IntervalI64(start, end),
+            ValueType::Interval {
+                element: IntervalElement::I64,
+            },
+        ) => {
+            if start < end {
+                Ok(())
+            } else {
+                Err(ValueMismatch::IntervalEmpty)
+            }
+        }
+        _ => Err(ValueMismatch::Type),
+    }
 }
 
 /// One side of a containment: the single-atom query `R(X | φ)`
@@ -106,7 +163,10 @@ pub struct Side {
     /// π — ordered, the statement's written order.
     pub projection: Box<[FieldId]>,
     /// σ — a set of (field, literal) equality bindings; empty = unselected.
-    pub selection: Box<[(FieldId, LiteralValue)]>,
+    /// Literals are the one shared [`Value`] sum
+    /// (`docs/architecture/30-dependencies.md` — any type's literal binds
+    /// in σ; dependencies and queries share one representation).
+    pub selection: Box<[(FieldId, Value)]>,
 }
 
 /// One dependency statement: a judgment about queries

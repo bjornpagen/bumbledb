@@ -38,7 +38,7 @@ fn side(relation: RelationId, projection: &[FieldId]) -> Side {
 fn side_where(
     relation: RelationId,
     projection: &[FieldId],
-    selection: Vec<(FieldId, LiteralValue)>,
+    selection: Vec<(FieldId, Value)>,
 ) -> Side {
     Side {
         relation,

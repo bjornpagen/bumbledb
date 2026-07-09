@@ -14,12 +14,10 @@
 //! hashed separately" (`docs/architecture/10-data-model.md`).
 
 use super::{
-    FieldId, Generation, IntervalElement, LiteralValue, RelationId, Schema, Side,
-    StatementDescriptor, ValueType,
+    FieldId, Generation, IntervalElement, RelationId, Schema, Side, StatementDescriptor, ValueType,
 };
-use crate::encoding::{
-    encode_bool, encode_i64, encode_interval_i64, encode_interval_u64, encode_u64,
-};
+use crate::encoding::encode_literal;
+use crate::value::Value;
 
 /// Bumped whenever the canonical serialization format itself changes. `v1`:
 /// the statement redesign — a different format even for schemas that would
@@ -147,27 +145,17 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
 }
 
 /// A selection literal in the canonical per-type value encoding
-/// (`crate::encoding`) — never a `Debug` or ad-hoc format. No variant tag:
-/// the selected field's type is already in the stream (relations serialize
+/// ([`encode_literal`], the one definition site shared with the commit
+/// judgment) — never a `Debug` or ad-hoc format. No variant tag: the
+/// selected field's type is already in the stream (relations serialize
 /// before statements), so the literal's shape is a function of bytes already
 /// hashed and no two schemas can alias here. String/Bytes literals hash
 /// their raw bytes, length-prefixed — the fact encoding's intern id is
 /// per-database state, not schema identity.
-fn put_literal(out: &mut Vec<u8>, literal: &LiteralValue) {
+fn put_literal(out: &mut Vec<u8>, literal: &Value) {
     match literal {
-        LiteralValue::Bool(value) => out.push(encode_bool(*value)),
-        LiteralValue::U64(value) => out.extend_from_slice(&encode_u64(*value)),
-        LiteralValue::I64(value) => out.extend_from_slice(&encode_i64(*value)),
-        // The canonical Enum encoding: the one-byte declaration-order
-        // ordinal (`crate::encoding::TypeDesc::Enum`).
-        LiteralValue::Enum(ordinal) => out.push(*ordinal),
-        LiteralValue::IntervalU64(start, end) => {
-            out.extend_from_slice(&encode_interval_u64(*start, *end));
-        }
-        LiteralValue::IntervalI64(start, end) => {
-            out.extend_from_slice(&encode_interval_i64(*start, *end));
-        }
-        LiteralValue::String(bytes) | LiteralValue::Bytes(bytes) => put_bytes(out, bytes),
+        Value::String(bytes) | Value::Bytes(bytes) => put_bytes(out, bytes),
+        encoded => encode_literal(encoded, out),
     }
 }
 
@@ -196,7 +184,7 @@ mod tests {
         }
     }
 
-    fn side(relation: u32, projection: &[u16], selection: &[(u16, LiteralValue)]) -> Side {
+    fn side(relation: u32, projection: &[u16], selection: &[(u16, Value)]) -> Side {
         Side {
             relation: RelationId(relation),
             projection: projection.iter().copied().map(FieldId).collect(),
@@ -235,7 +223,7 @@ mod tests {
                     projection: Box::new([FieldId(1)]),
                 },
                 StatementDescriptor::Containment {
-                    source: side(1, &[1], &[(2, LiteralValue::Enum(0))]),
+                    source: side(1, &[1], &[(2, Value::Enum(0))]),
                     target: side(0, &[0], &[]),
                 },
             ],
@@ -244,6 +232,28 @@ mod tests {
 
     fn base_fingerprint() -> SchemaFingerprint {
         fingerprint(&schema_of(base()))
+    }
+
+    #[test]
+    fn golden_fingerprint_pins_the_hash() {
+        // Pinned across the PRD-01 `Value` collapse: the canonical
+        // serialization (and therefore blake3 of it) must not drift while
+        // the format label stays `v1`. `base()` covers every literal-adjacent
+        // input: enums, serial auto-keys, a declared key, and a containment
+        // with a selection literal.
+        let hex: String =
+            base_fingerprint()
+                .0
+                .iter()
+                .fold(String::with_capacity(64), |mut hex, byte| {
+                    use std::fmt::Write;
+                    write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+                    hex
+                });
+        assert_eq!(
+            hex,
+            "b7e792d16e7b1582fcaca3d3f591fc210bff4d5bbc6a922b46fb24c5eee4c25f"
+        );
     }
 
     #[test]
@@ -321,7 +331,7 @@ mod tests {
         // new target projection {holder} resolves to the declared key.
         decl.statements[1] = StatementDescriptor::Containment {
             source: side(0, &[0], &[]),
-            target: side(1, &[1], &[(2, LiteralValue::Enum(0))]),
+            target: side(1, &[1], &[(2, Value::Enum(0))]),
         };
         assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
     }
@@ -330,7 +340,7 @@ mod tests {
     fn changing_a_selection_literal_changes_the_fingerprint() {
         let mut decl = base();
         decl.statements[1] = StatementDescriptor::Containment {
-            source: side(1, &[1], &[(2, LiteralValue::Enum(1))]),
+            source: side(1, &[1], &[(2, Value::Enum(1))]),
             target: side(0, &[0], &[]),
         };
         assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
@@ -439,7 +449,7 @@ mod tests {
                     projection: Box::new([FieldId(0)]),
                 },
                 StatementDescriptor::Containment {
-                    source: side(1, &[0], &[(1, LiteralValue::Enum(1))]),
+                    source: side(1, &[0], &[(1, Value::Enum(1))]),
                     target: side(0, &[0], &[]),
                 },
             ],

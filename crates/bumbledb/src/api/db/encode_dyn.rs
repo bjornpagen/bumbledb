@@ -4,29 +4,31 @@ use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
 use crate::schema::{FieldId, RelationId};
 
-/// The one [`crate::ir::ValueMismatch`] → [`FactShapeError`] translation,
+/// The one [`crate::schema::ValueMismatch`] → [`FactShapeError`] translation,
 /// shared by every dynamic write/read surface (`insert_dyn`/`delete_dyn`/
 /// `get_dyn`).
 pub(super) fn shape_mismatch(
     rel: RelationId,
     field: FieldId,
-    mismatch: crate::ir::ValueMismatch,
+    mismatch: crate::schema::ValueMismatch,
 ) -> FactShapeError {
     match mismatch {
-        crate::ir::ValueMismatch::Type => FactShapeError::TypeMismatch {
+        crate::schema::ValueMismatch::Type => FactShapeError::TypeMismatch {
             relation: rel,
             field,
         },
-        crate::ir::ValueMismatch::EnumOrdinal(ordinal) => FactShapeError::EnumOrdinalOutOfRange {
+        crate::schema::ValueMismatch::EnumOrdinal(ordinal) => {
+            FactShapeError::EnumOrdinalOutOfRange {
+                relation: rel,
+                field,
+                ordinal,
+            }
+        }
+        crate::schema::ValueMismatch::Utf8 => FactShapeError::InvalidUtf8 {
             relation: rel,
             field,
-            ordinal,
         },
-        crate::ir::ValueMismatch::Utf8 => FactShapeError::InvalidUtf8 {
-            relation: rel,
-            field,
-        },
-        crate::ir::ValueMismatch::IntervalEmpty => FactShapeError::EmptyInterval {
+        crate::schema::ValueMismatch::IntervalEmpty => FactShapeError::EmptyInterval {
             relation: rel,
             field,
         },
@@ -61,7 +63,7 @@ impl WriteTx<'_> {
         refs.clear();
         for (idx, (value, field)) in values.iter().zip(fields).enumerate() {
             let field_id = FieldId(u16::try_from(idx).expect("validated schema: fields fit u16"));
-            if let Err(mismatch) = crate::ir::value_matches(value, &field.value_type) {
+            if let Err(mismatch) = crate::schema::value_matches(value, &field.value_type) {
                 self.refs = refs; // restore the scratch before erroring
                 return Err(shape_mismatch(rel, field_id, mismatch).into());
             }

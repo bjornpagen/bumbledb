@@ -179,7 +179,8 @@ impl WriteTx<'_> {
     ) -> Result<bool> {
         let rel = self.schema.relation(relation);
         for (value, &field) in key_values.iter().zip(projection) {
-            if let Err(mismatch) = crate::ir::value_matches(value, &rel.field(field).value_type) {
+            if let Err(mismatch) = crate::schema::value_matches(value, &rel.field(field).value_type)
+            {
                 return Err(shape_mismatch(relation, field, mismatch).into());
             }
             match value {

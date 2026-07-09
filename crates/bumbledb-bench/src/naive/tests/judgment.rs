@@ -5,8 +5,8 @@
 //! double as the engine-agreement seed corpus.
 
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, LiteralValue, RelationDescriptor,
-    SchemaDescriptor, Side, StatementDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor,
+    Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{Direction, RelationId, StatementId, Value};
 
@@ -38,7 +38,7 @@ fn selected(relation: RelationId, projection: &[u16], field: u16, literal: bool)
     Side {
         relation,
         projection: projection.iter().map(|&f| FieldId(f)).collect(),
-        selection: Box::new([(FieldId(field), LiteralValue::Bool(literal))]),
+        selection: Box::new([(FieldId(field), Value::Bool(literal))]),
     }
 }
 

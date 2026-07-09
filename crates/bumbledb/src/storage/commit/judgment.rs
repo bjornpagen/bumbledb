@@ -17,18 +17,14 @@
 use std::collections::BTreeSet;
 use std::ops::Bound;
 
-use crate::encoding::{
-    encode_bool, encode_i64, encode_interval_i64, encode_interval_u64, encode_u64, field_bytes,
-    FactLayout,
-};
+use crate::encoding::{encode_literal, encode_u64, field_bytes, FactLayout};
 use crate::error::{CorruptionError, Direction, Error, Result};
 use crate::obs;
-use crate::schema::{
-    FieldId, LiteralValue, RelationId, Resolved, Schema, StatementDescriptor, StatementId,
-};
+use crate::schema::{FieldId, RelationId, Resolved, Schema, StatementDescriptor, StatementId};
 use crate::storage::delta::{Disposition, WriteDelta};
 use crate::storage::env::{ReadTxn, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
+use crate::value::Value;
 
 use super::applier::decode_row_id;
 
@@ -99,21 +95,18 @@ impl Selections {
 fn encode_selection(
     delta: &WriteDelta<'_>,
     view: &ReadTxn<'_>,
-    selection: &[(FieldId, LiteralValue)],
+    selection: &[(FieldId, Value)],
 ) -> Result<SelectionCheck> {
     if selection.is_empty() {
         return Ok(SelectionCheck::Empty);
     }
     let mut fields = Vec::with_capacity(selection.len());
     for (field, literal) in selection {
+        // The interned types resolve at this boundary (dictionary state is
+        // per-database); everything else takes the one canonical encoding
+        // shared with the fingerprint ([`encode_literal`]).
         let encoded: Box<[u8]> = match literal {
-            LiteralValue::Bool(v) => Box::new([encode_bool(*v)]),
-            LiteralValue::Enum(ordinal) => Box::new([*ordinal]),
-            LiteralValue::U64(v) => Box::new(encode_u64(*v)),
-            LiteralValue::I64(v) => Box::new(encode_i64(*v)),
-            LiteralValue::IntervalU64(s, e) => Box::new(encode_interval_u64(*s, *e)),
-            LiteralValue::IntervalI64(s, e) => Box::new(encode_interval_i64(*s, *e)),
-            LiteralValue::String(raw) => {
+            Value::String(raw) => {
                 let value =
                     std::str::from_utf8(raw).expect("validated schema: string literals are UTF-8");
                 match delta.resolve_str(view, value)? {
@@ -121,10 +114,15 @@ fn encode_selection(
                     None => return Ok(SelectionCheck::Never),
                 }
             }
-            LiteralValue::Bytes(raw) => match delta.resolve_bytes(view, raw)? {
+            Value::Bytes(raw) => match delta.resolve_bytes(view, raw)? {
                 Some(id) => Box::new(encode_u64(id)),
                 None => return Ok(SelectionCheck::Never),
             },
+            literal => {
+                let mut bytes = Vec::with_capacity(16);
+                encode_literal(literal, &mut bytes);
+                bytes.into_boxed_slice()
+            }
         };
         fields.push((*field, encoded));
     }
