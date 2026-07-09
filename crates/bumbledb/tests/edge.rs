@@ -200,6 +200,7 @@ fn wide_enum_through_commit_and_scan() {
                 (FieldId(1), Term::Var(VarId(0))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     };
     let mut prepared = db2.prepare(&query).expect("prepare");
@@ -340,6 +341,7 @@ fn zero_binding_gate_with_global_count() {
                 bindings: vec![],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     };
     let mut prepared = db.prepare(&query).expect("prepare");

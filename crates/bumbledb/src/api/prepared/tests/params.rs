@@ -99,6 +99,7 @@ fn string_params_resolve_per_execution() {
                 (FieldId(3), Term::Var(VarId(0))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     };
     let txn = env.read_txn().expect("txn");

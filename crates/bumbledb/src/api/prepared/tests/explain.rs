@@ -67,6 +67,7 @@ fn profile_returns_structured_stats_matching_the_execution() {
                 (FieldId(3), Term::Var(VarId(0))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     };
     let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");

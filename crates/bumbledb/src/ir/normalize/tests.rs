@@ -66,6 +66,7 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
             relation: R,
             bindings: vec![(FieldId(1), var(0)), (FieldId(2), var(0))],
         }],
+        negated: vec![],
         predicates: vec![],
     };
     let norm = normalized(&query);
@@ -120,6 +121,7 @@ fn literal_and_param_bindings_lower_to_eq_filters() {
                 (FieldId(2), Term::Param(ParamId(0))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     };
     let norm = normalized(&query);
@@ -182,6 +184,7 @@ fn same_relation_atoms_get_distinct_occurrences_with_independent_filters() {
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     };
     let norm = normalized(&query);
@@ -209,6 +212,7 @@ fn range_comparison_pushes_down_and_cross_atom_comparison_is_residual() {
                 bindings: vec![(FieldId(1), var(1))],
             },
         ],
+        negated: vec![],
         predicates: vec![
             Comparison {
                 op: CmpOp::Le,
@@ -272,6 +276,7 @@ fn occurrence_vars_are_duplicate_free_over_generated_inputs() {
                 relation: R,
                 bindings,
             }],
+            negated: vec![],
             predicates: vec![],
         };
         // Field types differ (U64 vs I64): only same-typed repeats
@@ -305,6 +310,7 @@ fn zero_binding_atom_becomes_an_empty_occurrence() {
                 bindings: vec![],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     };
     let norm = normalized(&query);
@@ -324,6 +330,7 @@ fn same_atom_var_var_comparison_lowers_to_a_filter() {
             relation: R,
             bindings: vec![(FieldId(1), var(0)), (FieldId(2), var(1))],
         }],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Lt,
             lhs: var(0),

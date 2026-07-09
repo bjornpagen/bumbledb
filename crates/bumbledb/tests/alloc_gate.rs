@@ -126,6 +126,7 @@ fn join_query() -> Query {
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(1)),
@@ -165,6 +166,7 @@ fn aggregate_query() -> Query {
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(1)),
@@ -196,6 +198,7 @@ fn string_query() -> Query {
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Ne,
             lhs: Term::Var(VarId(3)),
@@ -235,6 +238,7 @@ fn minmax_query() -> Query {
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -253,6 +257,7 @@ fn selection_query() -> Query {
                 (FieldId(2), Term::Var(VarId(0))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -271,6 +276,7 @@ fn string_rotation_query() -> Query {
                 (FieldId(2), Term::Var(VarId(1))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -286,6 +292,7 @@ fn guard_query() -> Query {
                 (FieldId(2), Term::Var(VarId(0))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     }
 }

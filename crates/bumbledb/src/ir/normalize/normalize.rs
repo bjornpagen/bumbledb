@@ -45,6 +45,9 @@ pub fn normalize(query: &ValidatedQuery) -> NormalizedQuery {
                         op: CmpOp::Eq,
                         value: Const::Param(*param),
                     }),
+                    // todo-by-PRD-13: a set binding lowers to a per-atom
+                    // any-element filter (with PRD 17's executor support).
+                    Term::ParamSet(_) => todo!("todo-by-PRD-13"),
                     Term::Literal(value) => filters.push(FilterPredicate::Compare {
                         field: *field,
                         op: CmpOp::Eq,

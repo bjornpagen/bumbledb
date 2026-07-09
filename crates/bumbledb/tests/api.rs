@@ -49,6 +49,7 @@ fn join_query() -> Query {
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -80,6 +81,7 @@ fn aggregate_query() -> Query {
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -95,6 +97,7 @@ fn point_query() -> Query {
                 (FieldId(2), Term::Var(VarId(0))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -789,6 +792,7 @@ fn cover_choice_iterates_the_selected_side() {
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     };
     let mut prepared = db.prepare(&query).expect("prepare");

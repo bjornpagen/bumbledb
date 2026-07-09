@@ -214,6 +214,7 @@ fn read_path_traces_phases_memo_hits_and_guard() {
                 (FieldId(3), Term::Var(VarId(0))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     };
     let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");

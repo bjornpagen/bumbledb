@@ -13,6 +13,9 @@ fn flip(op: CmpOp) -> CmpOp {
         CmpOp::Le => CmpOp::Ge,
         CmpOp::Gt => CmpOp::Lt,
         CmpOp::Ge => CmpOp::Le,
+        // todo-by-PRD-13: interval operators decompose into word
+        // comparisons over start/end rather than mirroring as one op.
+        CmpOp::Overlaps | CmpOp::Contains => todo!("todo-by-PRD-13"),
     }
 }
 
@@ -64,6 +67,9 @@ pub(super) fn place_comparisons(
                 };
                 let value = match constant {
                     Term::Param(param) => Const::Param(*param),
+                    // todo-by-PRD-13: an `Eq`-against-set lowers to an
+                    // any-element filter (with PRD 17's executor support).
+                    Term::ParamSet(_) => todo!("todo-by-PRD-13"),
                     Term::Literal(literal) => lower_literal(literal),
                     Term::Var(_) => unreachable!("matched the var-var arm above"),
                 };

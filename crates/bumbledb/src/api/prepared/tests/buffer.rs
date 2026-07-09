@@ -31,6 +31,7 @@ fn overflow_errors_leave_the_buffer_reusable() {
                 (FieldId(3), Term::Var(VarId(1))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     };
     let txn = env.read_txn().expect("txn");
@@ -54,6 +55,7 @@ fn overflow_errors_leave_the_buffer_reusable() {
                 (FieldId(3), Term::Var(VarId(1))),
             ],
         }],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Eq,
             lhs: Term::Var(VarId(0)),

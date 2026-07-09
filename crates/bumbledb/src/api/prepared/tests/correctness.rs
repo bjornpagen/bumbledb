@@ -31,6 +31,7 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
                 (FieldId(1), Term::Var(VarId(1))),
             ],
         }],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(1)),
@@ -73,6 +74,7 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Lt,
             lhs: Term::Var(VarId(0)),
@@ -152,6 +154,7 @@ fn aggregates_fold_every_binding_of_existential_suffixes() {
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     };
 
@@ -213,6 +216,7 @@ fn ne_against_a_never_interned_string_matches_everything() {
                 (FieldId(3), Term::Var(VarId(0))),
             ],
         }],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Ne,
             lhs: Term::Var(VarId(1)),
@@ -236,6 +240,7 @@ fn ne_against_a_never_interned_string_matches_everything() {
                 (FieldId(3), Term::Var(VarId(0))),
             ],
         }],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Ne,
             lhs: Term::Var(VarId(1)),

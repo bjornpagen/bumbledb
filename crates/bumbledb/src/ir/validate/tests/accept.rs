@@ -11,6 +11,7 @@ fn accepts_the_fk_walk_join_with_predicates() {
             atom(POSTING, vec![(1, var(0)), (2, var(1)), (3, var(2))]),
             atom(ACCOUNT, vec![(0, var(0))]),
         ],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Ge,
             lhs: var(2),
@@ -31,6 +32,7 @@ fn accepts_params_anchored_by_fields_and_comparisons() {
             POSTING,
             vec![(1, Term::Param(ParamId(0))), (0, var(0)), (3, var(1))],
         )],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Lt,
             lhs: var(1),

@@ -18,6 +18,10 @@ fn cmp_legal(op: CmpOp, value_type: &ValueType) -> bool {
         CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {
             matches!(value_type, ValueType::U64 | ValueType::I64)
         }
+        // todo-by-PRD-12: interval comparison type rules (Overlaps needs
+        // two intervals of one element type; Contains an interval left
+        // side and an interval or element right side).
+        CmpOp::Overlaps | CmpOp::Contains => todo!("todo-by-PRD-12"),
     }
 }
 
@@ -86,6 +90,9 @@ impl Context {
                         self.atom_vars.insert(*var);
                     }
                     Term::Param(param) => self.anchor_param(*param, field_type)?,
+                    // todo-by-PRD-12: anchor the set param's element type;
+                    // reject a ParamId used both scalar and set.
+                    Term::ParamSet(_) => todo!("todo-by-PRD-12"),
                     Term::Literal(value) => match literal_matches(value, field_type) {
                         Ok(()) => {}
                         // A non-UTF-8 String literal is a type mismatch:
@@ -142,6 +149,9 @@ impl Context {
                     }
                 }
                 Term::Param(param) => self.anchor_param(*param, &var_type)?,
+                // todo-by-PRD-12: a ParamSet is legal under `Eq` only —
+                // reject it under every other operator.
+                Term::ParamSet(_) => todo!("todo-by-PRD-12"),
                 Term::Literal(value) => match literal_matches(value, &var_type) {
                     Ok(()) => {}
                     // The precise diagnosis, exactly as the atom-binding
@@ -209,6 +219,13 @@ impl Context {
                         if !matches!(var_type, ValueType::U64 | ValueType::I64) {
                             return Err(ValidationError::AggregateInputType { find: find_idx });
                         }
+                    }
+                    // todo-by-PRD-12: CountDistinct takes Some(counted var),
+                    // any type; Arg ops take Some(carried var), one shared
+                    // orderable key and one direction per query, no mixing
+                    // with fold aggregates.
+                    (AggOp::CountDistinct | AggOp::ArgMax { .. } | AggOp::ArgMin { .. }, _) => {
+                        todo!("todo-by-PRD-12")
                     }
                 },
             }

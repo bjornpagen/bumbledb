@@ -9,6 +9,7 @@
 pub(crate) mod normalize;
 pub(crate) mod validate;
 
+use crate::interval::Interval;
 use crate::schema::{FieldId, RelationId};
 
 /// Dense query-variable id.
@@ -43,6 +44,22 @@ pub enum Value {
     IntervalU64(u64, u64),
     /// A half-open `[start, end)` over I64; bounds as [`Value::IntervalU64`].
     IntervalI64(i64, i64),
+}
+
+impl From<Interval<u64>> for Value {
+    /// Hosts construct interval literals through the checked
+    /// [`crate::Interval`] type, so a converted literal already satisfies
+    /// `start < end`.
+    fn from(interval: Interval<u64>) -> Self {
+        Self::IntervalU64(interval.start(), interval.end())
+    }
+}
+
+impl From<Interval<i64>> for Value {
+    /// Bounds discipline as [`From<Interval<u64>>`].
+    fn from(interval: Interval<i64>) -> Self {
+        Self::IntervalI64(interval.start(), interval.end())
+    }
 }
 
 /// How a [`Value`] failed to match an expected [`crate::schema::ValueType`]
@@ -94,6 +111,13 @@ pub(crate) fn value_matches(
 pub enum Term {
     Var(VarId),
     Param(ParamId),
+    /// A param id used as a *set* — bound at execution to a slice of values
+    /// of the anchored type; the term denotes *any element* (a binding
+    /// position matches iff the field value is in the set). Legal in atom
+    /// bindings (positive and negated) and as one side of `Eq`; illegal
+    /// under every other operator. A `ParamId` is scalar or set, never both
+    /// (`docs/architecture/20-query-ir.md`, § param sets).
+    ParamSet(ParamId),
     Literal(Value),
 }
 
@@ -103,28 +127,69 @@ pub enum Term {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Atom {
     pub relation: RelationId,
+    /// Named-field bindings; absence of a field is the wildcard.
+    ///
+    /// **Membership is a typing rule, not a node**
+    /// (`docs/architecture/20-query-ir.md`): a binding `(field, term)`
+    /// where the field is `Interval(E)` and the term's type is `E` means
+    /// **point membership** — the binding satisfies iff `start ≤ t < end`.
+    /// A term of type `Interval(E)` in the same position means interval
+    /// **value equality** (identity). Var, Param, ParamSet, and Literal all
+    /// participate under the same rule. The rule is owned by validation and
+    /// lowering; one consequence, enforced there: every point variable must
+    /// also be bound by at least one non-membership occurrence (a scalar
+    /// field binding), because membership alone gives it no enumerable
+    /// domain.
     pub bindings: Vec<(FieldId, Term)>,
 }
 
-/// Aggregate operators. `Count` is nullary (`over: None`): it counts the
-/// group's binding set, exactly.
+/// Aggregate operators (`docs/architecture/20-query-ir.md`, § aggregation).
+/// The fold domain of every aggregate is the group's set of distinct full
+/// bindings over all query variables; the group key is the values of the
+/// non-aggregated find variables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggOp {
+    /// Accumulates in i128 and range-checks the final value once:
+    /// Sum(I64)→I64, Sum(U64)→U64; out-of-range is a runtime query error.
     Sum,
+    /// U64 and I64 only (the orderable types — intervals excluded).
     Min,
+    /// U64 and I64 only, as [`AggOp::Min`].
     Max,
+    /// Nullary (`over: None`): |the group's binding set|, result type U64.
     Count,
+    /// |the set of distinct values of `over` across the group's binding
+    /// set|, result type U64; legal over every type.
+    CountDistinct,
+    /// Arg-restriction: the group's binding set is first restricted to the
+    /// bindings attaining the **maximum** of `key`, and the group's output
+    /// rows are projected from that restricted set — a tie yields every
+    /// attaining row. `over` is the carried variable; `key` must be
+    /// orderable (U64/I64), and all Arg terms in one query share one key
+    /// and one direction.
+    ArgMax { key: VarId },
+    /// Arg-restriction toward the **minimum** of `key`; rules as
+    /// [`AggOp::ArgMax`].
+    ArgMin { key: VarId },
 }
 
-/// One find term: a projected variable or an aggregate.
+/// One find term: a projected variable or an aggregate. `over` is `None`
+/// for the nullary `Count`, `Some(counted var)` for `CountDistinct`, the
+/// aggregated variable for `Sum`/`Min`/`Max`, and the *carried* variable
+/// for `ArgMax`/`ArgMin` (the key rides in the op).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FindTerm {
     Var(VarId),
     Aggregate { op: AggOp, over: Option<VarId> },
 }
 
-/// Comparison operators. `Eq`/`Ne` are legal for all six types; order
-/// operators only for U64/U64 and I64/I64 (no cross-type comparison, ever).
+/// Comparison operators. `Eq`/`Ne` are legal for all seven types; order
+/// operators only for U64/U64 and I64/I64 (no cross-type comparison, ever
+/// — and never intervals). `Overlaps` requires two interval terms of one
+/// element type: satisfied iff the point-sets intersect. `Contains`
+/// requires an interval left side and either an interval of the same
+/// element type (⊇ of point-sets) or an element-typed right side (point
+/// membership as a predicate, for terms already bound elsewhere).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpOp {
     Eq,
@@ -133,6 +198,8 @@ pub enum CmpOp {
     Le,
     Gt,
     Ge,
+    Overlaps,
+    Contains,
 }
 
 impl CmpOp {
@@ -146,6 +213,12 @@ impl CmpOp {
             Self::Le => left <= right,
             Self::Gt => left > right,
             Self::Ge => left >= right,
+            // Interval operators never reach single-word evaluation:
+            // normalization decomposes them into word comparisons over the
+            // interval's start/end (todo-by-PRD-13).
+            Self::Overlaps | Self::Contains => {
+                unreachable!("interval operators are decomposed at lowering")
+            }
         }
     }
 }
@@ -166,8 +239,18 @@ pub struct Comparison {
 pub struct Query {
     /// At least one term; duplicates rejected at validation.
     pub finds: Vec<FindTerm>,
-    /// At least one atom; conjunctive.
+    /// At least one atom; conjunctive, positive.
     pub atoms: Vec<Atom>,
+    /// Anti-join atoms (`docs/architecture/20-query-ir.md`, § negation).
+    /// A binding satisfies a negated atom iff **no fact** of its relation
+    /// matches the atom's bindings under that assignment — plain anti-join
+    /// over sets; no null trick, no three-valued logic. **Safety rule:**
+    /// every variable occurring in a negated atom must also occur in a
+    /// positive atom — a negated atom **binds nothing, only rejects**.
+    /// Literals, params, param sets, and membership bindings are all legal
+    /// here; negation is a *position* in the query, not a kind of atom, so
+    /// the list reuses [`Atom`] unchanged.
+    pub negated: Vec<Atom>,
     pub predicates: Vec<Comparison>,
 }
 
@@ -192,6 +275,7 @@ mod tests {
                     (FieldId(2), Term::Var(VarId(1))),
                 ],
             }],
+            negated: vec![],
             predicates: vec![],
         };
         assert_eq!(query.atoms.len(), 1);
@@ -217,6 +301,7 @@ mod tests {
                     bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
                 },
             ],
+            negated: vec![],
             predicates: vec![Comparison {
                 op: CmpOp::Ge,
                 lhs: Term::Var(VarId(2)),
@@ -251,6 +336,7 @@ mod tests {
                     (FieldId(4), Term::Var(VarId(1))),
                 ],
             }],
+            negated: vec![],
             predicates: vec![],
         };
         assert!(matches!(
@@ -276,9 +362,33 @@ mod tests {
                     bindings: vec![], // gate: Cartesian with the rest
                 },
             ],
+            negated: vec![],
             predicates: vec![],
         };
         assert!(query.atoms[1].bindings.is_empty());
+    }
+
+    #[test]
+    fn anti_join_with_param_set_shape() {
+        // Account(id = a, region ∈ ?set0), ¬Posting(account = a):
+        // accounts in a region set with no postings. The negated atom
+        // reuses `a` (the safety rule) and binds nothing.
+        let query = Query {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                relation: RelationId(1),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(3), Term::ParamSet(ParamId(0))),
+                ],
+            }],
+            negated: vec![Atom {
+                relation: RelationId(4),
+                bindings: vec![(FieldId(2), Term::Var(VarId(0)))],
+            }],
+            predicates: vec![],
+        };
+        assert_eq!(query.negated.len(), 1);
     }
 
     #[test]
@@ -293,7 +403,19 @@ mod tests {
             Value::Enum(3),
             Value::String(Box::from(&b"text"[..])),
             Value::Bytes(Box::from(&[0xDEu8, 0xAD][..])),
+            Value::IntervalU64(0, u64::MAX),
+            Value::IntervalI64(i64::MIN, i64::MAX),
         ];
-        assert_eq!(values.len(), 6);
+        assert_eq!(values.len(), 8);
+    }
+
+    #[test]
+    fn interval_converts_through_the_checked_type() {
+        // `From<Interval<_>>`: same halves, no re-check needed — the
+        // checked type already holds `start < end`.
+        let iv = Interval::<i64>::new(-5, 9).expect("valid bounds");
+        assert_eq!(Value::from(iv), Value::IntervalI64(-5, 9));
+        let iv = Interval::<u64>::new(3, 7).expect("valid bounds");
+        assert_eq!(Value::from(iv), Value::IntervalU64(3, 7));
     }
 }

@@ -121,6 +121,7 @@ fn rejects_order_comparison_on_non_integer() {
     let query = Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(1)), (1, var(0))])],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Lt,
             lhs: var(0),
@@ -139,6 +140,7 @@ fn rejects_self_comparison() {
     let query = Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Lt,
             lhs: var(0),
@@ -159,6 +161,7 @@ fn rejects_order_operators_on_bool_and_enum() {
                 atom(rel, vec![(field, var(0)), (0, var(1))]),
                 atom(rel, vec![(field, var(2)), (0, var(3))]),
             ],
+            negated: vec![],
             predicates: vec![Comparison {
                 op: CmpOp::Lt,
                 lhs: var(0),
@@ -179,6 +182,7 @@ fn enum_ordinal_in_a_comparison_reports_the_precise_variant() {
     let query = Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(2, var(0))])],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Eq,
             lhs: var(0),
@@ -209,6 +213,7 @@ fn rejects_duplicate_aggregate_find_terms() {
             },
         ],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
+        negated: vec![],
         predicates: vec![],
     };
     let err = validate(&schema(), &query).unwrap_err();
@@ -224,6 +229,7 @@ fn rejects_cross_type_comparison() {
     let query = Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, vec![(1, var(0)), (2, var(1))])],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Eq,
             lhs: var(0),
@@ -241,6 +247,7 @@ fn rejects_constant_comparison() {
     let query = Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Eq,
             lhs: Term::Literal(Value::U64(1)),
@@ -270,6 +277,7 @@ fn rejects_comparison_only_variable() {
     let query = Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Eq,
             lhs: var(9), // appears in no atom
@@ -379,6 +387,7 @@ fn param_anchoring_is_total_by_construction() {
     let query = Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Eq,
             lhs: var(0),
@@ -401,6 +410,7 @@ fn rejects_sparse_param_ids() {
             HOLDER,
             vec![(0, var(0)), (1, Term::Param(ParamId(1)))],
         )],
+        negated: vec![],
         predicates: vec![],
     };
     let err = validate(&schema(), &query).unwrap_err();
@@ -413,6 +423,7 @@ fn rejects_more_atoms_than_the_planner_cap_at_the_boundary() {
     let query = Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: (0..over).map(|_| atom(HOLDER, vec![(0, var(0))])).collect(),
+        negated: vec![],
         predicates: vec![],
     };
     let err = validate(&schema(), &query).unwrap_err();
@@ -444,6 +455,7 @@ fn rejects_more_distinct_variables_than_the_bitset_at_the_boundary() {
             relation: RelationId(0),
             bindings: (0..129u16).map(|i| (FieldId(i), var(i))).collect(),
         }],
+        negated: vec![],
         predicates: vec![],
     };
     let err = validate(&wide, &query).unwrap_err();

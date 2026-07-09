@@ -25,6 +25,7 @@ fn guard_fast_lane_hits_misses_and_type_errors() {
                 (FieldId(3), Term::Var(VarId(2))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     };
     let txn = env.read_txn().expect("txn");
@@ -80,6 +81,7 @@ fn a_guard_prepare_and_execute_build_no_image() {
                 (FieldId(3), Term::Var(VarId(2))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     };
     let txn = env.read_txn().expect("txn");
@@ -116,6 +118,7 @@ fn guard_probe_queries_flow_through_the_same_surface() {
                 (FieldId(3), Term::Var(VarId(0))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     };
     let txn = env.read_txn().expect("txn");

@@ -91,6 +91,7 @@ fn by_account_query() -> Query {
                 (FieldId(3), Term::Var(VarId(1))),
             ],
         }],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Ge,
             lhs: Term::Var(VarId(1)),
@@ -127,6 +128,7 @@ fn by_memo_query() -> Query {
                 (FieldId(3), Term::Var(VarId(0))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     }
 }

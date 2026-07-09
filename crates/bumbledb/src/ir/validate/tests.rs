@@ -86,6 +86,7 @@ fn simple(finds: Vec<FindTerm>, atoms: Vec<crate::ir::Atom>) -> Query {
     Query {
         finds,
         atoms,
+        negated: vec![],
         predicates: vec![],
     }
 }

@@ -149,6 +149,7 @@ fn a_noop_serial_commit_keeps_the_view_memo_valid() {
                 (FieldId(1), crate::ir::Term::Var(crate::ir::VarId(1))),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     };
     let mut prepared = db.prepare(&query).expect("prepare");
