@@ -27,6 +27,9 @@ fn row_matches(
             match (image.column(usize::from(field.0)), value) {
                 (ColumnView::Words(words), Const::Word(c)) => op.compare(&words[position], c),
                 (ColumnView::Bytes(bytes), Const::Byte(c)) => op.compare(&bytes[position], c),
+                // Interval and set constants are evaluable only over the
+                // two-word column spans / resolved word sets.
+                (_, Const::Interval { .. } | Const::ParamSet(_)) => todo!("todo-by-PRD-14"),
                 // Width mismatches are unrepresentable through validation,
                 // and PendingIntern constants are resolved before execution
                 // (docs/architecture/30-execution.md) — a miss empties the query without reaching here.
@@ -47,6 +50,14 @@ fn row_matches(
                 _ => unreachable!("same-fact comparison joins same-typed fields"),
             }
         }
+        // The interval filter kinds read two-word column spans (PRD 14's
+        // ColumnSpan map) — evaluator arms land there.
+        FilterPredicate::PointIn { .. }
+        | FilterPredicate::AnyPointIn { .. }
+        | FilterPredicate::FieldsOverlap { .. }
+        | FilterPredicate::FieldsContain { .. }
+        | FilterPredicate::FieldsContainPoint { .. }
+        | FilterPredicate::FieldWithin { .. } => todo!("todo-by-PRD-14"),
     })
 }
 
@@ -166,6 +177,10 @@ fn kernel_scan(
                 }
                 CmpOp::Ge => (*c, u64::MAX),
                 CmpOp::Ne => return false, // no fixed-width scan shape
+                // Interval operators never pair with a single-word
+                // constant (normalization emits the interval filter
+                // kinds); their kernels are PRD 17's compositions.
+                CmpOp::Overlaps | CmpOp::Contains => return false,
             };
             crate::exec::kernel::filter_range_u64(words, lo, hi, out);
             true

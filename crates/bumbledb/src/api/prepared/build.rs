@@ -40,7 +40,7 @@ pub(crate) fn prepare<'s>(
     };
     let normalized = {
         let _s = obs::span(obs::names::NORMALIZE, obs::Category::Prepare);
-        normalize(&witness)
+        normalize(schema, &witness)
     };
 
     // Classification first: a guard probe needs no statistics or planning.

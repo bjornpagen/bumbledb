@@ -88,6 +88,24 @@ impl ValidatedQuery {
         &self.var_types[&var]
     }
 
+    /// Every variable with its resolved type, in id order (the slot-layout
+    /// roster — normalization builds the binding-slot widths from it).
+    pub fn var_types(&self) -> impl Iterator<Item = (VarId, &ValueType)> {
+        self.var_types.iter().map(|(v, t)| (*v, t))
+    }
+
+    /// The resolved type of a scalar param (for a set param this is the
+    /// *element* type).
+    ///
+    /// # Panics
+    ///
+    /// On a programmer-invariant violation: an unknown `ParamId` (the
+    /// witness anchored every param).
+    #[must_use]
+    pub fn param_type(&self, param: ParamId) -> &ValueType {
+        &self.param_types[&param]
+    }
+
     /// The group key: non-aggregated find variables (test observability;
     /// production reads it only through [`Self::sink_vars`]).
     #[cfg(test)]

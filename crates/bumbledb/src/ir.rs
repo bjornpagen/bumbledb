@@ -246,8 +246,8 @@ impl CmpOp {
             Self::Gt => left > right,
             Self::Ge => left >= right,
             // Interval operators never reach single-word evaluation:
-            // normalization decomposes them into word comparisons over the
-            // interval's start/end (todo-by-PRD-13).
+            // normalization decomposes them into fixed word-comparison
+            // shapes over the interval's start/end (`ir::normalize`).
             Self::Overlaps | Self::Contains => {
                 unreachable!("interval operators are decomposed at lowering")
             }

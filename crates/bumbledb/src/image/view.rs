@@ -34,8 +34,22 @@ pub use build_with_filters::build_with_filters;
 pub enum Const {
     Word(u64),
     Byte(u8),
+    /// An interval constant as its two encoded column words (each half
+    /// byte-order-normalized exactly like a `Word`, so u64 word order is
+    /// value order). Compared pairwise under `Eq`/`Ne`, and as the constant
+    /// side of `Overlaps`/`Contains` compares and `FieldWithin`.
+    Interval {
+        start: u64,
+        end: u64,
+    },
     /// Bind-time symbolic constant; the evaluator indexes the param slice.
     Param(crate::ir::ParamId),
+    /// A param bound as a *set* at execution (`Term::ParamSet`): resolves
+    /// to a sorted, deduplicated word list; an `Eq` compare against it
+    /// matches any element. The plan's selection machinery carries the set
+    /// through the probe path (`docs/architecture/20-query-ir.md`,
+    /// § param sets; executor side is PRD 17).
+    ParamSet(crate::ir::ParamId),
     /// A raw String/Bytes literal awaiting per-execution intern resolution
     /// (`tag` is the dictionary type tag).
     PendingIntern {
@@ -44,10 +58,31 @@ pub enum Const {
     },
 }
 
+/// Where a lowered point word comes from, per execution: an encoded
+/// literal word (resolved at lowering), a bound param's word (resolved at
+/// bind), or a bound variable's slot word (a membership binding whose
+/// point variable is bound by another occurrence — evaluated once the
+/// variable is bound; the point-membership scan of
+/// `docs/architecture/40-execution.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedWordSource {
+    Word(u64),
+    Param(crate::ir::ParamId),
+    Var(crate::ir::VarId),
+}
+
 /// One lowered per-atom filter (produced by the 20-query-ir doc's normalization).
+///
+/// The interval kinds are **fixed word-comparison compositions** over the
+/// interval field's two encoded column words (`docs/architecture/40-execution.md`
+/// — interval predicates lower to word comparisons over the start/end
+/// column pair; no expression tree exists, three shapes as three kinds is
+/// the representation-over-control-flow answer).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilterPredicate {
-    /// `field <op> constant`.
+    /// `field <op> constant`. Under `Overlaps`/`Contains` the field is the
+    /// **left** operand and the constant is `Interval`/`Param` by
+    /// construction (the reversed containment is [`FilterPredicate::FieldWithin`]).
     Compare {
         field: FieldId,
         op: CmpOp,
@@ -59,12 +94,43 @@ pub enum FilterPredicate {
     /// cross-atom only — `docs/architecture/20-query-ir.md`). Both fields
     /// have the same structural type by validation, hence the same column
     /// kind, and word comparison is value-faithful (biased I64, ordinal
-    /// bytes, injective intern ids).
+    /// bytes, injective intern ids; interval fields compare pairwise over
+    /// their two-word span).
     FieldsCompare {
         left: FieldId,
         right: FieldId,
         op: CmpOp,
     },
+    /// Point membership in the interval field: `start ≤ p AND p < end`
+    /// over the field's two column words (the lowering of a membership
+    /// binding, and of `Contains(field, point-constant)`).
+    PointIn {
+        field: FieldId,
+        point: ResolvedWordSource,
+    },
+    /// Point-set membership in the interval field: any element of the
+    /// bound set lies in the interval (`Term::ParamSet` on an interval
+    /// field — `docs/architecture/20-query-ir.md`, § param sets).
+    AnyPointIn {
+        field: FieldId,
+        set: crate::ir::ParamId,
+    },
+    /// Same-atom `Overlaps` over two interval fields:
+    /// `left.start < right.end AND right.start < left.end`.
+    FieldsOverlap { left: FieldId, right: FieldId },
+    /// Same-atom `Contains` over two interval fields (point-set ⊇):
+    /// `outer.start ≤ inner.start AND inner.end ≤ outer.end`.
+    FieldsContain { outer: FieldId, inner: FieldId },
+    /// Same-atom `Contains` with a point field (the predicate form of the
+    /// membership rule, and the lowering of a same-atom membership-var
+    /// binding): `interval.start ≤ point AND point < interval.end`.
+    FieldsContainPoint { interval: FieldId, point: FieldId },
+    /// The field's point-set within a constant interval — the reversed
+    /// `Contains(constant, field)`. Over a scalar field:
+    /// `outer.start ≤ f AND f < outer.end`; over an interval field:
+    /// `outer.start ≤ f.start AND f.end ≤ outer.end`. `outer` is
+    /// `Interval`/`Param` by construction.
+    FieldWithin { field: FieldId, outer: Const },
 }
 
 /// A query-local view over an image: not yet bound to any generation
