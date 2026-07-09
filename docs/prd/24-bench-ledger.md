@@ -13,7 +13,8 @@ Arg-restriction, interval membership/overlap) alongside the ported originals.
 ## Technical direction
 
 1. **Schema** (`schema.rs`): transcribe the `60-validation.md` schema block
-   exactly — nine relations, the eight containments, and the pointwise key
+   exactly — nine relations, the nine containments (the OrgParent and
+   Mandate lines carry two statements each), and the pointwise key
    `Mandate(account, active) -> Mandate`. Serial fields per the block. Delete the
    old constraint-based construction.
 2. **Corpus generation** (`gen/`, `corpus.rs`): existing distributions carry

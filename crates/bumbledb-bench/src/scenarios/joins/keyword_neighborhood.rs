@@ -22,6 +22,7 @@ pub(super) fn keyword_neighborhood() -> Query {
                 bindings: vec![(FieldId(0), var(0)), (FieldId(1), var(2))],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }

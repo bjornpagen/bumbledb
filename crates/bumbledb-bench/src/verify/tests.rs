@@ -1,6 +1,6 @@
+use super::stamp_value::stamp_value_with;
 use super::*;
 use crate::gen::Scale;
-use super::stamp_value::stamp_value_with;
 
 fn scratch(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!("bumbledb-bench-verify-{tag}"))
@@ -12,7 +12,11 @@ fn cfg(tag: &str) -> VerifyConfig {
             seed: 1,
             scale: Scale::S,
         },
-        random_cases: 50,
+        // 25 randomized cases: the debug-build engine takes seconds per
+        // heavy random shape, so 25 keeps the full three-lane test
+        // inside a unit-test budget (release verify runs use
+        // DEFAULT_RANDOM_CASES).
+        random_cases: 25,
         out_dir: scratch(tag),
     }
 }
@@ -71,8 +75,7 @@ fn divergence_by_error_is_a_bundle_not_a_panic() {
     })
     .expect_err("must fail");
     assert!(!failure.bundles.is_empty());
-    let theirs =
-        std::fs::read_to_string(failure.bundles[0].join("theirs.txt")).expect("artifact");
+    let theirs = std::fs::read_to_string(failure.bundles[0].join("theirs.txt")).expect("artifact");
     assert!(theirs.starts_with("ERROR:"), "{theirs}");
     let ours = std::fs::read_to_string(failure.bundles[0].join("ours.txt")).expect("artifact");
     assert!(ours.contains("row(s)"), "the engine's rows render: {ours}");
@@ -133,13 +136,13 @@ fn a_wrong_oracle_fails_with_a_bundle() {
     let _ = std::fs::remove_dir_all(&config.out_dir);
 }
 
-/// The full oracle at S: families + 50 randomized cases agree, and the
+/// The full oracle at S: families + 25 randomized cases agree, and the
 /// stamp lands.
 #[test]
 fn a_full_verify_at_s_succeeds() {
     let config = cfg("full");
     let report = run(&config).expect("verify succeeds");
-    assert!(report.cases > 200, "families + 50 x 4 randomized");
+    assert!(report.cases > 200, "families + 25 x 4 randomized + naive ops");
     let stamp_path = config.out_dir.join("verify.stamp");
     assert!(stamp_matches(&config, &stamp_path));
     // A different config must not accept this stamp.

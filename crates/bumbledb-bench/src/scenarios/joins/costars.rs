@@ -17,6 +17,7 @@ pub(super) fn costars() -> Query {
                 bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(0))],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }

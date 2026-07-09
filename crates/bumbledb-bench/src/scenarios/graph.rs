@@ -19,11 +19,14 @@ bumbledb::schema! {
         score: i64,
     }
     relation Edge {
-        src: u64 as GNodeId, fk(Node.id),
-        dst: u64 as GNodeId, fk(Node.id),
+        src: u64 as GNodeId,
+        dst: u64 as GNodeId,
         weight: i64,
-        unique(src, dst),
     }
+
+    Edge(src) <= Node(id);
+    Edge(dst) <= Node(id);
+    Edge(src, dst) -> Edge;
 }
 
 /// Relation ids by declaration order.
@@ -112,6 +115,7 @@ fn neighbors() -> Query {
             relation: ids::EDGE,
             bindings: vec![(FieldId(0), param(0)), (FieldId(1), var(0))],
         }],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -130,6 +134,7 @@ fn two_hop() -> Query {
                 bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(0))],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -155,6 +160,7 @@ fn three_hop_count() -> Query {
                 bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(2))],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -177,6 +183,7 @@ fn mutual() -> Query {
                 bindings: vec![(FieldId(0), var(0)), (FieldId(1), param(0))],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -202,6 +209,7 @@ fn triangles_from() -> Query {
                 bindings: vec![(FieldId(0), var(1)), (FieldId(1), param(0))],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -224,6 +232,7 @@ fn weighted_hop() -> Query {
                 bindings: vec![(FieldId(0), var(0)), (FieldId(2), var(2))],
             },
         ],
+        negated: vec![],
         predicates: vec![
             Comparison {
                 op: CmpOp::Ge,

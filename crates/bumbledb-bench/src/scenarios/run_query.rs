@@ -25,8 +25,8 @@ pub(super) fn run_query(
         .prepare(&query)
         .map_err(|e| format!("{}/{}: prepare: {e:?}", scenario.name, sq.name))?;
     let types: Vec<ValueType> = prepared.column_types().cloned().collect();
-    let translated =
-        translate(&query, schema).map_err(|e| format!("{}/{}: {e}", scenario.name, sq.name))?;
+    let translated = translate(&query, schema, &[])
+        .map_err(|e| format!("{}/{}: {e}", scenario.name, sq.name))?;
 
     // The oracle gate: agreement on every param set before any timing.
     for (idx, params) in sets.iter().enumerate() {
@@ -40,7 +40,11 @@ pub(super) fn run_query(
             .conn
             .prepare_cached(&translated.sql)
             .map_err(|e| format!("{}/{}: oracle prepare: {e}", scenario.name, sq.name))?;
-        let theirs = compare::from_sqlite(&mut stmt, &translated.params, params, &types)
+        let args: Vec<crate::naive::ParamValue> = params
+            .iter()
+            .map(|value| crate::naive::ParamValue::Scalar(value.clone()))
+            .collect();
+        let theirs = compare::from_sqlite(&mut stmt, &translated.params, &args, &types)
             .map_err(|e| format!("{}/{}: oracle execute: {e}", scenario.name, sq.name))?;
         compare::multisets(ours, theirs).map_err(|mismatch| {
             format!(
@@ -55,7 +59,7 @@ pub(super) fn run_query(
     let mut buffer = ResultBuffer::new();
     let db = &stores.db;
     let ours = harness::measure(proto, || {
-        let params = rotation.next_set().to_vec();
+        let params = rotation.next_set().clone();
         db.read(|snap| snap.execute(&mut prepared, &params, &mut buffer))
             .map_err(|e| format!("execute: {e:?}"))?;
         Ok(buffer.len() as u64)

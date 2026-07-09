@@ -11,11 +11,11 @@ mod cold;
 mod measure;
 mod rotation;
 mod stats;
-mod traced;
 #[cfg(test)]
 mod tests;
+mod traced;
 
-pub use cold::{measure_cold, tag_touch};
+pub use cold::{measure_cold, org_touch};
 pub use measure::{measure, measure_batched};
 pub use stats::{normalized_p50, stats};
 pub use traced::{traced_cold_sample, traced_sample};
@@ -97,9 +97,11 @@ pub struct Modes {
 pub const QUANTUM_FLOOR_NS: u64 = 500;
 
 /// Round-robin over a fixed param-set vector — the gate-style rotation
-/// (misses included exactly where the family's policy says so).
+/// (misses included exactly where the family's policy says so). Generic
+/// over the set representation: scenario worlds rotate plain
+/// `Vec<Value>`, the ledger families rotate [`crate::families::Draw`]s.
 #[derive(Debug, Clone)]
-pub struct Rotation {
-    sets: Vec<Vec<Value>>,
+pub struct Rotation<T = Vec<Value>> {
+    sets: Vec<T>,
     cursor: usize,
 }

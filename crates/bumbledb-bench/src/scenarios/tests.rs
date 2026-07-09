@@ -7,8 +7,7 @@ use crate::translate::translate;
 #[test]
 fn every_scenario_query_prepares_and_translates() {
     for scenario in all() {
-        let dir =
-            std::env::temp_dir().join(format!("bumbledb-scenario-check-{}", scenario.name));
+        let dir = std::env::temp_dir().join(format!("bumbledb-scenario-check-{}", scenario.name));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch dir");
         let schema = (scenario.schema)();
@@ -16,7 +15,7 @@ fn every_scenario_query_prepares_and_translates() {
         for sq in (scenario.queries)() {
             db.prepare(&(sq.query)())
                 .unwrap_or_else(|e| panic!("{}/{}: validation: {e:?}", scenario.name, sq.name));
-            translate(&(sq.query)(), schema)
+            translate(&(sq.query)(), schema, &[])
                 .unwrap_or_else(|e| panic!("{}/{}: translation: {e}", scenario.name, sq.name));
             let a = (sq.params)(1);
             let b = (sq.params)(1);

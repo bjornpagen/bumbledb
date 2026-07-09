@@ -1,8 +1,8 @@
-//! The performance tripwires (docs/architecture/50-validation.md): every fix in the perf
-//! suite, encoded as a structural regression test over the pinned S
-//! corpus — trace-event counts and counter work bounds, never wall
-//! clock. If a finding from the 2026-07-03 report silently returns,
-//! one of these fails by name.
+//! The performance tripwires (docs/architecture/60-validation.md): the
+//! perf suite's fixes, encoded as structural regression tests over the
+//! pinned S corpus — trace-event counts, plan-shape observables, and
+//! counter work bounds, never wall clock. If a repaired finding silently
+//! returns, one of these fails by name.
 //!
 //! This module is test-only enforcement; it compiles no production
 //! code.
@@ -10,8 +10,8 @@
 #[cfg(test)]
 mod tests {
     use crate::corpus;
-    use crate::families;
-    use crate::gen::{GenConfig, Scale, Sizes, MEMO_VOCAB, UNIQUE_MEMO_DEN};
+    use crate::families::{self, has_sets, param_args, scalar_values};
+    use crate::gen::{GenConfig, Scale, Sizes};
     use crate::schema::schema;
     use bumbledb::Db;
 
@@ -27,6 +27,122 @@ mod tests {
         let db = Db::create(&dir, schema()).expect("create");
         corpus::load_bumbledb(&db, CFG).expect("load");
         (dir, db)
+    }
+
+    /// The plan-shape assertions the doc's perf decisions require
+    /// (docs/architecture/60-validation.md; PRD 24):
+    /// - `point` takes the guard fast path (`skip_free()` is `None`
+    ///   exactly for guard plans);
+    /// - the **membership families do NOT take the guard fast path** —
+    ///   a membership binding is never a whole-key point probe, even
+    ///   where the atom binds the pointwise key's scalar prefix;
+    /// - the param-set family plans a real join too (set bindings ride
+    ///   the selection machinery, not the guard).
+    #[test]
+    fn guard_fast_path_is_taken_exactly_where_documented() {
+        let dir = std::env::temp_dir().join("bumbledb-tripwires-guard");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let db = Db::create(&dir, schema()).expect("create");
+        let plan_kind = |name: &str| {
+            let family = families::all()
+                .iter()
+                .find(|f| f.name == name)
+                .expect("registered");
+            let prepared = db.prepare(&(family.query)()).expect("prepares");
+            prepared.skip_free()
+        };
+        assert_eq!(plan_kind("point"), None, "point is the guard probe");
+        for membership in ["mandate_at_instant", "mandate_overlap"] {
+            assert!(
+                plan_kind(membership).is_some(),
+                "{membership} must NOT take the guard fast path"
+            );
+        }
+        assert!(
+            plan_kind("entries_for_account_set").is_some(),
+            "the param-set family joins through selections, not the guard"
+        );
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The selection machinery engages for the param-set family
+    /// (docs/architecture/40-execution.md § selection levels — param
+    /// sets ride the selection trie): warm executions emit
+    /// `select_probe` events, and the membership families never emit a
+    /// `guard_probe`.
+    #[cfg(feature = "obs")]
+    #[test]
+    fn selection_levels_engage_for_the_param_set_family() {
+        use bumbledb::obs;
+
+        let (dir, db) = corpus_db("selections");
+        let events_of = |name: &str, event: &str| -> usize {
+            let family = families::all()
+                .iter()
+                .find(|f| f.name == name)
+                .expect("registered");
+            let mut prepared = db.prepare(&(family.query)()).expect("prepare");
+            let sets = (family.params)(&CFG);
+            for params in &sets {
+                let args = param_args(params);
+                db.read(|snap| snap.execute_collect_args(&mut prepared, &args).map(|_| ()))
+                    .expect("warm");
+            }
+            obs::start_capture();
+            let args = param_args(&sets[0]);
+            db.read(|snap| snap.execute_collect_args(&mut prepared, &args).map(|_| ()))
+                .expect("execute");
+            obs::finish_capture()
+                .iter()
+                .filter(|e| e.name == event)
+                .count()
+        };
+        assert!(
+            events_of("entries_for_account_set", obs::names::SELECT_PROBE) > 0,
+            "the set binding must probe selection levels"
+        );
+        for membership in ["mandate_at_instant", "mandate_overlap"] {
+            assert_eq!(
+                events_of(membership, obs::names::GUARD_PROBE),
+                0,
+                "{membership} must not guard-probe"
+            );
+        }
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The aggregate families' fold regimes, pinned: balance binds the
+    /// posting serial — distinct bindings proven, the seen-set elided.
+    /// stats binds no key coverage **by design** (collapsing duplicate
+    /// (currency, amount, at, account) bindings is the family's set
+    /// semantics), so its dedup pass is semantically required. A planner
+    /// change that flips either regime is a semantics bug, not a tuning
+    /// change.
+    #[test]
+    fn aggregate_family_fold_regimes_are_pinned() {
+        let dir = std::env::temp_dir().join("bumbledb-tripwires-elide");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let db = Db::create(&dir, schema()).expect("create");
+        let regime = |name: &str| {
+            let family = families::all()
+                .iter()
+                .find(|f| f.name == name)
+                .expect("registered");
+            let prepared = db.prepare(&(family.query)()).expect("prepares");
+            prepared.distinct_bindings()
+        };
+        assert!(regime("balance"), "balance elides the seen set");
+        assert!(!regime("stats"), "stats' dedup is semantics");
+        assert!(
+            regime("latest_posting_per_account"),
+            "the Arg family binds the posting serial"
+        );
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Finding 1 (the access path), forever: after one full param
@@ -45,14 +161,16 @@ mod tests {
             let sets = (family.params)(&CFG);
             // One full warm rotation: every binding built once.
             for params in &sets {
-                db.read(|snap| snap.execute_collect(&mut prepared, params).map(|_| ()))
+                let args = param_args(params);
+                db.read(|snap| snap.execute_collect_args(&mut prepared, &args).map(|_| ()))
                     .expect("warm");
             }
             // Two further rotations: zero view builds, ever.
             for cycle in 0..2 {
                 for (set_idx, params) in sets.iter().enumerate() {
+                    let args = param_args(params);
                     obs::start_capture();
-                    db.read(|snap| snap.execute_collect(&mut prepared, params).map(|_| ()))
+                    db.read(|snap| snap.execute_collect_args(&mut prepared, &args).map(|_| ()))
                         .expect("execute");
                     let events = obs::finish_capture();
                     let builds = events
@@ -73,46 +191,36 @@ mod tests {
 
     /// Finding 2 (per-row intern resolution), forever: a traced warm
     /// sample resolves each distinct string once — `fk_walk`'s single
-    /// holder name costs one lookup for its ~200 rows, skew's single
-    /// label one for its ~50k.
+    /// holder name costs one lookup for its ~200 rows.
     #[cfg(feature = "obs")]
     #[test]
     fn finalize_resolution_stays_collapsed() {
         use bumbledb::obs;
 
         let (dir, db) = corpus_db("resolve");
-        let resolves_of = |name: &str, set_idx: usize| -> (usize, usize) {
-            let family = families::all()
-                .iter()
-                .find(|f| f.name == name)
-                .expect("registered");
-            let mut prepared = db.prepare(&(family.query)()).expect("prepare");
-            let sets = (family.params)(&CFG);
-            for params in &sets {
-                db.read(|snap| snap.execute_collect(&mut prepared, params).map(|_| ()))
-                    .expect("warm");
-            }
-            obs::start_capture();
-            let out = db
-                .read(|snap| snap.execute_collect(&mut prepared, &sets[set_idx]))
-                .expect("execute");
-            let events = obs::finish_capture();
-            let resolves = events
-                .iter()
-                .filter(|e| e.name == obs::names::DICT_RESOLVE)
-                .count();
-            (resolves, out.len())
-        };
-
-        // fk_walk set 0 = one cold account = one holder name.
-        let (resolves, rows) = resolves_of("fk_walk", 0);
-        assert!(rows > 1, "a real result set");
+        let family = families::all()
+            .iter()
+            .find(|f| f.name == "fk_walk")
+            .expect("registered");
+        let mut prepared = db.prepare(&(family.query)()).expect("prepare");
+        let sets = (family.params)(&CFG);
+        for params in &sets {
+            let args = param_args(params);
+            db.read(|snap| snap.execute_collect_args(&mut prepared, &args).map(|_| ()))
+                .expect("warm");
+        }
+        obs::start_capture();
+        let args = param_args(&sets[0]);
+        let out = db
+            .read(|snap| snap.execute_collect_args(&mut prepared, &args))
+            .expect("execute");
+        let events = obs::finish_capture();
+        let resolves = events
+            .iter()
+            .filter(|e| e.name == obs::names::DICT_RESOLVE)
+            .count();
+        assert!(out.len() > 1, "a real result set");
         assert_eq!(resolves, 1, "one distinct name, one resolution");
-
-        // skew set 0 = the hot tag = one label across ~50k rows.
-        let (resolves, rows) = resolves_of("skew", 0);
-        assert!(rows > 10_000, "the hot label is hot");
-        assert_eq!(resolves, 1, "one distinct label, one resolution");
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -121,63 +229,84 @@ mod tests {
     /// per family is bounded by the corpus's logical selectivities —
     /// never O(relation) for selective families, never O(map capacity)
     /// anywhere. Bounds carry their derivations; counters are
-    /// deterministic over the pinned corpus.
+    /// deterministic over the pinned corpus. The param-set family has no
+    /// scalar profile path (set selectivity is an execution fact) — its
+    /// structural assertion is the selection-level tripwire above.
     #[test]
     fn read_work_is_bounded_by_selectivity() {
         let (dir, db) = corpus_db("work");
         let sizes = Sizes::of(CFG.scale);
         let typical = |name: &str| -> usize {
             match name {
-                "balance" => 1,
-                "skew" => 2,
+                "balance" | "skew" => 1,
                 _ => 0,
             }
         };
         for family in families::all() {
+            let sets = (family.params)(&CFG);
+            if has_sets(&sets) {
+                continue;
+            }
             let query = (family.query)();
             let mut prepared = db.prepare(&query).expect("prepare");
-            let sets = (family.params)(&CFG);
             for params in &sets {
-                db.read(|snap| snap.execute_collect(&mut prepared, params).map(|_| ()))
+                let args = param_args(params);
+                db.read(|snap| snap.execute_collect_args(&mut prepared, &args).map(|_| ()))
                     .expect("warm");
             }
             let (out, stats) = db
-                .read(|snap| snap.profile(&mut prepared, &sets[typical(family.name)]))
+                .read(|snap| {
+                    snap.profile(&mut prepared, &scalar_values(&sets[typical(family.name)]))
+                })
                 .expect("profile");
             let drawn: u64 = stats.nodes.iter().map(|n| n.batch_entries).sum();
             // Derivations over the pinned corpus (postings = 100_000,
-            // accounts = 500, holders = 125, instruments = 512):
+            // entries = 50_000, accounts = 500, holders = 125,
+            // instruments = 512, orgs = 64, mandates = 2_000):
             let bound = match family.name {
                 // Guard probe: no join nodes at all.
                 "point" => 0,
                 // One cold account: ~postings/accounts = 200 postings,
                 // plus the account and holder probes. 4x margin.
                 "fk_walk" => 4 * (sizes.postings / sizes.accounts + 2),
-                // ~2% suffix x open share, three relations walked by
-                // cover: bounded by 3x the window's postings.
+                // ~2% suffix x 1/3 currency share, three relations
+                // walked by cover: bounded by 3x the window's postings.
                 "chain" => 3 * (sizes.postings * 8 / 100),
                 // The pure scan family: one pass over postings.
                 "range" => 2 * sizes.postings,
                 // One light holder: ~4 accounts x ~200 postings + keys.
                 "balance" => 4 * (4 * (sizes.postings / sizes.accounts) + 8),
-                // The full fold: every posting once + the instruments.
-                "stats" => sizes.postings + 2 * sizes.instruments,
-                // One vocabulary memo: ~postings/vocab + uniq share.
-                "string" => {
-                    8 * (sizes.postings / MEMO_VOCAB + sizes.postings / UNIQUE_MEMO_DEN / 64)
-                }
-                // One uniform tag: ~2 accounts x ~200 postings + probes.
-                "skew" => 8 * (2 * (sizes.postings / sizes.accounts) + 8),
-                // Param-less self-join on transfer: the cover draws every
-                // posting once (~postings (t, x) keys) and the second
-                // occurrence ~2-3 per surviving entry (measured 4.0x
-                // postings at S) — 6x margin.
+                // The full fold: every posting once + the accounts.
+                "stats" => 2 * (sizes.postings + sizes.accounts),
+                // One symbol: ~postings/instruments postings + probes.
+                "string" => 8 * (sizes.postings / sizes.instruments + 8),
+                // One uniform tag: ~40% of second tag slots — bounded by
+                // the full PostingTag pass plus the matched postings.
+                "skew" => 2 * (sizes.posting_tags + sizes.postings),
+                // Param-less self-join on entry: the cover draws every
+                // posting once and the second occurrence ~2-3 per
+                // surviving entry — 6x margin.
                 "spread" => 6 * sizes.postings,
-                // The cyclic self-join: the measured S plan iterates one
+                // The cyclic self-join: the measured plan iterates one
                 // full occurrence and probes the closing edges — bounded
                 // by a small multiple of postings (the cold ~1% window
                 // keeps the surviving suffix tiny).
                 "triangle" => 8 * sizes.postings,
+                // One account's postings + its anti-probes.
+                "postings_without_tag" => 16 * (sizes.postings / sizes.accounts + 16),
+                // The full Arg restriction: every posting once, plus the
+                // per-account extremes.
+                "latest_posting_per_account" => 4 * sizes.postings,
+                // One (account, at) posting point + the account's ~4
+                // mandate segments; generous margin for the cover's
+                // account-postings walk.
+                "mandate_at_instant" => 16 * (sizes.postings / sizes.accounts + 64),
+                // One org's ~mandates/orgs segments squared (the
+                // overlap join), plus probes.
+                "mandate_overlap" => {
+                    let per_org = sizes.mandates / sizes.orgs + 8;
+                    8 * per_org * per_org
+                }
                 other => unreachable!("unregistered family {other}"),
             };
             eprintln!(

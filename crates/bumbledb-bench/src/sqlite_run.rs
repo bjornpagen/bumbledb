@@ -29,7 +29,7 @@ pub use bulk::bulk;
 pub use cold_fk_walk::cold_fk_walk;
 pub use commits::{commit_batch, commit_single};
 pub use open_for_bench::open_for_bench;
-pub use sample::sample;
+pub use sample::{sample, sample_args};
 
 /// A family's statement, prepared exactly once and reused across every
 /// warmup and sample (mirroring `PreparedQuery`). This is the **only**
@@ -56,9 +56,36 @@ pub fn bind_params(order: &[ParamSlot], params: &[Value]) -> Vec<rusqlite::types
         .collect()
 }
 
+/// [`bind_params`] over a family draw: scalar positions bind through the
+/// slot order; set positions never appear there (their element lists are
+/// SQL literals in the re-rendered statement).
+///
+/// # Panics
+///
+/// On a set arg in a placeholder slot (a translator invariant).
+#[must_use]
+pub fn bind_args(
+    order: &[ParamSlot],
+    draw: &[crate::naive::ParamValue],
+) -> Vec<rusqlite::types::Value> {
+    use crate::naive::ParamValue;
+    let scalar = |p: &bumbledb::ParamId| match &draw[usize::from(p.0)] {
+        ParamValue::Scalar(value) => value,
+        ParamValue::Set(_) => panic!("a set param has no placeholder slot"),
+    };
+    order
+        .iter()
+        .map(|slot| match slot {
+            ParamSlot::Whole(p) => sqlmap::to_sql_value(scalar(p)),
+            ParamSlot::Start(p) => sqlmap::interval_halves(scalar(p)).0,
+            ParamSlot::End(p) => sqlmap::interval_halves(scalar(p)).1,
+        })
+        .collect()
+}
+
 /// The fairness contract as code — run before measuring, so a
 /// misconfigured oracle fails the run instead of flattering the engine.
 pub struct FairnessCheck;
 
 /// The `SQLite` posting insert, mirroring the corpus loader's shape.
-const POSTING_INSERT: &str = "INSERT INTO \"Posting\" VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
+const POSTING_INSERT: &str = "INSERT INTO \"Posting\" VALUES (?1, ?2, ?3, ?4, ?5, ?6)";

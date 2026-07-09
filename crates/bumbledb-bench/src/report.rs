@@ -143,10 +143,10 @@ mod markdown;
 mod merge;
 mod provenance;
 mod run_report;
-mod verdict;
-mod write_artifacts;
 #[cfg(test)]
 mod tests;
+mod verdict;
+mod write_artifacts;
 
 pub use budget::within_budget;
 pub use json_out::to_json;

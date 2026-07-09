@@ -191,7 +191,9 @@ fn ghz_stamps_render_in_markdown_json_and_the_merge_excludes_dirt() {
     );
     let text = to_json(&stamped);
     assert!(
-        text.contains("\"ghz\":{\"pre\":3.450,\"post\":3.410,\"retried\":false,\"contaminated\":false}"),
+        text.contains(
+            "\"ghz\":{\"pre\":3.450,\"post\":3.410,\"retried\":false,\"contaminated\":false}"
+        ),
         "{text}"
     );
 
@@ -208,18 +210,21 @@ fn ghz_stamps_render_in_markdown_json_and_the_merge_excludes_dirt() {
         contaminated: true,
     });
     let runs = vec![
-        ("run1".to_owned(), json::parse(&to_json(&stamped)).expect("parses")),
-        ("run2".to_owned(), json::parse(&to_json(&second)).expect("parses")),
+        (
+            "run1".to_owned(),
+            json::parse(&to_json(&stamped)).expect("parses"),
+        ),
+        (
+            "run2".to_owned(),
+            json::parse(&to_json(&second)).expect("parses"),
+        ),
     ];
     let merged = merge_markdown(&runs).expect("merges");
     assert!(
         merged.contains("| point | 10.0 | ~~5.0~~ | 10.0 | 30.0 |"),
         "{merged}"
     );
-    assert!(
-        merged.contains("excluded from the minima"),
-        "{merged}"
-    );
+    assert!(merged.contains("excluded from the minima"), "{merged}");
     // commit_single is contaminated in BOTH runs: no clean minima.
     assert!(
         merged.contains("| commit_single | ~~100.0~~ | ~~100.0~~ | - | - |"),

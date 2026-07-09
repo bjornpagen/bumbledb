@@ -20,11 +20,13 @@ bumbledb::schema! {
     relation Doc {
         id: u64 as PDocId, serial,
         key: str,
-        unique(key),
-        bucket: u64 as PBucketId, fk(Bucket.id),
+        bucket: u64 as PBucketId,
         size: i64,
         payload: bytes,
     }
+
+    Doc(key) -> Doc;
+    Doc(bucket) <= Bucket(id);
 }
 
 /// Relation ids by declaration order.
@@ -79,6 +81,7 @@ fn by_id() -> Query {
                 (FieldId(2), var(1)),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -105,6 +108,7 @@ fn by_key() -> Query {
                 (FieldId(3), var(1)),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -134,6 +138,7 @@ fn bucket_fetch() -> Query {
                 bindings: vec![(FieldId(0), var(1)), (FieldId(1), param(0))],
             },
         ],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Lt,
             lhs: var(1),
@@ -163,6 +168,7 @@ fn size_band() -> Query {
             relation: ids::DOC,
             bindings: vec![(FieldId(0), var(0)), (FieldId(3), var(1))],
         }],
+        negated: vec![],
         predicates: vec![
             Comparison {
                 op: CmpOp::Ge,

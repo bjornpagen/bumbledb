@@ -1,33 +1,35 @@
 use bumbledb::{RelationId, Value};
 
 use crate::gen::{
-    account_tag_pair, GenConfig, Rng, Sizes, AT_BASE, AT_STEP, HOT_SHARE_PCT, MEMO_VOCAB,
-    UNIQUE_MEMO_DEN,
+    mandate_segments, mix, GenConfig, Rng, Sizes, AT_BASE, AT_STEP, HOT_SHARE_PCT, HOT_TAG_PCT,
+    MANDATE_SEGMENTS, TAG_VARIANTS,
 };
 use crate::schema::ids;
 
-/// The `SQLite` mapping axiom (docs/architecture/50-validation.md): every `u64` stays below
-/// 2⁶³ so INTEGER columns compare correctly.
+/// The `SQLite` mapping axiom (docs/architecture/60-validation.md): every
+/// `u64` stays below 2⁶³ so INTEGER columns compare correctly.
 fn checked_id(id: u64) -> u64 {
     assert!(id < 1 << 63, "the SQLite mapping axiom: u64 < 2^63");
     id
 }
 
-fn mix(seed: u64, rel: RelationId, row: u64) -> u64 {
-    // splitmix-style avalanche over the triple.
-    let mut z = seed ^ (u64::from(rel.0) << 56) ^ row;
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
-}
-
-fn memo(rng: &mut Rng, row: u64) -> Value {
-    let text = if rng.chance(1, UNIQUE_MEMO_DEN) {
-        format!("uniq-{row}")
+/// One posting's tag pair: the two **distinct** tags posting `2p` carries
+/// (rows `2p` and `2p + 1`; odd postings carry none — the negation
+/// family's untagged half exists by construction). The first tag is
+/// skewed: [`HOT_TAG_PCT`]% draw `Fee` (ordinal 0) — the skew family's
+/// hot parameter.
+fn tag_pair(seed: u64, pair: u64) -> (u8, u8) {
+    let mut rng = Rng::new(mix(seed, ids::POSTING_TAG, pair));
+    let first = if rng.chance(HOT_TAG_PCT, 100) {
+        0
     } else {
-        format!("m{}", rng.range(MEMO_VOCAB))
+        1 + rng.range(TAG_VARIANTS - 1)
     };
-    Value::String(text.into_bytes().into())
+    let second = (first + 1 + rng.range(TAG_VARIANTS - 1)) % TAG_VARIANTS;
+    (
+        u8::try_from(first).expect("three variants"),
+        u8::try_from(second).expect("three variants"),
+    )
 }
 
 /// One relation's row, by index — the pure function everything streams
@@ -42,48 +44,24 @@ fn memo(rng: &mut Rng, row: u64) -> Value {
 pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value> {
     let mut rng = Rng::new(mix(cfg.seed, rel, i));
     match rel {
-        ids::CURRENCY => vec![
-            Value::U64(checked_id(i)),
-            Value::String(format!("CUR{i:02}").into_bytes().into()),
-        ],
         ids::HOLDER => vec![
             Value::U64(checked_id(i)),
-            Value::String(
-                format!("holder-{}", rng.range(MEMO_VOCAB))
-                    .into_bytes()
-                    .into(),
-            ),
-            Value::Enum(u8::try_from(rng.range(4)).expect("4 regions")),
-        ],
-        ids::INSTRUMENT => vec![
-            Value::U64(checked_id(i)),
-            Value::String(format!("SYM{i:04}").into_bytes().into()),
-            Value::U64(rng.range(sizes.currencies)),
-            Value::Enum(u8::try_from(rng.range(4)).expect("4 kinds")),
+            Value::String(format!("holder-{i:05}").into_bytes().into()),
         ],
         ids::ACCOUNT => vec![
             Value::U64(checked_id(i)),
             Value::U64(rng.range(sizes.holders)),
-            Value::U64(rng.range(sizes.currencies)),
-            // status: 90% Open.
-            Value::Enum(if rng.chance(9, 10) {
-                0
-            } else {
-                u8::try_from(1 + rng.range(2)).expect("3 statuses")
-            }),
-            Value::I64(AT_BASE - i64::try_from(rng.range(1 << 30)).expect("fits")),
+            Value::Enum(u8::try_from(rng.range(3)).expect("3 currencies")),
         ],
-        ids::TRANSFER => {
-            let mut extref = Vec::with_capacity(16);
-            for _ in 0..2 {
-                extref.extend_from_slice(&rng.u64().to_le_bytes());
-            }
-            vec![
-                Value::U64(checked_id(i)),
-                Value::I64(AT_BASE + i64::try_from(i).expect("fits") * AT_STEP * 2),
-                Value::Bytes(extref.into()),
-            ]
-        }
+        ids::INSTRUMENT => vec![
+            Value::U64(checked_id(i)),
+            Value::String(format!("SYM{i:04}").into_bytes().into()),
+        ],
+        ids::JOURNAL_ENTRY => vec![
+            Value::U64(checked_id(i)),
+            Value::Enum(u8::try_from(rng.range(3)).expect("3 sources")),
+            Value::I64(AT_BASE + i64::try_from(i).expect("fits") * AT_STEP * 2),
+        ],
         ids::POSTING => {
             let account = if rng.chance(HOT_SHARE_PCT, 100) {
                 rng.range(sizes.hot_accounts())
@@ -105,35 +83,39 @@ pub fn row(cfg: &GenConfig, sizes: &Sizes, rel: RelationId, i: u64) -> Vec<Value
                     .expect("fits");
             vec![
                 Value::U64(checked_id(i)),
-                Value::U64(rng.range(sizes.transfers)),
+                Value::U64(rng.range(sizes.entries)),
                 Value::U64(account),
                 Value::U64(rng.range(sizes.instruments)),
                 Value::I64(amount),
                 Value::I64(at),
-                memo(&mut rng, i),
-                Value::Bool(rng.chance(3, 4)),
             ]
         }
-        ids::TAG => vec![
-            Value::U64(checked_id(i)),
-            Value::String(format!("tag-{i:03}").into_bytes().into()),
-        ],
-        ids::ACCOUNT_TAG => {
-            let (account, tag) = account_tag_pair(sizes, i);
-            vec![Value::U64(account), Value::U64(tag)]
-        }
-        ids::TAG_NOTE => {
-            // Every 4th AccountTag pair carries a note — a subset by
-            // construction, so the compound FK always resolves.
-            let (account, tag) = account_tag_pair(sizes, i * 4);
+        ids::POSTING_TAG => {
+            let posting = (i / 2) * 2;
+            let (first, second) = tag_pair(cfg.seed, i / 2);
             vec![
-                Value::U64(account),
-                Value::U64(tag),
-                Value::String(
-                    format!("note-{}", rng.range(MEMO_VOCAB))
-                        .into_bytes()
-                        .into(),
-                ),
+                Value::U64(posting),
+                Value::Enum(if i.is_multiple_of(2) { first } else { second }),
+            ]
+        }
+        ids::ORG => vec![
+            Value::U64(checked_id(i)),
+            Value::String(format!("org-{i:02}").into_bytes().into()),
+        ],
+        ids::ORG_PARENT => {
+            // A binary forest over the org ids: child c's parent is c/2 —
+            // every child and parent exists, no self-edges, no cycles.
+            let child = i + 1;
+            vec![Value::U64(child), Value::U64(child / 2)]
+        }
+        ids::MANDATE => {
+            let account = i / MANDATE_SEGMENTS;
+            let k = usize::try_from(i % MANDATE_SEGMENTS).expect("small");
+            let segment = mandate_segments(cfg.seed, sizes, account)[k];
+            vec![
+                Value::U64(checked_id(account)),
+                Value::U64(segment.org),
+                Value::IntervalI64(segment.start, segment.end),
             ]
         }
         _ => unreachable!("nine ledger relations"),

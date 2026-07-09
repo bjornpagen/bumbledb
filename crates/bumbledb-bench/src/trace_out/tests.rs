@@ -165,8 +165,7 @@ fn a_real_fk_walk_capture_summarizes_to_the_execute_span() {
     }
     let (_, events) = crate::harness::traced_sample(&mut run).expect("traced");
     let (engine, harness) = split_harness(events);
-    let names: std::collections::HashSet<&str> =
-        engine.iter().map(|event| event.name).collect();
+    let names: std::collections::HashSet<&str> = engine.iter().map(|event| event.name).collect();
     assert!(names.contains("execute"), "{names:?}");
     assert!(names.contains("join"), "{names:?}");
     assert!(
@@ -189,8 +188,8 @@ fn a_real_fk_walk_capture_summarizes_to_the_execute_span() {
     );
 
     // And it exports.
-    let path = write_trace_file(&dir.join("trace"), "fk_walk.warm", &engine, &harness)
-        .expect("export");
+    let path =
+        write_trace_file(&dir.join("trace"), "fk_walk.warm", &engine, &harness).expect("export");
     let text = std::fs::read_to_string(path).expect("read back");
     assert!(text.starts_with("[\n") && text.ends_with("\n]\n"));
     drop(db);

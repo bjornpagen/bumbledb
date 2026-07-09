@@ -17,16 +17,6 @@ use bumbledb::schema::{
 };
 use bumbledb::{Schema, Value};
 
-/// The family composites beyond the statement-derived indexes (fairness:
-/// `SQLite` gets every index the query families reward — see
-/// `docs/architecture/60-validation.md`, `FairnessCheck`, which asserts
-/// their presence).
-pub const EXTRA_INDEXES: &[(&str, &str, &[&str])] = &[
-    ("idx_posting_account_at", "Posting", &["account", "at"]),
-    ("idx_posting_memo", "Posting", &["memo"]),
-    ("idx_posting_instrument", "Posting", &["instrument"]),
-];
-
 /// The SQL storage class of one scalar type. Intervals never reach here:
 /// they split into two INTEGER columns first ([`field_columns`]).
 fn sql_type(ty: &ValueType) -> &'static str {
@@ -140,33 +130,26 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
     plan
 }
 
-/// Every index the fairness contract requires, as `(table, index)` pairs
-/// — the same walk [`schema_ddl`] emits (`FairnessCheck`,
-/// `docs/architecture/60-validation.md`).
+/// Every statement-derived index the fairness contract requires, as
+/// `(table, index)` pairs — the same walk [`schema_ddl`] emits
+/// (`FairnessCheck`, `docs/architecture/60-validation.md`). The
+/// family-owned composites live beside the families
+/// (`crate::families::expected_indexes`).
 #[must_use]
 pub fn expected_indexes(schema: &Schema) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = index_plan(schema)
+    index_plan(schema)
         .into_iter()
         .map(|spec| (spec.table, spec.name))
-        .collect();
-    for (index, table, _) in EXTRA_INDEXES {
-        out.push(((*table).to_owned(), (*index).to_owned()));
-    }
-    out
+        .collect()
 }
 
-/// The full DDL: [`schema_ddl`] plus [`EXTRA_INDEXES`].
+/// The ledger DDL: [`schema_ddl`] plus the family-owned index registry
+/// (`crate::families::index_ddl` — the honest opponent gets every index
+/// the query families reward).
 #[must_use]
 pub fn ddl(schema: &Schema) -> Vec<String> {
     let mut statements = schema_ddl(schema);
-    for (index, table, columns) in EXTRA_INDEXES {
-        let cols = columns
-            .iter()
-            .map(|c| format!("\"{c}\""))
-            .collect::<Vec<_>>()
-            .join(", ");
-        statements.push(format!("CREATE INDEX \"{index}\" ON \"{table}\" ({cols})"));
-    }
+    statements.extend(crate::families::index_ddl());
     statements
 }
 

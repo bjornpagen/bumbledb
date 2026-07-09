@@ -18,10 +18,10 @@ mod gen;
 mod merge;
 mod read_family;
 mod scenarios;
-mod trace;
-mod write_families;
 #[cfg(test)]
 mod tests;
+mod trace;
+mod write_families;
 
 pub use bench::cmd_bench;
 pub use corpus::{corpus_paths, ensure_corpus, ensure_corpus_with};

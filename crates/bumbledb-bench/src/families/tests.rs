@@ -2,22 +2,36 @@ use super::digest::digest_over;
 use super::read::balance_query;
 use super::*;
 
-use crate::gen::{self, Scale, Sizes};
+use crate::gen::{GenConfig, Scale, Sizes};
+use crate::naive::ParamValue;
 use crate::schema::{ids, schema};
-use crate::translate::{goldens, translate};
+use crate::translate::translate;
 
 const CFG: GenConfig = GenConfig {
     seed: 1,
     scale: Scale::S,
 };
 
+/// The set-bound families pin their goldens under a fixed representative
+/// set — documented in the param policy, independent of any seed.
+fn golden_sets(family: &Family) -> Vec<(ParamId, Vec<Value>)> {
+    if family.name == "entries_for_account_set" {
+        vec![(
+            ParamId(0),
+            vec![Value::U64(3), Value::U64(7), Value::U64(9)],
+        )]
+    } else {
+        vec![]
+    }
+}
+
 #[test]
-fn all_ten_validate_and_prepare() {
+fn all_fifteen_validate_and_prepare() {
     let dir = std::env::temp_dir().join("bumbledb-bench-families");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
     let db = bumbledb::Db::create(&dir, schema()).expect("create");
-    assert_eq!(all().len(), 10);
+    assert_eq!(all().len(), 15);
     for family in all() {
         db.prepare(&(family.query)())
             .unwrap_or_else(|e| panic!("{} fails validation: {e:?}", family.name));
@@ -26,84 +40,13 @@ fn all_ten_validate_and_prepare() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// PRD 09 (docs/perf/): the skip-free roster, pinned from real plans
-/// (the classification test the PRD orders written FIRST — its output
-/// decides which families gate PRD 09 vs PRD 10). The result moved
-/// the suite's plan: every skip-free family is a ≤2-node plan whose
-/// leaf already runs fused (cross-node batching has no parents to
-/// batch), while the deep-node families — triangle, chain, skew,
-/// `fk_walk` — all carry D2-crossing nodes and gate PRD 10.
-#[test]
-fn skip_free_classification_is_pinned() {
-    let dir = std::env::temp_dir().join("bumbledb-bench-families-skipfree");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
-    let db = bumbledb::Db::create(&dir, schema()).expect("create");
-    let mut seen: Vec<(&str, Option<bool>)> = Vec::new();
-    for family in all() {
-        let prepared = db.prepare(&(family.query)()).expect("prepares");
-        seen.push((family.name, prepared.skip_free()));
-    }
-    assert_eq!(
-        seen,
-        vec![
-            ("point", None),
-            ("fk_walk", Some(false)),
-            ("chain", Some(false)),
-            ("range", Some(true)),
-            ("balance", Some(true)),
-            ("stats", Some(true)),
-            ("string", Some(true)),
-            ("skew", Some(false)),
-            ("spread", Some(true)),
-            ("triangle", Some(false)),
-        ],
-        "the skip-free roster and with it the PRD 09/10 gate split"
-    );
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// PRD 02 (docs/perf/): the aggregate families' fold regimes, pinned.
-/// balance binds the posting serial — distinct bindings proven, the
-/// seen-set elided, the constant-group fast path bare. stats binds
-/// no unique coverage **by design** (collapsing duplicate
-/// (kind, amount, at, instrument) bindings is the family's set
-/// semantics), so its dedup pass is semantically required and the
-/// batch fold runs the dedup-then-gather arm. A planner change that
-/// flips either regime is a semantics bug, not a tuning change.
-#[test]
-fn aggregate_family_fold_regimes_are_pinned() {
-    let dir = std::env::temp_dir().join("bumbledb-bench-families-elide");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
-    let db = bumbledb::Db::create(&dir, schema()).expect("create");
-    let mut seen: Vec<(&str, bool)> = Vec::new();
-    for family in all() {
-        let query = (family.query)();
-        if !query
-            .finds
-            .iter()
-            .any(|f| matches!(f, bumbledb::FindTerm::Aggregate { .. }))
-        {
-            continue;
-        }
-        let prepared = db.prepare(&query).expect("prepares");
-        seen.push((family.name, prepared.distinct_bindings()));
-    }
-    assert_eq!(
-        seen,
-        vec![("balance", true), ("stats", false)],
-        "the aggregate roster and its fold regimes"
-    );
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
+/// The PRD 24 golden criterion: every family's SQL golden is byte-pinned
+/// against the translator (set-bound families under the documented
+/// representative set).
 #[test]
 fn every_golden_equals_its_translation() {
     for family in all() {
-        let t = translate(&(family.query)(), schema())
+        let t = translate(&(family.query)(), schema(), &golden_sets(family))
             .unwrap_or_else(|e| panic!("{} fails translation: {e}", family.name));
         assert_eq!(t.sql, family.golden_sql, "family {}", family.name);
     }
@@ -116,29 +59,67 @@ fn params_are_deterministic_with_the_documented_misses() {
         let a = (family.params)(&CFG);
         let b = (family.params)(&CFG);
         assert_eq!(a, b, "{} params must be seeded", family.name);
-        let expected_sets = if matches!(family.name, "stats" | "spread") {
-            1
-        } else {
-            4
+        let expected_sets = match family.name {
+            "stats" | "spread" | "latest_posting_per_account" => 1,
+            "skew" => 3,
+            _ => 4,
         };
         assert_eq!(a.len(), expected_sets, "{}", family.name);
     }
+    let draws = |name: &str| {
+        (all()
+            .iter()
+            .find(|f| f.name == name)
+            .expect("registered")
+            .params)(&CFG)
+    };
     // The documented misses.
-    let point = (all()[0].params)(&CFG);
-    let Value::U64(miss) = point[3][0] else {
+    let point = draws("point");
+    let ParamValue::Scalar(Value::U64(miss)) = point[3][0] else {
         panic!("point param")
     };
     assert!(miss >= sizes.postings, "point set 4 is a miss");
-    let fk_walk = (all()[1].params)(&CFG);
-    let Value::U64(miss) = fk_walk[3][0] else {
-        panic!("fk_walk param")
-    };
-    assert!(miss >= sizes.accounts, "fk_walk set 4 is a miss");
-    let string = (all()[6].params)(&CFG);
-    let Value::String(raw) = &string[3][0] else {
+    for name in ["fk_walk", "postings_without_tag"] {
+        let sets = draws(name);
+        let ParamValue::Scalar(Value::U64(miss)) = sets[3][0] else {
+            panic!("{name} param")
+        };
+        assert!(miss >= sizes.accounts, "{name} set 4 is a miss");
+    }
+    let string = draws("string");
+    let ParamValue::Scalar(Value::String(raw)) = &string[3][0] else {
         panic!("string param")
     };
     assert!(raw.starts_with(b"missing-"), "string set 4 is a miss");
+    // The set family's documented sizes: 1, 3 (hot account 0 in), 8, 0.
+    let sets = draws("entries_for_account_set");
+    let lens: Vec<usize> = sets
+        .iter()
+        .map(|draw| {
+            let ParamValue::Set(values) = &draw[0] else {
+                panic!("a set draw")
+            };
+            values.len()
+        })
+        .collect();
+    assert_eq!(lens, vec![1, 3, 8, 0]);
+    let ParamValue::Set(with_hot) = &sets[1][0] else {
+        panic!("set draw")
+    };
+    assert!(with_hot.contains(&Value::U64(0)), "hot account 0 included");
+    // The at-instant probes are real posting rows.
+    let instants = draws("mandate_at_instant");
+    for draw in &instants[..3] {
+        assert!(matches!(draw[0], ParamValue::Scalar(Value::U64(_))));
+        assert!(matches!(draw[1], ParamValue::Scalar(Value::I64(_))));
+    }
+    let ParamValue::Scalar(Value::U64(miss)) = instants[3][0] else {
+        panic!("at-instant miss")
+    };
+    assert!(
+        miss >= sizes.accounts,
+        "at-instant set 4 misses the account"
+    );
 }
 
 #[test]
@@ -170,112 +151,70 @@ fn the_digest_tracks_every_ingredient() {
     }
 }
 
-/// Estimate honesty over the pinned S corpus (docs/architecture/30-execution.md): with
-/// images resident, every family's worst per-node est/actual factor
-/// sits under its pin — the "for good" tripwire for the 114,679x
-/// dishonesty the first benchmark run measured.
+/// The family-owned index registry: deduplicated DDL (chain and range
+/// share `idx_posting_at`), and every expected pair has DDL.
 #[test]
-fn estimates_are_honest_over_the_pinned_corpus() {
-    let dir = std::env::temp_dir().join("bumbledb-bench-honesty");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
-    let db = bumbledb::Db::create(&dir, schema()).expect("create");
-    crate::corpus::load_bumbledb(&db, CFG).expect("load");
-
-    let pin = |name: &str| -> f64 {
-        match name {
-            "point" | "string" | "fk_walk" | "balance" => 16.0,
-            // The cyclic family: the closing edge is fully correlated
-            // with the opening one, which a per-step fanout model
-            // cannot see — the paper's triangle exists precisely
-            // because pairwise estimates explode on cycles. The pin
-            // documents the class rather than pretending the
-            // estimator can beat it (measured 5.2e3 at S).
-            "triangle" => 8192.0,
-            _ => 64.0,
-        }
-    };
-    // Estimates are per-plan statics: honesty is judged on each
-    // family's *typical* param set — an unskewed hit. The hot sets
-    // (balance 0, skew 0/1) and the misses measure execution
-    // behavior under skew, which no static estimate can or should
-    // match.
-    let typical = |name: &str| -> usize {
-        match name {
-            "balance" => 1,
-            "skew" => 2,
-            _ => 0,
-        }
-    };
-    for family in all() {
-        let query = (family.query)();
-        let mut prepared = db.prepare(&query).expect("prepare");
-        let sets = (family.params)(&CFG);
-        // Warm: images + views resident before the measured profile.
-        for params in &sets {
-            db.read(|snap| snap.execute_collect(&mut prepared, params).map(|_| ()))
-                .expect("warm");
-        }
-        let (_, stats) = db
-            .read(|snap| snap.profile(&mut prepared, &sets[typical(family.name)]))
-            .expect("profile");
-        let mut worst = 1.0_f64;
-        #[allow(clippy::cast_precision_loss)]
-        for node in &stats.nodes {
-            let (est, act) = (node.estimate.max(1) as f64, node.actual.max(1) as f64);
-            worst = worst.max((est / act).max(act / est));
-        }
-        eprintln!("honesty {}: worst factor {worst:.1}", family.name);
+fn the_index_registry_deduplicates_and_matches() {
+    let ddl = index_ddl();
+    let expected = expected_indexes();
+    assert_eq!(ddl.len(), expected.len());
+    for (table, name) in &expected {
         assert!(
-            worst <= pin(family.name),
-            "{}: worst est/actual factor {worst:.1} exceeds the pin {}\n{stats:?}",
-            family.name,
-            pin(family.name),
+            ddl.iter()
+                .any(|s| s.contains(&format!("\"{name}\"")) && s.contains(&format!("\"{table}\""))),
+            "{name} has no DDL"
         );
     }
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
+    let mut names: Vec<&String> = expected.iter().map(|(_, name)| name).collect();
+    names.sort();
+    names.dedup();
+    assert_eq!(names.len(), expected.len(), "names are unique");
+    // The shared shape appears exactly once.
+    assert_eq!(
+        ddl.iter().filter(|s| s.contains("idx_posting_at")).count(),
+        1
+    );
 }
 
-/// PRD 08 (docs/hardening): the balance family is a *true balance* —
-/// two equal-amount postings on one account sum to both, engine and
-/// translated SQL alike (the pre-rebind query collapsed them into
-/// one distinct (account, amount) pair).
+/// The doc's interval protocol: the pointwise Mandate key's
+/// statement-derived index IS the `(account, active_start, active_end)`
+/// composite — the interval families' honest opponent — and the overlap
+/// family adds the org-side composite.
+#[test]
+fn interval_families_get_their_composites() {
+    let ddl = crate::sqlmap::ddl(schema());
+    assert!(
+        ddl.iter().any(|s| s.contains("ON \"Mandate\"")
+            && s.contains("(\"account\", \"active_start\", \"active_end\")")),
+        "the pointwise key's composite: {ddl:#?}"
+    );
+    assert!(
+        ddl.iter().any(|s| s.contains("idx_mandate_org_active")
+            && s.contains("(\"org\", \"active_start\", \"active_end\")")),
+        "the overlap family's composite"
+    );
+}
+
+/// The engine result of the balance family over a two-equal-amount
+/// slice: both amount-5 postings count (the true-balance semantics),
+/// engine and translated SQL alike.
 /// The minimal consistent slice: one holder/account, two postings of
-/// amount 5 on distinct transfers (every FK target present).
+/// amount 5 on distinct entries (every containment target present).
 fn equal_amount_slice() -> Vec<(bumbledb::RelationId, Vec<Value>)> {
     vec![
-        (ids::CURRENCY, vec![Value::U64(0), s("USD")]),
-        (ids::HOLDER, vec![Value::U64(0), s("h"), Value::Enum(0)]),
-        (
-            ids::INSTRUMENT,
-            vec![Value::U64(0), s("SYM"), Value::U64(0), Value::Enum(0)],
-        ),
+        (ids::HOLDER, vec![Value::U64(0), s("h")]),
         (
             ids::ACCOUNT,
-            vec![
-                Value::U64(0),
-                Value::U64(0),
-                Value::U64(0),
-                Value::Enum(0),
-                Value::I64(0),
-            ],
+            vec![Value::U64(0), Value::U64(0), Value::Enum(0)],
+        ),
+        (ids::INSTRUMENT, vec![Value::U64(0), s("SYM")]),
+        (
+            ids::JOURNAL_ENTRY,
+            vec![Value::U64(0), Value::Enum(0), Value::I64(0)],
         ),
         (
-            ids::TRANSFER,
-            vec![
-                Value::U64(0),
-                Value::I64(0),
-                Value::Bytes(vec![0; 16].into()),
-            ],
-        ),
-        (
-            ids::TRANSFER,
-            vec![
-                Value::U64(1),
-                Value::I64(1),
-                Value::Bytes(vec![1; 16].into()),
-            ],
+            ids::JOURNAL_ENTRY,
+            vec![Value::U64(1), Value::Enum(1), Value::I64(1)],
         ),
         (
             ids::POSTING,
@@ -286,8 +225,6 @@ fn equal_amount_slice() -> Vec<(bumbledb::RelationId, Vec<Value>)> {
                 Value::U64(0),
                 Value::I64(5),
                 Value::I64(0),
-                s("m"),
-                Value::Bool(false),
             ],
         ),
         (
@@ -299,8 +236,6 @@ fn equal_amount_slice() -> Vec<(bumbledb::RelationId, Vec<Value>)> {
                 Value::U64(0),
                 Value::I64(5),
                 Value::I64(1),
-                s("m"),
-                Value::Bool(false),
             ],
         ),
     ]
@@ -339,23 +274,14 @@ fn balance_counts_equal_amounts_separately() {
     }
     for (rel, values) in &rows {
         let relation = schema().relation(*rel);
-        let placeholders = (1..=relation.fields().len())
-            .map(|i| format!("?{i}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let params: Vec<rusqlite::types::Value> =
-            values.iter().map(crate::sqlmap::to_sql_value).collect();
         conn.execute(
-            &format!(
-                "INSERT INTO \"{}\" VALUES ({placeholders})",
-                relation.name()
-            ),
-            rusqlite::params_from_iter(params),
+            &crate::sqlmap::insert_sql(relation),
+            rusqlite::params_from_iter(crate::sqlmap::to_sql_row(values)),
         )
         .expect("insert");
     }
     let sum: i64 = conn
-        .query_row(goldens::BALANCE, [0i64], |row| row.get(1))
+        .query_row(crate::translate::goldens::BALANCE, [0i64], |row| row.get(1))
         .expect("query");
     assert_eq!(sum, 10, "the golden agrees");
 
@@ -367,23 +293,8 @@ fn s(text: &str) -> Value {
     Value::String(text.as_bytes().into())
 }
 
-/// The generator attaches the skew params' tags to hot accounts at S.
 #[test]
-fn skew_tags_are_hot_attached() {
-    let sizes = Sizes::of(CFG.scale);
-    let hot = sizes.hot_accounts();
-    let attached: std::collections::HashSet<u64> = (0..sizes.account_tags)
-        .map(|i| gen::account_tag_pair(&sizes, i))
-        .filter(|(account, _)| *account < hot)
-        .map(|(_, tag)| tag)
-        .collect();
-    for tag in SKEW_HOT_TAGS {
-        assert!(attached.contains(&tag), "tag {tag} not hot-attached");
-    }
-}
-
-#[test]
-fn the_query_list_renders_all_ten_sections() {
+fn the_query_list_renders_all_fifteen_sections() {
     let md = render_queries_md();
     assert!(md.starts_with("# The read query families"));
     for family in all() {
@@ -396,5 +307,5 @@ fn the_query_list_renders_all_ten_sections() {
         assert!(md.contains(family.param_policy), "{} policy", family.name);
     }
     assert!(md.contains("Family-list digest: `"));
-    assert_eq!(md.matches("```sql").count(), 10);
+    assert_eq!(md.matches("```sql").count(), 15);
 }

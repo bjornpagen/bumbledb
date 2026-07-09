@@ -1,4 +1,4 @@
-use super::{VerifyConfig, binary_fingerprint};
+use super::{binary_fingerprint, VerifyConfig};
 
 use crate::{families, gen};
 

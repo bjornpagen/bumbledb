@@ -32,6 +32,7 @@ pub(super) fn country_rollup() -> Query {
                 bindings: vec![(FieldId(0), var(2)), (FieldId(2), var(1))],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }

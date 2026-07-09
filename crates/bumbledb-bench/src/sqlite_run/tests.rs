@@ -20,7 +20,7 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 /// One loaded S oracle covers the read-side criteria: the fairness
 /// contract passes, then fails by name when an index is dropped;
 /// sample drains (count == COUNT(*) cross-check); re-binding across
-/// param sets changes counts; one `PreparedFamily` runs 100 samples.
+/// param draws changes counts; one `PreparedFamily` runs 100 samples.
 #[test]
 fn fairness_and_the_prepared_sample_contract() {
     let dir = scratch("read");
@@ -30,7 +30,7 @@ fn fairness_and_the_prepared_sample_contract() {
     let conn = open_for_bench(&path).expect("open for bench");
     FairnessCheck::run(&conn).expect("fairness holds on a loaded corpus");
 
-    // The range family: window params make counts differ per set.
+    // The range family: window params make counts uniform per set.
     let family = families::all()
         .iter()
         .find(|f| f.name == "range")
@@ -47,13 +47,13 @@ fn fairness_and_the_prepared_sample_contract() {
     let sets = (family.params)(&CFG);
     let mut counts = Vec::new();
     for params in &sets {
-        let count = sample(&mut prepared, params).expect("sample");
+        let count = sample_args(&mut prepared, params).expect("sample");
         // Drain cross-check: the count matches COUNT(*) over the
         // same SQL and binding.
         let expected: i64 = conn
             .query_row(
                 &format!("SELECT COUNT(*) FROM ({})", translated.sql),
-                rusqlite::params_from_iter(bind_params(&translated.params, params)),
+                rusqlite::params_from_iter(bind_args(&translated.params, params)),
                 |row| row.get(0),
             )
             .expect("count");
@@ -65,7 +65,7 @@ fn fairness_and_the_prepared_sample_contract() {
         "the ~2% windows select uniformly by construction: {counts:?}"
     );
 
-    // Re-binding across param sets changes counts: the point family's
+    // Re-binding across param draws changes counts: the point family's
     // three hits return one row each, the miss returns none.
     let point = families::all()
         .iter()
@@ -83,7 +83,7 @@ fn fairness_and_the_prepared_sample_contract() {
         PreparedFamily::new(&conn, &point_translated, point_types).expect("prepare once");
     let point_counts: Vec<u64> = (point.params)(&CFG)
         .iter()
-        .map(|params| sample(&mut point_prepared, params).expect("sample"))
+        .map(|params| sample_args(&mut point_prepared, params).expect("sample"))
         .collect();
     assert_eq!(point_counts, vec![1, 1, 1, 0], "hits then the miss");
     drop(point_prepared);
@@ -91,21 +91,22 @@ fn fairness_and_the_prepared_sample_contract() {
     // Prepared-once discipline: 100 samples on the same statement.
     for round in 0..100 {
         let set = &sets[round % sets.len()];
-        sample(&mut prepared, set).expect("reused statement");
+        sample_args(&mut prepared, set).expect("reused statement");
     }
 
-    // Clearing fullfsync fails the contract by name (docs/architecture/50-validation.md).
+    // Clearing fullfsync fails the contract by name
+    // (docs/architecture/60-validation.md).
     conn.pragma_update(None, "fullfsync", "OFF")
         .expect("pragma");
     let err = FairnessCheck::run(&conn).expect_err("must fail");
     assert!(err.contains("fullfsync"), "{err}");
     conn.pragma_update(None, "fullfsync", "ON").expect("pragma");
 
-    // Drop an index: the contract fails naming it.
-    conn.execute("DROP INDEX \"idx_posting_memo\"", [])
+    // Drop a family-owned index: the contract fails naming it.
+    conn.execute("DROP INDEX \"idx_posting_at\"", [])
         .expect("drop");
     let err = FairnessCheck::run(&conn).expect_err("must fail");
-    assert!(err.contains("idx_posting_memo"), "{err}");
+    assert!(err.contains("idx_posting_at"), "{err}");
     drop(prepared);
     drop(conn);
     let _ = std::fs::remove_dir_all(&dir);
@@ -148,7 +149,8 @@ fn write_mirrors_run_with_sane_direction() {
 fn bulk_mirror_reports_positive_throughput() {
     let dir = scratch("bulk");
     let m = bulk(CFG, &dir).expect("bulk");
-    assert_eq!(m.work, gen::Sizes::of(CFG.scale).postings * 8);
+    let sizes = gen::Sizes::of(CFG.scale);
+    assert_eq!(m.work, (sizes.postings + sizes.posting_tags) * 8);
     assert!(m.stats.min > 0);
     let _ = std::fs::remove_dir_all(&dir);
 }

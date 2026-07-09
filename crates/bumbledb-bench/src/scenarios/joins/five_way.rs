@@ -38,6 +38,7 @@ pub(super) fn five_way() -> Query {
                 bindings: vec![(FieldId(0), var(2)), (FieldId(2), var(5))],
             },
         ],
+        negated: vec![],
         predicates: vec![
             Comparison {
                 op: CmpOp::Ge,

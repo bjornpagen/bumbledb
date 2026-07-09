@@ -3,9 +3,11 @@
 //! mismatches are undeniable and debuggable — the verify layer's core.
 
 use bumbledb::schema::ValueType;
-use bumbledb::{ParamId, ResultBuffer, ResultValue, Value};
+use bumbledb::{ResultBuffer, ResultValue, Value};
 
+use crate::naive::ParamValue;
 use crate::sqlmap;
+use crate::translate::ParamSlot;
 
 /// One canonical cell. Total order = the canonical multiset order.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -16,6 +18,8 @@ pub enum Owned {
     Enum(u8),
     Str(String),
     Bytes(Vec<u8>),
+    IntervalU64(u64, u64),
+    IntervalI64(i64, i64),
 }
 
 /// One canonical row.
@@ -36,30 +40,56 @@ pub fn from_buffer(buffer: &ResultBuffer, types: &[ValueType]) -> Vec<Row> {
                     ResultValue::Enum(v) => Owned::Enum(v),
                     ResultValue::String(v) => Owned::Str(v.to_owned()),
                     ResultValue::Bytes(v) => Owned::Bytes(v.to_vec()),
+                    ResultValue::IntervalU64(iv) => Owned::IntervalU64(iv.start(), iv.end()),
+                    ResultValue::IntervalI64(iv) => Owned::IntervalI64(iv.start(), iv.end()),
                 })
                 .collect()
         })
         .collect()
 }
 
+/// One [`ParamSlot`]'s bound `SQLite` value: a scalar param's whole
+/// value, or one endpoint of an interval-typed scalar param. Set params
+/// never reach here — their element lists render as SQL literals.
+///
+/// # Panics
+///
+/// On a set arg in a placeholder slot (the translator never emits one).
+fn slot_value(slot: ParamSlot, args: &[ParamValue]) -> rusqlite::types::Value {
+    let scalar = |p: bumbledb::ParamId| match &args[usize::from(p.0)] {
+        ParamValue::Scalar(value) => value,
+        ParamValue::Set(_) => panic!("a set param has no placeholder slot"),
+    };
+    match slot {
+        ParamSlot::Whole(p) => sqlmap::to_sql_value(scalar(p)),
+        ParamSlot::Start(p) => sqlmap::interval_halves(scalar(p)).0,
+        ParamSlot::End(p) => sqlmap::interval_halves(scalar(p)).1,
+    }
+}
+
 /// Executes a prepared `SQLite` statement with the given typed params and
 /// decodes every row into canonical form, guided by the expected column
 /// types (the engine side already knows them — aggregate columns
-/// included).
+/// included; an interval find spans two INTEGER result columns and
+/// reassembles through the pair decode).
 ///
 /// # Errors
 ///
 /// `SQLite` errors verbatim; a mapping mismatch (wrong storage class,
 /// negative INTEGER in a u64 column) as a message naming the column.
+///
+/// # Panics
+///
+/// On a set arg bound to a placeholder slot (a translator invariant).
 pub fn from_sqlite(
     stmt: &mut rusqlite::Statement<'_>,
-    param_order: &[ParamId],
-    params: &[Value],
+    param_order: &[ParamSlot],
+    args: &[ParamValue],
     types: &[ValueType],
 ) -> Result<Vec<Row>, String> {
     let bound: Vec<rusqlite::types::Value> = param_order
         .iter()
-        .map(|p| sqlmap::to_sql_value(&params[usize::from(p.0)]))
+        .map(|slot| slot_value(*slot, args))
         .collect();
     let mut rows = stmt
         .query(rusqlite::params_from_iter(bound))
@@ -67,10 +97,20 @@ pub fn from_sqlite(
     let mut out = Vec::new();
     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
         let mut canonical = Vec::with_capacity(types.len());
-        for (column, ty) in types.iter().enumerate() {
-            let raw: rusqlite::types::Value = row.get(column).map_err(|e| e.to_string())?;
-            let value =
-                sqlmap::from_sql_value(&raw, ty).map_err(|e| format!("column {column}: {e}"))?;
+        let mut column = 0usize;
+        for ty in types {
+            let value = if let ValueType::Interval { element } = ty {
+                let start: rusqlite::types::Value = row.get(column).map_err(|e| e.to_string())?;
+                let end: rusqlite::types::Value = row.get(column + 1).map_err(|e| e.to_string())?;
+                column += 2;
+                sqlmap::interval_from_sql(&start, &end, *element)
+                    .map_err(|e| format!("columns {}-{}: {e}", column - 2, column - 1))?
+            } else {
+                let raw: rusqlite::types::Value = row.get(column).map_err(|e| e.to_string())?;
+                column += 1;
+                sqlmap::from_sql_value(&raw, ty)
+                    .map_err(|e| format!("column {}: {e}", column - 1))?
+            };
             canonical.push(match value {
                 Value::Bool(v) => Owned::Bool(v),
                 Value::U64(v) => Owned::U64(v),
@@ -78,9 +118,11 @@ pub fn from_sqlite(
                 Value::Enum(v) => Owned::Enum(v),
                 Value::String(raw) => Owned::Str(
                     String::from_utf8(raw.to_vec())
-                        .map_err(|_| format!("column {column}: non-UTF-8 text"))?,
+                        .map_err(|_| format!("column {}: non-UTF-8 text", column - 1))?,
                 ),
                 Value::Bytes(raw) => Owned::Bytes(raw.to_vec()),
+                Value::IntervalU64(start, end) => Owned::IntervalU64(start, end),
+                Value::IntervalI64(start, end) => Owned::IntervalI64(start, end),
             });
         }
         out.push(canonical);

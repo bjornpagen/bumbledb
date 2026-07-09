@@ -80,7 +80,11 @@ fn normalization_corrects_slow_clock_samples_and_keeps_real_ones() {
     let mut raw = samples.to_vec();
     assert_eq!(stats(&mut raw).p50, 100);
     let samples = [300u64, 300, 300, 100, 100];
-    assert_eq!(normalized_p50(&samples, &ghz), 300, "real slowness survives");
+    assert_eq!(
+        normalized_p50(&samples, &ghz),
+        300,
+        "real slowness survives"
+    );
 }
 
 /// End-to-end: the per-rep mode populates `p50_norm`. Ignored:
@@ -122,7 +126,11 @@ fn batched_measurement_divides_time_and_sums_all_work() {
         Ok(3)
     })
     .expect("measures");
-    assert_eq!(calls, 2 + 4 * 8, "warmups run once each; samples run batch times");
+    assert_eq!(
+        calls,
+        2 + 4 * 8,
+        "warmups run once each; samples run batch times"
+    );
     assert_eq!(m.work, 4 * 8 * 3, "work sums every batched call");
 }
 
@@ -239,7 +247,7 @@ fn cold_touches_before_every_sample_and_bumps_generations() {
     std::fs::create_dir_all(&dir).expect("scratch dir");
     let db = bumbledb::Db::create(&dir, crate::schema::schema()).expect("create");
     let generations = RefCell::new(Vec::new());
-    measure_cold(proto, tag_touch(&db), || {
+    measure_cold(proto, org_touch(&db), || {
         let generation = db.generation().map_err(|e| format!("{e:?}"))?;
         generations.borrow_mut().push(generation);
         Ok(1)

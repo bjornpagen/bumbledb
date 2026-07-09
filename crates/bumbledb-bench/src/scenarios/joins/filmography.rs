@@ -23,6 +23,7 @@ pub(super) fn filmography() -> Query {
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }

@@ -1,76 +1,71 @@
-//! The benchmark's ledger schema (docs/architecture/50-validation.md;
-//! `docs/architecture/50-validation.md` owns the ledger decision). Nine
-//! relations exercising every engine construct: all six value types,
-//! serials, single and compound uniques, single and compound FKs
-//! (including the FK-inheritance pattern), enums, interned strings and
-//! bytes, bools.
-//!
-//! Rationale per relation:
-//! - `Posting` is the fact table — the 10⁵–10⁷ scale axis.
-//! - `AccountTag` carries the compound unique; `TagNote` carries the
-//!   compound-FK inheritance pattern targeting it.
-//! - `Transfer.extref` is the Bytes exerciser.
-//! - `unique(code)` / `unique(label)` are interned-string unique guards.
+//! The benchmark's ledger schema — a statement-for-statement
+//! transcription of the primary-benchmark block in
+//! `docs/architecture/60-validation.md`: nine relations, the eight
+//! containments, and the pointwise key
+//! `Mandate(account, active) -> Mandate` (one mandate per account per
+//! instant). The doc's notation leaves enum variant lists open; this
+//! transcription pins the ones the query generator's target module
+//! already uses (`Currency`, `Source`, `Tag` — three variants each).
 //!
 //! Changing this schema is a deliberate act: it re-baselines every stored
 //! corpus digest and every published report (the golden fingerprint test
 //! is the tripwire).
 
 bumbledb::schema! {
-    relation Currency {
-        id: u64 as CurrencyId, serial,
-        code: str,
-        unique(code),
-    }
     relation Holder {
         id: u64 as HolderId, serial,
         name: str,
-        region: enum Region { Na, Eu, Apac, Latam },
+    }
+    relation Account {
+        id: u64 as AccountId, serial,
+        holder: u64 as HolderId,
+        currency: enum Currency { Usd, Eur, Gbp },
     }
     relation Instrument {
         id: u64 as InstrumentId, serial,
         symbol: str,
-        currency: u64 as CurrencyId, fk(Currency.id),
-        kind: enum Kind { Cash, Equity, Bond, Fund },
     }
-    relation Account {
-        id: u64 as AccountId, serial,
-        holder: u64 as HolderId, fk(Holder.id),
-        currency: u64 as CurrencyId, fk(Currency.id),
-        status: enum Status { Open, Frozen, Closed },
-        opened_at: i64,
-    }
-    relation Transfer {
-        id: u64 as TransferId, serial,
-        at: i64,
-        extref: bytes,
+    relation JournalEntry {
+        id: u64 as JournalEntryId, serial,
+        source: enum Source { Manual, Import, System },
+        created_at: i64,
     }
     relation Posting {
         id: u64 as PostingId, serial,
-        transfer: u64 as TransferId, fk(Transfer.id),
-        account: u64 as AccountId, fk(Account.id),
-        instrument: u64 as InstrumentId, fk(Instrument.id),
+        entry: u64 as JournalEntryId,
+        account: u64 as AccountId,
+        instrument: u64 as InstrumentId,
         amount: i64,
         at: i64,
-        memo: str,
-        reconciled: bool,
     }
-    relation Tag {
-        id: u64 as TagId, serial,
-        label: str,
-        unique(label),
+    relation PostingTag {
+        posting: u64 as PostingId,
+        tag: enum Tag { Fee, Rebate, Adjustment },
     }
-    relation AccountTag {
-        account: u64 as AccountId, fk(Account.id),
-        tag: u64 as TagId, fk(Tag.id),
-        unique(account, tag),
+    relation Org {
+        id: u64 as OrgId, serial,
+        name: str,
     }
-    relation TagNote {
+    relation OrgParent {
+        child: u64 as OrgId,
+        parent: u64 as OrgId,
+    }
+    relation Mandate {
         account: u64 as AccountId,
-        tag: u64 as TagId,
-        fk(account, tag -> AccountTag.account_tag),
-        note: str,
+        org: u64 as OrgId,
+        active: interval<i64>,
     }
+
+    Account(holder)      <= Holder(id);
+    Posting(entry)       <= JournalEntry(id);
+    Posting(account)     <= Account(id);
+    Posting(instrument)  <= Instrument(id);
+    PostingTag(posting)  <= Posting(id);
+    OrgParent(child)     <= Org(id);
+    OrgParent(parent)    <= Org(id);
+    Mandate(account)     <= Account(id);
+    Mandate(org)         <= Org(id);
+    Mandate(account, active) -> Mandate;
 }
 
 /// Relation and field ids by name — no magic numbers in family
@@ -78,85 +73,77 @@ bumbledb::schema! {
 pub mod ids {
     use bumbledb::{FieldId, RelationId};
 
-    pub const CURRENCY: RelationId = RelationId(0);
-    pub const HOLDER: RelationId = RelationId(1);
+    pub const HOLDER: RelationId = RelationId(0);
+    pub const ACCOUNT: RelationId = RelationId(1);
     pub const INSTRUMENT: RelationId = RelationId(2);
-    pub const ACCOUNT: RelationId = RelationId(3);
-    pub const TRANSFER: RelationId = RelationId(4);
-    pub const POSTING: RelationId = RelationId(5);
-    pub const TAG: RelationId = RelationId(6);
-    pub const ACCOUNT_TAG: RelationId = RelationId(7);
-    pub const TAG_NOTE: RelationId = RelationId(8);
+    pub const JOURNAL_ENTRY: RelationId = RelationId(3);
+    pub const POSTING: RelationId = RelationId(4);
+    pub const POSTING_TAG: RelationId = RelationId(5);
+    pub const ORG: RelationId = RelationId(6);
+    pub const ORG_PARENT: RelationId = RelationId(7);
+    pub const MANDATE: RelationId = RelationId(8);
 
     /// The number of relations — loaders iterate `0..RELATIONS`.
     pub const RELATIONS: u32 = 9;
 
-    pub mod currency {
-        use super::FieldId;
-        pub const ID: FieldId = FieldId(0);
-        pub const CODE: FieldId = FieldId(1);
-    }
     pub mod holder {
         use super::FieldId;
         pub const ID: FieldId = FieldId(0);
         pub const NAME: FieldId = FieldId(1);
-        pub const REGION: FieldId = FieldId(2);
-    }
-    pub mod instrument {
-        use super::FieldId;
-        pub const ID: FieldId = FieldId(0);
-        pub const SYMBOL: FieldId = FieldId(1);
-        pub const CURRENCY: FieldId = FieldId(2);
-        pub const KIND: FieldId = FieldId(3);
     }
     pub mod account {
         use super::FieldId;
         pub const ID: FieldId = FieldId(0);
         pub const HOLDER: FieldId = FieldId(1);
         pub const CURRENCY: FieldId = FieldId(2);
-        pub const STATUS: FieldId = FieldId(3);
-        pub const OPENED_AT: FieldId = FieldId(4);
     }
-    pub mod transfer {
+    pub mod instrument {
         use super::FieldId;
         pub const ID: FieldId = FieldId(0);
-        pub const AT: FieldId = FieldId(1);
-        pub const EXTREF: FieldId = FieldId(2);
+        pub const SYMBOL: FieldId = FieldId(1);
+    }
+    pub mod journal_entry {
+        use super::FieldId;
+        pub const ID: FieldId = FieldId(0);
+        pub const SOURCE: FieldId = FieldId(1);
+        pub const CREATED_AT: FieldId = FieldId(2);
     }
     pub mod posting {
         use super::FieldId;
         pub const ID: FieldId = FieldId(0);
-        pub const TRANSFER: FieldId = FieldId(1);
+        pub const ENTRY: FieldId = FieldId(1);
         pub const ACCOUNT: FieldId = FieldId(2);
         pub const INSTRUMENT: FieldId = FieldId(3);
         pub const AMOUNT: FieldId = FieldId(4);
         pub const AT: FieldId = FieldId(5);
-        pub const MEMO: FieldId = FieldId(6);
-        pub const RECONCILED: FieldId = FieldId(7);
     }
-    pub mod tag {
+    pub mod posting_tag {
+        use super::FieldId;
+        pub const POSTING: FieldId = FieldId(0);
+        pub const TAG: FieldId = FieldId(1);
+    }
+    pub mod org {
         use super::FieldId;
         pub const ID: FieldId = FieldId(0);
-        pub const LABEL: FieldId = FieldId(1);
+        pub const NAME: FieldId = FieldId(1);
     }
-    pub mod account_tag {
+    pub mod org_parent {
+        use super::FieldId;
+        pub const CHILD: FieldId = FieldId(0);
+        pub const PARENT: FieldId = FieldId(1);
+    }
+    pub mod mandate {
         use super::FieldId;
         pub const ACCOUNT: FieldId = FieldId(0);
-        pub const TAG: FieldId = FieldId(1);
-    }
-    pub mod tag_note {
-        use super::FieldId;
-        pub const ACCOUNT: FieldId = FieldId(0);
-        pub const TAG: FieldId = FieldId(1);
-        pub const NOTE: FieldId = FieldId(2);
+        pub const ORG: FieldId = FieldId(1);
+        pub const ACTIVE: FieldId = FieldId(2);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bumbledb::schema::{ConstraintDescriptor, ValueType};
-    use bumbledb::Fact;
+    use bumbledb::schema::{Resolved, StatementDescriptor, ValueType};
 
     /// The golden fingerprint: changing the schema re-baselines every
     /// corpus digest and report — this test makes that a deliberate act,
@@ -171,99 +158,72 @@ mod tests {
             acc
         });
         assert_eq!(
-            hex, "0f1b316b5f4464e451b325bd7f12faf95b304a95f2731f9c5a7075f1fe9e4684",
+            hex, "2de5c610582eaa84fab6530ba997698bb6981197979e589d7f2a60467781fa81",
             "the ledger schema changed — re-baseline corpora and reports deliberately"
         );
     }
 
+    /// The doc's statement roster, verbatim: six serial auto-keys first
+    /// (declaration order), then the eight containments in source order,
+    /// then the pointwise key.
     #[test]
-    fn every_engine_construct_is_exercised() {
-        let s = schema();
-        let mut types = std::collections::HashSet::new();
-        let mut serials = 0;
-        let mut single_fks = 0;
-        let mut compound_fks = 0;
-        let mut compound_uniques = 0;
-        for relation in s.relations() {
-            for field in relation.fields() {
-                types.insert(std::mem::discriminant(&field.value_type));
-                if field.generation == bumbledb::schema::Generation::Serial {
-                    serials += 1;
-                }
-            }
-            for constraint in relation.constraints() {
-                match constraint {
-                    ConstraintDescriptor::ForeignKey { fields, .. } => {
-                        if fields.len() == 1 {
-                            single_fks += 1;
-                        } else {
-                            compound_fks += 1;
-                        }
+    fn the_statement_roster_matches_the_doc() {
+        let statements = schema().statements();
+        assert_eq!(statements.len(), 6 + 9 + 1);
+        let mut autos = 0;
+        let mut containments = Vec::new();
+        let mut pointwise = 0;
+        for statement in statements {
+            match &statement.descriptor {
+                StatementDescriptor::Functionality { relation, .. } => match statement.resolved {
+                    Resolved::Functionality {
+                        interval_position: Some(_),
+                    } => {
+                        pointwise += 1;
+                        assert_eq!(*relation, ids::MANDATE);
                     }
-                    ConstraintDescriptor::Unique { fields, .. } => {
-                        if fields.len() > 1 {
-                            compound_uniques += 1;
-                        }
-                    }
+                    _ => autos += 1,
+                },
+                StatementDescriptor::Containment { source, target } => {
+                    containments.push((source.relation, target.relation));
                 }
             }
         }
-        // All six value types (discriminants of ValueType).
-        assert_eq!(types.len(), 6, "all six value types present");
-        assert!(serials >= 5, "serials: {serials}");
-        assert!(single_fks >= 6, "single fks: {single_fks}");
-        assert!(compound_fks >= 1, "compound fks: {compound_fks}");
-        assert!(
-            compound_uniques >= 1,
-            "compound uniques: {compound_uniques}"
+        assert_eq!(
+            autos, 6,
+            "Holder/Account/Instrument/JournalEntry/Posting/Org serials"
         );
-        // Silence the unused-type warning path: the discriminant set must
-        // include an Enum — probe one directly.
-        let region = &s
-            .relation(ids::HOLDER)
-            .field(ids::holder::REGION)
-            .value_type;
-        assert!(matches!(region, ValueType::Enum { .. }));
-    }
-
-    #[test]
-    fn tag_note_targets_the_compound_unique() {
-        let s = schema();
-        let tag_note = s.relation(TagNote::RELATION);
-        let fk = tag_note
-            .constraints()
-            .iter()
-            .find_map(|c| match c {
-                ConstraintDescriptor::ForeignKey {
-                    fields,
-                    target_relation,
-                    target_constraint,
-                    ..
-                } if fields.len() == 2 => Some((*target_relation, *target_constraint)),
-                _ => None,
-            })
-            .expect("the compound fk");
-        assert_eq!(fk.0, AccountTag::RELATION);
-        // AccountTag's compound unique `account_tag` (no serial fields, so
-        // it is constraint 0... after any auto-uniques — resolve by name).
-        let target = s.relation(AccountTag::RELATION).constraint(fk.1);
-        assert_eq!(target.name(), "account_tag");
-        assert!(matches!(target, ConstraintDescriptor::Unique { .. }));
+        assert_eq!(pointwise, 1, "the pointwise Mandate key");
+        assert_eq!(
+            containments,
+            vec![
+                (ids::ACCOUNT, ids::HOLDER),
+                (ids::POSTING, ids::JOURNAL_ENTRY),
+                (ids::POSTING, ids::ACCOUNT),
+                (ids::POSTING, ids::INSTRUMENT),
+                (ids::POSTING_TAG, ids::POSTING),
+                (ids::ORG_PARENT, ids::ORG),
+                (ids::ORG_PARENT, ids::ORG),
+                (ids::MANDATE, ids::ACCOUNT),
+                (ids::MANDATE, ids::ORG),
+            ],
+            "the doc block's nine containment statements, in source order"
+        );
     }
 
     #[test]
     fn the_id_registry_matches_declaration_order() {
         let s = schema();
         for (idx, name) in [
-            "Currency",
             "Holder",
-            "Instrument",
             "Account",
-            "Transfer",
+            "Instrument",
+            "JournalEntry",
             "Posting",
-            "Tag",
-            "AccountTag",
-            "TagNote",
+            "PostingTag",
+            "Org",
+            "OrgParent",
+            "Mandate",
         ]
         .iter()
         .enumerate()
@@ -276,8 +236,14 @@ mod tests {
             ids::RELATIONS
         );
         assert_eq!(
-            s.relation(ids::POSTING).field(ids::posting::MEMO).name,
-            "memo".into()
+            s.relation(ids::POSTING).field(ids::posting::AT).name,
+            "at".into()
         );
+        assert!(matches!(
+            s.relation(ids::MANDATE)
+                .field(ids::mandate::ACTIVE)
+                .value_type,
+            ValueType::Interval { .. }
+        ));
     }
 }

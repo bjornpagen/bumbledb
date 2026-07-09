@@ -33,13 +33,17 @@ bumbledb::schema! {
     relation Sale {
         id: u64 as OSaleId, serial,
         day: i64,
-        store: u64 as OStoreId, fk(Store.id),
-        product: u64 as OProductId, fk(Product.id),
-        customer: u64 as OCustomerId, fk(Customer.id),
+        store: u64 as OStoreId,
+        product: u64 as OProductId,
+        customer: u64 as OCustomerId,
         qty: i64,
         total: i64,
         promo: bool,
     }
+
+    Sale(store) <= Store(id);
+    Sale(product) <= Product(id);
+    Sale(customer) <= Customer(id);
 }
 
 /// Relation ids by declaration order.
@@ -134,6 +138,7 @@ fn revenue_by_region() -> Query {
                 bindings: vec![(FieldId(0), var(3)), (FieldId(1), var(0))],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -167,6 +172,7 @@ fn category_window() -> Query {
                 bindings: vec![(FieldId(0), var(4)), (FieldId(1), var(0))],
             },
         ],
+        negated: vec![],
         predicates: vec![
             Comparison {
                 op: CmpOp::Ge,
@@ -210,6 +216,7 @@ fn promo_split() -> Query {
                 (FieldId(7), var(0)),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -243,6 +250,7 @@ fn segment_category() -> Query {
                 bindings: vec![(FieldId(0), var(3)), (FieldId(1), var(1))],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -270,6 +278,7 @@ fn store_extremes() -> Query {
                 (FieldId(6), var(1)),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     }
 }
@@ -296,6 +305,7 @@ fn brand_drill() -> Query {
                 bindings: vec![(FieldId(0), var(3)), (FieldId(2), param(0))],
             },
         ],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Ge,
             lhs: var(2),

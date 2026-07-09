@@ -15,10 +15,10 @@ use std::path::Path;
 
 use bumbledb::{Db, RelationId, ResultBuffer};
 
-use crate::families;
+use crate::families::{self, param_args};
 use crate::gen::{self, GenConfig, Rng, Sizes};
 use crate::harness::{self, Measurement, Protocol, Rotation};
-use crate::schema::{ids, schema, AccountId, InstrumentId, Posting, PostingId, TransferId};
+use crate::schema::{ids, schema, AccountId, InstrumentId, JournalEntryId, Posting, PostingId};
 
 /// The registered protocol for a write family (shared with the `SQLite`
 /// mirror runners in `sqlite_run`).
@@ -39,13 +39,11 @@ pub(crate) fn write_protocol(name: &str) -> Protocol {
 pub(crate) fn seeded_posting(rng: &mut Rng, sizes: &Sizes, id: PostingId) -> Posting {
     Posting {
         id,
-        transfer: TransferId(rng.range(sizes.transfers)),
+        entry: JournalEntryId(rng.range(sizes.entries)),
         account: AccountId(rng.range(sizes.accounts)),
         instrument: InstrumentId(rng.range(sizes.instruments)),
         amount: i64::try_from(1 + rng.range(5_000_000)).expect("fits"),
         at: gen::AT_BASE + i64::try_from(rng.range(1 << 30)).expect("fits"),
-        memo: format!("m{}", rng.range(gen::MEMO_VOCAB)),
-        reconciled: rng.chance(3, 4),
     }
 }
 
@@ -91,11 +89,13 @@ pub fn commit_batch_bumbledb(db: &Db<'_>, cfg: GenConfig) -> Result<Measurement,
 }
 
 /// The relations a bulk sample's throwaway store is pre-seeded with: the
-/// whole corpus minus postings (the timed part is the posting load only).
+/// whole corpus minus the posting mass (the timed part is the posting
+/// load; `PostingTag` rides with it — its containment targets postings,
+/// so it cannot precede them).
 pub(crate) fn non_posting_relations() -> impl Iterator<Item = RelationId> {
     (0..ids::RELATIONS)
         .map(RelationId)
-        .filter(|rel| *rel != ids::POSTING)
+        .filter(|rel| *rel != ids::POSTING && *rel != ids::POSTING_TAG)
 }
 
 /// `bulk` on bumbledb: one sample = `bulk_load` of the full posting stream
@@ -126,9 +126,12 @@ pub fn bulk_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurement, Stri
     let done = RefCell::new(Vec::new());
     harness::measure(proto, || {
         let db = pending.borrow_mut().pop_front().expect("pre-seeded store");
-        let facts = db
+        let mut facts = db
             .bulk_load(ids::POSTING, gen::relation_rows(cfg, ids::POSTING))
             .map_err(|e| format!("bulk: {e:?}"))?;
+        facts += db
+            .bulk_load(ids::POSTING_TAG, gen::relation_rows(cfg, ids::POSTING_TAG))
+            .map_err(|e| format!("bulk tags: {e:?}"))?;
         // Keep the store alive: its Drop must not land inside a sample.
         done.borrow_mut().push(db);
         Ok(facts)
@@ -161,10 +164,10 @@ pub fn cold_fk_walk(db: &Db<'_>, cfg: GenConfig) -> Result<Measurement, String> 
     let mut buffer = ResultBuffer::new();
     harness::measure_cold(
         write_protocol("cold_fk_walk"),
-        harness::tag_touch(db),
+        harness::org_touch(db),
         || {
-            let params = rotation.next_set().to_vec();
-            db.read(|snap| snap.execute(&mut prepared, &params, &mut buffer))
+            let args = param_args(rotation.next_set());
+            db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
                 .map_err(|e| format!("cold execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         },
@@ -247,7 +250,11 @@ mod tests {
         let dir = scratch("bulk");
         let ours = bulk_bumbledb(CFG, &dir).expect("bulk bumbledb");
         let sizes = Sizes::of(CFG.scale);
-        assert_eq!(ours.work, sizes.postings * 8, "full stream per sample");
+        assert_eq!(
+            ours.work,
+            (sizes.postings + sizes.posting_tags) * 8,
+            "full stream per sample"
+        );
         assert!(ours.stats.min > 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -272,8 +279,8 @@ mod tests {
         let mut rotation = Rotation::new((family.params)(&CFG));
         let mut buffer = ResultBuffer::new();
         let warm = harness::measure(Protocol::WARM, || {
-            let params = rotation.next_set().to_vec();
-            db.read(|snap| snap.execute(&mut prepared, &params, &mut buffer))
+            let args = param_args(rotation.next_set());
+            db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
                 .map_err(|e| format!("warm execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         })

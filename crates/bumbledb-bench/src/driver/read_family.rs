@@ -1,5 +1,6 @@
 use bumbledb::ResultBuffer;
 
+use crate::families::{has_sets, param_args, scalar_values, set_bindings};
 use crate::harness::{self, Modes, Rotation};
 use crate::schema::schema;
 use crate::translate::translate;
@@ -64,6 +65,7 @@ fn merge_stamps(ours: clockproxy::GhzStamp, theirs: clockproxy::GhzStamp) -> rep
 
 impl BenchRun<'_> {
     /// One read family on both engines.
+    #[allow(clippy::too_many_lines)] // one family's full protocol, linear
     pub(super) fn read_family(
         &mut self,
         family: &families::Family,
@@ -81,8 +83,8 @@ impl BenchRun<'_> {
         let mut buffer = ResultBuffer::new();
         let db = self.db;
         let mut run_ours = move |prepared: &mut bumbledb::PreparedQuery<'_>| {
-            let params = rotation.next_set().to_vec();
-            db.read(|snap| snap.execute(prepared, &params, &mut buffer))
+            let args = param_args(rotation.next_set());
+            db.read(|snap| snap.execute_args(prepared, &args, &mut buffer))
                 .map_err(|e| format!("execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         };
@@ -142,17 +144,40 @@ impl BenchRun<'_> {
                 table,
             });
         }
-        let (_, stats) = self
-            .db
-            .read(|snap| snap.profile(&mut prepared, &sets[0]))
-            .map_err(|e| format!("profile: {e:?}"))?;
+        // Estimate digest: the profile path binds scalar params only —
+        // set-bound families skip it (set selectivity is an execution
+        // fact, not a plan static).
+        let exec = if has_sets(&sets) {
+            None
+        } else {
+            let (_, stats) = self
+                .db
+                .read(|snap| snap.profile(&mut prepared, &scalar_values(&sets[0])))
+                .map_err(|e| format!("profile: {e:?}"))?;
+            Some(exec_digest(&stats))
+        };
 
-        let translated = translate(&query, schema()).map_err(|e| format!("translate: {e}"))?;
-        let mut sqlite_family = sqlite_run::PreparedFamily::new(self.conn, &translated, types)?;
-        let mut rotation = Rotation::new(sets);
+        // One prepared statement per draw: scalar families re-render to
+        // identical SQL; set-bound families genuinely differ per draw
+        // (element lists as literals — prepared-statement parity is not
+        // claimed for them, `60-validation.md`). Every statement is
+        // prepared once and reused across the rotation's cycles.
+        let mut sqlite_families = Vec::with_capacity(sets.len());
+        for draw in &sets {
+            let translated = translate(&query, schema(), &set_bindings(draw))
+                .map_err(|e| format!("translate: {e}"))?;
+            sqlite_families.push(sqlite_run::PreparedFamily::new(
+                self.conn,
+                &translated,
+                types.clone(),
+            )?);
+        }
+        let mut cursor = 0usize;
         let (theirs, ghz_theirs) = clockproxy::guarded(|| {
             harness::measure_batched(proto, Modes::default(), batch, || {
-                sqlite_run::sample(&mut sqlite_family, rotation.next_set())
+                let index = cursor;
+                cursor = (cursor + 1) % sets.len();
+                sqlite_run::sample_args(&mut sqlite_families[index], &sets[index])
             })
         })?;
 
@@ -170,7 +195,7 @@ impl BenchRun<'_> {
             theirs: theirs.stats,
             ratio_p50,
             alloc,
-            exec: Some(exec_digest(&stats)),
+            exec,
             ghz: Some(merge_stamps(ghz_ours, ghz_theirs)),
             p50_norm: ours.p50_norm,
         })

@@ -1,4 +1,4 @@
-use super::{VerifyConfig, stamp_value};
+use super::{stamp_value, VerifyConfig};
 
 use std::path::Path;
 

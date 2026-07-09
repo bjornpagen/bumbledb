@@ -23,6 +23,7 @@ mod tuple;
 #[cfg(test)]
 mod tests;
 
+pub use query::ParamValue;
 pub use tuple::Tuple;
 
 use std::collections::BTreeSet;

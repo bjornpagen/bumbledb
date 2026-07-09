@@ -102,14 +102,7 @@ pub fn load_sqlite_relation(
     rel: RelationId,
 ) -> rusqlite::Result<u64> {
     let relation = schema().relation(rel);
-    let placeholders = (1..=relation.fields().len())
-        .map(|i| format!("?{i}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let insert = format!(
-        "INSERT INTO \"{}\" VALUES ({placeholders})",
-        relation.name()
-    );
+    let insert = sqlmap::insert_sql(relation);
 
     let mut facts = 0u64;
     let mut rows = relation_rows(cfg, rel).peekable();
@@ -118,9 +111,7 @@ pub fn load_sqlite_relation(
         {
             let mut stmt = conn.prepare_cached(&insert)?;
             for row in rows.by_ref().take(4096) {
-                let params: Vec<rusqlite::types::Value> =
-                    row.iter().map(sqlmap::to_sql_value).collect();
-                stmt.execute(rusqlite::params_from_iter(params))?;
+                stmt.execute(rusqlite::params_from_iter(sqlmap::to_sql_row(&row)))?;
                 facts += 1;
             }
         }

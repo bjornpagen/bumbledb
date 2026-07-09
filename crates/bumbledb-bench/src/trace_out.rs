@@ -30,9 +30,9 @@ const RENDER_ROWS: usize = 24;
 mod flame_summary;
 mod phase_table;
 mod split_harness;
-mod write_chrome;
 #[cfg(test)]
 mod tests;
+mod write_chrome;
 
 pub use phase_table::render_phase_table;
 pub use split_harness::split_harness;

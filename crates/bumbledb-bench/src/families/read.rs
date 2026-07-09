@@ -1,7 +1,8 @@
 use bumbledb::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
 
-use crate::families::{Family, Kind, SKEW_HOT_TAGS};
+use crate::families::{scalar_draw, Draw, Family, Kind};
 use crate::gen::{self, GenConfig, Rng, Sizes};
+use crate::naive::ParamValue;
 use crate::schema::ids;
 use crate::translate::goldens;
 
@@ -25,17 +26,18 @@ fn point_query() -> Query {
                 (ids::posting::AT, var(1)),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     }
 }
 
-fn point_params(cfg: &GenConfig) -> Vec<Vec<Value>> {
+fn point_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0114_0001);
-    let mut sets: Vec<Vec<Value>> = (0..3)
-        .map(|_| vec![Value::U64(rng.range(sizes.postings))])
+    let mut sets: Vec<Draw> = (0..3)
+        .map(|_| scalar_draw(vec![Value::U64(rng.range(sizes.postings))]))
         .collect();
-    sets.push(vec![Value::U64(sizes.postings + 1_000_000)]);
+    sets.push(scalar_draw(vec![Value::U64(sizes.postings + 1_000_000)]));
     sets
 }
 
@@ -61,25 +63,32 @@ fn fk_walk_query() -> Query {
                 bindings: vec![(ids::holder::ID, var(2)), (ids::holder::NAME, var(0))],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }
 
-fn fk_walk_params(cfg: &GenConfig) -> Vec<Vec<Value>> {
-    let sizes = Sizes::of(cfg.scale);
+fn cold_account(rng: &mut Rng, sizes: &Sizes) -> u64 {
     let hot = sizes.hot_accounts();
+    hot + rng.range(sizes.accounts - hot)
+}
+
+fn fk_walk_params(cfg: &GenConfig) -> Vec<Draw> {
+    let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0114_0002);
     vec![
-        vec![Value::U64(hot + rng.range(sizes.accounts - hot))],
-        vec![Value::U64(hot + rng.range(sizes.accounts - hot))],
-        vec![Value::U64(rng.range(hot))],
-        vec![Value::U64(sizes.accounts + 1_000_000)],
+        scalar_draw(vec![Value::U64(cold_account(&mut rng, &sizes))]),
+        scalar_draw(vec![Value::U64(cold_account(&mut rng, &sizes))]),
+        scalar_draw(vec![Value::U64(rng.range(sizes.hot_accounts()))]),
+        scalar_draw(vec![Value::U64(sizes.accounts + 1_000_000)]),
     ]
 }
 
-/// chain — `Q(region, amount, at) :- Posting(account = a, amount, at),
-/// Account(id = a, holder = h, status = Open), Holder(id = h, region)`
-/// with `at >= ?0`.
+/// chain — `Q(src, amount, at) :- Posting(entry = e, account = a,
+/// amount, at), JournalEntry(id = e, source = src),
+/// Account(id = a, currency = Usd)` with `at >= ?0` — the multi-hop
+/// walk across postings/entries/accounts, an enum literal pinning the
+/// account side (~1/3 of accounts).
 fn chain_query() -> Query {
     Query {
         finds: vec![
@@ -91,24 +100,28 @@ fn chain_query() -> Query {
             Atom {
                 relation: ids::POSTING,
                 bindings: vec![
-                    (ids::posting::ACCOUNT, var(3)),
+                    (ids::posting::ENTRY, var(3)),
+                    (ids::posting::ACCOUNT, var(4)),
                     (ids::posting::AMOUNT, var(1)),
                     (ids::posting::AT, var(2)),
                 ],
             },
             Atom {
-                relation: ids::ACCOUNT,
+                relation: ids::JOURNAL_ENTRY,
                 bindings: vec![
-                    (ids::account::ID, var(3)),
-                    (ids::account::HOLDER, var(4)),
-                    (ids::account::STATUS, Term::Literal(Value::Enum(0))),
+                    (ids::journal_entry::ID, var(3)),
+                    (ids::journal_entry::SOURCE, var(0)),
                 ],
             },
             Atom {
-                relation: ids::HOLDER,
-                bindings: vec![(ids::holder::ID, var(4)), (ids::holder::REGION, var(0))],
+                relation: ids::ACCOUNT,
+                bindings: vec![
+                    (ids::account::ID, var(4)),
+                    (ids::account::CURRENCY, Term::Literal(Value::Enum(0))),
+                ],
             },
         ],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Ge,
             lhs: var(2),
@@ -117,12 +130,12 @@ fn chain_query() -> Query {
     }
 }
 
-fn chain_params(cfg: &GenConfig) -> Vec<Vec<Value>> {
+fn chain_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = Sizes::of(cfg.scale);
     let span = i64::try_from(sizes.postings).expect("fits") * gen::AT_STEP;
     // Four suffix edges near the corpus end, selecting ≈2/4/6/8%.
     (1..=4)
-        .map(|k| vec![Value::I64(gen::AT_BASE + span - span * k / 50)])
+        .map(|k| scalar_draw(vec![Value::I64(gen::AT_BASE + span - span * k / 50)]))
         .collect()
 }
 
@@ -139,6 +152,7 @@ fn range_query() -> Query {
                 (ids::posting::AT, var(2)),
             ],
         }],
+        negated: vec![],
         predicates: vec![
             Comparison {
                 op: CmpOp::Ge,
@@ -154,7 +168,7 @@ fn range_query() -> Query {
     }
 }
 
-fn range_params(cfg: &GenConfig) -> Vec<Vec<Value>> {
+fn range_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = Sizes::of(cfg.scale);
     let span = i64::try_from(sizes.postings).expect("fits") * gen::AT_STEP;
     let width = span / 50;
@@ -162,7 +176,7 @@ fn range_params(cfg: &GenConfig) -> Vec<Vec<Value>> {
     (0..4)
         .map(|k| {
             let start = gen::AT_BASE + span * (2 * k + 1) / 16;
-            vec![Value::I64(start), Value::I64(start + width)]
+            scalar_draw(vec![Value::I64(start), Value::I64(start + width)])
         })
         .collect()
 }
@@ -171,7 +185,7 @@ fn range_params(cfg: &GenConfig) -> Vec<Vec<Value>> {
 /// Account(id = a, holder = ?0)`. The serial id binding makes every
 /// posting a distinct binding, so the fold is the *ledger balance* —
 /// duplicate amounts on one account count once each, not once total —
-/// and the distinct-bindings elision engages (unique coverage), putting
+/// and the distinct-bindings elision engages (key coverage), putting
 /// the seen-set-elided aggregate path under the oracle.
 pub(super) fn balance_query() -> Query {
     Query {
@@ -196,24 +210,26 @@ pub(super) fn balance_query() -> Query {
                 bindings: vec![(ids::account::ID, var(0)), (ids::account::HOLDER, param(0))],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }
 
-fn balance_params(cfg: &GenConfig) -> Vec<Vec<Value>> {
+fn balance_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = Sizes::of(cfg.scale);
     // The hot-owning holder: whoever holds hot account 0 (deterministic —
     // the generator is a pure function of (cfg, relation, row)).
     let account0 = gen::row(cfg, &sizes, ids::ACCOUNT, 0);
     let hot_holder = account0[usize::from(ids::account::HOLDER.0)].clone();
     let mut rng = Rng::new(cfg.seed ^ 0x0114_0005);
-    let mut sets = vec![vec![hot_holder]];
-    sets.extend((0..3).map(|_| vec![Value::U64(rng.range(sizes.holders))]));
+    let mut sets = vec![scalar_draw(vec![hot_holder])];
+    sets.extend((0..3).map(|_| scalar_draw(vec![Value::U64(rng.range(sizes.holders))])));
     sets
 }
 
-/// stats — `Q(k, Min(at), Max(amount), Count) :- Posting(instrument = i,
-/// amount, at), Instrument(id = i, kind = k)`.
+/// stats — `Q(c, Min(at), Max(amount), Count) :- Posting(account = a,
+/// amount, at), Account(id = a, currency = c)` — the literal-free full
+/// fold grouped by currency.
 fn stats_query() -> Query {
     Query {
         finds: vec![
@@ -235,112 +251,112 @@ fn stats_query() -> Query {
             Atom {
                 relation: ids::POSTING,
                 bindings: vec![
-                    (ids::posting::INSTRUMENT, var(3)),
+                    (ids::posting::ACCOUNT, var(3)),
                     (ids::posting::AMOUNT, var(1)),
                     (ids::posting::AT, var(2)),
                 ],
             },
             Atom {
-                relation: ids::INSTRUMENT,
-                bindings: vec![
-                    (ids::instrument::ID, var(3)),
-                    (ids::instrument::KIND, var(0)),
-                ],
+                relation: ids::ACCOUNT,
+                bindings: vec![(ids::account::ID, var(3)), (ids::account::CURRENCY, var(0))],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     }
 }
 
-fn stats_params(_: &GenConfig) -> Vec<Vec<Value>> {
-    // Literal-free full fold: one empty param set.
-    vec![vec![]]
+fn stats_params(_: &GenConfig) -> Vec<Draw> {
+    // Literal-free full fold: one empty draw.
+    vec![scalar_draw(vec![])]
 }
 
-/// string — `Q(id, amount) :- Posting(id, amount, memo = ?0)`.
+/// string — `Q(id, amount) :- Posting(id, amount, instrument = i),
+/// Instrument(id = i, symbol = ?0)` — the interned-string point lookup.
 fn string_query() -> Query {
-    Query {
-        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
-        atoms: vec![Atom {
-            relation: ids::POSTING,
-            bindings: vec![
-                (ids::posting::ID, var(0)),
-                (ids::posting::AMOUNT, var(1)),
-                (ids::posting::MEMO, param(0)),
-            ],
-        }],
-        predicates: vec![],
-    }
-}
-
-fn string_params(cfg: &GenConfig) -> Vec<Vec<Value>> {
-    let mut rng = Rng::new(cfg.seed ^ 0x0114_0007);
-    let mut sets: Vec<Vec<Value>> = (0..3)
-        .map(|_| {
-            vec![Value::String(
-                format!("m{}", rng.range(gen::MEMO_VOCAB))
-                    .into_bytes()
-                    .into(),
-            )]
-        })
-        .collect();
-    // The never-interned miss: no corpus vocabulary starts with this.
-    sets.push(vec![Value::String(b"missing-family".to_vec().into())]);
-    sets
-}
-
-/// skew — `Q(label, amount) :- Posting(account = a, amount),
-/// AccountTag(account = a, tag = t), Tag(id = t, label)` with
-/// `label = ?0`.
-fn skew_query() -> Query {
     Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
                 relation: ids::POSTING,
                 bindings: vec![
-                    (ids::posting::ACCOUNT, var(2)),
+                    (ids::posting::ID, var(0)),
                     (ids::posting::AMOUNT, var(1)),
+                    (ids::posting::INSTRUMENT, var(2)),
                 ],
             },
             Atom {
-                relation: ids::ACCOUNT_TAG,
+                relation: ids::INSTRUMENT,
                 bindings: vec![
-                    (ids::account_tag::ACCOUNT, var(2)),
-                    (ids::account_tag::TAG, var(3)),
+                    (ids::instrument::ID, var(2)),
+                    (ids::instrument::SYMBOL, param(0)),
                 ],
-            },
-            Atom {
-                relation: ids::TAG,
-                bindings: vec![(ids::tag::ID, var(3)), (ids::tag::LABEL, var(0))],
             },
         ],
-        predicates: vec![Comparison {
-            op: CmpOp::Eq,
-            lhs: var(0),
-            rhs: param(0),
-        }],
+        negated: vec![],
+        predicates: vec![],
     }
 }
 
-fn skew_params(cfg: &GenConfig) -> Vec<Vec<Value>> {
-    let label = |tag: u64| vec![Value::String(format!("tag-{tag:03}").into_bytes().into())];
-    let mut rng = Rng::new(cfg.seed ^ 0x0114_0008);
-    // Two hot-attached tags, two uniform tags (drawn above the hot k = 1
-    // band, which tops out well below 150).
+fn string_params(cfg: &GenConfig) -> Vec<Draw> {
+    let sizes = Sizes::of(cfg.scale);
+    let mut rng = Rng::new(cfg.seed ^ 0x0114_0007);
+    let mut sets: Vec<Draw> = (0..3)
+        .map(|_| {
+            scalar_draw(vec![Value::String(
+                format!("SYM{:04}", rng.range(sizes.instruments))
+                    .into_bytes()
+                    .into(),
+            )])
+        })
+        .collect();
+    // The never-interned miss: no corpus vocabulary starts with this.
+    sets.push(scalar_draw(vec![Value::String(
+        b"missing-family".to_vec().into(),
+    )]));
+    sets
+}
+
+/// skew — `Q(p, amount) :- Posting(id = p, amount),
+/// PostingTag(posting = p, tag = ?0)` — the skewed tag join: the
+/// generator routes [`gen::HOT_TAG_PCT`]% of first tags to `Fee`
+/// (ordinal 0), so the rotation spans hot and uniform fan-outs.
+fn skew_query() -> Query {
+    Query {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![
+            Atom {
+                relation: ids::POSTING,
+                bindings: vec![(ids::posting::ID, var(0)), (ids::posting::AMOUNT, var(1))],
+            },
+            Atom {
+                relation: ids::POSTING_TAG,
+                bindings: vec![
+                    (ids::posting_tag::POSTING, var(0)),
+                    (ids::posting_tag::TAG, param(0)),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![],
+    }
+}
+
+fn skew_params(_: &GenConfig) -> Vec<Draw> {
+    // The hot tag, then the two uniform tags (all three ordinals — an
+    // out-of-range ordinal is unrepresentable, so no miss draw exists).
     vec![
-        label(SKEW_HOT_TAGS[0]),
-        label(SKEW_HOT_TAGS[1]),
-        label(150 + rng.range(100)),
-        label(150 + rng.range(100)),
+        scalar_draw(vec![Value::Enum(0)]),
+        scalar_draw(vec![Value::Enum(1)]),
+        scalar_draw(vec![Value::Enum(2)]),
     ]
 }
 
-/// spread — `Q(x, y) :- Posting(transfer = t, amount = x),
-/// Posting(transfer = t, amount = y)` with `x < y` — the cross-atom
-/// residual family: a self-join whose ordered comparison exercises
-/// `PlacedComparison` placement, per-node residual evaluation, and
-/// survivor compaction (no other family or generated shape did).
+/// spread — `Q(x, y) :- Posting(entry = e, amount = x),
+/// Posting(entry = e, amount = y)` with `x < y` — the cross-atom
+/// residual family and the duplicate-witness projection: a self-join
+/// whose ordered comparison exercises residual placement, and whose
+/// `(x, y)` pairs are witnessed by many distinct entries.
 fn spread_query() -> Query {
     Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -348,18 +364,19 @@ fn spread_query() -> Query {
             Atom {
                 relation: ids::POSTING,
                 bindings: vec![
-                    (ids::posting::TRANSFER, var(2)),
+                    (ids::posting::ENTRY, var(2)),
                     (ids::posting::AMOUNT, var(0)),
                 ],
             },
             Atom {
                 relation: ids::POSTING,
                 bindings: vec![
-                    (ids::posting::TRANSFER, var(2)),
+                    (ids::posting::ENTRY, var(2)),
                     (ids::posting::AMOUNT, var(1)),
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Lt,
             lhs: var(0),
@@ -368,19 +385,19 @@ fn spread_query() -> Query {
     }
 }
 
-fn spread_params(_: &GenConfig) -> Vec<Vec<Value>> {
+fn spread_params(_: &GenConfig) -> Vec<Draw> {
     // Param-less full-relation family (like stats): ~1 ordered pair per
-    // transfer at any scale (2 postings per transfer), so the result is
-    // ~transfers rows — measured acceptable at S.
-    vec![vec![]]
+    // entry at any scale (2 postings per entry), so the result is
+    // ~entries rows — measured acceptable at S.
+    vec![scalar_draw(vec![])]
 }
 
 /// triangle — `Q(a) :- Posting(account = a, instrument = i),
-/// Posting(instrument = i, transfer = w), Posting(transfer = w,
-/// account = a)` with `?0 <= a < ?1` — a true 3-cycle over the ledger via
-/// self-joins on Posting's three FK fields: three occurrences, three
-/// shared variables, a cyclic hypergraph — exactly the dynamic-cover
-/// stress the paper's triangle exposes.
+/// Posting(instrument = i, entry = w), Posting(entry = w, account = a)`
+/// with `?0 <= a < ?1` — a true 3-cycle over the ledger via self-joins
+/// on Posting's three FK fields: three occurrences, three shared
+/// variables, a cyclic hypergraph — exactly the dynamic-cover stress
+/// the paper's triangle exposes.
 fn triangle_query() -> Query {
     Query {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -395,18 +412,19 @@ fn triangle_query() -> Query {
             Atom {
                 relation: ids::POSTING,
                 bindings: vec![
-                    (ids::posting::TRANSFER, var(2)),
+                    (ids::posting::ENTRY, var(2)),
                     (ids::posting::INSTRUMENT, var(1)),
                 ],
             },
             Atom {
                 relation: ids::POSTING,
                 bindings: vec![
-                    (ids::posting::TRANSFER, var(2)),
+                    (ids::posting::ENTRY, var(2)),
                     (ids::posting::ACCOUNT, var(0)),
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![
             Comparison {
                 op: CmpOp::Ge,
@@ -422,28 +440,241 @@ fn triangle_query() -> Query {
     }
 }
 
-fn triangle_params(cfg: &GenConfig) -> Vec<Vec<Value>> {
+fn triangle_params(cfg: &GenConfig) -> Vec<Draw> {
     // The unnarrowed cycle is O(postings x instrument-fanout) work —
-    // beyond the 10 ms budget class at S (measured) — so the account
-    // window `?0 <= a < ?1` keeps the family inside it. Windows are
-    // *cold* (they start past the hot set — any window containing hot
-    // account 0 is dominated by its posting share): three ~1%-of-
-    // accounts slices spread over the cold range, plus the empty window.
+    // beyond the 10 ms budget class at S (measured on the previous
+    // ledger) — so the account window `?0 <= a < ?1` keeps the family
+    // inside it. Windows are *cold* (they start past the hot set — any
+    // window containing hot account 0 is dominated by its posting
+    // share): three ~1%-of-accounts slices spread over the cold range,
+    // plus the empty window.
     let sizes = Sizes::of(cfg.scale);
     let hot = sizes.hot_accounts();
     let width = (sizes.accounts / 100).max(1);
     let cold = sizes.accounts - hot;
     let window = |k: u64| {
         let lo = hot + cold * k / 3;
-        vec![Value::U64(lo), Value::U64(lo + width)]
+        scalar_draw(vec![Value::U64(lo), Value::U64(lo + width)])
     };
-    let mut sets: Vec<Vec<Value>> = (0..3).map(window).collect();
-    sets.push(vec![Value::U64(sizes.accounts), Value::U64(sizes.accounts)]);
+    let mut sets: Vec<Draw> = (0..3).map(window).collect();
+    sets.push(scalar_draw(vec![
+        Value::U64(sizes.accounts),
+        Value::U64(sizes.accounts),
+    ]));
     sets
 }
 
-/// The registry: the ten, in the suite's canonical order.
+/// `entries_for_account_set` — `Q(e) :- Posting(entry = e,
+/// account ∈ ?set0)` — the param-set family (`ParamSet` replaces the
+/// retired host-side union convention): entries touching any account of
+/// a bound set, `IN`-list on the `SQLite` side, re-rendered per draw.
+fn entries_for_account_set_query() -> Query {
+    Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: ids::POSTING,
+            bindings: vec![
+                (ids::posting::ENTRY, var(0)),
+                (ids::posting::ACCOUNT, Term::ParamSet(ParamId(0))),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    }
+}
+
+fn entries_for_account_set_params(cfg: &GenConfig) -> Vec<Draw> {
+    let sizes = Sizes::of(cfg.scale);
+    let mut rng = Rng::new(cfg.seed ^ 0x0114_000B);
+    let mut cold = |n: usize| -> Vec<Value> {
+        (0..n)
+            .map(|_| Value::U64(cold_account(&mut rng, &sizes)))
+            .collect()
+    };
+    let singleton = cold(1);
+    let mut with_hot = cold(2);
+    with_hot.push(Value::U64(0));
+    let eight = cold(8);
+    vec![
+        vec![ParamValue::Set(singleton)],
+        vec![ParamValue::Set(with_hot)],
+        vec![ParamValue::Set(eight)],
+        vec![ParamValue::Set(Vec::new())],
+    ]
+}
+
+/// `postings_without_tag` — `Q(p, amount) :- Posting(id = p,
+/// account = ?0, amount), ¬PostingTag(posting = p)` — the negation
+/// family: one account's untagged postings (the generator tags even
+/// posting ids only, so roughly half of any account's postings
+/// survive the anti-join).
+fn postings_without_tag_query() -> Query {
+    Query {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![Atom {
+            relation: ids::POSTING,
+            bindings: vec![
+                (ids::posting::ID, var(0)),
+                (ids::posting::ACCOUNT, param(0)),
+                (ids::posting::AMOUNT, var(1)),
+            ],
+        }],
+        negated: vec![Atom {
+            relation: ids::POSTING_TAG,
+            bindings: vec![(ids::posting_tag::POSTING, var(0))],
+        }],
+        predicates: vec![],
+    }
+}
+
+fn postings_without_tag_params(cfg: &GenConfig) -> Vec<Draw> {
+    let sizes = Sizes::of(cfg.scale);
+    let mut rng = Rng::new(cfg.seed ^ 0x0114_000C);
+    vec![
+        scalar_draw(vec![Value::U64(cold_account(&mut rng, &sizes))]),
+        scalar_draw(vec![Value::U64(cold_account(&mut rng, &sizes))]),
+        scalar_draw(vec![Value::U64(rng.range(sizes.hot_accounts()))]),
+        scalar_draw(vec![Value::U64(sizes.accounts + 1_000_000)]),
+    ]
+}
+
+/// `latest_posting_per_account` — `Q(a, ArgMax_at(p)) :- Posting(id = p,
+/// account = a, at = t)` — the Arg-restriction family: each account's
+/// latest posting (the join-back template on the `SQLite` side; `at` is
+/// strictly increasing per posting id, so groups are tie-free — tie
+/// semantics are the query generator's lane).
+fn latest_posting_per_account_query() -> Query {
+    Query {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::ArgMax { key: VarId(2) },
+                over: Some(VarId(1)),
+            },
+        ],
+        atoms: vec![Atom {
+            relation: ids::POSTING,
+            bindings: vec![
+                (ids::posting::ID, var(1)),
+                (ids::posting::ACCOUNT, var(0)),
+                (ids::posting::AT, var(2)),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    }
+}
+
+fn latest_posting_per_account_params(_: &GenConfig) -> Vec<Draw> {
+    // Param-less full restriction: one empty draw.
+    vec![scalar_draw(vec![])]
+}
+
+/// `mandate_at_instant` — `Q(o) :- Posting(account = ?0, at = ?1),
+/// Mandate(account = ?0, org = o, active ∋ ?1)` — the interval
+/// membership probe through a **param point**: which orgs held a
+/// mandate on the account at the instant of one of its postings. The
+/// posting atom anchors `?1` as a scalar point (the bivalent-anchor
+/// rule: a lone interval-position param would read as interval value
+/// equality), exactly the doc's at-instant probe form.
+fn mandate_at_instant_query() -> Query {
+    Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![
+            Atom {
+                relation: ids::POSTING,
+                bindings: vec![
+                    (ids::posting::ACCOUNT, param(0)),
+                    (ids::posting::AT, param(1)),
+                ],
+            },
+            Atom {
+                relation: ids::MANDATE,
+                bindings: vec![
+                    (ids::mandate::ACCOUNT, param(0)),
+                    (ids::mandate::ORG, var(0)),
+                    (ids::mandate::ACTIVE, param(1)),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![],
+    }
+}
+
+fn mandate_at_instant_params(cfg: &GenConfig) -> Vec<Draw> {
+    let sizes = Sizes::of(cfg.scale);
+    let mut rng = Rng::new(cfg.seed ^ 0x0114_000E);
+    // Three real postings' (account, at) instants — the mandate windows
+    // tile the posting-at span, so most instants land inside a segment —
+    // plus the account miss.
+    let mut sets: Vec<Draw> = (0..3)
+        .map(|_| {
+            let posting = gen::row(cfg, &sizes, ids::POSTING, rng.range(sizes.postings));
+            scalar_draw(vec![
+                posting[usize::from(ids::posting::ACCOUNT.0)].clone(),
+                posting[usize::from(ids::posting::AT.0)].clone(),
+            ])
+        })
+        .collect();
+    sets.push(scalar_draw(vec![
+        Value::U64(sizes.accounts + 1_000_000),
+        Value::I64(gen::AT_BASE),
+    ]));
+    sets
+}
+
+/// `mandate_overlap` — `Q(a1, a2) :- Mandate(account = a1, org = ?0,
+/// active = u), Mandate(account = a2, org = ?0, active = v),
+/// Overlaps(u, v)` — the interval-overlap family. **Chosen shape:**
+/// Mandate × Mandate joined through a shared org param — a true
+/// `Overlaps` JOIN across accounts (account pairs concurrently mandated
+/// to one org), not a window filter; the pointwise key makes
+/// same-account overlap impossible, so the join must cross accounts to
+/// produce anything beyond the reflexive pairs.
+fn mandate_overlap_query() -> Query {
+    Query {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![
+            Atom {
+                relation: ids::MANDATE,
+                bindings: vec![
+                    (ids::mandate::ACCOUNT, var(0)),
+                    (ids::mandate::ORG, param(0)),
+                    (ids::mandate::ACTIVE, var(2)),
+                ],
+            },
+            Atom {
+                relation: ids::MANDATE,
+                bindings: vec![
+                    (ids::mandate::ACCOUNT, var(1)),
+                    (ids::mandate::ORG, param(0)),
+                    (ids::mandate::ACTIVE, var(3)),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Overlaps,
+            lhs: var(2),
+            rhs: var(3),
+        }],
+    }
+}
+
+fn mandate_overlap_params(cfg: &GenConfig) -> Vec<Draw> {
+    let sizes = Sizes::of(cfg.scale);
+    let mut rng = Rng::new(cfg.seed ^ 0x0114_000F);
+    (0..4)
+        .map(|_| scalar_draw(vec![Value::U64(rng.range(sizes.orgs))]))
+        .collect()
+}
+
+/// The registry: the fifteen, in the suite's canonical order — the
+/// ported ten, then the redesign's five (param set, negation,
+/// Arg-restriction, membership, overlap).
 #[must_use]
+#[allow(clippy::too_many_lines)] // the registry is a table, one entry per family
 pub fn all() -> &'static [Family] {
     &[
         Family {
@@ -453,6 +684,7 @@ pub fn all() -> &'static [Family] {
             params: point_params,
             golden_sql: goldens::POINT,
             param_policy: "3 existing posting ids + 1 miss (id = postings + 10^6).",
+            indexes: &[],
         },
         Family {
             name: "fk_walk",
@@ -461,6 +693,7 @@ pub fn all() -> &'static [Family] {
             params: fk_walk_params,
             golden_sql: goldens::FK_WALK,
             param_policy: "2 cold accounts, 1 hot account, 1 miss (id = accounts + 10^6).",
+            indexes: &[],
         },
         Family {
             name: "chain",
@@ -469,6 +702,7 @@ pub fn all() -> &'static [Family] {
             params: chain_params,
             golden_sql: goldens::CHAIN,
             param_policy: "4 suffix edges near the corpus end (at >= edge selects ~2/4/6/8%).",
+            indexes: &[("idx_posting_at", "Posting", &["at"])],
         },
         Family {
             name: "range",
@@ -477,6 +711,7 @@ pub fn all() -> &'static [Family] {
             params: range_params,
             golden_sql: goldens::RANGE,
             param_policy: "4 windows of the pinned ~2% selectivity, spread over the span.",
+            indexes: &[("idx_posting_at", "Posting", &["at"])],
         },
         Family {
             name: "balance",
@@ -485,6 +720,7 @@ pub fn all() -> &'static [Family] {
             params: balance_params,
             golden_sql: goldens::BALANCE,
             param_policy: "4 holders, the first owning hot account 0.",
+            indexes: &[],
         },
         Family {
             name: "stats",
@@ -492,7 +728,8 @@ pub fn all() -> &'static [Family] {
             query: stats_query,
             params: stats_params,
             golden_sql: goldens::STATS,
-            param_policy: "No params — literal-free full fold; one empty set.",
+            param_policy: "No params — literal-free full fold; one empty draw.",
+            indexes: &[],
         },
         Family {
             name: "string",
@@ -500,7 +737,8 @@ pub fn all() -> &'static [Family] {
             query: string_query,
             params: string_params,
             golden_sql: goldens::STRING,
-            param_policy: "3 vocabulary memos + 1 never-interned miss.",
+            param_policy: "3 existing symbols + 1 never-interned miss.",
+            indexes: &[("idx_instrument_symbol", "Instrument", &["symbol"])],
         },
         Family {
             name: "skew",
@@ -508,7 +746,8 @@ pub fn all() -> &'static [Family] {
             query: skew_query,
             params: skew_params,
             golden_sql: goldens::SKEW,
-            param_policy: "2 hot-attached tag labels (tags 0 and 97) + 2 uniform tag labels.",
+            param_policy: "The hot tag (Fee, ~60% of first tags), then the two uniform tags.",
+            indexes: &[("idx_postingtag_tag_posting", "PostingTag", &["tag", "posting"])],
         },
         Family {
             name: "spread",
@@ -516,7 +755,8 @@ pub fn all() -> &'static [Family] {
             query: spread_query,
             params: spread_params,
             golden_sql: goldens::SPREAD,
-            param_policy: "No params — full-relation cross-atom residual; one empty set.",
+            param_policy: "No params — full-relation cross-atom residual; one empty draw.",
+            indexes: &[],
         },
         Family {
             name: "triangle",
@@ -525,6 +765,56 @@ pub fn all() -> &'static [Family] {
             params: triangle_params,
             golden_sql: goldens::TRIANGLE,
             param_policy: "3 cold ~1%-of-accounts windows (?0 <= a < ?1, past the hot set) + the empty window.",
+            indexes: &[],
+        },
+        Family {
+            name: "entries_for_account_set",
+            kind: Kind::Gate,
+            query: entries_for_account_set_query,
+            params: entries_for_account_set_params,
+            golden_sql: goldens::IN_THREE,
+            param_policy: "Account sets of sizes 1, 3 (hot account 0 included), 8, and 0 — the golden pins the representative set {3, 7, 9}.",
+            indexes: &[("idx_posting_account_entry", "Posting", &["account", "entry"])],
+        },
+        Family {
+            name: "postings_without_tag",
+            kind: Kind::Gate,
+            query: postings_without_tag_query,
+            params: postings_without_tag_params,
+            golden_sql: goldens::POSTINGS_WITHOUT_TAG,
+            param_policy: "2 cold accounts, 1 hot account, 1 miss (id = accounts + 10^6).",
+            indexes: &[],
+        },
+        Family {
+            name: "latest_posting_per_account",
+            kind: Kind::Gate,
+            query: latest_posting_per_account_query,
+            params: latest_posting_per_account_params,
+            golden_sql: goldens::ARG_MAX,
+            param_policy: "No params — full Arg-restriction over every account; one empty draw.",
+            indexes: &[("idx_posting_account_at", "Posting", &["account", "at"])],
+        },
+        Family {
+            name: "mandate_at_instant",
+            kind: Kind::Gate,
+            query: mandate_at_instant_query,
+            params: mandate_at_instant_params,
+            golden_sql: goldens::MEMBERSHIP_PARAM,
+            param_policy: "3 real postings' (account, at) instants + 1 account miss — gap instants occur naturally (segments 1-2 and 2-3 are gapped).",
+            indexes: &[],
+        },
+        Family {
+            name: "mandate_overlap",
+            kind: Kind::Gate,
+            query: mandate_overlap_query,
+            params: mandate_overlap_params,
+            golden_sql: goldens::MANDATE_OVERLAP,
+            param_policy: "4 org ids (mandates spread uniformly over 64 orgs).",
+            indexes: &[(
+                "idx_mandate_org_active",
+                "Mandate",
+                &["org", "active_start", "active_end"],
+            )],
         },
     ]
 }

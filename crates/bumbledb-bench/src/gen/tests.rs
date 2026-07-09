@@ -1,5 +1,5 @@
 use super::*;
-use bumbledb::Value;
+use bumbledb::{Interval, Value};
 
 use crate::schema::ids;
 
@@ -21,7 +21,7 @@ fn the_corpus_digest_is_deterministic_and_pinned() {
     // The golden: changing the generator re-baselines every corpus.
     assert_eq!(
         digest_hex(&a),
-        "12d08c93fe2b654aa74fbe1f1a5e84fa255e805e284e6d216ba1702f2ddc1af0",
+        "d850ac5008aa7a97531d5cb1ff28712f4f753892bf4803eeddc5f973e2bf8bc3",
         "generator output changed — re-baseline deliberately"
     );
 }
@@ -75,58 +75,94 @@ fn the_range_window_selects_about_two_percent() {
 }
 
 #[test]
-fn memos_draw_from_the_vocabulary_plus_rare_uniques() {
-    let mut vocab = std::collections::HashSet::new();
-    let mut uniques = 0u64;
-    for r in relation_rows(CFG, ids::POSTING) {
-        let Value::String(raw) = &r[6] else {
-            panic!("memo")
-        };
-        if raw.starts_with(b"uniq-") {
-            uniques += 1;
-        } else {
-            vocab.insert(raw.clone());
-        }
-    }
-    assert!(vocab.len() as u64 <= MEMO_VOCAB);
-    assert!(vocab.len() as u64 > MEMO_VOCAB / 2, "{}", vocab.len());
-    let expected = Sizes::of(Scale::S).postings / UNIQUE_MEMO_DEN;
-    assert!(
-        uniques > expected * 8 / 10 && uniques < expected * 12 / 10,
-        "uniques {uniques} vs expected {expected}"
-    );
-}
-
-#[test]
-fn foreign_keys_close_by_construction() {
+fn containment_sources_resolve_by_construction() {
     let sizes = Sizes::of(Scale::S);
     let mut rng = Rng::new(7);
     for _ in 0..1000 {
         let i = rng.range(sizes.postings);
         let r = row(&CFG, &sizes, ids::POSTING, i);
-        let (Value::U64(transfer), Value::U64(account), Value::U64(instrument)) =
+        let (Value::U64(entry), Value::U64(account), Value::U64(instrument)) =
             (&r[1], &r[2], &r[3])
         else {
-            panic!("fk columns")
+            panic!("containment columns")
         };
-        assert!(*transfer < sizes.transfers);
+        assert!(*entry < sizes.entries);
         assert!(*account < sizes.accounts);
         assert!(*instrument < sizes.instruments);
     }
-    // TagNote pairs are a subset of AccountTag pairs by construction.
-    let pairs: std::collections::HashSet<(u64, u64)> = relation_rows(CFG, ids::ACCOUNT_TAG)
-        .map(|r| {
-            let (Value::U64(a), Value::U64(t)) = (&r[0], &r[1]) else {
-                panic!("pair")
-            };
-            (*a, *t)
-        })
-        .collect();
-    assert_eq!(pairs.len() as u64, sizes.account_tags, "pairs distinct");
-    for r in relation_rows(CFG, ids::TAG_NOTE) {
-        let (Value::U64(a), Value::U64(t)) = (&r[0], &r[1]) else {
-            panic!("pair")
+    // PostingTag targets even postings only, with distinct tag pairs.
+    for pair in 0..64 {
+        let a = row(&CFG, &sizes, ids::POSTING_TAG, pair * 2);
+        let b = row(&CFG, &sizes, ids::POSTING_TAG, pair * 2 + 1);
+        assert_eq!(a[0], b[0], "one posting per pair");
+        assert_ne!(a[1], b[1], "distinct tags per posting");
+        let Value::U64(posting) = a[0] else {
+            panic!("posting")
         };
-        assert!(pairs.contains(&(*a, *t)), "({a}, {t}) must exist");
+        assert!(posting.is_multiple_of(2) && posting < sizes.postings);
+    }
+    // OrgParent edges reference existing orgs, acyclically.
+    for r in relation_rows(CFG, ids::ORG_PARENT) {
+        let (Value::U64(child), Value::U64(parent)) = (&r[0], &r[1]) else {
+            panic!("edge")
+        };
+        assert!(*child < sizes.orgs && *parent < sizes.orgs);
+        assert!(parent < child, "parents precede children — no cycles");
+    }
+}
+
+/// The PRD 24 corpus-validity criterion, structural half: every
+/// account's mandate history is sequential and non-overlapping under
+/// the pointwise key, and the three boundary shapes all exist —
+/// **abutting** (every account, segments 0→1), **gapped** (every
+/// account, segments 1→2), and the **sentinel end** (every even
+/// account).
+#[test]
+fn mandate_histories_carry_all_three_shapes_validly() {
+    let sizes = Sizes::of(Scale::S);
+    let (mut abutting, mut gapped, mut sentinel) = (0u64, 0u64, 0u64);
+    for account in 0..sizes.accounts {
+        let segments = mandate_segments(CFG.seed, &sizes, account);
+        for segment in &segments {
+            assert!(segment.start < segment.end, "nonempty interval");
+            assert!(segment.org < sizes.orgs);
+        }
+        for pair in segments.windows(2) {
+            assert!(
+                pair[0].end <= pair[1].start,
+                "account {account}: segments overlap — the pointwise key would abort"
+            );
+            if pair[0].end == pair[1].start {
+                abutting += 1;
+            } else {
+                gapped += 1;
+            }
+        }
+        if segments[3].end == Interval::<i64>::MAX_END {
+            sentinel += 1;
+        }
+    }
+    assert!(abutting >= sizes.accounts, "one abutting pair per account");
+    assert!(gapped >= sizes.accounts, "one gapped pair per account");
+    assert_eq!(sentinel, sizes.accounts / 2, "even accounts stay active");
+}
+
+/// The mandate rows stream exactly the segment table (the row fn and
+/// the segment fn cannot drift apart).
+#[test]
+fn mandate_rows_stream_the_segment_table() {
+    let sizes = Sizes::of(Scale::S);
+    for i in [0u64, 1, 2, 3, 4, 7, 401] {
+        let r = row(&CFG, &sizes, ids::MANDATE, i);
+        let segment = mandate_segments(CFG.seed, &sizes, i / MANDATE_SEGMENTS)
+            [usize::try_from(i % MANDATE_SEGMENTS).expect("small")];
+        assert_eq!(
+            r,
+            vec![
+                Value::U64(i / MANDATE_SEGMENTS),
+                Value::U64(segment.org),
+                Value::IntervalI64(segment.start, segment.end),
+            ]
+        );
     }
 }

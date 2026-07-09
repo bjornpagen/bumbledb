@@ -172,7 +172,10 @@ fn markdown_diagnostics(out: &mut String, report: &RunReport) {
         .collect();
     if !stamped.is_empty() {
         let _ = writeln!(out, "## Clock proxy\n");
-        let _ = writeln!(out, "| family | GHz pre | GHz post | status | norm p50 (us) |");
+        let _ = writeln!(
+            out,
+            "| family | GHz pre | GHz post | status | norm p50 (us) |"
+        );
         let _ = writeln!(out, "|---|---|---|---|---|");
         for (name, ghz, norm) in &stamped {
             let norm = norm.map_or_else(|| "-".to_owned(), |n| format!("{:.1}", us(n)));

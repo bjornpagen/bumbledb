@@ -94,6 +94,53 @@ pub const COUNT_DISTINCT: &str = "SELECT v0, COUNT(DISTINCT v2) FROM (SELECT DIS
 /// `SELECT DISTINCT` keeps ties on both sides.
 pub const ARG_MAX: &str = "WITH d AS (SELECT DISTINCT t0.\"account\" AS v0, t0.\"id\" AS v1, t0.\"at\" AS v2 FROM \"Posting\" AS t0) SELECT DISTINCT d.v0, d.v1 FROM d JOIN (SELECT v0, MAX(v2) AS mk FROM d GROUP BY v0) m ON d.v0 = m.v0 AND d.v2 = m.mk";
 
+/// chain — `Q(src, amount, at) :- Posting(entry = e, account = a,
+/// amount, at), JournalEntry(id = e, source = src),
+/// Account(id = a, currency = Usd)` with `at >= ?0`: the multi-hop walk
+/// across postings/entries/accounts, an enum literal pinning the
+/// account side.
+pub const CHAIN: &str = "SELECT DISTINCT t1.\"source\", t0.\"amount\", t0.\"at\" FROM \"Posting\" AS t0, \"JournalEntry\" AS t1, \"Account\" AS t2 WHERE t0.\"entry\" = t1.\"id\" AND t0.\"account\" = t2.\"id\" AND t2.\"currency\" = 0 AND t0.\"at\" >= ?1";
+
+/// range — `Q(id, amount) :- Posting(id, amount, at)` with
+/// `at >= ?0, at < ?1`: the pure scan family.
+pub const RANGE: &str = "SELECT DISTINCT t0.\"id\", t0.\"amount\" FROM \"Posting\" AS t0 WHERE t0.\"at\" >= ?1 AND t0.\"at\" < ?2";
+
+/// stats — `Q(c, Min(at), Max(amount), Count) :- Posting(account = a,
+/// amount, at), Account(id = a, currency = c)`: the literal-free full
+/// fold grouped by currency, over the normative distinct subquery.
+pub const STATS: &str = "SELECT v0, MIN(v2), MAX(v1), COUNT(*) FROM (SELECT DISTINCT t1.\"currency\" AS v0, t0.\"amount\" AS v1, t0.\"at\" AS v2, t0.\"account\" AS v3 FROM \"Posting\" AS t0, \"Account\" AS t1 WHERE t0.\"account\" = t1.\"id\") GROUP BY v0";
+
+/// string — `Q(id, amount) :- Posting(id, amount, instrument = i),
+/// Instrument(id = i, symbol = ?0)`: the interned-string point lookup
+/// (a never-interned miss rotates through).
+pub const STRING: &str = "SELECT DISTINCT t0.\"id\", t0.\"amount\" FROM \"Posting\" AS t0, \"Instrument\" AS t1 WHERE t0.\"instrument\" = t1.\"id\" AND t1.\"symbol\" = ?1";
+
+/// skew — `Q(p, amount) :- Posting(id = p, amount),
+/// PostingTag(posting = p, tag = ?0)`: the skewed tag join (tag 0 is
+/// the generator's hot tag).
+pub const SKEW: &str = "SELECT DISTINCT t0.\"id\", t0.\"amount\" FROM \"Posting\" AS t0, \"PostingTag\" AS t1 WHERE t0.\"id\" = t1.\"posting\" AND t1.\"tag\" = ?1";
+
+/// spread — `Q(x, y) :- Posting(entry = e, amount = x),
+/// Posting(entry = e, amount = y)` with `x < y`: the duplicate-witness
+/// projection (distinct entries can witness one `(x, y)` pair).
+pub const SPREAD: &str = "SELECT DISTINCT t0.\"amount\", t1.\"amount\" FROM \"Posting\" AS t0, \"Posting\" AS t1 WHERE t0.\"entry\" = t1.\"entry\" AND t0.\"amount\" < t1.\"amount\"";
+
+/// triangle — `Q(a) :- Posting(account = a, instrument = i),
+/// Posting(entry = w, instrument = i), Posting(entry = w, account = a)`
+/// with `?0 <= a < ?1`: the cyclic-ish self-join for WCOJ honesty.
+pub const TRIANGLE: &str = "SELECT DISTINCT t0.\"account\" FROM \"Posting\" AS t0, \"Posting\" AS t1, \"Posting\" AS t2 WHERE t0.\"instrument\" = t1.\"instrument\" AND t1.\"entry\" = t2.\"entry\" AND t0.\"account\" = t2.\"account\" AND t0.\"account\" >= ?1 AND t0.\"account\" < ?2";
+
+/// `postings_without_tag` — `Q(p, amount) :- Posting(id = p,
+/// account = ?0, amount), ¬PostingTag(posting = p)`: one account's
+/// untagged postings — the negation family.
+pub const POSTINGS_WITHOUT_TAG: &str = "SELECT DISTINCT t0.\"id\", t0.\"amount\" FROM \"Posting\" AS t0 WHERE t0.\"account\" = ?1 AND NOT EXISTS (SELECT 1 FROM \"PostingTag\" AS n0 WHERE n0.\"posting\" = t0.\"id\")";
+
+/// `mandate_overlap` — `Q(a1, a2) :- Mandate(account = a1, org = ?0,
+/// active = u), Mandate(account = a2, org = ?0, active = v),
+/// Overlaps(u, v)`: account pairs whose mandates under one org overlap
+/// in time — an Overlaps **join** across accounts, not a filter.
+pub const MANDATE_OVERLAP: &str = "SELECT DISTINCT t0.\"account\", t1.\"account\" FROM \"Mandate\" AS t0, \"Mandate\" AS t1 WHERE t0.\"org\" = ?1 AND t1.\"org\" = ?1 AND t0.\"active_start\" < t1.\"active_end\" AND t1.\"active_start\" < t0.\"active_end\"";
+
 /// `arg_max_global` — `Q(ArgMax_at(p)) :- Posting(id = p, at = t)`: the
 /// global-group variant omits the GROUP BY and the group join keys; an
 /// empty `d` joins nothing (the NULL extreme matches no row), so the

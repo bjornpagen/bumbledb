@@ -19,8 +19,9 @@ use super::tuple::{cmp_value, contains_point, endpoints, overlaps, point};
 use super::{NaiveDb, Tuple};
 
 /// One positional parameter, scalar or set — the model's mirror of the
-/// engine's `ParamArg`, owned so op streams can store it.
-#[derive(Debug, Clone)]
+/// engine's `ParamArg`, owned so op streams (and the family rotations)
+/// can store it.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParamValue {
     Scalar(Value),
     Set(Vec<Value>),

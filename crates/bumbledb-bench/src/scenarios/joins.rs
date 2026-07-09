@@ -25,7 +25,6 @@ bumbledb::schema! {
     relation Kind {
         id: u64 as JKindId, serial,
         name: str,
-        unique(name),
     }
     relation Company {
         id: u64 as JCompanyId, serial,
@@ -40,30 +39,39 @@ bumbledb::schema! {
     relation Keyword {
         id: u64 as JKeywordId, serial,
         word: str,
-        unique(word),
     }
     relation Movie {
         id: u64 as JMovieId, serial,
         title: str,
         year: i64,
-        kind: u64 as JKindId, fk(Kind.id),
+        kind: u64 as JKindId,
     }
     relation CastInfo {
-        movie: u64 as JMovieId, fk(Movie.id),
-        person: u64 as JPersonId, fk(Person.id),
+        movie: u64 as JMovieId,
+        person: u64 as JPersonId,
         role: enum Role { Actor, Actress, Director, Producer, Writer, Composer, Editor, Extra },
-        unique(movie, person),
     }
     relation MovieCompany {
-        movie: u64 as JMovieId, fk(Movie.id),
-        company: u64 as JCompanyId, fk(Company.id),
-        unique(movie, company),
+        movie: u64 as JMovieId,
+        company: u64 as JCompanyId,
     }
     relation MovieKeyword {
-        movie: u64 as JMovieId, fk(Movie.id),
-        keyword: u64 as JKeywordId, fk(Keyword.id),
-        unique(movie, keyword),
+        movie: u64 as JMovieId,
+        keyword: u64 as JKeywordId,
     }
+
+    Kind(name) -> Kind;
+    Keyword(word) -> Keyword;
+    Movie(kind) <= Kind(id);
+    CastInfo(movie) <= Movie(id);
+    CastInfo(person) <= Person(id);
+    CastInfo(movie, person) -> CastInfo;
+    MovieCompany(movie) <= Movie(id);
+    MovieCompany(company) <= Company(id);
+    MovieCompany(movie, company) -> MovieCompany;
+    MovieKeyword(movie) <= Movie(id);
+    MovieKeyword(keyword) <= Keyword(id);
+    MovieKeyword(movie, keyword) -> MovieKeyword;
 }
 
 /// Relation ids by declaration order.

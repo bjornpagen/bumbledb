@@ -7,18 +7,16 @@ use crate::writebench::{seeded_posting, write_protocol};
 
 use super::POSTING_INSERT;
 
-fn sqlite_posting_params(rng: &mut Rng, sizes: &Sizes, id: u64) -> [rusqlite::types::Value; 8] {
+fn sqlite_posting_params(rng: &mut Rng, sizes: &Sizes, id: u64) -> [rusqlite::types::Value; 6] {
     use rusqlite::types::Value as Sql;
     let posting = seeded_posting(rng, sizes, PostingId(id));
     [
         Sql::Integer(i64::try_from(id).expect("axiom")),
-        Sql::Integer(i64::try_from(posting.transfer.0).expect("axiom")),
+        Sql::Integer(i64::try_from(posting.entry.0).expect("axiom")),
         Sql::Integer(i64::try_from(posting.account.0).expect("axiom")),
         Sql::Integer(i64::try_from(posting.instrument.0).expect("axiom")),
         Sql::Integer(posting.amount),
         Sql::Integer(posting.at),
-        Sql::Text(posting.memo),
-        Sql::Integer(i64::from(posting.reconciled)),
     ]
 }
 

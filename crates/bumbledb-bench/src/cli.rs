@@ -34,7 +34,8 @@ impl Default for CorpusArgs {
 }
 
 /// `bench`'s knobs.
-#[allow(clippy::struct_excessive_bools)] // a 1:1 mirror of independent CLI
+#[allow(clippy::struct_excessive_bools)]
+// a 1:1 mirror of independent CLI
 // flags; folding them into state enums would misrepresent the surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BenchArgs {

@@ -1,13 +1,19 @@
 use super::{Case, Run, MAX_BUNDLES};
 
 use bumbledb::schema::ValueType;
-use bumbledb::{ResultBuffer, Value};
+use bumbledb::ResultBuffer;
 
 use crate::compare;
+use crate::families::param_args;
+use crate::naive::ParamValue;
+use crate::translate::ParamSlot;
 
 impl Run<'_> {
-    /// Executes one query × param set on both stores and compares. Returns
-    /// `false` once the bundle budget is exhausted (stop the run).
+    /// Executes one query × param draw on both stores and compares.
+    /// Returns `false` once the bundle budget is exhausted (stop the
+    /// run). Set params bind through the engine's `ParamArg` surface;
+    /// the `SQLite` side receives the per-draw re-rendered SQL in
+    /// `case.sql` with its element lists embedded as literals.
     ///
     /// Divergence-by-error is a mismatch, not a panic: if either side
     /// errors at prepare or execute where the other answers, that is an
@@ -20,8 +26,8 @@ impl Run<'_> {
     pub(super) fn check(
         &mut self,
         case: &Case<'_>,
-        param_order: &[bumbledb::ParamId],
-        params: &[Value],
+        param_order: &[ParamSlot],
+        params: &[ParamValue],
     ) -> bool {
         // Column types come from the engine's prepared query; without
         // them the oracle's rows cannot even be decoded, so a prepare
@@ -38,9 +44,10 @@ impl Run<'_> {
             Ok(mut prepared) => {
                 let types: Vec<ValueType> = prepared.column_types().cloned().collect();
                 let mut buffer = ResultBuffer::new();
+                let args = param_args(params);
                 let ours = self
                     .db
-                    .read(|snap| snap.execute(&mut prepared, params, &mut buffer))
+                    .read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
                     .map(|()| compare::from_buffer(&buffer, &types))
                     .map_err(|e| format!("{e}"));
                 let theirs = self

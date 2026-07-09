@@ -46,7 +46,11 @@ pub fn normalized_p50(samples_ns: &[u64], ghz: &[f64]) -> u64 {
         .iter()
         .zip(ghz)
         .map(|(&ns, &g)| {
-            #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            #[allow(
+                clippy::cast_precision_loss,
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss
+            )]
             {
                 (ns as f64 * g / ghz_ref) as u64
             }

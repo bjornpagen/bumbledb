@@ -382,6 +382,117 @@ pub fn string_hit(rel: bumbledb::RelationId, field: bumbledb::FieldId, rng: &mut
     }
 }
 
+/// The number of target relations — loaders iterate `0..TARGET_RELATIONS`.
+pub const TARGET_RELATIONS: u32 = 10;
+
+/// Row count of one target relation (the randomized lane's corpus).
+#[must_use]
+pub fn corpus_rows(domains: &Domains, rel: bumbledb::RelationId) -> u64 {
+    match rel {
+        ids::HOLDER => domains.holders,
+        ids::ACCOUNT => domains.accounts,
+        ids::INSTRUMENT => domains.instruments,
+        ids::JOURNAL_ENTRY => domains.entries,
+        ids::POSTING => domains.postings,
+        ids::POSTING_TAG => domains.posting_tags,
+        ids::ORG => domains.orgs,
+        ids::ORG_PARENT => domains.orgs - 1,
+        ids::MANDATE => domains.mandates,
+        ids::TRANSFER => domains.transfers,
+        _ => unreachable!("ten target relations"),
+    }
+}
+
+/// One target-relation row, by index — the pure function the randomized
+/// lane's corpus streams from, built entirely from this module's value
+/// functions so the dressing's in-vocabulary hits are *actual* rows.
+///
+/// # Panics
+///
+/// Only on programmer-invariant violations (an unknown relation id).
+#[must_use]
+pub fn corpus_row(
+    cfg: GenConfig,
+    domains: &Domains,
+    rel: bumbledb::RelationId,
+    i: u64,
+) -> Vec<Value> {
+    let mut rng = row_rng(cfg.seed, u64::from(rel.0), i);
+    match rel {
+        ids::HOLDER => vec![
+            Value::U64(i),
+            Value::String(
+                string_hit(ids::HOLDER, ids::holder::NAME, &mut rng)
+                    .into_bytes()
+                    .into(),
+            ),
+        ],
+        ids::ACCOUNT => vec![
+            Value::U64(i),
+            Value::U64(rng.range(domains.holders)),
+            Value::Enum(u8::try_from(rng.range(3)).expect("3 currencies")),
+        ],
+        ids::INSTRUMENT => vec![
+            Value::U64(i),
+            Value::String(format!("SYM{i:04}").into_bytes().into()),
+        ],
+        ids::JOURNAL_ENTRY => vec![
+            Value::U64(i),
+            Value::Enum(u8::try_from(rng.range(3)).expect("3 sources")),
+            Value::I64(posting_at(i * 2)),
+        ],
+        ids::POSTING => vec![
+            Value::U64(i),
+            Value::U64(rng.range(domains.entries)),
+            // Round-robin accounts: every in-domain account id exists.
+            Value::U64(i % domains.accounts.max(1)),
+            Value::U64(rng.range(domains.instruments)),
+            Value::I64(posting_amount(cfg, i)),
+            Value::I64(posting_at(i)),
+            Value::String(format!("m{}", rng.range(MEMO_VOCAB)).into_bytes().into()),
+            Value::Bool(rng.chance(1, 2)),
+        ],
+        ids::POSTING_TAG => {
+            let (posting, tag) = posting_tag(i);
+            vec![Value::U64(posting), Value::Enum(tag)]
+        }
+        ids::ORG => vec![
+            Value::U64(i),
+            Value::String(format!("org-{i:02}").into_bytes().into()),
+        ],
+        ids::ORG_PARENT => {
+            let child = i + 1;
+            vec![Value::U64(child), Value::U64(child / 2)]
+        }
+        ids::MANDATE => {
+            let (account, org, (start, end)) = mandate(cfg, domains, i);
+            vec![
+                Value::U64(account),
+                Value::U64(org),
+                Value::IntervalI64(start, end),
+            ]
+        }
+        ids::TRANSFER => {
+            let (start, end) = transfer_window(cfg, i);
+            vec![
+                Value::U64(i),
+                extref(cfg, i),
+                Value::IntervalU64(start, end),
+            ]
+        }
+        _ => unreachable!("ten target relations"),
+    }
+}
+
+/// One target relation's full row stream — O(1) memory, restartable.
+pub fn corpus_relation_rows(
+    cfg: GenConfig,
+    rel: bumbledb::RelationId,
+) -> impl Iterator<Item = Vec<Value>> + Clone {
+    let domains = Domains::of(cfg.scale);
+    (0..corpus_rows(&domains, rel)).map(move |i| corpus_row(cfg, &domains, rel, i))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -43,8 +43,8 @@ pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
     let mut rotation = Rotation::new((family.params)(&cfg));
     let mut buffer = ResultBuffer::new();
     let mut run = || {
-        let params = rotation.next_set().to_vec();
-        db.read(|snap| snap.execute(&mut prepared, &params, &mut buffer))
+        let args = crate::families::param_args(rotation.next_set());
+        db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
             .map_err(|e| format!("execute: {e:?}"))?;
         Ok(buffer.len() as u64)
     };
@@ -66,7 +66,7 @@ pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
         print!("{phases}");
     }
 
-    let (_, events) = harness::traced_cold_sample(&mut harness::tag_touch(&db), &mut run)?;
+    let (_, events) = harness::traced_cold_sample(&mut harness::org_touch(&db), &mut run)?;
     let (engine, harness_events) = trace_out::split_harness(events);
     let cold = trace_out::write_trace_file(
         &trace_dir,

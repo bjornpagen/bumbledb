@@ -100,6 +100,10 @@ pub(super) fn distinct_rows(seed: u64, rel: bumbledb::RelationId, n: u64) -> Vec
     out
 }
 
-pub(super) fn boxed(seed: u64, rel: bumbledb::RelationId, n: u64) -> Box<dyn Iterator<Item = Vec<Value>>> {
+pub(super) fn boxed(
+    seed: u64,
+    rel: bumbledb::RelationId,
+    n: u64,
+) -> Box<dyn Iterator<Item = Vec<Value>>> {
     Box::new((0..n).map(move |i| row(seed, rel, i)))
 }

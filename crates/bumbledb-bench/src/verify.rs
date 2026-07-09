@@ -23,6 +23,7 @@ mod check;
 mod display;
 mod run;
 mod run_empty_store;
+mod run_naive;
 mod stamp_matches;
 mod stamp_value;
 #[cfg(test)]

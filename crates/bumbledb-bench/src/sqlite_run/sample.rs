@@ -1,7 +1,9 @@
 use bumbledb::schema::ValueType;
 use bumbledb::Value;
 
-use super::{bind_params, PreparedFamily};
+use crate::naive::ParamValue;
+
+use super::{bind_args, bind_params, PreparedFamily};
 
 /// One timed sample: bind via the normative mapping (interval params as
 /// their two endpoint slots), drain ALL rows with typed reads on every
@@ -12,7 +14,23 @@ use super::{bind_params, PreparedFamily};
 ///
 /// `SQLite` errors, stringified.
 pub fn sample(family: &mut PreparedFamily<'_>, params: &[Value]) -> Result<u64, String> {
-    let bound = bind_params(&family.param_order, params);
+    drain(family, bind_params(&family.param_order, params))
+}
+
+/// [`sample`] over a family draw (set element lists already live in the
+/// re-rendered SQL; scalar positions bind through the slot order).
+///
+/// # Errors
+///
+/// `SQLite` errors, stringified.
+pub fn sample_args(family: &mut PreparedFamily<'_>, draw: &[ParamValue]) -> Result<u64, String> {
+    drain(family, bind_args(&family.param_order, draw))
+}
+
+fn drain(
+    family: &mut PreparedFamily<'_>,
+    bound: Vec<rusqlite::types::Value>,
+) -> Result<u64, String> {
     let mut rows = family
         .stmt
         .query(rusqlite::params_from_iter(bound))

@@ -8,10 +8,13 @@ use super::FairnessCheck;
 impl FairnessCheck {
     /// Asserts the session and store shape: WAL on, `synchronous=FULL`,
     /// `fullfsync`/`checkpoint_fullfsync` ON (flush-to-media parity with
-    /// LMDB's macOS commits — docs/architecture/50-validation.md), every expected index
-    /// present (the [`sqlmap::expected_indexes`] registry against
-    /// `PRAGMA index_list`), and `ANALYZE` statistics populated. Statement reuse needs no runtime check —
-    /// [`PreparedFamily`] owns the only construction site by type.
+    /// LMDB's macOS commits — docs/architecture/60-validation.md), every
+    /// expected index present (the statement-derived
+    /// [`sqlmap::expected_indexes`] registry PLUS the family-owned
+    /// composites, `crate::families::expected_indexes`, against
+    /// `PRAGMA index_list`), and `ANALYZE` statistics populated.
+    /// Statement reuse needs no runtime check — [`PreparedFamily`] owns
+    /// the only construction site by type.
     ///
     /// # Errors
     ///
@@ -42,7 +45,9 @@ impl FairnessCheck {
                 return Err(format!("fairness: {pragma} is OFF — flush to media"));
             }
         }
-        for (table, index) in sqlmap::expected_indexes(schema()) {
+        let mut expected = sqlmap::expected_indexes(schema());
+        expected.extend(crate::families::expected_indexes());
+        for (table, index) in expected {
             let mut stmt = conn
                 .prepare(&format!("PRAGMA index_list(\"{table}\")"))
                 .map_err(|e| format!("index_list: {e}"))?;

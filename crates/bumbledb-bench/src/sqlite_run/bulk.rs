@@ -40,8 +40,10 @@ pub fn bulk(cfg: GenConfig, scratch: &Path) -> Result<Measurement, String> {
     let done = RefCell::new(Vec::new());
     harness::measure(proto, || {
         let conn = pending.borrow_mut().pop_front().expect("pre-seeded store");
-        let facts = corpus::load_sqlite_relation(&conn, cfg, crate::schema::ids::POSTING)
+        let mut facts = corpus::load_sqlite_relation(&conn, cfg, crate::schema::ids::POSTING)
             .map_err(|e| format!("bulk sqlite: {e}"))?;
+        facts += corpus::load_sqlite_relation(&conn, cfg, crate::schema::ids::POSTING_TAG)
+            .map_err(|e| format!("bulk sqlite tags: {e}"))?;
         done.borrow_mut().push(conn);
         Ok(facts)
     })

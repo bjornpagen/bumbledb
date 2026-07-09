@@ -29,6 +29,7 @@ pub(super) fn keyword_kind() -> Query {
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![Comparison {
             op: CmpOp::Ge,
             lhs: var(1),
