@@ -18,8 +18,7 @@ decades because deferred constraints make FKs untrustworthy at plan time. This
 engine deleted the objection: no deferral modes exist and every readable
 snapshot satisfies every statement, so the rewrite is *always* sound here when
 its conditions hold. Classical name: the chase. This PRD builds the analysis and
-the rewrite; PRD 09 builds the surfaces (EXPLAIN, generator coverage,
-differential switch).
+the rewrite; PRD 09 builds the surfaces.
 
 ## The rewrite (conditions are normative — implement exactly)
 
@@ -34,16 +33,14 @@ A **positive** atom occurrence `B` is removable when:
 2. `B` is otherwise unused: no `B` field outside Y is projected, filtered,
    compared in residuals, **or referenced by any other occurrence — positive or
    negated, including anti-probe bindings and membership points**; `B` carries
-   no selections beyond ψ (literal subset of ψ is fine — the containment's
-   match satisfies all of ψ); and the `A` occurrence's own filter list contains
-   φ — **literal-subset checked as (field, encoded literal) set containment,
-   never inferred**. If φ is not literally present on `A`, no elimination.
+   no selections beyond ψ (literal subset of ψ is fine); and the `A`
+   occurrence's own filter list contains φ — **literal-subset checked as
+   (field, encoded literal) set containment, never inferred**.
 3. Every variable of `B` is either a join variable (unified with `A`'s) or dead
    in the sense of condition 2.
 4. **Interval refusal (v0):** no paired position is interval-typed — pointwise
-   coverage is not 1:1 fact-to-fact. Refuse and move on; record the OPEN
-   sub-question in the doc amendment ("trigger: a census query that would
-   benefit").
+   coverage is not 1:1 fact-to-fact. Refuse; the OPEN sub-question rides the
+   doc amendment ("trigger: a census query that would benefit").
 
 **Why it is sound (carry this into the module doc):** existence — the
 containment guarantees each surviving `A` binding a ψ-satisfying `B` match;
@@ -55,46 +52,52 @@ therefore bit-identical under both sinks.
 
 ## Technical direction
 
-1. **Placement:** after normalization (occurrences/filters/residuals explicit),
-   before statistics and the DP — a `chase(&mut normalized, &schema)` pass in
-   `plan/chase.rs` called from the planner entry. It must run **as a fixpoint**:
-   removing one occurrence can make another removable (chains `A<=B<=C`); loop
-   until no removal. ≤20 occurrences makes the loop trivially cheap.
-2. **Removal mechanics:** dropping occurrence `B` re-indexes the occurrence
-   table and every structure that references occurrences by index (filters,
-   residual sides, anti-probe specs, find-variable sources). Prefer a single
-   `remove_occurrence(idx)` function owning ALL the re-indexing, exhaustively —
-   this is where a subtle bug would live; make it one auditable place with a
-   test that round-trips a synthetic normalized query through removal and
-   checks every index.
-3. **Record what was done:** the normalized output carries
-   `eliminated: Vec<(OccurrenceId, StatementId)>` — dead data for execution,
-   consumed by PRD 09's EXPLAIN surface and by tests.
+1. **Placement:** after normalization, before statistics and the DP — a
+   `chase(&mut normalized, &schema)` pass in `plan/chase.rs` called from the
+   planner entry, run **as a fixpoint** (removing one occurrence can make
+   another removable; chains `A<=B<=C` are real; ≤20 occurrences makes the loop
+   trivially cheap).
+2. **Elimination is a mark, not a removal.** Index-shifting removal
+   (`remove_occurrence` with centralized re-indexing) was considered and
+   **rejected**: dense indices that move on removal are the off-by-one
+   coordinate system — the re-indexing bug class exists only because of that
+   representation. Instead the occurrence entry gains
+   `eliminated: Option<StatementId>` (`None` = live). Occurrence ids never
+   move; every structure that references occurrences by index stays valid by
+   construction. The DP already excludes negated occurrences via its
+   occurrence-filtering boundary — eliminated occurrences ride the **same
+   accessor** (one "participates in planning" predicate: positive ∧ not
+   eliminated), so downstream sees a smaller problem through the mechanism it
+   already trusts. Audit the witness-construction and stats paths for any
+   iteration that does NOT go through that predicate and route it through
+   (this audit replaces the rejected design's re-indexing round-trip test).
+3. **`eliminated` doubles as the record:** PRD 09's EXPLAIN surface and the
+   tests read the marks directly; no separate eliminated-list is kept.
 4. **The proof-shaped precedent:** model the condition-checking code on
    `plan/provably_distinct.rs` (same move: plan-time proof from schema
-   statements). Read it first; match its style.
-5. **Test-only off switch:** a `#[cfg(test)]`-visible constructor knob or a
-   crate-internal `fn chase_disabled_for_tests()` path so differential tests
-   (PRD 09) can run the same query with and without the rewrite. **No runtime
-   mode ships** — no public API, no env var, no feature flag.
+   statements). Read it first; match its style. Conditions 1–4 as separate,
+   named predicate functions, auditable one-to-one against this PRD.
+5. **Test-only off switch:** a crate-internal, `#[cfg(test)]`-reachable bypass
+   so differential tests (PRD 09) run the same query with and without the
+   rewrite. **No runtime mode ships** — no public API, no env var, no feature
+   flag.
 
 ## Passing criteria
 
-- `[shape]` Conditions 1–4 implemented as separate, named predicate functions
-  (auditable one-to-one against this PRD); `remove_occurrence` is the single
-  re-indexing site; no public off switch exists.
-- `[test]` Positive cases: the existence-walk shape (join parent only to prove
-  the reference) eliminates; the DU one-sided `==` query eliminates the header;
-  a chain `A<=B<=C` eliminates both in fixpoint. Assert `eliminated` contents
-  and that the DP saw the reduced occurrence count.
+- `[shape]` Conditions 1–4 as named predicates; `eliminated` is an
+  `Option<StatementId>` on the occurrence entry; exactly one
+  participates-in-planning predicate exists and planner/stats/witness paths
+  consume it (grep the iteration sites); no index re-mapping code exists; no
+  public off switch.
+- `[test]` Positive cases: the existence-walk shape eliminates; the DU
+  one-sided `==` query eliminates the header; a chain `A<=B<=C` eliminates
+  both in fixpoint. Assert the marks and that the DP saw the reduced count.
 - `[test]` Negative cases, one per condition: partial-key join; a projected
   non-Y field; a negated atom referencing `B`; a membership point sourced from
   `B`; missing φ on the `A` side; extra selection on `B` beyond ψ; an
-  interval-typed pair. Each refuses (assert not eliminated).
-- `[test]` The removal re-indexing round-trip test.
+  interval-typed pair. Each refuses.
 - `[test]` Result equality on a fixture: eliminated vs chase-disabled execution
-  produce identical result sets, projection and aggregate sinks both (this is
-  the unit-level version of PRD 09's randomized differential).
+  produce identical result sets, projection and aggregate sinks both.
 - `[gate]` Workspace gates green.
 
 ## Doc amendments (rule 5)

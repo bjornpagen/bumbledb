@@ -46,7 +46,7 @@ regenerated charts (hot paths move), which is orchestrator work, not a PRD.
 
 | Phase | PRDs | What exists at the end |
 |---|---|---|
-| A — correctness | 01 02 03 | No reachable panic from valid input; oracles agree on every verdict label |
+| A — correctness | 01 02 03 | No reachable panic from valid input; oracles agree on every verdict label — each fixed by deleting the representation that made the case expressible, not by guarding it |
 | B — contract & hardening | 04 05 | The allocation contract states its true invariant and the gate can see violations; reopen trust bounded; reader cap configured |
 | C — the sweeper | 06 07 | `Db::verify_store`: full store coherence + global judgment re-verification, CLI-wrapped |
 | D — the chase | 08 09 | Containment-implied occurrence elimination, EXPLAIN'd, differentially covered |
@@ -56,9 +56,9 @@ regenerated charts (hot paths move), which is orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [01 — Hoist-path eligibility](01-hoist-eligibility.md)
-- [02 — Applied inserts and judgment direction](02-applied-inserts-direction.md)
-- [03 — `alloc_dyn` typed error](03-alloc-dyn-typed-error.md)
+- [01 — Hoist-path scratch: delete the caps](01-hoist-eligibility.md)
+- [02 — Net-disposition delta](02-applied-inserts-direction.md)
+- [03 — `alloc_dyn`: parse, don't validate](03-alloc-dyn-typed-error.md)
 - [04 — The high-water allocation contract](04-alloc-highwater-contract.md)
 - [05 — Storage hardening](05-storage-hardening.md)
 - [06 — `verify_store`: namespace coherence](06-verify-store-namespaces.md)

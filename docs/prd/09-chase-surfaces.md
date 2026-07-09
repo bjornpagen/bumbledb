@@ -11,7 +11,8 @@ two-oracle verify and it must be green before any later PRD starts.**
 ## Technical direction
 
 1. **EXPLAIN/stats:** eliminated occurrences surface in the EXPLAIN report and
-   the structured stats — occurrence, relation name, and the licensing
+   the structured stats, read directly from PRD 08's `eliminated` marks (no
+   separate list exists) — occurrence, relation name, and the licensing
    statement id rendered through `schema/render.rs` (e.g.
    `eliminated: Grading via Grading(id | kind == Deterministic) == DeterministicGrading(grading)`).
    The reader is EXPLAIN plus the DP (which sees a smaller problem) — say so in

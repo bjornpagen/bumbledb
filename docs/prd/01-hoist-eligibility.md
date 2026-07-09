@@ -1,4 +1,4 @@
-# PRD 01 — Hoist-path eligibility (reachable, data-dependent panics)
+# PRD 01 — Hoist-path scratch: delete the caps, not guard them
 
 **Depends on:** nothing. **Severity: highest in the set** — a valid query panics,
 data-dependently: it works while every leaf run is short and dies the first time
@@ -7,72 +7,74 @@ real data.
 **Modules:** `crates/bumbledb/src/exec/sink/projection/sink.rs`,
 `crates/bumbledb/src/exec/run/scan_table.rs`, `crates/bumbledb/src/exec/run.rs`,
 `crates/bumbledb-bench/src/querygen/`.
-**Authority:** `docs/architecture/40-execution.md` (scan-fold pushdown; the
-"no data-dependent branching becomes no data-dependent panicking" spirit of the
-batching laws).
+**Authority:** `docs/architecture/40-execution.md` (scan-fold pushdown;
+column-hoisted gather is the existing idiom), `00-product.md` (representation
+over control flow).
 
-## Context (decided)
+## Context (decided — representation-first)
 
 Two executor fast paths use fixed-size scratch arrays sized 8 guarded by runtime
-`assert!`s, with nothing making the guarded state unreachable. A validation-
-boundary cap was considered and **rejected**: `MAX_DISTINCT_VARS` /
-`MAX_OCCURRENCES` protect *representations* (bitset widths, DP tables); a
-projection-width cap would protect one optimization's scratch array — an
-implementation constant leaking into the user contract. The fix is at the
-**eligibility altitude**.
+`assert!`s. Two fixes were considered and **rejected**: a validation-boundary cap
+(an implementation constant leaking into the user contract) and an eligibility
+condition in `begin_scan` (a guard protecting a representation that shouldn't
+exist). The root defect is the representation: **both widths are statically known
+at plan time**, so a fixed-size runtime scratch guarded by a runtime branch is a
+patch on the trace. Delete the scratch; the cap, the assert, and the would-be
+eligibility branch all stop existing.
 
 ## Current behavior (verify line numbers before relying)
 
-1. The projection sink's scan-pushdown hoist uses `[ColumnView; 8]` with
-   `assert!(sources.len() <= 8, "projection arity cap")`
-   (`exec/sink/projection/sink.rs:102`); `sources.len()` = projected word count
-   (`projection/new.rs:20`), unbounded — four projected interval fields suffice
-   (two words each). **Root defect one altitude up:** `begin_scan` returns `true`
-   unconditionally (`projection/sink.rs:74`) — an eligibility function with no
-   eligibility condition. The safe per-position arm at `projection/sink.rs:126`
-   is correct for any arity.
+1. The projection sink's scan-pushdown hoist collects `[ColumnView; 8]` with
+   `assert!(sources.len() <= 8)` (`exec/sink/projection/sink.rs:102`);
+   `sources.len()` = projected word count (`projection/new.rs:20`), unbounded —
+   four projected interval fields suffice. `begin_scan` returns `true`
+   unconditionally (`projection/sink.rs:74`).
 2. `assert!(self.leaf_scan_residuals.len() <= MAX_LEAF_RESIDUALS)` with
    `MAX_LEAF_RESIDUALS = 8` (`exec/run/scan_table.rs:68-71`, constant at
-   `exec/run.rs:329`) — same shape: nothing bounds column-touching residuals per
-   leaf.
+   `exec/run.rs:329`) — a fixed-size copy of a plan-known list.
 
 ## Technical direction
 
-1. **Projection width:** `begin_scan` gains the condition — hoist iff
-   `sources.len()` fits the scratch constant; otherwise return `false` and let
-   the per-position arm run. The constant is defined **once** and used by both
-   the scratch array type and the eligibility test (an associated `const` or a
-   shared `pub(crate) const SCAN_HOIST_MAX_WORDS: usize = 8` — single source of
-   truth so the two cannot drift). The `assert!` becomes `debug_assert!` with a
-   comment naming the eligibility guard that makes it unreachable.
-2. **Leaf residuals:** same shape — the hoist's eligibility site checks
-   `leaf_scan_residuals.len() <= MAX_LEAF_RESIDUALS` and falls back to the
-   non-hoisted path. If reading the code proves no correct fallback arm exists
-   for this case, instead make the bounding invariant explicit at plan
-   validation (`plan/fj/validate.rs`) with a comment citing it at the
-   (then-`debug_`) assert — and say which branch you took in the commit body.
-3. **Generator coverage:** querygen draws projected-word counts past 8 (mix of
-   wide scalar projections and ≥4 interval-field projections) so the
-   differential oracle covers this class permanently. Extend the coverage
-   contract test's assertions accordingly.
+1. **Projection scan hoist — flip the loop nesting.** The views array exists to
+   pre-resolve columns for a row-outer loop. The codebase's own idiom is the
+   inverse: `gather_segment`/`gather_identity` are **column-hoisted** (columns
+   outer, rows inner) with no views array at all, and the `ResultBuffer` is
+   columnar, so column-wise emit is the native write order. Restructure the
+   hoisted scan emit column-outer: for each projected source column, resolve
+   `ColumnView` once and copy the run's span into the result buffer's column;
+   no scratch, no width limit, any arity. The per-position fallback arm remains
+   for non-scannable cursors only (its existing role), not as a width fallback.
+2. **Leaf residuals — iterate the plan's own list.** The `[...; 8]` copy in
+   `scan_table.rs` duplicates a list the plan witness already owns with a
+   plan-time-known length. Evaluate directly off the witness slice (or, if the
+   copy exists to pre-resolve column views, apply the same column-hoisted
+   restructure). No fixed-size copy survives.
+3. **Perf honesty:** both restructures target the hoisted (measured) paths. The
+   column-hoisted shape is the same one the gather kernels already won with, so
+   a regression is not expected — but flag both hunks for the campaign-closing
+   re-bench, and if the ledger families regress, the recorded fallback is the
+   eligibility condition (hoist iff width fits; documented as the runner-up,
+   only reachable on measured evidence).
+4. **Generator coverage:** querygen draws projected-word counts past 8 (wide
+   scalar projections and ≥4 interval-field projections) so the differential
+   oracle covers this class permanently; coverage-contract assertions extended.
 
 ## Passing criteria
 
-- `[shape]` `begin_scan` contains an eligibility condition; the shared constant
-  has exactly one definition site; no `assert!` on a data-dependent condition
-  remains under `crates/bumbledb/src/exec/` (grep for `assert!` and audit each
-  survivor — invariant asserts on plan-witness properties are fine and each
-  carries a comment naming its guarantor).
+- `[shape]` No fixed-size scratch array sized by a width cap exists on either
+  hoist path; `SCAN_HOIST_THRESHOLD` (a cost threshold, legitimately a branch)
+  is the only constant left; no `assert!` on a data-dependent condition remains
+  under `crates/bumbledb/src/exec/` (audit survivors — plan-witness invariant
+  asserts are fine with a comment naming their guarantor).
 - `[test]` A query projecting >8 words over a relation whose leaf runs reach ≥8
-  executes and returns correct results (constructed fixture, compared against
-  the per-position arm's output or a hand-computed expectation).
-- `[test]` The >8-leaf-residual case, if constructible, executes correctly; if
-  not constructible, the plan-validation invariant has its own test.
-- `[test]` The querygen coverage-contract test asserts wide projections are
-  drawn (±30% band like the other shapes).
-- `[gate]` Workspace gates green.
+  executes correctly (fixture compared against the per-position arm's output).
+- `[test]` The >8-residual leaf case, if constructible, executes correctly.
+- `[test]` Batch/scan-path equality: hoisted and non-hoisted results identical
+  across the fixture set (the existing equality-harness style).
+- `[test]` Querygen coverage-contract asserts wide projections are drawn.
+- `[gate]` Workspace gates green; both hunks flagged for re-bench.
 
 ## Doc amendments (rule 5)
 
-`40-execution.md`: the scan-fold pushdown paragraph gains the eligibility
-condition sentence.
+`40-execution.md`: the scan-fold pushdown paragraph states the column-hoisted
+shape and that width is unbounded by construction.

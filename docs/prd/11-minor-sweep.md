@@ -1,6 +1,8 @@
 # PRD 11 — Minor findings sweep
 
-**Depends on:** 02 (item G's test uses the applied-inserts machinery).
+**Depends on:** 02 (item G leans on the net-disposition delta: a pure-no-op
+transaction is now an *empty delta* by representation, which is exactly what
+G's test asserts the consequences of).
 **Modules:** per item below.
 **Authority:** verdicts pinned by the 2026-07-09 audit; the dictionary-leak item
 (historically "F") was discharged as a doc amendment and is not here.
@@ -30,8 +32,12 @@ current reality is the code).
 wraps in release beyond 2³² absorb-node survivors → wrong origin cancelled →
 silently dropped valid rows — the worst failure shape in the taxonomy. Beyond
 the scale axiom, but a checked increment returning the existing typed `Overflow`
-variant costs nothing measurable at batch granularity. The justification-comment
-alternative is rejected: no comment fixes silent wrong results.
+variant costs nothing measurable at batch granularity. Two alternatives
+rejected: the justification comment (no comment fixes silent wrong results) and
+the representation fix — widening origins to u64 — because origin ids are
+stored per pending row in hot scratch arrays, and doubling that width is
+measured bytes on the hot path spent against a beyond-axiom case (record this
+rejection in the code comment at the check).
 - `[shape]` The increment is checked; the error path reuses `Overflow`; the
   check sits at mint granularity, not per-row (confirm placement keeps it off
   the per-tuple path).
