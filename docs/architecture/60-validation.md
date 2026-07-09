@@ -1,8 +1,9 @@
 # 60 — Validation
 
-Correctness discipline without gate theater. The validation system: two oracles, a
-seeded differential suite with an asserted coverage contract, a small golden anchor
-set, one allocation boolean, and the ledger benchmark protocol. Every count and
+Correctness discipline without gate theater. The validation system: two oracles
+plus the offline store sweeper, a seeded differential suite with an asserted
+coverage contract, a small golden anchor set, one allocation boolean, and the
+ledger benchmark protocol. Every count and
 every performance claim is derived and earned on this engine — a claim without a
 current run behind it does not exist.
 
@@ -33,6 +34,17 @@ lost:** trigger emulation is a second nontrivial implementation of the semantics
 *in a language nobody here trusts for it*, validated by nothing; the naive model is
 smaller than its triggers would be and doubles as the query-gap oracle.
 **Reverses if:** never — three-way beats two-way.
+
+**The store sweeper is the third leg: the oracles judge semantics; the sweeper
+judges the store.** `Db::verify_store` takes one read snapshot and sweeps
+O(store): every namespace pairing re-verified against the schema (F↔M↔U↔R plus
+the `S` counters against the `F` scan — including the `R`-delete class the
+commit path defers, `50-storage.md`), and **both judgment forms re-verified
+globally** over the full committed state through the commit path's own probe
+and coverage walk — the class no incremental check can see: an incremental form
+wrong once, long ago, preserved by every commit since. Findings are report
+data, never errors; CLI-wrapped as `bumbledb-bench verify-store` (nonzero exit
+iff findings are non-empty).
 
 **Durability parity under `synchronous=FULL`.** Both engines flush **to media** on
 the timing machine: LMDB does unconditionally on macOS (`lmdb-master-sys`

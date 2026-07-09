@@ -8,7 +8,9 @@
 //! The passes mirror the key-layout table of `50-storage.md`:
 //!
 //! ```text
-//! F  facts          forward checks into M/U/R, tallies, intern references
+//! F  facts          forward checks into M/U/R, tallies, intern references,
+//!                   and the global containment judgment per outgoing
+//!                   statement
 //! M  membership     resolves back to its fact, hash-verified
 //! U  FD guards      resolves back + per-group pointwise disjointness
 //! R  reverse edges  resolves back to a live source inside φ (the heart:
@@ -17,6 +19,20 @@
 //! _dict             dangling-id statistic (the accepted leak)
 //! ```
 //!
+//! Beyond namespace coherence, both judgment forms
+//! (`docs/architecture/30-dependencies.md`) are re-verified **globally**
+//! over the full committed state — the class no incremental check can
+//! see: the incremental form was wrong once, long ago, and every commit
+//! since preserved the corruption. **Functionality** needs no pass of its
+//! own: duplicate scalar guards are impossible by LMDB key uniqueness, so
+//! the global judgment *is* the F pass's every-fact-holds-its-guard check
+//! plus the U pass's per-group disjointness walk — functionality findings
+//! are namespace findings. **Containment** rides the F scan (one scan,
+//! shared across every statement): each fact inside a source selection φ
+//! probes the target through the commit path's own scalar probe and
+//! coverage walk ([`judgment`]'s `Checker` — one definition, never a
+//! sweeper copy), and a miss is [`StoreFinding::JudgmentViolation`].
+//!
 //! Findings are data, not errors: a desynced store returns `Ok` with a
 //! populated report and the *caller* decides fatality. `Err` is
 //! environmental — a failed LMDB operation or an unreadable `_meta`
@@ -24,7 +40,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::error::Result;
+use crate::error::{Direction, Result};
 use crate::schema::{RelationId, Schema, StatementId};
 use crate::storage::commit::judgment::Selections;
 use crate::storage::env::ReadTxn;
@@ -111,6 +127,23 @@ pub enum StoreFinding {
         statement: StatementId,
         reverse_key: Box<[u8]>,
     },
+    /// A containment statement globally violated by the committed state:
+    /// a live source fact inside φ whose target tuple is absent (scalar
+    /// probe miss) or whose interval is not jointly covered (coverage-walk
+    /// gap). Same payload as [`Error::ContainmentViolation`], as a
+    /// finding. The direction is always [`Direction::TargetRequired`]: a
+    /// committed store has no just-inserted facts, so every offline
+    /// violation is a standing source whose required target is missing —
+    /// the naive model's own convention
+    /// (`docs/architecture/60-validation.md`).
+    ///
+    /// [`Error::ContainmentViolation`]: crate::error::Error::ContainmentViolation
+    JudgmentViolation {
+        statement: StatementId,
+        direction: Direction,
+        /// The source fact — canonical bytes, never a row id.
+        fact: Box<[u8]>,
+    },
     /// The stored `S` row count disagrees with the `F`-scan cardinality.
     RowCountDesync {
         relation: RelationId,
@@ -140,11 +173,15 @@ pub enum StoreFinding {
 }
 
 impl Db<'_> {
-    /// Sweeps the store for cross-namespace desyncs: F↔M, F↔U (plus
+    /// Sweeps the store for cross-namespace desyncs — F↔M, F↔U (plus
     /// per-group pointwise disjointness), F↔R (φ re-checked with the
     /// commit path's satisfaction helper), and the `S` counters against
-    /// the `F` scan. Read-only, one LMDB snapshot, O(store) — seconds at
-    /// the ≤10⁷-fact axiom; no incremental mode, no parallelism.
+    /// the `F` scan — and re-verifies both judgment forms globally: the
+    /// containment judgment runs per source fact inside φ through the
+    /// commit path's own probe and coverage walk, and the functionality
+    /// judgment is the F/U namespace checks themselves (module doc).
+    /// Read-only, one LMDB snapshot, O(store) — seconds at the
+    /// ≤10⁷-fact axiom; no incremental mode, no parallelism.
     ///
     /// # Errors
     ///

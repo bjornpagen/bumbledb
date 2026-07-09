@@ -13,9 +13,16 @@
 //! `R`-puts: literals encode once per commit into [`Selections`]
 //! (never per fact), and [`satisfies`] is a straight byte compare of
 //! selected field slices.
+//!
+//! The probe machinery ([`Checker`], [`Probe`]) is deliberately
+//! transaction-agnostic: `Db::verify_store` runs the same scalar probe
+//! and the same coverage walk over a read snapshot to re-verify the
+//! judgments globally — one definition, never a sweeper copy.
 
 use std::collections::BTreeSet;
 use std::ops::Bound;
+
+use heed::{AnyTls, RoTxn};
 
 use crate::encoding::{encode_literal, encode_u64, field_bytes, FactLayout};
 use crate::error::{CorruptionError, Direction, Error, Result};
@@ -174,12 +181,7 @@ pub(super) fn check_source(
     selections: &Selections,
 ) -> Result<()> {
     let schema = delta.schema();
-    let mut checker = Checker {
-        txn,
-        data,
-        schema,
-        key: [0; MAX_KEY],
-    };
+    let mut checker = Checker::new(txn.raw(), data, schema);
     let mut key_bytes = Vec::new();
     let mut probes = 0u64;
     let mut span = obs::span(obs::names::JUDGMENT_SOURCE, obs::Category::Commit);
@@ -372,12 +374,7 @@ pub(super) fn check_target(
         }
     }
     // The deduped walks, each against the final `U` state.
-    let mut checker = Checker {
-        txn,
-        data,
-        schema,
-        key: [0; MAX_KEY],
-    };
+    let mut checker = Checker::new(txn.raw(), data, schema);
     for r_key in &affected {
         let (sid, key_bytes, source_rel, source_row) =
             keys::parse_reverse_key(r_key).expect("affected set holds parsed R keys");
@@ -456,21 +453,23 @@ fn fact_by_row<'t>(
 }
 
 /// One (source fact, containment statement) judgment pair: everything a
-/// target probe needs, borrowed from the driving loop. Both sides build
-/// these — the source side for each inserted fact inside σ, the target
-/// side for each surviving source whose required window a delete touched.
-struct Probe<'a> {
-    statement: StatementId,
-    target_relation: RelationId,
+/// target probe needs, borrowed from the driving loop. Both commit-time
+/// sides build these — the source side for each inserted fact inside σ,
+/// the target side for each surviving source whose required window a
+/// delete touched — and `Db::verify_store` builds one per committed
+/// source fact inside σ, re-running the same judgment globally.
+pub(crate) struct Probe<'a> {
+    pub(crate) statement: StatementId,
+    pub(crate) target_relation: RelationId,
     /// The `Functionality` statement whose `U` guard is probed.
-    target_key: StatementId,
-    target_check: &'a SelectionCheck,
+    pub(crate) target_key: StatementId,
+    pub(crate) target_check: &'a SelectionCheck,
     /// The source fact's projection, already in target guard order.
-    key_bytes: &'a [u8],
+    pub(crate) key_bytes: &'a [u8],
     /// The source fact — the violation payload.
-    fact_bytes: &'a [u8],
+    pub(crate) fact_bytes: &'a [u8],
     /// Which side's judgment a miss convicts.
-    direction: Direction,
+    pub(crate) direction: Direction,
 }
 
 impl Probe<'_> {
@@ -486,27 +485,43 @@ impl Probe<'_> {
     }
 }
 
-/// Working state threaded through the judgment probes — both sides share
-/// the scalar probe and the coverage walk.
-struct Checker<'a, 'env> {
-    txn: &'a WriteTxn<'env>,
+/// Working state threaded through the judgment probes. The scalar probe
+/// and the coverage walk have exactly this one implementation, consumed
+/// by three callers: the commit path's two sides (over the write
+/// transaction's own-writes view) and `Db::verify_store`'s global
+/// re-verification (over a read snapshot) — never a copy.
+pub(crate) struct Checker<'a> {
+    txn: &'a RoTxn<'a, AnyTls>,
     data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
     schema: &'a Schema,
     key: KeyBuf,
 }
 
-impl Checker<'_, '_> {
+impl<'a> Checker<'a> {
+    pub(crate) fn new(
+        txn: &'a RoTxn<'a, AnyTls>,
+        data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+        schema: &'a Schema,
+    ) -> Self {
+        Self {
+            txn,
+            data,
+            schema,
+            key: [0; MAX_KEY],
+        }
+    }
+
     /// Scalar target probe: one `U` get on the target key's guard. A miss
     /// is the violation; a hit with a nonempty target selection
     /// additionally checks the found fact against σ (one `F` get).
-    fn check_scalar(&mut self, probe: &Probe<'_>) -> Result<()> {
+    pub(crate) fn check_scalar(&mut self, probe: &Probe<'_>) -> Result<()> {
         let u_len = keys::guard_key(
             &mut self.key,
             probe.target_relation,
             probe.target_key,
             probe.key_bytes,
         );
-        let Some(value) = self.data.get(self.txn.raw(), &self.key[..u_len])? else {
+        let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
             return Err(probe.unsatisfied());
         };
         self.check_segment(probe, value)
@@ -520,7 +535,7 @@ impl Checker<'_, '_> {
     /// comparisons are on the 8-byte encoded halves — order-preserving,
     /// so byte compare is numeric compare, and a `MAX`-sentinel end is
     /// just the largest end.
-    fn check_coverage(&mut self, probe: &Probe<'_>) -> Result<()> {
+    pub(crate) fn check_coverage(&mut self, probe: &Probe<'_>) -> Result<()> {
         // The scratch holds the full guard key
         // `U | rel | stmt | prefix | s | e` (the acceptance gate puts the
         // interval last, so its 16 bytes are the tail). Only slices of it
@@ -546,14 +561,11 @@ impl Checker<'_, '_> {
         // entry gap.
         let at_or_after = self
             .data
-            .get_greater_than_or_equal_to(self.txn.raw(), &self.key[..seek_len])?
+            .get_greater_than_or_equal_to(self.txn, &self.key[..seek_len])?
             .filter(|(k, _)| k.starts_with(&self.key[..seek_len]));
         let (entry_key, entry_value) = match at_or_after {
             Some(hit) => hit,
-            None => match self
-                .data
-                .get_lower_than(self.txn.raw(), &self.key[..seek_len])?
-            {
+            None => match self.data.get_lower_than(self.txn, &self.key[..seek_len])? {
                 Some((k, v)) if k.starts_with(&self.key[..group_len]) => {
                     if k.len() != full_len {
                         return Err(Error::Corruption(CorruptionError::MalformedValue(
@@ -581,7 +593,7 @@ impl Checker<'_, '_> {
 
         // Chain (the walk's step 2): extend `covered` to the source's end.
         let bounds: (Bound<&[u8]>, Bound<&[u8]>) = (Bound::Excluded(entry_key), Bound::Unbounded);
-        let mut chain = self.data.range(self.txn.raw(), &bounds)?;
+        let mut chain = self.data.range(self.txn, &bounds)?;
         while covered < source_end {
             // Gap or prefix exhaustion before reaching `e` is the
             // violation.
@@ -624,13 +636,13 @@ impl Checker<'_, '_> {
         // Own scratch: `self.key` still holds the caller's guard key.
         let mut key: KeyBuf = [0; MAX_KEY];
         let f_len = keys::fact_key(&mut key, probe.target_relation, row_id);
-        let target_fact =
-            self.data
-                .get(self.txn.raw(), &key[..f_len])?
-                .ok_or(Error::Corruption(CorruptionError::MissingFact {
-                    relation: probe.target_relation,
-                    row_id,
-                }))?;
+        let target_fact = self
+            .data
+            .get(self.txn, &key[..f_len])?
+            .ok_or(Error::Corruption(CorruptionError::MissingFact {
+                relation: probe.target_relation,
+                row_id,
+            }))?;
         let layout = self.schema.relation(probe.target_relation).layout();
         if satisfies(probe.target_check, layout, target_fact) {
             Ok(())

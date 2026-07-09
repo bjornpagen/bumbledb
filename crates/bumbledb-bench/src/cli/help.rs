@@ -14,6 +14,8 @@ pub fn help() -> String {
          COMMANDS:\n\
          \x20 gen      generate + load both stores into the digest-keyed dir\n\
          \x20 verify   the oracle: families + randomized queries on both engines\n\
+         \x20 verify-store  the offline sweeper (Db::verify_store): namespace\n\
+         \x20          coherence + global judgments over the committed store\n\
          \x20 bench    the timing run (requires a fresh verify stamp)\n\
          \x20 trace    one traced warm+cold pair for one family\n\
          \x20 scenarios non-ledger worlds (joins/graph/olap/points), gated then timed\n\
@@ -21,7 +23,7 @@ pub fn help() -> String {
          \x20 queries  print the versioned query list (QUERIES.md)\n\
          \x20 help     print this text\n\
          \n\
-         SHARED FLAGS (gen, verify, bench, trace):\n\
+         SHARED FLAGS (gen, verify, verify-store, bench, trace):\n\
          \x20 --scale S|M|L   corpus scale        (default S)\n\
          \x20 --seed N        corpus seed         (default 1)\n\
          \x20 --dir PATH      corpus cache root   (default bench-data)\n\
@@ -51,7 +53,8 @@ pub fn help() -> String {
          \x20 --samples N     measured samples/query   (default 64)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-scenarios)\n\
          \n\
-         EXIT CODES: 0 ok / gate won; 1 verify mismatch or gate loss; 2 usage.\n",
+         EXIT CODES: 0 ok / gate won; 1 verify mismatch, store findings, or\n\
+         gate loss; 2 usage.\n",
         env!("CARGO_PKG_VERSION"),
         DEFAULT_RANDOM_CASES,
     )

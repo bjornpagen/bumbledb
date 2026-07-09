@@ -63,7 +63,6 @@ orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [10 — `verify_store`: global judgments + CLI](10-verify-store-judgments.md)
 - [11 — The chase: analysis and rewrite](11-chase-rewrite.md)
 - [12 — The chase: surfaces and coverage](12-chase-surfaces.md)
 - [13 — Plan staleness signal](13-staleness-signal.md)

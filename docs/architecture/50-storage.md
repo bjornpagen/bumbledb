@@ -187,8 +187,8 @@ Two write-side asymmetries, recorded as decisions rather than left as surprises:
 verifying they existed (unlike `F`/`M`/`U`, whose absence is the
 `MembershipDesync` hard error); a missing `R` entry is not independently
 detectable at delete time without re-deriving every statement's edges, and the
-class is covered by the same offline-sweeper deferral as the rest of M↔F↔U↔R
-consistency. **Counter overflow guards** — the serial ceiling is guarded
+class is covered by the offline sweeper, `Db::verify_store` — the same
+compensating control that re-verifies the rest of M↔F↔U↔R consistency. **Counter overflow guards** — the serial ceiling is guarded
 (`SerialExhausted` at `u64::MAX`, because hosts can supply explicit serial values),
 while the storage tx id and row-id high-waters are not: they advance by at most one
 per commit/insert, so wrapping needs ~2⁶⁴ commits — twelve orders beyond the scale

@@ -61,9 +61,9 @@ impl Applier<'_> {
         // puts, so the removal is byte-symmetric. Deleted without
         // verifying they existed — unlike F/M/U, a missing R entry is not
         // independently detectable here without re-deriving every
-        // statement's edges; the class is covered by the offline-sweeper
-        // deferral (docs/architecture/50-storage.md, R-delete
-        // verification).
+        // statement's edges; the class is deferred to the offline
+        // sweeper, `Db::verify_store` (docs/architecture/50-storage.md,
+        // R-delete verification).
         for &sid in relation.outgoing() {
             if let Some(r_len) = self.reverse_key_for(schema, rel, sid, fact_bytes, row_id) {
                 self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;

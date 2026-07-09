@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::encoding::{encode_fact, encode_interval_u64, encode_u64, fact_hash, ValueRef};
+use crate::error::Direction;
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor,
     Side, StatementDescriptor, ValueType,
@@ -17,14 +18,20 @@ use crate::value::Value;
 const HOLDER: RelationId = RelationId(0);
 const BOOKING: RelationId = RelationId(1);
 const ACCOUNT: RelationId = RelationId(2);
+const CLAIM: RelationId = RelationId(3);
 /// Materialized statement order: the serial auto-FD on `Holder.id` first,
 /// then the declared statements in declaration order.
+const HOLDER_KEY: StatementId = StatementId(0);
 const BOOKING_KEY: StatementId = StatementId(1);
 const ACCOUNT_HOLDER: StatementId = StatementId(2);
+const CLAIM_BOOKING: StatementId = StatementId(3);
 
 /// Holder(id serial, name str) — scalar key, string field for the
 /// dictionary statistic; Booking(room, during) with a pointwise key;
-/// Account(holder, kind) ⊆ Holder under the σ `kind == checking`.
+/// Account(holder, kind) ⊆ Holder under the σ `kind == checking`;
+/// Claim(room, span) ⊆ Booking(room, during) — the coverage-form
+/// containment (the target's pointwise key carries the interval).
+#[allow(clippy::too_many_lines)] // one descriptor literal, four relations
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -77,6 +84,23 @@ fn schema() -> Schema {
                     },
                 ],
             },
+            RelationDescriptor {
+                name: "Claim".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "room".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "span".into(),
+                        value_type: ValueType::Interval {
+                            element: IntervalElement::U64,
+                        },
+                        generation: Generation::None,
+                    },
+                ],
+            },
         ],
         statements: vec![
             StatementDescriptor::Functionality {
@@ -95,6 +119,18 @@ fn schema() -> Schema {
                     selection: Box::new([]),
                 },
             },
+            StatementDescriptor::Containment {
+                source: Side {
+                    relation: CLAIM,
+                    projection: Box::new([FieldId(0), FieldId(1)]),
+                    selection: Box::new([]),
+                },
+                target: Side {
+                    relation: BOOKING,
+                    projection: Box::new([FieldId(0), FieldId(1)]),
+                    selection: Box::new([]),
+                },
+            },
         ],
     }
     .validate()
@@ -105,7 +141,8 @@ fn schema() -> Schema {
 /// deleted — "bob" is the dangling dictionary entry), bookings (7, [0,10))
 /// and (7, [20,30)) at rows 0 and 1, accounts (1, checking) at row 0
 /// (inside σ — one `R` edge) and (2, savings) at row 1 (outside σ — no
-/// edge). One insert per commit pins the row ids.
+/// edge), and claim (7, [2,8)) at row 0 (covered by booking (7, [0,10))).
+/// One insert per commit pins the row ids.
 fn fixture(tag: &str) -> (TempDir, Db<'static>) {
     let schema = Box::leak(Box::new(schema()));
     let dir = TempDir::new(tag);
@@ -123,6 +160,7 @@ fn fixture(tag: &str) -> (TempDir, Db<'static>) {
         (BOOKING, vec![Value::U64(7), Value::IntervalU64(20, 30)]),
         (ACCOUNT, vec![Value::U64(1), Value::Enum(0)]),
         (ACCOUNT, vec![Value::U64(2), Value::Enum(1)]),
+        (CLAIM, vec![Value::U64(7), Value::IntervalU64(2, 8)]),
     ];
     for (rel, values) in facts {
         db.write(|tx| tx.insert_dyn(*rel, values).map(|_| ()))
@@ -166,10 +204,69 @@ fn booking_guard(room: u64, start: u64, end: u64) -> Vec<u8> {
     guard
 }
 
+fn account_bytes(db: &Db<'_>, holder: u64, kind: u8) -> Vec<u8> {
+    let mut out = Vec::new();
+    encode_fact(
+        &[ValueRef::U64(holder), ValueRef::Enum(kind)],
+        db.schema().relation(ACCOUNT).layout(),
+        &mut out,
+    );
+    out
+}
+
+fn claim_bytes(db: &Db<'_>, room: u64, start: u64, end: u64) -> Vec<u8> {
+    let mut out = Vec::new();
+    encode_fact(
+        &[ValueRef::U64(room), ValueRef::IntervalU64(start, end)],
+        db.schema().relation(CLAIM).layout(),
+        &mut out,
+    );
+    out
+}
+
 fn key(write: impl FnOnce(&mut KeyBuf) -> usize) -> Vec<u8> {
     let mut buf: KeyBuf = [0; MAX_KEY];
     let len = write(&mut buf);
     buf[..len].to_vec()
+}
+
+/// Deletes one fact's `F`/`M`/`U` rows *coherently* — every namespace
+/// pairing stays consistent, and the `S` row count is re-pinned to the
+/// surviving cardinality — so every namespace sweep passes. This is
+/// exactly the corruption class only the global judgment re-verification
+/// can convict: a target gone from every namespace while a source fact
+/// still requires it. (`R` rows: neither fixture target relation has
+/// outgoing statements, so there are none to remove.)
+fn delete_target_rows(
+    db: &Db<'_>,
+    rel: RelationId,
+    row_id: u64,
+    guards: &[(StatementId, Vec<u8>)],
+    remaining_rows: u64,
+) {
+    raw_write(db, |txn| {
+        let data = txn.env().data();
+        let f = key(|b| keys::fact_key(b, rel, row_id));
+        let fact = data
+            .get(txn.raw(), &f)
+            .expect("raw get")
+            .expect("live fact")
+            .to_vec();
+        let m = key(|b| keys::membership_key(b, rel, &fact_hash(&fact)));
+        assert!(data.delete(txn.raw_mut(), &f).expect("raw delete"));
+        assert!(data.delete(txn.raw_mut(), &m).expect("raw delete"));
+        for (sid, guard) in guards {
+            let u = key(|b| keys::guard_key(b, rel, *sid, guard));
+            assert!(data.delete(txn.raw_mut(), &u).expect("raw delete"));
+        }
+        let count = key(|b| keys::stat_key(b, rel, StatKind::RowCount));
+        data.put(
+            txn.raw_mut(),
+            &count,
+            remaining_rows.to_le_bytes().as_slice(),
+        )
+        .expect("raw put");
+    });
 }
 
 #[test]
@@ -233,12 +330,22 @@ fn missing_guard_is_found_from_the_fact_side() {
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings,
-        vec![StoreFinding::FactWithoutGuard {
-            relation: BOOKING,
-            statement: BOOKING_KEY,
-            row_id: 0,
-            guard_key: u.into(),
-        }]
+        vec![
+            StoreFinding::FactWithoutGuard {
+                relation: BOOKING,
+                statement: BOOKING_KEY,
+                row_id: 0,
+                guard_key: u.into(),
+            },
+            // The deleted guard entry is also the segment covering claim
+            // (7, [2,8)) — the coverage walk judges the `U` state, so the
+            // desync convicts twice, once per broken invariant.
+            StoreFinding::JudgmentViolation {
+                statement: CLAIM_BOOKING,
+                direction: Direction::TargetRequired,
+                fact: claim_bytes(&db, 7, 2, 8).into(),
+            },
+        ]
     );
 }
 
@@ -299,6 +406,48 @@ fn pointwise_overlap_is_found_by_the_ordered_walk() {
             first: key(|b| keys::guard_key(b, BOOKING, BOOKING_KEY, &booking_guard(7, 0, 10)))
                 .into(),
             second: u.into(),
+        }]
+    );
+}
+
+#[test]
+fn a_coherently_deleted_scalar_target_is_a_judgment_violation() {
+    let (_dir, db) = fixture("verify-judgment-scalar");
+    // Holder 1 removed from every namespace at once — no namespace sweep
+    // sees it, but account (1, checking) is a live source inside σ still
+    // requiring it: the scalar guard probe misses.
+    delete_target_rows(&db, HOLDER, 0, &[(HOLDER_KEY, encode_u64(1).to_vec())], 0);
+    let report = db.verify_store().expect("verify");
+    assert_eq!(
+        report.findings,
+        vec![StoreFinding::JudgmentViolation {
+            statement: ACCOUNT_HOLDER,
+            direction: Direction::TargetRequired,
+            fact: account_bytes(&db, 1, 0).into(),
+        }]
+    );
+}
+
+#[test]
+fn a_coherently_deleted_coverage_segment_is_a_judgment_violation() {
+    let (_dir, db) = fixture("verify-judgment-coverage");
+    // Booking (7, [0,10)) removed from every namespace at once — booking
+    // (7, [20,30)) survives, so the store stays namespace-coherent, but
+    // claim (7, [2,8)) is no longer covered: the coverage walk gaps.
+    delete_target_rows(
+        &db,
+        BOOKING,
+        0,
+        &[(BOOKING_KEY, booking_guard(7, 0, 10))],
+        1,
+    );
+    let report = db.verify_store().expect("verify");
+    assert_eq!(
+        report.findings,
+        vec![StoreFinding::JudgmentViolation {
+            statement: CLAIM_BOOKING,
+            direction: Direction::TargetRequired,
+            fact: claim_bytes(&db, 7, 2, 8).into(),
         }]
     );
 }

@@ -65,6 +65,8 @@ pub enum Cmd {
     Gen(CorpusArgs),
     /// The oracle: compare both engines, stamp on success.
     Verify { corpus: CorpusArgs, cases: u32 },
+    /// The offline sweeper: `Db::verify_store` over the corpus store.
+    VerifyStore(CorpusArgs),
     /// The timing run (refuses without a fresh stamp).
     Bench(BenchArgs),
     /// One traced warm+cold pair for one family.

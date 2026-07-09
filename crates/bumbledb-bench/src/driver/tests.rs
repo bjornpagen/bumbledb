@@ -102,6 +102,35 @@ fn alloc_without_obs_names_the_cargo_invocation() {
     );
 }
 
+/// The sweeper's full CLI pipeline on a clean store: gen, then the
+/// driver fn (no spawned process) — an empty report and exit code 0.
+#[test]
+fn verify_store_exits_zero_on_a_clean_corpus() {
+    let dir = scratch("verify-store-clean");
+    let corpus = CorpusArgs {
+        scale: Scale::S,
+        seed: 1,
+        dir: dir.clone(),
+    };
+    cmd_gen(&corpus).expect("gen");
+    assert_eq!(cmd_verify_store(&corpus).expect("verify-store"), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Without a generated corpus the sweeper refuses; the message names gen.
+#[test]
+fn verify_store_refusal_names_gen() {
+    let dir = scratch("verify-store-missing");
+    let corpus = CorpusArgs {
+        scale: Scale::S,
+        seed: 1,
+        dir: dir.clone(),
+    };
+    let err = cmd_verify_store(&corpus).unwrap_err();
+    assert!(err.contains("bumbledb-bench gen"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The suite's own integration point (unit-scale by S's size):
 /// gen → verify → bench --families point --samples 8, three
 /// artifacts, PARTIAL verdict, and the UNVERIFIED override branding.

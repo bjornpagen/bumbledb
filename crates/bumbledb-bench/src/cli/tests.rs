@@ -44,6 +44,30 @@ fn verify_parses_cases() {
 }
 
 #[test]
+fn verify_store_parses_the_shared_flags_and_nothing_else() {
+    let cmd = parse(&argv(&[
+        "verify-store",
+        "--scale",
+        "L",
+        "--seed",
+        "3",
+        "--dir",
+        "/tmp/y",
+    ]))
+    .expect("parses");
+    assert_eq!(
+        cmd,
+        Cmd::VerifyStore(CorpusArgs {
+            scale: Scale::L,
+            seed: 3,
+            dir: PathBuf::from("/tmp/y"),
+        })
+    );
+    let err = parse(&argv(&["verify-store", "--cases", "5"])).unwrap_err();
+    assert!(err.contains("--cases"), "{err}");
+}
+
+#[test]
 fn bench_parses_every_knob() {
     let cmd = parse(&argv(&[
         "bench",
@@ -103,7 +127,7 @@ fn help_text_names_the_binary_and_version() {
     let text = help();
     assert!(text.contains("bumbledb-bench"));
     assert!(text.contains(env!("CARGO_PKG_VERSION")));
-    for command in ["gen", "verify", "bench", "trace", "queries"] {
+    for command in ["gen", "verify", "verify-store", "bench", "trace", "queries"] {
         assert!(text.contains(command), "{command}");
     }
 }

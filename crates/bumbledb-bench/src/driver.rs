@@ -21,6 +21,7 @@ mod scenarios;
 #[cfg(test)]
 mod tests;
 mod trace;
+mod verify_store;
 mod write_families;
 
 pub use bench::cmd_bench;
@@ -29,6 +30,7 @@ pub use gen::{cmd_gen, cmd_verify};
 pub use merge::cmd_merge;
 pub use scenarios::cmd_scenarios;
 pub use trace::cmd_trace;
+pub use verify_store::cmd_verify_store;
 
 /// The digest-keyed corpus locations.
 #[derive(Debug, Clone, PartialEq, Eq)]

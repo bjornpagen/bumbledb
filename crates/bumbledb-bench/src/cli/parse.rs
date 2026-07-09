@@ -95,6 +95,17 @@ fn parse_verify(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Verify { corpus, cases })
 }
 
+fn parse_verify_store(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+    let mut corpus = CorpusArgs::default();
+    while let Some(flag) = tokens.next() {
+        let flag = flag.to_owned();
+        if !corpus_flag(&mut corpus, &flag, tokens)? {
+            return Err(unknown("verify-store", &flag));
+        }
+    }
+    Ok(Cmd::VerifyStore(corpus))
+}
+
 fn parse_bench(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     let mut args = BenchArgs {
         corpus: CorpusArgs::default(),
@@ -188,6 +199,7 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         },
         "gen" => parse_gen(&mut tokens),
         "verify" => parse_verify(&mut tokens),
+        "verify-store" => parse_verify_store(&mut tokens),
         "bench" => parse_bench(&mut tokens),
         "trace" => parse_trace(&mut tokens),
         "scenarios" => parse_scenarios(&mut tokens),
