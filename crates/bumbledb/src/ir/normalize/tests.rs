@@ -775,6 +775,7 @@ fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
 // --- constant-side interval comparisons -------------------------------------
 
 #[test]
+#[allow(clippy::too_many_lines)] // a fixed list, one entry per const shape
 fn constant_interval_comparisons_lower_to_fixed_const_shapes() {
     let iv = || Term::Literal(Value::IntervalI64(2, 9));
     let iv_const = Const::Interval {

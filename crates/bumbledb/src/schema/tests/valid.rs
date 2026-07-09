@@ -91,7 +91,7 @@ fn nullary_relation_constructs() {
 }
 
 /// The `docs/architecture/30-dependencies.md` example schema — Holder /
-/// Account / SavingsTerms with its three declared statements (`==` lowered
+/// Account / `SavingsTerms` with its three declared statements (`==` lowered
 /// to two mirrored Containments) plus the serial auto-keys — validates,
 /// with every statement's `Resolved` exact. The mirrored pair (ids 3 and 4)
 /// pins independent per-direction resolution, and id 3 resolves a key

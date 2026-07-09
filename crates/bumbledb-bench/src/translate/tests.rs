@@ -203,7 +203,7 @@ fn point_matches_its_hand_written_golden() {
 }
 
 #[test]
-fn fk_walk_matches_its_hand_written_golden() {
+fn containment_walk_matches_its_hand_written_golden() {
     // Q(name, amount) :- Posting(account = ?0, amount),
     //                    Account(id = ?0, holder = h),
     //                    Holder(id = h, name).
@@ -235,7 +235,7 @@ fn fk_walk_matches_its_hand_written_golden() {
         predicates: vec![],
     };
     let t = translate(&query, schema(), &[]).expect("translates");
-    assert_eq!(t.sql, goldens::FK_WALK);
+    assert_eq!(t.sql, goldens::CONTAINMENT_WALK);
     assert_eq!(
         t.params,
         vec![ParamSlot::Whole(ParamId(0))],

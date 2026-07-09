@@ -294,11 +294,11 @@ fn validate_containment(
 }
 
 /// Roster "unknown relation … ids": the relation for a statement-named id.
-fn known_relation<'a>(
+fn known_relation(
     id: StatementId,
     relation: RelationId,
-    relations: &'a [Relation],
-) -> Result<&'a Relation, SchemaError> {
+    relations: &[Relation],
+) -> Result<&Relation, SchemaError> {
     relations
         .get(relation.0 as usize)
         .ok_or(SchemaError::StatementUnknownRelation {

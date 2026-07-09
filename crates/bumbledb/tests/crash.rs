@@ -93,7 +93,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
                 );
             }
             // Q consistency: the serial generator continues past every
-            // committed id (a collision would corrupt the auto-unique).
+            // committed id (a collision would break the serial's auto-key statement).
             let next: ItemId = tx.alloc()?;
             assert!(
                 next.0 > max_seen || live.is_empty(),

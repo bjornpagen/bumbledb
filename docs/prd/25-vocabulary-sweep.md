@@ -57,3 +57,52 @@ owner ruling).
   -D warnings` clean; `cargo test --workspace` green — with every PRD's `[test]`
   criteria included.
 - `[gate]` `scripts/check.sh` runs to completion on the new tree.
+
+## Execution record (2026-07-09)
+
+Final `rg -i` hit summary over `crates/ scripts/` per target word — zero
+identifier hits of any deleted concept:
+
+| word | hits | classification |
+|---|---|---|
+| `unique` | 7 | 2 current-refusal (macro assertion + `compile_fail` example), 5 SQLite-DDL side (`UNIQUE` index emission and its comments in `sqlmap.rs` — the oracle's language) |
+| `fk` | 1 | current-refusal (the macro's rejected-word assertion) |
+| `fkey` | 0 | — |
+| `foreign` | 24 | false positives: the another-environment sense (`ForeignPreparedQuery` and "foreign snapshot", normative in `70-api.md`; test names/locals in that sense) |
+| `primary key` | 8 | SQLite-DDL side (`PRIMARY KEY` emission in `sqlmap.rs`) |
+| `pkey` | 6 | substring false positives (`AggregateOverGroupKey`) |
+| `constraint` | 3 | current-refusal ("field-level constraints do not exist; write a statement") |
+| `cascade` | 0 | — |
+| `restrict` | 51 | current vocabulary (Arg-restriction, PRD 18) and plain-English "restricts/restricted" |
+| `replace` | ~25 | string/`mem::replace` API and the delete+insert replacement idiom (current mutation story) |
+
+Surviving current-refusal comment sites: 4 (macro crate doc + diagnostic,
+engine crate doc + `compile_fail` example).
+
+Renames: `fk_walk` → `containment_walk` (family, functions, module
+`sqlite_run/cold_containment_walk.rs`, golden `CONTAINMENT_WALK`,
+`bench_viz.py` orders), `fk_target_db` → `containment_target_db`,
+`point_lookup_by_unique_key` → `point_lookup_by_serial_key`,
+`near_unique_maps_*` → `near_distinct_maps_*`,
+`accepts_the_fk_walk_join_*` / `fk_walk_join_*` → containment-walk names.
+
+Root README `schema!` example rewritten in statement notation
+(`Account(holder) <= Holder(id);`, no field-level words) and aligned with
+the real API (`tx.alloc()?`, `&mut` prepared query).
+
+Residual breakage fixed here: 32 clippy `-D warnings` diagnostics
+(doc-markdown backticks, `too_many_lines` allows with justifications,
+items-after-statements moves, an `if let` destructure, elided lifetimes,
+merged match arms, one `# Panics` section, `unused_self` allow), rustfmt
+drift in `alloc_gate.rs`/`trace_out/tests.rs`/`verify/tests.rs`, and the
+obs-only trace capture test re-bound through `families::param_args` /
+`execute_args` (the PRD 20 surface).
+
+Gates: `cargo fmt --all --check` clean; `clippy --workspace --all-targets
+-- -D warnings` clean (obs feature included); `cargo test --workspace`
+688 passed / 0 failed (+6 doc-tests); `scripts/check.sh` exit 0 end to
+end (allocation gate included); `scripts/check-asm.sh` all three gates
+green against a fresh release build — no gate re-pointing needed (no hot
+symbol was renamed).
+
+No conflicts.

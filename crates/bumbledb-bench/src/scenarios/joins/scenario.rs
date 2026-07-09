@@ -54,7 +54,7 @@ pub fn scenario() -> Scenario {
                     name: "j1_filmography",
                     query: filmography,
                     params: filmography_params,
-                    about: "2-atom FK walk under 25%-hot fan-in skew",
+                    about: "2-atom containment walk under 25%-hot fan-in skew",
                 },
                 ScenarioQuery {
                     name: "j2_costars",

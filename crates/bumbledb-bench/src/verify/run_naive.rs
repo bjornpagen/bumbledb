@@ -149,7 +149,7 @@ fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
     let span = i64::try_from(sizes.postings).expect("fits") * gen::AT_STEP;
     match name {
         "point" => scalar_draw(vec![Value::U64(3)]),
-        "fk_walk" | "postings_without_tag" => scalar_draw(vec![Value::U64(0)]),
+        "containment_walk" | "postings_without_tag" => scalar_draw(vec![Value::U64(0)]),
         "chain" => scalar_draw(vec![Value::I64(gen::AT_BASE)]),
         "range" => scalar_draw(vec![
             Value::I64(gen::AT_BASE + span / 4),

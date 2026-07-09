@@ -190,7 +190,7 @@ mod tests {
     }
 
     /// Finding 2 (per-row intern resolution), forever: a traced warm
-    /// sample resolves each distinct string once — `fk_walk`'s single
+    /// sample resolves each distinct string once — `containment_walk`'s single
     /// holder name costs one lookup for its ~200 rows.
     #[cfg(feature = "obs")]
     #[test]
@@ -200,7 +200,7 @@ mod tests {
         let (dir, db) = corpus_db("resolve");
         let family = families::all()
             .iter()
-            .find(|f| f.name == "fk_walk")
+            .find(|f| f.name == "containment_walk")
             .expect("registered");
         let mut prepared = db.prepare(&(family.query)()).expect("prepare");
         let sets = (family.params)(&CFG);
@@ -268,7 +268,7 @@ mod tests {
                 "point" => 0,
                 // One cold account: ~postings/accounts = 200 postings,
                 // plus the account and holder probes. 4x margin.
-                "fk_walk" => 4 * (sizes.postings / sizes.accounts + 2),
+                "containment_walk" => 4 * (sizes.postings / sizes.accounts + 2),
                 // ~2% suffix x 1/3 currency share, three relations
                 // walked by cover: bounded by 3x the window's postings.
                 "chain" => 3 * (sizes.postings * 8 / 100),

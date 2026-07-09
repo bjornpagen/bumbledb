@@ -138,10 +138,10 @@ pub fn bulk_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurement, Stri
     })
 }
 
-/// `cold_fk_walk`: `measure_cold` over the `fk_walk` family — every sample
+/// `cold_containment_walk`: `measure_cold` over the `containment_walk` family — every sample
 /// pays a touch commit (generation bump, cache eviction), so the timed
 /// execution carries the image-rebuild spike. The `SQLite` mirror runs
-/// the identical protocol (`sqlite_run::cold_fk_walk`): it keeps no
+/// the identical protocol (`sqlite_run::cold_containment_walk`): it keeps no
 /// derived cache, so its number is the honest post-commit query cost —
 /// the comparison that prices our cold path instead of reporting it
 /// absolute.
@@ -152,18 +152,18 @@ pub fn bulk_bumbledb(cfg: GenConfig, scratch: &Path) -> Result<Measurement, Stri
 ///
 /// # Panics
 ///
-/// Only on registry corruption (`fk_walk` missing).
-pub fn cold_fk_walk(db: &Db<'_>, cfg: GenConfig) -> Result<Measurement, String> {
+/// Only on registry corruption (`containment_walk` missing).
+pub fn cold_containment_walk(db: &Db<'_>, cfg: GenConfig) -> Result<Measurement, String> {
     let family = families::all()
         .iter()
-        .find(|f| f.name == "fk_walk")
-        .expect("fk_walk is registered");
+        .find(|f| f.name == "containment_walk")
+        .expect("containment_walk is registered");
     let query = (family.query)();
     let mut prepared = db.prepare(&query).map_err(|e| format!("prepare: {e:?}"))?;
     let mut rotation = Rotation::new((family.params)(&cfg));
     let mut buffer = ResultBuffer::new();
     harness::measure_cold(
-        write_protocol("cold_fk_walk"),
+        write_protocol("cold_containment_walk"),
         harness::org_touch(db),
         || {
             let args = param_args(rotation.next_set());
@@ -192,9 +192,9 @@ mod tests {
         dir
     }
 
-    /// A store holding every posting FK target (the commit families need
+    /// A store holding every posting containment target (the commit families need
     /// referenced rows, not the posting mass).
-    fn fk_target_db(dir: &Path) -> Db<'static> {
+    fn containment_target_db(dir: &Path) -> Db<'static> {
         let db = Db::create(dir, schema()).expect("create");
         for rel in non_posting_relations() {
             db.bulk_load(rel, gen::relation_rows(CFG, rel))
@@ -210,7 +210,7 @@ mod tests {
     fn commits_run_and_preserve_the_source_corpus() {
         let dir = scratch("commit");
         let source = dir.join("source");
-        let db = fk_target_db(&source);
+        let db = containment_target_db(&source);
         let generation_before = db.generation().expect("generation");
         drop(db);
 
@@ -262,17 +262,17 @@ mod tests {
     /// The cold protocol runs, and rebuild cost shows: cold p50 is at
     /// least warm p50 on the same corpus (a 1x-margin inequality only).
     #[test]
-    fn cold_fk_walk_costs_at_least_warm() {
+    fn cold_containment_walk_costs_at_least_warm() {
         let dir = scratch("cold");
         let db = Db::create(&dir, schema()).expect("create");
         corpus::load_bumbledb(&db, CFG).expect("load");
 
-        let cold = cold_fk_walk(&db, CFG).expect("cold");
+        let cold = cold_containment_walk(&db, CFG).expect("cold");
         assert!(cold.stats.min > 0);
 
         let family = families::all()
             .iter()
-            .find(|f| f.name == "fk_walk")
+            .find(|f| f.name == "containment_walk")
             .expect("registered");
         let query = (family.query)();
         let mut prepared = db.prepare(&query).expect("prepare");

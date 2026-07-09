@@ -41,9 +41,9 @@ fn point_params(cfg: &GenConfig) -> Vec<Draw> {
     sets
 }
 
-/// `fk_walk` — `Q(name, amount) :- Posting(account = ?0, amount),
+/// `containment_walk` — `Q(name, amount) :- Posting(account = ?0, amount),
 /// Account(id = ?0, holder = h), Holder(id = h, name)`.
-fn fk_walk_query() -> Query {
+fn containment_walk_query() -> Query {
     Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
@@ -73,7 +73,7 @@ fn cold_account(rng: &mut Rng, sizes: &Sizes) -> u64 {
     hot + rng.range(sizes.accounts - hot)
 }
 
-fn fk_walk_params(cfg: &GenConfig) -> Vec<Draw> {
+fn containment_walk_params(cfg: &GenConfig) -> Vec<Draw> {
     let sizes = Sizes::of(cfg.scale);
     let mut rng = Rng::new(cfg.seed ^ 0x0114_0002);
     vec![
@@ -395,7 +395,7 @@ fn spread_params(_: &GenConfig) -> Vec<Draw> {
 /// triangle — `Q(a) :- Posting(account = a, instrument = i),
 /// Posting(instrument = i, entry = w), Posting(entry = w, account = a)`
 /// with `?0 <= a < ?1` — a true 3-cycle over the ledger via self-joins
-/// on Posting's three FK fields: three occurrences, three shared
+/// on Posting's three containment fields: three occurrences, three shared
 /// variables, a cyclic hypergraph — exactly the dynamic-cover stress
 /// the paper's triangle exposes.
 fn triangle_query() -> Query {
@@ -687,11 +687,11 @@ pub fn all() -> &'static [Family] {
             indexes: &[],
         },
         Family {
-            name: "fk_walk",
+            name: "containment_walk",
             kind: Kind::Gate,
-            query: fk_walk_query,
-            params: fk_walk_params,
-            golden_sql: goldens::FK_WALK,
+            query: containment_walk_query,
+            params: containment_walk_params,
+            golden_sql: goldens::CONTAINMENT_WALK,
             param_policy: "2 cold accounts, 1 hot account, 1 miss (id = accounts + 10^6).",
             indexes: &[],
         },

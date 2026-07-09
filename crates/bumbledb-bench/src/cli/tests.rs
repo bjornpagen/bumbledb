@@ -48,7 +48,7 @@ fn bench_parses_every_knob() {
     let cmd = parse(&argv(&[
         "bench",
         "--families",
-        "point,fk_walk",
+        "point,containment_walk",
         "--samples",
         "8",
         "--trace",
@@ -63,7 +63,7 @@ fn bench_parses_every_knob() {
         cmd,
         Cmd::Bench(BenchArgs {
             corpus: CorpusArgs::default(),
-            families: Some(vec!["point".to_owned(), "fk_walk".to_owned()]),
+            families: Some(vec!["point".to_owned(), "containment_walk".to_owned()]),
             samples: Some(8),
             trace: true,
             alloc: true,

@@ -150,6 +150,12 @@ fn adversarial_false_tag_rates(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, f6
 /// the false-tag gate covers both.
 #[test]
 fn hash_core_is_identical_to_hash_words() {
+    fn check<const K: usize>(next: &mut impl FnMut() -> u64) {
+        for _ in 0..1_000 {
+            let key: Vec<u64> = (0..K).map(|_| next()).collect();
+            assert_eq!(hash_core::<K>(&key), hash_words(&key), "K={K}");
+        }
+    }
     let mut rng = 0x0F1E_2D3C_4B5A_6978u64;
     let mut next = move || {
         rng = rng
@@ -157,12 +163,6 @@ fn hash_core_is_identical_to_hash_words() {
             .wrapping_add(1_442_695_040_888_963_407);
         rng
     };
-    fn check<const K: usize>(next: &mut impl FnMut() -> u64) {
-        for _ in 0..1_000 {
-            let key: Vec<u64> = (0..K).map(|_| next()).collect();
-            assert_eq!(hash_core::<K>(&key), hash_words(&key), "K={K}");
-        }
-    }
     check::<1>(&mut next);
     check::<2>(&mut next);
     check::<3>(&mut next);

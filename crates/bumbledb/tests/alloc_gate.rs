@@ -18,8 +18,8 @@
 use bumbledb::alloc_counter;
 use bumbledb::ir::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, Side, StatementDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
+    Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{Db, PreparedQuery, ResultBuffer, Snapshot};
 
@@ -250,7 +250,7 @@ fn minmax_query() -> Query {
 }
 
 /// Q(amount) :- Posting(memo = ?0, amount) — the selection shape
-/// (docs/architecture/30-execution.md): a rotating Eq param on a non-unique field probes the
+/// (docs/architecture/30-execution.md): a rotating Eq param on a non-key field probes the
 /// COLT's selection level; after the rotation's first cycle forces every
 /// probed subtrie, further rotation must not touch the allocator.
 fn selection_query() -> Query {
@@ -397,7 +397,7 @@ fn zero_warm_allocation_gate() {
         gate("guard", &mut guard, snap, &guard_params);
 
         // The selection shape (docs/architecture/30-execution.md): four rotating Eq params on
-        // a non-unique string field — the gate's warmups cover two full
+        // a non-key string field — the gate's warmups cover two full
         // rotation cycles, so every probed subtrie is forced and the
         // measured rotations must not touch the allocator.
         let selection_params: Vec<Vec<Value>> = (0..4)

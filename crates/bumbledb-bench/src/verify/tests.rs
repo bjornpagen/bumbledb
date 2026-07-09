@@ -142,7 +142,10 @@ fn a_wrong_oracle_fails_with_a_bundle() {
 fn a_full_verify_at_s_succeeds() {
     let config = cfg("full");
     let report = run(&config).expect("verify succeeds");
-    assert!(report.cases > 200, "families + 25 x 4 randomized + naive ops");
+    assert!(
+        report.cases > 200,
+        "families + 25 x 4 randomized + naive ops"
+    );
     let stamp_path = config.out_dir.join("verify.stamp");
     assert!(stamp_matches(&config, &stamp_path));
     // A different config must not accept this stamp.

@@ -39,10 +39,10 @@ fn skewed_maps_size_by_the_formula_and_iterate_densely() {
     assert_eq!((calls, total), (8, 500), "O(keys) drain");
 }
 
-/// Near-unique keys rehash-double to the pinned final capacity and
+/// Near-distinct keys rehash-double to the pinned final capacity and
 /// iterate each key exactly once, in dense (insertion) order.
 #[test]
-fn near_unique_maps_grow_to_the_pinned_capacity() {
+fn near_distinct_maps_grow_to_the_pinned_capacity() {
     let dir = TempDir::new("colt-dense-grow");
     let schema = schema();
     let rows: Vec<(u64, u64)> = (0..10_000).map(|i| (i, i * 2)).collect();

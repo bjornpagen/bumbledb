@@ -435,6 +435,7 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // one violation per statement kind, linear
 fn statement_violations_surface_from_commit_through_the_public_api() {
     let dir = test_dir("violations");
     let db = Db::create(&dir, schema()).expect("create");

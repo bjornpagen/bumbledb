@@ -7,7 +7,7 @@ use crate::schema::RelationId;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 
-/// A process-unique key for the calling thread (never 0). `ThreadId`
+/// A per-thread key, distinct process-wide (never 0). `ThreadId`
 /// itself has no stable integer form, so each thread mints one from a
 /// shared counter on first use.
 fn thread_key() -> u64 {

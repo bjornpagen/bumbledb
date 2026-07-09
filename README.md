@@ -20,28 +20,33 @@ bumbledb::schema! {
     }
     relation Account {
         id: u64 as AccountId, serial,
-        holder: u64 as HolderId, fk(Holder.id),
+        holder: u64 as HolderId,
         status: enum Status { Open, Frozen, Closed },
         opened_at: i64,
     }
+
+    // Everything relational is a statement between the blocks — there are
+    // no field-level modifiers. `serial` auto-materializes R(id) -> R.
+    Account(holder) <= Holder(id);   // containment: every account's holder exists
 }
 
 let db = bumbledb::Db::create(path, schema())?;
 
-// Writes are set arithmetic on an in-memory delta; constraints are checked
-// at commit against the final state — an abort never touched disk.
+// Writes are set arithmetic on an in-memory delta; every statement is
+// judged at commit against the final state — an abort never touched disk.
 db.write(|tx| {
-    let holder: HolderId = tx.alloc();
+    let holder: HolderId = tx.alloc()?;
     tx.insert(&Holder { id: holder, name: "alice".into(), region: Region::Eu })?;
-    tx.insert(&Account { id: tx.alloc(), holder, status: Status::Open, opened_at: 17_000_000 })?;
+    let account: AccountId = tx.alloc()?;
+    tx.insert(&Account { id: account, holder, status: Status::Open, opened_at: 17_000_000 })?;
     Ok(())
 })?;
 
 // Queries are prepared once, executed on snapshots into a reusable buffer —
 // zero allocations per execution after warmup.
-let q = db.prepare(&query)?;   // ir::Query: conjunctive atoms + predicates + finds
+let mut q = db.prepare(&query)?;   // ir::Query: conjunctive atoms + predicates + finds
 db.read(|snap| {
-    snap.execute(&q, &params, &mut results)?;
+    snap.execute(&mut q, &params, &mut results)?;
     Ok(())
 })?;
 ```

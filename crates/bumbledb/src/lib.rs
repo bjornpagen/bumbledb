@@ -11,7 +11,7 @@
 //! - Open a handle with [`Db::create`] / [`Db::open`] and share it across
 //!   threads (`Send + Sync`; the engine owns zero threads).
 //! - Write through [`Db::write`]: the transaction is an in-memory delta —
-//!   set arithmetic, constraints checked at commit against the final
+//!   set arithmetic, statements judged at commit against the final
 //!   state, an abort never touched disk. `delete(old); insert(new)` in
 //!   either order is the blessed mutation idiom.
 //! - Query through [`Db::prepare`] ([`ir::Query`] is the IR) and execute
@@ -142,7 +142,7 @@ pub(crate) mod testutil {
 
     impl TempDir {
         /// Creates (or wipes and recreates) a per-test directory. `tag` must
-        /// be unique per test function so parallel tests never collide.
+        /// be distinct per test function so parallel tests never collide.
         pub fn new(tag: &str) -> Self {
             let path = std::env::temp_dir().join(format!("bumbledb-test-{tag}"));
             let _ = std::fs::remove_dir_all(&path);

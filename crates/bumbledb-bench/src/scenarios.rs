@@ -52,17 +52,17 @@ pub struct ScenarioQuery {
 }
 
 /// One scenario: a schema, a deterministic corpus, extra `SQLite`
-/// indexes for its predicate columns (FK/unique indexes come from the
-/// schema constraints via [`sqlmap::expected_indexes`]), and a query
+/// indexes for its predicate columns (key/containment indexes come from the
+/// schema statements via [`sqlmap::expected_indexes`]), and a query
 /// list.
 pub struct Scenario {
     pub name: &'static str,
     pub about: &'static str,
     pub schema: fn() -> &'static Schema,
-    /// Relations in FK dependency order with their row iterators.
+    /// Relations in containment order with their row iterators.
     #[allow(clippy::type_complexity)]
     pub rows: fn(u64) -> Vec<(RelationId, Box<dyn Iterator<Item = Vec<Value>>>)>,
-    /// `CREATE INDEX` statements for predicate columns the constraint
+    /// `CREATE INDEX` statements for predicate columns the statement
     /// registry does not already cover.
     pub extra_indexes: &'static [&'static str],
     pub queries: fn() -> Vec<ScenarioQuery>,

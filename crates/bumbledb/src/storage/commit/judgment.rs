@@ -236,6 +236,7 @@ pub(super) fn check_source(
 /// `R` entry, because phase 1 removed its outgoing edges — so a survivor
 /// is always live in the final state, no disposition re-check is needed,
 /// and its `F` row must exist (a miss is corruption, never a race).
+#[allow(clippy::too_many_lines)] // the target-side judgment, one phase per block
 pub(super) fn check_target(
     txn: &WriteTxn<'_>,
     data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
@@ -273,13 +274,12 @@ pub(super) fn check_target(
                     SelectionCheck::Never => {}
                     check @ SelectionCheck::Compare(_) => {
                         let relation = key_relation(schema, *key_sid);
-                        let fact = match establisher {
-                            Some(fact) => fact,
-                            None => {
-                                let fact = establishing_fact(data, txn, relation, *key_sid, guard)?;
-                                establisher = Some(fact);
-                                fact
-                            }
+                        let fact = if let Some(fact) = establisher {
+                            fact
+                        } else {
+                            let fact = establishing_fact(data, txn, relation, *key_sid, guard)?;
+                            establisher = Some(fact);
+                            fact
                         };
                         if satisfies(check, schema.relation(relation).layout(), fact) {
                             continue;

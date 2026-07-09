@@ -148,6 +148,11 @@ impl SchemaDescriptor {
     /// (relation declaration order, then field order; projection = the one
     /// serial field), followed by the declared statements in declaration
     /// order. [`StatementId`] = index into this list, schema-global.
+    ///
+    /// # Panics
+    ///
+    /// When a relation or field ordinal exceeds the id space (`u32`/`u16`)
+    /// — impossible for a descriptor the acceptance gate admitted.
     #[must_use]
     pub fn materialized_statements(&self) -> Vec<StatementDescriptor> {
         let mut statements: Vec<StatementDescriptor> = Vec::new();

@@ -102,7 +102,7 @@ pub const MEMBERSHIP_KEY_LEN: usize = 1 + 4 + 32;
 pub const SERIAL_KEY_LEN: usize = 1 + 4 + 2;
 /// `S` key width: tag + relation + stat kind.
 pub const STAT_KEY_LEN: usize = 1 + 4 + 1;
-/// `R` key width after the key bytes: source_rel + source_row.
+/// `R` key width after the key bytes: `source_rel` + `source_row`.
 pub const REVERSE_KEY_TAIL_LEN: usize = 4 + 8;
 
 pub fn fact_key(buf: &mut [u8], relation: RelationId, row_id: u64) -> usize {

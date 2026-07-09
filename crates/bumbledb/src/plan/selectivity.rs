@@ -121,10 +121,14 @@ fn occurrence_estimate(
     for residual in &residuals {
         let keep_den = match residual {
             FilterPredicate::Compare { op, .. } => match op {
-                CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => RANGE_KEEP_DEN,
-                // Interval predicates against a constant: word-range
-                // compositions — the range class.
-                CmpOp::Overlaps | CmpOp::Contains => RANGE_KEEP_DEN,
+                // Interval predicates against a constant are word-range
+                // compositions — the same range class as the scalar ops.
+                CmpOp::Lt
+                | CmpOp::Le
+                | CmpOp::Gt
+                | CmpOp::Ge
+                | CmpOp::Overlaps
+                | CmpOp::Contains => RANGE_KEEP_DEN,
                 CmpOp::Ne => 1,
                 CmpOp::Eq => unreachable!("split_filters routed Eq into selections"),
             },

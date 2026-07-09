@@ -69,6 +69,7 @@ fn word(var: VarId, word: IntervalWord) -> VarWord {
 /// whole-value comparisons, except `Overlaps`/`Contains`, which decompose
 /// into word comparisons over slot pairs
 /// (docs/architecture/20-query-ir.md).
+#[allow(clippy::too_many_lines)] // one linear pass, each comparison class in order
 pub(super) fn place_comparisons(
     query: &ValidatedQuery,
     occurrences: &mut [Occurrence],

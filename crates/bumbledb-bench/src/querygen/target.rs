@@ -6,8 +6,8 @@
 //! relation/field ids, per-relation domains, literal vocabularies, and
 //! the deterministic corpus value functions the dressing recomputes
 //! (in-vocabulary hits are *actual* seeded values, never guesses). The
-//! ledger rebuild (PRD 24) replaces this module's declarations with the
-//! bench schema and its corpus; the grammar above does not change.
+//! declarations here are the bench schema and its corpus; the grammar
+//! above does not depend on them.
 //!
 //! The declared ledger is `60-validation.md`'s, with the two coverage
 //! extensions the seven-type matrix needs: `Posting.{memo, reconciled}`

@@ -20,8 +20,8 @@ mod writetxn;
 #[cfg(test)]
 mod tests;
 
-/// Process-unique environment instance ids, minted at `create`/`open`.
-/// Starts at 1 — 0 stays "no environment" forever. Per-process uniqueness
+/// Process-distinct environment instance ids, minted at `create`/`open`.
+/// Starts at 1 — 0 stays "no environment" forever. Per-process distinctness
 /// is exactly sufficient: every piece of derived state keyed by an
 /// instance (the view memo, prepared queries) is process-local, and a
 /// wiped-and-recreated store necessarily passes through a new
@@ -53,7 +53,7 @@ pub struct Environment {
     meta: Database<Bytes, Bytes>,
     data: Database<Bytes, Bytes>,
     dict: Database<Bytes, Bytes>,
-    /// This environment's process-unique identity (never 0). Prepared
+    /// This environment's process-distinct identity (never 0). Prepared
     /// queries record it and refuse to execute against any other
     /// environment's snapshots — the generation clock knows whose clock
     /// it is.
@@ -97,7 +97,7 @@ impl ReadTxn<'_> {
         self.env
     }
 
-    /// The owning environment's process-unique identity — the value a
+    /// The owning environment's process-distinct identity — the value a
     /// prepared query records at prepare and checks at execute.
     pub(crate) fn env_instance(&self) -> u64 {
         self.env.instance

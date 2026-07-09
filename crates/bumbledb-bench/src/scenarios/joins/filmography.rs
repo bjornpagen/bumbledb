@@ -5,7 +5,7 @@ use super::{ids, mix, HOT_PEOPLE, PEOPLE};
 use crate::gen::Rng;
 
 /// j1 — one hot person, one cold person, one mid, one miss: fan-in skew
-/// on a 2-atom FK walk.
+/// on a 2-atom containment walk.
 pub(super) fn filmography() -> Query {
     Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],

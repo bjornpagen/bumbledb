@@ -2,10 +2,10 @@
 pub const POINT: &str =
     "SELECT DISTINCT t0.\"amount\", t0.\"at\" FROM \"Posting\" AS t0 WHERE t0.\"id\" = ?1";
 
-/// `fk_walk` — `Q(name, amount) :- Posting(account = ?0, amount),
+/// `containment_walk` — `Q(name, amount) :- Posting(account = ?0, amount),
 /// Account(id = ?0, holder = h), Holder(id = h, name)` with the
 /// posting's account pinned by the same param on both sides.
-pub const FK_WALK: &str = "SELECT DISTINCT t2.\"name\", t0.\"amount\" FROM \"Posting\" AS t0, \"Account\" AS t1, \"Holder\" AS t2 WHERE t0.\"account\" = ?1 AND t1.\"id\" = ?1 AND t1.\"holder\" = t2.\"id\"";
+pub const CONTAINMENT_WALK: &str = "SELECT DISTINCT t2.\"name\", t0.\"amount\" FROM \"Posting\" AS t0, \"Account\" AS t1, \"Holder\" AS t2 WHERE t0.\"account\" = ?1 AND t1.\"id\" = ?1 AND t1.\"holder\" = t2.\"id\"";
 
 /// balance — `Q(a, Sum(amount)) :- Posting(id, account = a, amount),
 /// Account(id = a, holder = ?0)` — the id binding makes the fold a

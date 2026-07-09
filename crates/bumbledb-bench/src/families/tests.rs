@@ -79,7 +79,7 @@ fn params_are_deterministic_with_the_documented_misses() {
         panic!("point param")
     };
     assert!(miss >= sizes.postings, "point set 4 is a miss");
-    for name in ["fk_walk", "postings_without_tag"] {
+    for name in ["containment_walk", "postings_without_tag"] {
         let sets = draws(name);
         let ParamValue::Scalar(Value::U64(miss)) = sets[3][0] else {
             panic!("{name} param")
@@ -168,7 +168,7 @@ fn the_index_registry_deduplicates_and_matches() {
     let mut names: Vec<&String> = expected.iter().map(|(_, name)| name).collect();
     names.sort();
     names.dedup();
-    assert_eq!(names.len(), expected.len(), "names are unique");
+    assert_eq!(names.len(), expected.len(), "names are distinct");
     // The shared shape appears exactly once.
     assert_eq!(
         ddl.iter().filter(|s| s.contains("idx_posting_at")).count(),

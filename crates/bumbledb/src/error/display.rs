@@ -115,6 +115,7 @@ impl fmt::Display for CorruptionError {
 }
 
 impl fmt::Display for SchemaError {
+    #[allow(clippy::too_many_lines)] // a rendering table: one arm per variant
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Short bindings: r = relation, fd = field.
         match self {
@@ -310,6 +311,7 @@ impl fmt::Display for SchemaError {
 }
 
 impl fmt::Display for ValidationError {
+    #[allow(clippy::too_many_lines)] // a rendering table: one arm per variant
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownRelation { atom, relation } => {

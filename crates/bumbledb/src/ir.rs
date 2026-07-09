@@ -166,7 +166,7 @@ pub struct Atom {
     /// where the field is `Interval(E)` and the term's type is `E` means
     /// **point membership** — the binding satisfies iff `start ≤ t < end`.
     /// A term of type `Interval(E)` in the same position means interval
-    /// **value equality** (identity). Var, Param, ParamSet, and Literal all
+    /// **value equality** (identity). `Var`, `Param`, `ParamSet`, and `Literal` all
     /// participate under the same rule. The rule is owned by validation and
     /// lowering; one consequence, enforced there: every point variable must
     /// also be bound by at least one non-membership occurrence (a scalar
@@ -294,7 +294,7 @@ mod tests {
     // query shapes over the ledger schema (Account, Posting, ...).
 
     #[test]
-    fn point_lookup_by_unique_key() {
+    fn point_lookup_by_serial_key() {
         // Account(id = ?0, holder = h, status = s) — a single atom binding
         // the serial key to a param.
         let query = Query {
@@ -314,9 +314,9 @@ mod tests {
     }
 
     #[test]
-    fn fk_walk_join_with_range_predicate() {
+    fn containment_walk_join_with_range_predicate() {
         // Posting(account = a, amount = amt, at = t), Account(id = a):
-        // an FK walk joined on `a`, with t >= <timestamp>.
+        // a containment walk joined on `a`, with t >= <timestamp>.
         let query = Query {
             finds: vec![FindTerm::Var(VarId(1))],
             atoms: vec![

@@ -60,7 +60,7 @@ pub(super) fn densify(
                         unreachable!("Relation::keys() indexes Functionality statements")
                     };
                     let mut set = 0u128;
-                    for field in projection.iter() {
+                    for field in projection {
                         let (_, var) = occurrence.vars.iter().find(|(f, _)| f == field)?;
                         set |= 1 << var_index[var];
                     }

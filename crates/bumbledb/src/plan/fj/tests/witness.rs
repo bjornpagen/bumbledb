@@ -204,7 +204,7 @@ fn outer_join_idiom_absence_half_validates_into_the_witness() {
 /// An `Overlaps` residual query: two P occurrences with no shared
 /// variable, `Overlaps(d1, d2)` decomposed into two word comparisons
 /// attached to the node binding the second interval — plus the two-slot
-/// interval layout and ColumnSpan field maps.
+/// interval layout and `ColumnSpan` field maps.
 #[test]
 fn overlaps_residual_query_validates_into_the_witness() {
     let schema = interval_schema();

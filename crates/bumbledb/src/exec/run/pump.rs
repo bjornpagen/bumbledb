@@ -175,8 +175,8 @@ impl Executor {
         scratch.parents.clear();
         scratch.element_origins.clear();
         self.scratch[node_idx] = scratch;
-        // Drain the child's sub-batch remainder (full batches cascaded
-        // already inside probe_pass's flush check — see its tail).
+        // Drain the child's sub-batch remainder (full batches already flushed downstream
+        // inside probe_pass's flush check — see its tail).
         if node_idx + 2 < n_nodes && self.scratch[node_idx + 1].pending_len > 0 {
             self.pump(tables, plan, node_idx + 1, colts, bindings, sink, counters);
         }

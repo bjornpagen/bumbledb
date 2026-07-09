@@ -4,7 +4,7 @@ use crate::ir::{AggOp, CmpOp, Comparison, Value};
 // --- Accepting shapes ---
 
 #[test]
-fn accepts_the_fk_walk_join_with_predicates() {
+fn accepts_the_containment_walk_join_with_predicates() {
     let query = Query {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![

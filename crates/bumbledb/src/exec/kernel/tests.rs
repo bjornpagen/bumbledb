@@ -61,7 +61,7 @@ fn u8_kernel_matches_the_scalar_reference() {
 }
 
 /// PRD 17 (the 00-product unsafe policy): the interval filter
-/// compositions — PointIn, AnyPointIn, and the three Overlaps/Contains
+/// compositions — `PointIn`, `AnyPointIn`, and the three Overlaps/Contains
 /// shapes — are bit-identical to the scalar reference across the
 /// boundary shapes: empty, single, odd lengths, lane ±1.
 #[test]

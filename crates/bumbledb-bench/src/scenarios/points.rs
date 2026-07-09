@@ -96,7 +96,7 @@ fn id_params(seed: u64, salt: u64) -> Vec<Vec<Value>> {
     ]
 }
 
-/// p2 — point by unique string key (interning on every execution).
+/// p2 — point by string key (interning on every execution).
 fn by_key() -> Query {
     Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -124,7 +124,7 @@ fn key_params(seed: u64) -> Vec<Vec<Value>> {
     ]
 }
 
-/// p3 — bucket fetch through the FK dimension: ~73 docs per bucket.
+/// p3 — bucket fetch through the containment edge: ~73 docs per bucket.
 fn bucket_fetch() -> Query {
     Query {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -222,7 +222,7 @@ pub fn scenario() -> Scenario {
                     name: "p2_by_key",
                     query: by_key,
                     params: key_params,
-                    about: "unique string-key point: dictionary + guard",
+                    about: "keyed string point: dictionary + guard",
                 },
                 ScenarioQuery {
                     name: "p3_bucket_fetch",

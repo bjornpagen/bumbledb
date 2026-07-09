@@ -259,13 +259,13 @@ fn dirty_serial_marks_are_exactly_the_advanced_sequences() {
 
 #[test]
 fn guard_map_mirrors_the_fact_dispositions() {
+    // The serial auto-key on `id` is StatementId(0) (materialized first).
+    const KEY: StatementId = StatementId(0);
     let dir = TempDir::new("delta-guard-map");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
-    // The serial auto-key on `id` is StatementId(0) (materialized first).
-    const KEY: StatementId = StatementId(0);
     let f = fact(&schema, 7, 700);
     let guard = encode_u64(7);
 
@@ -304,6 +304,7 @@ fn guard_map_mirrors_the_fact_dispositions() {
 fn deleting_the_old_fact_never_erases_the_new_facts_guard_record() {
     // `delete(old); insert(new)` is blessed in either order — a point
     // read of the shared key tuple must see `new` whichever ran last.
+    const KEY: StatementId = StatementId(0);
     let dir = TempDir::new("delta-guard-order");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -316,7 +317,6 @@ fn deleting_the_old_fact_never_erases_the_new_facts_guard_record() {
         drop(view);
         crate::storage::commit::commit(delta, &env).expect("commit");
     }
-    const KEY: StatementId = StatementId(0);
     let view = env.read_txn().expect("txn");
     for insert_first in [true, false] {
         let mut delta = WriteDelta::new(&schema);

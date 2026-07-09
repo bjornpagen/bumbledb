@@ -39,7 +39,7 @@ fn suffix_iteration_never_forces() {
 fn singleton_keys_allocate_no_chunks() {
     let dir = TempDir::new("colt-singleton");
     let schema = schema();
-    let rows: Vec<(u64, u64)> = (0..100).map(|i| (i, i)).collect(); // all unique
+    let rows: Vec<(u64, u64)> = (0..100).map(|i| (i, i)).collect(); // all distinct
     let view = view_of(&dir, &schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let child = colt.get(Colt::root(), 0, &[5]).expect("hit");

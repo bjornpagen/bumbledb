@@ -128,11 +128,11 @@ fn the_table_render_is_golden() {
     assert_eq!(summary.render(), expected);
 }
 
-/// A real captured S-scale `fk_walk` trace: the expected spans appear
+/// A real captured S-scale `containment_walk` trace: the expected spans appear
 /// and the summary wall tracks the execute span within 5%.
 #[cfg(feature = "obs")]
 #[test]
-fn a_real_fk_walk_capture_summarizes_to_the_execute_span() {
+fn a_real_containment_walk_capture_summarizes_to_the_execute_span() {
     use crate::gen::{GenConfig, Scale};
     use crate::harness::Rotation;
 
@@ -148,14 +148,14 @@ fn a_real_fk_walk_capture_summarizes_to_the_execute_span() {
 
     let family = crate::families::all()
         .iter()
-        .find(|f| f.name == "fk_walk")
+        .find(|f| f.name == "containment_walk")
         .expect("registered");
     let mut prepared = db.prepare(&(family.query)()).expect("prepare");
     let mut rotation = Rotation::new((family.params)(&cfg));
     let mut buffer = bumbledb::ResultBuffer::new();
     let mut run = || {
-        let params = rotation.next_set().to_vec();
-        db.read(|snap| snap.execute(&mut prepared, &params, &mut buffer))
+        let args = crate::families::param_args(rotation.next_set());
+        db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
             .map_err(|e| format!("{e:?}"))?;
         Ok(buffer.len() as u64)
     };
@@ -188,8 +188,13 @@ fn a_real_fk_walk_capture_summarizes_to_the_execute_span() {
     );
 
     // And it exports.
-    let path =
-        write_trace_file(&dir.join("trace"), "fk_walk.warm", &engine, &harness).expect("export");
+    let path = write_trace_file(
+        &dir.join("trace"),
+        "containment_walk.warm",
+        &engine,
+        &harness,
+    )
+    .expect("export");
     let text = std::fs::read_to_string(path).expect("read back");
     assert!(text.starts_with("[\n") && text.ends_with("\n]\n"));
     drop(db);

@@ -16,7 +16,7 @@ use crate::sqlmap;
 use crate::translate::ParamSlot;
 
 mod bulk;
-mod cold_fk_walk;
+mod cold_containment_walk;
 mod commits;
 mod fairness_check;
 mod new;
@@ -26,7 +26,7 @@ mod sample;
 mod tests;
 
 pub use bulk::bulk;
-pub use cold_fk_walk::cold_fk_walk;
+pub use cold_containment_walk::cold_containment_walk;
 pub use commits::{commit_batch, commit_single};
 pub use open_for_bench::open_for_bench;
 pub use sample::{sample, sample_args};

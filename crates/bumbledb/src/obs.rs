@@ -236,7 +236,7 @@ pub mod names {
 /// The trace-mode fast clock, under the measured cost model
 /// (docs/silicon/01-timer-discipline.md, bumblebench exp 11): a raw
 /// `cntvct_el0` read costs 0.30 ns (1/cycle — the instrument is free;
-/// the 24 MHz / 41.67 ns tick granularity is the real constraint), and
+/// the 24 MHz / 41.67 ns tick granularity is the real limit), and
 /// an unfenced closing stamp can read up to ~50 ns early (bounded by
 /// backend scheduler occupancy, not the ROB). Stamp policy:
 ///

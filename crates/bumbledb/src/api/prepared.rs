@@ -128,7 +128,7 @@ pub struct Row<'a> {
 /// ```
 pub struct PreparedQuery<'s> {
     schema: &'s Schema,
-    /// The preparing environment's process-unique identity: plan,
+    /// The preparing environment's process-distinct identity: plan,
     /// statistics, and view memo all belong to it, so execution against
     /// any other environment's snapshot is `Error::ForeignPreparedQuery`
     /// — checked first at every execution entry.

@@ -32,7 +32,7 @@
 //! 15. empty finds
 //! 16. duplicate find terms
 //! 17. no positive atoms
-//! 18. aggregate input types (Sum/Min/Max integers only; CountDistinct
+//! 18. aggregate input types (Sum/Min/Max integers only; `CountDistinct`
 //!     every type; Count nullary)
 //! 19. aggregate over a group-key variable
 //! 20. mixed Arg and fold aggregates; Arg terms with differing keys or

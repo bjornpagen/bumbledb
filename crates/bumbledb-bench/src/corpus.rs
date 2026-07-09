@@ -31,7 +31,7 @@ fn load_stats(facts: u64, wall: Duration) -> LoadStats {
 }
 
 /// Loads the corpus into a bumbledb store, relation by relation in the
-/// FK-safe declaration order, through the ordinary `bulk_load` path.
+/// containment-safe declaration order, through the ordinary `bulk_load` path.
 ///
 /// # Errors
 ///

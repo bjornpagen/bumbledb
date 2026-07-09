@@ -41,7 +41,7 @@ fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
             ]
         }
         ids::CAST_INFO => {
-            // (movie, person) unique: derive both from i injectively,
+            // (movie, person) distinct: derive both from i injectively,
             // with the skew on the person side.
             let movie = i % MOVIES;
             let person = if rng.chance(1, 4) {
@@ -49,7 +49,7 @@ fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
             } else {
                 HOT_PEOPLE + rng.range(PEOPLE - HOT_PEOPLE)
             };
-            // Uniqueness fix-up: mix i into the person draw's low bits
+            // Injectivity fix-up: mix i into the person draw's low bits
             // deterministically; collisions on (movie, person) are
             // deduplicated by set semantics on the engine side, so the
             // pair must be injective for the SQLite mirror. Derive
@@ -83,7 +83,7 @@ fn row(seed: u64, rel: bumbledb::RelationId, i: u64) -> Vec<Value> {
     }
 }
 
-/// Compound-unique relations can collide on their derived pairs; the
+/// Derived pairs can collide; the
 /// loader deduplicates per relation so both engines load the identical
 /// fact set (set semantics native on ours, INSERT OR IGNORE-free on
 /// theirs).

@@ -1,5 +1,5 @@
-//! WriteTx point reads through the public surface
-//! (`docs/architecture/70-api.md` § WriteTx point reads): `contains`/`get`
+//! `WriteTx` point reads through the public surface
+//! (`docs/architecture/70-api.md` § `WriteTx` point reads): `contains`/`get`
 //! observe committed state overlaid with the pending delta — the
 //! final-state view the judgment phase judges — so every pre-commit answer
 //! equals the post-commit one, and the blessed upsert idiom is sound

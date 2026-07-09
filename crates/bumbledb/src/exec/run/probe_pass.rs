@@ -379,7 +379,7 @@ impl Executor {
         counters.phase_end(node_idx, JoinPhase::Descend);
         scratch.parents.clear();
         scratch.element_origins.clear();
-        // Cascade at one accumulated batch. Bounded memory: the child
+        // Flush downstream at one accumulated batch. Bounded memory: the child
         // holds at most two batches transiently (the 1×batch trigger
         // plus one pass's appends before the next check). The 2×-batch
         // threshold (docs/silicon/14) measured 0.0–0.6% once exp 14

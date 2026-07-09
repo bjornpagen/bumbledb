@@ -9,23 +9,14 @@ use super::*;
 /// L2-resident 20k shape. The pin guards DRAM-tier parity — the
 /// force-heavy ledger families gate the rest. Biased AGAINST the
 /// shipped side: the reference consumes pre-decoded keys while
-/// force() pays its own column decode. Ignored: a microbenchmark,
+/// `force()` pays its own column decode. Ignored: a microbenchmark,
 /// run explicitly for the Result section.
 #[test]
 #[ignore = "microbench pin: run explicitly with --ignored"]
 fn bucketized_force_stays_at_parity_with_the_linear_build() {
-    let dir = TempDir::new("colt-build-pin");
-    let schema = schema();
-    let n = std::hint::black_box(100_000u64);
-    let rows: Vec<(u64, u64)> = (0..n)
-        .map(|i| (i.wrapping_mul(0x9E37_79B9_7F4A_7C15), i))
-        .collect();
-    let view = view_of(&dir, &schema, &rows);
-    let decoded: Vec<u64> = view.column_words(0).to_vec();
-
     /// The pre-PRD build, reconstructed: linear probe over a ctrl
     /// byte slab + row-major `(key, child)` rows, first-empty
-    /// insert, rehash-double at 75% — near-unique keys, so the
+    /// insert, rehash-double at 75% — near-distinct keys, so the
     /// duplicate/chunk machinery never fires and is elided.
     fn linear_build(keys: &[u64]) -> (Vec<u8>, Vec<u64>) {
         let mut capacity = ((keys.len() / 8).max(16)).next_power_of_two();
@@ -72,7 +63,7 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
                     break;
                 }
                 if c == wanted && rows[2 * idx] == k {
-                    break; // duplicate: absorbed (near-unique corpus)
+                    break; // duplicate: absorbed (near-distinct corpus)
                 }
                 idx = (idx + 1) & mask;
             }
@@ -80,6 +71,15 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
         std::hint::black_box(len);
         (ctrl, rows)
     }
+
+    let dir = TempDir::new("colt-build-pin");
+    let schema = schema();
+    let n = std::hint::black_box(100_000u64);
+    let rows: Vec<(u64, u64)> = (0..n)
+        .map(|i| (i.wrapping_mul(0x9E37_79B9_7F4A_7C15), i))
+        .collect();
+    let view = view_of(&dir, &schema, &rows);
+    let decoded: Vec<u64> = view.column_words(0).to_vec();
 
     let mut bucket_best = std::time::Duration::MAX;
     let mut linear_best = std::time::Duration::MAX;

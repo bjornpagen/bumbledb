@@ -32,7 +32,7 @@ pub fn write_families() -> &'static [WriteFamily] {
             },
         },
         WriteFamily {
-            name: "cold_fk_walk",
+            name: "cold_containment_walk",
             kind: Kind::Report,
             protocol: Protocol::COLD,
         },

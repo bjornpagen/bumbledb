@@ -402,7 +402,7 @@ pub enum ValidationError {
     /// A query with no positive atoms is invalid — negated atoms alone
     /// bind nothing.
     NoPositiveAtoms,
-    /// Sum/Min/Max over a non-integer variable (CountDistinct is legal
+    /// Sum/Min/Max over a non-integer variable (`CountDistinct` is legal
     /// over every type — equality is all it needs).
     AggregateInputType {
         find: usize,

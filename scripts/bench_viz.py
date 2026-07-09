@@ -25,10 +25,10 @@ from matplotlib.ticker import FuncFormatter
 # ---------------------------------------------------------------- data
 
 READ_ORDER = [
-    "point", "string", "balance", "fk_walk", "skew",
+    "point", "string", "balance", "containment_walk", "skew",
     "range", "chain", "stats", "spread", "triangle",
 ]
-WRITE_ORDER = ["commit_single", "commit_batch", "cold_fk_walk", "bulk"]
+WRITE_ORDER = ["commit_single", "commit_batch", "cold_containment_walk", "bulk"]
 
 OURS, THEIRS, FG, DIM, GRID, BG = (
     "#f0b429", "#8b949e", "#e6edf3", "#9da7b3", "#2d333b", "#0d1117",
@@ -186,7 +186,7 @@ def chart_tails(reads, out):
     ], loc="lower right", facecolor=BG, edgecolor=GRID, labelcolor=FG, fontsize=9)
     ax.set_title("tail behavior · p50 → p95 → p99 per read family, both engines",
                  fontsize=12, loc="left", pad=14, family="monospace")
-    fig.text(0.01, 0.005, "bimodal families (fk_walk, balance, skew, chain) show their true tails — gated on p95, published anyway",
+    fig.text(0.01, 0.005, "bimodal families (containment_walk, balance, skew, chain) show their true tails — gated on p95, published anyway",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")

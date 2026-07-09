@@ -22,7 +22,7 @@ pub(super) fn write_families(
 ) -> Result<Vec<report::WriteFamilyReport>, String> {
     let mut out = Vec::new();
     let commit_selected = selected("commit_single") || selected("commit_batch");
-    let cold_selected = selected("cold_fk_walk");
+    let cold_selected = selected("cold_containment_walk");
 
     if commit_selected || cold_selected {
         eprintln!("bench: loading the scratch write corpus");
@@ -63,15 +63,15 @@ pub(super) fn write_families(
             });
         }
         if cold_selected {
-            eprintln!("bench: cold_fk_walk");
+            eprintln!("bench: cold_containment_walk");
             let ((ours, theirs), ghz) = clockproxy::stamped(|| {
                 Ok((
-                    writebench::cold_fk_walk(&db, cfg)?,
-                    sqlite_run::cold_fk_walk(&conn, cfg)?,
+                    writebench::cold_containment_walk(&db, cfg)?,
+                    sqlite_run::cold_containment_walk(&conn, cfg)?,
                 ))
             })?;
             out.push(report::WriteFamilyReport {
-                name: "cold_fk_walk".to_owned(),
+                name: "cold_containment_walk".to_owned(),
                 ours: ours.stats,
                 theirs: Some(theirs.stats),
                 facts_per_sec: None,

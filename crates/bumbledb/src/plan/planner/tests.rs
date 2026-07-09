@@ -120,7 +120,7 @@ fn order_cost(
                     unreachable!("keys() indexes Functionality statements")
                 };
                 let mut set = 0u128;
-                for field in projection.iter() {
+                for field in projection {
                     let (_, var) = occ(i).vars.iter().find(|(f, _)| f == field)?;
                     set |= 1 << var_index[var];
                 }

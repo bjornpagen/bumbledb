@@ -1,7 +1,7 @@
 //! Canonical per-type encodings and the fact codec (docs/architecture/10-data-model.md).
 //!
 //! The byte-level truth of the whole system: everything above stores, hashes,
-//! and compares exactly these bytes. Canonical means injective and unique
+//! and compares exactly these bytes. Canonical means injective
 //! (`docs/architecture/10-data-model.md`): one value, one byte string, so
 //! value equality is `fact_bytes` equality.
 
