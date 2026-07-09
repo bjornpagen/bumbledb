@@ -1,4 +1,4 @@
-//! The interning dictionary (docs/architecture/40-storage.md): one global dictionary for String and
+//! The interning dictionary (docs/architecture/50-storage.md): one global dictionary for String and
 //! Bytes, segregated by a type-tag byte inside the hashed key
 //! (`docs/architecture/10-data-model.md`).
 //!

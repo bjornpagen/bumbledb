@@ -5,11 +5,13 @@ LMDB, executing conjunctive queries with **Free Join** — and tuned, one
 measured PRD at a time, for Apple Silicon.
 
 There is no SQL and no interpreter in the hot path. You declare a schema with
-a macro, write plain structs, and run conjunctive queries (joins,
-comparisons, aggregates) that are planned once and executed over columnar
-in-memory images with a lazy trie join. Results are sets. Everything the
-engine claims about performance is a pinned, reproducible measurement with a
-differential oracle standing behind it.
+a macro, write plain structs, and run conjunctive queries (joins, negation,
+interval membership, comparisons, aggregates) that are planned once and
+executed over columnar in-memory images with a lazy trie join. Results are
+sets. Invariants are dependency statements — functional and inclusion
+dependencies, judged at commit against the final state. Everything the
+engine claims about performance is a pinned, reproducible measurement with
+two differential oracles standing behind it.
 
 ```rust
 bumbledb::schema! {
@@ -57,13 +59,14 @@ type discipline is enforced by rustc, not by runtime checks.
 
 ## The numbers
 
-Same corpus, same queries, results verified identical against SQLite by a
-2,468-case differential oracle before any timing is believed:
+Same corpus, same queries, results verified identical against SQLite — and
+every write judged identically by an independent naive model — across a
+2,585-case differential oracle before any timing is believed:
 
 ![read families vs SQLite](assets/bench-vs-sqlite.svg)
 
-The same data as multiples — the ledger's ten read families, point lookups
-through the triangle join:
+The same data as multiples — the ledger's fifteen read families, point
+lookups through negation, interval probes, and the triangle join:
 
 ![speedup over SQLite](assets/bench-speedup.svg)
 
@@ -133,30 +136,29 @@ broken until they agree.
 
 | doc | what it owns |
 |---|---|
-| [00 — Product](docs/architecture/00-product.md) | what bumbledb is and refuses to be; the unsafe policy; the simplicity doctrine |
-| [10 — Data Model](docs/architecture/10-data-model.md) | typed relations, set semantics, serials, interning, constraints |
-| [20 — Query IR](docs/architecture/20-query-ir.md) | conjunctive queries as data: atoms, predicates, finds, aggregates |
-| [30 — Execution](docs/architecture/30-execution.md) | Free Join, COLT, batching, the probe laws, the Apple Silicon model |
-| [40 — Storage](docs/architecture/40-storage.md) | LMDB layout, generations, commit-time constraint checking |
-| [50 — Validation](docs/architecture/50-validation.md) | the differential oracle, the bench ledger, measurement discipline |
-| [60 — Embedding API](docs/architecture/60-api.md) | the `schema!` macro, `Db`, transactions, prepared queries |
+| [00 — Product](docs/architecture/00-product.md) | what bumbledb is and refuses to be; the deleted vocabulary; the unsafe policy |
+| [10 — Data Model](docs/architecture/10-data-model.md) | the seven structural types, the interval denotation, set semantics, identity |
+| [20 — Query IR](docs/architecture/20-query-ir.md) | queries as data: atoms, negation, membership, param sets, aggregates |
+| [30 — Dependencies](docs/architecture/30-dependencies.md) | the two judgments, statements, pointwise lifting, the acceptance gate |
+| [40 — Execution](docs/architecture/40-execution.md) | Free Join, COLT, anti-probes, batching, the Apple Silicon model |
+| [50 — Storage](docs/architecture/50-storage.md) | LMDB layout, guards as judgment accelerators, the delta write path |
+| [60 — Validation](docs/architecture/60-validation.md) | the two oracles, the bench ledger, measurement discipline |
+| [70 — Embedding API](docs/architecture/70-api.md) | the `schema!` grammar, `Db`, transactions, point reads, prepared queries |
 
 The algorithmic reference is Wang, Willsey & Suciu, *Free Join: Unifying
 Worst-Case Optimal and Traditional Joins* (arXiv:2301.10841), vendored in
 [`docs/free-join-paper/`](docs/free-join-paper/).
-
-These numbers describe an earlier engine and are unearned for the current
-architecture until its benchmark suite runs green
-(see [docs/architecture/README.md](docs/architecture/README.md)).
 
 ## Measurement discipline
 
 The part of this repo most worth stealing. Performance claims here are gated
 by machinery, not judgment:
 
-- **A differential oracle before every timing run**: 2,468 cases (family
-  queries plus randomized conjunctive queries) executed on both engines; the
-  bench binary refuses to time against an unverified build (per-binary
+- **Two differential oracles before every timing run**: 2,585 cases —
+  family queries and randomized queries against SQLite, plus a randomized
+  write stream whose every commit verdict (accept or abort, and the
+  violated statement) must match an independent brute-force naive model;
+  the bench binary refuses to time against an unverified build (per-binary
   stamps).
 - **A machine-wide measurement lock** (`scripts/measure.sh`) so two agents'
   runs never overlap, and **clock-proxy bracketing** around every timed block

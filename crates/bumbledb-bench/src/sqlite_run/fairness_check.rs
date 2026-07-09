@@ -34,7 +34,7 @@ impl FairnessCheck {
                 "fairness: synchronous is {synchronous}, not FULL (2)"
             ));
         }
-        // Durability parity (docs/architecture/50-validation.md): LMDB flushes to media on
+        // Durability parity (docs/architecture/60-validation.md): LMDB flushes to media on
         // every macOS commit; SQLite must too, or the write comparison
         // is a lie told at the same synchronous level.
         for pragma in ["fullfsync", "checkpoint_fullfsync"] {

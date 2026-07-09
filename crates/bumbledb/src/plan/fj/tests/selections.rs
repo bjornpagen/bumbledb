@@ -2,7 +2,7 @@ use super::*;
 use crate::ir::CmpOp;
 use std::collections::BTreeSet;
 
-/// The string shape (docs/architecture/30-execution.md): one occurrence, `memo = ?0`
+/// The string shape (docs/architecture/40-execution.md): one occurrence, `memo = ?0`
 /// lowered as a filter by normalize, split into a selection here.
 #[test]
 fn lowering_splits_eq_constants_into_selections() {

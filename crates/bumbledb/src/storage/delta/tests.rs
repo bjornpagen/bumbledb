@@ -66,7 +66,7 @@ fn insert_then_delete_of_absent_fact_nets_noop_and_reports_true_true() {
     assert!(delta.insert(&view, R, &f).expect("insert"));
     assert!(delta.delete(&view, R, &f).expect("delete"));
     // Net disposition is Delete for a fact not in base: apply's base
-    // check makes it a no-op (docs/architecture/40-storage.md).
+    // check makes it a no-op (docs/architecture/50-storage.md).
     assert_eq!(delta.disposition(R, &f), Some(Disposition::Delete));
 }
 

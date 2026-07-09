@@ -1,7 +1,7 @@
 use bumbledb::obs::{Category, TraceEvent};
 
 /// Renders the executor phase table from `Category::Phase` accumulator
-/// events (docs/architecture/50-validation.md): one row per (node, phase)
+/// events (docs/architecture/60-validation.md): one row per (node, phase)
 /// in node-major, phase-index order, with an `excl_us` column — the
 /// phase's time minus everything attributed one node deeper, meaningful
 /// for `descend` rows (per-row bookkeeping + leaf emits + the next

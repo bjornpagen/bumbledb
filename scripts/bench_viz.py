@@ -25,8 +25,10 @@ from matplotlib.ticker import FuncFormatter
 # ---------------------------------------------------------------- data
 
 READ_ORDER = [
-    "point", "string", "balance", "containment_walk", "skew",
-    "range", "chain", "stats", "spread", "triangle",
+    "point", "mandate_at_instant", "string", "entries_for_account_set",
+    "balance", "containment_walk", "postings_without_tag", "mandate_overlap",
+    "skew", "range", "chain", "stats", "latest_posting_per_account",
+    "spread", "triangle",
 ]
 WRITE_ORDER = ["commit_single", "commit_batch", "cold_containment_walk", "bulk"]
 

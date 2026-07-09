@@ -1,4 +1,4 @@
-//! The explicit-SIMD and unrolled-fold kernels (docs/architecture/30-execution.md;
+//! The explicit-SIMD and unrolled-fold kernels (docs/architecture/40-execution.md;
 //! sanctioned shapes amended by docs/perf/): fixed-width predicate scans,
 //! survivor compaction, and — PRD 03 — the fold/accumulate kernels behind
 //! the aggregate sink's batch path, all behind scalar-identical

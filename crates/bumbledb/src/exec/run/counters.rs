@@ -1,4 +1,4 @@
-//! The execution observability counters (docs/architecture/50-validation.md).
+//! The execution observability counters (docs/architecture/60-validation.md).
 
 use super::Counters;
 use super::NoopCounters;

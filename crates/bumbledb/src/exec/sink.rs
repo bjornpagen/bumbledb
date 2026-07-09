@@ -1,6 +1,6 @@
-//! The two consumers of bindings (docs/architecture/30-execution.md): set-projection with dedup and
+//! The two consumers of bindings (docs/architecture/40-execution.md): set-projection with dedup and
 //! the D2 subtree-skip signal, and aggregate folds with binding dedup
-//! (`docs/architecture/30-execution.md` D2/D3; semantics normative in
+//! (`docs/architecture/40-execution.md` D2/D3; semantics normative in
 //! `20-query-ir.md`).
 //!
 //! Aggregation never materializes the join: group maps live in sink state;
@@ -110,7 +110,7 @@ enum Acc {
     SumSigned(i128),
     SumUnsigned(u128),
     /// Min/Max compare column words — correct because words are
-    /// order-preserving (docs/architecture/30-execution.md).
+    /// order-preserving (docs/architecture/40-execution.md).
     Min(u64),
     Max(u64),
     Count(u64),
@@ -163,7 +163,7 @@ pub struct AggregateSink {
     /// Per group: the extreme key word so far. Encoded words compare
     /// correctly unsigned for both orderable key types — U64 words are
     /// the value, I64 words are the sign-flipped biased form, and both
-    /// encodings are order-preserving (docs/architecture/30-execution.md).
+    /// encodings are order-preserving (docs/architecture/40-execution.md).
     arg_best: Vec<u64>,
     /// Per group: the restricted set's projected rows (all Arg carries
     /// concatenated, in find order) — a word-set, because ties are

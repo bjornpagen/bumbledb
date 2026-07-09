@@ -1,5 +1,5 @@
 //! The build path: one sequential scan decodes every column of a relation
-//! into structure-of-arrays slabs (docs/architecture/30-execution.md D1,
+//! into structure-of-arrays slabs (docs/architecture/40-execution.md D1,
 //! `40-storage.md`; the per-fact decode kernel lives in `super::decode`).
 
 use std::sync::Arc;

@@ -116,7 +116,7 @@ impl PreparedQuery<'_> {
                     return Ok(()); // Eq-anchored dictionary miss: empty result
                 }
                 // Phase attribution engages only under an active obs
-                // capture (docs/architecture/50-validation.md): timing
+                // capture (docs/architecture/60-validation.md): timing
                 // runs — even obs builds — monomorphize NoopCounters and
                 // pay nothing.
                 macro_rules! run_join_with {

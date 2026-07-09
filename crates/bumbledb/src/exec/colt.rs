@@ -1,5 +1,5 @@
-//! COLT — the Column-Oriented Lazy Trie (docs/architecture/30-execution.md), per paper §4.2 with the
-//! chunked-child-list deviation (`docs/architecture/30-execution.md`).
+//! COLT — the Column-Oriented Lazy Trie (docs/architecture/40-execution.md), per paper §4.2 with the
+//! chunked-child-list deviation (`docs/architecture/40-execution.md`).
 //!
 //! Aliasing safety is representational: nodes, chunks, map slots, and key
 //! words live in index-addressed pools (`NodeRef`-style u32 indices, never
@@ -37,7 +37,7 @@ const CHUNK_LEN: usize = 64;
 /// (duplicate-inflated) and simultaneously the exact cost of iterating
 /// it unforced. Both are admissible iteration-cost bounds, so cover
 /// choice compares magnitudes first and uses the label only to break
-/// ties (docs/architecture/30-execution.md) — label-first preference is exactly the bug that
+/// ties (docs/architecture/40-execution.md) — label-first preference is exactly the bug that
 /// iterated a 500-key forced map instead of a 7-row view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyCount {
@@ -296,7 +296,7 @@ struct PoolMark {
 /// every capacity retained (the 30-execution doc's zero-alloc discipline).
 pub struct Colt {
     view: View,
-    /// Prepended selection levels (docs/architecture/30-execution.md): one trie
+    /// Prepended selection levels (docs/architecture/40-execution.md): one trie
     /// level per Eq-constant, probed once per execution with the resolved
     /// words. Everything below a successful probe is exactly the filtered
     /// subtrie a view scan used to produce — built lazily, only for keys
@@ -328,7 +328,7 @@ pub struct Colt {
     /// Interleaved bucket rows for every forced map, range per map.
     buckets: Vec<u64>,
     /// The dense occupied-slot lists, one contiguous range per map
-    /// (docs/architecture/30-execution.md). A rehash abandons its old range at the slab's
+    /// (docs/architecture/40-execution.md). A rehash abandons its old range at the slab's
     /// interior — reclaimed by [`Colt::reset`], a documented ≤2× slab
     /// transient within a generation.
     dense: Vec<u32>,

@@ -1,6 +1,6 @@
 use super::*;
 
-/// Dense iteration (docs/architecture/30-execution.md): draining a forced map costs
+/// Dense iteration (docs/architecture/40-execution.md): draining a forced map costs
 /// O(keys) batches, never O(capacity), and capacity follows the
 /// documented sizing formula exactly.
 #[test]

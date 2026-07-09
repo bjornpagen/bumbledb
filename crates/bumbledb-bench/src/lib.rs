@@ -1,5 +1,5 @@
 //! The benchmark and oracle suite for bumbledb
-//! (design authority: `docs/architecture/50-validation.md`;
+//! (design authority: `docs/architecture/60-validation.md`;
 //! the PRD process that built it is retired — git history has it).
 //!
 //! Library-first: every capability is a `pub` function here; the binary is

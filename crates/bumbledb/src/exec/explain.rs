@@ -1,6 +1,6 @@
-//! EXPLAIN (docs/architecture/30-execution.md): the debugging surface — an instrumented execution of
+//! EXPLAIN (docs/architecture/40-execution.md): the debugging surface — an instrumented execution of
 //! the same plan through the `Counters` seam, never a runtime mode
-//! (`docs/architecture/30-execution.md`, observability).
+//! (`docs/architecture/40-execution.md`, observability).
 //!
 //! The normal path instantiates `NoopCounters` (zero-sized, compiled to
 //! nothing); the EXPLAIN entry point instantiates [`CountingCounters`] and
@@ -51,7 +51,7 @@ pub struct CountingCounters {
 /// the hot loops.
 #[derive(Debug)]
 pub enum Report<'p> {
-    /// The query classified as a point lookup (docs/architecture/30-execution.md).
+    /// The query classified as a point lookup (docs/architecture/40-execution.md).
     GuardProbe { plan: &'p GuardPlan },
     /// The Free Join engine, with its counted execution.
     FreeJoin {

@@ -1,4 +1,4 @@
-//! Structured per-execution statistics (docs/architecture/50-validation.md): the data
+//! Structured per-execution statistics (docs/architecture/60-validation.md): the data
 //! behind EXPLAIN, as plain structs — estimates vs actuals, cover
 //! choices, probe hit rates, batching, skips — for tooling that wants
 //! numbers, not a rendered string. Obtained via `Snapshot::profile`

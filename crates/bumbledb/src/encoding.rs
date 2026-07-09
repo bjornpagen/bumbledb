@@ -64,7 +64,7 @@ impl TypeDesc {
 /// A decoded field value at the encoding layer.
 ///
 /// `String`/`Bytes` carry intern ids here; resolving an id to raw bytes is
-/// the dictionary's job (docs/architecture/40-storage.md). Every variant is a fixed-width scalar, so
+/// the dictionary's job (docs/architecture/50-storage.md). Every variant is a fixed-width scalar, so
 /// the type is `Copy` and carries no borrow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ValueRef {

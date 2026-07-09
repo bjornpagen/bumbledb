@@ -1,4 +1,4 @@
-//! Command orchestration (docs/architecture/50-validation.md): the digest-keyed corpus
+//! Command orchestration (docs/architecture/60-validation.md): the digest-keyed corpus
 //! cache, verify-before-time enforcement, and the bench run that turns
 //! measurements into PRD 18 artifacts. Every failure message names the
 //! next action.

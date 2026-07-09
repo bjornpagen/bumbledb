@@ -1,5 +1,5 @@
 //! The read/build path: return the reader's image, building outside the
-//! lock on a miss (docs/architecture/40-storage.md).
+//! lock on a miss (docs/architecture/50-storage.md).
 
 use std::sync::Arc;
 

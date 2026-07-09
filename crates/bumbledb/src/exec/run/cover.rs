@@ -1,8 +1,8 @@
-//! The magnitude-first cover rule (docs/architecture/30-execution.md).
+//! The magnitude-first cover rule (docs/architecture/40-execution.md).
 
 use super::KeyCount;
 
-/// The magnitude-first cover rule (docs/architecture/30-execution.md): iterating a cover
+/// The magnitude-first cover rule (docs/architecture/40-execution.md): iterating a cover
 /// costs O(its keys) plus a probe into every other subatom per key, and
 /// both labels are admissible bounds on that cost — an `Estimate`
 /// (unforced position count) is exact iteration cost pre-force and an

@@ -1,5 +1,5 @@
 //! The workspace error taxonomy (the 40-storage doc; categories per
-//! `docs/architecture/60-api.md`).
+//! `docs/architecture/70-api.md`).
 //!
 //! Everything reachable from user input or disk returns these typed errors;
 //! panics are reserved for programmer-invariant violations. Payloads carry
@@ -14,7 +14,7 @@ use crate::schema::fingerprint::SchemaFingerprint;
 use crate::schema::{FieldId, RelationId, StatementId, ValueType};
 
 /// Corruption detected while decoding stored bytes — a hard error, never a
-/// skip, never a default (`docs/architecture/40-storage.md`).
+/// skip, never a default (`docs/architecture/50-storage.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CorruptionError {
     /// A Bool byte other than `0x00`/`0x01` — there is no distinct "true".
@@ -233,7 +233,7 @@ pub enum SchemaError {
 
 /// A mis-shaped dynamic fact on the untyped write surface
 /// (`insert_dyn`/`delete_dyn`/`bulk_load`): ETL input is data, so shape
-/// problems are typed errors, not panics (`docs/architecture/60-api.md`).
+/// problems are typed errors, not panics (`docs/architecture/70-api.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FactShapeError {
     /// The relation id is outside the schema — ETL input is data, so an
@@ -458,7 +458,7 @@ pub enum Direction {
 }
 
 /// The one workspace error type, categorized per
-/// `docs/architecture/60-api.md`.
+/// `docs/architecture/70-api.md`.
 #[derive(Debug)]
 pub enum Error {
     // --- Open errors ---

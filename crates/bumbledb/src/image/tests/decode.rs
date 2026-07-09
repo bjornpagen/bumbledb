@@ -8,7 +8,7 @@ use crate::storage::read;
 use crate::testutil::TempDir;
 
 /// Build-time distinct counts are exact per column type
-/// (docs/architecture/30-execution.md): serial ids all-distinct, bools 2, enums 3, and a
+/// (docs/architecture/40-execution.md): serial ids all-distinct, bools 2, enums 3, and a
 /// skewed i64 column counted through the word set.
 #[test]
 fn distinct_counts_are_exact() {

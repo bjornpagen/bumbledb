@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::storage::env::ReadTxn;
 
 /// Drains the sink into the result buffer, decoding words by result type
-/// (each distinct intern resolved once, docs/architecture/30-execution.md).
+/// (each distinct intern resolved once, docs/architecture/40-execution.md).
 ///
 /// Sink rows are **word rows** (the `SlotWidth` layout): each find
 /// contributes its width — an interval find spans two words that

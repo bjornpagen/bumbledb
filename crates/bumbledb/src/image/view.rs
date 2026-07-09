@@ -1,6 +1,6 @@
-//! Filtered views (docs/architecture/30-execution.md): per-atom filter evaluation producing
+//! Filtered views (docs/architecture/40-execution.md): per-atom filter evaluation producing
 //! survivor-position vectors over images. Views are query-local and never
-//! cached (`docs/architecture/40-storage.md`); COLT roots iterate the view,
+//! cached (`docs/architecture/50-storage.md`); COLT roots iterate the view,
 //! and view positions index the image.
 
 use std::sync::Arc;

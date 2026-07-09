@@ -1,5 +1,5 @@
 //! LMDB environment lifecycle, `_meta` contents, and transaction wrappers
-//! (docs/architecture/40-storage.md). Authority: `docs/architecture/40-storage.md`, `60-api.md`.
+//! (docs/architecture/50-storage.md). Authority: `docs/architecture/50-storage.md`, `60-api.md`.
 
 use std::sync::atomic::AtomicU64;
 

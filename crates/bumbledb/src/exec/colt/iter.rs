@@ -173,7 +173,7 @@ impl Colt {
         let arity = self.arity_at(level);
         debug_assert_eq!(arity, m.arity);
         // Walk the dense occupied list — O(keys), never O(capacity)
-        // (docs/architecture/30-execution.md). The token is a tagged
+        // (docs/architecture/40-execution.md). The token is a tagged
         // dense index: an untagged nonzero token was minted by positions
         // iteration before this node was forced — reinterpreting it as a
         // dense index would silently omit entries (the audit's

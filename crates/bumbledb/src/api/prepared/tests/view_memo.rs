@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// The view-memo LRU (docs/architecture/30-execution.md): four rotating residual bindings
+/// The view-memo LRU (docs/architecture/40-execution.md): four rotating residual bindings
 /// all memoize; a fifth evicts exactly the least recently used.
 #[test]
 fn residual_bindings_memoize_under_lru() {

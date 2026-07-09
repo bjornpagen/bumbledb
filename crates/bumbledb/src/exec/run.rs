@@ -1,7 +1,7 @@
 //! The pipelined Free Join executor (the architecture docs; docs/perf/
 //! PRDs 01–10) — vectorized execution is the default and only path;
 //! batch size 1 is merely its degenerate setting, never a mode
-//! (`docs/architecture/30-execution.md` D4, post-mortem §31).
+//! (`docs/architecture/40-execution.md` D4, post-mortem §31).
 //!
 //! Everything is a monomorphized generic — no `dyn` anywhere in the hot
 //! path. Middle nodes pump: pending binding rows + carried cursor sets
@@ -147,7 +147,7 @@ pub trait Sink {
 }
 
 /// One executor phase, for per-(node, phase) time attribution
-/// (docs/architecture/50-validation.md): the five sequential segments of
+/// (docs/architecture/60-validation.md): the five sequential segments of
 /// a node entry's batch loop. `Descend` wraps the per-survivor recursion
 /// loop, so its exclusive time (total minus the next node's phases) is
 /// the per-row bookkeeping — binds, journal restores, and leaf emits.
@@ -172,7 +172,7 @@ pub enum JoinPhase {
 
 /// Execution observability seam (30-execution): the normal path
 /// instantiates [`NoopCounters`] — zero-sized, compiled to nothing; the
-/// EXPLAIN entry point (docs/architecture/30-execution.md) instantiates the counting variant.
+/// EXPLAIN entry point (docs/architecture/40-execution.md) instantiates the counting variant.
 pub trait Counters {
     fn node_entry(&mut self, node: usize);
     /// One cover batch was drawn (`len` entries) — EXPLAIN's "batching
@@ -213,7 +213,7 @@ pub trait Counters {
 #[cfg(feature = "trace")]
 pub const PHASE_NODE_CAP: usize = 8;
 
-/// The trace-mode phase accumulator (docs/architecture/50-validation.md):
+/// The trace-mode phase accumulator (docs/architecture/60-validation.md):
 /// per (node, phase) tick totals via the obs fast clock, flushed as
 /// `Category::Phase` point events at capture end. Never in a timing
 /// path — the prepared-query execute path selects it only under an

@@ -1,6 +1,6 @@
 use super::*;
 
-/// The differential pin for the selection cutover (docs/architecture/30-execution.md):
+/// The differential pin for the selection cutover (docs/architecture/40-execution.md):
 /// rotating Eq params across many executions, every result compared
 /// against a nested-loop filter over the inserted rows.
 #[test]
@@ -58,7 +58,7 @@ fn selection_params_rotate_differentially() {
     assert!(out.is_empty());
 }
 
-/// Counters pin (docs/architecture/30-execution.md): a selection's work is O(selected),
+/// Counters pin (docs/architecture/40-execution.md): a selection's work is O(selected),
 /// never O(relation).
 #[test]
 fn selection_work_is_o_selected() {
@@ -92,7 +92,7 @@ fn selection_work_is_o_selected() {
     assert_eq!(drawn, 4, "work is O(selected), not O(relation): {stats:?}");
 }
 
-/// The scan is dead (docs/architecture/30-execution.md): rotating Eq params build the view
+/// The scan is dead (docs/architecture/40-execution.md): rotating Eq params build the view
 /// once per generation; every later execution memo-hits and probes.
 #[cfg(feature = "trace")]
 #[test]

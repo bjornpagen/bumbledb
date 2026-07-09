@@ -119,7 +119,7 @@ fn rows_of(buffer: &ResultBuffer) -> Vec<(String, i64)> {
 }
 
 /// Q(amount) :- Posting(memo = ?0, amount) — the selection shape
-/// (docs/architecture/30-execution.md): a param-Eq on a field outside
+/// (docs/architecture/40-execution.md): a param-Eq on a field outside
 /// every key.
 fn by_memo_query() -> Query {
     Query {

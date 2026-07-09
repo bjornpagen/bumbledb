@@ -26,7 +26,7 @@ impl CountingCounters {
     }
 
     /// `(batches drawn, entries yielded)` for one node — the "batching
-    /// engaged" observable (docs/architecture/50-validation.md).
+    /// engaged" observable (docs/architecture/60-validation.md).
     #[cfg(test)]
     #[must_use]
     pub fn batches(&self, node: usize) -> (u64, u64) {

@@ -1,4 +1,4 @@
-//! The non-building cache probe (docs/architecture/30-execution.md:
+//! The non-building cache probe (docs/architecture/40-execution.md:
 //! prepare-time statistics peek).
 
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use super::ImageCache;
 
 impl ImageCache {
     /// The resident image for `(rel, current generation)` — **never
-    /// builds** (docs/architecture/30-execution.md: prepare-time statistics peek; a cold
+    /// builds** (docs/architecture/40-execution.md: prepare-time statistics peek; a cold
     /// cache falls back to schema-derived bounds and floors).
     ///
     /// # Errors

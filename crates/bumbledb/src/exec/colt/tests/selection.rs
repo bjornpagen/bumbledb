@@ -1,6 +1,6 @@
 use super::*;
 
-/// Selection levels (docs/architecture/30-execution.md): probing lands exactly on the
+/// Selection levels (docs/architecture/40-execution.md): probing lands exactly on the
 /// filtered subtrie a view scan used to produce.
 #[test]
 fn selection_levels_probe_to_the_filtered_subtrie() {

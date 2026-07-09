@@ -287,7 +287,7 @@ impl Executor {
         self.cursors.clear();
         // Each occurrence starts below its selection levels — the root
         // when it has none, the post-`select` cursor otherwise
-        // (docs/architecture/30-execution.md).
+        // (docs/architecture/40-execution.md).
         self.cursors
             .extend(colts.iter().map(|colt| (colt.start(), 0usize)));
         // The one executor (docs/perf/ PRD 09/10): multi-node plans

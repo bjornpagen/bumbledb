@@ -1,4 +1,4 @@
-//! Kill-during-commit crash injection (docs/architecture/50-validation.md):
+//! Kill-during-commit crash injection (docs/architecture/60-validation.md):
 //! a child process commits a known delta sequence in a loop, the parent
 //! SIGKILLs it mid-flight, and the reopened database must be *some*
 //! consistent committed state — LMDB atomicity exercised, not trusted.

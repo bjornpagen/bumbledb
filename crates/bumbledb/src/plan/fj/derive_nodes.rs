@@ -28,7 +28,7 @@ pub(super) fn derive_nodes(plan: &FjPlan) -> Result<Vec<PlanNode>, PlanError> {
             .collect();
         // A cover must contain all of the node's new vars AND nothing else
         // (Deviation from the paper's Definition, recorded in
-        // docs/architecture/30-execution.md): a subatom that also carries an
+        // docs/architecture/40-execution.md): a subatom that also carries an
         // already-bound variable is iterable per the paper, but iterating it
         // would *rebind* the bound variable without re-checking the
         // occurrence that bound it — wrong results under dynamic cover

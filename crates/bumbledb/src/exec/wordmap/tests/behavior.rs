@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::*;
 
-/// The dense rule (docs/architecture/30-execution.md, extended to sink maps): after a hot
+/// The dense rule (docs/architecture/40-execution.md, extended to sink maps): after a hot
 /// execution inflates capacity, iteration and clearing stay O(len) —
 /// pinned structurally by insertion-order iteration over a
 /// high-water map.

@@ -7,7 +7,7 @@ use super::{WordMap, WINDOW};
 impl<V: Copy> WordMap<V> {
     pub(super) fn grow(&mut self) {
         let new_capacity = (self.capacity() * 2).max(WINDOW);
-        // Rehash visibility (docs/architecture/50-validation.md): sink-map
+        // Rehash visibility (docs/architecture/60-validation.md): sink-map
         // growth inside a measured execution is exactly the presizing
         // opportunity the trace should surface.
         crate::obs::event(

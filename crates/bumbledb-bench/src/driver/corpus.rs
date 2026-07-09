@@ -71,7 +71,7 @@ pub fn ensure_corpus(dir: &Path, cfg: GenConfig) -> Result<CorpusPaths, String> 
             paths.root.display()
         );
         // Load into a scratch sibling, then compact into place
-        // (docs/architecture/40-storage.md): a bulk load is exactly the CoW-churn-heavy
+        // (docs/architecture/50-storage.md): a bulk load is exactly the CoW-churn-heavy
         // case — ~40% of the loaded file is freelist — and the cached
         // corpus is write-once, so it ships live-sized.
         let load_dir = paths.root.join("db-load");

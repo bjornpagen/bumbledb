@@ -1,4 +1,4 @@
-//! The scenario suites (docs/architecture/50-validation.md, extended):
+//! The scenario suites (docs/architecture/60-validation.md, extended):
 //! additional schema+corpus+query worlds beyond the ledger, each
 //! stressing a different regime — join-order pressure, graph fan-out,
 //! OLAP rollups, point-lookup overhead. Every scenario runs under the

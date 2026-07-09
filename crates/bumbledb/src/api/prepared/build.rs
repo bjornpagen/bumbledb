@@ -53,7 +53,7 @@ pub(crate) fn prepare<'s>(
     let exec_plan = if let Some(guard) = classified {
         ExecPlan::GuardProbe(guard)
     } else {
-        // Per-occurrence input estimates (docs/architecture/30-execution.md): row counters
+        // Per-occurrence input estimates (docs/architecture/40-execution.md): row counters
         // shaped by the selectivity ladder — key-exact counts,
         // resident-image distinct counts (peek only: prepare never
         // builds an image for statistics), documented bounds and floors.

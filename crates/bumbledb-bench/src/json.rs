@@ -1,4 +1,4 @@
-//! Tiny hand-rolled JSON helpers (docs/architecture/50-validation.md; the
+//! Tiny hand-rolled JSON helpers (docs/architecture/60-validation.md; the
 //! dependency quarantine forbids serde). Shared by the trace writer and
 //! the report's JSON renderer — one escaping rule, one number format —
 //! plus a minimal parser for reading our own `report.json` back (the

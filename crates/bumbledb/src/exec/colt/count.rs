@@ -17,7 +17,7 @@ impl Colt {
     }
 
     /// A forced node's map capacity (`None` when unforced) — the test
-    /// observability for the sizing formula (docs/architecture/30-execution.md).
+    /// observability for the sizing formula (docs/architecture/40-execution.md).
     #[cfg(test)]
     #[must_use]
     pub fn forced_capacity(&self, cursor: Cursor) -> Option<usize> {

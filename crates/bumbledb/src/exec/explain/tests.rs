@@ -297,7 +297,7 @@ fn noop_counters_are_zero_sized_and_the_normal_path_carries_no_state() {
     assert_eq!(std::mem::size_of::<NoopCounters>(), 0);
 }
 
-/// "Batching engaged" (docs/architecture/50-validation.md): at batch
+/// "Batching engaged" (docs/architecture/60-validation.md): at batch
 /// size 64 over hundreds of root tuples, the cover draws batches, not
 /// per-tuple iterations — the counted execution proves the vectorized
 /// path is live, not silently degenerate.

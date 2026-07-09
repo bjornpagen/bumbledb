@@ -71,7 +71,7 @@ impl Snapshot<'_> {
         prepared.execute_collect_args(&self.txn, self.cache, args)
     }
 
-    /// EXPLAIN ANALYZE (docs/architecture/30-execution.md): executes with counting instrumentation
+    /// EXPLAIN ANALYZE (docs/architecture/40-execution.md): executes with counting instrumentation
     /// and returns the rows alongside the rendered report.
     ///
     /// # Errors

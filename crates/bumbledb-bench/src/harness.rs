@@ -1,4 +1,4 @@
-//! The measurement engine (docs/architecture/50-validation.md): warmup → measured
+//! The measurement engine (docs/architecture/60-validation.md): warmup → measured
 //! samples → exact percentiles, with optional allocation windows and a
 //! precisely defined cold protocol. Everything the report prints comes
 //! from here — the harness owns time, never queries (runners pass
@@ -21,7 +21,7 @@ pub use stats::{normalized_p50, stats};
 pub use traced::{traced_cold_sample, traced_sample};
 
 /// The warmup/measure protocol. Warm reads use [`Protocol::WARM`]; writes
-/// and cold runs use fewer (docs/architecture/50-validation.md, [`Protocol::COLD`]).
+/// and cold runs use fewer (docs/architecture/60-validation.md, [`Protocol::COLD`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Protocol {
     pub warmups: u32,

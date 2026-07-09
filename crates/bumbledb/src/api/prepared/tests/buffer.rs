@@ -103,7 +103,7 @@ fn buffer_reuse_retains_capacity_and_results_stay_identical() {
 }
 
 /// Finalize resolves each distinct intern once per finalize and
-/// stores its bytes once per buffer (docs/architecture/30-execution.md).
+/// stores its bytes once per buffer (docs/architecture/40-execution.md).
 #[cfg(feature = "trace")]
 #[test]
 fn finalize_resolves_each_distinct_intern_once() {

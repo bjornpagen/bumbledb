@@ -38,7 +38,7 @@ impl WriteTx<'_> {
     /// delta ([`InternMode::Mint`]) or resolving without minting
     /// ([`InternMode::Resolve`] — `Ok(false)` = a value was never
     /// interned; the fact cannot exist). Shape problems are typed errors
-    /// — ETL input is data (`docs/architecture/60-api.md`).
+    /// — ETL input is data (`docs/architecture/70-api.md`).
     pub(super) fn encode_dyn(
         &mut self,
         rel: RelationId,

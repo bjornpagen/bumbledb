@@ -1,4 +1,4 @@
-//! The embedding surface (the 60-api doc, `docs/architecture/60-api.md`): [`Db`],
+//! The embedding surface (the 60-api doc, `docs/architecture/70-api.md`): [`Db`],
 //! the read/write transaction closures, the typed write path, and export.
 //!
 //! Threading doctrine (`00-product.md`): the engine owns zero threads. The

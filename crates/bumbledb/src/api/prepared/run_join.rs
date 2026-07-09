@@ -29,7 +29,7 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
     memo.tick += 1;
     // Lowering routes every positive occurrence's Eq-constant into
     // selections; a leak here would silently resurrect the per-param
-    // view scan (docs/architecture/30-execution.md). Negated occurrences
+    // view scan (docs/architecture/40-execution.md). Negated occurrences
     // are exempt: their Eq-constants ARE view filters — the ordinary
     // filtered view their anti-probes run against, memoized per
     // (generation, resolved filters) like any occurrence
@@ -84,7 +84,7 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
         memo.filters[occ_idx].clone_from(&resolved_filters[occ_idx]);
     }
     views_span.end();
-    // Selection probes (docs/architecture/30-execution.md): each occurrence's Eq constants
+    // Selection probes (docs/architecture/40-execution.md): each occurrence's Eq constants
     // resolve to trie keys probed once per execution — set-bound levels
     // probe once per element and union survivors inside `select` — and a
     // miss means no fact matches, so the whole conjunctive query is

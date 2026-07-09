@@ -1,4 +1,4 @@
-//! The counting allocator (docs/architecture/30-execution.md allocation
+//! The counting allocator (docs/architecture/40-execution.md allocation
 //! contract, 00-product.md success criterion 3): test-support machinery
 //! for the zero-warm-allocation gate and the benchmark's memory
 //! observability.

@@ -1,4 +1,4 @@
-//! Prepared queries, parameters, and results (docs/architecture/30-execution.md) — the reusable
+//! Prepared queries, parameters, and results (docs/architecture/40-execution.md) — the reusable
 //! execution object the allocation contract is written against
 //! (`docs/architecture/20-query-ir.md`, `30-execution.md`, `60-api.md`).
 //!
@@ -90,7 +90,7 @@ pub struct ResultBuffer {
     bytes: Vec<u8>,
 }
 
-/// The per-finalize intern-resolution memo (docs/architecture/30-execution.md): each
+/// The per-finalize intern-resolution memo (docs/architecture/40-execution.md): each
 /// distinct `(intern word, dictionary tag)` pair is resolved through
 /// LMDB exactly once per finalize, and its bytes land in the output
 /// buffer exactly once — K rows sharing one memo string cost one B-tree
@@ -166,7 +166,7 @@ pub struct PreparedQuery<'s> {
     /// one word for a scalar constant, the encoded pair for an interval
     /// constant, k sorted deduplicated words for a set. Reused in place.
     resolved_selections: Vec<Vec<Vec<u64>>>,
-    /// The view memo (docs/architecture/30-execution.md): per occurrence, the active binding
+    /// The view memo (docs/architecture/40-execution.md): per occurrence, the active binding
     /// (whose COLT the executor consumes) plus parked bindings under LRU.
     memo: ViewMemo,
     /// The sink, reset per execution with capacities retained.
@@ -181,7 +181,7 @@ pub struct PreparedQuery<'s> {
     /// plans whose finds are all plain variables; aggregate-find guards
     /// keep the sink path.
     guard_finds: Option<Vec<(crate::schema::FieldId, ValueType)>>,
-    /// The per-finalize intern-resolution memo (docs/architecture/30-execution.md).
+    /// The per-finalize intern-resolution memo (docs/architecture/40-execution.md).
     resolve_memo: ResolveMemo,
     /// Guard-key byte scratch.
     guard_key: Vec<u8>,
@@ -193,7 +193,7 @@ pub struct PreparedQuery<'s> {
 /// occurrence memoizes: the active one plus [`PARKED_SLOTS`] parked.
 /// Four covers the bench rotation and the handful of bindings real
 /// workloads repeat; memory is bounded by four COLT high-waters per
-/// occurrence per prepared query — the explicit trade (docs/architecture/30-execution.md).
+/// occurrence per prepared query — the explicit trade (docs/architecture/40-execution.md).
 const MEMO_SLOTS: usize = 4;
 const PARKED_SLOTS: usize = MEMO_SLOTS - 1;
 
@@ -209,12 +209,12 @@ struct ParkedView {
     last_used: u64,
 }
 
-/// The per-occurrence view memo (docs/architecture/30-execution.md): generational
+/// The per-occurrence view memo (docs/architecture/40-execution.md): generational
 /// immutability makes a memoized view provably valid for its whole
 /// generation, so repeated residual bindings (range windows, Ne
 /// constants) skip the rebuild scan entirely. Occurrences whose only
 /// predicates are selections never park — their single binding hits on
-/// generation alone (docs/architecture/30-execution.md).
+/// generation alone (docs/architecture/40-execution.md).
 struct ViewMemo {
     /// The executor-facing COLTs: each occurrence's *active* binding
     /// (over [`View::Unbound`] until the first execution — prepare pins

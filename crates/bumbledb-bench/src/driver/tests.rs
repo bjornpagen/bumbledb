@@ -118,7 +118,7 @@ fn the_full_sequence_runs_at_s() {
     assert!(paths.db.join("data.mdb").exists(), "compacted store");
     assert!(
         !paths.root.join("db-load").exists(),
-        "no load-scratch residue (docs/architecture/40-storage.md)"
+        "no load-scratch residue (docs/architecture/50-storage.md)"
     );
     assert_eq!(cmd_verify(&corpus, 25).expect("verify"), 0);
 

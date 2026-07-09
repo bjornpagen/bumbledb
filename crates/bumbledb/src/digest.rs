@@ -1,5 +1,5 @@
 //! A stable streaming blake3 wrapper (reader: the bench crate's corpus
-//! identity — `docs/architecture/50-validation.md`). The dependency
+//! identity — `docs/architecture/60-validation.md`). The dependency
 //! quarantine keeps `blake3` out of `bumbledb-bench`; this thin surface
 //! lends the hash without leaking the dependency's types.
 

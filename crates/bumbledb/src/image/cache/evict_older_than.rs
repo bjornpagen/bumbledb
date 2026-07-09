@@ -1,5 +1,5 @@
 //! Retain-newest eviction, run by the write path after each state-changing
-//! commit (docs/architecture/40-storage.md).
+//! commit (docs/architecture/50-storage.md).
 
 use super::ImageCache;
 

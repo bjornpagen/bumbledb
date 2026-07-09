@@ -36,7 +36,7 @@ impl ResultBuffer {
     }
 
     /// The byte heap's length — memory observability (each distinct
-    /// String/Bytes value is stored once per buffer, docs/architecture/30-execution.md).
+    /// String/Bytes value is stored once per buffer, docs/architecture/40-execution.md).
     #[must_use]
     pub fn byte_len(&self) -> usize {
         self.bytes.len()

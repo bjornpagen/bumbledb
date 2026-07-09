@@ -12,7 +12,7 @@ use super::finalize::finalize;
 use super::run_join::run_join;
 
 impl PreparedQuery<'_> {
-    /// EXPLAIN (docs/architecture/30-execution.md): executes the query with counting instrumentation
+    /// EXPLAIN (docs/architecture/40-execution.md): executes the query with counting instrumentation
     /// (ANALYZE semantics) and returns the rows alongside the rendered
     /// report.
     ///

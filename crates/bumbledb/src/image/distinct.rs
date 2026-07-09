@@ -5,7 +5,7 @@
 use super::{ColumnView, RelationImage};
 
 impl RelationImage {
-    /// The exact distinct-value count of one column (docs/architecture/30-execution.md):
+    /// The exact distinct-value count of one column (docs/architecture/40-execution.md):
     /// word columns counted through a scratch hash set, byte columns
     /// through a 256-slot table. Intern ids are injective, so a
     /// String/Bytes column's word distincts are its value distincts.

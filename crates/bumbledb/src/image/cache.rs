@@ -1,9 +1,9 @@
-//! The environment image cache (docs/architecture/40-storage.md) — the mechanism whose absence was
+//! The environment image cache (docs/architecture/50-storage.md) — the mechanism whose absence was
 //! v5's quietest failure (post-mortem §26).
 //!
 //! Keyed by `(relation, generation)` where generation is the reader's
 //! *snapshot-sourced* storage tx id — never an in-process counter
-//! (`docs/architecture/40-storage.md`'s race-closing rule). Retain-newest
+//! (`docs/architecture/50-storage.md`'s race-closing rule). Retain-newest
 //! eviction runs at each state-changing commit; readers pinned at older
 //! generations keep their `Arc`s alive until their transactions end. There
 //! is no memory-pressure eviction, ever — the scale axiom.

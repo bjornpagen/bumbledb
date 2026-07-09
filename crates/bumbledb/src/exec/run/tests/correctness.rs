@@ -251,7 +251,7 @@ fn residuals_filter_across_atoms() {
     assert_eq!(results.len(), 5); // i in 0..=4: i < 9-i
 }
 
-/// The randomized differential family (docs/architecture/50-validation.md):
+/// The randomized differential family (docs/architecture/60-validation.md):
 /// random instances and join orders over three query shapes, the whole
 /// production lowering (binary2fj + factor + validate), compared against
 /// a brute-force nested-loop oracle at batch sizes {1, 7, 128}. This is

@@ -1,4 +1,4 @@
-//! An open-addressed map over inline u64 word tuples (docs/architecture/30-execution.md): the sink
+//! An open-addressed map over inline u64 word tuples (docs/architecture/40-execution.md): the sink
 //! machinery's seen-sets and group maps. Rebuilt by docs/perf/ PRD 06 as
 //! a tag-byte-controlled single-probe-line map: a control byte per slot
 //! (0 = empty, else `0x80 | top-7-hash-bits`) means a probe step
@@ -53,7 +53,7 @@ pub struct WordMap<V> {
     keys: Vec<u64>,
     /// One value per slot, initialized exactly when its ctrl byte is set.
     values: Vec<MaybeUninit<V>>,
-    /// Occupied slot indices in insertion order — docs/architecture/30-execution.md dense
+    /// Occupied slot indices in insertion order — docs/architecture/40-execution.md dense
     /// rule, extended to the sink maps: iteration *and clearing* walk
     /// O(len), never O(capacity), so one hot execution's high-water
     /// cannot tax every later execution's finalize and reset.

@@ -1,4 +1,4 @@
-//! Corpus loading (docs/architecture/50-validation.md): one generator stream, two stores,
+//! Corpus loading (docs/architecture/60-validation.md): one generator stream, two stores,
 //! identical contents — the precondition for every verify and every
 //! timing run.
 
@@ -48,7 +48,7 @@ pub fn load_bumbledb(db: &Db<'_>, cfg: GenConfig) -> Result<LoadStats, bumbledb:
 }
 
 /// The `SQLite` session PRAGMAs for loading and benching, with fairness
-/// rationale (docs/architecture/50-validation.md):
+/// rationale (docs/architecture/60-validation.md):
 /// - `journal_mode=WAL`: `SQLite`'s best self for a read-heavy profile.
 /// - `synchronous=FULL`: the durability level `00-product.md` pins for
 ///   the comparison (both engines pay the fsync bill).

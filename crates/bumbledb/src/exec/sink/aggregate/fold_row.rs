@@ -87,7 +87,7 @@ impl AggregateSink {
         // Encoded words compare correctly unsigned for both orderable
         // key types: a U64 word is the value itself, an I64 word is the
         // sign-flipped biased form — both order-preserving encodings
-        // (docs/architecture/30-execution.md).
+        // (docs/architecture/40-execution.md).
         let key = self.binding_scratch[arg.key_slot];
         let best = self.arg_best[group_idx];
         let better = if arg.max { key > best } else { key < best };

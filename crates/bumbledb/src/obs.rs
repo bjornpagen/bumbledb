@@ -1,4 +1,4 @@
-//! The one tracing mechanism (docs/architecture/50-validation.md):
+//! The one tracing mechanism (docs/architecture/60-validation.md):
 //! nanosecond spans and point events recorded into a thread-local buffer
 //! during explicit capture, drained by tooling — Chrome-trace export and
 //! flame summaries are this seam plus names.
@@ -23,7 +23,7 @@ pub enum Category {
     Image,
     Cache,
     Harness,
-    /// Executor phase accumulators (docs/architecture/50-validation.md):
+    /// Executor phase accumulators (docs/architecture/60-validation.md):
     /// synthetic point events carrying `(total_ns, calls)` per
     /// (node, phase), flushed once per traced execution — never real
     /// spans, so flame containment math must exclude them.
@@ -63,7 +63,7 @@ pub struct TraceEvent {
 /// here so call sites cannot typo-drift. Arg meanings are documented per
 /// constant; consumers (the trace exporter, tests) match on these.
 pub mod names {
-    // Read path (docs/architecture/50-validation.md). Args noted as (a0, a1); `-` = unused.
+    // Read path (docs/architecture/60-validation.md). Args noted as (a0, a1); `-` = unused.
 
     /// The whole prepare pipeline. (-, -)
     pub const PREPARE: &str = "prepare";
@@ -100,7 +100,7 @@ pub mod names {
     pub const FINALIZE: &str = "finalize";
     /// The guard-probe access path. (1 hit / 0 miss, -)
     pub const GUARD_PROBE: &str = "guard_probe";
-    /// One occurrence's selection-level probe (docs/architecture/30-execution.md).
+    /// One occurrence's selection-level probe (docs/architecture/40-execution.md).
     /// (occurrence index, 1 hit / 0 miss)
     pub const SELECT_PROBE: &str = "select_probe";
 
@@ -115,10 +115,10 @@ pub mod names {
     /// One COLT node forced. (positions ingested, distinct keys)
     pub const COLT_FORCE: &str = "colt_force";
     /// One dictionary resolution in finalize — fires per *distinct*
-    /// intern per finalize (docs/architecture/30-execution.md). (intern word, byte length)
+    /// intern per finalize (docs/architecture/40-execution.md). (intern word, byte length)
     pub const DICT_RESOLVE: &str = "dict_resolve";
 
-    // Write path (docs/architecture/50-validation.md).
+    // Write path (docs/architecture/60-validation.md).
 
     /// One state-changing commit. (1 changed / 0 no-op, -)
     pub const COMMIT: &str = "commit";
@@ -141,7 +141,7 @@ pub mod names {
     /// One `Db::write`, closure plus commit. (1 committed / 0 aborted, -)
     pub const WRITE_TXN: &str = "write_txn";
 
-    // Harness (docs/architecture/50-validation.md, 17): tool overhead, honestly visible
+    // Harness (docs/architecture/60-validation.md, 17): tool overhead, honestly visible
     // inside the same trace, separated by tid at export.
 
     /// One harness-timed sample around the runner closure. (-, -)

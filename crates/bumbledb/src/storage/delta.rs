@@ -1,7 +1,7 @@
-//! The write transaction delta core (docs/architecture/40-storage.md): a write transaction is an
+//! The write transaction delta core (docs/architecture/50-storage.md): a write transaction is an
 //! in-memory net insert-set and delete-set of canonical fact bytes — last
 //! disposition per fact wins — plus in-memory counters
-//! (`docs/architecture/40-storage.md`).
+//! (`docs/architecture/50-storage.md`).
 //!
 //! During accumulation, `insert`/`delete` are pure set arithmetic: encode is
 //! the caller's job; membership is the delta's own disposition if present,
@@ -27,7 +27,7 @@ mod new;
 mod tests;
 
 /// The net effect recorded for one fact. Last disposition wins; whether it
-/// actually applies is decided against base state at commit (docs/architecture/40-storage.md).
+/// actually applies is decided against base state at commit (docs/architecture/50-storage.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Disposition {
     Insert,

@@ -64,7 +64,7 @@ fn dynamic_cover_prefers_the_forced_small_side() {
 }
 
 /// Regression for the cover-soundness deviation
-/// (docs/architecture/30-execution.md): a subatom carrying an
+/// (docs/architecture/40-execution.md): a subatom carrying an
 /// already-bound variable must never be a runtime-eligible cover. In
 /// the triangle below, node 1 = [S(z), T(x, z)]; with skew, T's tiny
 /// key count would win the dynamic choice, and iterating T(x, z)
@@ -321,7 +321,7 @@ fn pinned_siblings_probe_without_hashing() {
     );
 }
 
-/// The magnitude-first cover rule (docs/architecture/30-execution.md), table-tested: the
+/// The magnitude-first cover rule (docs/architecture/40-execution.md), table-tested: the
 /// smaller side wins whatever its label; Exact breaks ties; a full
 /// tie keeps the incumbent.
 #[test]

@@ -1,4 +1,4 @@
-//! The filter-application mechanism (docs/architecture/30-execution.md):
+//! The filter-application mechanism (docs/architecture/40-execution.md):
 //! evaluates the per-atom conjunction over a warm image into a
 //! survivor-position vector.
 
@@ -123,7 +123,7 @@ fn row_matches(
                 }
                 // Width mismatches are unrepresentable through validation,
                 // and PendingIntern constants are resolved before execution
-                // (docs/architecture/30-execution.md) — a miss empties the query without reaching here.
+                // (docs/architecture/40-execution.md) — a miss empties the query without reaching here.
                 _ => unreachable!("validated, resolved filter constant"),
             }
         }
