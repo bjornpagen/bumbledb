@@ -46,7 +46,6 @@ fn insert_lands_exactly_the_expected_key_set() {
         assert!(applied
             .inserted_guards
             .contains(&(TARGET_KEY, encode_u64(5).to_vec())));
-        assert!(applied.changed);
         // Abort: drop the txn without committing.
     }
     assert!(committed_data(&env).is_empty());
@@ -149,6 +148,69 @@ fn deleting_a_fact_with_a_scrubbed_interval_guard_is_corruption() {
             relation: BOOKING,
             row_id: 0
         })
+    ));
+}
+
+#[test]
+fn base_state_disagreeing_with_a_proved_disposition_is_corruption() {
+    // The delta proves its net dispositions against committed state at op
+    // time, and the single-writer mutex keeps that proof valid — so base
+    // state contradicting an entry at apply time is unambiguously
+    // corruption. Craft both directions by committing behind the delta's
+    // back (exactly the discipline violation the probe names).
+    let dir = TempDir::new("commit-disposition-desync");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let t5 = target_fact(&schema, 5);
+
+    // Insert direction: the delta proved t5 absent; land it underneath.
+    let mut insert_delta = WriteDelta::new(&schema);
+    {
+        let view = env.read_txn().expect("txn");
+        insert_delta.insert(&view, TARGET, &t5).expect("insert");
+    }
+    {
+        let view = env.read_txn().expect("txn");
+        let mut sneak = WriteDelta::new(&schema);
+        sneak.insert(&view, TARGET, &t5).expect("insert");
+        drop(view);
+        apply(sneak, &env)
+            .expect("apply")
+            .txn
+            .commit()
+            .expect("commit");
+    }
+    let Err(err) = apply(insert_delta, &env).map(|_| ()) else {
+        panic!("apply must fail on a base state the delta disproved");
+    };
+    assert!(matches!(
+        err,
+        Error::Corruption(CorruptionError::DispositionDesync { relation: TARGET })
+    ));
+
+    // Delete direction: the delta proved t5 present; scrub its M entry.
+    let mut delete_delta = WriteDelta::new(&schema);
+    {
+        let view = env.read_txn().expect("txn");
+        delete_delta.delete(&view, TARGET, &t5).expect("delete");
+    }
+    {
+        let mut wtxn = env.write_txn().expect("wtxn");
+        let hash = crate::encoding::fact_hash(&t5);
+        let mut key: KeyBuf = [0; MAX_KEY];
+        let m_len = keys::membership_key(&mut key, TARGET, &hash);
+        assert!(env
+            .data()
+            .delete(wtxn.raw_mut(), &key[..m_len])
+            .expect("del"));
+        wtxn.commit().expect("commit");
+    }
+    let Err(err) = apply(delete_delta, &env).map(|_| ()) else {
+        panic!("apply must fail on a base state the delta disproved");
+    };
+    assert!(matches!(
+        err,
+        Error::Corruption(CorruptionError::DispositionDesync { relation: TARGET })
     ));
 }
 

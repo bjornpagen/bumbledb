@@ -1,7 +1,10 @@
 use super::*;
 use crate::ir::Value;
 use crate::obs;
-use crate::schema::{FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType};
+use crate::schema::{
+    FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor,
+    ValueType,
+};
 use crate::testutil::TempDir;
 
 fn schema() -> Schema {
@@ -98,6 +101,98 @@ fn write_path_traces_phases_with_counts() {
     );
     assert!(!noop_names.contains(&obs::names::LMDB_COMMIT));
     assert!(!noop_names.contains(&obs::names::APPLY_DELETES));
+}
+
+/// A redundant insert is never judged (PRD 05, the net-disposition
+/// delta): the delta records nothing for a committed fact, so the
+/// source-side judgment runs zero probes on its behalf — the trace's
+/// `JUDGMENT_SOURCE` arg is the probe count.
+#[test]
+fn a_redundant_insert_costs_zero_source_side_probes() {
+    const TARGET: RelationId = RelationId(0);
+    const CLAIM: RelationId = RelationId(1);
+    const EXTRA: RelationId = RelationId(2);
+    let field = |name: &str| FieldDescriptor {
+        name: name.into(),
+        value_type: ValueType::U64,
+        generation: Generation::None,
+    };
+    let containment_schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                name: "Target".into(),
+                fields: vec![field("id")],
+            },
+            RelationDescriptor {
+                name: "Claim".into(),
+                fields: vec![field("holder")],
+            },
+            RelationDescriptor {
+                name: "Extra".into(),
+                fields: vec![field("v")],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: TARGET,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Containment {
+                source: Side {
+                    relation: CLAIM,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
+                target: Side {
+                    relation: TARGET,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
+            },
+        ],
+    }
+    .validate()
+    .expect("fixture");
+    let dir = TempDir::new("db-trace-redundant-insert");
+    let db = Db::create(dir.path(), &containment_schema).expect("create");
+    db.write(|tx| {
+        tx.insert_dyn(TARGET, &[Value::U64(5)])?;
+        tx.insert_dyn(CLAIM, &[Value::U64(5)])?;
+        Ok(())
+    })
+    .expect("seed");
+
+    // The redundant insert beside an unrelated genuine change (which
+    // keeps the delta nonempty; Extra has no outgoing statements): the
+    // source-side judgment probes nothing.
+    obs::start_capture();
+    db.write(|tx| {
+        tx.insert_dyn(CLAIM, &[Value::U64(5)])?;
+        tx.insert_dyn(EXTRA, &[Value::U64(1)])?;
+        Ok(())
+    })
+    .expect("write");
+    let events = obs::finish_capture();
+    let source = events
+        .iter()
+        .find(|e| e.name == obs::names::JUDGMENT_SOURCE)
+        .expect("judgment span");
+    assert_eq!(source.a0, 0, "zero probes for the redundant insert");
+
+    // Contrast: a genuinely added source costs exactly its one probe.
+    obs::start_capture();
+    db.write(|tx| {
+        tx.insert_dyn(TARGET, &[Value::U64(6)])?;
+        tx.insert_dyn(CLAIM, &[Value::U64(6)])?;
+        Ok(())
+    })
+    .expect("write");
+    let events = obs::finish_capture();
+    let source = events
+        .iter()
+        .find(|e| e.name == obs::names::JUDGMENT_SOURCE)
+        .expect("judgment span");
+    assert_eq!(source.a0, 1, "one probe for the genuine insert");
 }
 
 /// A serial-only no-op commit does not move

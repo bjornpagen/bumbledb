@@ -198,9 +198,11 @@ because an untouched binding cannot change a judgment's truth:
 
 - FD: guard put conflicts (scalar) and ordered-neighbor probes (pointwise) during
   the insert phase.
-- IND, source side: per inserted A-fact satisfying φ, probe B's key guard (plus the
-  selection-literal check on the found fact, and the coverage walk for interval
-  positions).
+- IND, source side: per **genuinely** inserted A-fact satisfying φ — true by
+  representation: the delta's net insert set is exactly the facts the commit adds
+  (`50-storage.md` net dispositions), so a redundant insert is never judged here —
+  probe B's key guard (plus the selection-literal check on the found fact, and the
+  coverage walk for interval positions).
 - IND, target side: per deleted-and-not-reestablished B key tuple
   (re-establishment ψ-qualified per statement — `50-storage.md`), probe the
   statement's reverse-edge namespace for surviving A-facts that still require it

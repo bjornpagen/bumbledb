@@ -21,7 +21,7 @@ use crate::encoding::{encode_literal, encode_u64, field_bytes, FactLayout};
 use crate::error::{CorruptionError, Direction, Error, Result};
 use crate::obs;
 use crate::schema::{FieldId, RelationId, Resolved, Schema, StatementDescriptor, StatementId};
-use crate::storage::delta::{Disposition, WriteDelta};
+use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 use crate::value::Value;
@@ -142,7 +142,9 @@ pub(crate) fn satisfies(check: &SelectionCheck, layout: &FactLayout, fact_bytes:
     }
 }
 
-/// The source-side judgment: for each inserted fact, for each `outgoing`
+/// The source-side judgment: for each fact of the delta's insert set —
+/// exactly the facts this commit added, by the net-disposition invariant,
+/// so a redundant insert is never judged here — for each `outgoing`
 /// containment statement whose source selection it satisfies, prove the
 /// target tuple present (scalar) or covered (interval) in the final
 /// state. The per-relation `outgoing` index drives the loops — a fact
@@ -163,10 +165,7 @@ pub(super) fn check_source(
     let mut key_bytes = Vec::new();
     let mut probes = 0u64;
     let mut span = obs::span(obs::names::JUDGMENT_SOURCE, obs::Category::Commit);
-    for (rel, fact_bytes, disposition) in delta.entries() {
-        if disposition != Disposition::Insert {
-            continue;
-        }
+    for (rel, fact_bytes) in delta.inserts() {
         let relation = schema.relation(rel);
         for &sid in relation.outgoing() {
             let statement = schema.statement(sid);

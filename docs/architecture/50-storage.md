@@ -90,10 +90,22 @@ likely; revisit only with the layout.
 ## Write path: the transaction is a delta
 
 A write transaction is an **in-memory delta** — a net insert-set and delete-set of
-canonical fact bytes (last disposition per fact wins), arena-backed. During the
-closure, `insert`/`delete` are pure set arithmetic: encode the fact, probe `M` (a
-read-only get) plus the delta to compute the `changed: bool` return value, record the
-disposition. `alloc` reads `Q` once at first use per (relation, field) and increments
+canonical fact bytes, arena-backed, recording **net dispositions against committed
+state**. During the closure, `insert`/`delete` are pure set arithmetic: encode the
+fact, probe `M` (a read-only get) plus the delta to compute the `changed: bool`
+return value, and record the *net* effect — a redundant op (insert of a committed
+fact, delete of an absent one) records nothing, and an op whose net effect is
+nothing *cancels* the pending opposite entry (delete + re-insert of a committed
+fact, or insert + delete of an absent one, leaves no entry). The op-time probe is
+authoritative because the single-writer mutex holds committed state stable for the
+delta's lifetime; last-disposition-wins is a consequence of these rules, not a rule
+of its own. **The invariant this buys:** the insert set contains exactly the facts
+commit will add and the delete set exactly the facts it will remove — every entry
+applies at commit (base state disagreeing with a proved disposition is the
+`DispositionDesync` corruption, never a skip), the empty delta is the only no-op
+commit shape, and judging a no-op insert is unrepresentable (the judgment-direction
+divergence this closes is pinned in `60-validation.md`). `alloc` reads `Q` once at
+first use per (relation, field) and increments
 in memory (a transaction sees its own allocations); explicit-value inserts advance the
 in-memory mark past the supplied value; mixed explicit/generated allocation tracks the
 running maximum. **WriteTx point reads** (`70-api.md`: existence of a fact, lookup

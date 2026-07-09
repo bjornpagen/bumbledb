@@ -87,6 +87,11 @@ impl fmt::Display for CorruptionError {
                 "relation {}: membership entry for row {row_id} desynced from its F/U entries",
                 relation.0
             ),
+            Self::DispositionDesync { relation } => write!(
+                f,
+                "relation {}: base state disagrees with a net disposition the delta proved",
+                relation.0
+            ),
             Self::WrongFactWidth {
                 relation,
                 row_id,

@@ -6,8 +6,12 @@ use crate::storage::env::ReadTxn;
 use super::{Disposition, WriteDelta};
 
 impl WriteDelta<'_> {
-    /// Records an insert. Returns whether the final state changes (an
-    /// idempotent no-op if the fact is already present).
+    /// Records an insert, netted against committed state
+    /// (docs/architecture/50-storage.md): committed + no pending entry is a
+    /// redundant insert and records nothing; a pending `Delete` proves the
+    /// fact committed, so the insert *cancels* it (net no-op — the entry is
+    /// removed, never overwritten); only a genuinely absent fact records
+    /// `Insert`. Returns whether the final state changes.
     ///
     /// Any serial field values the fact carries advance the in-memory
     /// high-water mark past them — explicit values are legal on the normal
@@ -25,14 +29,26 @@ impl WriteDelta<'_> {
     ) -> Result<bool> {
         self.advance_serial_marks(view, rel, fact_bytes)?;
         let hash = fact_hash(fact_bytes);
-        let changed = !self.present(view, rel, &hash)?;
-        if changed {
-            let slice = self.arena.alloc(fact_bytes);
-            self.facts.insert((rel, hash), (slice, Disposition::Insert));
-            self.record_guards(rel, fact_bytes, Some(slice));
-            *self.row_count_delta.entry(rel).or_insert(0) += 1;
+        match self.facts.get(&(rel, hash)).copied() {
+            Some((_, Disposition::Insert)) => Ok(false),
+            Some((slice, Disposition::Delete)) => {
+                // The pending Delete proves the fact committed: cancel it.
+                self.facts.remove(&(rel, hash));
+                self.record_guards(rel, fact_bytes, Some(slice));
+                *self.row_count_delta.entry(rel).or_insert(0) += 1;
+                Ok(true)
+            }
+            None => {
+                if crate::storage::read::fact_row_by_hash(view, rel, &hash)?.is_some() {
+                    return Ok(false); // committed: a redundant insert.
+                }
+                let slice = self.arena.alloc(fact_bytes);
+                self.facts.insert((rel, hash), (slice, Disposition::Insert));
+                self.record_guards(rel, fact_bytes, Some(slice));
+                *self.row_count_delta.entry(rel).or_insert(0) += 1;
+                Ok(true)
+            }
         }
-        Ok(changed)
     }
 
     /// Effective membership: the delta's disposition if present, else an `M`

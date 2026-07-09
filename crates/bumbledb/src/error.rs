@@ -37,6 +37,13 @@ pub enum CorruptionError {
     /// the write-side M/F disagreement (the read side raises
     /// [`CorruptionError::MissingFact`]).
     MembershipDesync { relation: RelationId, row_id: u64 },
+    /// Base state disagreed with a net disposition the delta proved at op
+    /// time — a fact commit would insert already live in `M`, or one it
+    /// would delete already gone. The single-writer mutex holds committed
+    /// state stable for the delta's lifetime
+    /// (`docs/architecture/50-storage.md`), so the disagreement is
+    /// unambiguously corruption, never a race.
+    DispositionDesync { relation: RelationId },
     /// A stored fact's length differs from the schema's fact width.
     WrongFactWidth {
         relation: RelationId,

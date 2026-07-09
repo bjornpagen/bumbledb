@@ -56,7 +56,7 @@ fn data_snapshot(env: &Environment) -> Vec<(Vec<u8>, Vec<u8>)> {
 }
 
 #[test]
-fn insert_then_delete_of_absent_fact_nets_noop_and_reports_true_true() {
+fn insert_then_delete_of_absent_fact_cancels_to_an_empty_delta() {
     let dir = TempDir::new("delta-insert-delete");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -64,10 +64,36 @@ fn insert_then_delete_of_absent_fact_nets_noop_and_reports_true_true() {
     let mut delta = WriteDelta::new(&schema);
     let f = fact(&schema, 1, 100);
     assert!(delta.insert(&view, R, &f).expect("insert"));
+    // The delete cancels the pending Insert: the net effect against
+    // committed state is nothing, so nothing is recorded
+    // (docs/architecture/50-storage.md net dispositions).
     assert!(delta.delete(&view, R, &f).expect("delete"));
-    // Net disposition is Delete for a fact not in base: apply's base
-    // check makes it a no-op (docs/architecture/50-storage.md).
-    assert_eq!(delta.disposition(R, &f), Some(Disposition::Delete));
+    assert_eq!(delta.disposition(R, &f), None);
+    assert!(delta.is_empty());
+}
+
+#[test]
+fn delete_then_insert_of_a_committed_fact_cancels_to_an_empty_delta() {
+    let dir = TempDir::new("delta-delete-insert");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let f = fact(&schema, 1, 100);
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, R, &f).expect("insert");
+        drop(view);
+        crate::storage::commit::commit(delta, &env).expect("commit");
+    }
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    assert!(delta.delete(&view, R, &f).expect("delete"));
+    // The re-insert cancels the pending Delete — a no-op insert is
+    // unrepresentable, never recorded and never judged
+    // (docs/architecture/50-storage.md net dispositions).
+    assert!(delta.insert(&view, R, &f).expect("insert"));
+    assert_eq!(delta.disposition(R, &f), None);
+    assert!(delta.is_empty());
 }
 
 #[test]
@@ -83,21 +109,23 @@ fn idempotent_double_insert_reports_true_false() {
 }
 
 #[test]
-fn disposition_last_wins_across_long_sequences() {
-    let dir = TempDir::new("delta-last-wins");
+fn long_alternating_sequences_net_against_committed_state() {
+    let dir = TempDir::new("delta-net-sequences");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     let f = fact(&schema, 1, 100);
+    // Each insert/delete pair on an absent fact cancels: the delta stays
+    // net-empty however long the sequence runs.
     for _ in 0..7 {
-        delta.insert(&view, R, &f).expect("insert");
-        delta.delete(&view, R, &f).expect("delete");
+        assert!(delta.insert(&view, R, &f).expect("insert"));
+        assert!(delta.delete(&view, R, &f).expect("delete"));
+        assert_eq!(delta.disposition(R, &f), None);
     }
-    delta.insert(&view, R, &f).expect("insert");
+    // An unpaired trailing op records its genuine net effect.
+    assert!(delta.insert(&view, R, &f).expect("insert"));
     assert_eq!(delta.disposition(R, &f), Some(Disposition::Insert));
-    delta.delete(&view, R, &f).expect("delete");
-    assert_eq!(delta.disposition(R, &f), Some(Disposition::Delete));
 }
 
 #[test]
@@ -272,8 +300,8 @@ fn guard_map_mirrors_the_fact_dispositions() {
     // Untouched tuple: no overlay — the committed state answers.
     assert_eq!(delta.guard_overlay(KEY, &guard), None);
 
-    // Insert records the establishing fact; delete records absence;
-    // last disposition wins, mirroring the fact map.
+    // Insert records the establishing fact; delete records absence —
+    // even a canceling delete, since the final-state view changed.
     delta.insert(&view, R, &f).expect("insert");
     assert_eq!(
         delta.guard_overlay(KEY, &guard),

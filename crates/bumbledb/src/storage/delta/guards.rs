@@ -8,8 +8,10 @@ impl WriteDelta<'_> {
     /// Records the guard disposition of one changed fact under every key
     /// statement of its relation — `Some(slice)` for an insert (the fact
     /// establishes each of its key tuples), `None` for a delete. Called by
-    /// `insert`/`delete` exactly when they record a fact disposition, so
-    /// the guard map mirrors the fact map: last disposition wins.
+    /// `insert`/`delete` exactly when the final-state view changes —
+    /// including a cancellation, whose op re-records the fact's committed
+    /// disposition — so point reads compose delta-over-committed
+    /// correctly; last disposition wins.
     ///
     /// Guard bytes come from the one shared slicer ([`keys::guard_bytes`])
     /// — the same derivation commit applies, so a point read and the

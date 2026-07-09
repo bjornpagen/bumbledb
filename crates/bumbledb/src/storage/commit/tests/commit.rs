@@ -78,13 +78,14 @@ fn scalar_key_conflict_across_deltas_aborts_with_the_statement_id() {
 }
 
 #[test]
-fn delete_and_reinsert_of_the_same_fact_is_a_noop() {
+fn delete_and_reinsert_of_a_committed_fact_commits_as_an_empty_delta() {
+    // The net-disposition algebra: the re-insert cancels the pending
+    // Delete, the delta is empty, and the commit is a no-op — the storage
+    // tx id stays put (docs/architecture/50-storage.md).
     let dir = TempDir::new("commit-reestablish");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     commit_facts(&env, &schema, &[(KEYED, keyed_fact(&schema, 1, 10))]);
-    // Delete then re-insert the same fact: last disposition wins, and an
-    // Insert of a base-present fact is a no-op delta.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     delta
@@ -94,8 +95,37 @@ fn delete_and_reinsert_of_the_same_fact_is_a_noop() {
         .insert(&view, KEYED, &keyed_fact(&schema, 1, 10))
         .expect("insert");
     drop(view);
+    assert!(delta.is_empty());
     let report = commit(delta, &env).expect("commit");
     assert!(!report.changed);
+    assert_eq!(report.new_generation, 1);
+    let rtxn = env.read_txn().expect("txn");
+    assert_eq!(rtxn.generation().expect("generation"), 1);
+}
+
+#[test]
+fn insert_and_delete_of_an_absent_fact_commits_as_an_empty_delta() {
+    // The mirror case of the algebra: the delete cancels the pending
+    // Insert of a fact base never held — empty delta, no tx id movement.
+    let dir = TempDir::new("commit-cancel-absent");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    commit_facts(&env, &schema, &[(KEYED, keyed_fact(&schema, 1, 10))]);
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    delta
+        .insert(&view, KEYED, &keyed_fact(&schema, 2, 20))
+        .expect("insert");
+    delta
+        .delete(&view, KEYED, &keyed_fact(&schema, 2, 20))
+        .expect("delete");
+    drop(view);
+    assert!(delta.is_empty());
+    let report = commit(delta, &env).expect("commit");
+    assert!(!report.changed);
+    assert_eq!(report.new_generation, 1);
+    let rtxn = env.read_txn().expect("txn");
+    assert_eq!(rtxn.generation().expect("generation"), 1);
 }
 
 #[test]

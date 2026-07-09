@@ -38,9 +38,6 @@ pub struct Applied<'env, 's> {
     pub txn: WriteTxn<'env>,
     /// The source delta (its counters flush in the 50-storage doc's phase 4).
     pub delta: WriteDelta<'s>,
-    /// Whether any insert or delete actually applied (drives the 50-storage
-    /// doc's tx-id-advances-iff-state-changed rule).
-    pub changed: bool,
     /// Per-relation next row id after this apply (flushed to `S` by the
     /// 50-storage doc's phase 4).
     pub row_id_next: BTreeMap<RelationId, u64>,
@@ -71,7 +68,6 @@ pub struct CommitReport {
 struct Applier<'env> {
     txn: WriteTxn<'env>,
     data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
-    changed: bool,
     row_id_next: BTreeMap<RelationId, u64>,
     deleted_guards: BTreeSet<(StatementId, Vec<u8>)>,
     inserted_guards: BTreeSet<(StatementId, Vec<u8>)>,

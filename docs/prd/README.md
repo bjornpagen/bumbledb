@@ -44,10 +44,9 @@ Those collapse **first**, so every later PRD lands on clean ground.
 
 ## Execution order
 
-Strict order. Hard sequencing rules: **14 requires 05**,
-**15 requires 05 and 10**, and **the full two-oracle verify runs green
-immediately after 12 lands** (the chase is the only real regression risk)
-before anything stacks on top. The campaign closes with re-earned benchmarks
+Strict order. Hard sequencing rules: **15 requires 10**, and **the full
+two-oracle verify runs green immediately after 12 lands** (the chase is the
+only real regression risk) before anything stacks on top. The campaign closes with re-earned benchmarks
 and regenerated charts (hot paths move in 04, 15, and possibly 19) — 
 orchestrator work, not a PRD.
 
@@ -64,7 +63,6 @@ orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [05 — Net-disposition delta](05-net-disposition-delta.md)
 - [06 — `alloc_dyn`: parse, don't validate](06-serial-field-witness.md)
 - [07 — The high-water allocation contract](07-alloc-highwater-contract.md)
 - [08 — Storage hardening](08-storage-hardening.md)

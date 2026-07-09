@@ -135,13 +135,17 @@ fn pick(mirror: &NaiveDb, rel: RelationId, rng: &mut Rng) -> Option<Vec<Value>> 
 /// The 200 write ops: consistent pair inserts and deletes (which commit),
 /// lone inserts and lone-fact deletes (which abort on one of the five
 /// statements), overlapping spans (pointwise aborts), duplicate
-/// references (scalar-key aborts), and no-op deletes. The generator keeps
-/// its own model mirror so deletes can name real facts.
-fn write_ops(rng: &mut Rng) -> Vec<Delta> {
+/// references (scalar-key aborts), redundant inserts alongside a delete
+/// of their containment target (the net-disposition pattern class — the
+/// second count returned; verdicts must classify target-side on both
+/// oracles), and no-op deletes. The generator keeps its own model mirror
+/// so deletes can name real facts.
+fn write_ops(rng: &mut Rng) -> (Vec<Delta>, u64) {
     let mut mirror = NaiveDb::new(&schema());
     let mut deltas = Vec::new();
+    let mut pattern_cases = 0u64;
     for _ in 0..200 {
-        let delta = match rng.below(10) {
+        let delta = match rng.below(11) {
             // A consistent pair: commits unless the reference is taken or
             // the span overlaps an existing booking's.
             0..=3 => {
@@ -192,6 +196,29 @@ fn write_ops(rng: &mut Rng) -> Vec<Delta> {
                 }
                 None => Delta::default(),
             },
+            // The net-disposition pattern class (PRD 05 normative rule:
+            // "source side" means facts the transaction actually added):
+            // a redundant insert of a committed booking alongside the
+            // delete of its containment target — in its plain form
+            // (re-insert of a committed fact) and its cancellation form
+            // (delete + re-insert netting to nothing). Either way the
+            // booking was not genuinely added, so the stranding judges
+            // target-side on both oracles, Direction included.
+            9 => match pick(&mirror, BOOKING, rng) {
+                Some(fact) => {
+                    let reference = fact[2].clone();
+                    let mut deletes = vec![(MARKER, vec![reference])];
+                    if rng.below(2) == 0 {
+                        deletes.insert(0, (BOOKING, fact.clone()));
+                    }
+                    pattern_cases += 1;
+                    Delta {
+                        deletes,
+                        inserts: vec![(BOOKING, fact)],
+                    }
+                }
+                None => Delta::default(),
+            },
             // A no-op delete of a (probably) absent fact.
             _ => Delta {
                 deletes: vec![(MARKER, vec![Value::U64(100 + rng.below(8))])],
@@ -201,7 +228,7 @@ fn write_ops(rng: &mut Rng) -> Vec<Delta> {
         let _ = mirror.apply(&delta);
         deltas.push(delta);
     }
-    deltas
+    (deltas, pattern_cases)
 }
 
 fn var(id: u16) -> Term {
@@ -474,6 +501,68 @@ impl Drop for TempDir {
     }
 }
 
+/// The PRD-05 Direction-divergence regression: `A(x) <= B(y)` standing,
+/// `a ∈ A` and its target `b ∈ B` committed; one transaction does
+/// `insert(a)` (a storage no-op) and `delete(b)`. The naive model is
+/// normative — "source side" means facts the transaction *actually
+/// added* — so both oracles must judge the delete target-side: identical
+/// verdicts **including `Direction`**. Covered in the plain form and the
+/// cancellation form (`delete(a); insert(a)` netting to nothing), which
+/// the engine's old last-disposition delta judged source-side.
+#[test]
+fn a_redundant_insert_beside_its_targets_delete_judges_target_side() {
+    use bumbledb::{Direction, StatementId};
+
+    use crate::naive::Violation;
+
+    let descriptor = schema();
+    let sealed = descriptor.clone().validate().expect("fixture validates");
+    let dir = TempDir::new("differential-net-disposition");
+    let db = Db::create(dir.path(), &sealed).expect("create engine store");
+    let mut naive = NaiveDb::new(&descriptor);
+
+    // Pre-seed {a, b}: a booking and the marker it requires.
+    let a = vec![Value::U64(0), Value::IntervalU64(1, 4), Value::U64(3)];
+    let b = vec![Value::U64(3)];
+    let seed = Delta {
+        deletes: vec![],
+        inserts: vec![(BOOKING, a.clone()), (MARKER, b.clone())],
+    };
+    let redundant = Delta {
+        deletes: vec![(MARKER, b.clone())],
+        inserts: vec![(BOOKING, a.clone())],
+    };
+    let cancelled = Delta {
+        deletes: vec![(BOOKING, a.clone()), (MARKER, b.clone())],
+        inserts: vec![(BOOKING, a.clone())],
+    };
+    let ops = vec![
+        Op::Write(seed),
+        Op::Write(redundant.clone()),
+        Op::Write(cancelled.clone()),
+    ];
+    let summary = run(&db, &mut naive, &ops).unwrap_or_else(|divergence| {
+        panic!("engine and model disagree: {divergence:#?}");
+    });
+    assert_eq!((summary.commits, summary.aborts), (1, 2));
+
+    // `run` proved the verdicts identical including Direction; pin the
+    // label itself to the normative target-side classification, on the
+    // Booking(ref) <= Marker(id) statement.
+    for delta in [redundant, cancelled] {
+        let violation = naive
+            .apply(&delta)
+            .expect_err("the stranded booking aborts");
+        assert_eq!(
+            violation,
+            Violation::Containment {
+                statement: StatementId(3),
+                direction: Direction::TargetRequired,
+            }
+        );
+    }
+}
+
 #[test]
 fn seeded_200_op_stream_agrees_with_the_engine() {
     let descriptor = schema();
@@ -485,7 +574,12 @@ fn seeded_200_op_stream_agrees_with_the_engine() {
     let mut rng = Rng(0x0021_0001);
     let fixed_queries = queries();
     let mut ops = Vec::new();
-    for (index, delta) in write_ops(&mut rng).into_iter().enumerate() {
+    let (deltas, pattern_cases) = write_ops(&mut rng);
+    assert!(
+        pattern_cases >= 5,
+        "the stream must emit the net-disposition pattern class: {pattern_cases}"
+    );
+    for (index, delta) in deltas.into_iter().enumerate() {
         ops.push(Op::Write(delta));
         // The full query battery after every 5th write and after the
         // last, keeping the engine's per-commit fsync cost sane.

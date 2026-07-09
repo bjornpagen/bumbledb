@@ -618,6 +618,47 @@ fn child_alone_deleted_aborts_on_the_totality_direction() {
 }
 
 #[test]
+fn noop_parent_reinsert_with_child_delete_aborts_target_side() {
+    // The ==/totality corner (normative rule, `60-validation.md`: "source
+    // side" means facts the transaction *actually added*): a redundant
+    // re-insert of the committed parent records nothing — the delta is
+    // {delete child} and the violation surfaces target-side via the
+    // parent's standing R edge, naming the parent, never source-side.
+    let schema = schema();
+    let p = u64_fact(&schema, PARENT, 1);
+    assert_target_violation(
+        base_then_delta(
+            "tgt-pair-noop-reinsert",
+            &[(PARENT, p.clone()), (CHILD, u64_fact(&schema, CHILD, 1))],
+            &[(CHILD, u64_fact(&schema, CHILD, 1))],
+            &[(PARENT, p.clone())],
+        ),
+        TOTALITY,
+        &p,
+    );
+}
+
+#[test]
+fn parent_delete_reinsert_with_child_delete_aborts_target_side() {
+    // The cancellation form of the same corner: delete(parent) +
+    // insert(parent) nets to nothing, so the parent is never judged
+    // source-side (that judgment previously flipped the Direction label
+    // against the naive model). Same target-side verdict as above.
+    let schema = schema();
+    let p = u64_fact(&schema, PARENT, 1);
+    assert_target_violation(
+        base_then_delta(
+            "tgt-pair-cancel-reinsert",
+            &[(PARENT, p.clone()), (CHILD, u64_fact(&schema, CHILD, 1))],
+            &[(PARENT, p.clone()), (CHILD, u64_fact(&schema, CHILD, 1))],
+            &[(PARENT, p.clone())],
+        ),
+        TOTALITY,
+        &p,
+    );
+}
+
+#[test]
 fn parent_alone_deleted_aborts_on_the_arm_direction() {
     // Symmetric machinery: the surviving child still requires its parent.
     let schema = schema();

@@ -80,8 +80,14 @@ fn load_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
 
 /// Deltas that must ABORT, verdict and violating statement agreeing on
 /// both sides: a dangling containment source, a pointwise-key overlap,
-/// a scalar-key duplicate, and a target-required delete.
+/// a scalar-key duplicate, a target-required delete, and the
+/// net-disposition pattern class (a redundant insert alongside a delete
+/// of its containment target — PRD 05's Direction-divergence shape).
 fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
+    let cfg = gen::GenConfig {
+        seed,
+        scale: gen::Scale::S,
+    };
     let segment = mandate_segments(seed, sizes, 0)[0];
     let overlap = Interval::<i64>::new(segment.start, segment.start + 1).expect("nonempty");
     vec![
@@ -127,14 +133,26 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
         // Deleting account 0 strands its postings and mandates: the
         // target-required direction.
         Op::Write(Delta {
-            deletes: vec![(ids::ACCOUNT, {
-                let cfg = gen::GenConfig {
-                    seed,
-                    scale: gen::Scale::S,
-                };
-                gen::row(&cfg, sizes, ids::ACCOUNT, 0)
-            })],
+            deletes: vec![(ids::ACCOUNT, gen::row(&cfg, sizes, ids::ACCOUNT, 0))],
             inserts: vec![],
+        }),
+        // The net-disposition pattern class (PRD 05): a committed posting
+        // deleted and re-inserted (netting to nothing) alongside the
+        // delete of its containment target — the posting was not
+        // genuinely added, so the verdict classifies target-side on both
+        // oracles, Direction included.
+        Op::Write({
+            let posting = (0..sizes.postings)
+                .map(|i| gen::row(&cfg, sizes, ids::POSTING, i))
+                .find(|row| row[usize::from(ids::posting::ACCOUNT.0)] == Value::U64(0))
+                .expect("some posting references account 0");
+            Delta {
+                deletes: vec![
+                    (ids::POSTING, posting.clone()),
+                    (ids::ACCOUNT, gen::row(&cfg, sizes, ids::ACCOUNT, 0)),
+                ],
+                inserts: vec![(ids::POSTING, posting)],
+            }
         }),
     ]
 }
@@ -179,7 +197,7 @@ fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
 
 /// The naive-model differential slice (docs/architecture/60-validation.md
 /// § the two oracles — the integration point PRD 21 marked): a fresh
-/// unit-scale store replays the corpus stream, four judgment-violating
+/// unit-scale store replays the corpus stream, five judgment-violating
 /// deltas, and every family query (its unit draw plus its seeded S
 /// rotation) against [`NaiveDb`]; any verdict, violator, or result-set
 /// disagreement is an arbitration bundle.
@@ -213,7 +231,7 @@ pub(super) fn run_naive_slice(cfg: &VerifyConfig, run: &mut Run<'_>) {
     match differential::run(&db, &mut naive, &ops) {
         Ok(summary) => {
             assert!(
-                summary.aborts >= 4,
+                summary.aborts >= 5,
                 "the violating deltas must abort (got {})",
                 summary.aborts
             );

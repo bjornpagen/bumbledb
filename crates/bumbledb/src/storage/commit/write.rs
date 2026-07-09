@@ -26,14 +26,15 @@ use super::{apply, judgment, Applied, CommitReport};
 ///
 /// Only on programmer-invariant violations (validated-schema shapes).
 pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> {
-    // An all-no-op delta commits without touching query-visible state:
-    // the tx id does not advance and no cached image is invalidated. But
-    // a *successful* commit persists every serial value it issued — the
-    // closure may have returned those ids to the host — so dirty `Q`
-    // marks flush even here (`flush_escaped_serials`). Pending interns
-    // are still dropped: intern ids never escape (hosts see values, not
-    // words), and re-issuing an unflushed provisional id is the
-    // established abort semantics.
+    // The empty delta is the *only* no-op commit shape — net dispositions
+    // make every recorded entry a genuine state change. It commits without
+    // touching query-visible state: the tx id does not advance and no
+    // cached image is invalidated. But a *successful* commit persists
+    // every serial value it issued — the closure may have returned those
+    // ids to the host — so dirty `Q` marks flush even here
+    // (`flush_escaped_serials`). Pending interns are still dropped: intern
+    // ids never escape (hosts see values, not words), and re-issuing an
+    // unflushed provisional id is the established abort semantics.
     if delta.is_empty() {
         obs::event(obs::names::COMMIT_NOOP, obs::Category::Commit, 0, 0);
         let generation = {
@@ -48,19 +49,6 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     }
 
     let mut commit_span = obs::span(obs::names::COMMIT, obs::Category::Commit);
-    let applied = apply(delta, env)?;
-    if !applied.changed {
-        obs::event(obs::names::COMMIT_NOOP, obs::Category::Commit, 0, 0);
-        let generation = applied.txn.generation()?;
-        // Nothing was applied (every disposition was a base no-op), so
-        // the open transaction is clean: reuse it for the escaped
-        // serials, or abort it if none are dirty.
-        flush_escaped_serials(applied.txn, &applied.delta)?;
-        return Ok(CommitReport {
-            changed: false,
-            new_generation: generation,
-        });
-    }
     let Applied {
         mut txn,
         delta,
@@ -68,8 +56,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         deleted_guards,
         inserted_guards,
         selections,
-        ..
-    } = applied;
+    } = apply(delta, env)?;
 
     // Phase 3, the judgment phase: final-state probes inside this same
     // write transaction (LMDB write txns read their own writes) — the

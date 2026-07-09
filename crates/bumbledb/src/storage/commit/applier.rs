@@ -5,8 +5,10 @@ use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
 use super::{judgment, Applier};
 
 impl Applier<'_> {
-    /// Phase-1 step: removes one fact's F/M/U entries if it exists in
-    /// base state (else the delete is a no-op by construction).
+    /// Phase-1 step: removes one fact's F/M/U entries. The fact exists in
+    /// base state by the delta's net-disposition invariant — a missing `M`
+    /// entry means storage disagrees with what the delta proved at op
+    /// time, unambiguously corruption (docs/architecture/50-storage.md).
     pub(super) fn delete_fact(
         &mut self,
         schema: &Schema,
@@ -17,7 +19,9 @@ impl Applier<'_> {
         let hash = crate::encoding::fact_hash(fact_bytes);
         let m_len = keys::membership_key(&mut self.key, rel, &hash);
         let Some(row_id_bytes) = self.data.get(self.txn.raw(), &self.key[..m_len])? else {
-            return Ok(());
+            return Err(Error::Corruption(CorruptionError::DispositionDesync {
+                relation: rel,
+            }));
         };
         let row_id = decode_row_id(row_id_bytes)?;
         self.data.delete(self.txn.raw_mut(), &self.key[..m_len])?;
@@ -66,13 +70,15 @@ impl Applier<'_> {
                 self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;
             }
         }
-        self.changed = true;
         Ok(())
     }
 
-    /// Phase-2 step: lands one fact's F/M/U entries if it is not in base
-    /// state (else the insert is a no-op), enforcing every key statement —
-    /// scalar by put-conflict, pointwise by the ordered-neighbor probe.
+    /// Phase-2 step: lands one fact's F/M/U entries, enforcing every key
+    /// statement — scalar by put-conflict, pointwise by the
+    /// ordered-neighbor probe. The fact is absent from base state by the
+    /// delta's net-disposition invariant — a live `M` entry means storage
+    /// disagrees with what the delta proved at op time, unambiguously
+    /// corruption (docs/architecture/50-storage.md).
     pub(super) fn insert_fact(
         &mut self,
         schema: &Schema,
@@ -83,7 +89,9 @@ impl Applier<'_> {
         let hash = crate::encoding::fact_hash(fact_bytes);
         let m_len = keys::membership_key(&mut self.key, rel, &hash);
         if self.data.get(self.txn.raw(), &self.key[..m_len])?.is_some() {
-            return Ok(());
+            return Err(Error::Corruption(CorruptionError::DispositionDesync {
+                relation: rel,
+            }));
         }
         let row_id = self.next_row_id(rel)?;
         self.data.put(
@@ -151,7 +159,6 @@ impl Applier<'_> {
                 self.data.put(self.txn.raw_mut(), &self.key[..r_len], &[])?;
             }
         }
-        self.changed = true;
         Ok(())
     }
 

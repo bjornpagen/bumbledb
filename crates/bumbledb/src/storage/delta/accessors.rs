@@ -18,13 +18,24 @@ impl WriteDelta<'_> {
         self.present(view, rel, &fact_hash(fact_bytes))
     }
 
-    /// Iterates every recorded disposition in deterministic
-    /// `(relation, fact_hash)` order with its fact bytes (reader: the 40-storage doc's
-    /// commit apply).
-    pub(crate) fn entries(&self) -> impl Iterator<Item = (RelationId, &[u8], Disposition)> {
+    /// The net insert set in deterministic `(relation, fact_hash)` order —
+    /// exactly the facts commit will add (readers: the apply phase and the
+    /// source-side judgment, which iterates it directly).
+    pub(crate) fn inserts(&self) -> impl Iterator<Item = (RelationId, &[u8])> {
+        self.dispositions(Disposition::Insert)
+    }
+
+    /// The net delete set in deterministic `(relation, fact_hash)` order —
+    /// exactly the facts commit will remove (reader: the apply phase).
+    pub(crate) fn deletes(&self) -> impl Iterator<Item = (RelationId, &[u8])> {
+        self.dispositions(Disposition::Delete)
+    }
+
+    fn dispositions(&self, wanted: Disposition) -> impl Iterator<Item = (RelationId, &[u8])> {
         self.facts
             .iter()
-            .map(|((rel, _), (slice, disposition))| (*rel, self.arena.get(*slice), *disposition))
+            .filter(move |(_, (_, disposition))| *disposition == wanted)
+            .map(|((rel, _), (slice, _))| (*rel, self.arena.get(*slice)))
     }
 
     /// Serial next-values to flush to `Q` (reader: the 40-storage doc phase 4).

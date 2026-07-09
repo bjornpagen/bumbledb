@@ -22,8 +22,8 @@ because SQLite cannot express the judgments
 (`30-dependencies.md`): pointwise keys, conditional containments, totality. The
 naive model implements chapter 30 literally — after every commit in a differential
 run it evaluates **every statement by brute force over the full final state** and
-must agree with the engine's accept/abort verdict *and* the violating statement id
-on abort. It also executes every query IR (negation, membership, param sets, and
+must agree with the engine's accept/abort verdict *and*, on abort, the violating
+statement id and the judgment `Direction` — verdicts compare whole. It also executes every query IR (negation, membership, param sets, and
 Arg-restriction included) by nested loops, closing the expressibility gaps in the
 SQLite lane. The naive model is the executable form of the semantics chapters: when
 engine, model, and docs disagree, the docs arbitrate and the loser is fixed in the
@@ -175,7 +175,14 @@ gate nothing.
   totality (parent without child must abort; parent-with-child in one delta must
   commit), same-delta cluster demolition (must commit), pointwise-key
   adjacent-vs-overlapping boundaries, coverage with exact-abutment segment chains,
-  and the sentinel end (`MAX`) at every boundary position.
+  the sentinel end (`MAX`) at every boundary position, and **the net-disposition
+  pattern class** — a redundant insert (plain, or a delete + re-insert netting to
+  nothing) alongside a delete of its containment target must abort **target-side
+  on both oracles, `Direction` compared as part of the verdict**: "source side"
+  means facts the transaction actually added, the naive model is normative, and
+  the delta's net dispositions (`50-storage.md`) make the engine agree by
+  representation. The `==`/totality corner (no-op parent re-insert + child
+  delete) is the same class, caught via the parent's standing reverse edge.
 - Operation-sequence property tests for the write path: random insert/delete/alloc
   interleavings with judgment checks, asserting idempotence, guard consistency,
   reverse-edge consistency, and serial monotonicity across commits and aborts —
