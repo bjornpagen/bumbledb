@@ -54,6 +54,22 @@ pub enum CorruptionError {
     /// The `F` scan yielded a different number of rows than the stored `S`
     /// row count — the derived counters have desynced from the facts.
     RowCountMismatch { relation: RelationId, stored: u64 },
+    /// A stored `S` row count exceeds a witness the store itself provides
+    /// — the `_data` DBI entry count, which spans every namespace and so
+    /// over-approximates any one relation's rows. The reopen-trust
+    /// ceiling (`docs/architecture/50-storage.md`): a claim above it
+    /// cannot be a real row count and would otherwise size an
+    /// allocation, so it is typed corruption *before* a byte is
+    /// allocated (the scan cross-check,
+    /// [`CorruptionError::RowCountMismatch`], stays the exactness
+    /// guarantee).
+    CounterDesync {
+        relation: RelationId,
+        /// The stored `S` value.
+        claimed: u64,
+        /// The `_data` entry count that bounds it.
+        witness: u64,
+    },
     /// A stored value (a counter, row id, or dictionary id) failed to
     /// decode; the static string names which kind — a diagnosis, not a
     /// formatted payload.
@@ -505,6 +521,19 @@ pub enum Error {
     EnvironmentLocked,
     Io(std::io::Error),
     Lmdb(heed::Error),
+
+    // --- Runtime resource errors ---
+    /// Every reader slot holds an open snapshot. The environment opens
+    /// with a fixed 1024-slot reader table
+    /// (`crate::storage::env::MAX_READERS` — a decision, not a knob), and
+    /// `MDB_NOTLS` binds slots to transaction objects, so this names one
+    /// snapshot too many — not one thread too many. Named instead of a
+    /// raw `Lmdb` passthrough because the remedy is releasing snapshots,
+    /// not diagnosing LMDB.
+    ReadersFull {
+        /// The configured reader-table size.
+        max_readers: u32,
+    },
 
     // --- Declaration / validation errors ---
     Schema(SchemaError),

@@ -8,6 +8,7 @@
 //! scan, `S` the planner.
 
 mod check_width;
+mod data_entries;
 mod fact_row;
 mod fetch;
 mod guard_row;
@@ -18,6 +19,7 @@ mod scan;
 #[cfg(test)]
 mod tests;
 
+pub use data_entries::data_entries;
 pub use fact_row::{fact_row, fact_row_by_hash};
 pub use fetch::fetch;
 pub use guard_row::guard_row;

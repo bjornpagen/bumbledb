@@ -8,6 +8,14 @@ writer, many reader threads, one process (`00-product.md`).
 maintained thin binding; raw FFI buys nothing at this layer. **Reverses if:** heed
 becomes a correctness or maintenance liability.
 
+Environment constants are decisions, not knobs: `map_size` is fixed at 4 GB
+(comfortably above the 1 GB scale axiom, allocated sparsely by the OS), and
+`max_readers` at 1024 — inter-query parallelism is the scaling axis and `MDB_NOTLS`
+binds reader slots to open transaction objects, so LMDB's default 126 would cap
+concurrent snapshots, not threads; the raise costs a measured 64 bytes of lock file
+per slot (~64 KiB total), and the snapshot past the table is the typed `ReadersFull`
+error naming the limit.
+
 ## Design inputs (why this layout)
 
 The first governing observation: an encoded fact is already a fixed-width row
@@ -209,7 +217,13 @@ stays deliberately unbuilt.
 the schema's fact width, a dangling intern id, an `M`/`F` disagreement, an
 out-of-range enum ordinal, an interval with `start ≥ end` — any of these aborts the
 scan/query with a corruption error; an engine that silently skips undecodable rows
-silently shrinks query results, which is the worse bug. An offline integrity
+silently shrinks query results, which is the worse bug. Reopen-trusted counters are
+additionally **bounded before they size anything**: the image build caps the claimed
+`S` row count by the `_data` DBI entry count (`mdb_stat`, O(1)) — a witness that
+over-approximates any one relation's rows because the DBI spans every namespace,
+which is exactly what a ceiling is allowed to do — and a claim above it is the typed
+`CounterDesync` corruption *before* any size-derived allocation; the F-scan
+cross-check stays the exactness guarantee. An offline integrity
 checker (M↔F↔U↔R sweep) is out of scope for v0, stated.
 
 ## The columnar image cache (the hot representation)

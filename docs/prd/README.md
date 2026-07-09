@@ -63,7 +63,6 @@ orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [08 — Storage hardening](08-storage-hardening.md)
 - [09 — `verify_store`: namespace coherence](09-verify-store-namespaces.md)
 - [10 — `verify_store`: global judgments + CLI](10-verify-store-judgments.md)
 - [11 — The chase: analysis and rewrite](11-chase-rewrite.md)

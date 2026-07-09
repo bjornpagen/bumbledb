@@ -38,6 +38,17 @@ pub const FORMAT_VERSION: u32 = 1;
 /// sparsely by the OS. Not configurable — path-only public surface.
 const MAP_SIZE: usize = 4 << 30;
 
+/// Fixed reader-table size: comfortably above any plausible snapshot
+/// concurrency — inter-query parallelism is the design's scaling axis
+/// (`00-product.md`), and `MDB_NOTLS` binds slots to open *transaction
+/// objects* (the parked reader included), so LMDB's default 126 would cap
+/// concurrent snapshots, not threads. Measured cost of the raise: 64
+/// bytes of lock file per slot (one cache line) — 8,192 bytes at the
+/// default, 65,664 at 1024, a 56 KiB delta. Not configurable — a
+/// decision, not a knob. The slot past the table is the typed
+/// [`crate::error::Error::ReadersFull`], never a raw LMDB passthrough.
+pub(crate) const MAX_READERS: u32 = 1024;
+
 /// `_meta` keys, single-byte.
 const META_FORMAT_VERSION: &[u8] = &[0];
 const META_FINGERPRINT: &[u8] = &[1];

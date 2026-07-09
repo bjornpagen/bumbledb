@@ -115,6 +115,15 @@ impl fmt::Display for CorruptionError {
                 "relation {}: stored row count {stored} desynced from the facts",
                 relation.0
             ),
+            Self::CounterDesync {
+                relation,
+                claimed,
+                witness,
+            } => write!(
+                f,
+                "relation {}: stored row count {claimed} exceeds the store's {witness}-entry witness",
+                relation.0
+            ),
             Self::MalformedValue(kind) => write!(f, "malformed stored value: {kind}"),
             Self::NonUtf8Intern(id) => write!(f, "intern id {id}: stored bytes are not UTF-8"),
             Self::InternTagMismatch(id) => {
@@ -470,6 +479,9 @@ impl fmt::Display for Error {
             }
             Self::Io(err) => write!(f, "io: {err}"),
             Self::Lmdb(err) => write!(f, "lmdb: {err}"),
+            Self::ReadersFull { max_readers } => {
+                write!(f, "all {max_readers} reader slots hold open snapshots")
+            }
             Self::Schema(err) => write!(f, "schema declaration: {err}"),
             Self::Validation(err) => write!(f, "query validation: {err}"),
             Self::FactShape(err) => write!(f, "dynamic fact: {err}"),

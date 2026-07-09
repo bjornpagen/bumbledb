@@ -13,7 +13,9 @@ impl Environment {
     ///
     /// # Errors
     ///
-    /// `Lmdb` on transaction failure (e.g. reader-slot exhaustion).
+    /// [`ReadersFull`](crate::error::Error::ReadersFull) when every slot
+    /// of the fixed [`MAX_READERS`](super::MAX_READERS) reader table
+    /// holds an open snapshot; `Lmdb` on any other transaction failure.
     pub fn read_txn(&self) -> Result<ReadTxn<'_>> {
         Ok(self.resume_read_txn(self.env.clone().static_read_txn()?))
     }

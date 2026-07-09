@@ -36,7 +36,9 @@ fn slab_lengths(row_count: usize, word_cols: usize, byte_cols: usize) -> Result<
 /// # Errors
 ///
 /// Any scan corruption (wrong fact width) aborts the build; a scan yielding
-/// a different number of rows than the stored `S` count is corruption too.
+/// a different number of rows than the stored `S` count is corruption too,
+/// and a stored count exceeding the `_data` entry-count witness is
+/// [`CorruptionError::CounterDesync`] before any size-derived allocation.
 /// Dangling intern ids are *not* checked here — ids are opaque words at
 /// this layer.
 ///
@@ -47,7 +49,25 @@ fn slab_lengths(row_count: usize, word_cols: usize, byte_cols: usize) -> Result<
 pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<RelationImage>> {
     let relation = schema.relation(rel);
     let layout = relation.layout();
-    let row_count = usize::try_from(read::row_count(txn, rel)?).expect("64-bit usize");
+    let claimed = read::row_count(txn, rel)?;
+
+    // The reopen-trust ceiling: the stored `S` count is data, and a
+    // corrupt-but-plausible value (2^40 passes every checked size
+    // computation) would drive the slab `vec!`s below into a
+    // multi-terabyte allocation. Bound it by the `_data` DBI entry count
+    // — an over-approximation (the DBI spans F/M/U/R/Q/S, so it counts
+    // far more than this relation's F rows), which a ceiling is allowed
+    // to be: no real row count can exceed it, and the scan cross-check
+    // below stays the exactness guarantee.
+    let witness = read::data_entries(txn)?;
+    if claimed > witness {
+        return Err(Error::Corruption(CorruptionError::CounterDesync {
+            relation: rel,
+            claimed,
+            witness,
+        }));
+    }
+    let row_count = usize::try_from(claimed).expect("64-bit usize");
 
     // One up-front allocation per backing store, sized from the row count
     // plus per-column alignment/stagger slack. The stored `S` count is

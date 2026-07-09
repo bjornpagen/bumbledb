@@ -4,7 +4,15 @@ use super::{CorruptionError, Error, FactShapeError, SchemaError, ValidationError
 
 impl From<heed::Error> for Error {
     fn from(err: heed::Error) -> Self {
-        Self::Lmdb(err)
+        match err {
+            // `MDB_READERS_FULL` gets a named error carrying the fixed
+            // reader-table size: the failure is "one snapshot too many",
+            // and the remedy is releasing snapshots, not diagnosing LMDB.
+            heed::Error::Mdb(heed::MdbError::ReadersFull) => Self::ReadersFull {
+                max_readers: crate::storage::env::MAX_READERS,
+            },
+            other => Self::Lmdb(other),
+        }
     }
 }
 

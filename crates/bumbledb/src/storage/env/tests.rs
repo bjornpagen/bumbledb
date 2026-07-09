@@ -101,6 +101,55 @@ fn generation_is_zero_on_fresh_database() {
     assert_eq!(rtxn.generation().expect("generation"), 0);
 }
 
+/// The reader-slot cap is a mechanism, not a promise: >126 concurrent
+/// read snapshots — past LMDB's default reader table — open and hold
+/// simultaneously under the fixed [`MAX_READERS`]. Threads rendezvous on
+/// a barrier so every snapshot is provably live at once, then release.
+#[test]
+fn holds_more_read_snapshots_than_lmdb_default() {
+    const READERS: usize = 160;
+    let dir = TempDir::new("env-many-readers");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let barrier = std::sync::Barrier::new(READERS);
+    std::thread::scope(|s| {
+        for _ in 0..READERS {
+            s.spawn(|| {
+                let txn = env.read_txn().expect("snapshot within MAX_READERS");
+                barrier.wait(); // all 160 slots held at once
+                drop(txn);
+            });
+        }
+    });
+}
+
+/// The snapshot past the reader table is the typed error naming the
+/// limit — cheap to provoke because `MDB_NOTLS` binds slots to
+/// transaction objects, so one thread exhausts the table alone.
+#[test]
+fn the_snapshot_past_the_reader_table_is_a_typed_error() {
+    let dir = TempDir::new("env-readers-full");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let mut held = Vec::with_capacity(MAX_READERS as usize);
+    for _ in 0..MAX_READERS {
+        held.push(env.read_txn().expect("slot within the table"));
+    }
+    let err = env.read_txn().map(|_| ()).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::ReadersFull {
+                max_readers: MAX_READERS
+            }
+        ),
+        "{err:?}"
+    );
+    drop(held);
+    // Released slots are reusable: the table was full, not poisoned.
+    env.read_txn().expect("snapshot after release");
+}
+
 /// A stored `u64::MAX` dictionary counter —
 /// the miss sentinel, never mintable — is typed Corruption at the
 /// read, not an assert.
