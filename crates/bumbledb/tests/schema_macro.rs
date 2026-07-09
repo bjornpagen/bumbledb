@@ -11,7 +11,7 @@
 use bumbledb::schema::fingerprint::fingerprint;
 use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
-    SchemaDescriptor, Side, StatementDescriptor, ValueType,
+    SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
 };
 use bumbledb::{Db, Fact, Interval, Value};
 
@@ -199,6 +199,25 @@ fn statements_land_in_source_order_with_equality_lowered() {
             relation: RelationId(2),
             projection: Box::new([FieldId(0)]),
         }
+    );
+}
+
+#[test]
+fn the_equality_pair_seals_mirror_links() {
+    // The macro's `==` lowers to ids 3 and 4, which seal pointing at each
+    // other; every FD and the one-way containment carry `None`.
+    let mirrors: Vec<Option<StatementId>> =
+        schema().statements().iter().map(|s| s.mirror).collect();
+    assert_eq!(
+        mirrors,
+        vec![
+            None,
+            None,
+            None,
+            Some(StatementId(4)),
+            Some(StatementId(3)),
+            None
+        ]
     );
 }
 

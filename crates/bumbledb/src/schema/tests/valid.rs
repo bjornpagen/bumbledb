@@ -174,6 +174,21 @@ fn example_schema_resolves_exactly() {
         ]
     );
 
+    // The sealed `==` pairing: the lowered pair links symmetrically;
+    // every FD and the one-way containment (id 2) carry `None`.
+    let mirrors: Vec<Option<StatementId>> = schema.statements().iter().map(|s| s.mirror).collect();
+    assert_eq!(
+        mirrors,
+        vec![
+            None,
+            None,
+            None,
+            Some(StatementId(4)),
+            Some(StatementId(3)),
+            None
+        ]
+    );
+
     // The target_key -> dependents reverse index (the target-side
     // reverse-edge check set).
     assert_eq!(schema.dependents(StatementId(0)), &[StatementId(2)]);

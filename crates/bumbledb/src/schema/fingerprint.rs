@@ -8,10 +8,12 @@
 //! order and therefore covered without being hashed separately.
 //!
 //! [`Resolved`](super::Resolved) data (target keys, key permutations,
-//! interval positions) is **not** hashed: the acceptance gate computes it as
-//! a deterministic function of the hashed inputs, the same way materialized
-//! order leaves "statement ids … pinned by the fingerprint without being
-//! hashed separately" (`docs/architecture/10-data-model.md`).
+//! interval positions) and the sealed `==` pairing
+//! ([`Statement::mirror`](super::Statement::mirror)) are **not** hashed:
+//! the acceptance gate computes both as deterministic functions of the
+//! hashed inputs, the same way materialized order leaves "statement ids …
+//! pinned by the fingerprint without being hashed separately"
+//! (`docs/architecture/10-data-model.md`).
 
 use super::{
     FieldId, Generation, IntervalElement, RelationId, Schema, Side, StatementDescriptor, ValueType,
@@ -162,7 +164,7 @@ fn put_literal(out: &mut Vec<u8>, literal: &Value) {
 #[cfg(test)]
 mod tests {
     use super::super::{
-        FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
+        FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, StatementId, ValueType,
     };
     use super::*;
 
@@ -234,6 +236,15 @@ mod tests {
         fingerprint(&schema_of(base()))
     }
 
+    fn hex_of(fp: &SchemaFingerprint) -> String {
+        fp.0.iter()
+            .fold(String::with_capacity(64), |mut hex, byte| {
+                use std::fmt::Write;
+                write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+                hex
+            })
+    }
+
     #[test]
     fn golden_fingerprint_pins_the_hash() {
         // Pinned across the PRD-01 `Value` collapse: the canonical
@@ -241,18 +252,33 @@ mod tests {
         // the format label stays `v1`. `base()` covers every literal-adjacent
         // input: enums, serial auto-keys, a declared key, and a containment
         // with a selection literal.
-        let hex: String =
-            base_fingerprint()
-                .0
-                .iter()
-                .fold(String::with_capacity(64), |mut hex, byte| {
-                    use std::fmt::Write;
-                    write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
-                    hex
-                });
         assert_eq!(
-            hex,
+            hex_of(&base_fingerprint()),
             "b7e792d16e7b1582fcaca3d3f591fc210bff4d5bbc6a922b46fb24c5eee4c25f"
+        );
+    }
+
+    #[test]
+    fn mirror_links_never_reach_the_fingerprint() {
+        // Identity golden: the sealed `==` pairing (`Statement::mirror`)
+        // is derived from hashed inputs exactly like `Resolved`, so a
+        // schema carrying a mirrored pair hashes only its descriptors —
+        // pinned so the field can never leak into `canonical_bytes`.
+        let mut decl = base();
+        decl.statements.push(StatementDescriptor::Containment {
+            source: side(0, &[0], &[]),
+            target: side(1, &[1], &[(2, Value::Enum(0))]),
+        });
+        let schema = schema_of(decl);
+        // The fixture genuinely seals a pair (materialized ids 3 and 4:
+        // two serial auto-keys and the declared FD precede them).
+        assert_eq!(
+            schema.statement(StatementId(3)).mirror,
+            Some(StatementId(4))
+        );
+        assert_eq!(
+            hex_of(&fingerprint(&schema)),
+            "e262a1a960e148f5d1371a9763481fb9b65c24f677bc2347950ad1bd29b8a073"
         );
     }
 

@@ -17,22 +17,22 @@ use super::{
 /// Renders one sealed statement in the exact macro notation: an FD as
 /// `SavingsTerms(account) -> SavingsTerms`, a containment as
 /// `Account(holder) <= Holder(id)` with any selection after `|`
-/// (`Account(id | kind == Savings)`), and a bidirectional pair — detected
-/// via the adjacent mirror statement `==` lowering left — as `==` once,
-/// in the pair's written orientation (both ids render the same string).
-/// Selection literals render through one value formatter: enum ordinals
-/// resolve to variant names, intervals as `start..end`.
+/// (`Account(id | kind == Savings)`), and a bidirectional pair — read off
+/// the sealed [`Statement::mirror`](super::Statement::mirror) link — as
+/// `==` once, in the pair's written orientation (both ids render the same
+/// string). Selection literals render through one value formatter: enum
+/// ordinals resolve to variant names, intervals as `start..end`.
 ///
 /// # Panics
 ///
 /// On an out-of-range id — statement ids are validated, internal data.
 #[must_use]
 pub fn render(schema: &Schema, id: StatementId) -> String {
-    let descriptors: Vec<&StatementDescriptor> =
-        schema.statements().iter().map(|s| &s.descriptor).collect();
+    let statement = schema.statement(id);
     Rendered {
         names: &SealedNames(schema),
-        statements: &descriptors,
+        descriptor: &statement.descriptor,
+        mirror: statement.mirror,
         id,
     }
     .to_string()
@@ -53,10 +53,13 @@ pub fn render(schema: &Schema, id: StatementId) -> String {
 #[must_use]
 pub fn render_declared(descriptor: &SchemaDescriptor, id: StatementId) -> String {
     let materialized = descriptor.materialized_statements();
-    let descriptors: Vec<&StatementDescriptor> = materialized.iter().collect();
+    let index = usize::from(id.0);
     Rendered {
         names: &DeclaredNames(descriptor),
-        statements: &descriptors,
+        descriptor: &materialized[index],
+        // A rejected declaration seals no `mirror` field to read, so the
+        // pairing comes from sealing's one computation site.
+        mirror: super::validate::mirror_of(&materialized, index),
         id,
     }
     .to_string()
@@ -104,14 +107,15 @@ impl Names for DeclaredNames<'_> {
 /// The lazy renderer behind both entry points.
 struct Rendered<'a> {
     names: &'a dyn Names,
-    statements: &'a [&'a StatementDescriptor],
+    descriptor: &'a StatementDescriptor,
+    /// The `==` partner, if any — the sealed fact, never re-detected here.
+    mirror: Option<StatementId>,
     id: StatementId,
 }
 
 impl fmt::Display for Rendered<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let index = usize::from(self.id.0);
-        match self.statements[index] {
+        match self.descriptor {
             StatementDescriptor::Functionality {
                 relation,
                 projection,
@@ -120,36 +124,27 @@ impl fmt::Display for Rendered<'_> {
                 write!(f, " -> ")?;
                 relation_name(f, self.names, *relation)
             }
-            StatementDescriptor::Containment { source, target } => {
-                // `==` lowers to two adjacent mirrored containments
-                // (`docs/architecture/30-dependencies.md`); the pair
-                // renders `==` once, in its written orientation, from
-                // either id.
-                let mirrors = |other: &&StatementDescriptor| {
-                    matches!(
-                        other,
-                        StatementDescriptor::Containment {
-                            source: mirror_source,
-                            target: mirror_target,
-                        } if mirror_source == target && mirror_target == source
-                    )
-                };
-                if index > 0 && mirrors(&self.statements[index - 1]) {
-                    // The pair's second statement: the first wrote the
-                    // orientation.
+            StatementDescriptor::Containment { source, target } => match self.mirror {
+                // A mirrored pair renders `==` once, canonically in the
+                // lower id's written orientation — both partners produce
+                // the same string, so the higher id flips its sides
+                // (which *are* the partner's sides, swapped).
+                Some(partner) if partner < self.id => {
                     side(f, self.names, target)?;
                     write!(f, " == ")?;
                     side(f, self.names, source)
-                } else if self.statements.get(index + 1).is_some_and(mirrors) {
+                }
+                Some(_) => {
                     side(f, self.names, source)?;
                     write!(f, " == ")?;
                     side(f, self.names, target)
-                } else {
+                }
+                None => {
                     side(f, self.names, source)?;
                     write!(f, " <= ")?;
                     side(f, self.names, target)
                 }
-            }
+            },
         }
     }
 }

@@ -253,11 +253,24 @@ pub enum Resolved {
     },
 }
 
-/// One sealed statement: the descriptor plus its resolved enforcement data.
+/// One sealed statement: the descriptor plus its resolved enforcement data
+/// and its `==` pairing.
 #[derive(Debug)]
 pub struct Statement {
     pub descriptor: StatementDescriptor,
     pub resolved: Resolved,
+    /// The `==` partner: the containment whose sides are exactly this
+    /// statement's sides swapped, anywhere in the materialized list —
+    /// `==` lowers to two containments and the pairing is a fact of the
+    /// declaration, sealed here rather than re-discovered by render-time
+    /// search (`docs/architecture/30-dependencies.md`). At most one
+    /// partner can exist because [`SchemaError::DuplicateStatement`]
+    /// rejects identical normalized statements (two candidate mirrors
+    /// would be identical to each other), which makes the links
+    /// symmetric. `None` for every FD and one-way containment.
+    ///
+    /// [`SchemaError::DuplicateStatement`]: crate::error::SchemaError::DuplicateStatement
+    pub mirror: Option<StatementId>,
 }
 
 /// One relation of a validated schema.

@@ -168,6 +168,75 @@ fn a_bidirectional_pair_renders_as_double_equals_once_from_either_id() {
 }
 
 #[test]
+fn a_non_adjacent_mirrored_pair_renders_as_double_equals() {
+    // The closed gap, pinned: the pairing is a sealed fact computed over
+    // *all* statements, so a hand-built descriptor separating the lowered
+    // pair with an unrelated statement still renders `==` once from
+    // either id (adjacency-based detection rendered it as two `<=`
+    // lines).
+    let declaration = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                name: "P".into(),
+                fields: vec![field("id", ValueType::U64)],
+            },
+            RelationDescriptor {
+                name: "Q".into(),
+                fields: vec![field("pid", ValueType::U64)],
+            },
+            RelationDescriptor {
+                name: "R".into(),
+                fields: vec![field("x", ValueType::U64)],
+            },
+        ],
+        statements: vec![
+            // id 0: P(id) -> P
+            StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+            },
+            // id 1: Q(pid) -> Q
+            StatementDescriptor::Functionality {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0)]),
+            },
+            // id 2: the pair's first half.
+            StatementDescriptor::Containment {
+                source: side_of(0, &[0]),
+                target: side_of(1, &[0]),
+            },
+            // id 3: an unrelated statement between the halves.
+            StatementDescriptor::Functionality {
+                relation: RelationId(2),
+                projection: Box::new([FieldId(0)]),
+            },
+            // id 4: the pair's second half — exactly id 2's sides swapped.
+            StatementDescriptor::Containment {
+                source: side_of(1, &[0]),
+                target: side_of(0, &[0]),
+            },
+        ],
+    };
+    let schema = declaration.clone().validate().expect("valid");
+    // The links seal symmetric across the gap.
+    assert_eq!(
+        schema.statement(StatementId(2)).mirror,
+        Some(StatementId(4))
+    );
+    assert_eq!(
+        schema.statement(StatementId(4)).mirror,
+        Some(StatementId(2))
+    );
+    // Both halves render the pair once, in the lower id's orientation.
+    let expected = "P(id) == Q(pid)";
+    assert_eq!(render(&schema, StatementId(2)), expected);
+    assert_eq!(render(&schema, StatementId(4)), expected);
+    // The declared (diagnostic) path agrees.
+    assert_eq!(render_declared(&declaration, StatementId(2)), expected);
+    assert_eq!(render_declared(&declaration, StatementId(4)), expected);
+}
+
+#[test]
 fn declared_rendering_matches_sealed_rendering() {
     let declaration = example();
     let schema = declaration.clone().validate().expect("valid");

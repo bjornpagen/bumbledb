@@ -10,7 +10,7 @@
 //! The roster's "FD with selection" and "non-key FD form" lines have no
 //! checks here: [`StatementDescriptor::Functionality`] carries neither a
 //! selection nor a Y side, so both shapes are unrepresentable rather than
-//! rejected (the PRD 02 descriptor decision; see PRD 03 § Conflict).
+//! rejected (the PRD 02 descriptor decision).
 
 use super::{
     value_matches, FactLayout, FieldDescriptor, FieldId, Generation, Relation, RelationDescriptor,
@@ -120,12 +120,21 @@ impl SchemaDescriptor {
             }
         }
 
+        // The `==` pairing, sealed as a fact of the declaration
+        // ([`Statement::mirror`]): n² over ≤ 2¹⁶ statements, in practice
+        // tens — computed once here, read everywhere after.
+        let mirrors: Vec<Option<StatementId>> = (0..descriptors.len())
+            .map(|idx| mirror_of(&descriptors, idx))
+            .collect();
+
         let statements = descriptors
             .into_iter()
             .zip(resolutions)
-            .map(|(descriptor, resolved)| Statement {
+            .zip(mirrors)
+            .map(|((descriptor, resolved), mirror)| Statement {
                 descriptor,
                 resolved,
+                mirror,
             })
             .collect();
 
@@ -135,6 +144,37 @@ impl SchemaDescriptor {
             dependents: dependents.into_iter().map(Vec::into_boxed_slice).collect(),
         })
     }
+}
+
+/// The `==` partner of the statement at `index`: the first *other*
+/// containment in the materialized list whose sides are exactly the swapped
+/// sides — the one swapped-sides comparison site. Sealing calls it over
+/// **all** statements (the lowered pair need not be adjacent — legal for
+/// hand-built descriptors); the declared-side diagnostic renderer calls it
+/// too, because a rejected declaration never seals a field to read. On a
+/// *sealed* list the partner is unique and the links symmetric: a second
+/// candidate mirror would equal the first, and
+/// [`SchemaError::DuplicateStatement`] rejects identical normalized
+/// statements. On a rejected declaration first-match is best-effort
+/// diagnostics.
+pub(super) fn mirror_of(descriptors: &[StatementDescriptor], index: usize) -> Option<StatementId> {
+    let StatementDescriptor::Containment { source, target } = &descriptors[index] else {
+        return None;
+    };
+    descriptors
+        .iter()
+        .enumerate()
+        .find(|(other, descriptor)| {
+            *other != index
+                && matches!(
+                    descriptor,
+                    StatementDescriptor::Containment {
+                        source: mirror_source,
+                        target: mirror_target,
+                    } if mirror_source == target && mirror_target == source
+                )
+        })
+        .map(|(other, _)| StatementId(u16::try_from(other).expect("statement count fits u16")))
 }
 
 /// The descriptor with each selection sorted by [`FieldId`] — σ is a set of
