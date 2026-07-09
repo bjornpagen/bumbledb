@@ -50,32 +50,54 @@ impl Executor {
             matches!(colts[cover_occ].key_count(cover_cursor), KeyCount::Exact(_)),
         );
 
-        let arity = node.subatoms[cover_sub].vars.len();
+        // Word-level batch arity: an interval cover variable contributes
+        // its two key words (the SlotWidth layout).
+        let arity = self.slot_map[node_idx][cover_sub].len();
         let mut scratch = std::mem::take(&mut self.scratch[node_idx]);
 
-        // Resolve value sources against the runtime cover choice: a var
-        // bound by the chosen cover reads the batch key column; everything
-        // else reads its (already bound) outer slot.
+        // Resolve value sources against the runtime cover choice, one
+        // source per key WORD: a var bound by the chosen cover reads the
+        // batch key words at its word base; everything else reads its
+        // (already bound) outer slots.
         let cover_vars = &plan.nodes()[node_idx].subatoms[cover_sub].vars;
         for (sub_idx, subatom) in plan.nodes()[node_idx].subatoms.iter().enumerate() {
             scratch.sources[sub_idx].clear();
-            for (i, var) in subatom.vars.iter().enumerate() {
-                let source = cover_vars.iter().position(|cv| cv == var).map_or(
-                    Source::Slot(self.slot_map[node_idx][sub_idx][i]),
-                    Source::Batch,
-                );
-                scratch.sources[sub_idx].push(source);
+            let mut word = 0;
+            for var in &subatom.vars {
+                let width = self.width_of(*var);
+                let base = super::word_base(cover_vars, *var, |v| self.width_of(v));
+                for offset in 0..width {
+                    scratch.sources[sub_idx].push(match base {
+                        Some(base) => Source::Batch(base + offset),
+                        None => Source::Slot(self.slot_map[node_idx][sub_idx][word + offset]),
+                    });
+                }
+                word += width;
             }
         }
         scratch.residual_sources.clear();
-        for (residual, lhs_slot, rhs_slot) in &self.residual_slots[node_idx] {
+        for (residual, lhs_slot, rhs_slot, _) in &self.residual_slots[node_idx] {
             let resolve = |var: crate::ir::VarId, slot: usize| {
-                cover_vars
-                    .iter()
-                    .position(|cv| *cv == var)
+                super::word_base(cover_vars, var, |v| self.width_of(v))
                     .map_or(Source::Slot(slot), Source::Batch)
             };
             scratch.residual_sources.push((
+                resolve(residual.lhs, *lhs_slot),
+                resolve(residual.rhs, *rhs_slot),
+            ));
+        }
+        // Word residuals: sources pre-offset to the compared word — a
+        // cover-bound side reads its word base plus the residual's
+        // Start/End offset.
+        scratch.word_residual_sources.clear();
+        for (residual, lhs_slot, rhs_slot) in &self.word_residual_slots[node_idx] {
+            let resolve = |side: crate::ir::normalize::VarWord, slot: usize| {
+                super::word_base(cover_vars, side.var, |v| self.width_of(v))
+                    .map_or(Source::Slot(slot), |base| {
+                        Source::Batch(base + side.word.offset())
+                    })
+            };
+            scratch.word_residual_sources.push((
                 resolve(residual.lhs, *lhs_slot),
                 resolve(residual.rhs, *rhs_slot),
             ));
@@ -119,7 +141,7 @@ impl Executor {
                     continue;
                 }
                 let subatom = &plan.nodes()[node_idx].subatoms[sub_idx];
-                let sub_arity = subatom.vars.len();
+                let sub_arity = self.slot_map[node_idx][sub_idx].len();
                 let occ = usize::from(subatom.occ.0);
                 let (s_cursor, s_level) = self.cursors[occ];
                 counters.phase_start(node_idx, JoinPhase::Force);
@@ -212,7 +234,35 @@ impl Executor {
             // Residuals run as batch survivor compaction after the probes.
             counters.phase_start(node_idx, JoinPhase::Residual);
             for (r_idx, (lhs_src, rhs_src)) in scratch.residual_sources.iter().enumerate() {
-                let op = self.residual_slots[node_idx][r_idx].0.op;
+                let (residual, _, _, width) = &self.residual_slots[node_idx][r_idx];
+                let op = residual.op;
+                let n = scratch.survivors.len();
+                scratch.mask.clear();
+                scratch.mask.resize(n, 0);
+                for k in 0..n {
+                    let e = scratch.survivors[k];
+                    let entry = usize::try_from(e).expect("batch fits usize");
+                    let value = |src: &Source, offset: usize| match *src {
+                        Source::Batch(word) => scratch.entry_keys[entry * arity + word + offset],
+                        Source::Slot(slot) => bindings.get(slot + offset),
+                    };
+                    let pass = super::compare_wide(
+                        op,
+                        *width,
+                        |offset| value(lhs_src, offset),
+                        |offset| value(rhs_src, offset),
+                    );
+                    counters.residual(node_idx, pass);
+                    scratch.mask[k] = u8::from(pass);
+                }
+                crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+            }
+            // Word residuals: the decomposed interval compositions —
+            // single-word compares over pre-offset slot pairs, compacted
+            // exactly like the whole-value residuals above
+            // (docs/architecture/20-query-ir.md, § normalization).
+            for (r_idx, (lhs_src, rhs_src)) in scratch.word_residual_sources.iter().enumerate() {
+                let op = self.word_residual_slots[node_idx][r_idx].0.op;
                 let n = scratch.survivors.len();
                 scratch.mask.clear();
                 scratch.mask.resize(n, 0);
@@ -229,6 +279,43 @@ impl Executor {
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
+            // Membership probes (docs/architecture/40-execution.md, the
+            // point-membership scan): per surviving binding, scan the
+            // occurrence's remaining positions for one fact satisfying
+            // every var-sourced membership; misses compact away.
+            for spec in &self.point_probe_slots[node_idx] {
+                let n = scratch.survivors.len();
+                scratch.mask.clear();
+                scratch.mask.resize(n, 0);
+                for k in 0..n {
+                    let e = scratch.survivors[k];
+                    let entry = usize::try_from(e).expect("batch fits usize");
+                    scratch.point_checks.clear();
+                    for (start_col, end_col, var, slot) in &spec.parts {
+                        let point = super::word_base(cover_vars, *var, |v| self.width_of(v))
+                            .map_or_else(
+                                || bindings.get(*slot),
+                                |base| scratch.entry_keys[entry * arity + base],
+                            );
+                        scratch.point_checks.push((*start_col, *end_col, point));
+                    }
+                    let cursor = if spec.occ == cover_occ {
+                        scratch.children[entry]
+                    } else if let Some(sub_idx) = plan.nodes()[node_idx]
+                        .subatoms
+                        .iter()
+                        .position(|sub| usize::from(sub.occ.0) == spec.occ)
+                    {
+                        scratch.sibling_children[sub_idx][entry]
+                    } else {
+                        self.cursors[spec.occ].0
+                    };
+                    let pass = colts[spec.occ].any_position_matches(cursor, &scratch.point_checks);
+                    counters.residual(node_idx, pass);
+                    scratch.mask[k] = u8::from(pass);
+                }
+                crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+            }
             counters.phase_end(node_idx, JoinPhase::Residual);
 
             // Anti-probes: the residual step's sibling (docs/architecture/
@@ -240,6 +327,7 @@ impl Executor {
                 &self.anti_probe_slots[node_idx],
                 node_idx,
                 cover_vars,
+                &self.var_widths,
                 arity,
                 colts,
                 &scratch.entry_keys,
@@ -248,6 +336,7 @@ impl Executor {
                 &mut scratch.hashes,
                 &mut scratch.mask,
                 &mut scratch.anti_sources,
+                &mut scratch.point_checks,
                 |_, slot| bindings.get(slot),
                 counters,
             );

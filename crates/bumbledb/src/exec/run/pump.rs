@@ -82,7 +82,8 @@ impl Executor {
             counters.cover_choice(node_idx, cover_sub, matches!(count, KeyCount::Exact(_)));
             let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
             let cover_level = tables.entry_level[node_idx][cover_occ];
-            let cur_arity = node.subatoms[cover_sub].vars.len();
+            // Word-level batch arity (the SlotWidth layout).
+            let cur_arity = self.slot_map[node_idx][cover_sub].len();
             if let Some((open_sub, open_arity, _, _)) = group {
                 if open_sub != cover_sub && fill > 0 {
                     self.probe_pass(

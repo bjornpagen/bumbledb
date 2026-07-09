@@ -365,18 +365,18 @@ fn any_point_in_matches_any_element_of_the_bound_set() {
     let image = interval_image(&dir);
     let predicates = vec![FilterPredicate::AnyPointIn {
         field: P_DURING,
-        set: ParamId(0),
+        set: Const::ParamSet(ParamId(0)),
     }];
 
     // {-4, 10}: -4 lies in [-5,2) (row 3), 10 in [9,12) (row 2).
-    let params = [Const::WordSet(Box::from([w(-4), w(10)]))];
+    let params = [Const::WordSet(vec![w(-4), w(10)])];
     assert_eq!(
         sorted_ids(&apply(&image, &predicates, &params, Vec::new())),
         [2, 3]
     );
 
     // The empty set lies in no interval.
-    let empty = [Const::WordSet(Vec::new().into())];
+    let empty = [Const::WordSet(Vec::new())];
     assert!(apply(&image, &predicates, &empty, Vec::new()).is_empty());
 }
 
@@ -506,7 +506,7 @@ fn param_set_eq_matches_any_element_over_a_scalar_column() {
         op: CmpOp::Eq,
         value: Const::ParamSet(ParamId(0)),
     }];
-    let params = [Const::WordSet(Box::from([1u64, 3]))];
+    let params = [Const::WordSet(vec![1u64, 3])];
     assert_eq!(
         sorted_ids(&apply(&image, &predicates, &params, Vec::new())),
         [1, 3]

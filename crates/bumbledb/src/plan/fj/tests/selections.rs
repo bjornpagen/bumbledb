@@ -110,6 +110,7 @@ fn a_leaked_eq_filter_fails_selection_validation() {
             op: CmpOp::Eq,
             value: Const::Word(1),
         }],
+        point_filters: vec![],
         spans: Box::new([]),
         trie_schema: vec![],
         key_widths: vec![],

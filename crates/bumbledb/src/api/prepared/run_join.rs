@@ -19,7 +19,7 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
     executor: &mut Executor,
     bindings: &mut Bindings,
     resolved_filters: &[Vec<FilterPredicate>],
-    resolved_selections: &[Vec<u64>],
+    resolved_selections: &[Vec<Vec<u64>>],
     memo: &mut ViewMemo,
     sink: &mut EitherSink,
     counters: &mut C,
@@ -85,9 +85,11 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
     }
     views_span.end();
     // Selection probes (docs/architecture/30-execution.md): each occurrence's Eq constants
-    // resolve to trie keys probed once per execution — a miss means no
-    // fact matches, so the whole conjunctive query is empty and the join
-    // never runs (the sink stays reset: a zero-emit execution).
+    // resolve to trie keys probed once per execution — set-bound levels
+    // probe once per element and union survivors inside `select` — and a
+    // miss means no fact matches, so the whole conjunctive query is
+    // empty and the join never runs (the sink stays reset: a zero-emit
+    // execution).
     for (occ_idx, keys) in resolved_selections.iter().enumerate() {
         let hit = memo.colts[occ_idx].select(keys).is_some();
         obs::event(

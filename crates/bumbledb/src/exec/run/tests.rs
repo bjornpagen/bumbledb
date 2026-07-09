@@ -131,22 +131,40 @@ fn views_of(
 /// list, evaluated at the source — docs/architecture/40-execution.md,
 /// § anti-probe filters).
 fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) -> Vec<Colt> {
+    colts_with_params(plan, images, &[])
+}
+
+/// [`colts_for`] with a bind-time param slice for filter evaluation
+/// (set-carrying negated filters resolve through it in these fixtures).
+fn colts_with_params(
+    plan: &ValidatedPlan,
+    images: &[Arc<crate::image::RelationImage>],
+    params: &[crate::image::view::Const],
+) -> Vec<Colt> {
     plan.occurrences()
         .iter()
         .map(|occurrence| {
+            // Field→column through the span map (production shape —
+            // interval fields cover two columns and shift their
+            // successors).
             let columns: Vec<Vec<usize>> = occurrence
                 .trie_schema
                 .iter()
                 .map(|level| {
                     level
                         .iter()
-                        .map(|var| {
+                        .flat_map(|var| {
                             let (field, _) = occurrence
                                 .vars
                                 .iter()
                                 .find(|(_, v)| v == var)
                                 .expect("plan vars come from the occurrence");
-                            usize::from(field.0)
+                            let span = occurrence.spans[usize::from(field.0)];
+                            let first = usize::from(span.first_column);
+                            match span.width {
+                                crate::image::ColumnWidth::WordPair => vec![first, first + 1],
+                                _ => vec![first],
+                            }
                         })
                         .collect()
                 })
@@ -155,7 +173,7 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
                 apply(
                     &images[usize::try_from(occurrence.relation.0).expect("small")],
                     &occurrence.filters,
-                    &[],
+                    params,
                     Vec::new(),
                 ),
                 &[],
@@ -241,7 +259,7 @@ fn all_vars(normalized: &NormalizedQuery) -> BTreeSet<VarId> {
 
 fn run(plan: &ValidatedPlan, views: &[Arc<crate::image::RelationImage>]) -> BTreeSet<Vec<u64>> {
     let mut colts = colts_for(plan, views);
-    let mut bindings = Bindings::new(plan.slots().len());
+    let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let mut executor = Executor::new(plan);
     executor.execute(
@@ -295,7 +313,7 @@ fn run_batched(
     batch: usize,
 ) -> BTreeSet<Vec<u64>> {
     let mut colts = colts_for(plan, views);
-    let mut bindings = Bindings::new(plan.slots().len());
+    let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let mut executor = Executor::with_batch_size(plan, batch);
     executor.execute(
@@ -337,7 +355,7 @@ fn run_at(
     batch: usize,
 ) -> BTreeSet<Vec<u64>> {
     let mut colts = colts_for(plan, views);
-    let mut bindings = Bindings::new(plan.slots().len());
+    let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let mut executor = Executor::with_batch_size(plan, batch);
     executor.execute(
@@ -352,6 +370,7 @@ fn run_at(
 
 mod cancellation;
 mod correctness;
+mod intervals;
 mod mechanics;
 mod negation;
 mod pipeline;

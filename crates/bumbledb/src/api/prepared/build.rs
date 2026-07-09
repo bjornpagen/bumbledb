@@ -27,6 +27,8 @@ use crate::storage::read;
 ///
 /// Only on programmer-invariant violations (`binary2fj` + `factor`
 /// construct valid plans by construction).
+#[allow(clippy::too_many_lines)] // the pipeline's stages in order; each
+                                 // is one span-wrapped step
 pub(crate) fn prepare<'s>(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
@@ -91,13 +93,20 @@ pub(crate) fn prepare<'s>(
     let finds = find_specs(query, &witness, &exec_plan);
 
     // Dense param typing for bind-time checks (validation rejected gaps,
-    // so the id-ordered iteration is positional).
+    // so the id-ordered iteration is positional). A set param records its
+    // element type plus the set-ness bit — bind expects a slice for it.
     let param_types: Vec<ValueType> = witness.param_types().map(|(_, ty)| ty.clone()).collect();
+    let param_is_set: Vec<bool> = witness
+        .param_types()
+        .map(|(id, _)| witness.set_params().contains(&id))
+        .collect();
 
+    // Binding slots are WORDS: an interval variable holds two (the
+    // SlotWidth layout) — `slot_count`, never the variable count.
     let (executor, slot_count, occurrence_count) = match &exec_plan {
         ExecPlan::FreeJoin(plan) => (
             Some(Executor::new(plan)),
-            plan.slots().len(),
+            plan.slot_count(),
             plan.occurrences().len(),
         ),
         ExecPlan::GuardProbe(guard) => (None, guard.vars.len(), 1),
@@ -138,6 +147,7 @@ pub(crate) fn prepare<'s>(
         bindings: Bindings::new(slot_count),
         finds,
         param_types,
+        param_is_set,
         resolved_params: Vec::new(),
         missed_params: Vec::new(),
         resolved_filters: vec![Vec::new(); occurrence_count],
@@ -171,27 +181,46 @@ fn build_view_memo(exec_plan: &ExecPlan) -> ViewMemo {
         return memo; // guard probes never touch views
     };
     for occurrence in plan.occurrences() {
+        // Field→column through the span map (docs/architecture/
+        // 50-storage.md image layout): an interval field contributes its
+        // start/end column pair, and every field after one is shifted —
+        // spans, never raw field indices.
+        let columns_of = |field: crate::schema::FieldId| -> Vec<usize> {
+            let span = occurrence.spans[usize::from(field.0)];
+            let first = usize::from(span.first_column);
+            match span.width {
+                crate::image::ColumnWidth::WordPair => vec![first, first + 1],
+                crate::image::ColumnWidth::Word | crate::image::ColumnWidth::Byte => vec![first],
+            }
+        };
         let columns: Vec<Vec<usize>> = occurrence
             .trie_schema
             .iter()
             .map(|level| {
                 level
                     .iter()
-                    .map(|var| {
+                    .flat_map(|var| {
                         let (field, _) = occurrence
                             .vars
                             .iter()
                             .find(|(_, v)| v == var)
                             .expect("plan vars come from the occurrence");
-                        usize::from(field.0)
+                        columns_of(*field)
                     })
                     .collect()
             })
             .collect();
-        let selections: Vec<usize> = occurrence
+        // Selection levels: columns plus set-ness — a `ParamSet` value
+        // marks a set-bound level, probed once per element with the
+        // survivor union (docs/architecture/40-execution.md, § selection
+        // levels; set-ness is a plan fact, never per-execution data).
+        let selections: Vec<crate::exec::colt::SelectionLevel> = occurrence
             .selections
             .iter()
-            .map(|s| usize::from(s.field.0))
+            .map(|s| crate::exec::colt::SelectionLevel {
+                columns: columns_of(s.field),
+                set: matches!(s.value, crate::image::view::Const::ParamSet(_)),
+            })
             .collect();
         memo.colts
             .push(Colt::new(View::Unbound, &selections, columns));

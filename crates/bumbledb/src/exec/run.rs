@@ -20,7 +20,7 @@
 //! future work" caveat is retired: deep nodes see full batches.
 
 use crate::exec::colt::{BatchToken, Colt, Cursor, KeyCount};
-use crate::ir::normalize::PlacedComparison;
+use crate::ir::normalize::{PlacedComparison, PlacedWordComparison};
 use crate::plan::fj::ValidatedPlan;
 
 /// The sink's reply to one emitted binding: `SkipSuffix` requests the D2
@@ -253,11 +253,56 @@ pub const BATCH: usize = 128;
 
 /// Where a value read during batched probing comes from: a word of the
 /// current batch's cover keys (varying per element) or an already-bound
-/// outer slot (constant across the batch).
+/// outer slot (constant across the batch). Word-indexed on both sides:
+/// an interval variable occupies two consecutive batch key words exactly
+/// as it occupies two consecutive binding slots (the [`crate::ir::
+/// normalize::SlotWidth`] layout), so every consumer resolves one
+/// `Source` per key **word**, never per variable.
 #[derive(Debug, Clone, Copy)]
 enum Source {
     Batch(usize),
     Slot(usize),
+}
+
+/// One whole-value residual compare over a variable's slot words: width
+/// 1 is the scalar compare; width 2 is an interval pair, compared
+/// **pairwise** — `Eq`/`Ne` are the only operators validation admits for
+/// intervals (`docs/architecture/20-query-ir.md`; `Overlaps`/`Contains`
+/// decompose into word residuals instead).
+fn compare_wide(
+    op: crate::ir::CmpOp,
+    width: usize,
+    lhs: impl Fn(usize) -> u64,
+    rhs: impl Fn(usize) -> u64,
+) -> bool {
+    match width {
+        1 => op.compare(&lhs(0), &rhs(0)),
+        2 => match op {
+            crate::ir::CmpOp::Eq => lhs(0) == rhs(0) && lhs(1) == rhs(1),
+            crate::ir::CmpOp::Ne => lhs(0) != rhs(0) || lhs(1) != rhs(1),
+            _ => unreachable!("validated: intervals admit Eq/Ne only as whole values"),
+        },
+        _ => unreachable!("slot widths are 1 or 2"),
+    }
+}
+
+/// The batch key word offset of `target` inside a cover's variable list
+/// — `None` when the variable is not bound by this cover (read its
+/// outer slot instead). Word offsets accumulate slot widths, so an
+/// interval cover variable's pair lands at `base` and `base + 1`.
+fn word_base(
+    cover_vars: &[crate::ir::VarId],
+    target: crate::ir::VarId,
+    width_of: impl Fn(crate::ir::VarId) -> usize,
+) -> Option<usize> {
+    let mut base = 0;
+    for var in cover_vars {
+        if *var == target {
+            return Some(base);
+        }
+        base += width_of(*var);
+    }
+    None
 }
 
 /// A leaf-scan residual operand resolved for one big run (docs/perf/
@@ -305,11 +350,20 @@ struct NodeScratch {
     sources: Vec<Vec<Source>>,
     /// Residual operand sources, aligned with the node's residual list.
     residual_sources: Vec<(Source, Source)>,
+    /// Word-residual operand sources, aligned with the node's
+    /// `word_residuals` list — one source per side, already offset to
+    /// the compared interval word (docs/architecture/20-query-ir.md,
+    /// § normalization: the three fixed compositions).
+    word_residual_sources: Vec<(Source, Source)>,
     /// Anti-probe key sources, aligned with the node's anti-probe list
-    /// (one inner vec per anti-probe, one source per key variable) —
+    /// (one inner vec per anti-probe, one source per key **word**) —
     /// resolved per pass against the runtime cover choice, exactly like
     /// `sources`.
     anti_sources: Vec<Vec<Source>>,
+    /// Membership-check scratch: one (start column, end column, point
+    /// word) triple per point filter of the spec under evaluation,
+    /// rebuilt per element (capacity retained).
+    point_checks: Vec<(usize, usize, u64)>,
     /// Per-entry survivor mask for the compaction kernel.
     mask: Vec<u8>,
     /// Pipeline probe-batch parent indices (docs/perf/ PRD 09): the
@@ -341,8 +395,20 @@ pub struct Executor {
     /// Per subatom slot maps, precomputed: `slot_map[node][subatom][i]` is
     /// the binding slot of that subatom's i-th variable.
     slot_map: Vec<Vec<Vec<usize>>>,
-    /// Per residual: (lhs slot, rhs slot), aligned with each node's list.
-    residual_slots: Vec<Vec<(PlacedComparison, usize, usize)>>,
+    /// Per residual: (lhs slot, rhs slot, slot width), aligned with each
+    /// node's list. Width 2 is an interval pair — `Eq`/`Ne` compare
+    /// pairwise over the two slot words (the only operators validation
+    /// admits for intervals).
+    residual_slots: Vec<Vec<(PlacedComparison, usize, usize, usize)>>,
+    /// Per word residual: (lhs slot, rhs slot), aligned with each node's
+    /// `word_residuals` — slots already offset to the compared word.
+    word_residual_slots: Vec<Vec<(PlacedWordComparison, usize, usize)>>,
+    /// Per membership probe, aligned with each node's `point_probes`
+    /// list ([`PointProbeSpec`]).
+    point_probe_slots: Vec<Vec<PointProbeSpec>>,
+    /// Every variable's slot width in words — the word-level source
+    /// resolution's lookup (tiny; linear scan).
+    var_widths: Vec<(crate::ir::VarId, usize)>,
     /// Per anti-probe, aligned with each node's `anti_probes` list: the
     /// negated occurrence and its probe-key layout, precomputed like
     /// `residual_slots`.
@@ -413,6 +479,24 @@ struct AntiProbeSpec {
     /// Total probe-key words (the occurrence's `key_widths[0]`); zero for
     /// the emptiness-gate form.
     key_words: usize,
+    /// The negated occurrence's var-sourced membership filters, per
+    /// filter: (start column, end column, point variable, point slot).
+    /// Evaluated inside the probe: a binding is rejected only if a fact
+    /// matching the keys **also** satisfies every membership — the
+    /// existential reading over the negated occurrence's facts
+    /// (docs/architecture/20-query-ir.md, § param sets / membership).
+    point_parts: Vec<(usize, usize, crate::ir::VarId, usize)>,
+}
+
+/// One membership probe resolved for execution ([`crate::plan::fj::
+/// PointProbe`]): the positive occurrence whose remaining positions are
+/// scanned, and per filter the interval field's column pair with the
+/// bound point variable's slot. A binding survives iff one position
+/// satisfies **every** part (the conjunction quantifies over one fact).
+struct PointProbeSpec {
+    occ: usize,
+    /// Per filter: (start column, end column, point variable, point slot).
+    parts: Vec<(usize, usize, crate::ir::VarId, usize)>,
 }
 
 /// The single-subatom-leaf precompute (docs/perf/ PRD 05): everything

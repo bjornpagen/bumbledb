@@ -66,6 +66,25 @@ fn all(image: &Arc<crate::image::RelationImage>) -> View {
     apply(image, &[], &[], Vec::new())
 }
 
+/// Scalar selection levels over the given single columns.
+fn scalars(columns: &[usize]) -> Vec<SelectionLevel> {
+    columns
+        .iter()
+        .map(|column| SelectionLevel {
+            columns: vec![*column],
+            set: false,
+        })
+        .collect()
+}
+
+/// One set-bound selection level over a single column.
+fn set_level(column: usize) -> Vec<SelectionLevel> {
+    vec![SelectionLevel {
+        columns: vec![column],
+        set: true,
+    }]
+}
+
 /// Drains every entry at a cursor/level into (key words, child) pairs.
 fn drain(colt: &mut Colt, cursor: Cursor, level: usize) -> Vec<(Vec<u64>, Cursor)> {
     let arity = colt.arity(level);

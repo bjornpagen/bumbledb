@@ -60,6 +60,76 @@ fn u8_kernel_matches_the_scalar_reference() {
     }
 }
 
+/// PRD 17 (the 00-product unsafe policy): the interval filter
+/// compositions — PointIn, AnyPointIn, and the three Overlaps/Contains
+/// shapes — are bit-identical to the scalar reference across the
+/// boundary shapes: empty, single, odd lengths, lane ±1.
+#[test]
+fn interval_filter_compositions_match_the_scalar_reference_bit_for_bit() {
+    let mut rng = Lcg(1717);
+    for &len in LENGTHS {
+        // Interval columns with heavy boundary mass: starts around small
+        // values, ends strictly greater, extremes included.
+        let starts: Vec<u64> = (0..len)
+            .map(|_| match rng.next() % 8 {
+                0 => 0,
+                1 => u64::MAX - 1,
+                n => n % 6,
+            })
+            .collect();
+        let ends: Vec<u64> = starts
+            .iter()
+            .map(|s| match rng.next() % 4 {
+                0 => s.saturating_add(1).max(1),
+                1 => u64::MAX,
+                n => s.saturating_add(n + 1).max(1),
+            })
+            .collect();
+        for point in [0u64, 1, 2, 5, u64::MAX - 1, u64::MAX] {
+            let (mut kernel, mut reference) = (Vec::new(), Vec::new());
+            filter_point_in_u64(&starts, &ends, point, &mut kernel);
+            super::reference::filter_point_in_u64(&starts, &ends, point, &mut reference);
+            assert_eq!(kernel, reference, "point_in len {len} point {point}");
+        }
+        for points in [&[][..], &[3][..], &[0, 4][..], &[1, 2, 5, u64::MAX - 1][..]] {
+            let (mut kernel, mut reference) = (Vec::new(), Vec::new());
+            filter_any_point_in_u64(&starts, &ends, points, &mut kernel);
+            super::reference::filter_any_point_in_u64(&starts, &ends, points, &mut reference);
+            assert_eq!(kernel, reference, "any_point_in len {len} {points:?}");
+        }
+        for (c_start, c_end) in [(0u64, 1u64), (1, 4), (2, 7), (0, u64::MAX), (5, 6)] {
+            let (mut kernel, mut reference) = (Vec::new(), Vec::new());
+            filter_overlaps_u64(&starts, &ends, c_start, c_end, &mut kernel);
+            super::reference::filter_overlaps_u64(&starts, &ends, c_start, c_end, &mut reference);
+            assert_eq!(kernel, reference, "overlaps len {len} [{c_start},{c_end})");
+
+            let (mut kernel, mut reference) = (Vec::new(), Vec::new());
+            filter_contains_u64(&starts, &ends, c_start, c_end, &mut kernel);
+            super::reference::filter_contains_u64(&starts, &ends, c_start, c_end, &mut reference);
+            assert_eq!(kernel, reference, "contains len {len} [{c_start},{c_end})");
+
+            let (mut kernel, mut reference) = (Vec::new(), Vec::new());
+            filter_within_u64(&starts, &ends, c_start, c_end, &mut kernel);
+            super::reference::filter_within_u64(&starts, &ends, c_start, c_end, &mut reference);
+            assert_eq!(kernel, reference, "within len {len} [{c_start},{c_end})");
+        }
+    }
+}
+
+/// The membership boundary rule, pinned at the kernel level: `p == start`
+/// survives, `p == end` does not (half-open, `10-data-model.md`).
+#[test]
+fn point_in_is_half_open_at_both_boundaries() {
+    let starts = [10u64, 10, 10];
+    let ends = [20u64, 20, 20];
+    let mut out = Vec::new();
+    filter_point_in_u64(&starts, &ends, 10, &mut out);
+    assert_eq!(out, vec![0, 1, 2], "p == start is in");
+    out.clear();
+    filter_point_in_u64(&starts, &ends, 20, &mut out);
+    assert!(out.is_empty(), "p == end is out");
+}
+
 #[test]
 fn results_preserve_ascending_position_order() {
     let col: Vec<u64> = (0..1000).map(|i| i % 5).collect();

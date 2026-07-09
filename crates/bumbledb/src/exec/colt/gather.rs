@@ -1,7 +1,69 @@
-use super::{Colt, Cursor, NodeState, Positions, SuffixRun, View};
+use super::{unpack_child, Colt, Cursor, NodeState, Positions, Slot, SuffixRun, View};
 use crate::image::ColumnView;
 
 impl Colt {
+    /// The membership probe's position scan (docs/architecture/
+    /// 40-execution.md, § access paths — the point-membership scan):
+    /// whether ANY position under `cursor` satisfies every check, each
+    /// check the half-open rule `start <= point AND point < end` over
+    /// the (start column, end column, point word) triple. Early-exit
+    /// scalar by doctrine (irregular control flow, not a reduction) and
+    /// `&self` — the scan never forces. Positions typically number the
+    /// per-key fanout of a fully-descended cursor; the forced arm exists
+    /// for zero-arity gate occurrences whose root a sibling probe forced.
+    #[must_use]
+    pub fn any_position_matches(&self, cursor: Cursor, checks: &[(usize, usize, u64)]) -> bool {
+        let check = |position: u32| {
+            checks.iter().all(|(start_col, end_col, point)| {
+                self.word_at(*start_col, position) <= *point
+                    && *point < self.word_at(*end_col, position)
+            })
+        };
+        self.any_position(cursor, &check)
+    }
+
+    /// [`Colt::any_position_matches`]'s walk: pinned rows check directly;
+    /// unforced nodes walk the view or their chunk chain; a forced node
+    /// recurses through its map's children.
+    fn any_position(&self, cursor: Cursor, check: &impl Fn(u32) -> bool) -> bool {
+        let node = match cursor {
+            Cursor::Row(position) => return check(position),
+            Cursor::Node(node) => node,
+        };
+        match self.nodes[node.0 as usize] {
+            NodeState::Unforced(Positions::Root) => {
+                (0..self.view.len()).any(|idx| check(self.view.position_at(idx)))
+            }
+            NodeState::Unforced(Positions::Chunks { first, .. }) => {
+                let mut chunk = first;
+                while chunk != u32::MAX {
+                    let c = &self.chunks[chunk as usize];
+                    if c.positions[..usize::from(c.len)]
+                        .iter()
+                        .any(|position| check(*position))
+                    {
+                        return true;
+                    }
+                    chunk = c.next;
+                }
+                false
+            }
+            NodeState::Forced { map } => {
+                let m = self.maps[map as usize];
+                let len = usize::try_from(m.len).expect("64-bit usize");
+                self.dense[m.dense_start..m.dense_start + len]
+                    .iter()
+                    .any(|slot_idx| {
+                        let idx = usize::try_from(*slot_idx).expect("64-bit usize");
+                        match unpack_child(self.buckets[m.child_at(idx)]) {
+                            Slot::Single(position) => check(position),
+                            Slot::Node(child) => self.any_position(Cursor::Node(child), check),
+                        }
+                    })
+            }
+        }
+    }
+
     /// Copies up to `max` entries into the caller's buffers, returning the
     /// yielded count and the resume token. `keys_out` receives
     /// `yielded * arity(level)` words; `children_out` one cursor per entry.

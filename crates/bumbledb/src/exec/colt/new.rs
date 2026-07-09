@@ -1,20 +1,25 @@
-use super::{Colt, Cursor, NodeRef, NodeState, Positions, View};
+use super::{Colt, Cursor, NodeRef, NodeState, Positions, SelectionLevel, View};
 
 impl Colt {
     /// Builds the root over a view: O(1) — nothing decodes until a force.
-    /// `selections` are the image columns of the occurrence's Eq-constant
-    /// predicates, in plan order; `join_schema` the join levels below them.
+    /// `selections` are the occurrence's Eq-constant predicate levels, in
+    /// plan order (image columns plus set-ness — [`SelectionLevel`]);
+    /// `join_schema` the join levels below them.
     #[must_use]
-    pub fn new(view: View, selections: &[usize], join_schema: Vec<Vec<usize>>) -> Self {
+    pub fn new(view: View, selections: &[SelectionLevel], join_schema: Vec<Vec<usize>>) -> Self {
         let selection_levels = selections.len();
         let schema_columns: Vec<Vec<usize>> = selections
             .iter()
-            .map(|column| vec![*column])
+            .map(|level| level.columns.clone())
             .chain(join_schema)
             .collect();
         Self {
             view,
             selection_levels,
+            set_levels: selections.iter().map(|level| level.set).collect(),
+            union_mark: None,
+            select_hits: Vec::new(),
+            select_positions: Vec::new(),
             start: Cursor::Node(NodeRef(0)),
             selected: selection_levels == 0,
             schema_columns,
@@ -36,6 +41,10 @@ impl Colt {
         Self {
             view: View::Unbound,
             selection_levels: self.selection_levels,
+            set_levels: self.set_levels.clone(),
+            union_mark: None,
+            select_hits: Vec::new(),
+            select_positions: Vec::new(),
             start: Cursor::Node(NodeRef(0)),
             selected: self.selection_levels == 0,
             schema_columns: self.schema_columns.clone(),
@@ -62,6 +71,7 @@ impl Colt {
         self.ctrl.clear();
         self.buckets.clear();
         self.dense.clear();
+        self.union_mark = None;
         self.start = Cursor::Node(NodeRef(0));
         self.selected = self.selection_levels == 0;
         old

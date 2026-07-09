@@ -179,7 +179,7 @@ fn lower_atom(
                     // type): any element in the field's interval.
                     filters.push(FilterPredicate::AnyPointIn {
                         field: *field,
-                        set: *param,
+                        set: Const::ParamSet(*param),
                     });
                 } else {
                     // The selection-level set marker: an Eq compare the

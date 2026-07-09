@@ -2,13 +2,33 @@
 
 use super::{
     AntiProbeSpec, Bindings, Colt, Counters, Cursor, Executor, LeafPrecompute, NodeScratch,
-    PipeTables, PlacedComparison, Sink, ValidatedPlan, BATCH,
+    PipeTables, PlacedComparison, PlacedWordComparison, PointProbeSpec, Sink, ValidatedPlan, BATCH,
 };
+
+/// The membership-filter column/slot table shared by both probe kinds:
+/// per filter, the interval field's (start column, end column) through
+/// the occurrence's span map, plus the point variable and its slot.
+fn point_parts(
+    plan: &ValidatedPlan,
+    occ: usize,
+    filters: &[(crate::schema::FieldId, crate::ir::VarId)],
+) -> Vec<(usize, usize, crate::ir::VarId, usize)> {
+    let occurrence = &plan.occurrences()[occ];
+    filters
+        .iter()
+        .map(|(field, var)| {
+            let span = occurrence.spans[usize::from(field.0)];
+            let first = usize::from(span.first_column);
+            (first, first + 1, *var, plan.slot_of(*var))
+        })
+        .collect()
+}
 
 /// Anti-probe specs (docs/architecture/40-execution.md, § anti-probe
 /// filters), aligned with each node's `anti_probes` list: the negated
 /// occurrence's single trie level in binding order, each variable with
-/// its first slot and slot width — precomputed like `residual_slots`.
+/// its first slot and slot width — precomputed like `residual_slots` —
+/// plus its var-sourced membership filters, evaluated inside the probe.
 fn anti_probe_slots(plan: &ValidatedPlan) -> Vec<Vec<AntiProbeSpec>> {
     plan.nodes()
         .iter()
@@ -38,6 +58,26 @@ fn anti_probe_slots(plan: &ValidatedPlan) -> Vec<Vec<AntiProbeSpec>> {
                         occ,
                         parts,
                         key_words: usize::from(occurrence.key_widths[0]),
+                        point_parts: point_parts(plan, occ, &occurrence.point_filters),
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Membership-probe specs, aligned with each node's `point_probes`.
+fn point_probe_slots(plan: &ValidatedPlan) -> Vec<Vec<PointProbeSpec>> {
+    plan.nodes()
+        .iter()
+        .map(|node| {
+            node.point_probes
+                .iter()
+                .map(|probe| {
+                    let occ = usize::from(probe.occ.0);
+                    PointProbeSpec {
+                        occ,
+                        parts: point_parts(plan, occ, &probe.filters),
                     }
                 })
                 .collect()
@@ -59,41 +99,100 @@ impl Executor {
     ///
     /// Only on a programmer-invariant violation: a zero batch size.
     #[must_use]
+    #[allow(clippy::too_many_lines)] // table construction, one table at a
+                                     // time — splitting scatters the shapes
     pub fn with_batch_size(plan: &ValidatedPlan, batch: usize) -> Self {
         assert!(
             batch > 0,
             "a batch has at least one element (set_batch_size is the caller-facing knob)"
         );
+        let var_widths: Vec<(crate::ir::VarId, usize)> = plan
+            .slots()
+            .iter()
+            .map(|(var, width)| (*var, width.slots()))
+            .collect();
+        let width_of = |var: crate::ir::VarId| -> usize {
+            var_widths
+                .iter()
+                .find(|(v, _)| *v == var)
+                .expect("plans bind every variable")
+                .1
+        };
+        // Word-level slot maps: an interval variable expands to its two
+        // consecutive slots, so batch key words and binding slots stay in
+        // 1:1 correspondence everywhere downstream (the SlotWidth layout).
         let slot_map: Vec<Vec<Vec<usize>>> = plan
             .nodes()
             .iter()
             .map(|node| {
                 node.subatoms
                     .iter()
-                    .map(|s| s.vars.iter().map(|v| plan.slot_of(*v)).collect())
+                    .map(|s| {
+                        let mut words = Vec::new();
+                        for var in &s.vars {
+                            let slot = plan.slot_of(*var);
+                            for offset in 0..width_of(*var) {
+                                words.push(slot + offset);
+                            }
+                        }
+                        words
+                    })
                     .collect()
             })
             .collect();
-        let residual_slots: Vec<Vec<(PlacedComparison, usize, usize)>> = plan
+        let residual_slots: Vec<Vec<(PlacedComparison, usize, usize, usize)>> = plan
             .nodes()
             .iter()
             .map(|node| {
                 node.residuals
                     .iter()
-                    .map(|r| (*r, plan.slot_of(r.lhs), plan.slot_of(r.rhs)))
+                    .map(|r| {
+                        debug_assert_eq!(
+                            width_of(r.lhs),
+                            width_of(r.rhs),
+                            "validated: residual sides share a structural type"
+                        );
+                        (
+                            *r,
+                            plan.slot_of(r.lhs),
+                            plan.slot_of(r.rhs),
+                            width_of(r.lhs),
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        // Decomposed interval word residuals: slots pre-offset to the
+        // compared word (docs/architecture/20-query-ir.md — the three
+        // fixed compositions over slot pairs).
+        let word_residual_slots: Vec<Vec<(PlacedWordComparison, usize, usize)>> = plan
+            .nodes()
+            .iter()
+            .map(|node| {
+                node.word_residuals
+                    .iter()
+                    .map(|r| {
+                        (
+                            *r,
+                            plan.slot_of(r.lhs.var) + r.lhs.word.offset(),
+                            plan.slot_of(r.rhs.var) + r.rhs.word.offset(),
+                        )
+                    })
                     .collect()
             })
             .collect();
         let anti_probe_slots = anti_probe_slots(plan);
+        let point_probe_slots = point_probe_slots(plan);
         let scratch = plan
             .nodes()
             .iter()
+            .enumerate()
             .zip(&anti_probe_slots)
-            .map(|(node, anti_specs)| {
-                let max_arity = node
-                    .subatoms
+            .map(|((node_idx, node), anti_specs)| {
+                // Word-level arity: an interval variable is two key words.
+                let max_arity = slot_map[node_idx]
                     .iter()
-                    .map(|s| s.vars.len())
+                    .map(Vec::len)
                     .max()
                     .unwrap_or(0)
                     .max(1);
@@ -119,7 +218,9 @@ impl Executor {
                         .collect(),
                     sources: node.subatoms.iter().map(|_| Vec::new()).collect(),
                     residual_sources: Vec::new(),
+                    word_residual_sources: Vec::new(),
                     anti_sources: anti_specs.iter().map(|_| Vec::new()).collect(),
+                    point_checks: Vec::new(),
                     mask: Vec::with_capacity(batch),
                     parents: Vec::with_capacity(batch),
                     pending_bindings: Vec::new(),
@@ -130,12 +231,15 @@ impl Executor {
                 }
             })
             .collect();
-        let leaf = LeafPrecompute::of(plan, &residual_slots);
+        let leaf = LeafPrecompute::of(plan, &residual_slots, &var_widths);
         Self {
             batch,
             cursors: Vec::new(),
             slot_map,
             residual_slots,
+            word_residual_slots,
+            point_probe_slots,
+            var_widths,
             anti_probe_slots,
             scratch,
             leaf_single: leaf.single,
@@ -150,6 +254,16 @@ impl Executor {
             next_origin: 0,
             all_cancelled: false,
         }
+    }
+
+    /// A variable's slot width in words (the `SlotWidth` layout, exported
+    /// through the plan witness).
+    pub(super) fn width_of(&self, var: crate::ir::VarId) -> usize {
+        self.var_widths
+            .iter()
+            .find(|(v, _)| *v == var)
+            .expect("plans bind every variable")
+            .1
     }
 
     /// Runs the plan over the COLT sources (one per occurrence, indexed by

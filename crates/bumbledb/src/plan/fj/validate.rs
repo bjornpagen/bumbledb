@@ -1,12 +1,45 @@
 use super::{
     check_occurrence_coverage::check_occurrence_coverage, check_selections,
     derive_nodes::derive_nodes, provably_distinct::provably_distinct, split_filters, FjPlan,
-    PlanError, PlanOccurrence, ValidatedPlan,
+    PlanError, PlanOccurrence, PointProbe, ValidatedPlan,
 };
-use crate::ir::normalize::{NormalizedQuery, Polarity, SlotWidth};
+use crate::image::view::{FilterPredicate, ResolvedWordSource};
+use crate::ir::normalize::{NormalizedQuery, Occurrence, Polarity, SlotWidth};
 use crate::ir::VarId;
-use crate::schema::Schema;
+use crate::schema::{FieldId, Schema};
 use std::collections::BTreeSet;
+
+/// The var-sourced membership filters of one lowered occurrence — the
+/// `PointIn` filters whose point reads a bound variable. A view is built
+/// per execution while a variable binds per join row, so these never
+/// reach the filtered view: they execute inside the join
+/// ([`PointProbe`] for positive occurrences, the anti-probe's point
+/// checks for negated ones).
+fn point_filters_of(occurrence: &Occurrence) -> Vec<(FieldId, VarId)> {
+    occurrence
+        .filters
+        .iter()
+        .filter_map(|filter| match filter {
+            FilterPredicate::PointIn {
+                field,
+                point: ResolvedWordSource::Var(var),
+            } => Some((*field, *var)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether a filter is a var-sourced membership (the complement of
+/// [`point_filters_of`]'s selection).
+fn is_point_filter(filter: &FilterPredicate) -> bool {
+    matches!(
+        filter,
+        FilterPredicate::PointIn {
+            point: ResolvedWordSource::Var(_),
+            ..
+        }
+    )
+}
 
 /// The execution-facing occurrence table. Trie schemas: a positive
 /// occurrence's subatom var-lists in node order (§3.3); a negated
@@ -70,9 +103,17 @@ fn build_occurrences(
             // A selection's miss contract — "the whole conjunctive query
             // is empty" — holds for positive occurrences only; an empty
             // negated view just means the anti-probe never rejects.
+            // Var-sourced membership filters leave the view filter list
+            // entirely (both polarities): they execute inside the join.
+            let view_filters: Vec<FilterPredicate> = occurrence
+                .filters
+                .iter()
+                .filter(|f| !is_point_filter(f))
+                .cloned()
+                .collect();
             let (selections, filters) = match occurrence.polarity {
-                Polarity::Positive => split_filters(&occurrence.filters),
-                Polarity::Negated => (Vec::new(), occurrence.filters.clone()),
+                Polarity::Positive => split_filters(&view_filters),
+                Polarity::Negated => (Vec::new(), view_filters),
             };
             PlanOccurrence {
                 occ_id: occurrence.occ_id,
@@ -80,6 +121,7 @@ fn build_occurrences(
                 vars: occurrence.vars.clone(),
                 selections,
                 filters,
+                point_filters: point_filters_of(occurrence),
                 spans: crate::image::column_spans(&field_types),
                 trie_schema,
                 key_widths,
@@ -121,6 +163,8 @@ fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usiz
 /// Only on programmer-invariant violations (more than 256 subatoms in one
 /// node — impossible for plans over the planner's occurrence cap — or a
 /// normalized query whose slot-width map misses a variable).
+#[allow(clippy::too_many_lines)] // the placement rules read in order;
+                                 // each attaches one residual kind
 pub fn validate(
     plan: &FjPlan,
     normalized: &NormalizedQuery,
@@ -191,17 +235,56 @@ pub fn validate(
         nodes[node].word_residuals.push(*residual);
     }
     // Anti-probe attachment: the earliest node binding the negated
-    // occurrence's whole variable set; a zero-variable emptiness gate
-    // attaches to the root (docs/architecture/40-execution.md,
-    // § anti-probe filters).
+    // occurrence's whole variable set — probe keys plus point-filter
+    // variables (a membership check reads its point variable inside the
+    // probe, so the probe cannot run before that variable is bound); a
+    // zero-variable emptiness gate attaches to the root
+    // (docs/architecture/40-execution.md, § anti-probe filters).
     for (probe_idx, anti_probe) in normalized.anti_probes.iter().enumerate() {
-        let vars: Vec<VarId> = anti_probe.probe_bindings.iter().map(|(_, v)| *v).collect();
+        let occurrence = &normalized.occurrences[usize::from(anti_probe.occurrence.0)];
+        let vars: Vec<VarId> = anti_probe
+            .probe_bindings
+            .iter()
+            .map(|(_, v)| *v)
+            .chain(point_filters_of(occurrence).iter().map(|(_, v)| *v))
+            .collect();
         let Some(node) = earliest_bound_node(&bound, &vars) else {
             return Err(PlanError::UnplacedAntiProbe {
                 anti_probe: probe_idx,
             });
         };
         nodes[node].anti_probes.push(anti_probe.clone());
+    }
+
+    // Membership-probe attachment (positive occurrences): the earliest
+    // node where every point variable is bound AND the occurrence's trie
+    // is fully descended — only then are its remaining positions exactly
+    // the facts consistent with the binding, and the existential check
+    // `∃ fact: every membership holds` is per-binding correct.
+    for occurrence in &normalized.occurrences {
+        if occurrence.polarity == Polarity::Negated {
+            continue;
+        }
+        let filters = point_filters_of(occurrence);
+        if filters.is_empty() {
+            continue;
+        }
+        let vars: Vec<VarId> = filters.iter().map(|(_, v)| *v).collect();
+        let Some(var_node) = earliest_bound_node(&bound, &vars) else {
+            return Err(PlanError::UnplacedPointProbe {
+                occ: occurrence.occ_id,
+            });
+        };
+        let last_subatom_node = nodes
+            .iter()
+            .rposition(|node| node.subatoms.iter().any(|s| s.occ == occurrence.occ_id))
+            .expect("coverage checked: every positive occurrence joins a node");
+        nodes[var_node.max(last_subatom_node)]
+            .point_probes
+            .push(PointProbe {
+                occ: occurrence.occ_id,
+                filters,
+            });
     }
 
     // Binding-slot layout: node order, then `VarId` order within a node

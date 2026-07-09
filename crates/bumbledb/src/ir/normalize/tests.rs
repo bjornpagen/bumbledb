@@ -707,7 +707,7 @@ fn scalar_param_set_binding_is_the_selection_set_marker() {
         normalized(&point_set).occurrences[0].filters,
         vec![FilterPredicate::AnyPointIn {
             field: P_DURING,
-            set: ParamId(0),
+            set: Const::ParamSet(ParamId(0)),
         }]
     );
 }

@@ -260,18 +260,57 @@ fn eq_byte_mask(w: u64, needle: u8) -> u64 {
     zero_byte_mask(w ^ (u64::from(needle) * 0x0101_0101_0101_0101))
 }
 
+/// One prepended selection level's shape (docs/architecture/
+/// 40-execution.md, § selection levels): the image columns its trie keys
+/// decode from (one column for a scalar field, the start/end pair for an
+/// interval field), and whether the level is **set-bound** — a
+/// `Term::ParamSet` position, probed once per element with the survivor
+/// union feeding the level below. Set-ness is a plan fact (a `ParamId`
+/// is scalar or set, never both), so it lives in the trie's shape, not
+/// in the per-execution key data.
+#[derive(Debug, Clone)]
+pub struct SelectionLevel {
+    pub columns: Vec<usize>,
+    pub set: bool,
+}
+
+/// Pool high-water snapshot taken just before a select builds its first
+/// union node: everything appended past it — the union's position copies
+/// and every map the join forces beneath it — belongs to one execution's
+/// set values and is provably dead at the next `select`, which truncates
+/// back to the mark (capacity retained: the warm fixpoint the allocation
+/// contract requires, docs/architecture/40-execution.md).
+#[derive(Debug, Clone, Copy)]
+struct PoolMark {
+    nodes: usize,
+    chunks: usize,
+    maps: usize,
+    ctrl: usize,
+    buckets: usize,
+    dense: usize,
+}
+
 /// The lazy trie over one occurrence's view. Owns the view (a cheap
 /// enum over an `Arc`'d image plus survivor positions) and its pools, so a
 /// prepared query can hold and [`Colt::reset`] it across executions with
 /// every capacity retained (the 30-execution doc's zero-alloc discipline).
 pub struct Colt {
     view: View,
-    /// Prepended selection levels (docs/architecture/30-execution.md): one single-column trie
+    /// Prepended selection levels (docs/architecture/30-execution.md): one trie
     /// level per Eq-constant, probed once per execution with the resolved
     /// words. Everything below a successful probe is exactly the filtered
     /// subtrie a view scan used to produce — built lazily, only for keys
     /// actually asked about.
     selection_levels: usize,
+    /// Per selection level: whether it is set-bound ([`SelectionLevel`]).
+    set_levels: Vec<bool>,
+    /// The union watermark of the current execution's set probes, if any
+    /// ([`PoolMark`]).
+    union_mark: Option<PoolMark>,
+    /// Per-select probe-hit scratch (capacity retained).
+    select_hits: Vec<Cursor>,
+    /// Per-select union-position scratch (capacity retained).
+    select_positions: Vec<u32>,
     /// The post-selection start cursor for the current execution.
     start: Cursor,
     /// Whether [`Colt::select`] ran since the last reset (always true for

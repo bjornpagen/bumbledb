@@ -52,9 +52,12 @@ pub enum Const {
     /// PRD 17).
     ParamSet(crate::ir::ParamId),
     /// A set's bind-time resolution: the sorted, deduplicated column words
-    /// of the bound elements. Lives in the evaluator's param slice — a
-    /// `ParamSet` marker in a filter indexes to one of these.
-    WordSet(Box<[u64]>),
+    /// of the bound elements, in pooled storage — the `Vec` is reused
+    /// across binds (warm re-binds of a differently-sized set reuse its
+    /// capacity, docs/architecture/40-execution.md § allocation contract).
+    /// Lives in the evaluator's param slice and in resolved filters — a
+    /// `ParamSet` marker resolves to one of these.
+    WordSet(Vec<u64>),
     /// A raw String/Bytes literal awaiting per-execution intern resolution
     /// (`tag` is the dictionary type tag).
     PendingIntern {
@@ -68,7 +71,11 @@ pub enum Const {
 /// bind), or a bound variable's slot word (a membership binding whose
 /// point variable is bound by another occurrence — evaluated once the
 /// variable is bound; the point-membership scan of
-/// `docs/architecture/40-execution.md`).
+/// `docs/architecture/40-execution.md`). A `Var` source never reaches the
+/// view evaluator: plan validation routes it into the executor's
+/// membership probes (`PlanNode::point_probes` for positive occurrences,
+/// the anti-probe's point checks for negated ones), because a view is
+/// built per execution while a variable binds per join row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolvedWordSource {
     Word(u64),
@@ -115,11 +122,11 @@ pub enum FilterPredicate {
     },
     /// Point-set membership in the interval field: any element of the
     /// bound set lies in the interval (`Term::ParamSet` on an interval
-    /// field — `docs/architecture/20-query-ir.md`, § param sets).
-    AnyPointIn {
-        field: FieldId,
-        set: crate::ir::ParamId,
-    },
+    /// field — `docs/architecture/20-query-ir.md`, § param sets). `set`
+    /// is [`Const::ParamSet`] in the lowered template and resolves to a
+    /// [`Const::WordSet`] per execution, exactly like a `Compare`
+    /// constant.
+    AnyPointIn { field: FieldId, set: Const },
     /// Same-atom `Overlaps` over two interval fields:
     /// `left.start < right.end AND right.start < left.end`.
     FieldsOverlap { left: FieldId, right: FieldId },

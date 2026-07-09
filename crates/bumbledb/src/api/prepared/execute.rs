@@ -39,6 +39,47 @@ impl PreparedQuery<'_> {
             let _s = obs::span(obs::names::BIND_PARAMS, obs::Category::Execute);
             self.bind_params(txn, params)?;
         }
+        let result = self.run_bound(txn, cache, out);
+        execute_span.set_args(out.len() as u64, 0);
+        result
+    }
+
+    /// Executes with mixed scalar/set parameter arguments — the internal
+    /// entry the set machinery runs through until PRD 20 renders the
+    /// public bind signature (`docs/prd/20-api-errors-render-bind.md`).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::execute`].
+    #[allow(dead_code)] // reader: PRD 20's public bind rendering
+                        // (tests drive it meanwhile)
+    pub(crate) fn execute_args(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        cache: &ImageCache,
+        args: &[super::ParamArg<'_>],
+        out: &mut ResultBuffer,
+    ) -> Result<()> {
+        self.check_snapshot(txn)?;
+        let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
+        out.clear();
+        out.arity = self.finds.len();
+        {
+            let _s = obs::span(obs::names::BIND_PARAMS, obs::Category::Execute);
+            self.bind_param_args(txn, args)?;
+        }
+        let result = self.run_bound(txn, cache, out);
+        execute_span.set_args(out.len() as u64, 0);
+        result
+    }
+
+    /// The post-bind execution body shared by every bind shape.
+    fn run_bound(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        cache: &ImageCache,
+        out: &mut ResultBuffer,
+    ) -> Result<()> {
         match &self.plan {
             ExecPlan::GuardProbe(guard) => {
                 // The point fast lane (docs/perf/ PRD 11): one probe, one
@@ -46,9 +87,7 @@ impl PreparedQuery<'_> {
                 // sink, no bindings, no finalize pass. Aggregate-find
                 // guards (rare) keep the sink path below.
                 if self.guard_finds.is_some() {
-                    let result = self.execute_guard_direct(txn, out);
-                    execute_span.set_args(out.len() as u64, 0);
-                    return result;
+                    return self.execute_guard_direct(txn, out);
                 }
                 self.sink.reset();
                 execute_guard(
@@ -112,20 +151,16 @@ impl PreparedQuery<'_> {
                 run_join_with!(&mut NoopCounters)?;
             }
         }
-        let result = {
-            let _s = obs::span(obs::names::FINALIZE, obs::Category::Execute);
-            finalize(
-                &self.sink,
-                &mut self.row_scratch,
-                &mut self.resolve_memo,
-                txn,
-                &self.finds,
-                self.all_words,
-                out,
-            )
-        };
-        execute_span.set_args(out.len() as u64, 0);
-        result
+        let _s = obs::span(obs::names::FINALIZE, obs::Category::Execute);
+        finalize(
+            &self.sink,
+            &mut self.row_scratch,
+            &mut self.resolve_memo,
+            txn,
+            &self.finds,
+            self.all_words,
+            out,
+        )
     }
 
     /// The point fast lane's body (docs/perf/ PRD 11): probe + fetch +
@@ -172,6 +207,23 @@ impl PreparedQuery<'_> {
     ) -> Result<ResultBuffer> {
         let mut out = ResultBuffer::new();
         self.execute(txn, cache, params, &mut out)?;
+        Ok(out)
+    }
+
+    /// [`Self::execute_args`]'s fresh-buffer convenience.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::execute`].
+    #[cfg(test)]
+    pub(crate) fn execute_collect_args(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        cache: &ImageCache,
+        args: &[super::ParamArg<'_>],
+    ) -> Result<ResultBuffer> {
+        let mut out = ResultBuffer::new();
+        self.execute_args(txn, cache, args, &mut out)?;
         Ok(out)
     }
 }

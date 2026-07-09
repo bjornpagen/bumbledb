@@ -34,6 +34,19 @@ mod tests;
 
 pub(crate) use self::build::prepare;
 
+/// One execution-time parameter binding, internally: a scalar value or
+/// an element slice for a set-typed param (`Term::ParamSet` —
+/// `docs/architecture/20-query-ir.md`, § param sets). The PUBLIC bind
+/// signature is PRD 20's; this is the clean internal representation it
+/// will render into — `execute` wraps a plain `&[Value]` as all-scalars.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ParamArg<'a> {
+    Scalar(&'a crate::ir::Value),
+    /// Constructed by tests until PRD 20's public bind surface lands.
+    #[allow(dead_code)]
+    Set(&'a [crate::ir::Value]),
+}
+
 /// One decoded output cell, borrowed from a [`ResultBuffer`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultValue<'a> {
@@ -118,20 +131,33 @@ pub struct PreparedQuery<'s> {
     bindings: Bindings,
     /// Per find term: the output spec and its result type.
     finds: Vec<(FindSpec, ValueType)>,
-    /// Dense per-param expected types (validation rejects id gaps).
+    /// Dense per-param expected types (validation rejects id gaps). A set
+    /// param's type is its **element** type.
     param_types: Vec<ValueType>,
-    /// Bind-time resolved constants, reused across executions.
+    /// Dense per-param set-ness (`Term::ParamSet` anchors — a `ParamId`
+    /// is scalar or set, never both; validation enforced it).
+    param_is_set: Vec<bool>,
+    /// Bind-time resolved constants, reused across executions — pooled
+    /// storage: a set param's slot holds a [`Const::WordSet`] whose `Vec`
+    /// is rebound in place (sorted, deduplicated words; capacity
+    /// retained across differently-sized warm re-binds).
     resolved_params: Vec<Const>,
     /// Per param: whether this execution's value missed the dictionary
-    /// (String/Bytes only). A missed value under `Eq` short-circuits to an
-    /// empty result; under `Ne` the sentinel word matches everything.
+    /// (String/Bytes only; for a set, whether NO element survived — the
+    /// empty set rides the same short-circuit machinery). A missed value
+    /// under `Eq` on a positive occurrence short-circuits to an empty
+    /// result; under `Ne` the sentinel word matches everything; on a
+    /// negated occurrence it just matches nothing.
     missed_params: Vec<bool>,
     /// Per occurrence: residual filters with symbolic constants
-    /// substituted, reused.
+    /// substituted, reused — in place, so a set-carrying filter's
+    /// `WordSet` capacity survives re-binds (the allocation contract).
     resolved_filters: Vec<Vec<FilterPredicate>>,
-    /// Per occurrence: this execution's resolved selection words, in
-    /// selection-level order (docs/architecture/30-execution.md), reused.
-    resolved_selections: Vec<Vec<u64>>,
+    /// Per occurrence, per selection level: this execution's resolved key
+    /// words (docs/architecture/40-execution.md, § selection levels) —
+    /// one word for a scalar constant, the encoded pair for an interval
+    /// constant, k sorted deduplicated words for a set. Reused in place.
+    resolved_selections: Vec<Vec<Vec<u64>>>,
     /// The view memo (docs/architecture/30-execution.md): per occurrence, the active binding
     /// (whose COLT the executor consumes) plus parked bindings under LRU.
     memo: ViewMemo,

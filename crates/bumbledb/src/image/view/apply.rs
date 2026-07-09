@@ -55,9 +55,11 @@ fn word_at(image: &RelationImage, field: FieldId, position: usize) -> u64 {
     }
 }
 
-/// The resolved point word of a membership filter. A var-sourced point is
-/// the executor's slot binding — the point-membership scan
-/// (`docs/architecture/40-execution.md`).
+/// The resolved point word of a membership filter. A var-sourced point
+/// never reaches the view evaluator: plan validation routes it into the
+/// executor's membership probes (the point-membership scan runs inside
+/// the join, once the variable is bound — `docs/architecture/
+/// 40-execution.md`; the routing is [`ResolvedWordSource`]'s doc).
 fn point_word(point: &ResolvedWordSource, params: &[Const]) -> u64 {
     match point {
         ResolvedWordSource::Word(word) => *word,
@@ -65,15 +67,17 @@ fn point_word(point: &ResolvedWordSource, params: &[Const]) -> u64 {
             Const::Word(word) => *word,
             _ => unreachable!("validated: a point param resolves to a word"),
         },
-        ResolvedWordSource::Var(_) => todo!("todo-by-PRD-17"),
+        ResolvedWordSource::Var(_) => {
+            unreachable!("var-sourced points are the executor's membership probes")
+        }
     }
 }
 
-/// The resolved word set of a bound set param (sorted, deduplicated).
-fn word_set(set: crate::ir::ParamId, params: &[Const]) -> &[u64] {
-    match &params[usize::from(set.0)] {
+/// The resolved word set behind a set constant (sorted, deduplicated).
+fn word_set<'a>(set: &'a Const, params: &'a [Const]) -> &'a [u64] {
+    match resolve(set, params) {
         Const::WordSet(words) => words,
-        _ => unreachable!("validated: a set param resolves to a word set"),
+        _ => unreachable!("validated: a set resolves to a word set"),
     }
 }
 
@@ -148,7 +152,7 @@ fn row_matches(
         FilterPredicate::AnyPointIn { field, set } => {
             let (start, end) = interval_at(image, *field, position);
             // Sorted set: the smallest element ≥ start decides membership.
-            let points = word_set(*set, params);
+            let points = word_set(set, params);
             let idx = points.partition_point(|&p| p < start);
             idx < points.len() && points[idx] < end
         }
@@ -278,24 +282,103 @@ pub fn apply(
     }
 }
 
-/// Attempts the kernel fast path for one predicate: a compare against a
-/// resolved `Word`/`Byte` constant on a plain single column lowers to a
-/// fixed-width predicate scan. Returns whether the scan ran. (The interval
-/// filter kinds' fused two-column kernels are PRD 17's.)
+/// An interval field's two word-column slices — the operand shape of
+/// every fused two-column composition.
+fn interval_columns(image: &RelationImage, field: FieldId) -> (&[u64], &[u64]) {
+    let span = image.span(field);
+    debug_assert_eq!(span.width, ColumnWidth::WordPair);
+    let first = usize::from(span.first_column);
+    match (image.column(first), image.column(first + 1)) {
+        (ColumnView::Words(starts), ColumnView::Words(ends)) => (starts, ends),
+        _ => unreachable!("an interval span covers two word columns"),
+    }
+}
+
+/// Attempts the kernel fast path for one predicate. Scalar compares
+/// against a resolved `Word`/`Byte` constant lower to the fixed-width
+/// predicate scans; the membership/interval kinds (`PointIn`,
+/// `AnyPointIn`, the three `Overlaps`/`Contains` shapes) lower to
+/// compositions of that same shape over the start/end column pair —
+/// two compare-and-mask passes `AND`ed, never a new kernel shape
+/// (docs/architecture/40-execution.md, § access paths). Returns whether
+/// the scan ran; `false` falls back to the scalar `row_matches` loop.
 fn kernel_scan(
     image: &RelationImage,
     predicate: &FilterPredicate,
     params: &[Const],
     out: &mut Vec<u32>,
 ) -> bool {
+    match predicate {
+        FilterPredicate::Compare { .. } => {}
+        FilterPredicate::PointIn { field, point } => {
+            let (starts, ends) = interval_columns(image, *field);
+            crate::exec::kernel::filter_point_in_u64(starts, ends, point_word(point, params), out);
+            return true;
+        }
+        FilterPredicate::AnyPointIn { field, set } => {
+            let (starts, ends) = interval_columns(image, *field);
+            crate::exec::kernel::filter_any_point_in_u64(starts, ends, word_set(set, params), out);
+            return true;
+        }
+        FilterPredicate::FieldWithin { field, outer } => {
+            let Const::Interval { start, end } = resolve(outer, params) else {
+                unreachable!("validated: the outer side is an interval constant")
+            };
+            let span = image.span(*field);
+            match span.width {
+                // A scalar field within the constant interval: point
+                // membership is the range scan `[start, end - 1]` (the
+                // half-open bound; `end >= 1` because `start < end` and
+                // word order is value order).
+                ColumnWidth::Word => {
+                    let ColumnView::Words(words) = image.column(usize::from(span.first_column))
+                    else {
+                        unreachable!("a word span covers a word column")
+                    };
+                    crate::exec::kernel::filter_range_u64(words, *start, *end - 1, out);
+                }
+                ColumnWidth::WordPair => {
+                    let (starts, ends) = interval_columns(image, *field);
+                    crate::exec::kernel::filter_within_u64(starts, ends, *start, *end, out);
+                }
+                ColumnWidth::Byte => unreachable!("validated: within-comparands are word-typed"),
+            }
+            return true;
+        }
+        // Same-fact comparisons read two varying columns per position —
+        // no constant side, no kernel shape; the scalar loop evaluates
+        // them.
+        FilterPredicate::FieldsCompare { .. }
+        | FilterPredicate::FieldsOverlap { .. }
+        | FilterPredicate::FieldsContain { .. }
+        | FilterPredicate::FieldsContainPoint { .. } => return false,
+    }
     let FilterPredicate::Compare { field, op, value } = predicate else {
-        return false;
+        unreachable!("every other kind returned above")
     };
     let span = image.span(*field);
-    if span.width == ColumnWidth::WordPair {
-        return false;
-    }
     let value = resolve(value, params);
+    if span.width == ColumnWidth::WordPair {
+        // The interval-vs-interval-constant compositions: `Overlaps` and
+        // `Contains` are two-column compare-and-mask ANDs; `Eq`/`Ne`
+        // have no fixed-width scan shape (like scalar `Ne`) and take the
+        // scalar loop.
+        let Const::Interval { start, end } = value else {
+            return false; // an unresolved set/marker never pairs with a word-pair span
+        };
+        let (starts, ends) = interval_columns(image, *field);
+        return match op {
+            CmpOp::Overlaps => {
+                crate::exec::kernel::filter_overlaps_u64(starts, ends, *start, *end, out);
+                true
+            }
+            CmpOp::Contains => {
+                crate::exec::kernel::filter_contains_u64(starts, ends, *start, *end, out);
+                true
+            }
+            _ => false,
+        };
+    }
     match (image.column(usize::from(span.first_column)), value) {
         (ColumnView::Words(words), Const::Word(c)) => {
             let (lo, hi) = match op {
@@ -321,8 +404,8 @@ fn kernel_scan(
                 CmpOp::Ge => (*c, u64::MAX),
                 // `Ne` has no fixed-width scan shape; the interval
                 // operators never pair with a single-word constant
-                // (normalization emits the interval filter kinds), and
-                // their kernels are PRD 17's compositions.
+                // (normalization emits the interval filter kinds, and
+                // their word-pair compositions matched above).
                 CmpOp::Ne | CmpOp::Overlaps | CmpOp::Contains => return false,
             };
             crate::exec::kernel::filter_range_u64(words, lo, hi, out);

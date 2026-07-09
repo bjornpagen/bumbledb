@@ -91,6 +91,10 @@ pub enum PlanError {
     /// lowering moves every one into `selections`, so its presence means
     /// a hand-built occurrence bypassed the split (docs/architecture/40-execution.md).
     SelectionOnFilteredField { occ: OccId },
+    /// A var-sourced membership filter's point variable is never bound —
+    /// validation guarantees point variables are positive-atom-bound, so
+    /// this names a hand-built plan or query.
+    UnplacedPointProbe { occ: OccId },
 }
 
 /// One probeable equality: `field == value`, the value constant per
@@ -102,6 +106,22 @@ pub enum PlanError {
 pub struct Selection {
     pub field: crate::schema::FieldId,
     pub value: Const,
+}
+
+/// One placed membership probe: a positive occurrence's var-sourced
+/// membership filters, evaluated inside the join once (a) every point
+/// variable is bound and (b) the occurrence's trie is fully descended —
+/// its remaining positions are then exactly the facts consistent with
+/// the current binding, and the binding survives iff **one fact
+/// satisfies every filter** (the point-membership scan,
+/// docs/architecture/40-execution.md § access paths). Grouped per
+/// occurrence because the conjunction quantifies over one fact:
+/// `∃f (P₁(f) ∧ P₂(f))`, never `∃f P₁(f) ∧ ∃f P₂(f)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PointProbe {
+    pub occ: OccId,
+    /// The interval field and bound point variable of each filter.
+    pub filters: Vec<(crate::schema::FieldId, VarId)>,
 }
 
 /// One occurrence's execution-facing description — positive and negated
@@ -126,8 +146,18 @@ pub struct PlanOccurrence {
     /// the anti-probe runs against the ordinary filtered view, memoized
     /// per (generation, resolved filters), and an empty view just means
     /// the probe never rejects (docs/architecture/40-execution.md,
-    /// § anti-probe filters).
+    /// § anti-probe filters). Var-sourced membership filters live in
+    /// `point_filters`, never here — a view is built per execution, a
+    /// variable binds per join row.
     pub filters: Vec<FilterPredicate>,
+    /// Var-sourced membership filters (`PointIn` whose point is a bound
+    /// variable), stripped out of `filters` at plan validation. For a
+    /// positive occurrence they execute through the node's
+    /// [`PlanNode::point_probes`]; for a negated occurrence the
+    /// anti-probe evaluates them inside the probe — a binding is
+    /// rejected only if a matching fact **also** satisfies every
+    /// membership.
+    pub point_filters: Vec<(crate::schema::FieldId, VarId)>,
     /// The field→column map (docs/architecture/50-storage.md image
     /// layout): one [`ColumnSpan`] per field of the relation, in
     /// declaration order — an interval field spans two word columns;
@@ -165,10 +195,16 @@ pub struct PlanNode {
     /// rule as `residuals`.
     pub word_residuals: Vec<PlacedWordComparison>,
     /// Anti-probes evaluated at this node: each negated occurrence
-    /// attaches to the earliest node binding its whole variable set
+    /// attaches to the earliest node binding its whole variable set —
+    /// its probe keys **and** its point-filter variables
     /// (docs/architecture/40-execution.md, § anti-probe filters); a
     /// zero-variable emptiness gate attaches to the root.
     pub anti_probes: Vec<AntiProbe>,
+    /// Membership probes evaluated at this node: each positive
+    /// occurrence's var-sourced membership filters attach to the
+    /// earliest node where every point variable is bound and the
+    /// occurrence's trie is fully descended ([`PointProbe`]).
+    pub point_probes: Vec<PointProbe>,
     /// Variables first bound by this node.
     pub new_vars: Vec<VarId>,
     /// Whether this node binds any sink-relevant (projected) variable —

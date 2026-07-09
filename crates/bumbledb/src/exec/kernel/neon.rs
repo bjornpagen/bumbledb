@@ -1,6 +1,6 @@
 use std::arch::aarch64::{
-    vceqq_u64, vceqq_u8, vcgeq_u64, vcleq_u64, vdupq_n_u64, vdupq_n_u8, vgetq_lane_u64, vld1q_u64,
-    vld1q_u8, vst1q_u8,
+    uint64x2_t, vandq_u64, vceqq_u64, vceqq_u8, vcgeq_u64, vcgtq_u64, vcleq_u64, vcltq_u64,
+    vdupq_n_u64, vdupq_n_u8, vgetq_lane_u64, vld1q_u64, vld1q_u8, vorrq_u64, vst1q_u8,
 };
 
 pub(super) fn filter_eq_u64(col: &[u64], value: u64, out: &mut Vec<u32>) {
@@ -56,6 +56,163 @@ pub(super) fn filter_range_u64(col: &[u64], lo: u64, hi: u64, out: &mut Vec<u32>
         }
     }
     out.truncate(write);
+}
+
+/// The shared two-column compare-and-mask pass (docs/architecture/
+/// 40-execution.md, § access paths — interval predicates lower to word
+/// comparisons over the start/end column pair; the fixed 8-byte shape,
+/// no new NEON width): `mask` maps a (starts, ends) lane pair to the
+/// combined survivor mask; the branchless writes are the predicate-scan
+/// pattern verbatim, and `tail` is its scalar twin over the remainder.
+#[allow(clippy::inline_always)]
+// the fused pass exists to keep the mask
+// closures from becoming outlined calls
+// per two-lane chunk (docs/silicon/02's
+// instruction-diet law)
+#[inline(always)]
+unsafe fn filter_pair_u64(
+    starts: &[u64],
+    ends: &[u64],
+    out: &mut Vec<u32>,
+    mask: impl Fn(uint64x2_t, uint64x2_t) -> uint64x2_t,
+    tail: impl Fn(u64, u64) -> bool,
+) {
+    debug_assert_eq!(starts.len(), ends.len());
+    let base = out.len();
+    out.resize(base + starts.len(), 0);
+    let mut write = base;
+    // SAFETY (caller's contract): every vld1q_u64 reads exactly two u64s
+    // from within `chunks_exact(2)` of equal-length columns; unaligned
+    // loads are legal for vld1q.
+    unsafe {
+        let chunks = starts.chunks_exact(2);
+        let tail_start = starts.len() - chunks.remainder().len();
+        for (chunk_idx, chunk) in chunks.enumerate() {
+            let s = vld1q_u64(chunk.as_ptr());
+            let e = vld1q_u64(ends.as_ptr().add(chunk_idx * 2));
+            let m = mask(s, e);
+            let out_base = u32::try_from(chunk_idx * 2).expect("positions fit u32");
+            out[write] = out_base;
+            write += usize::from(vgetq_lane_u64(m, 0) != 0);
+            out[write] = out_base + 1;
+            write += usize::from(vgetq_lane_u64(m, 1) != 0);
+        }
+        for i in tail_start..starts.len() {
+            out[write] = u32::try_from(i).expect("positions fit u32");
+            write += usize::from(tail(starts[i], ends[i]));
+        }
+    }
+    out.truncate(write);
+}
+
+pub(super) fn filter_point_in_u64(starts: &[u64], ends: &[u64], point: u64, out: &mut Vec<u32>) {
+    // SAFETY: equal-length columns, chunked loads in bounds — the
+    // `filter_pair_u64` contract.
+    unsafe {
+        let p = vdupq_n_u64(point);
+        filter_pair_u64(
+            starts,
+            ends,
+            out,
+            // `start <= p` AND `p < end` — the half-open membership rule
+            // as two predicate-scan masks ANDed.
+            |s, e| vandq_u64(vcleq_u64(s, p), vcgtq_u64(e, p)),
+            |s, e| s <= point && point < e,
+        );
+    }
+}
+
+pub(super) fn filter_any_point_in_u64(
+    starts: &[u64],
+    ends: &[u64],
+    points: &[u64],
+    out: &mut Vec<u32>,
+) {
+    // SAFETY: as in `filter_point_in_u64`; the OR accumulates per-point
+    // membership masks (k small — docs/architecture/20-query-ir.md,
+    // § param sets).
+    unsafe {
+        filter_pair_u64(
+            starts,
+            ends,
+            out,
+            |s, e| {
+                let mut any = vdupq_n_u64(0);
+                for &point in points {
+                    let p = vdupq_n_u64(point);
+                    any = vorrq_u64(any, vandq_u64(vcleq_u64(s, p), vcgtq_u64(e, p)));
+                }
+                any
+            },
+            |s, e| points.iter().any(|p| s <= *p && *p < e),
+        );
+    }
+}
+
+pub(super) fn filter_overlaps_u64(
+    starts: &[u64],
+    ends: &[u64],
+    c_start: u64,
+    c_end: u64,
+    out: &mut Vec<u32>,
+) {
+    // SAFETY: the `filter_pair_u64` contract.
+    unsafe {
+        let cs = vdupq_n_u64(c_start);
+        let ce = vdupq_n_u64(c_end);
+        filter_pair_u64(
+            starts,
+            ends,
+            out,
+            // `start < c_end` AND `c_start < end` — point-sets intersect.
+            |s, e| vandq_u64(vcltq_u64(s, ce), vcgtq_u64(e, cs)),
+            |s, e| s < c_end && c_start < e,
+        );
+    }
+}
+
+pub(super) fn filter_contains_u64(
+    starts: &[u64],
+    ends: &[u64],
+    c_start: u64,
+    c_end: u64,
+    out: &mut Vec<u32>,
+) {
+    // SAFETY: the `filter_pair_u64` contract.
+    unsafe {
+        let cs = vdupq_n_u64(c_start);
+        let ce = vdupq_n_u64(c_end);
+        filter_pair_u64(
+            starts,
+            ends,
+            out,
+            // `start <= c_start` AND `c_end <= end` — field ⊇ constant.
+            |s, e| vandq_u64(vcleq_u64(s, cs), vcgeq_u64(e, ce)),
+            |s, e| s <= c_start && c_end <= e,
+        );
+    }
+}
+
+pub(super) fn filter_within_u64(
+    starts: &[u64],
+    ends: &[u64],
+    c_start: u64,
+    c_end: u64,
+    out: &mut Vec<u32>,
+) {
+    // SAFETY: the `filter_pair_u64` contract.
+    unsafe {
+        let cs = vdupq_n_u64(c_start);
+        let ce = vdupq_n_u64(c_end);
+        filter_pair_u64(
+            starts,
+            ends,
+            out,
+            // `c_start <= start` AND `end <= c_end` — constant ⊇ field.
+            |s, e| vandq_u64(vcgeq_u64(s, cs), vcleq_u64(e, ce)),
+            |s, e| c_start <= s && e <= c_end,
+        );
+    }
 }
 
 /// Dense exact-u128 sum via carry counting (docs/silicon/06): four

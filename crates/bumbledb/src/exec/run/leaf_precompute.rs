@@ -5,15 +5,33 @@ use super::{LeafPrecompute, PlacedComparison, Source, ValidatedPlan};
 impl LeafPrecompute {
     pub(super) fn of(
         plan: &ValidatedPlan,
-        residual_slots: &[Vec<(PlacedComparison, usize, usize)>],
+        residual_slots: &[Vec<(PlacedComparison, usize, usize, usize)>],
+        var_widths: &[(crate::ir::VarId, usize)],
     ) -> Self {
         let last = plan.nodes().len() - 1;
-        // A leaf carrying anti-probes declines the fast paths: they run
-        // on the generic batch machinery, where the anti-probe pass sits
-        // (conservative by construction — correctness never depends on a
-        // fast path firing).
-        let single =
-            plan.nodes()[last].subatoms.len() == 1 && plan.nodes()[last].anti_probes.is_empty();
+        let width_of = |var: crate::ir::VarId| -> usize {
+            var_widths
+                .iter()
+                .find(|(v, _)| *v == var)
+                .expect("plans bind every variable")
+                .1
+        };
+        // A leaf carrying anti-probes, membership probes, word residuals,
+        // interval-width residuals, or an interval-width cover variable
+        // declines the fast paths: they run on the generic batch
+        // machinery, where those passes sit (conservative by construction
+        // — correctness never depends on a fast path firing).
+        let single = plan.nodes()[last].subatoms.len() == 1
+            && plan.nodes()[last].anti_probes.is_empty()
+            && plan.nodes()[last].point_probes.is_empty()
+            && plan.nodes()[last].word_residuals.is_empty()
+            && residual_slots[last]
+                .iter()
+                .all(|(_, _, _, width)| *width == 1)
+            && plan.nodes()[last].subatoms[0]
+                .vars
+                .iter()
+                .all(|v| width_of(*v) == 1);
         if !single {
             return Self {
                 single,
@@ -26,7 +44,7 @@ impl LeafPrecompute {
         let cover_vars = &plan.nodes()[last].subatoms[0].vars;
         let residual_sources: Vec<(Source, Source)> = residual_slots[last]
             .iter()
-            .map(|(residual, lhs_slot, rhs_slot)| {
+            .map(|(residual, lhs_slot, rhs_slot, _)| {
                 let resolve = |var: crate::ir::VarId, slot: usize| {
                     cover_vars
                         .iter()

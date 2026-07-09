@@ -12,6 +12,16 @@ impl PipeTables {
                 appears[usize::from(subatom.occ.0)][node_idx] = true;
             }
         }
+        // Cursor USES extend appearances: a membership probe reads its
+        // occurrence's advanced cursor at the node it attaches to, so
+        // pending entries must carry that cursor there even when the
+        // occurrence's own subatoms all sit earlier.
+        let mut uses = appears.clone();
+        for (node_idx, node) in plan.nodes().iter().enumerate() {
+            for probe in &node.point_probes {
+                uses[usize::from(probe.occ.0)][node_idx] = true;
+            }
+        }
         let mut entry_level = Vec::with_capacity(n_nodes);
         let mut carried = Vec::with_capacity(n_nodes);
         let mut carried_col = Vec::with_capacity(n_nodes);
@@ -22,7 +32,7 @@ impl PipeTables {
             for (occ, at) in appears.iter().enumerate() {
                 levels.push(at[..node_idx].iter().filter(|b| **b).count());
                 let before = at[..node_idx].iter().any(|b| *b);
-                let at_or_after = at[node_idx..].iter().any(|b| *b);
+                let at_or_after = uses[occ][node_idx..].iter().any(|b| *b);
                 if before && at_or_after {
                     cols[occ] = Some(occs.len());
                     occs.push(occ);
