@@ -28,8 +28,8 @@ pub fn cold_fk_walk(conn: &Connection, cfg: GenConfig) -> Result<Measurement, St
         .find(|f| f.name == "fk_walk")
         .expect("fk_walk is registered");
     let query = (family.query)();
-    let translated =
-        crate::translate::translate(&query, schema()).map_err(|e| format!("translate: {e}"))?;
+    let translated = crate::translate::translate(&query, schema(), &[])
+        .map_err(|e| format!("translate: {e}"))?;
     // fk_walk projects (Holder.name, Posting.amount).
     let types = vec![ValueType::String, ValueType::I64];
     let mut prepared = PreparedFamily::new(conn, &translated, types)?;

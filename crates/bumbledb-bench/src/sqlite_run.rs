@@ -1,4 +1,4 @@
-//! The `SQLite` runner and the fairness contract (docs/architecture/50-validation.md):
+//! The `SQLite` runner and the fairness contract (docs/architecture/60-validation.md):
 //! `SQLite` measured under exactly the engine's protocol, with the
 //! fairness rules encoded as assertions — a benchmark nobody can dismiss
 //! as a strawman.
@@ -10,7 +10,10 @@
 //! verify's job, never the timed path's.
 
 use bumbledb::schema::ValueType;
-use bumbledb::ParamId;
+use bumbledb::Value;
+
+use crate::sqlmap;
+use crate::translate::ParamSlot;
 
 mod bulk;
 mod cold_fk_walk;
@@ -34,8 +37,23 @@ pub use sample::sample;
 /// asserted by type: no re-prepare path exists.
 pub struct PreparedFamily<'c> {
     stmt: rusqlite::Statement<'c>,
-    param_order: Vec<ParamId>,
+    param_order: Vec<ParamSlot>,
     result_types: Vec<ValueType>,
+}
+
+/// The positional bindings of one execution: each placeholder slot takes
+/// its param's whole value or one endpoint of an interval-typed param,
+/// through the normative mapping (`crate::sqlmap`).
+#[must_use]
+pub fn bind_params(order: &[ParamSlot], params: &[Value]) -> Vec<rusqlite::types::Value> {
+    order
+        .iter()
+        .map(|slot| match slot {
+            ParamSlot::Whole(p) => sqlmap::to_sql_value(&params[usize::from(p.0)]),
+            ParamSlot::Start(p) => sqlmap::interval_halves(&params[usize::from(p.0)]).0,
+            ParamSlot::End(p) => sqlmap::interval_halves(&params[usize::from(p.0)]).1,
+        })
+        .collect()
 }
 
 /// The fairness contract as code — run before measuring, so a

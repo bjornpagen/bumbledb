@@ -1,7 +1,181 @@
+use std::sync::OnceLock;
+
 use super::*;
-use crate::schema::{ids, schema};
 use bumbledb::ir::{Atom, CmpOp, Comparison, FindTerm, Term};
-use bumbledb::{AggOp, Query, Value};
+use bumbledb::schema::{
+    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, SchemaDescriptor, Side,
+    ValueType,
+};
+use bumbledb::AggOp;
+
+/// Relation and field ids for the test ledger below — declaration order
+/// is the id order, no magic numbers in query constructions.
+mod ids {
+    use bumbledb::{FieldId, RelationId};
+
+    pub const HOLDER: RelationId = RelationId(0);
+    pub const ACCOUNT: RelationId = RelationId(1);
+    pub const INSTRUMENT: RelationId = RelationId(2);
+    pub const POSTING: RelationId = RelationId(4);
+    pub const POSTING_TAG: RelationId = RelationId(5);
+    pub const ORG_PARENT: RelationId = RelationId(7);
+    pub const MANDATE: RelationId = RelationId(8);
+    pub const TRANSFER: RelationId = RelationId(9);
+
+    pub mod holder {
+        use super::FieldId;
+        pub const ID: FieldId = FieldId(0);
+        pub const NAME: FieldId = FieldId(1);
+    }
+    pub mod account {
+        use super::FieldId;
+        pub const ID: FieldId = FieldId(0);
+        pub const HOLDER: FieldId = FieldId(1);
+    }
+    pub mod instrument {
+        use super::FieldId;
+        pub const ID: FieldId = FieldId(0);
+        pub const SYMBOL: FieldId = FieldId(1);
+    }
+    pub mod posting {
+        use super::FieldId;
+        pub const ID: FieldId = FieldId(0);
+        pub const ENTRY: FieldId = FieldId(1);
+        pub const ACCOUNT: FieldId = FieldId(2);
+        pub const INSTRUMENT: FieldId = FieldId(3);
+        pub const AMOUNT: FieldId = FieldId(4);
+        pub const AT: FieldId = FieldId(5);
+    }
+    pub mod posting_tag {
+        use super::FieldId;
+        pub const POSTING: FieldId = FieldId(0);
+        pub const TAG: FieldId = FieldId(1);
+    }
+    pub mod org_parent {
+        use super::FieldId;
+        pub const CHILD: FieldId = FieldId(0);
+        pub const PARENT: FieldId = FieldId(1);
+    }
+    pub mod mandate {
+        use super::FieldId;
+        pub const ACCOUNT: FieldId = FieldId(0);
+        pub const ORG: FieldId = FieldId(1);
+        pub const ACTIVE: FieldId = FieldId(2);
+    }
+    pub mod transfer {
+        use super::FieldId;
+        pub const EXTREF: FieldId = FieldId(1);
+    }
+}
+
+fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
+    FieldDescriptor {
+        name: name.into(),
+        value_type,
+        generation: Generation::None,
+    }
+}
+
+fn serial(name: &str) -> FieldDescriptor {
+    FieldDescriptor {
+        name: name.into(),
+        value_type: ValueType::U64,
+        generation: Generation::Serial,
+    }
+}
+
+fn enum_type(variants: &[&str]) -> ValueType {
+    ValueType::Enum {
+        variants: variants.iter().map(|v| Box::from(*v)).collect(),
+    }
+}
+
+/// The test ledger: the benchmark schema of
+/// `docs/architecture/60-validation.md` (whose families PRD 24 owns),
+/// plus `Transfer` for a Bytes field — built locally so the translator's
+/// goldens depend on nothing but the IR and the schema descriptors.
+fn schema() -> &'static Schema {
+    static SCHEMA: OnceLock<Schema> = OnceLock::new();
+    SCHEMA.get_or_init(|| {
+        SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    name: "Holder".into(),
+                    fields: vec![serial("id"), field("name", ValueType::String)],
+                },
+                RelationDescriptor {
+                    name: "Account".into(),
+                    fields: vec![
+                        serial("id"),
+                        field("holder", ValueType::U64),
+                        field("currency", enum_type(&["Usd", "Eur", "Gbp"])),
+                    ],
+                },
+                RelationDescriptor {
+                    name: "Instrument".into(),
+                    fields: vec![serial("id"), field("symbol", ValueType::String)],
+                },
+                RelationDescriptor {
+                    name: "JournalEntry".into(),
+                    fields: vec![
+                        serial("id"),
+                        field("source", enum_type(&["Manual", "Import", "System"])),
+                        field("created_at", ValueType::I64),
+                    ],
+                },
+                RelationDescriptor {
+                    name: "Posting".into(),
+                    fields: vec![
+                        serial("id"),
+                        field("entry", ValueType::U64),
+                        field("account", ValueType::U64),
+                        field("instrument", ValueType::U64),
+                        field("amount", ValueType::I64),
+                        field("at", ValueType::I64),
+                    ],
+                },
+                RelationDescriptor {
+                    name: "PostingTag".into(),
+                    fields: vec![
+                        field("posting", ValueType::U64),
+                        field("tag", enum_type(&["Fee", "Rebate", "Adjustment"])),
+                    ],
+                },
+                RelationDescriptor {
+                    name: "Org".into(),
+                    fields: vec![serial("id"), field("name", ValueType::String)],
+                },
+                RelationDescriptor {
+                    name: "OrgParent".into(),
+                    fields: vec![
+                        field("child", ValueType::U64),
+                        field("parent", ValueType::U64),
+                    ],
+                },
+                RelationDescriptor {
+                    name: "Mandate".into(),
+                    fields: vec![
+                        field("account", ValueType::U64),
+                        field("org", ValueType::U64),
+                        field(
+                            "active",
+                            ValueType::Interval {
+                                element: IntervalElement::I64,
+                            },
+                        ),
+                    ],
+                },
+                RelationDescriptor {
+                    name: "Transfer".into(),
+                    fields: vec![serial("id"), field("extref", ValueType::Bytes)],
+                },
+            ],
+            statements: vec![],
+        }
+        .validate()
+        .expect("the test ledger validates")
+    })
+}
 
 fn var(id: u16) -> Term {
     Term::Var(VarId(id))
@@ -20,11 +194,12 @@ fn point_matches_its_hand_written_golden() {
                 (ids::posting::AT, var(1)),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     };
-    let t = translate(&query, schema()).expect("translates");
+    let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::POINT);
-    assert_eq!(t.params, vec![ParamId(0)]);
+    assert_eq!(t.params, vec![ParamSlot::Whole(ParamId(0))]);
 }
 
 #[test]
@@ -56,11 +231,16 @@ fn fk_walk_matches_its_hand_written_golden() {
                 bindings: vec![(ids::holder::ID, var(2)), (ids::holder::NAME, var(0))],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     };
-    let t = translate(&query, schema()).expect("translates");
+    let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::FK_WALK);
-    assert_eq!(t.params, vec![ParamId(0)], "one placeholder, reused");
+    assert_eq!(
+        t.params,
+        vec![ParamSlot::Whole(ParamId(0))],
+        "one placeholder, reused"
+    );
 }
 
 #[test]
@@ -92,35 +272,576 @@ fn balance_matches_its_hand_written_golden() {
                 ],
             },
         ],
+        negated: vec![],
         predicates: vec![],
     };
-    let t = translate(&query, schema()).expect("translates");
+    let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::BALANCE);
 }
 
 #[test]
-fn every_construct_translates() {
-    // Gate atom → EXISTS; repeated in-atom var; same-atom and
-    // cross-atom comparisons; every operator; literal escaping.
+fn negated_atoms_match_their_goldens() {
+    // no_tag: Q(p) :- Posting(id = p), ¬PostingTag(posting = p, tag = Fee).
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: ids::POSTING,
+            bindings: vec![(ids::posting::ID, var(0))],
+        }],
+        negated: vec![Atom {
+            relation: ids::POSTING_TAG,
+            bindings: vec![
+                (ids::posting_tag::POSTING, var(0)),
+                (ids::posting_tag::TAG, Term::Literal(Value::Enum(0))),
+            ],
+        }],
+        predicates: vec![],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::NO_TAG);
+    assert!(t.params.is_empty());
+
+    // self_negation: Q(c) :- OrgParent(child = c, parent = p),
+    //                        ¬OrgParent(child = p).
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: ids::ORG_PARENT,
+            bindings: vec![
+                (ids::org_parent::CHILD, var(0)),
+                (ids::org_parent::PARENT, var(1)),
+            ],
+        }],
+        negated: vec![Atom {
+            relation: ids::ORG_PARENT,
+            bindings: vec![(ids::org_parent::CHILD, var(1))],
+        }],
+        predicates: vec![],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::SELF_NEGATION);
+
+    // A param inside a negated atom still binds positionally.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: ids::POSTING,
+            bindings: vec![(ids::posting::ID, var(0))],
+        }],
+        negated: vec![Atom {
+            relation: ids::POSTING_TAG,
+            bindings: vec![
+                (ids::posting_tag::POSTING, var(0)),
+                (ids::posting_tag::TAG, Term::Param(ParamId(0))),
+            ],
+        }],
+        predicates: vec![],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert!(t.sql.contains("n0.\"tag\" = ?1"), "{}", t.sql);
+    assert_eq!(t.params, vec![ParamSlot::Whole(ParamId(0))]);
+}
+
+#[test]
+fn param_sets_render_as_literal_in_lists() {
+    // in_three / in_empty: Q(e) :- Posting(entry = e, account ∈ ?set0).
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: ids::POSTING,
+            bindings: vec![
+                (ids::posting::ENTRY, var(0)),
+                (ids::posting::ACCOUNT, Term::ParamSet(ParamId(0))),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let sets = vec![(
+        ParamId(0),
+        vec![Value::U64(3), Value::U64(7), Value::U64(9)],
+    )];
+    let t = translate(&query, schema(), &sets).expect("translates");
+    assert_eq!(t.sql, goldens::IN_THREE);
+    assert!(
+        t.params.is_empty(),
+        "set elements are literals, not placeholders"
+    );
+
+    let empty = vec![(ParamId(0), Vec::new())];
+    let t = translate(&query, schema(), &empty).expect("translates");
+    assert_eq!(t.sql, goldens::IN_EMPTY);
+
+    // An unbound set is a named error, never silently-empty SQL.
+    let err = translate(&query, schema(), &[]).unwrap_err();
+    assert!(err.contains("param set 0"), "{err}");
+
+    // A set inside a negated atom takes the same IN form.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: ids::ACCOUNT,
+            bindings: vec![(ids::account::ID, var(0))],
+        }],
+        negated: vec![Atom {
+            relation: ids::POSTING,
+            bindings: vec![
+                (ids::posting::ACCOUNT, var(0)),
+                (ids::posting::ENTRY, Term::ParamSet(ParamId(0))),
+            ],
+        }],
+        predicates: vec![],
+    };
+    let t = translate(&query, schema(), &sets).expect("translates");
+    assert!(
+        t.sql.contains(
+            "NOT EXISTS (SELECT 1 FROM \"Posting\" AS n0 WHERE n0.\"account\" = t0.\"id\" AND n0.\"entry\" IN (3, 7, 9))"
+        ),
+        "{}",
+        t.sql
+    );
+}
+
+#[test]
+fn set_forms_cover_interval_membership_and_predicate_equality() {
+    // Membership per element on an interval field: an OR of endpoint
+    // tests (IN has no interval form); the empty set is 1 = 0 here too.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: ids::MANDATE,
+            bindings: vec![
+                (ids::mandate::ORG, var(0)),
+                (ids::mandate::ACTIVE, Term::ParamSet(ParamId(0))),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let sets = vec![(ParamId(0), vec![Value::I64(1), Value::I64(2)])];
+    let t = translate(&query, schema(), &sets).expect("translates");
+    assert!(
+        t.sql.contains(
+            "(t0.\"active_start\" <= 1 AND 1 < t0.\"active_end\" OR t0.\"active_start\" <= 2 AND 2 < t0.\"active_end\")"
+        ),
+        "{}",
+        t.sql
+    );
+    let empty = vec![(ParamId(0), Vec::new())];
+    let t = translate(&query, schema(), &empty).expect("translates");
+    assert!(t.sql.ends_with("WHERE 1 = 0"), "{}", t.sql);
+
+    // Eq against a set in a predicate: the variable side's IN.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: ids::POSTING,
+            bindings: vec![
+                (ids::posting::ACCOUNT, var(0)),
+                (ids::posting::ENTRY, var(1)),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Eq,
+            lhs: var(1),
+            rhs: Term::ParamSet(ParamId(0)),
+        }],
+    };
+    let sets = vec![(ParamId(0), vec![Value::U64(3), Value::U64(7)])];
+    let t = translate(&query, schema(), &sets).expect("translates");
+    assert!(t.sql.contains("t0.\"entry\" IN (3, 7)"), "{}", t.sql);
+}
+
+#[test]
+fn membership_matches_its_goldens() {
+    // Q(o) :- Posting(account = a, at = t),
+    //         Mandate(account = a, org = o, active ∋ t).
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![
+            Atom {
+                relation: ids::POSTING,
+                bindings: vec![(ids::posting::ACCOUNT, var(1)), (ids::posting::AT, var(2))],
+            },
+            Atom {
+                relation: ids::MANDATE,
+                bindings: vec![
+                    (ids::mandate::ACCOUNT, var(1)),
+                    (ids::mandate::ORG, var(0)),
+                    (ids::mandate::ACTIVE, var(2)),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::MEMBERSHIP);
+
+    // The param form: Q(o) :- Posting(account = ?0, at = ?1),
+    //                         Mandate(account = ?0, org = o, active ∋ ?1).
     let query = Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
                 relation: ids::POSTING,
                 bindings: vec![
-                    (ids::posting::AMOUNT, var(0)),
-                    (ids::posting::AT, var(1)),
-                    (
-                        ids::posting::MEMO,
-                        Term::Literal(Value::String(b"it's a 'quote'".to_vec().into())),
-                    ),
+                    (ids::posting::ACCOUNT, Term::Param(ParamId(0))),
+                    (ids::posting::AT, Term::Param(ParamId(1))),
                 ],
             },
             Atom {
-                relation: ids::TAG,
+                relation: ids::MANDATE,
+                bindings: vec![
+                    (ids::mandate::ACCOUNT, Term::Param(ParamId(0))),
+                    (ids::mandate::ORG, var(0)),
+                    (ids::mandate::ACTIVE, Term::Param(ParamId(1))),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::MEMBERSHIP_PARAM);
+    assert_eq!(
+        t.params,
+        vec![ParamSlot::Whole(ParamId(0)), ParamSlot::Whole(ParamId(1))],
+        "the instant's placeholder repeats; one bound value"
+    );
+}
+
+#[test]
+fn overlaps_matches_its_hand_written_golden() {
+    // Q(o1, o2) :- Mandate(account = a, org = o1, active = u),
+    //              Mandate(account = a, org = o2, active = v),
+    //              Overlaps(u, v).
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![
+            Atom {
+                relation: ids::MANDATE,
+                bindings: vec![
+                    (ids::mandate::ACCOUNT, var(2)),
+                    (ids::mandate::ORG, var(0)),
+                    (ids::mandate::ACTIVE, var(3)),
+                ],
+            },
+            Atom {
+                relation: ids::MANDATE,
+                bindings: vec![
+                    (ids::mandate::ACCOUNT, var(2)),
+                    (ids::mandate::ORG, var(1)),
+                    (ids::mandate::ACTIVE, var(4)),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Overlaps,
+            lhs: var(3),
+            rhs: var(4),
+        }],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::OVERLAPS);
+}
+
+#[test]
+fn contains_matches_both_goldens() {
+    // Interval ⊇ interval, the containing side probed by a param:
+    // Q(o) :- Mandate(org = o, active = v), Contains(v, ?0).
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: ids::MANDATE,
+            bindings: vec![(ids::mandate::ORG, var(0)), (ids::mandate::ACTIVE, var(1))],
+        }],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Contains,
+            lhs: var(1),
+            rhs: Term::Param(ParamId(0)),
+        }],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::CONTAINS_INTERVAL);
+    assert_eq!(
+        t.params,
+        vec![ParamSlot::Start(ParamId(0)), ParamSlot::End(ParamId(0))],
+        "an interval param binds its two halves"
+    );
+
+    // Point containment: Q(o, t) :- Mandate(org = o, active = v),
+    //                               Posting(at = t), Contains(v, t).
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
+        atoms: vec![
+            Atom {
+                relation: ids::MANDATE,
+                bindings: vec![(ids::mandate::ORG, var(0)), (ids::mandate::ACTIVE, var(1))],
+            },
+            Atom {
+                relation: ids::POSTING,
+                bindings: vec![(ids::posting::AT, var(2))],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Contains,
+            lhs: var(1),
+            rhs: var(2),
+        }],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::CONTAINS_POINT);
+}
+
+#[test]
+fn interval_equality_matches_its_goldens() {
+    // Predicate form: Q(a1, a2) :- Mandate(account = a1, active = u),
+    //                              Mandate(account = a2, active = v),
+    //                              Eq(u, v).
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![
+            Atom {
+                relation: ids::MANDATE,
+                bindings: vec![
+                    (ids::mandate::ACCOUNT, var(0)),
+                    (ids::mandate::ACTIVE, var(2)),
+                ],
+            },
+            Atom {
+                relation: ids::MANDATE,
+                bindings: vec![
+                    (ids::mandate::ACCOUNT, var(1)),
+                    (ids::mandate::ACTIVE, var(3)),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Eq,
+            lhs: var(2),
+            rhs: var(3),
+        }],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::INTERVAL_EQ);
+
+    // Binding form, literal: Q(o) :- Mandate(org = o, active = [1700, 1800)).
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: ids::MANDATE,
+            bindings: vec![
+                (ids::mandate::ORG, var(0)),
+                (
+                    ids::mandate::ACTIVE,
+                    Term::Literal(Value::IntervalI64(1700, 1800)),
+                ),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::INTERVAL_EQ_LITERAL);
+
+    // Binding form, param: Q(o) :- Mandate(org = o, active = ?0) — the
+    // bivalent anchor resolves to the interval reading, two placeholders.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: ids::MANDATE,
+            bindings: vec![
+                (ids::mandate::ORG, var(0)),
+                (ids::mandate::ACTIVE, Term::Param(ParamId(0))),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::INTERVAL_EQ_PARAM);
+    assert_eq!(
+        t.params,
+        vec![ParamSlot::Start(ParamId(0)), ParamSlot::End(ParamId(0))]
+    );
+}
+
+#[test]
+fn count_distinct_matches_its_hand_written_golden() {
+    // Q(h, CountDistinct(i)) :- Account(id = a, holder = h),
+    //                           Posting(account = a, instrument = i).
+    let query = Query {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::CountDistinct,
+                over: Some(VarId(2)),
+            },
+        ],
+        atoms: vec![
+            Atom {
+                relation: ids::ACCOUNT,
+                bindings: vec![(ids::account::ID, var(1)), (ids::account::HOLDER, var(0))],
+            },
+            Atom {
+                relation: ids::POSTING,
+                bindings: vec![
+                    (ids::posting::ACCOUNT, var(1)),
+                    (ids::posting::INSTRUMENT, var(2)),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::COUNT_DISTINCT);
+}
+
+#[test]
+fn count_distinct_over_an_interval_concatenates_the_halves() {
+    // Q(CountDistinct(u)) :- Mandate(account = a, active = u): the halves
+    // fold through an injective decimal rendering (COUNT(DISTINCT ...)
+    // takes one expression).
+    let query = Query {
+        finds: vec![FindTerm::Aggregate {
+            op: AggOp::CountDistinct,
+            over: Some(VarId(1)),
+        }],
+        atoms: vec![Atom {
+            relation: ids::MANDATE,
+            bindings: vec![
+                (ids::mandate::ACCOUNT, var(0)),
+                (ids::mandate::ACTIVE, var(1)),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert!(
+        t.sql.contains("COUNT(DISTINCT v1_start || ',' || v1_end)"),
+        "{}",
+        t.sql
+    );
+    assert!(t.sql.ends_with("HAVING COUNT(*) > 0"), "{}", t.sql);
+}
+
+#[test]
+fn arg_restriction_matches_its_goldens() {
+    // Grouped: Q(a, ArgMax_at(p)) :- Posting(id = p, account = a, at = t).
+    let query = Query {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::ArgMax { key: VarId(2) },
+                over: Some(VarId(1)),
+            },
+        ],
+        atoms: vec![Atom {
+            relation: ids::POSTING,
+            bindings: vec![
+                (ids::posting::ID, var(1)),
+                (ids::posting::ACCOUNT, var(0)),
+                (ids::posting::AT, var(2)),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::ARG_MAX);
+
+    // Global: Q(ArgMax_at(p)) :- Posting(id = p, at = t).
+    let query = Query {
+        finds: vec![FindTerm::Aggregate {
+            op: AggOp::ArgMax { key: VarId(1) },
+            over: Some(VarId(0)),
+        }],
+        atoms: vec![Atom {
+            relation: ids::POSTING,
+            bindings: vec![(ids::posting::ID, var(0)), (ids::posting::AT, var(1))],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::ARG_MAX_GLOBAL);
+
+    // ArgMin swaps the extreme.
+    let query = Query {
+        finds: vec![FindTerm::Aggregate {
+            op: AggOp::ArgMin { key: VarId(1) },
+            over: Some(VarId(0)),
+        }],
+        atoms: vec![Atom {
+            relation: ids::POSTING,
+            bindings: vec![(ids::posting::ID, var(0)), (ids::posting::AT, var(1))],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert!(t.sql.contains("SELECT MIN(v1) AS mk FROM d"), "{}", t.sql);
+}
+
+#[test]
+fn an_interval_find_projects_both_halves() {
+    // Q(o, u) :- Mandate(org = o, active = u): the decode path
+    // reassembles the value from the pair (`crate::sqlmap`).
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![Atom {
+            relation: ids::MANDATE,
+            bindings: vec![(ids::mandate::ORG, var(0)), (ids::mandate::ACTIVE, var(1))],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let t = translate(&query, schema(), &[]).expect("translates");
+    assert_eq!(
+        t.sql,
+        "SELECT DISTINCT t0.\"org\", t0.\"active_start\", t0.\"active_end\" FROM \"Mandate\" AS t0"
+    );
+}
+
+#[test]
+fn every_scalar_construct_translates() {
+    // Gate atom → EXISTS; literal escaping (string and bytes); same-atom
+    // comparisons; every scalar operator.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![
+            Atom {
+                relation: ids::POSTING,
+                bindings: vec![(ids::posting::AMOUNT, var(0)), (ids::posting::AT, var(1))],
+            },
+            Atom {
+                relation: ids::INSTRUMENT,
+                bindings: vec![(
+                    ids::instrument::SYMBOL,
+                    Term::Literal(Value::String(b"it's a 'quote'".to_vec().into())),
+                )],
+            },
+            Atom {
+                relation: ids::TRANSFER,
+                bindings: vec![(
+                    ids::transfer::EXTREF,
+                    Term::Literal(Value::Bytes(vec![0xDE, 0xAD].into())),
+                )],
+            },
+            Atom {
+                relation: ids::POSTING_TAG,
                 bindings: vec![],
             },
         ],
+        negated: vec![],
         predicates: vec![
             Comparison {
                 op: CmpOp::Lt,
@@ -139,17 +860,18 @@ fn every_construct_translates() {
             },
         ],
     };
-    let t = translate(&query, schema()).expect("translates");
+    let t = translate(&query, schema(), &[]).expect("translates");
     assert!(
-        t.sql.contains("EXISTS (SELECT 1 FROM \"Tag\")"),
+        t.sql.contains("EXISTS (SELECT 1 FROM \"PostingTag\")"),
         "{}",
         t.sql
     );
     assert!(t.sql.contains("'it''s a ''quote'''"), "{}", t.sql);
+    assert!(t.sql.contains("X'DEAD'"), "{}", t.sql);
     assert!(t.sql.contains("t0.\"amount\" < t0.\"at\""), "{}", t.sql);
     assert!(t.sql.contains(">= -5"), "{}", t.sql);
     assert!(t.sql.contains("<> ?1"), "{}", t.sql);
-    assert_eq!(t.params, vec![ParamId(0)]);
+    assert_eq!(t.params, vec![ParamSlot::Whole(ParamId(0))]);
 
     // Repeated in-atom variable equates its two columns.
     let repeated = Query {
@@ -158,9 +880,10 @@ fn every_construct_translates() {
             relation: ids::POSTING,
             bindings: vec![(ids::posting::AMOUNT, var(0)), (ids::posting::AT, var(0))],
         }],
+        negated: vec![],
         predicates: vec![],
     };
-    let t = translate(&repeated, schema()).expect("translates");
+    let t = translate(&repeated, schema(), &[]).expect("translates");
     assert!(t.sql.contains("t0.\"amount\" = t0.\"at\""), "{}", t.sql);
 }
 
@@ -177,9 +900,10 @@ fn global_aggregates_carry_the_having_rule() {
             relation: ids::POSTING,
             bindings: vec![(ids::posting::AMOUNT, var(0))],
         }],
+        negated: vec![],
         predicates: vec![],
     };
-    let t = translate(&query, schema()).expect("translates");
+    let t = translate(&query, schema(), &[]).expect("translates");
     assert!(t.sql.ends_with("HAVING COUNT(*) > 0"), "{}", t.sql);
     assert!(t.sql.contains("SELECT DISTINCT"), "{}", t.sql);
 
@@ -203,9 +927,10 @@ fn global_aggregates_carry_the_having_rule() {
                 (ids::posting::AMOUNT, var(1)),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     };
-    let t = translate(&grouped, schema()).expect("translates");
+    let t = translate(&grouped, schema(), &[]).expect("translates");
     assert!(t.sql.contains("MIN(v1)"), "{}", t.sql);
     assert!(t.sql.contains("MAX(v1)"), "{}", t.sql);
     assert!(t.sql.ends_with("GROUP BY v0"), "{}", t.sql);
@@ -219,34 +944,81 @@ fn errors_name_the_untranslatable_construct() {
             over: None,
         }],
         atoms: vec![Atom {
-            relation: ids::TAG,
+            relation: ids::POSTING_TAG,
             bindings: vec![],
         }],
+        negated: vec![],
         predicates: vec![],
     };
-    let err = translate(&gates_only, schema()).unwrap_err();
+    let err = translate(&gates_only, schema(), &[]).unwrap_err();
     assert!(err.contains("no bound atoms"), "{err}");
 }
 
-/// PRD 07 (docs/hardening): a NUL in a string literal would truncate
-/// `SQLite`'s tokenizer mid-statement — the translator rejects it by
-/// name instead of emitting silently-shortened SQL.
+/// A NUL in a string literal would truncate `SQLite`'s tokenizer
+/// mid-statement — the translator rejects it by name instead of emitting
+/// silently-shortened SQL.
 #[test]
 fn a_nul_string_literal_is_a_named_error() {
     let query = Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            relation: ids::POSTING,
+            relation: ids::INSTRUMENT,
             bindings: vec![
-                (ids::posting::ID, Term::Var(VarId(0))),
+                (ids::instrument::ID, Term::Var(VarId(0))),
                 (
-                    ids::posting::MEMO,
+                    ids::instrument::SYMBOL,
                     Term::Literal(Value::String(b"before\0after".to_vec().into())),
                 ),
             ],
         }],
+        negated: vec![],
         predicates: vec![],
     };
-    let err = translate(&query, schema()).unwrap_err();
+    let err = translate(&query, schema(), &[]).unwrap_err();
     assert!(err.contains("NUL byte in string literal"), "{err}");
+}
+
+/// The `[shape]` criterion pinned as a golden: the inexpressible set is
+/// exactly the dependency judgments; no query construct is in it.
+#[test]
+fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: ids::POSTING,
+            bindings: vec![(ids::posting::ID, var(0))],
+        }],
+        negated: vec![Atom {
+            relation: ids::POSTING_TAG,
+            bindings: vec![(ids::posting_tag::POSTING, var(0))],
+        }],
+        predicates: vec![],
+    };
+    assert_eq!(sqlite_expressible(&LaneCase::Query(&query)), Ok(()));
+
+    let functionality = StatementDescriptor::Functionality {
+        relation: ids::MANDATE,
+        projection: Box::new([ids::mandate::ACCOUNT, ids::mandate::ACTIVE]),
+    };
+    assert_eq!(
+        sqlite_expressible(&LaneCase::Judgment(&functionality)),
+        Err(Inexpressible::FunctionalityJudgment)
+    );
+
+    let containment = StatementDescriptor::Containment {
+        source: Side {
+            relation: ids::MANDATE,
+            projection: Box::new([ids::mandate::ACCOUNT]),
+            selection: Box::new([]),
+        },
+        target: Side {
+            relation: ids::ACCOUNT,
+            projection: Box::new([ids::account::ID]),
+            selection: Box::new([]),
+        },
+    };
+    assert_eq!(
+        sqlite_expressible(&LaneCase::Judgment(&containment)),
+        Err(Inexpressible::ContainmentJudgment)
+    );
 }

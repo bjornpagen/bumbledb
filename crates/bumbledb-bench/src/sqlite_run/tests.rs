@@ -35,7 +35,7 @@ fn fairness_and_the_prepared_sample_contract() {
         .iter()
         .find(|f| f.name == "range")
         .expect("registered");
-    let translated = translate(&(family.query)(), crate::schema::schema()).expect("translate");
+    let translated = translate(&(family.query)(), crate::schema::schema(), &[]).expect("translate");
     let types: Vec<ValueType> = {
         let db_dir = dir.join("types-db");
         let db = bumbledb::Db::create(&db_dir, crate::schema::schema()).expect("create");
@@ -53,12 +53,7 @@ fn fairness_and_the_prepared_sample_contract() {
         let expected: i64 = conn
             .query_row(
                 &format!("SELECT COUNT(*) FROM ({})", translated.sql),
-                rusqlite::params_from_iter(
-                    translated
-                        .params
-                        .iter()
-                        .map(|p| sqlmap::to_sql_value(&params[usize::from(p.0)])),
-                ),
+                rusqlite::params_from_iter(bind_params(&translated.params, params)),
                 |row| row.get(0),
             )
             .expect("count");
@@ -77,7 +72,7 @@ fn fairness_and_the_prepared_sample_contract() {
         .find(|f| f.name == "point")
         .expect("registered");
     let point_translated =
-        translate(&(point.query)(), crate::schema::schema()).expect("translate");
+        translate(&(point.query)(), crate::schema::schema(), &[]).expect("translate");
     let point_types: Vec<ValueType> = {
         let db =
             bumbledb::Db::open(&dir.join("types-db"), crate::schema::schema()).expect("reopen");
