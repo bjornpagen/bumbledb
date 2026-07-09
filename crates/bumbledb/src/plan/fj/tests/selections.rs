@@ -12,13 +12,10 @@ fn lowering_splits_eq_constants_into_selections() {
         op: CmpOp::Eq,
         value: Const::Param(crate::ir::ParamId(0)),
     }];
-    let normalized = NormalizedQuery {
-        occurrences: vec![occ],
-        residuals: vec![],
-    };
-    let plan = binary2fj(&normalized, &order(&[0]));
+    let query = normalized(vec![occ], vec![]);
+    let plan = binary2fj(&query, &order(&[0]));
     let validated =
-        validate(&plan, &normalized, &schema(1, 3), vec![0], &BTreeSet::new()).expect("valid plan");
+        validate(&plan, &query, &schema(1, 3), vec![0], &BTreeSet::new()).expect("valid plan");
     let lowered = validated.occurrence(OccId(0));
     assert_eq!(
         lowered.selections,
@@ -57,13 +54,10 @@ fn residuals_and_field_compares_stay_filters() {
             value: Const::Byte(1),
         },
     ];
-    let normalized = NormalizedQuery {
-        occurrences: vec![occ],
-        residuals: vec![],
-    };
-    let plan = binary2fj(&normalized, &order(&[0]));
+    let query = normalized(vec![occ], vec![]);
+    let plan = binary2fj(&query, &order(&[0]));
     let validated =
-        validate(&plan, &normalized, &schema(1, 3), vec![0], &BTreeSet::new()).expect("valid plan");
+        validate(&plan, &query, &schema(1, 3), vec![0], &BTreeSet::new()).expect("valid plan");
     let lowered = validated.occurrence(OccId(0));
     assert_eq!(
         lowered.selections,
@@ -98,7 +92,7 @@ fn residuals_and_field_compares_stay_filters() {
 
     // Determinism: the same query lowers to the same plan.
     let again =
-        validate(&plan, &normalized, &schema(1, 3), vec![0], &BTreeSet::new()).expect("valid plan");
+        validate(&plan, &query, &schema(1, 3), vec![0], &BTreeSet::new()).expect("valid plan");
     assert_eq!(validated.occurrences(), again.occurrences());
 }
 
@@ -116,7 +110,9 @@ fn a_leaked_eq_filter_fails_selection_validation() {
             op: CmpOp::Eq,
             value: Const::Word(1),
         }],
+        spans: Box::new([]),
         trie_schema: vec![],
+        key_widths: vec![],
     };
     assert_eq!(
         check_selections(std::slice::from_ref(&bad)),

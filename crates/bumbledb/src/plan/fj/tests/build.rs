@@ -40,16 +40,16 @@ fn binary2fj_and_factor_match_the_papers_clover_example() {
 #[test]
 fn binary2fj_matches_the_papers_chain_example() {
     // Q :- R(x,y), S(y,z), T(z,u), W(u,v) with plan [R,S,T,W] (§4.1).
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let query = normalized(
+        vec![
             occurrence(0, 0, &[(1, X), (2, Y)]),
             occurrence(1, 1, &[(1, Y), (2, Z)]),
             occurrence(2, 2, &[(1, Z), (2, U)]),
             occurrence(3, 3, &[(1, U), (2, V)]),
         ],
-        residuals: vec![],
-    };
-    let plan = binary2fj(&normalized, &order(&[0, 1, 2, 3]));
+        vec![],
+    );
+    let plan = binary2fj(&query, &order(&[0, 1, 2, 3]));
     assert_eq!(
         plan.nodes,
         vec![

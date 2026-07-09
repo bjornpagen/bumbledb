@@ -1,8 +1,9 @@
-//! Statistics and the DP planner (docs/architecture/30-execution.md): real statistics in, one
-//! left-deep atom order out (`docs/architecture/30-execution.md`).
+//! Statistics and the DP planner (docs/architecture/40-execution.md): real
+//! statistics in, one left-deep atom order out.
 //!
 //! Statistics are exact row counts (or measured filtered-view survivor
-//! counts) plus schema constraint knowledge — nothing else exists: no NDV
+//! counts) plus schema statement knowledge (keys and containments,
+//! `docs/architecture/30-dependencies.md`) — nothing else exists: no NDV
 //! fields, no histograms, no magic selectivity constants (the post-mortem's
 //! central engine finding, §30).
 
@@ -15,21 +16,25 @@ mod plan;
 
 pub use plan::plan;
 
-/// Hard cap on occurrences the exhaustive subset DP accepts. The 30-execution doc named
+/// Hard cap on occurrences the exhaustive subset DP accepts. The 40-execution doc named
 /// 32 (the bitmask width), but 2³² DP states is memory-infeasible; at
 /// 2²⁰ the DP table (`Option<State>`, 32 bytes each) is ~32 MB plus a
 /// 16 MB per-mask prefix-variables memo — instant, and the doc's own
 /// envelope is "≤ ~12 atoms" (amendment recorded in
-/// docs/architecture/30-execution.md), where both are kilobytes.
+/// docs/architecture/40-execution.md), where both are kilobytes. The
+/// validation-boundary roster cap counts negated occurrences too (they
+/// consume plan-time work), but only positive occurrences enter the DP
+/// state — negated occurrences never join (docs/architecture/40-execution.md,
+/// § search).
 pub const MAX_OCCURRENCES: usize = 20;
 
 /// Distinct-variable cap for the planner's dense var bitsets.
 pub(crate) const MAX_DISTINCT_VARS: usize = 128;
 
-/// The planner's per-occurrence statistics (docs/architecture/30-execution.md): the
+/// The planner's per-occurrence statistics (docs/architecture/40-execution.md): the
 /// selectivity-shaped cardinality estimate, plus the base-relation
 /// distinct count of every bound variable's field (from the same
-/// ladder — unique-exact, image-exact, schema bounds, floor). The
+/// ladder — key-exact, image-exact, schema bounds, floor). The
 /// distincts drive the join-step fanout model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OccStats {
@@ -41,7 +46,8 @@ pub struct OccStats {
 }
 
 /// The chosen left-deep join order, with per-step estimates retained for
-/// EXPLAIN (docs/architecture/30-execution.md).
+/// EXPLAIN (docs/architecture/40-execution.md). Positive occurrences only —
+/// negated occurrences join nothing and reach execution as anti-probes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinOrder {
     /// Occurrences in join order (first = the iterated relation).
@@ -65,12 +71,16 @@ struct OccInfo {
     /// This occurrence's variables as a dense bitset.
     vars: u128,
     /// `(var bit, base-relation distinct count of its field)` — the
-    /// join-step fanout inputs (docs/architecture/30-execution.md).
+    /// join-step fanout inputs (docs/architecture/40-execution.md).
     var_distincts: Vec<(u128, u64)>,
-    /// Var bitsets of unique constraints whose every field is var-bound in
-    /// this occurrence (constraints with literal-bound fields are skipped —
-    /// simple and faithful to the doc's estimator).
-    unique_var_sets: Vec<u128>,
+    /// Var bitsets of `Functionality` statements whose every projection
+    /// field is var-bound in this occurrence (statements with any
+    /// literal-bound or unbound field are skipped — simple and faithful
+    /// to the doc's estimator). The pointwise-key guard lives in the
+    /// translation ([`densify`]): a pointwise key's set exists only when
+    /// its interval field is bound **by value**, so a join binding just
+    /// the scalar prefix never certifies fanout 1.
+    key_var_sets: Vec<u128>,
 }
 
 #[cfg(test)]

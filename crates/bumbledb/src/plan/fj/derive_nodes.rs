@@ -52,6 +52,8 @@ pub(super) fn derive_nodes(plan: &FjPlan) -> Result<Vec<PlanNode>, PlanError> {
             subatoms: node.subatoms.clone(),
             covers,
             residuals: Vec::new(),
+            word_residuals: Vec::new(),
+            anti_probes: Vec::new(),
             new_vars,
             sink_relevant: false, // filled by the caller from sink_vars
         });

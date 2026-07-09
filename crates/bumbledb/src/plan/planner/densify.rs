@@ -1,17 +1,18 @@
 use super::{OccInfo, OccStats, MAX_DISTINCT_VARS};
-use crate::ir::normalize::NormalizedQuery;
+use crate::ir::normalize::Occurrence;
 use crate::ir::VarId;
-use crate::schema::Schema;
+use crate::schema::{Schema, StatementDescriptor};
 
-/// Densifies occurrences into bitset form, resolving stats and translating
-/// unique-constraint field sets to variable sets.
+/// Densifies the positive occurrences into bitset form, resolving stats
+/// and translating key (`Functionality` statement) projections to
+/// variable sets.
 pub(super) fn densify(
-    normalized: &NormalizedQuery,
+    occurrences: &[&Occurrence],
     schema: &Schema,
     stats: &[OccStats],
 ) -> Vec<OccInfo> {
     let mut var_index: std::collections::BTreeMap<VarId, usize> = std::collections::BTreeMap::new();
-    for occurrence in &normalized.occurrences {
+    for occurrence in occurrences {
         for (_, var) in &occurrence.vars {
             let next = var_index.len();
             var_index.entry(*var).or_insert(next);
@@ -21,14 +22,13 @@ pub(super) fn densify(
         var_index.len() <= MAX_DISTINCT_VARS,
         "validation rejects over-cap queries at the boundary"
     );
-    normalized
-        .occurrences
+    occurrences
         .iter()
         .map(|occurrence| {
             let stat = stats
                 .iter()
                 .find(|s| s.occ_id == occurrence.occ_id)
-                .expect("stats cover every occurrence");
+                .expect("stats cover every positive occurrence");
             let rows = stat.rows;
             let mut vars = 0u128;
             for (_, var) in &occurrence.vars {
@@ -39,15 +39,28 @@ pub(super) fn densify(
                 .iter()
                 .map(|(var, distinct)| (1u128 << var_index[var], *distinct))
                 .collect();
-            // Translate each unique constraint's field set to a var bitset;
-            // skip constraints with any non-var-bound field.
+            // Translate each key's projection to a var bitset; skip keys
+            // with any non-var-bound field. **The pointwise-key guard**
+            // (docs/architecture/40-execution.md): `occurrence.vars`
+            // carries value bindings only — a membership-bound interval
+            // field lowered to a filter and never appears here — so a
+            // pointwise key contributes its set only when the interval
+            // field is bound **by value**. A join binding just the
+            // scalar prefix then fails full-set coverage in `estimate`:
+            // two facts may share the prefix with disjoint intervals,
+            // so prefix agreement certifies no fanout bound.
             let relation = schema.relation(occurrence.relation);
-            let unique_var_sets = relation
-                .unique_constraints()
+            let key_var_sets = relation
+                .keys()
                 .iter()
-                .filter_map(|cid| {
+                .filter_map(|id| {
+                    let StatementDescriptor::Functionality { projection, .. } =
+                        &schema.statement(*id).descriptor
+                    else {
+                        unreachable!("Relation::keys() indexes Functionality statements")
+                    };
                     let mut set = 0u128;
-                    for field in relation.constraint(*cid).fields() {
+                    for field in projection.iter() {
                         let (_, var) = occurrence.vars.iter().find(|(f, _)| f == field)?;
                         set |= 1 << var_index[var];
                     }
@@ -58,7 +71,7 @@ pub(super) fn densify(
                 rows,
                 vars,
                 var_distincts,
-                unique_var_sets,
+                key_var_sets,
             }
         })
         .collect()

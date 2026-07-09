@@ -1,19 +1,20 @@
-//! Prepare-time cardinality estimation (docs/architecture/30-execution.md): per-occurrence
+//! Prepare-time cardinality estimation (docs/architecture/40-execution.md): per-occurrence
 //! input estimates for the join-order DP and the EXPLAIN/report
 //! honesty numbers. Three sources, strongest first — schema structure
 //! (free and exact), resident-image exact distinct counts, documented
 //! constant floors. Prepare **never builds** an image for statistics
 //! (the cache is peeked); a cold prepare degrades to bounds and floors,
-//! and runtime cover choice (docs/architecture/30-execution.md) carries the load-bearing
+//! and runtime cover choice (docs/architecture/40-execution.md) carries the load-bearing
 //! decisions either way.
 
 use crate::image::cache::ImageCache;
-use crate::image::view::FilterPredicate;
+use crate::image::view::{Const, FilterPredicate};
+use crate::image::ColumnWidth;
 use crate::ir::normalize::Occurrence;
 use crate::ir::CmpOp;
 use crate::plan::fj::split_filters;
 use crate::plan::planner::OccStats;
-use crate::schema::{ConstraintDescriptor, FieldId, Schema, ValueType};
+use crate::schema::{FieldId, Schema, StatementDescriptor};
 use crate::storage::env::ReadTxn;
 use crate::storage::read;
 
@@ -26,22 +27,36 @@ pub(crate) const DEFAULT_EQ_DISTINCT: u64 = 64;
 
 /// A range residual (`Lt/Le/Gt/Ge` against a constant) keeps 1/4 of its
 /// input — the classic textbook fraction; ranges are scans by design and
-/// the estimate only orders joins.
+/// the estimate only orders joins. Interval predicates are fixed
+/// word-range compositions over the start/end column pair
+/// (docs/architecture/40-execution.md), so they take the same class.
 pub(crate) const RANGE_KEEP_DEN: u64 = 4;
 
 /// A same-fact field equality (`FieldsCompare` under `Eq`, the repeated
 /// in-atom variable) keeps `1/64` — same floor class as an Eq selection.
 pub(crate) const FIELDS_EQ_KEEP_DEN: u64 = 64;
 
+/// The assumed distinct-match count of a set-bound position. Params are
+/// unmeasurable at prepare (the ladder's carve-out extends to sets), and
+/// the prepared plan pins the documented **small-set assumption** —
+/// |set| ≤ a few hundred, re-prepare or restructure beyond it
+/// (`docs/architecture/20-query-ir.md`, § prepared queries). 16 is a
+/// floor-style constant like the ladder's: small enough that a set-bound
+/// selection still reads selective to the DP, large enough to price it
+/// above a scalar equality.
+pub(crate) const PARAM_SET_PLANNING_CARDINALITY: u64 = 16;
+
 /// One occurrence's planner statistics: the cardinality estimate —
-/// `rows` divided by each Eq selection's distinct count and each
+/// `rows` divided by each Eq selection's distinct count (times the
+/// set-cardinality assumption for set-bound positions) and each
 /// residual's keep fraction, clamped to `[1, rows]` (`Ne` keeps
 /// everything) — plus every bound variable's base-relation distinct
 /// count for the join-step fanout model.
 ///
 /// # Errors
 ///
-/// `Lmdb` from counter reads (FK target row counts, the cache peek).
+/// `Lmdb` from counter reads (containment target row counts, the cache
+/// peek).
 pub(crate) fn occurrence_stats(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
@@ -70,6 +85,17 @@ pub(crate) fn occurrence_stats(
     })
 }
 
+/// The assumed distinct-match count of one selection: 1 for every scalar
+/// constant; the documented small-set assumption for a set-bound
+/// position (a bound `WordSet` carries its real, deduplicated size).
+fn selection_matches(value: &Const) -> u64 {
+    match value {
+        Const::ParamSet(_) => PARAM_SET_PLANNING_CARDINALITY,
+        Const::WordSet(words) => u64::try_from(words.len()).expect("bounded set").max(1),
+        _ => 1,
+    }
+}
+
 /// The estimate half of [`occurrence_stats`].
 fn occurrence_estimate(
     txn: &ReadTxn<'_>,
@@ -89,12 +115,16 @@ fn occurrence_estimate(
             image,
             rows,
         )?;
-        estimate = (estimate / distinct.max(1)).max(1);
+        estimate =
+            (estimate.saturating_mul(selection_matches(&selection.value)) / distinct.max(1)).max(1);
     }
     for residual in &residuals {
         let keep_den = match residual {
             FilterPredicate::Compare { op, .. } => match op {
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => RANGE_KEEP_DEN,
+                // Interval predicates against a constant: word-range
+                // compositions — the range class.
+                CmpOp::Overlaps | CmpOp::Contains => RANGE_KEEP_DEN,
                 CmpOp::Ne => 1,
                 CmpOp::Eq => unreachable!("split_filters routed Eq into selections"),
             },
@@ -102,18 +132,43 @@ fn occurrence_estimate(
                 CmpOp::Eq => FIELDS_EQ_KEEP_DEN,
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => RANGE_KEEP_DEN,
                 CmpOp::Ne => 1,
+                CmpOp::Overlaps | CmpOp::Contains => {
+                    unreachable!("same-atom interval predicates lower to their fixed shapes")
+                }
             },
+            // The fixed interval compositions (membership, overlap,
+            // containment): word ranges over the start/end pair.
+            FilterPredicate::PointIn { .. }
+            | FilterPredicate::AnyPointIn { .. }
+            | FilterPredicate::FieldsOverlap { .. }
+            | FilterPredicate::FieldsContain { .. }
+            | FilterPredicate::FieldsContainPoint { .. }
+            | FilterPredicate::FieldWithin { .. } => RANGE_KEEP_DEN,
         };
         estimate = (estimate / keep_den).max(1);
+        // A set-bound membership matches any of the set's elements —
+        // the range fraction per element, the documented small-set
+        // count of elements (unmeasurable at prepare, like every param).
+        if matches!(residual, FilterPredicate::AnyPointIn { .. }) {
+            estimate = estimate.saturating_mul(PARAM_SET_PLANNING_CARDINALITY);
+        }
     }
     Ok(estimate.clamp(1, rows.max(1)))
 }
 
 /// The distinct-count ladder for one field, strongest source first:
-/// 1. a single-field unique constraint ⇒ exactly `rows`;
-/// 2. a resident image ⇒ the exact build-time count;
-/// 3. schema bounds — a single-field FK is bounded by its target's row
-///    count, an enum by its variant list, a bool by 2;
+/// 1. a single-field key (a `Functionality` statement whose whole
+///    projection is this field) ⇒ exactly `rows` — sound for a pointwise
+///    single-field key too: equal interval values overlap, so the
+///    statement forces value-distinctness exactly like a scalar key;
+/// 2. a resident image ⇒ the exact build-time count, through the
+///    field→column span map (an interval field lower-bounds its pair
+///    distincts by the larger of its two word columns — underestimating
+///    distincts overestimates rows, the safe direction);
+/// 3. schema bounds — a `Containment` whose unselected source projection
+///    is exactly this field is bounded by its target relation's row
+///    count (the containment domain), an enum by its variant list, a
+///    bool by 2;
 /// 4. the documented floor.
 fn distinct_of(
     txn: &ReadTxn<'_>,
@@ -124,31 +179,40 @@ fn distinct_of(
     rows: u64,
 ) -> crate::error::Result<u64> {
     let descriptor = schema.relation(relation);
-    let unique = descriptor.constraints().iter().any(
-        |c| matches!(c, ConstraintDescriptor::Unique { fields, .. } if fields.as_ref() == [field]),
-    );
-    if unique {
+    let keyed = descriptor.keys().iter().any(|id| {
+        matches!(
+            &schema.statement(*id).descriptor,
+            StatementDescriptor::Functionality { projection, .. }
+                if projection.as_ref() == [field]
+        )
+    });
+    if keyed {
         return Ok(rows.max(1));
     }
     if let Some(image) = image {
-        return Ok(image.distinct(usize::from(field.0)).max(1));
+        let span = image.span(field);
+        let first = usize::from(span.first_column);
+        let distinct = match span.width {
+            ColumnWidth::Byte | ColumnWidth::Word => image.distinct(first),
+            ColumnWidth::WordPair => image.distinct(first).max(image.distinct(first + 1)),
+        };
+        return Ok(distinct.max(1));
     }
-    for constraint in descriptor.constraints() {
-        if let ConstraintDescriptor::ForeignKey {
-            fields,
-            target_relation,
-            ..
-        } = constraint
+    for id in descriptor.outgoing() {
+        if let StatementDescriptor::Containment { source, target } =
+            &schema.statement(*id).descriptor
         {
-            if fields.as_ref() == [field] {
-                let target_rows = read::row_count(txn, *target_relation)?;
+            if source.projection.as_ref() == [field] && source.selection.is_empty() {
+                let target_rows = read::row_count(txn, target.relation)?;
                 return Ok(target_rows.min(rows).max(1));
             }
         }
     }
     Ok(match &descriptor.field(field).value_type {
-        ValueType::Bool => 2,
-        ValueType::Enum { variants } => u64::try_from(variants.len()).expect("small").max(1),
+        crate::schema::ValueType::Bool => 2,
+        crate::schema::ValueType::Enum { variants } => {
+            u64::try_from(variants.len()).expect("small").max(1)
+        }
         _ => DEFAULT_EQ_DISTINCT,
     })
 }
@@ -158,17 +222,18 @@ mod tests {
     use super::*;
     use crate::encoding::{encode_fact, ValueRef};
     use crate::image::view::Const;
-    use crate::ir::normalize::OccId;
+    use crate::ir::normalize::{OccId, Polarity};
     use crate::schema::{
-        FieldDescriptor, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
+        FieldDescriptor, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
+        ValueType,
     };
     use crate::storage::commit::commit;
     use crate::storage::delta::WriteDelta;
     use crate::storage::env::Environment;
     use crate::testutil::TempDir;
 
-    /// R(id u64 serial+unique, memo str, kind enum[4]);
-    /// S(id u64 serial, r u64 fk -> R.id).
+    /// R(id u64 serial — auto-key, memo str, kind enum[4]);
+    /// S(id u64 serial, r u64) with the containment S(r) <= R(id).
     fn schema() -> Schema {
         SchemaDescriptor {
             relations: vec![
@@ -177,17 +242,17 @@ mod tests {
                     fields: vec![
                         FieldDescriptor {
                             name: "id".into(),
-                            value_type: crate::schema::ValueType::U64,
+                            value_type: ValueType::U64,
                             generation: Generation::Serial,
                         },
                         FieldDescriptor {
                             name: "memo".into(),
-                            value_type: crate::schema::ValueType::String,
+                            value_type: ValueType::String,
                             generation: Generation::None,
                         },
                         FieldDescriptor {
                             name: "kind".into(),
-                            value_type: crate::schema::ValueType::Enum {
+                            value_type: ValueType::Enum {
                                 variants: ["A", "B", "C", "D"]
                                     .iter()
                                     .map(|v| Box::from(*v))
@@ -196,30 +261,35 @@ mod tests {
                             generation: Generation::None,
                         },
                     ],
-                    constraints: vec![],
                 },
                 RelationDescriptor {
                     name: "S".into(),
                     fields: vec![
                         FieldDescriptor {
                             name: "id".into(),
-                            value_type: crate::schema::ValueType::U64,
+                            value_type: ValueType::U64,
                             generation: Generation::Serial,
                         },
                         FieldDescriptor {
                             name: "r".into(),
-                            value_type: crate::schema::ValueType::U64,
+                            value_type: ValueType::U64,
                             generation: Generation::None,
                         },
                     ],
-                    constraints: vec![ConstraintDescriptor::ForeignKey {
-                        name: "s_r".into(),
-                        fields: Box::new([FieldId(1)]),
-                        target_relation: RelationId(0),
-                        target_constraint: crate::schema::ConstraintId(0),
-                    }],
                 },
             ],
+            statements: vec![StatementDescriptor::Containment {
+                source: Side {
+                    relation: RelationId(1),
+                    projection: Box::new([FieldId(1)]),
+                    selection: Box::new([]),
+                },
+                target: Side {
+                    relation: RelationId(0),
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
+            }],
         }
         .validate()
         .expect("valid fixture")
@@ -264,6 +334,7 @@ mod tests {
         Occurrence {
             occ_id: OccId(0),
             relation: occ_relation,
+            polarity: Polarity::Positive,
             vars: vec![],
             filters: vec![FilterPredicate::Compare {
                 field: FieldId(field),
@@ -273,8 +344,9 @@ mod tests {
         }
     }
 
-    /// The ladder, rung by rung: unique ⇒ rows; resident image ⇒ exact;
-    /// FK/enum schema bounds when cold; the floor for plain strings.
+    /// The ladder, rung by rung: key ⇒ rows; resident image ⇒ exact;
+    /// containment/enum schema bounds when cold; the floor for plain
+    /// strings.
     #[test]
     fn the_distinct_ladder_resolves_strongest_first() {
         let dir = TempDir::new("selectivity-ladder");
@@ -284,11 +356,11 @@ mod tests {
         let txn = env.read_txn().expect("txn");
         let cache = ImageCache::new();
 
-        // Unique (serial id): estimate = rows / rows = 1, cold or warm.
+        // Keyed (serial id): estimate = rows / rows = 1, cold or warm.
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(0, R), 64)
             .expect("estimate")
             .rows;
-        assert_eq!(est, 1, "unique fields select one row");
+        assert_eq!(est, 1, "keyed fields select one row");
 
         // Plain string, cold cache: the floor (64 / 64 = 1)… use more
         // rows to see it: pretend 6400 rows.
@@ -307,11 +379,12 @@ mod tests {
             .rows;
         assert_eq!(est, 1600, "cold enum uses the variant bound");
 
-        // FK field, cold: bounded by the target's row count (R has 64).
+        // Containment source field, cold: bounded by the target's row
+        // count (R has 64).
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(1, S), 1600)
             .expect("estimate")
             .rows;
-        assert_eq!(est, 1600 / 64, "cold FK uses the target bound");
+        assert_eq!(est, 1600 / 64, "cold containment uses the target bound");
 
         // Warm the cache: exact image distincts displace bounds/floors.
         cache.get_or_build(&txn, &schema, R).expect("build");
@@ -371,6 +444,40 @@ mod tests {
 
         // Clamp: estimates never reach zero.
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(1, R), 3)
+            .expect("estimate")
+            .rows;
+        assert_eq!(est, 1);
+    }
+
+    /// A set-bound position plans as `PARAM_SET_PLANNING_CARDINALITY`
+    /// distinct matches instead of one — the small-set assumption
+    /// (`docs/architecture/20-query-ir.md`, § prepared queries): a set-Eq
+    /// on a keyed field prices at the assumed element count, not 1.
+    #[test]
+    fn a_set_bound_selection_plans_on_the_small_set_assumption() {
+        let dir = TempDir::new("selectivity-paramset");
+        let schema = schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        populate(&env, &schema);
+        let txn = env.read_txn().expect("txn");
+        let cache = ImageCache::new();
+
+        let mut occ = eq_on(0, R);
+        occ.filters = vec![FilterPredicate::Compare {
+            field: FieldId(0),
+            op: CmpOp::Eq,
+            value: Const::ParamSet(crate::ir::ParamId(0)),
+        }];
+        let est = occurrence_stats(&txn, &cache, &schema, &occ, 6400)
+            .expect("estimate")
+            .rows;
+        assert_eq!(
+            est, PARAM_SET_PLANNING_CARDINALITY,
+            "keyed set-Eq: one row per assumed element"
+        );
+
+        // Scalar control: the same position with a scalar param is 1.
+        let est = occurrence_stats(&txn, &cache, &schema, &eq_on(0, R), 6400)
             .expect("estimate")
             .rows;
         assert_eq!(est, 1);

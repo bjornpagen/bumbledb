@@ -5,7 +5,7 @@ use crate::ir::CmpOp;
 /// Splits an occurrence's lowered predicates into probeable selections
 /// (every Eq-against-a-constant, literal or param alike) and the
 /// scannable residue (non-Eq compares and every `FieldsCompare` — a
-/// repeated in-atom variable is a row-shape constraint, not a constant
+/// repeated in-atom variable is a same-fact condition, not a constant
 /// probe). Selections are ordered by field id, stable within a field, so
 /// equal queries lower to equal plans.
 pub(crate) fn split_filters(filters: &[FilterPredicate]) -> (Vec<Selection>, Vec<FilterPredicate>) {

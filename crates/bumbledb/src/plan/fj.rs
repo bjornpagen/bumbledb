@@ -1,13 +1,14 @@
-//! Free Join plan lowering (docs/architecture/30-execution.md): `binary2fj` (paper Fig. 7), the
+//! Free Join plan lowering (docs/architecture/40-execution.md): `binary2fj` (paper Fig. 7), the
 //! conservative `factor()` hoist (Fig. 8), cover enumeration (§4.4),
-//! residual placement, trie schemas (§3.3), and the sealed
-//! [`ValidatedPlan`] witness (`docs/architecture/30-execution.md`).
+//! residual and anti-probe placement, trie schemas (§3.3), and the sealed
+//! [`ValidatedPlan`] witness (`docs/architecture/40-execution.md`).
 //!
 //! Plain `Vec`s everywhere — no fixed-capacity silent-drop containers
 //! (post-mortem §35: capacity bugs must be impossible, not silent).
 
 use crate::image::view::{Const, FilterPredicate};
-use crate::ir::normalize::{OccId, PlacedComparison};
+use crate::image::ColumnSpan;
+use crate::ir::normalize::{AntiProbe, OccId, PlacedComparison, PlacedWordComparison, SlotWidth};
 use crate::ir::VarId;
 use crate::schema::RelationId;
 
@@ -31,7 +32,9 @@ pub(crate) use split_filters::split_filters;
 pub use validate::validate;
 
 /// A subatom: one occurrence with a subset of its variables. The plan
-/// partitions every occurrence's variables across its subatoms.
+/// partitions every **positive** occurrence's variables across its
+/// subatoms; negated occurrences join no node — they are reached only
+/// through anti-probes (docs/architecture/40-execution.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Subatom {
     pub occ: OccId,
@@ -45,7 +48,8 @@ pub struct Node {
     pub subatoms: Vec<Subatom>,
 }
 
-/// A Free Join plan: a list of nodes partitioning the query.
+/// A Free Join plan: a list of nodes partitioning the query's positive
+/// occurrences.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FjPlan {
     pub nodes: Vec<Node>,
@@ -56,55 +60,86 @@ pub struct FjPlan {
 /// data anyone can construct.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanError {
-    /// An occurrence's subatoms do not partition its variable set.
+    /// A positive occurrence's subatoms do not partition its variable set.
     BrokenPartition { occ: OccId },
-    /// An occurrence of the query appears in no subatom of any node. A
-    /// zero-variable (gate) occurrence dropped this way would silently
-    /// skip its nonemptiness check — wrong results on a validated plan.
+    /// A positive occurrence of the query appears in no subatom of any
+    /// node. A zero-variable (gate) occurrence dropped this way would
+    /// silently skip its nonemptiness check — wrong results on a
+    /// validated plan.
     MissingOccurrence { occ: OccId },
     /// A subatom references an occurrence outside the normalized query —
     /// the executor would index past its COLT array.
     UnknownOccurrence { node: usize, occ: OccId },
+    /// A subatom references a **negated** occurrence — negated
+    /// occurrences join no node; the executor reaches them exclusively
+    /// through anti-probes (docs/architecture/40-execution.md).
+    NegatedOccurrenceInNode { node: usize, occ: OccId },
     /// Two subatoms of one node share an occurrence.
     DuplicateOccurrenceInNode { node: usize, occ: OccId },
     /// A node has no cover: no subatom contains all its new variables.
     NoCover { node: usize },
     /// A residual comparison's variables are never both bound.
     UnplacedResidual { residual: usize },
+    /// A decomposed interval word residual's variables are never both
+    /// bound.
+    UnplacedWordResidual { residual: usize },
+    /// An anti-probe's variable set is never fully bound (validation
+    /// guarantees negated-atom variables are positive-atom-bound, so
+    /// this names a hand-built plan or query).
+    UnplacedAntiProbe { anti_probe: usize },
     /// An occurrence's `filters` still carries an Eq-constant compare —
     /// lowering moves every one into `selections`, so its presence means
-    /// a hand-built occurrence bypassed the split (docs/architecture/30-execution.md).
+    /// a hand-built occurrence bypassed the split (docs/architecture/40-execution.md).
     SelectionOnFilteredField { occ: OccId },
 }
 
 /// One probeable equality: `field == value`, the value constant per
-/// execution (literal word/byte, param slot, or pending intern —
-/// literals and params are the same machine). Selections are the
-/// probe-not-scan half of an occurrence's predicates; `filters` keeps
-/// the scannable rest (docs/architecture/30-execution.md).
+/// execution (literal word/byte, param slot, param set, or pending
+/// intern — literals and params are the same machine). Selections are
+/// the probe-not-scan half of an occurrence's predicates; `filters`
+/// keeps the scannable rest (docs/architecture/40-execution.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection {
     pub field: crate::schema::FieldId,
     pub value: Const,
 }
 
-/// One occurrence's execution-facing description.
+/// One occurrence's execution-facing description — positive and negated
+/// occurrences alike live in the one table ([`OccId`]s are indices);
+/// polarity is a plan-shape fact: negated occurrences appear in no
+/// subatom and are probed through the nodes' `anti_probes`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanOccurrence {
     pub occ_id: OccId,
     pub relation: RelationId,
-    /// The field each variable reads from (field index = column index).
+    /// The field each variable reads from.
     pub vars: Vec<(crate::schema::FieldId, VarId)>,
     /// Probeable equalities, ordered by field id (deterministic plans).
     pub selections: Vec<Selection>,
     /// Residual per-occurrence filters (evaluated at the source view):
-    /// non-Eq compares and every `FieldsCompare` — never an Eq-constant,
-    /// which lowering routes into `selections`.
+    /// non-Eq compares, every `FieldsCompare`, and the interval
+    /// compositions — never an Eq-constant, which lowering routes into
+    /// `selections`.
     pub filters: Vec<FilterPredicate>,
-    /// The trie schema: this occurrence's subatom var-lists in node order
-    /// (§3.3). Under COLT laziness there is no trailing `[]` level — the
-    /// build-phase question dissolves (30-execution).
+    /// The field→column map (docs/architecture/50-storage.md image
+    /// layout): one [`ColumnSpan`] per field of the relation, in
+    /// declaration order — an interval field spans two word columns;
+    /// consumers dispatch on spans, never raw field indices.
+    pub spans: Box<[ColumnSpan]>,
+    /// The trie schema: for a positive occurrence, its subatom var-lists
+    /// in node order (§3.3; under COLT laziness there is no trailing `[]`
+    /// level — the build-phase question dissolves, 40-execution). For a
+    /// negated occurrence, one probe level holding all its variables in
+    /// binding order (the order they appear in the probing node's
+    /// binding) — derived per §3.3 exactly as a fully-hoisted positive
+    /// lookup would be.
     pub trie_schema: Vec<Vec<VarId>>,
+    /// Words per trie level: the sum of the level's variables' slot
+    /// widths. An interval-typed join variable is one variable keyed by
+    /// its two-word pair (docs/architecture/40-execution.md) — the COLT
+    /// wordmap keys tuples, and this is the key-width bookkeeping it
+    /// reads.
+    pub key_widths: Vec<u16>,
 }
 
 /// One validated node.
@@ -113,11 +148,20 @@ pub struct PlanNode {
     pub subatoms: Vec<Subatom>,
     /// Indices into `subatoms` of the valid covers (every subatom
     /// containing all variables new to this node) — the runtime chooses
-    /// among them magnitude-first by key count (§4.4, docs/architecture/30-execution.md).
+    /// among them magnitude-first by key count (§4.4, docs/architecture/40-execution.md).
     pub covers: Vec<u8>,
-    /// Residual comparisons evaluated at this node (both sides bound here
-    /// for the first time).
+    /// Whole-value residual comparisons evaluated at this node (both
+    /// sides bound here for the first time).
     pub residuals: Vec<PlacedComparison>,
+    /// Decomposed interval word residuals (cross-atom `Overlaps`/
+    /// `Contains`/membership) evaluated at this node — same placement
+    /// rule as `residuals`.
+    pub word_residuals: Vec<PlacedWordComparison>,
+    /// Anti-probes evaluated at this node: each negated occurrence
+    /// attaches to the earliest node binding its whole variable set
+    /// (docs/architecture/40-execution.md, § anti-probe filters); a
+    /// zero-variable emptiness gate attaches to the root.
+    pub anti_probes: Vec<AntiProbe>,
     /// Variables first bound by this node.
     pub new_vars: Vec<VarId>,
     /// Whether this node binds any sink-relevant (projected) variable —
@@ -132,18 +176,22 @@ pub struct PlanNode {
 pub struct ValidatedPlan {
     occurrences: Vec<PlanOccurrence>,
     nodes: Vec<PlanNode>,
-    /// Dense binding-slot layout: `slots[i]` is the variable stored in
-    /// slot `i`; `slot_of` maps a `VarId` to its slot.
-    slots: Vec<VarId>,
-    /// Provably-distinct-bindings: every occurrence's bound fields cover a
-    /// unique constraint, so distinct facts imply distinct bindings and the
-    /// aggregate sink may skip its seen-set (30-execution, elision).
+    /// The binding-slot layout in binding order: each variable with its
+    /// slot width — an interval-typed variable occupies two consecutive
+    /// u64 slots (start word, end word; the layout decision lives at
+    /// [`SlotWidth`]), every other variable one. `slot_of` maps a
+    /// `VarId` to its **first** slot.
+    slots: Vec<(VarId, SlotWidth)>,
+    /// Provably-distinct-bindings: every positive occurrence's bound
+    /// fields cover a key (`Functionality` statement) of its relation, so
+    /// distinct facts imply distinct bindings and the aggregate sink may
+    /// skip its seen-set (40-execution, elision).
     distinct_bindings: bool,
     /// Every node binds a sink-relevant variable (docs/perf/ PRD 09):
     /// `Flow::SkipSuffix` can never cross a node, so the pipelined
     /// executor's cross-node batching needs no cancellation machinery.
     skip_free: bool,
-    /// The planner's per-step estimates (EXPLAIN's reader, the 30-execution doc).
+    /// The planner's per-step estimates (EXPLAIN's reader, the 40-execution doc).
     estimates: Vec<u64>,
 }
 
@@ -158,10 +206,18 @@ impl ValidatedPlan {
         &self.nodes
     }
 
-    /// Slot order: the variable stored in each binding slot.
+    /// The binding-slot layout: each variable in binding order with its
+    /// slot width.
     #[must_use]
-    pub fn slots(&self) -> &[VarId] {
+    pub fn slots(&self) -> &[(VarId, SlotWidth)] {
         &self.slots
+    }
+
+    /// Total u64 slot count of the layout (interval variables count
+    /// twice).
+    #[must_use]
+    pub fn slot_count(&self) -> usize {
+        self.slots.iter().map(|(_, width)| width.slots()).sum()
     }
 
     #[must_use]
