@@ -7,14 +7,22 @@ use crate::schema::{RelationId, Schema};
 use crate::storage::env::ReadTxn;
 use crate::storage::read;
 
-use super::Column;
+use super::{Column, ColumnSpan, ColumnWidth};
 
-/// One column's hoisted decode step (docs/perf/ PRD 12): static offset,
+/// One field's hoisted decode step (docs/perf/ PRD 12): static offset,
 /// validation arm resolved once — the row loop runs bare loads/stores.
 pub(super) enum Decode {
     Word {
         offset: usize,
         start: usize,
+    },
+    /// An interval field: the first 8 bytes go to the start column, the
+    /// second 8 to the end column (two ordinary word columns —
+    /// `docs/architecture/50-storage.md`).
+    Interval {
+        offset: usize,
+        start_column: usize,
+        end_column: usize,
     },
     Bool {
         offset: usize,
@@ -27,30 +35,63 @@ pub(super) enum Decode {
     },
 }
 
-/// Builds the per-column decode plan from the layout.
+/// The word-slab start of a column that must be 8-byte.
+///
+/// # Panics
+///
+/// On a programmer-invariant violation: the field→column map put a word
+/// span over a byte column.
+fn words_start(column: Column) -> usize {
+    match column {
+        Column::Words { start } => start,
+        Column::Bytes { .. } => unreachable!("word spans cover word columns"),
+    }
+}
+
+/// The byte-slab start of a column that must be 1-byte.
+///
+/// # Panics
+///
+/// On a programmer-invariant violation: the field→column map put a byte
+/// span over a word column.
+fn bytes_start(column: Column) -> usize {
+    match column {
+        Column::Bytes { start } => start,
+        Column::Words { .. } => unreachable!("byte spans cover byte columns"),
+    }
+}
+
+/// Builds the per-field decode plan from the field→column map.
 pub(super) fn decode_plan(
     field_types: &[TypeDesc],
+    spans: &[ColumnSpan],
     columns: &[Column],
     layout: &crate::encoding::FactLayout,
 ) -> Vec<Decode> {
     field_types
         .iter()
-        .zip(columns)
+        .zip(spans)
         .enumerate()
-        .map(|(field_idx, (desc, column))| {
+        .map(|(field_idx, (desc, span))| {
             let offset = layout.field_offset(field_idx);
-            match (column, desc) {
-                (Column::Words { start }, _) => Decode::Word {
+            let first = usize::from(span.first_column);
+            match (span.width, desc) {
+                (ColumnWidth::Word, _) => Decode::Word {
                     offset,
-                    start: *start,
+                    start: words_start(columns[first]),
                 },
-                (Column::Bytes { start }, TypeDesc::Bool) => Decode::Bool {
+                (ColumnWidth::WordPair, _) => Decode::Interval {
                     offset,
-                    start: *start,
+                    start_column: words_start(columns[first]),
+                    end_column: words_start(columns[first + 1]),
                 },
-                (Column::Bytes { start }, TypeDesc::Enum { variant_count }) => Decode::Enum {
+                (ColumnWidth::Byte, TypeDesc::Bool) => Decode::Bool {
                     offset,
-                    start: *start,
+                    start: bytes_start(columns[first]),
+                },
+                (ColumnWidth::Byte, TypeDesc::Enum { variant_count }) => Decode::Enum {
+                    offset,
+                    start: bytes_start(columns[first]),
                     variants: *variant_count,
                 },
                 _ => unreachable!("1-byte columns are Bool or Enum"),
@@ -105,6 +146,35 @@ pub(super) fn fill_columns(
                     });
                     unsafe {
                         *words.get_unchecked_mut(start + position) = word;
+                    }
+                }
+                Decode::Interval {
+                    offset,
+                    start_column,
+                    end_column,
+                } => {
+                    // SAFETY: offset + 16 <= fact_width (layout-derived),
+                    // width checked above; slab bounds as for Word.
+                    let halves: [u8; 16] = unsafe {
+                        fact_bytes
+                            .get_unchecked(*offset..*offset + 16)
+                            .try_into()
+                            .expect("16-byte field")
+                    };
+                    let start_word =
+                        u64::from_be_bytes(halves[..8].try_into().expect("8-byte half"));
+                    let end_word = u64::from_be_bytes(halves[8..].try_into().expect("8-byte half"));
+                    // The stored halves are order-preserving words (the
+                    // I64 sign-flip lives inside the encoding), so the
+                    // strict `start < end` invariant IS this u64 compare.
+                    // A violation is corruption: hard error, never a skip
+                    // (`docs/architecture/50-storage.md`).
+                    if start_word >= end_word {
+                        return Err(Error::Corruption(CorruptionError::InvalidInterval(halves)));
+                    }
+                    unsafe {
+                        *words.get_unchecked_mut(start_column + position) = start_word;
+                        *words.get_unchecked_mut(end_column + position) = end_word;
                     }
                 }
                 Decode::Bool { offset, start } => {

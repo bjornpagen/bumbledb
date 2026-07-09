@@ -45,11 +45,16 @@ pub enum Const {
     /// Bind-time symbolic constant; the evaluator indexes the param slice.
     Param(crate::ir::ParamId),
     /// A param bound as a *set* at execution (`Term::ParamSet`): resolves
-    /// to a sorted, deduplicated word list; an `Eq` compare against it
-    /// matches any element. The plan's selection machinery carries the set
-    /// through the probe path (`docs/architecture/20-query-ir.md`,
-    /// § param sets; executor side is PRD 17).
+    /// to a sorted, deduplicated word list ([`Const::WordSet`] in the param
+    /// slice); an `Eq` compare against it matches any element. The plan's
+    /// selection machinery carries the set through the probe path
+    /// (`docs/architecture/20-query-ir.md`, § param sets; executor side is
+    /// PRD 17).
     ParamSet(crate::ir::ParamId),
+    /// A set's bind-time resolution: the sorted, deduplicated column words
+    /// of the bound elements. Lives in the evaluator's param slice — a
+    /// `ParamSet` marker in a filter indexes to one of these.
+    WordSet(Box<[u64]>),
     /// A raw String/Bytes literal awaiting per-execution intern resolution
     /// (`tag` is the dictionary type tag).
     PendingIntern {

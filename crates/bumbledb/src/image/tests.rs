@@ -10,6 +10,7 @@ use crate::testutil::TempDir;
 
 mod corruption;
 mod decode;
+mod interval;
 mod pitch;
 mod timing;
 
@@ -42,8 +43,8 @@ fn schema() -> Schema {
                     generation: Generation::None,
                 },
             ],
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("valid fixture")

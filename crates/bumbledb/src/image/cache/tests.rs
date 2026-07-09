@@ -17,8 +17,8 @@ fn schema() -> Schema {
                 value_type: ValueType::U64,
                 generation: Generation::Serial,
             }],
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("valid fixture")

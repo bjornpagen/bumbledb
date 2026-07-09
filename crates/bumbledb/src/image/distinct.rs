@@ -9,12 +9,14 @@ impl RelationImage {
     /// word columns counted through a scratch hash set, byte columns
     /// through a 256-slot table. Intern ids are injective, so a
     /// String/Bytes column's word distincts are its value distincts.
+    /// Column indices come from [`ColumnSpan`](crate::image::ColumnSpan)s —
+    /// an interval field has two counts, one per word column.
     /// Computed on first demand and memoized on the image
     /// (docs/silicon/13); a plan that never asks — every guard probe —
     /// never pays the walk.
     #[must_use]
-    pub fn distinct(&self, field_idx: usize) -> u64 {
-        *self.distincts[field_idx].get_or_init(|| match self.column(field_idx) {
+    pub fn distinct(&self, column: usize) -> u64 {
+        *self.distincts[column].get_or_init(|| match self.column(column) {
             ColumnView::Words(words) => DistinctCounter::new(self.row_count).count_words(words),
             ColumnView::Bytes(bytes) => DistinctCounter::count_bytes(bytes),
         })

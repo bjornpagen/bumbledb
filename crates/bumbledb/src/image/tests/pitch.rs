@@ -28,8 +28,8 @@ fn twelve_column_bases_are_aligned_and_stagger_distinctly() {
         relations: vec![RelationDescriptor {
             name: "Wide".into(),
             fields,
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("valid fixture");
@@ -100,8 +100,8 @@ fn big_column_pitches_avoid_the_tracker_band() {
         relations: vec![RelationDescriptor {
             name: "Big".into(),
             fields,
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("valid fixture");

@@ -2,9 +2,10 @@ use super::*;
 use crate::encoding::{decode_field, encode_fact, encode_i64, encode_u64, ValueRef};
 use crate::error::Result as DbResult;
 use crate::image::build;
+use crate::ir::ParamId;
 use crate::schema::{
-    FieldDescriptor, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
-    ValueType,
+    FieldDescriptor, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
+    SchemaDescriptor, ValueType,
 };
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
@@ -39,8 +40,8 @@ fn schema() -> Schema {
                     generation: Generation::None,
                 },
             ],
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("valid fixture")
@@ -232,4 +233,282 @@ fn cold_dual_output_matches_separate_build_and_apply() -> DbResult<()> {
     );
     assert_eq!(view.len(), 10);
     Ok(())
+}
+
+// --- the interval filter kinds (PRD 14, scalar path) ------------------------
+
+/// P(id u64, during interval<i64>, review interval<i64>, at i64) — columns
+/// 0, (1, 2), (3, 4), 5.
+fn interval_schema() -> Schema {
+    let interval_i64 = ValueType::Interval {
+        element: IntervalElement::I64,
+    };
+    let field = |name: &str, ty: ValueType| FieldDescriptor {
+        name: name.into(),
+        value_type: ty,
+        generation: Generation::None,
+    };
+    SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            name: "P".into(),
+            fields: vec![
+                field("id", ValueType::U64),
+                field("during", interval_i64.clone()),
+                field("review", interval_i64),
+                field("at", ValueType::I64),
+            ],
+        }],
+        statements: vec![],
+    }
+    .validate()
+    .expect("valid fixture")
+}
+
+const P: RelationId = RelationId(0);
+const P_ID: FieldId = FieldId(0);
+const P_DURING: FieldId = FieldId(1);
+const P_REVIEW: FieldId = FieldId(2);
+const P_AT: FieldId = FieldId(3);
+
+/// One fixture row: `(id, during, review, at)`.
+type PRow = (u64, (i64, i64), (i64, i64), i64);
+
+/// The rows, chosen so every interval shape and both membership
+/// boundaries discriminate.
+const P_ROWS: [PRow; 5] = [
+    (1, (2, 9), (2, 5), 2),
+    (2, (9, 12), (9, 10), 9),
+    (3, (-5, 2), (-6, 1), 2),
+    (4, (0, 4), (4, 8), 4),
+    (5, (1, 3), (1, 3), 1),
+];
+
+/// The biased I64 column word.
+fn w(value: i64) -> u64 {
+    u64::from_be_bytes(encode_i64(value))
+}
+
+/// Survivor ids in ascending id order (scan order is content-hash order,
+/// so set comparisons sort).
+fn sorted_ids(view: &View) -> Vec<u64> {
+    let mut ids = survivor_ids(view);
+    ids.sort_unstable();
+    ids
+}
+
+fn interval_image(dir: &TempDir) -> std::sync::Arc<crate::image::RelationImage> {
+    let schema = interval_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    for (id, during, review, at) in P_ROWS {
+        let mut bytes = Vec::new();
+        encode_fact(
+            &[
+                ValueRef::U64(id),
+                ValueRef::IntervalI64(during.0, during.1),
+                ValueRef::IntervalI64(review.0, review.1),
+                ValueRef::I64(at),
+            ],
+            schema.relation(P).layout(),
+            &mut bytes,
+        );
+        delta.insert(&view, P, &bytes).expect("insert");
+    }
+    drop(view);
+    commit(delta, &env).expect("commit");
+    let txn = env.read_txn().expect("txn");
+    build(&txn, &schema, P).expect("build")
+}
+
+/// PRD 14 criterion: `PointIn` survives exactly the rows whose interval
+/// contains the point — `point == start` survives, `point == end` does
+/// not (the half-open boundary).
+#[test]
+fn point_in_keeps_start_boundary_and_drops_end_boundary() {
+    let dir = TempDir::new("view-point-in");
+    let image = interval_image(&dir);
+
+    // 9 == start of [9,12) (row 2, survives) and == end of [2,9)
+    // (row 1, dies).
+    let at_nine = vec![FilterPredicate::PointIn {
+        field: P_DURING,
+        point: ResolvedWordSource::Word(w(9)),
+    }];
+    assert_eq!(sorted_ids(&apply(&image, &at_nine, &[], Vec::new())), [2]);
+
+    // 2 == start of [2,9) (survives), == end of [-5,2) (dies), and an
+    // interior point of [1,3).
+    let at_two = vec![FilterPredicate::PointIn {
+        field: P_DURING,
+        point: ResolvedWordSource::Word(w(2)),
+    }];
+    assert_eq!(
+        sorted_ids(&apply(&image, &at_two, &[], Vec::new())),
+        [1, 4, 5]
+    );
+
+    // The same point through the bind-time param slice.
+    let via_param = vec![FilterPredicate::PointIn {
+        field: P_DURING,
+        point: ResolvedWordSource::Param(ParamId(0)),
+    }];
+    assert_eq!(
+        sorted_ids(&apply(&image, &via_param, &[Const::Word(w(9))], Vec::new())),
+        [2]
+    );
+}
+
+#[test]
+fn any_point_in_matches_any_element_of_the_bound_set() {
+    let dir = TempDir::new("view-any-point-in");
+    let image = interval_image(&dir);
+    let predicates = vec![FilterPredicate::AnyPointIn {
+        field: P_DURING,
+        set: ParamId(0),
+    }];
+
+    // {-4, 10}: -4 lies in [-5,2) (row 3), 10 in [9,12) (row 2).
+    let params = [Const::WordSet(Box::from([w(-4), w(10)]))];
+    assert_eq!(
+        sorted_ids(&apply(&image, &predicates, &params, Vec::new())),
+        [2, 3]
+    );
+
+    // The empty set lies in no interval.
+    let empty = [Const::WordSet(Vec::new().into())];
+    assert!(apply(&image, &predicates, &empty, Vec::new()).is_empty());
+}
+
+#[test]
+fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
+    let dir = TempDir::new("view-interval-shapes");
+    let image = interval_image(&dir);
+    let run =
+        |predicate: FilterPredicate| sorted_ids(&apply(&image, &[predicate], &[], Vec::new()));
+
+    // Overlaps: left.start < right.end AND right.start < left.end.
+    assert_eq!(
+        run(FilterPredicate::FieldsOverlap {
+            left: P_DURING,
+            right: P_REVIEW,
+        }),
+        [1, 2, 3, 5]
+    );
+    // Contains (⊇): outer.start ≤ inner.start AND inner.end ≤ outer.end.
+    assert_eq!(
+        run(FilterPredicate::FieldsContain {
+            outer: P_DURING,
+            inner: P_REVIEW,
+        }),
+        [1, 2, 5]
+    );
+    // Point membership as a same-fact composition, half-open on both
+    // fixture boundaries (rows 1 and 2 sit at start, rows 3 and 4 at end).
+    assert_eq!(
+        run(FilterPredicate::FieldsContainPoint {
+            interval: P_DURING,
+            point: P_AT,
+        }),
+        [1, 2, 5]
+    );
+    // Interval fields compare pairwise over their two-word spans.
+    assert_eq!(
+        run(FilterPredicate::FieldsCompare {
+            left: P_DURING,
+            right: P_REVIEW,
+            op: CmpOp::Eq,
+        }),
+        [5]
+    );
+    assert_eq!(
+        run(FilterPredicate::FieldsCompare {
+            left: P_DURING,
+            right: P_REVIEW,
+            op: CmpOp::Ne,
+        }),
+        [1, 2, 3, 4]
+    );
+}
+
+#[test]
+fn field_within_covers_interval_and_scalar_fields() {
+    let dir = TempDir::new("view-field-within");
+    let image = interval_image(&dir);
+
+    // Interval field within [0,10): point-set containment.
+    let interval_within = vec![FilterPredicate::FieldWithin {
+        field: P_DURING,
+        outer: Const::Interval {
+            start: w(0),
+            end: w(10),
+        },
+    }];
+    assert_eq!(
+        sorted_ids(&apply(&image, &interval_within, &[], Vec::new())),
+        [1, 4, 5]
+    );
+
+    // Scalar field within [2,9): membership with the half-open boundary
+    // (at == 2 survives, at == 9 dies).
+    let scalar_within = vec![FilterPredicate::FieldWithin {
+        field: P_AT,
+        outer: Const::Interval {
+            start: w(2),
+            end: w(9),
+        },
+    }];
+    assert_eq!(
+        sorted_ids(&apply(&image, &scalar_within, &[], Vec::new())),
+        [1, 3, 4]
+    );
+}
+
+#[test]
+fn interval_constants_compare_against_the_two_word_span() {
+    let dir = TempDir::new("view-interval-const");
+    let image = interval_image(&dir);
+    let run = |op: CmpOp, start: i64, end: i64, params: &[Const]| {
+        let predicates = vec![FilterPredicate::Compare {
+            field: P_DURING,
+            op,
+            value: if params.is_empty() {
+                Const::Interval {
+                    start: w(start),
+                    end: w(end),
+                }
+            } else {
+                Const::Param(ParamId(0))
+            },
+        }];
+        sorted_ids(&apply(&image, &predicates, params, Vec::new()))
+    };
+
+    assert_eq!(run(CmpOp::Eq, 2, 9, &[]), [1]);
+    assert_eq!(run(CmpOp::Ne, 2, 9, &[]), [2, 3, 4, 5]);
+    assert_eq!(run(CmpOp::Overlaps, 3, 10, &[]), [1, 2, 4]);
+    // The field's interval covers the constant.
+    assert_eq!(run(CmpOp::Contains, 3, 4, &[]), [1, 4]);
+    // A param-bound interval resolves through the slice.
+    let bound = [Const::Interval {
+        start: w(3),
+        end: w(10),
+    }];
+    assert_eq!(run(CmpOp::Overlaps, 0, 0, &bound), [1, 2, 4]);
+}
+
+#[test]
+fn param_set_eq_matches_any_element_over_a_scalar_column() {
+    let dir = TempDir::new("view-param-set");
+    let image = interval_image(&dir);
+    let predicates = vec![FilterPredicate::Compare {
+        field: P_ID,
+        op: CmpOp::Eq,
+        value: Const::ParamSet(ParamId(0)),
+    }];
+    let params = [Const::WordSet(Box::from([1u64, 3]))];
+    assert_eq!(
+        sorted_ids(&apply(&image, &predicates, &params, Vec::new())),
+        [1, 3]
+    );
 }

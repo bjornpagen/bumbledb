@@ -11,7 +11,7 @@ use crate::storage::env::ReadTxn;
 use crate::storage::read;
 
 use super::decode::{decode_plan, fill_columns};
-use super::{Column, PitchPadder, RelationImage, LINE, SET_STRIDE};
+use super::{column_spans, Column, ColumnWidth, PitchPadder, RelationImage, LINE, SET_STRIDE};
 
 /// Checked slab lengths (in words and bytes) for the stored row count.
 /// The `S` value is data: overflow in any size computation is typed
@@ -60,8 +60,19 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
         .iter()
         .map(|f| f.value_type.type_desc())
         .collect();
-    let word_cols = field_types.iter().filter(|t| t.width() == 8).count();
-    let byte_cols = field_types.len() - word_cols;
+    // The field→column map drives the layout: an interval field spans two
+    // consecutive 8-byte columns (start, end), everything else one column
+    // of its width — the image layer has no 16-byte column
+    // (`docs/architecture/50-storage.md`).
+    let spans = column_spans(&field_types);
+    let byte_cols = spans
+        .iter()
+        .filter(|s| s.width == ColumnWidth::Byte)
+        .count();
+    let column_count = spans
+        .last()
+        .map_or(0, |s| usize::from(s.first_column + s.width.column_count()));
+    let word_cols = column_count - byte_cols;
     let (word_len, byte_len) = slab_lengths(row_count, word_cols, byte_cols)?;
     let mut words = vec![0u64; word_len];
     let mut bytes = vec![0u8; byte_len];
@@ -73,24 +84,33 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
     let mut stagger = PitchPadder::new();
     let mut word_cursor = 0usize;
     let mut byte_cursor = 0usize;
-    let columns: Vec<Column> = field_types
-        .iter()
-        .map(|t| {
-            if t.width() == 8 {
-                let start = stagger.place(words_addr, 8, word_cursor);
-                word_cursor = start + row_count;
-                Column::Words { start }
-            } else {
+    let mut columns: Vec<Column> = Vec::with_capacity(column_count);
+    for span in &spans {
+        assert_eq!(
+            usize::from(span.first_column),
+            columns.len(),
+            "the field→column map drives the layout"
+        );
+        let word_columns = match span.width {
+            ColumnWidth::Byte => {
                 let start = stagger.place(bytes_addr, 1, byte_cursor);
                 byte_cursor = start + row_count;
-                Column::Bytes { start }
+                columns.push(Column::Bytes { start });
+                continue;
             }
-        })
-        .collect();
+            ColumnWidth::Word => 1,
+            ColumnWidth::WordPair => 2,
+        };
+        for _ in 0..word_columns {
+            let start = stagger.place(words_addr, 8, word_cursor);
+            word_cursor = start + row_count;
+            columns.push(Column::Words { start });
+        }
+    }
 
     // One sequential scan fills every column (positions = scan ordinals),
     // through the hoisted decode plan (docs/perf/ PRD 12).
-    let plan = decode_plan(&field_types, &columns, layout);
+    let plan = decode_plan(&field_types, &spans, &columns, layout);
     let position = fill_columns(
         txn,
         schema,
@@ -117,6 +137,7 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
     Ok(Arc::new(RelationImage {
         row_count,
         distincts: distincts.into_boxed_slice(),
+        spans,
         columns: columns.into_boxed_slice(),
         words,
         bytes,
