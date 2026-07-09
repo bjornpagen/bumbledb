@@ -1,27 +1,88 @@
-use bumbledb::{AggOp, CmpOp, Comparison, FieldId, FindTerm, Term, VarId};
+use bumbledb::{AggOp, CmpOp, Comparison, FieldId, FindTerm, RelationId, Term, VarId};
 
 use crate::gen::Rng;
-use crate::querygen::{Builder, GUARDABLE, REPEAT_VAR_PCT, SATELLITES};
-use crate::schema::ids;
+use crate::querygen::target::ids;
+use crate::querygen::{Builder, REPEAT_VAR_PCT};
 
-/// One atom, serial id bound to a param, 1–2 vars projected.
+/// Guardable relations: (relation, serial-id field, projectable fields).
+const GUARDABLE: &[(RelationId, FieldId, &[FieldId])] = &[
+    (ids::HOLDER, ids::holder::ID, &[ids::holder::NAME]),
+    (
+        ids::ACCOUNT,
+        ids::account::ID,
+        &[ids::account::HOLDER, ids::account::CURRENCY],
+    ),
+    (
+        ids::INSTRUMENT,
+        ids::instrument::ID,
+        &[ids::instrument::SYMBOL],
+    ),
+    (
+        ids::JOURNAL_ENTRY,
+        ids::journal_entry::ID,
+        &[ids::journal_entry::SOURCE, ids::journal_entry::CREATED_AT],
+    ),
+    (
+        ids::POSTING,
+        ids::posting::ID,
+        &[
+            ids::posting::ENTRY,
+            ids::posting::ACCOUNT,
+            ids::posting::AMOUNT,
+            ids::posting::AT,
+            ids::posting::MEMO,
+        ],
+    ),
+    (ids::ORG, ids::org::ID, &[ids::org::NAME]),
+    (
+        ids::TRANSFER,
+        ids::transfer::ID,
+        &[ids::transfer::EXTREF, ids::transfer::WINDOW],
+    ),
+];
+
+/// Star satellites: (Posting reference field, relation, projected
+/// payload field) — each satellite joins on its serial id (field 0).
+const SATELLITES: &[(FieldId, RelationId, FieldId)] = &[
+    (
+        ids::posting::ENTRY,
+        ids::JOURNAL_ENTRY,
+        ids::journal_entry::SOURCE,
+    ),
+    (ids::posting::ACCOUNT, ids::ACCOUNT, ids::account::CURRENCY),
+    (
+        ids::posting::INSTRUMENT,
+        ids::INSTRUMENT,
+        ids::instrument::SYMBOL,
+    ),
+];
+
+/// One atom, serial id bound to a param — or, a fifth of the time, a
+/// param **set** (the point-lookup-over-a-set family) — with 1–2 vars
+/// projected.
 pub(super) fn guard(b: &mut Builder, rng: &mut Rng) {
     let idx = usize::try_from(rng.range(GUARDABLE.len() as u64)).expect("small");
     let (relation, id, fields) = GUARDABLE[idx];
     let atom = b.atom(relation);
     let param = b.fresh_param();
-    b.bind(atom, id, Term::Param(param));
-    let take = 1 + usize::try_from(rng.range(2)).expect("small");
+    let term = if rng.chance(1, 5) {
+        Term::ParamSet(param)
+    } else {
+        Term::Param(param)
+    };
+    b.bind(atom, id, term);
+    let take = (1 + usize::try_from(rng.range(2)).expect("small")).min(fields.len());
     let start = usize::try_from(rng.range(fields.len() as u64)).expect("small");
-    for k in 0..take.min(fields.len()) {
+    for k in 0..take {
         let field = fields[(start + k) % fields.len()];
         let var = b.bind_var(atom, field);
         b.find_var(var);
     }
 }
 
-/// Posting joined to 1–3 of {Account, Instrument, Transfer} on its FK
-/// fields, projecting amount plus each satellite's payload.
+/// Posting joined to 1–3 of `JournalEntry`/`Account`/`Instrument` on
+/// its reference fields, projecting amount plus each satellite's
+/// payload.
 pub(super) fn star(b: &mut Builder, rng: &mut Rng) {
     let posting = b.atom(ids::POSTING);
     let amount = b.bind_var(posting, ids::posting::AMOUNT);
@@ -29,8 +90,8 @@ pub(super) fn star(b: &mut Builder, rng: &mut Rng) {
     let take = 1 + usize::try_from(rng.range(3)).expect("small");
     let start = usize::try_from(rng.range(SATELLITES.len() as u64)).expect("small");
     for k in 0..take {
-        let (fk, relation, payload) = SATELLITES[(start + k) % SATELLITES.len()];
-        let join = b.bind_var(posting, fk);
+        let (edge, relation, payload) = SATELLITES[(start + k) % SATELLITES.len()];
+        let join = b.bind_var(posting, edge);
         let satellite = b.atom(relation);
         b.bind(satellite, FieldId(0), Term::Var(join));
         let projected = b.bind_var(satellite, payload);
@@ -55,22 +116,21 @@ pub(super) fn chain(b: &mut Builder, rng: &mut Rng) {
         let name = b.bind_var(holder, ids::holder::NAME);
         b.find_var(name);
     } else {
-        let opened = b.bind_var(account, ids::account::OPENED_AT);
-        b.find_var(opened);
+        let currency = b.bind_var(account, ids::account::CURRENCY);
+        b.find_var(currency);
     }
     repeat_var(b, rng, posting);
 }
 
-/// Two Posting occurrences equated on `transfer`, projecting both
-/// amounts — and, half the time, a cross-atom ordered residual between
-/// them (`x < y` and friends): the randomized twin of the spread
-/// family, exercising residual placement and survivor compaction.
+/// Two Posting occurrences equated on `entry`, projecting both amounts
+/// — and, half the time, a cross-atom ordered residual between them
+/// (`x < y` and friends): residual placement and survivor compaction.
 pub(super) fn self_join(b: &mut Builder, rng: &mut Rng) {
     let first = b.atom(ids::POSTING);
-    let transfer = b.bind_var(first, ids::posting::TRANSFER);
+    let entry = b.bind_var(first, ids::posting::ENTRY);
     let x = b.bind_var(first, ids::posting::AMOUNT);
     let second = b.atom(ids::POSTING);
-    b.bind(second, ids::posting::TRANSFER, Term::Var(transfer));
+    b.bind(second, ids::posting::ENTRY, Term::Var(entry));
     let y = b.bind_var(second, ids::posting::AMOUNT);
     b.find_var(x);
     b.find_var(y);
@@ -104,11 +164,11 @@ fn repeat_var(b: &mut Builder, rng: &mut Rng, posting: usize) {
     }
 }
 
-/// Any join shape re-projected as group-by + one aggregate (sometimes
-/// two); group key = 0–2 of the shape's bound variables. Aggregate
-/// targets cover both integer types: i64 (amount/at) and u64 (the
-/// posting's account id — Sum over it is provably bounded: the fold is
-/// over distinct bindings, so any group's sum is at most
+/// Any join shape re-projected as group-by + one fold aggregate
+/// (sometimes two); group key = 0–2 of the shape's bound variables.
+/// Aggregate targets cover both integer types: i64 (amount/at) and u64
+/// (the posting's account id — Sum over it is provably bounded: the fold
+/// is over distinct bindings, so any group's sum is at most
 /// postings × accounts ≤ 10⁷ × 5 × 10⁴ = 5 × 10¹¹ ≪ 2⁶³ at every scale,
 /// satisfying the Sum-range rule). A fifth of the time the posting's
 /// bool field joins the group-key candidates.
@@ -182,8 +242,10 @@ pub(super) fn aggregate(b: &mut Builder, rng: &mut Rng) {
     }
 }
 
-/// One order operator, uniformly.
-fn order_op(rng: &mut Rng) -> CmpOp {
+/// One order operator, uniformly — applied ONLY to integer-typed
+/// variable pairs by every caller: the (order op, non-integer) matrix
+/// cells are unemittable because no other construction site exists.
+pub(super) fn order_op(rng: &mut Rng) -> CmpOp {
     match rng.range(4) {
         0 => CmpOp::Lt,
         1 => CmpOp::Le,

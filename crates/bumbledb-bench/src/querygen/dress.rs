@@ -1,13 +1,13 @@
-use bumbledb::{CmpOp, Comparison, FieldId, Term, Value};
+use bumbledb::{CmpOp, Comparison, FieldId, RelationId, Term, Value};
 
-use crate::gen::{self, GenConfig, Rng, Sizes};
-use crate::querygen::construct::extref_of;
+use crate::gen::{GenConfig, Rng};
 use crate::querygen::dress_posting::dress_posting;
-use crate::querygen::{Builder, DRESS_PCT};
-use crate::schema::ids;
+use crate::querygen::target::{self, ids, Domains};
+use crate::querygen::{interval_data, Builder, DRESS_PCT};
 
-/// Any of the six operators, uniformly (integer dressing — every legal
-/// (op, integer-type) cell of the coverage matrix must be reachable).
+/// Any of the six word-comparison operators, uniformly — applied ONLY
+/// to the two integer types by its callers (the order-op legality
+/// cells).
 pub(super) fn any_op(rng: &mut Rng) -> CmpOp {
     match rng.range(6) {
         0 => CmpOp::Eq,
@@ -19,14 +19,32 @@ pub(super) fn any_op(rng: &mut Rng) -> CmpOp {
     }
 }
 
-/// An i64 predicate on the field (any operator): literal or param, 50/50.
-pub(super) fn i64_dress(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, lo: i64, hi: i64) {
+pub(super) fn eq_ne(rng: &mut Rng) -> CmpOp {
+    if rng.chance(1, 2) {
+        CmpOp::Eq
+    } else {
+        CmpOp::Ne
+    }
+}
+
+/// An i64 predicate on the field (any operator): literal, param, or —
+/// under `Eq` — a param set.
+pub(super) fn i64_dress(
+    b: &mut Builder,
+    rng: &mut Rng,
+    atom: usize,
+    field: FieldId,
+    lo: i64,
+    hi: i64,
+) {
     let Some(var) = b.var_at(atom, field) else {
         return;
     };
     let op = any_op(rng);
     let width = u64::try_from(hi - lo).expect("ordered window");
-    let rhs = if rng.chance(1, 2) {
+    let rhs = if op == CmpOp::Eq && rng.chance(1, 4) {
+        Term::ParamSet(b.fresh_param())
+    } else if rng.chance(1, 2) {
         Term::Literal(Value::I64(
             lo + i64::try_from(rng.range(width.max(1))).expect("fits"),
         ))
@@ -40,29 +58,112 @@ pub(super) fn i64_dress(b: &mut Builder, rng: &mut Rng, atom: usize, field: Fiel
     });
 }
 
-/// An `Eq`/`Ne` predicate against an enum-ordinal literal.
+/// A u64 predicate on a dense-id field (any operator): the literal or
+/// param draws in-domain so ordered comparisons select real slices;
+/// under `Eq`, sometimes a param set.
+pub(super) fn u64_dress(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, domain: u64) {
+    let Some(var) = b.var_at(atom, field) else {
+        return;
+    };
+    let op = any_op(rng);
+    let rhs = if op == CmpOp::Eq && rng.chance(1, 4) {
+        Term::ParamSet(b.fresh_param())
+    } else if rng.chance(1, 2) {
+        Term::Literal(Value::U64(rng.range(domain.max(1))))
+    } else {
+        Term::Param(b.fresh_param())
+    };
+    b.predicates.push(Comparison {
+        op,
+        lhs: Term::Var(var),
+        rhs,
+    });
+}
+
+/// An `Eq`/`Ne` predicate against an enum ordinal: literal, param, or —
+/// under `Eq` — a param set.
 fn enum_cmp(b: &mut Builder, rng: &mut Rng, atom: usize, field: FieldId, variants: u64) {
     let Some(var) = b.var_at(atom, field) else {
         return;
     };
-    let op = if rng.chance(1, 2) {
-        CmpOp::Eq
+    let op = eq_ne(rng);
+    let rhs = if op == CmpOp::Eq && rng.chance(1, 5) {
+        Term::ParamSet(b.fresh_param())
+    } else if rng.chance(1, 4) {
+        Term::Param(b.fresh_param())
     } else {
-        CmpOp::Ne
+        Term::Literal(Value::Enum(
+            u8::try_from(rng.range(variants)).expect("small"),
+        ))
     };
-    let ordinal = u8::try_from(rng.range(variants)).expect("small");
     b.predicates.push(Comparison {
         op,
         lhs: Term::Var(var),
-        rhs: Term::Literal(Value::Enum(ordinal)),
+        rhs,
     });
 }
 
-/// Filter dressing ([`DRESS_PCT`]% of queries, 1–3 predicates): i64 range
-/// ops on amount/at, Eq/Ne on memo (hit, miss, or param), Eq on
-/// enums/bools, and same-typed var-vs-var — per the dressed atom's
-/// relation.
-pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, sizes: &Sizes) {
+/// An `Eq`/`Ne` string predicate: in-vocabulary hit, out-of-vocabulary
+/// miss, param, or — under `Eq` — a param set.
+pub(super) fn string_cmp(
+    b: &mut Builder,
+    rng: &mut Rng,
+    atom: usize,
+    relation: RelationId,
+    field: FieldId,
+) {
+    let Some(var) = b.var_at(atom, field) else {
+        return;
+    };
+    let op = eq_ne(rng);
+    let rhs = if op == CmpOp::Eq && rng.chance(1, 5) {
+        Term::ParamSet(b.fresh_param())
+    } else {
+        match rng.range(3) {
+            0 => Term::Literal(Value::String(
+                target::string_hit(relation, field, rng).into_bytes().into(),
+            )),
+            1 => {
+                b.miss = true;
+                Term::Literal(Value::String(
+                    format!("missing-{}", rng.u64()).into_bytes().into(),
+                ))
+            }
+            _ => Term::Param(b.fresh_param()),
+        }
+    };
+    b.predicates.push(Comparison {
+        op,
+        lhs: Term::Var(var),
+        rhs,
+    });
+}
+
+/// The i64 window `Posting.at` (and `JournalEntry.created_at`) draws
+/// from, per scale.
+pub(super) fn at_window(domains: &Domains) -> (i64, i64) {
+    let span = i64::try_from(domains.postings).expect("fits") * target::AT_STEP;
+    (target::AT_BASE, target::AT_BASE + span)
+}
+
+/// An in-data interval literal for value-equality dressing.
+fn window_literal_u64(cfg: GenConfig, rng: &mut Rng) -> Value {
+    let (start, end) =
+        interval_data::group_u64(cfg.seed, rng.range(64), rng.range(interval_data::PER_GROUP));
+    Value::IntervalU64(start, end)
+}
+
+fn active_literal_i64(cfg: GenConfig, rng: &mut Rng) -> Value {
+    let (start, end) =
+        interval_data::group_i64(cfg.seed, rng.range(64), rng.range(interval_data::PER_GROUP));
+    Value::IntervalI64(start, end)
+}
+
+/// Filter dressing ([`DRESS_PCT`]% of queries, 1–3 predicates), per the
+/// dressed atom's relation: integer range ops, string/bytes hits and
+/// misses, enum and bool equalities, interval-value `Eq`/`Ne` against
+/// in-data literals, and same-typed var-vs-var.
+pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
     if !rng.chance(DRESS_PCT, 100) {
         return;
     }
@@ -77,41 +178,56 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, sizes: &Size
             .collect();
         let atom = dressable[usize::try_from(rng.range(dressable.len() as u64)).expect("small")];
         match b.atoms[atom].relation {
-            ids::POSTING => dress_posting(b, rng, atom, sizes),
+            ids::POSTING => dress_posting(b, rng, atom, domains),
             ids::ACCOUNT => {
                 if rng.chance(1, 2) {
-                    enum_cmp(b, rng, atom, ids::account::STATUS, 3);
+                    enum_cmp(b, rng, atom, ids::account::CURRENCY, 3);
                 } else {
-                    i64_dress(
-                        b,
-                        rng,
-                        atom,
-                        ids::account::OPENED_AT,
-                        gen::AT_BASE - (1 << 30),
-                        gen::AT_BASE,
-                    );
+                    u64_dress(b, rng, atom, ids::account::HOLDER, domains.holders);
                 }
             }
-            ids::INSTRUMENT => enum_cmp(b, rng, atom, ids::instrument::KIND, 4),
-            ids::HOLDER => enum_cmp(b, rng, atom, ids::holder::REGION, 4),
-            ids::TRANSFER => {
+            ids::JOURNAL_ENTRY => {
                 if rng.chance(1, 2) {
+                    enum_cmp(b, rng, atom, ids::journal_entry::SOURCE, 3);
+                } else {
+                    let (lo, hi) = at_window(domains);
+                    i64_dress(b, rng, atom, ids::journal_entry::CREATED_AT, lo, hi);
+                }
+            }
+            ids::HOLDER => string_cmp(b, rng, atom, ids::HOLDER, ids::holder::NAME),
+            ids::ORG => string_cmp(b, rng, atom, ids::ORG, ids::org::NAME),
+            ids::INSTRUMENT => string_cmp(b, rng, atom, ids::INSTRUMENT, ids::instrument::SYMBOL),
+            ids::TRANSFER => {
+                if rng.chance(1, 3) {
+                    // Interval value equality: Eq/Ne against an in-data
+                    // window literal — the (Eq/Ne, interval) cells. A
+                    // membership *point* var bound here is element-typed
+                    // and must not be compared against interval values.
+                    let Some(var) = b.var_at(atom, ids::transfer::WINDOW) else {
+                        continue;
+                    };
+                    if !b.interval_valued(var) {
+                        continue;
+                    }
+                    let rhs = Term::Literal(window_literal_u64(cfg, rng));
+                    b.predicates.push(Comparison {
+                        op: eq_ne(rng),
+                        lhs: Term::Var(var),
+                        rhs,
+                    });
+                } else {
                     // Bytes Eq/Ne on extref: the hit literal is the
-                    // *actual* extref of a seeded row (recomputed via
-                    // gen::row — the corpus is a pure function of the
-                    // config); the miss is a fresh 16-byte value.
+                    // *actual* extref of a seeded row (recomputed — the
+                    // corpus is a pure function of the config); the miss
+                    // is a fresh 16-byte value.
                     let Some(var) = b.var_at(atom, ids::transfer::EXTREF) else {
                         continue;
                     };
-                    let op = if rng.chance(1, 2) {
-                        CmpOp::Eq
-                    } else {
-                        CmpOp::Ne
-                    };
+                    let op = eq_ne(rng);
                     let rhs = match rng.range(3) {
                         0 => {
                             b.bytes_hit = true;
-                            Term::Literal(extref_of(cfg, sizes, rng.range(sizes.transfers)))
+                            Term::Literal(target::extref(cfg, rng.range(domains.transfers)))
                         }
                         1 => {
                             b.miss = true;
@@ -129,17 +245,24 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, sizes: &Size
                         lhs: Term::Var(var),
                         rhs,
                     });
-                } else {
-                    let span = i64::try_from(sizes.transfers).expect("fits") * gen::AT_STEP * 2;
-                    i64_dress(
-                        b,
-                        rng,
-                        atom,
-                        ids::transfer::AT,
-                        gen::AT_BASE,
-                        gen::AT_BASE + span,
-                    );
                 }
+            }
+            ids::MANDATE => {
+                // Interval value equality on the I64 element lane —
+                // skipped when the bound term is a membership point
+                // (element-typed, not an interval value).
+                let Some(var) = b.var_at(atom, ids::mandate::ACTIVE) else {
+                    continue;
+                };
+                if !b.interval_valued(var) {
+                    continue;
+                }
+                let rhs = Term::Literal(active_literal_i64(cfg, rng));
+                b.predicates.push(Comparison {
+                    op: eq_ne(rng),
+                    lhs: Term::Var(var),
+                    rhs,
+                });
             }
             _ => {}
         }

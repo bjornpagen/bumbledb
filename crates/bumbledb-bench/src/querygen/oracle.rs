@@ -1,52 +1,119 @@
-use bumbledb::{FieldId, Query, RelationId, Term, Value};
+//! Param binding generation: four seeded draws per query — two
+//! in-range hits, one of boundary values, one of guaranteed misses —
+//! now carrying **param sets** beside the scalars. Set sizes draw from
+//! {0, 1, 2, [`LARGE_BOUNDARY`]}, duplicate elements are injected (the
+//! executor must dedup — asserted downstream), and the miss draw
+//! applies the per-type miss policies to every element.
 
-use crate::gen::{self, GenConfig, Rng, Sizes};
-use crate::querygen::construct::extref_of;
-use crate::querygen::dress_posting::posting_at_window;
-use crate::querygen::{SetKind, PARAM_SETS};
-use crate::schema::ids;
+use bumbledb::schema::{IntervalElement, ValueType};
+use bumbledb::{FieldId, ParamId, Query, RelationId, Term, Value};
+
+use crate::gen::{GenConfig, Rng};
+use crate::querygen::target::{self, ids, Domains, AMOUNT_LEVELS, AMOUNT_STEP};
+use crate::querygen::{dress, interval_data, DrawKind, PARAM_DRAWS};
+
+/// The large set size: one past the executor's batch width (128), so a
+/// single set spans a full batch plus a straggler lane.
+pub const LARGE_BOUNDARY: usize = 129;
+
+/// One draw's bindings: scalar values and set element lists, both by
+/// dense `ParamId`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParamDraw {
+    pub scalars: Vec<(ParamId, Value)>,
+    pub sets: Vec<(ParamId, Vec<Value>)>,
+}
+
+/// How a param is used, with its typing anchor.
+#[derive(Clone, Copy)]
+pub(super) struct Anchor {
+    pub(super) relation: RelationId,
+    pub(super) field: FieldId,
+    pub(super) set: bool,
+    /// The param also occurs at a non-interval position — it is a
+    /// *scalar point* even where it binds an interval field
+    /// (membership); without one, an interval-field param is an
+    /// interval value.
+    scalar_anchored: bool,
+}
 
 /// Resolves every param's anchor: the (relation, field) that types it —
-/// directly for atom bindings, through the variable side for predicates.
-pub(super) fn param_anchors(query: &Query) -> Vec<(RelationId, FieldId)> {
+/// directly for atom bindings (positive and negated), through the
+/// variable side for predicates. Prefers a scalar-field position: a
+/// membership param's type is its element, established by the scalar
+/// anchor the generator constructs.
+pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
+    let schema = target::schema();
+    let is_interval = |rel: RelationId, field: FieldId| {
+        matches!(
+            schema.relation(rel).field(field).value_type,
+            ValueType::Interval { .. }
+        )
+    };
     let mut var_anchor = std::collections::HashMap::new();
     for atom in &query.atoms {
         for (field, term) in &atom.bindings {
             if let Term::Var(var) = term {
-                var_anchor.entry(*var).or_insert((atom.relation, *field));
+                if !is_interval(atom.relation, *field) {
+                    var_anchor.entry(*var).or_insert((atom.relation, *field));
+                }
             }
         }
     }
-    let count = usize::from(query.atoms.iter().flat_map(|a| &a.bindings).fold(
-        0u16,
-        |max, (_, term)| match term {
-            Term::Param(p) => max.max(p.0 + 1),
-            _ => max,
-        },
-    ))
-    .max(usize::from(query.predicates.iter().fold(
-        0u16,
-        |max, c| match (&c.lhs, &c.rhs) {
-            (Term::Param(p), _) | (_, Term::Param(p)) => max.max(p.0 + 1),
-            _ => max,
-        },
-    )));
-    let mut anchors = vec![None; count];
-    for atom in &query.atoms {
-        for (field, term) in &atom.bindings {
-            if let Term::Param(p) = term {
-                anchors[usize::from(p.0)] = Some((atom.relation, *field));
+    let mut count = 0u16;
+    for atom in query.atoms.iter().chain(&query.negated) {
+        for (_, term) in &atom.bindings {
+            if let Term::Param(p) | Term::ParamSet(p) = term {
+                count = count.max(p.0 + 1);
             }
         }
     }
     for comparison in &query.predicates {
-        let ((Term::Param(param), Term::Var(var)) | (Term::Var(var), Term::Param(param))) =
-            (&comparison.lhs, &comparison.rhs)
-        else {
-            continue;
+        for term in [&comparison.lhs, &comparison.rhs] {
+            if let Term::Param(p) | Term::ParamSet(p) = term {
+                count = count.max(p.0 + 1);
+            }
+        }
+    }
+    let mut anchors: Vec<Option<Anchor>> = vec![None; usize::from(count)];
+    let place = |anchors: &mut Vec<Option<Anchor>>,
+                 param: ParamId,
+                 relation: RelationId,
+                 field: FieldId,
+                 set: bool| {
+        let slot = &mut anchors[usize::from(param.0)];
+        let scalar = !is_interval(relation, field);
+        match slot {
+            // A scalar-field position wins over an interval-field one.
+            Some(anchor) if anchor.scalar_anchored => {}
+            Some(_) if !scalar => {}
+            _ => {
+                *slot = Some(Anchor {
+                    relation,
+                    field,
+                    set,
+                    scalar_anchored: scalar,
+                });
+            }
+        }
+    };
+    for atom in query.atoms.iter().chain(&query.negated) {
+        for (field, term) in &atom.bindings {
+            match term {
+                Term::Param(p) => place(&mut anchors, *p, atom.relation, *field, false),
+                Term::ParamSet(p) => place(&mut anchors, *p, atom.relation, *field, true),
+                _ => {}
+            }
+        }
+    }
+    for comparison in &query.predicates {
+        let (param, set, var) = match (&comparison.lhs, &comparison.rhs) {
+            (Term::Param(p), Term::Var(v)) | (Term::Var(v), Term::Param(p)) => (*p, false, *v),
+            (Term::ParamSet(p), Term::Var(v)) | (Term::Var(v), Term::ParamSet(p)) => (*p, true, *v),
+            _ => continue,
         };
-        if anchors[usize::from(param.0)].is_none() {
-            anchors[usize::from(param.0)] = var_anchor.get(var).copied();
+        if let Some((relation, field)) = var_anchor.get(&var) {
+            place(&mut anchors, param, *relation, *field, set);
         }
     }
     anchors
@@ -56,55 +123,45 @@ pub(super) fn param_anchors(query: &Query) -> Vec<(RelationId, FieldId)> {
 }
 
 /// The dense-id domain of a u64 field (every corpus id is `0..n`).
-pub(super) fn u64_domain(rel: RelationId, field: FieldId, sizes: &Sizes) -> u64 {
+pub(super) fn u64_domain(rel: RelationId, field: FieldId, domains: &Domains) -> u64 {
     match (rel, field) {
-        (ids::POSTING, ids::posting::TRANSFER) => sizes.transfers,
-        (ids::POSTING, ids::posting::ACCOUNT) | (ids::ACCOUNT_TAG, ids::account_tag::ACCOUNT) => {
-            sizes.accounts
+        (ids::POSTING, ids::posting::ENTRY) | (ids::JOURNAL_ENTRY, ids::journal_entry::ID) => {
+            domains.entries
         }
+        (ids::POSTING, ids::posting::ACCOUNT)
+        | (ids::ACCOUNT, ids::account::ID)
+        | (ids::MANDATE, ids::mandate::ACCOUNT) => domains.accounts,
         (ids::POSTING, ids::posting::INSTRUMENT) | (ids::INSTRUMENT, ids::instrument::ID) => {
-            sizes.instruments
+            domains.instruments
         }
-        (ids::ACCOUNT, ids::account::HOLDER) => sizes.holders,
-        (ids::ACCOUNT, ids::account::CURRENCY) | (ids::INSTRUMENT, ids::instrument::CURRENCY) => {
-            sizes.currencies
+        (ids::ACCOUNT, ids::account::HOLDER) | (ids::HOLDER, ids::holder::ID) => domains.holders,
+        (ids::POSTING, ids::posting::ID) | (ids::POSTING_TAG, ids::posting_tag::POSTING) => {
+            domains.postings
         }
-        (ids::ACCOUNT_TAG, ids::account_tag::TAG) => sizes.tags,
-        _ => sizes.rows(rel),
-    }
-}
-
-fn string_hit(rel: RelationId, field: FieldId, rng: &mut Rng) -> String {
-    match (rel, field) {
-        (ids::CURRENCY, ids::currency::CODE) => format!("CUR{:02}", rng.range(16)),
-        (ids::HOLDER, ids::holder::NAME) => format!("holder-{}", rng.range(gen::MEMO_VOCAB)),
-        (ids::INSTRUMENT, ids::instrument::SYMBOL) => format!("SYM{:04}", rng.range(512)),
-        (ids::TAG, ids::tag::LABEL) => format!("tag-{:03}", rng.range(256)),
-        (ids::TAG_NOTE, ids::tag_note::NOTE) => format!("note-{}", rng.range(gen::MEMO_VOCAB)),
-        _ => format!("m{}", rng.range(gen::MEMO_VOCAB)),
+        (ids::ORG, ids::org::ID) | (ids::ORG_PARENT, _) | (ids::MANDATE, ids::mandate::ORG) => {
+            domains.orgs
+        }
+        (ids::TRANSFER, ids::transfer::ID) => domains.transfers,
+        _ => domains.postings,
     }
 }
 
 fn param_value(
-    anchor: (RelationId, FieldId),
-    kind: SetKind,
+    anchor: Anchor,
+    kind: DrawKind,
     rng: &mut Rng,
     cfg: GenConfig,
-    sizes: &Sizes,
+    domains: &Domains,
 ) -> Value {
-    use bumbledb::schema::ValueType;
-    let (rel, field) = anchor;
-    let ty = &crate::schema::schema()
-        .relation(rel)
-        .field(field)
-        .value_type;
+    let (rel, field) = (anchor.relation, anchor.field);
+    let ty = &target::schema().relation(rel).field(field).value_type;
     match ty {
         ValueType::U64 => {
-            let domain = u64_domain(rel, field, sizes).max(1);
+            let domain = u64_domain(rel, field, domains).max(1);
             Value::U64(match kind {
-                SetKind::Hit => rng.range(domain),
+                DrawKind::Hit => rng.range(domain),
                 // Boundary alternates the domain's edges.
-                SetKind::Boundary => {
+                DrawKind::Boundary => {
                     if rng.chance(1, 2) {
                         0
                     } else {
@@ -112,21 +169,24 @@ fn param_value(
                     }
                 }
                 // Out-of-domain, matching the family miss policies.
-                SetKind::Miss => domain + 1 + rng.range(domain),
+                DrawKind::Miss => domain + 1 + rng.range(domain),
             })
         }
         ValueType::I64 => {
-            let (lo, hi) = match (rel, field) {
-                (ids::POSTING, ids::posting::AMOUNT) => (-5_000_000, 5_000_000),
-                (ids::ACCOUNT, ids::account::OPENED_AT) => (gen::AT_BASE - (1 << 30), gen::AT_BASE),
-                _ => posting_at_window(sizes),
+            let (lo, hi) = if (rel, field) == (ids::POSTING, ids::posting::AMOUNT) {
+                (
+                    -(AMOUNT_LEVELS / 2) * AMOUNT_STEP,
+                    (AMOUNT_LEVELS / 2) * AMOUNT_STEP,
+                )
+            } else {
+                dress::at_window(domains)
             };
             Value::I64(match kind {
-                SetKind::Hit | SetKind::Miss => {
+                DrawKind::Hit | DrawKind::Miss => {
                     lo + i64::try_from(rng.range(u64::try_from(hi - lo).expect("ordered")))
                         .expect("fits")
                 }
-                SetKind::Boundary => {
+                DrawKind::Boundary => {
                     if rng.chance(1, 2) {
                         lo
                     } else {
@@ -137,9 +197,9 @@ fn param_value(
         }
         ValueType::String => Value::String(
             match kind {
-                SetKind::Hit | SetKind::Boundary => string_hit(rel, field, rng),
+                DrawKind::Hit | DrawKind::Boundary => target::string_hit(rel, field, rng),
                 // Guaranteed miss: no corpus vocabulary starts with this.
-                SetKind::Miss => format!("missing-{}", rng.u64()),
+                DrawKind::Miss => format!("missing-{}", rng.u64()),
             }
             .into_bytes()
             .into(),
@@ -147,8 +207,8 @@ fn param_value(
         ValueType::Enum { variants } => {
             let count = variants.len() as u64;
             Value::Enum(match kind {
-                SetKind::Hit | SetKind::Miss => u8::try_from(rng.range(count)).expect("small"),
-                SetKind::Boundary => {
+                DrawKind::Hit | DrawKind::Miss => u8::try_from(rng.range(count)).expect("small"),
+                DrawKind::Boundary => {
                     if rng.chance(1, 2) {
                         0
                     } else {
@@ -157,14 +217,14 @@ fn param_value(
                 }
             })
         }
-        // Both bool values are boundary values; every set kind draws
+        // Both bool values are boundary values; every draw kind draws
         // uniformly.
         ValueType::Bool => Value::Bool(rng.chance(1, 2)),
         ValueType::Bytes => match kind {
             // The hit (and boundary) is a real seeded extref; the miss a
             // fresh 16-byte value no corpus row carries.
-            SetKind::Hit | SetKind::Boundary => extref_of(cfg, sizes, rng.range(sizes.transfers)),
-            SetKind::Miss => {
+            DrawKind::Hit | DrawKind::Boundary => target::extref(cfg, rng.range(domains.transfers)),
+            DrawKind::Miss => {
                 let mut raw = Vec::with_capacity(16);
                 for _ in 0..2 {
                     raw.extend_from_slice(&rng.u64().to_le_bytes());
@@ -172,28 +232,83 @@ fn param_value(
                 Value::Bytes(raw.into())
             }
         },
+        // An interval-typed param (no scalar anchor): an in-data window
+        // literal, whatever the draw kind — hit-vs-miss for interval
+        // values is a corpus alignment question, not a vocabulary one.
+        ValueType::Interval { element } => {
+            let group = rng.range(64);
+            let k = rng.range(interval_data::PER_GROUP);
+            match element {
+                IntervalElement::U64 => {
+                    let (start, end) = interval_data::group_u64(cfg.seed, group, k);
+                    Value::IntervalU64(start, end)
+                }
+                IntervalElement::I64 => {
+                    let (start, end) = interval_data::group_i64(cfg.seed, group, k);
+                    Value::IntervalI64(start, end)
+                }
+            }
+        }
     }
 }
 
-/// Four param sets per query: two in-range hits, one of boundary values
-/// (domain edges — minima and maxima alternate), and one where every
-/// string, bytes, and u64 param is a guaranteed miss (out of vocabulary
-/// or out of domain; i64/enum/bool params stay in range).
+/// One set's element list: size from {0, 1, 2, [`LARGE_BOUNDARY`]},
+/// elements per the draw kind's policy, and — often — an injected
+/// duplicate (dedup is the executor's obligation, exercised here).
+fn set_elements(
+    anchor: Anchor,
+    kind: DrawKind,
+    rng: &mut Rng,
+    cfg: GenConfig,
+    domains: &Domains,
+) -> Vec<Value> {
+    let size = match rng.range(8) {
+        0 => 0,
+        1 | 2 => 1,
+        3..=5 => 2,
+        _ => LARGE_BOUNDARY,
+    };
+    let mut elements: Vec<Value> = (0..size)
+        .map(|_| param_value(anchor, kind, rng, cfg, domains))
+        .collect();
+    if elements.len() >= 2 && rng.chance(3, 10) {
+        elements[1] = elements[0].clone();
+    }
+    elements
+}
+
+/// Four param draws per query: two in-range hits, one of boundary
+/// values (domain edges — minima and maxima alternate), and one where
+/// every string, bytes, and u64 param — scalar or set element — is a
+/// guaranteed miss (out of vocabulary or out of domain; i64/enum/bool
+/// stay in range).
+///
+/// # Panics
+///
+/// On a programmer-invariant violation: an unanchored param (validation
+/// anchors every param the grammar emits).
 #[must_use]
-pub fn params_for(query: &Query, rng: &mut Rng, cfg: GenConfig) -> Vec<Vec<Value>> {
-    let sizes = Sizes::of(cfg.scale);
+pub fn params_for(query: &Query, rng: &mut Rng, cfg: GenConfig) -> Vec<ParamDraw> {
+    let domains = Domains::of(cfg.scale);
     let anchors = param_anchors(query);
-    (0..PARAM_SETS)
-        .map(|set| {
-            let kind = match set {
-                0 | 1 => SetKind::Hit,
-                2 => SetKind::Boundary,
-                _ => SetKind::Miss,
+    (0..PARAM_DRAWS)
+        .map(|draw| {
+            let kind = match draw {
+                0 | 1 => DrawKind::Hit,
+                2 => DrawKind::Boundary,
+                _ => DrawKind::Miss,
             };
-            anchors
-                .iter()
-                .map(|anchor| param_value(*anchor, kind, rng, cfg, &sizes))
-                .collect()
+            let mut scalars = Vec::new();
+            let mut sets = Vec::new();
+            for (index, anchor) in anchors.iter().enumerate() {
+                let param = ParamId(u16::try_from(index).expect("dense params fit"));
+                if anchor.set {
+                    sets.push((param, set_elements(*anchor, kind, rng, cfg, &domains)));
+                } else {
+                    scalars.push((param, param_value(*anchor, kind, rng, cfg, &domains)));
+                }
+            }
+            ParamDraw { scalars, sets }
         })
         .collect()
 }

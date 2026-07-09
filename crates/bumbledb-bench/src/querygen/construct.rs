@@ -1,10 +1,13 @@
-use bumbledb::{Query, Value};
+use bumbledb::Query;
 
-use crate::gen::{self, GenConfig, Rng, Sizes};
+use crate::gen::{GenConfig, Rng};
 use crate::querygen::dress::dress;
+use crate::querygen::negate::negate;
 use crate::querygen::shapes::{aggregate, chain, guard, self_join, star};
+use crate::querygen::shapes_interval::{boundary, interval_join, membership};
+use crate::querygen::shapes_sink::{arg, count_distinct};
+use crate::querygen::target::{ids, Domains};
 use crate::querygen::{Builder, GenTags, Shape, SHAPE_WEIGHTS};
-use crate::schema::ids;
 
 fn shape_of(rng: &mut Rng) -> Shape {
     let total: u64 = SHAPE_WEIGHTS.iter().map(|(_, w)| w).sum();
@@ -18,7 +21,7 @@ fn shape_of(rng: &mut Rng) -> Shape {
     unreachable!("weights cover the draw")
 }
 
-fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, sizes: &Sizes) -> Builder {
+fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Builder {
     let mut b = Builder::default();
     match shape {
         Shape::Guard => guard(&mut b, rng),
@@ -31,48 +34,51 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, sizes: &Sizes) -> Builder 
                 1 => star(&mut b, rng),
                 2 => chain(&mut b, rng),
                 3 => aggregate(&mut b, rng),
-                _ => self_join(&mut b, rng),
+                _ => count_distinct(&mut b, rng),
             }
-            // The zero-binding nonemptiness gate, over either non-empty
-            // relation (falsity is the empty-store pass's job; diversity
-            // here is about relation shape).
-            b.atom(if rng.chance(1, 2) {
-                ids::TAG
-            } else {
-                ids::TAG_NOTE
+            // The zero-binding nonemptiness gate, drawn from more than
+            // one relation (falsity is the empty-store pass's job;
+            // diversity here is about relation shape) — including under
+            // aggregates, per the two aggregate-bearing arms above.
+            b.atom(match rng.range(3) {
+                0 => ids::ORG,
+                1 => ids::ORG_PARENT,
+                _ => ids::POSTING_TAG,
             });
         }
         Shape::Aggregate => aggregate(&mut b, rng),
+        Shape::Membership => membership(&mut b, rng, cfg, domains),
+        Shape::IntervalJoin => interval_join(&mut b, rng, cfg),
+        Shape::Boundary => boundary(&mut b, rng, cfg, domains),
+        Shape::CountDistinct => count_distinct(&mut b, rng),
+        Shape::Arg => arg(&mut b, rng),
     }
-    dress(&mut b, rng, cfg, sizes);
+    dress(&mut b, rng, cfg, domains);
+    // Negation last: its templates draw on every anchor the shape and
+    // the dressing established.
+    negate(&mut b, rng);
     b
 }
 
 pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shape, GenTags) {
-    let sizes = Sizes::of(cfg.scale);
+    let domains = Domains::of(cfg.scale);
     let shape = shape_of(rng);
-    let b = build(rng, shape, cfg, &sizes);
+    let b = build(rng, shape, cfg, &domains);
     let tags = GenTags {
         miss: b.miss,
         bytes_hit: b.bytes_hit,
         bytes_miss: b.bytes_miss,
+        adjacent_left: b.adjacent_left,
+        adjacent_right: b.adjacent_right,
     };
     (b.into_query(), shape, tags)
 }
 
-/// The seeded extref of one Transfer row — corpus rows are a pure
-/// function of the config, so in-vocabulary Bytes literals recompute.
-pub(super) fn extref_of(cfg: GenConfig, sizes: &Sizes, row: u64) -> Value {
-    gen::row(&cfg, sizes, ids::TRANSFER, row)
-        .into_iter()
-        .nth(usize::from(ids::transfer::EXTREF.0))
-        .expect("transfer rows carry extref")
-}
-
-/// One seeded random valid query over the ledger schema. The schema is
-/// the ledger (the grammar is schema-specific by design); the config
-/// bounds dressing literals (and recomputes in-vocabulary Bytes hits)
-/// so predicates select real subsets.
+/// One seeded random valid query over the target ledger schema. The
+/// grammar is schema-specific by design ([`crate::querygen::target`] is
+/// the seam); the config bounds dressing literals (and recomputes
+/// in-vocabulary hits — Bytes extrefs, interval windows) so predicates
+/// select real subsets.
 #[must_use]
 pub fn random_query(rng: &mut Rng, cfg: GenConfig) -> Query {
     random_query_tagged(rng, cfg).0

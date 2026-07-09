@@ -32,11 +32,14 @@ impl Builder {
     }
 
     /// A fresh variable bound to the field, registered as a group-key
-    /// candidate.
+    /// candidate and anchored for provenance (negation templates and
+    /// membership anchors select by (relation, field), never by hope).
     pub(super) fn bind_var(&mut self, atom: usize, field: FieldId) -> VarId {
         let var = self.fresh_var();
+        let relation = self.atoms[atom].relation;
         self.bind(atom, field, Term::Var(var));
         self.bound.push(var);
+        self.anchors.push((var, relation, field));
         var
     }
 
@@ -50,14 +53,59 @@ impl Builder {
         }
     }
 
+    /// A positive-bound variable anchored at any of the given
+    /// (relation, field) positions — the deliberate-anchor lookup.
+    pub(super) fn anchored_at(&self, positions: &[(RelationId, FieldId)]) -> Option<VarId> {
+        self.anchors
+            .iter()
+            .find(|(_, rel, field)| positions.contains(&(*rel, *field)))
+            .map(|(var, _, _)| *var)
+    }
+
+    /// Whether a variable is interval-*valued*: every anchor it has is
+    /// an interval field. A membership point var is also reachable at
+    /// an interval field (through the binding, not an anchor), but its
+    /// scalar anchor names it element-typed — interval dressing must
+    /// not compare it against interval literals.
+    pub(super) fn interval_valued(&self, var: VarId) -> bool {
+        use crate::querygen::target::ids;
+        let mut anchors = self
+            .anchors
+            .iter()
+            .filter(|(candidate, _, _)| *candidate == var);
+        anchors.all(|(_, relation, field)| {
+            (*relation, *field) == (ids::MANDATE, ids::mandate::ACTIVE)
+                || (*relation, *field) == (ids::TRANSFER, ids::transfer::WINDOW)
+        })
+    }
+
     pub(super) fn find_var(&mut self, var: VarId) {
         self.finds.push(FindTerm::Var(var));
+    }
+
+    /// One negated atom (an anti-join position — it binds nothing, only
+    /// rejects, so every variable placed in it must come from `anchors`).
+    pub(super) fn negated_atom(&mut self, relation: RelationId) -> usize {
+        self.negated.push(Atom {
+            relation,
+            bindings: Vec::new(),
+        });
+        self.negated.len() - 1
+    }
+
+    pub(super) fn bind_negated(&mut self, atom: usize, field: FieldId, term: Term) {
+        debug_assert!(
+            !self.negated[atom].bindings.iter().any(|(f, _)| *f == field),
+            "duplicate field binding"
+        );
+        self.negated[atom].bindings.push((field, term));
     }
 
     pub(super) fn into_query(self) -> Query {
         Query {
             finds: self.finds,
             atoms: self.atoms,
+            negated: self.negated,
             predicates: self.predicates,
         }
     }

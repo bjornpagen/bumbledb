@@ -1,22 +1,38 @@
-use bumbledb::{AggOp, CmpOp, FindTerm, Query, Term, VarId};
+//! The coverage contract's evidence collector: one pass per generated
+//! query, counting every construct the n = 1000 test asserts. Structural
+//! facts (negation shapes, membership kinds, the comparison matrix, the
+//! sinks) are re-derived from the query itself; only corpus-content
+//! facts (hit-vs-miss, boundary polarity) come from generation tags.
+
+use bumbledb::schema::{Generation, IntervalElement, ValueType};
+use bumbledb::{AggOp, Atom, CmpOp, FindTerm, Query, Term, VarId};
+use std::collections::{HashMap, HashSet};
 
 use crate::gen::{GenConfig, Rng};
 use crate::querygen::construct::random_query_tagged;
+use crate::querygen::target::{self, ids};
 use crate::querygen::{Coverage, GenTags, Shape, CMP_OPS};
 
-/// Whether an (op, type) cell is legal under the roster: `Eq`/`Ne`
-/// everywhere, order operators over the two integer types only.
+/// Whether an (op, type) cell is legal under the roster: `Eq`/`Ne` over
+/// all seven types, order operators over the two integer types only,
+/// `Overlaps`/`Contains` only at their interval-typed shapes.
 #[must_use]
 pub fn cmp_cell_legal(op_idx: usize, type_idx: usize) -> bool {
-    op_idx < 2 || type_idx < 2
+    match op_idx {
+        0 | 1 => true,
+        2..=5 => type_idx < 2,
+        _ => type_idx == 6,
+    }
 }
 
 fn op_index(op: CmpOp) -> usize {
-    CMP_OPS.iter().position(|o| *o == op).expect("all six ops")
+    CMP_OPS
+        .iter()
+        .position(|o| *o == op)
+        .expect("all eight ops")
 }
 
-fn type_index(ty: &bumbledb::schema::ValueType) -> usize {
-    use bumbledb::schema::ValueType;
+fn type_index(ty: &ValueType) -> usize {
     match ty {
         ValueType::U64 => 0,
         ValueType::I64 => 1,
@@ -24,12 +40,94 @@ fn type_index(ty: &bumbledb::schema::ValueType) -> usize {
         ValueType::Bool => 3,
         ValueType::String => 4,
         ValueType::Bytes => 5,
+        ValueType::Interval { .. } => 6,
+    }
+}
+
+/// The typing walk's product: variable and param resolutions mirroring
+/// the validation boundary's bivalent-anchor rule for exactly the
+/// shapes the generator emits (a scalar anchor wins; an interval-field
+/// position with no scalar anchor is interval-valued).
+struct Typing {
+    var_types: HashMap<VarId, ValueType>,
+    scalar_params: HashSet<u16>,
+    var_atoms: HashMap<VarId, Vec<usize>>,
+    var_pos: HashMap<VarId, (bumbledb::RelationId, bumbledb::FieldId)>,
+}
+
+fn field_type(atom: &Atom, field: bumbledb::FieldId) -> ValueType {
+    target::schema()
+        .relation(atom.relation)
+        .field(field)
+        .value_type
+        .clone()
+}
+
+fn typing(query: &Query) -> Typing {
+    let mut t = Typing {
+        var_types: HashMap::new(),
+        scalar_params: HashSet::new(),
+        var_atoms: HashMap::new(),
+        var_pos: HashMap::new(),
+    };
+    // Pass one: scalar-field positions anchor vars and params.
+    for (atom_idx, atom) in query.atoms.iter().enumerate() {
+        for (field, term) in &atom.bindings {
+            let ty = field_type(atom, *field);
+            if let Term::Var(var) = term {
+                t.var_atoms.entry(*var).or_default().push(atom_idx);
+            }
+            if matches!(ty, ValueType::Interval { .. }) {
+                continue;
+            }
+            match term {
+                Term::Var(var) => {
+                    t.var_types.entry(*var).or_insert(ty);
+                    t.var_pos.entry(*var).or_insert((atom.relation, *field));
+                }
+                Term::Param(p) | Term::ParamSet(p) => {
+                    t.scalar_params.insert(p.0);
+                }
+                Term::Literal(_) => {}
+            }
+        }
+    }
+    for atom in &query.negated {
+        for (field, term) in &atom.bindings {
+            if matches!(field_type(atom, *field), ValueType::Interval { .. }) {
+                continue;
+            }
+            if let Term::Param(p) | Term::ParamSet(p) = term {
+                t.scalar_params.insert(p.0);
+            }
+        }
+    }
+    // Pass two: interval-field var positions with no scalar anchor are
+    // interval-typed (the bivalent default).
+    for atom in &query.atoms {
+        for (field, term) in &atom.bindings {
+            let ty = field_type(atom, *field);
+            if !matches!(ty, ValueType::Interval { .. }) {
+                continue;
+            }
+            if let Term::Var(var) = term {
+                t.var_types.entry(*var).or_insert(ty.clone());
+                t.var_pos.entry(*var).or_insert((atom.relation, *field));
+            }
+        }
+    }
+    t
+}
+
+fn element_of(ty: &ValueType) -> Option<IntervalElement> {
+    match ty {
+        ValueType::Interval { element } => Some(*element),
+        _ => None,
     }
 }
 
 impl Coverage {
-    #[allow(clippy::too_many_lines)]
-    fn record(&mut self, query: &Query, shape: Shape, tags: GenTags) {
+    fn record_shape(&mut self, shape: Shape) {
         match shape {
             Shape::Guard => self.guard += 1,
             Shape::Star => self.star += 1,
@@ -37,7 +135,221 @@ impl Coverage {
             Shape::SelfJoin => self.self_join += 1,
             Shape::Gated => self.gated += 1,
             Shape::Aggregate => self.aggregate += 1,
+            Shape::Membership => self.membership += 1,
+            Shape::IntervalJoin => self.interval_join += 1,
+            Shape::Boundary => self.boundary += 1,
+            Shape::CountDistinct => self.count_distinct += 1,
+            Shape::Arg => self.arg += 1,
         }
+    }
+
+    /// Membership bindings in the positive atoms: an interval-typed
+    /// field carrying an element-typed term. Returns whether any exist
+    /// (the composition detector's input).
+    fn record_membership(&mut self, query: &Query, t: &Typing) -> bool {
+        let mut any = false;
+        for atom in &query.atoms {
+            for (field, term) in &atom.bindings {
+                let Some(element) = element_of(&field_type(atom, *field)) else {
+                    continue;
+                };
+                let is_point = match term {
+                    Term::Literal(bumbledb::Value::U64(_) | bumbledb::Value::I64(_)) => {
+                        self.membership_literal += 1;
+                        true
+                    }
+                    Term::Param(p) if t.scalar_params.contains(&p.0) => {
+                        self.membership_param += 1;
+                        true
+                    }
+                    Term::Var(var)
+                        if !matches!(t.var_types.get(var), Some(ValueType::Interval { .. })) =>
+                    {
+                        self.membership_var += 1;
+                        true
+                    }
+                    _ => false,
+                };
+                if is_point {
+                    any = true;
+                    match element {
+                        IntervalElement::U64 => self.membership_u64 += 1,
+                        IntervalElement::I64 => self.membership_i64 += 1,
+                    }
+                }
+            }
+        }
+        any
+    }
+
+    fn record_comparisons(&mut self, query: &Query, t: &Typing) -> bool {
+        let mut has_overlaps = false;
+        for comparison in &query.predicates {
+            let ty = match (&comparison.lhs, &comparison.rhs) {
+                (Term::Var(var), _) | (_, Term::Var(var)) => t
+                    .var_types
+                    .get(var)
+                    .expect("comparison variables are atom-bound")
+                    .clone(),
+                _ => unreachable!("the grammar never compares two constants"),
+            };
+            self.matrix[op_index(comparison.op)][type_index(&ty)] += 1;
+            match comparison.op {
+                CmpOp::Overlaps => {
+                    has_overlaps = true;
+                    match element_of(&ty) {
+                        Some(IntervalElement::U64) => self.overlaps_u64 += 1,
+                        Some(IntervalElement::I64) => self.overlaps_i64 += 1,
+                        None => unreachable!("Overlaps is interval-typed by construction"),
+                    }
+                }
+                CmpOp::Contains => {
+                    match element_of(&ty) {
+                        Some(IntervalElement::U64) => self.contains_u64 += 1,
+                        Some(IntervalElement::I64) => self.contains_i64 += 1,
+                        None => unreachable!("Contains' left side is interval-typed"),
+                    }
+                    // An element-typed right side: point membership as
+                    // a predicate.
+                    let element_rhs = match &comparison.rhs {
+                        Term::Literal(bumbledb::Value::U64(_) | bumbledb::Value::I64(_)) => true,
+                        Term::Var(var) => !matches!(
+                            t.var_types.get(var),
+                            Some(ValueType::Interval { .. }) | None
+                        ),
+                        _ => false,
+                    };
+                    if element_rhs {
+                        self.contains_element += 1;
+                    }
+                }
+                _ => {}
+            }
+            if let (Term::Var(lhs), Term::Var(rhs)) = (&comparison.lhs, &comparison.rhs) {
+                let shared = t.var_atoms[lhs]
+                    .iter()
+                    .any(|a| t.var_atoms[rhs].contains(a));
+                if !shared {
+                    self.cross_residuals += 1;
+                }
+            }
+            for term in [&comparison.lhs, &comparison.rhs] {
+                match term {
+                    Term::Param(_) => self.params += 1,
+                    Term::ParamSet(_) => self.param_sets += 1,
+                    _ => {}
+                }
+            }
+        }
+        has_overlaps
+    }
+
+    /// Negated-atom shapes: gate / key-covered / open (with the
+    /// multiply-witnessed relations tracked), and the binding-term mix.
+    fn record_negations(&mut self, query: &Query, t: &Typing) {
+        for atom in &query.negated {
+            self.negations += 1;
+            if atom.bindings.is_empty() {
+                self.negation_gate += 1;
+                continue;
+            }
+            let relation = target::schema().relation(atom.relation);
+            let key_covered = atom
+                .bindings
+                .iter()
+                .any(|(field, _)| relation.field(*field).generation == Generation::Serial);
+            if key_covered {
+                self.negation_key_covered += 1;
+            } else {
+                self.negation_open += 1;
+                if atom.relation == ids::POSTING_TAG || atom.relation == ids::POSTING {
+                    self.negation_multi_witness += 1;
+                }
+            }
+            for (field, term) in &atom.bindings {
+                match term {
+                    Term::Literal(_) => self.negation_literal += 1,
+                    Term::Param(_) => self.negation_param += 1,
+                    Term::ParamSet(_) => self.negation_set += 1,
+                    Term::Var(var) => {
+                        // Membership inside negation: an element-typed
+                        // var at an interval field.
+                        if element_of(&field_type(atom, *field)).is_some()
+                            && !matches!(
+                                t.var_types.get(var),
+                                Some(ValueType::Interval { .. }) | None
+                            )
+                        {
+                            self.negation_membership += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn record_finds(&mut self, query: &Query, t: &Typing) -> bool {
+        let mut aggregates = 0u64;
+        let mut has_var_find = false;
+        let mut arg_key: Option<VarId> = None;
+        let mut arg_key_projected = false;
+        for term in &query.finds {
+            match term {
+                FindTerm::Var(_) => has_var_find = true,
+                FindTerm::Aggregate { op, over } => {
+                    aggregates += 1;
+                    match op {
+                        AggOp::Sum => self.agg_sum += 1,
+                        AggOp::Min => self.agg_min += 1,
+                        AggOp::Max => self.agg_max += 1,
+                        AggOp::Count => self.agg_count += 1,
+                        AggOp::CountDistinct => {
+                            let var = over.expect("CountDistinct carries its input");
+                            let ty = t.var_types.get(&var).expect("finds are bound");
+                            self.count_distinct_types[type_index(ty)] += 1;
+                        }
+                        AggOp::ArgMax { key } => {
+                            self.arg_max += 1;
+                            arg_key = Some(*key);
+                            arg_key_projected |= *over == Some(*key);
+                        }
+                        AggOp::ArgMin { key } => {
+                            self.arg_min += 1;
+                            arg_key = Some(*key);
+                            arg_key_projected |= *over == Some(*key);
+                        }
+                    }
+                    if let Some(var) = over {
+                        if matches!(t.var_types.get(var), Some(ValueType::U64)) {
+                            self.agg_u64 += 1;
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(key) = arg_key {
+            if arg_key_projected {
+                self.arg_key_projected += 1;
+            }
+            if !has_var_find {
+                self.arg_global += 1;
+            }
+            match t.var_pos.get(&key) {
+                Some(&(ids::POSTING, field)) if field == ids::posting::AMOUNT => {
+                    self.arg_tie_key += 1;
+                }
+                Some(&(ids::POSTING, field)) if field == ids::posting::AT => {
+                    self.arg_tie_free_key += 1;
+                }
+                _ => {}
+            }
+        }
+        self.multi_aggregate += u64::from(aggregates > 1);
+        aggregates > 0
+    }
+
+    fn record(&mut self, query: &Query, shape: Shape, tags: GenTags) {
+        self.record_shape(shape);
         self.gates += query
             .atoms
             .iter()
@@ -46,12 +358,11 @@ impl Coverage {
         self.misses += u64::from(tags.miss);
         self.bytes_hits += u64::from(tags.bytes_hit);
         self.bytes_misses += u64::from(tags.bytes_miss);
-        // Per-variable anchors: the (relation, field) that types each
-        // var, and the atom set it binds in (cross-residual detection).
-        let mut var_type = std::collections::HashMap::new();
-        let mut var_atoms: std::collections::HashMap<VarId, Vec<usize>> =
-            std::collections::HashMap::new();
-        for (atom_idx, atom) in query.atoms.iter().enumerate() {
+        self.adjacent_left += u64::from(tags.adjacent_left);
+        self.adjacent_right += u64::from(tags.adjacent_right);
+        let t = typing(query);
+        // Repeated in-atom variables.
+        for atom in &query.atoms {
             let vars: Vec<&Term> = atom
                 .bindings
                 .iter()
@@ -65,64 +376,36 @@ impl Coverage {
             {
                 self.repeated_vars += 1;
             }
-            for (field, term) in &atom.bindings {
-                if let Term::Var(var) = term {
-                    var_type.entry(*var).or_insert_with(|| {
-                        crate::schema::schema()
-                            .relation(atom.relation)
-                            .field(*field)
-                            .value_type
-                            .clone()
-                    });
-                    var_atoms.entry(*var).or_default().push(atom_idx);
-                }
-            }
         }
-        for comparison in &query.predicates {
-            let ty = match (&comparison.lhs, &comparison.rhs) {
-                (Term::Var(var), _) | (_, Term::Var(var)) => var_type
-                    .get(var)
-                    .expect("comparison variables are atom-bound"),
-                _ => unreachable!("the grammar never compares two constants"),
-            };
-            self.matrix[op_index(comparison.op)][type_index(ty)] += 1;
-            if let (Term::Var(lhs), Term::Var(rhs)) = (&comparison.lhs, &comparison.rhs) {
-                let shared = var_atoms[lhs].iter().any(|a| var_atoms[rhs].contains(a));
-                if !shared {
-                    self.cross_residuals += 1;
-                }
-            }
-            for term in [&comparison.lhs, &comparison.rhs] {
-                if matches!(term, Term::Param(_)) {
-                    self.params += 1;
-                }
-            }
-        }
-        for atom in &query.atoms {
+        // Param and param-set binding occurrences (positive + negated).
+        for atom in query.atoms.iter().chain(&query.negated) {
             for (_, term) in &atom.bindings {
-                if matches!(term, Term::Param(_)) {
-                    self.params += 1;
+                match term {
+                    Term::Param(_) => self.params += 1,
+                    Term::ParamSet(_) => self.param_sets += 1,
+                    _ => {}
                 }
             }
         }
-        let mut aggregates = 0u64;
-        for term in &query.finds {
-            if let FindTerm::Aggregate { op, over } = term {
-                aggregates += 1;
-                match op {
-                    AggOp::Sum => self.agg_sum += 1,
-                    AggOp::Min => self.agg_min += 1,
-                    AggOp::Max => self.agg_max += 1,
-                    AggOp::Count => self.agg_count += 1,
-                }
-                if let Some(var) = over {
-                    if matches!(var_type.get(var), Some(bumbledb::schema::ValueType::U64)) {
-                        self.agg_u64 += 1;
-                    }
-                }
-            }
-        }
-        self.multi_aggregate += u64::from(aggregates > 1);
+        let has_membership = self.record_membership(query, &t);
+        let has_overlaps = self.record_comparisons(query, &t);
+        self.record_negations(query, &t);
+        let has_aggregate = self.record_finds(query, &t);
+        // The structural compositions where bugs hide.
+        let has_negation = !query.negated.is_empty();
+        let uses_set = query
+            .atoms
+            .iter()
+            .chain(&query.negated)
+            .flat_map(|atom| &atom.bindings)
+            .any(|(_, term)| matches!(term, Term::ParamSet(_)))
+            || query
+                .predicates
+                .iter()
+                .any(|c| matches!(c.lhs, Term::ParamSet(_)) || matches!(c.rhs, Term::ParamSet(_)));
+        self.neg_and_aggregate += u64::from(has_negation && has_aggregate);
+        self.set_and_negation += u64::from(has_negation && uses_set);
+        self.membership_and_overlaps += u64::from(has_membership && has_overlaps);
     }
 }
 
