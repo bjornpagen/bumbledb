@@ -23,14 +23,14 @@ fn clover_on_the_papers_instance() {
     let views = views_of(&dir, &schema, &[r.clone(), s.clone(), t.clone()]);
 
     // Q(x,a,b,c) :- R(x,a), S(x,b), T(x,c).
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 0), (1, 2)]),
             occurrence(2, 2, &[(0, 0), (1, 3)]),
         ],
-        residuals: vec![],
-    };
+        vec![],
+    );
     let plan = planned(&normalized, &schema, &[0, 1, 2]);
     let results = run(&plan, &views);
 
@@ -59,14 +59,14 @@ fn chain_query_matches_the_nested_loop_oracle() {
     let views = views_of(&dir, &schema, &[r.clone(), s.clone(), t.clone()]);
 
     // Q(x,y,z,w) :- R(x,y), S(y,z), T(z,w).
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 1), (1, 2)]),
             occurrence(2, 2, &[(0, 2), (1, 3)]),
         ],
-        residuals: vec![],
-    };
+        vec![],
+    );
     let plan = planned(&normalized, &schema, &[0, 1, 2]);
     let results = run(&plan, &views);
 
@@ -94,13 +94,13 @@ fn self_join_grandparent() {
 
     // Grandparent(c, g) :- OrgParent(c, p), OrgParent(p, g) — two
     // occurrences of relation 0.
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 0, &[(0, 1), (1, 2)]),
         ],
-        residuals: vec![],
-    };
+        vec![],
+    );
     let plan = planned(&normalized, &schema, &[0, 1]);
     // Both occurrences read relation 0: views vector must be indexed by
     // occurrence, not relation — build colts by occurrence's relation.
@@ -128,14 +128,14 @@ fn triangle_is_wcoj_honest() {
     let t: Vec<(u64, u64)> = (0..6).map(|z| (z, (z + 2) % 6)).collect();
     let views = views_of(&dir, &schema, &[r.clone(), s.clone(), t.clone()]);
 
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 1), (1, 2)]),
             occurrence(2, 2, &[(0, 2), (1, 0)]),
         ],
-        residuals: vec![],
-    };
+        vec![],
+    );
     let plan = planned(&normalized, &schema, &[0, 1, 2]);
     let results = run(&plan, &views);
 
@@ -162,18 +162,10 @@ fn zero_binding_atom_gates_the_query() {
     for (gate_rows, expect_rows) in [(vec![(9u64, 9u64)], 2usize), (vec![], 0)] {
         let dir2 = TempDir::new(&format!("run-gate-{expect_rows}"));
         let views = views_of(&dir2, &schema, &[r.clone(), gate_rows]);
-        let normalized = NormalizedQuery {
-            occurrences: vec![
-                occurrence(0, 0, &[(0, 0), (1, 1)]),
-                Occurrence {
-                    occ_id: OccId(1),
-                    relation: RelationId(1),
-                    vars: vec![],
-                    filters: vec![],
-                },
-            ],
-            residuals: vec![],
-        };
+        let normalized = normalized(
+            vec![occurrence(0, 0, &[(0, 0), (1, 1)]), occurrence(1, 1, &[])],
+            vec![],
+        );
         let plan = planned(&normalized, &schema, &[0, 1]);
         let results = run(&plan, &views);
         assert_eq!(results.len(), expect_rows, "gate case {expect_rows}");
@@ -186,13 +178,13 @@ fn empty_relations_yield_empty_results() {
     let dir = TempDir::new("run-empty");
     let schema = schema(2);
     let views = views_of(&dir, &schema, &[vec![(1, 2)], vec![]]);
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 1), (1, 2)]),
         ],
-        residuals: vec![],
-    };
+        vec![],
+    );
     let plan = planned(&normalized, &schema, &[0, 1]);
     assert!(run(&plan, &views).is_empty());
 }
@@ -206,13 +198,13 @@ fn duplicate_heavy_skew_collapses_to_the_distinct_binding_set() {
     let r: Vec<(u64, u64)> = (0..50).map(|i| (i % 2, i % 3)).collect();
     let s: Vec<(u64, u64)> = (0..50).map(|i| (i % 3, i % 5)).collect();
     let views = views_of(&dir, &schema, &[r.clone(), s.clone()]);
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 1), (1, 2)]),
         ],
-        residuals: vec![],
-    };
+        vec![],
+    );
     let plan = planned(&normalized, &schema, &[0, 1]);
     let results = run(&plan, &views);
     let mut expected = BTreeSet::new();
@@ -234,17 +226,17 @@ fn residuals_filter_across_atoms() {
     let s: Vec<(u64, u64)> = (0..10).map(|i| (i, 9 - i)).collect();
     let views = views_of(&dir, &schema, &[r.clone(), s.clone()]);
     // R(x, a), S(x, b), a < b.
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 0), (1, 2)]),
         ],
-        residuals: vec![PlacedComparison {
+        vec![PlacedComparison {
             op: CmpOp::Lt,
             lhs: VarId(1),
             rhs: VarId(2),
         }],
-    };
+    );
     let plan = planned(&normalized, &schema, &[0, 1]);
     let results = run(&plan, &views);
     let mut expected = BTreeSet::new();
@@ -316,10 +308,7 @@ fn randomized_differential_against_the_nested_loop_oracle() {
             ],
         };
         let n = occurrences.len();
-        let normalized = NormalizedQuery {
-            occurrences,
-            residuals: vec![],
-        };
+        let normalized = normalized(occurrences, vec![]);
         // Random join order (a permutation drawn by rejection).
         let mut order: Vec<u16> = (0..u16::try_from(n).expect("small")).collect();
         for i in (1..order.len()).rev() {

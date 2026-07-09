@@ -17,14 +17,14 @@ fn pipelined_d2_cancels_one_origin_and_spares_the_rest() {
     let s: Vec<(u64, u64)> = (0..40).map(|i| (10 + (i % 2), i)).collect();
     let t: Vec<(u64, u64)> = (0..40).map(|i| (i, 900 + i)).collect();
     let views = views_of(&dir, &schema, &[r.clone(), s.clone(), t.clone()]);
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 1), (1, 2)]),
             occurrence(2, 2, &[(0, 2), (1, 3)]),
         ],
-        residuals: vec![],
-    };
+        vec![],
+    );
     // Sink vars: x only.
     let sinks: BTreeSet<VarId> = [VarId(0)].into();
     let plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
@@ -92,10 +92,7 @@ fn randomized_subset_projections_match_the_oracle_under_d2() {
         };
         let n_vars = if shape == 2 { 4u16 } else { 3 };
         let n = occurrences.len();
-        let normalized = NormalizedQuery {
-            occurrences,
-            residuals: vec![],
-        };
+        let normalized = normalized(occurrences, vec![]);
         let mut order: Vec<u16> = (0..u16::try_from(n).expect("small")).collect();
         for i in (1..order.len()).rev() {
             let j = usize::try_from(next()).expect("64-bit") % (i + 1);

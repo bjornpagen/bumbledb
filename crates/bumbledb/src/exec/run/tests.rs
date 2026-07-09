@@ -1,7 +1,9 @@
 use super::*;
 use crate::encoding::{encode_fact, ValueRef};
 use crate::image::view::apply;
-use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence, PlacedComparison};
+use crate::ir::normalize::{
+    AntiProbe, NormalizedQuery, OccId, Occurrence, PlacedComparison, Polarity, SlotWidth,
+};
 use crate::ir::{CmpOp, VarId};
 use crate::plan::fj::{binary2fj, factor, validate, ValidatedPlan};
 use crate::plan::planner::JoinOrder;
@@ -12,7 +14,7 @@ use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// A sink collecting distinct full binding tuples (set semantics).
@@ -60,6 +62,7 @@ impl Counters for RecordingCounters {
     fn probe_hash(&mut self, _: usize, _: usize) {}
     fn probe(&mut self, _: usize, _: usize, _: bool) {}
     fn residual(&mut self, _: usize, _: bool) {}
+    fn anti_probe(&mut self, _: usize, _: bool) {}
     fn emit(&mut self) {}
     fn skip(&mut self, _: usize) {}
 }
@@ -82,9 +85,9 @@ fn schema(relations: usize) -> Schema {
                         generation: Generation::None,
                     },
                 ],
-                constraints: vec![],
             })
             .collect(),
+        statements: vec![],
     }
     .validate()
     .expect("valid fixture")
@@ -123,7 +126,10 @@ fn views_of(
 }
 
 /// COLT sources for a plan: schema columns from each occurrence's trie
-/// schema and var-to-field map.
+/// schema and var-to-field map, over the occurrence's filtered view
+/// (production shape: a negated occurrence's constants are its filter
+/// list, evaluated at the source — docs/architecture/40-execution.md,
+/// § anti-probe filters).
 fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) -> Vec<Colt> {
     plan.occurrences()
         .iter()
@@ -148,7 +154,7 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
             Colt::new(
                 apply(
                     &images[usize::try_from(occurrence.relation.0).expect("small")],
-                    &[],
+                    &occurrence.filters,
                     &[],
                     Vec::new(),
                 ),
@@ -163,8 +169,42 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
     Occurrence {
         occ_id: OccId(occ),
         relation: RelationId(relation),
+        polarity: Polarity::Positive,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters: vec![],
+    }
+}
+
+/// A negated occurrence: joins no node, probed through its anti-probe.
+fn negated(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
+    Occurrence {
+        polarity: Polarity::Negated,
+        ..occurrence(occ, relation, vars)
+    }
+}
+
+/// Assembles a `NormalizedQuery` the way `normalize` would: anti-probe
+/// descriptors derived from the negated occurrences, every variable one
+/// slot wide (these fixtures are scalar-only).
+fn normalized(occurrences: Vec<Occurrence>, residuals: Vec<PlacedComparison>) -> NormalizedQuery {
+    let anti_probes = occurrences
+        .iter()
+        .filter(|o| o.polarity == Polarity::Negated)
+        .map(|o| AntiProbe {
+            occurrence: o.occ_id,
+            probe_bindings: o.vars.clone(),
+        })
+        .collect();
+    let slot_widths: BTreeMap<VarId, SlotWidth> = occurrences
+        .iter()
+        .flat_map(|o| o.vars.iter().map(|(_, v)| (*v, SlotWidth::One)))
+        .collect();
+    NormalizedQuery {
+        occurrences,
+        residuals,
+        word_residuals: vec![],
+        anti_probes,
+        slot_widths,
     }
 }
 
@@ -227,6 +267,7 @@ impl Counters for SkipCounterRun {
     fn probe_hash(&mut self, _: usize, _: usize) {}
     fn probe(&mut self, _: usize, _: usize, _: bool) {}
     fn residual(&mut self, _: usize, _: bool) {}
+    fn anti_probe(&mut self, _: usize, _: bool) {}
     fn emit(&mut self) {}
     fn skip(&mut self, _: usize) {
         self.skips += 1;
@@ -284,6 +325,7 @@ impl Counters for PhaseOrderCounters {
         self.events.push(("probe", node, subatom));
     }
     fn residual(&mut self, _: usize, _: bool) {}
+    fn anti_probe(&mut self, _: usize, _: bool) {}
     fn emit(&mut self) {}
     fn skip(&mut self, _: usize) {}
 }
@@ -311,4 +353,5 @@ fn run_at(
 mod cancellation;
 mod correctness;
 mod mechanics;
+mod negation;
 mod pipeline;

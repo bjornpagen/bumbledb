@@ -37,6 +37,12 @@ pub struct NodeStats {
     pub residual_pass: u64,
     /// Residual comparisons that failed.
     pub residual_fail: u64,
+    /// Anti-probes issued for surviving bindings at this node
+    /// (docs/architecture/40-execution.md, § anti-probe filters).
+    pub anti_probe_probed: u64,
+    /// Anti-probes that hit — bindings rejected. Selectivity is
+    /// `rejected / probed`.
+    pub anti_probe_rejected: u64,
     /// D2 subtree skips propagated through this node.
     pub skips: u64,
 }

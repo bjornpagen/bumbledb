@@ -186,6 +186,11 @@ pub trait Counters {
     fn probe_hash(&mut self, node: usize, subatom: usize);
     fn probe(&mut self, node: usize, subatom: usize, hit: bool);
     fn residual(&mut self, node: usize, pass: bool);
+    /// One anti-probe ran for a surviving binding (docs/architecture/
+    /// 40-execution.md, § anti-probe filters): `hit` means a matching
+    /// fact exists in the negated occurrence and the binding is
+    /// rejected; a miss survives.
+    fn anti_probe(&mut self, node: usize, hit: bool);
     fn emit(&mut self);
     /// A D2 subtree skip propagated through this node.
     fn skip(&mut self, node: usize);
@@ -300,6 +305,11 @@ struct NodeScratch {
     sources: Vec<Vec<Source>>,
     /// Residual operand sources, aligned with the node's residual list.
     residual_sources: Vec<(Source, Source)>,
+    /// Anti-probe key sources, aligned with the node's anti-probe list
+    /// (one inner vec per anti-probe, one source per key variable) —
+    /// resolved per pass against the runtime cover choice, exactly like
+    /// `sources`.
+    anti_sources: Vec<Vec<Source>>,
     /// Per-entry survivor mask for the compaction kernel.
     mask: Vec<u8>,
     /// Pipeline probe-batch parent indices (docs/perf/ PRD 09): the
@@ -333,6 +343,10 @@ pub struct Executor {
     slot_map: Vec<Vec<Vec<usize>>>,
     /// Per residual: (lhs slot, rhs slot), aligned with each node's list.
     residual_slots: Vec<Vec<(PlacedComparison, usize, usize)>>,
+    /// Per anti-probe, aligned with each node's `anti_probes` list: the
+    /// negated occurrence and its probe-key layout, precomputed like
+    /// `residual_slots`.
+    anti_probe_slots: Vec<Vec<AntiProbeSpec>>,
     scratch: Vec<NodeScratch>,
     /// The leaf fast paths (docs/perf/ PRD 05) apply when the last node
     /// has exactly one subatom — its cover is fixed, so the per-entry
@@ -387,6 +401,20 @@ struct PipeTables {
     absorb: Option<usize>,
 }
 
+/// One anti-probe resolved for execution (docs/architecture/
+/// 40-execution.md, § anti-probe filters): the negated occurrence's
+/// index and its probe-key parts — the occurrence's single trie level in
+/// binding order, each variable with its first binding slot and its
+/// [`crate::ir::normalize::SlotWidth`] word count.
+struct AntiProbeSpec {
+    occ: usize,
+    /// Per key variable: (variable, first binding slot, width in words).
+    parts: Vec<(crate::ir::VarId, usize, usize)>,
+    /// Total probe-key words (the occurrence's `key_widths[0]`); zero for
+    /// the emptiness-gate form.
+    key_words: usize,
+}
+
 /// The single-subatom-leaf precompute (docs/perf/ PRD 05): everything
 /// the leaf fast paths would otherwise re-derive per node entry.
 struct LeafPrecompute {
@@ -397,6 +425,7 @@ struct LeafPrecompute {
     row: Vec<u64>,
 }
 
+mod anti_probe;
 mod bindings;
 mod cancel;
 mod counters;

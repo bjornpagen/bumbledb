@@ -79,8 +79,8 @@ fn hoisted_gathers_match_the_per_position_reference() {
                     generation: Generation::None,
                 },
             ],
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("valid fixture");

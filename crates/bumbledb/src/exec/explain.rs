@@ -34,6 +34,10 @@ pub struct CountingCounters {
     hashes: Vec<u64>,
     /// Per node: residual `[pass, fail]`.
     residuals: Vec<[u64; 2]>,
+    /// Per node: anti-probe `[miss (binding survives), hit (binding
+    /// rejected)]` — probed is the sum (docs/architecture/40-execution.md,
+    /// § anti-probe filters).
+    anti_probes: Vec<[u64; 2]>,
     /// Per node: D2 subtree skips propagated through it.
     skips: Vec<u64>,
     /// Per node: `[batches drawn, entries yielded]` — batching engaged

@@ -62,7 +62,18 @@ fn build_occurrences(
             let field_types: Vec<crate::encoding::TypeDesc> = (0..layout.field_count())
                 .map(|idx| layout.field_type(idx))
                 .collect();
-            let (selections, filters) = split_filters(&occurrence.filters);
+            // A positive occurrence's Eq-constants become selection
+            // levels (probes); a negated occurrence keeps its whole
+            // filter list — the ordinary filtered view its anti-probe
+            // runs against, memoized per (generation, resolved filters)
+            // (docs/architecture/40-execution.md, § anti-probe filters).
+            // A selection's miss contract — "the whole conjunctive query
+            // is empty" — holds for positive occurrences only; an empty
+            // negated view just means the anti-probe never rejects.
+            let (selections, filters) = match occurrence.polarity {
+                Polarity::Positive => split_filters(&occurrence.filters),
+                Polarity::Negated => (Vec::new(), occurrence.filters.clone()),
+            };
             PlanOccurrence {
                 occ_id: occurrence.occ_id,
                 relation: occurrence.relation,
@@ -82,14 +93,15 @@ fn build_occurrences(
 /// attach to the **earliest node at which every variable of the item is
 /// bound**. `bound` holds the cumulative bound-variable set after each
 /// node; a zero-variable item (an emptiness-gate anti-probe) attaches to
-/// the root because the empty set is bound everywhere.
-fn earliest_bound_node<'a>(
-    bound: &[BTreeSet<VarId>],
-    mut vars: impl Iterator<Item = &'a VarId>,
-) -> Option<usize> {
+/// the root because the empty set is bound everywhere. The variables are
+/// a slice, re-walked in full per node: a single iterator consumed
+/// across the `position` steps is exhausted after the first failing
+/// node, making every later check vacuously true — the one-node-too-
+/// early misattachment the placement regression test pins.
+fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usize> {
     bound
         .iter()
-        .position(|bound_here| vars.all(|v| bound_here.contains(v)))
+        .position(|bound_here| vars.iter().all(|v| bound_here.contains(v)))
 }
 
 /// Validates a plan against its normalized query, deriving covers,
@@ -161,7 +173,7 @@ pub fn validate(
 
     // Residual placement: the earliest node at which both sides are bound.
     for (residual_idx, residual) in normalized.residuals.iter().enumerate() {
-        let Some(node) = earliest_bound_node(&bound, [residual.lhs, residual.rhs].iter()) else {
+        let Some(node) = earliest_bound_node(&bound, &[residual.lhs, residual.rhs]) else {
             return Err(PlanError::UnplacedResidual {
                 residual: residual_idx,
             });
@@ -171,8 +183,7 @@ pub fn validate(
     // Decomposed interval word residuals: the same rule over the word
     // operands' variables.
     for (residual_idx, residual) in normalized.word_residuals.iter().enumerate() {
-        let Some(node) = earliest_bound_node(&bound, [residual.lhs.var, residual.rhs.var].iter())
-        else {
+        let Some(node) = earliest_bound_node(&bound, &[residual.lhs.var, residual.rhs.var]) else {
             return Err(PlanError::UnplacedWordResidual {
                 residual: residual_idx,
             });
@@ -184,9 +195,8 @@ pub fn validate(
     // attaches to the root (docs/architecture/40-execution.md,
     // § anti-probe filters).
     for (probe_idx, anti_probe) in normalized.anti_probes.iter().enumerate() {
-        let Some(node) =
-            earliest_bound_node(&bound, anti_probe.probe_bindings.iter().map(|(_, v)| v))
-        else {
+        let vars: Vec<VarId> = anti_probe.probe_bindings.iter().map(|(_, v)| *v).collect();
+        let Some(node) = earliest_bound_node(&bound, &vars) else {
             return Err(PlanError::UnplacedAntiProbe {
                 anti_probe: probe_idx,
             });
@@ -219,8 +229,17 @@ pub fn validate(
     // these occurrences, so no Eq-constant can sit in `filters`. The real
     // producers `check_selections` guards against are hand-built
     // `PlanOccurrence`s (tests, future callers); the executor-side twin
-    // is a debug_assert too.
-    debug_assert!(check_selections(&occurrences).is_ok());
+    // is a debug_assert too. Positive occurrences only (they lead the
+    // table): a negated occurrence's Eq-constants legitimately live in
+    // its filter list (see `build_occurrences`).
+    debug_assert!({
+        let positive = normalized
+            .occurrences
+            .iter()
+            .filter(|o| o.polarity == Polarity::Positive)
+            .count();
+        check_selections(&occurrences[..positive]).is_ok()
+    });
 
     let distinct_bindings = provably_distinct(normalized, schema);
     let skip_free = nodes.iter().all(|n| n.sink_relevant);

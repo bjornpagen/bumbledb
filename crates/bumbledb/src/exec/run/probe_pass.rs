@@ -1,5 +1,6 @@
 //! One cross-parent probe pass (docs/perf/ PRD 09).
 
+use super::anti_probe::anti_probe_pass;
 use super::{
     Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, NodeScratch, PipeTables, Sink,
     Source, ValidatedPlan, PREFETCH_WIDTH_FLOOR,
@@ -172,6 +173,29 @@ impl Executor {
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
         counters.phase_end(node_idx, JoinPhase::Residual);
+
+        // Anti-probes: the residual step's sibling (docs/architecture/
+        // 40-execution.md, § anti-probe filters) — hits are compacted
+        // away on the same cursor-write. Slot reads go through each
+        // element's parent row, exactly like the residuals above.
+        anti_probe_pass(
+            &self.anti_probe_slots[node_idx],
+            node_idx,
+            &node.subatoms[cover_sub].vars,
+            arity,
+            colts,
+            &scratch.entry_keys,
+            &mut scratch.survivors,
+            &mut scratch.probe_keys,
+            &mut scratch.hashes,
+            &mut scratch.mask,
+            &mut scratch.anti_sources,
+            |element, slot| {
+                let parent = scratch.parents[element] as usize;
+                scratch.pending_bindings[parent * slot_count + slot]
+            },
+            counters,
+        );
 
         // Survivor routing. Origins (PRD 10): the absorb node mints one
         // fresh origin per routed survivor — the cancellation unit is

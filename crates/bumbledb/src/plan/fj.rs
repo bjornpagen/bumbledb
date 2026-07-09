@@ -115,11 +115,18 @@ pub struct PlanOccurrence {
     /// The field each variable reads from.
     pub vars: Vec<(crate::schema::FieldId, VarId)>,
     /// Probeable equalities, ordered by field id (deterministic plans).
+    /// Always empty for a negated occurrence: its Eq-constants stay in
+    /// `filters` (below).
     pub selections: Vec<Selection>,
     /// Residual per-occurrence filters (evaluated at the source view):
     /// non-Eq compares, every `FieldsCompare`, and the interval
-    /// compositions — never an Eq-constant, which lowering routes into
-    /// `selections`.
+    /// compositions — never an Eq-constant on a positive occurrence,
+    /// which lowering routes into `selections`. A **negated** occurrence
+    /// keeps its whole lowered filter list here, Eq-constants included:
+    /// the anti-probe runs against the ordinary filtered view, memoized
+    /// per (generation, resolved filters), and an empty view just means
+    /// the probe never rejects (docs/architecture/40-execution.md,
+    /// § anti-probe filters).
     pub filters: Vec<FilterPredicate>,
     /// The field→column map (docs/architecture/50-storage.md image
     /// layout): one [`ColumnSpan`] per field of the relation, in
@@ -218,6 +225,18 @@ impl ValidatedPlan {
     #[must_use]
     pub fn slot_count(&self) -> usize {
         self.slots.iter().map(|(_, width)| width.slots()).sum()
+    }
+
+    /// Whether an occurrence is negated — the plan-shape fact: a negated
+    /// occurrence appears in no subatom and is reached exclusively
+    /// through the nodes' `anti_probes`.
+    #[must_use]
+    pub fn is_negated(&self, occ: OccId) -> bool {
+        !self
+            .nodes
+            .iter()
+            .flat_map(|node| &node.subatoms)
+            .any(|subatom| subatom.occ == occ)
     }
 
     #[must_use]

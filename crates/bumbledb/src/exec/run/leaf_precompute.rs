@@ -8,7 +8,12 @@ impl LeafPrecompute {
         residual_slots: &[Vec<(PlacedComparison, usize, usize)>],
     ) -> Self {
         let last = plan.nodes().len() - 1;
-        let single = plan.nodes()[last].subatoms.len() == 1;
+        // A leaf carrying anti-probes declines the fast paths: they run
+        // on the generic batch machinery, where the anti-probe pass sits
+        // (conservative by construction — correctness never depends on a
+        // fast path firing).
+        let single =
+            plan.nodes()[last].subatoms.len() == 1 && plan.nodes()[last].anti_probes.is_empty();
         if !single {
             return Self {
                 single,

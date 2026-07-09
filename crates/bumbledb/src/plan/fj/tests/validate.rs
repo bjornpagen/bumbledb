@@ -275,6 +275,43 @@ fn residuals_attach_to_the_first_node_binding_both_sides() {
     assert!(validated.nodes()[2].residuals.is_empty());
 }
 
+/// The placement regression (found executing PRD 16): an item whose
+/// variable set first fails at the root must keep being checked in
+/// full at every later node. The bug this pins: consuming one
+/// variables iterator across the node scan leaves it exhausted after
+/// the first failing node, so the NEXT node passes vacuously — a < c
+/// (bound at nodes 0 and 2) attached to node 1, where c is unbound,
+/// and the executor compared against a zero slot.
+#[test]
+fn placement_rechecks_every_variable_at_every_node() {
+    // Residual half: a < c places on node 2 (c binds there), never 1.
+    let query = normalized(
+        clover().occurrences,
+        vec![PlacedComparison {
+            op: CmpOp::Lt,
+            lhs: A,
+            rhs: C,
+        }],
+    );
+    let plan = binary2fj(&query, &order(&[0, 1, 2]));
+    let validated =
+        validate(&plan, &query, &schema(3, 3), vec![0; 3], &BTreeSet::new()).expect("valid plan");
+    assert!(validated.nodes()[0].residuals.is_empty());
+    assert!(validated.nodes()[1].residuals.is_empty());
+    assert_eq!(validated.nodes()[2].residuals.len(), 1);
+
+    // Anti-probe half: ¬T(a, c) places on node 2 through the same rule.
+    let mut occurrences = clover().occurrences;
+    occurrences.push(negated(3, 2, &[(1, A), (2, C)]));
+    let query = normalized(occurrences, vec![]);
+    let plan = binary2fj(&query, &order(&[0, 1, 2]));
+    let validated =
+        validate(&plan, &query, &schema(3, 3), vec![0; 3], &BTreeSet::new()).expect("valid plan");
+    assert!(validated.nodes()[0].anti_probes.is_empty());
+    assert!(validated.nodes()[1].anti_probes.is_empty());
+    assert_eq!(validated.nodes()[2].anti_probes.len(), 1);
+}
+
 #[test]
 fn self_join_plans_validate_over_occurrences() {
     // Grandparent over OrgParent: two occurrences of one relation.

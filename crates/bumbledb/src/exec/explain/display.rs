@@ -66,6 +66,13 @@ impl fmt::Display for Report<'_> {
                     )?;
                     writeln!(
                         f,
+                        "    anti-probes: {} placed, probed={} rejected={}",
+                        node.anti_probes.len(),
+                        node_stats.anti_probe_probed,
+                        node_stats.anti_probe_rejected,
+                    )?;
+                    writeln!(
+                        f,
                         "    estimated={} actual={} entries={} skips={}",
                         node_stats.estimate,
                         node_stats.actual,

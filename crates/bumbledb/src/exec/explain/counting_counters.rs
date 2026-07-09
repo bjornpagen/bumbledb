@@ -18,6 +18,7 @@ impl CountingCounters {
             probes: vec![[0; 2]; nodes * stride],
             hashes: vec![0; nodes * stride],
             residuals: vec![[0; 2]; nodes],
+            anti_probes: vec![[0; 2]; nodes],
             skips: vec![0; nodes],
             batches: vec![[0; 2]; nodes],
             emits: 0,

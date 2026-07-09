@@ -27,18 +27,18 @@ fn pipelined_executor_matches_recursive_and_oracle() {
         t.dedup();
         let dir2 = TempDir::new(&format!("run-pipeline-{n_r}-{n_s}-{n_t}"));
         let views = views_of(&dir2, &schema, &[r.clone(), s.clone(), t.clone()]);
-        let normalized = NormalizedQuery {
-            occurrences: vec![
+        let normalized = normalized(
+            vec![
                 occurrence(0, 0, &[(0, 0), (1, 1)]),
                 occurrence(1, 1, &[(0, 1), (1, 2)]),
                 occurrence(2, 2, &[(0, 2), (1, 3)]),
             ],
-            residuals: vec![PlacedComparison {
+            vec![PlacedComparison {
                 op: CmpOp::Ne,
                 lhs: VarId(0),
                 rhs: VarId(3),
             }],
-        };
+        );
         let sinks = all_vars(&normalized);
         let pipe_plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
         assert!(pipe_plan.skip_free(), "all-vars projections are skip-free");
@@ -106,6 +106,7 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
             }
         }
         fn residual(&mut self, _: usize, _: bool) {}
+        fn anti_probe(&mut self, _: usize, _: bool) {}
         fn emit(&mut self) {}
         fn skip(&mut self, _: usize) {}
         fn phase_start(&mut self, node: usize, phase: JoinPhase) {
@@ -128,14 +129,14 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
     let s: Vec<(u64, u64)> = (0..1000).map(|i| (i, i % 5)).collect();
     let t: Vec<(u64, u64)> = (0..5).map(|i| (i, i)).collect();
     let views = views_of(&dir, &schema, &[r, s, t]);
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 1), (1, 2)]),
             occurrence(2, 2, &[(0, 2), (1, 3)]),
         ],
-        residuals: vec![],
-    };
+        vec![],
+    );
     let sinks = all_vars(&normalized);
     let plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
     assert!(plan.skip_free());

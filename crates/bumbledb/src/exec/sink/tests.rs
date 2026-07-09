@@ -207,6 +207,7 @@ impl Counters for SkipCounter {
     fn probe_hash(&mut self, _: usize, _: usize) {}
     fn probe(&mut self, _: usize, _: usize, _: bool) {}
     fn residual(&mut self, _: usize, _: bool) {}
+    fn anti_probe(&mut self, _: usize, _: bool) {}
     fn emit(&mut self) {}
     fn skip(&mut self, _: usize) {
         self.skips += 1;

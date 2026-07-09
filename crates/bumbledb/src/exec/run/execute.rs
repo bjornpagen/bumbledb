@@ -1,9 +1,49 @@
 //! Executor construction and the per-execution entry point.
 
 use super::{
-    Bindings, Colt, Counters, Cursor, Executor, LeafPrecompute, NodeScratch, PipeTables,
-    PlacedComparison, Sink, ValidatedPlan, BATCH,
+    AntiProbeSpec, Bindings, Colt, Counters, Cursor, Executor, LeafPrecompute, NodeScratch,
+    PipeTables, PlacedComparison, Sink, ValidatedPlan, BATCH,
 };
+
+/// Anti-probe specs (docs/architecture/40-execution.md, § anti-probe
+/// filters), aligned with each node's `anti_probes` list: the negated
+/// occurrence's single trie level in binding order, each variable with
+/// its first slot and slot width — precomputed like `residual_slots`.
+fn anti_probe_slots(plan: &ValidatedPlan) -> Vec<Vec<AntiProbeSpec>> {
+    plan.nodes()
+        .iter()
+        .map(|node| {
+            node.anti_probes
+                .iter()
+                .map(|anti_probe| {
+                    let occ = usize::from(anti_probe.occurrence.0);
+                    let occurrence = &plan.occurrences()[occ];
+                    debug_assert_eq!(
+                        occurrence.trie_schema.len(),
+                        1,
+                        "a negated occurrence's trie schema is one probe level"
+                    );
+                    let parts: Vec<(crate::ir::VarId, usize, usize)> = occurrence.trie_schema[0]
+                        .iter()
+                        .map(|var| {
+                            let (_, width) = plan
+                                .slots()
+                                .iter()
+                                .find(|(slot_var, _)| slot_var == var)
+                                .expect("anti-probe variables are slot-bound");
+                            (*var, plan.slot_of(*var), width.slots())
+                        })
+                        .collect();
+                    AntiProbeSpec {
+                        occ,
+                        parts,
+                        key_words: usize::from(occurrence.key_widths[0]),
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
 
 impl Executor {
     /// An executor with the default batch size ([`BATCH`]).
@@ -44,10 +84,12 @@ impl Executor {
                     .collect()
             })
             .collect();
+        let anti_probe_slots = anti_probe_slots(plan);
         let scratch = plan
             .nodes()
             .iter()
-            .map(|node| {
+            .zip(&anti_probe_slots)
+            .map(|(node, anti_specs)| {
                 let max_arity = node
                     .subatoms
                     .iter()
@@ -55,11 +97,20 @@ impl Executor {
                     .max()
                     .unwrap_or(0)
                     .max(1);
+                // Probe keys also hold anti-probe keys, whose width can
+                // exceed every subatom arity (an interval variable is two
+                // words; the negated occurrence joins no subatom).
+                let max_key = anti_specs
+                    .iter()
+                    .map(|spec| spec.key_words)
+                    .max()
+                    .unwrap_or(0)
+                    .max(max_arity);
                 NodeScratch {
                     entry_keys: vec![0; batch * max_arity],
                     children: vec![Cursor::Row(0); batch],
                     survivors: Vec::with_capacity(batch),
-                    probe_keys: vec![0; batch * max_arity],
+                    probe_keys: vec![0; batch * max_key],
                     hashes: Vec::with_capacity(batch),
                     sibling_children: node
                         .subatoms
@@ -68,6 +119,7 @@ impl Executor {
                         .collect(),
                     sources: node.subatoms.iter().map(|_| Vec::new()).collect(),
                     residual_sources: Vec::new(),
+                    anti_sources: anti_specs.iter().map(|_| Vec::new()).collect(),
                     mask: Vec::with_capacity(batch),
                     parents: Vec::with_capacity(batch),
                     pending_bindings: Vec::new(),
@@ -84,6 +136,7 @@ impl Executor {
             cursors: Vec::new(),
             slot_map,
             residual_slots,
+            anti_probe_slots,
             scratch,
             leaf_single: leaf.single,
             leaf_residual_sources: leaf.residual_sources,

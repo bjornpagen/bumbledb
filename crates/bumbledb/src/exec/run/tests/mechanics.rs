@@ -9,13 +9,13 @@ fn dynamic_cover_prefers_the_forced_small_side() {
     let r: Vec<(u64, u64)> = (0..500).map(|i| (i % 250, i)).collect();
     let s: Vec<(u64, u64)> = vec![(0, 0), (1, 1)];
     let views = views_of(&dir, &schema, &[r, s]);
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 0), (1, 2)]),
         ],
-        residuals: vec![],
-    };
+        vec![],
+    );
     // Hand-build the GJ plan: [[R(x), S(x)], [R(a)], [S(b)]].
     let plan = crate::plan::fj::FjPlan {
         nodes: vec![
@@ -80,14 +80,14 @@ fn covers_never_rebind_an_already_bound_variable() {
     let views = views_of(&dir, &schema, &[r, s, t]);
 
     // Q(x,y,z) :- R(x,y), S(y,z), T(x,z), order [R, S, T].
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 1), (1, 2)]),
             occurrence(2, 2, &[(0, 0), (1, 2)]),
         ],
-        residuals: vec![],
-    };
+        vec![],
+    );
     let plan = planned(&normalized, &schema, &[0, 1, 2]);
 
     // The mixed-var subatom T(x, z) must not be listed as a cover of
@@ -117,13 +117,13 @@ fn backtracking_restores_sources_across_sequential_executions() {
     let r: Vec<(u64, u64)> = (0..20).map(|i| (i % 4, i)).collect();
     let s: Vec<(u64, u64)> = (0..4).map(|i| (i, i * 10)).collect();
     let views = views_of(&dir, &schema, &[r, s]);
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 0), (1, 2)]),
         ],
-        residuals: vec![],
-    };
+        vec![],
+    );
     let plan = planned(&normalized, &schema, &[0, 1]);
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slots().len());
@@ -159,18 +159,18 @@ fn results_are_identical_across_batch_sizes() {
     let s: Vec<(u64, u64)> = (0..90).map(|i| (i % 11, i % 5)).collect();
     let t: Vec<(u64, u64)> = (0..40).map(|i| (i % 5, i)).collect();
     let views = views_of(&dir, &schema, &[r, s, t]);
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 1), (1, 2)]),
             occurrence(2, 2, &[(0, 2), (1, 3)]),
         ],
-        residuals: vec![PlacedComparison {
+        vec![PlacedComparison {
             op: CmpOp::Ne,
             lhs: VarId(0),
             rhs: VarId(3),
         }],
-    };
+    );
     let plan = planned(&normalized, &schema, &[0, 1, 2]);
     let reference = run_batched(&plan, &views, 1);
     assert!(!reference.is_empty());
@@ -197,13 +197,13 @@ fn phase_one_hashes_the_whole_batch_before_any_phase_two_probe() {
     let r: Vec<(u64, u64)> = (0..10).map(|i| (i, i)).collect();
     let s: Vec<(u64, u64)> = (0..10).map(|i| (i, i * 2)).collect();
     let views = views_of(&dir, &schema, &[r, s]);
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 0), (1, 2)]),
         ],
-        residuals: vec![],
-    };
+        vec![],
+    );
     let plan = planned(&normalized, &schema, &[0, 1]);
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slots().len());
@@ -251,14 +251,14 @@ fn pinned_siblings_probe_without_hashing() {
     let b_rows: Vec<(u64, u64)> = vec![(1, 100), (2, 200)];
     let c_rows: Vec<(u64, u64)> = vec![(10, 100), (20, 200)];
     let views = views_of(&dir, &schema, &[a_rows, b_rows, c_rows]);
-    let normalized = NormalizedQuery {
-        occurrences: vec![
+    let normalized = normalized(
+        vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]), // A(a, b)
             occurrence(1, 1, &[(0, 0), (1, 2)]), // B(a, c)
             occurrence(2, 2, &[(0, 1), (1, 2)]), // C(b, c)
         ],
-        residuals: vec![],
-    };
+        vec![],
+    );
     // Hand-built: node 0 probes both B(a) and C(b) — C's second
     // appearance at node 1 is then a probe against its pinned child.
     let plan = crate::plan::fj::FjPlan {

@@ -72,6 +72,8 @@ impl Counters for PhaseTimers {
     #[inline]
     fn residual(&mut self, _: usize, _: bool) {}
     #[inline]
+    fn anti_probe(&mut self, _: usize, _: bool) {}
+    #[inline]
     fn emit(&mut self) {}
     #[inline]
     fn skip(&mut self, _: usize) {}
@@ -101,6 +103,8 @@ impl Counters for NoopCounters {
     fn probe(&mut self, _: usize, _: usize, _: bool) {}
     #[inline]
     fn residual(&mut self, _: usize, _: bool) {}
+    #[inline]
+    fn anti_probe(&mut self, _: usize, _: bool) {}
     #[inline]
     fn emit(&mut self) {}
     #[inline]

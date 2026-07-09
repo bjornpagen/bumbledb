@@ -27,17 +27,31 @@ pub(super) fn run_join<C: crate::exec::run::Counters>(
     let views_span = obs::span(obs::names::VIEWS, obs::Category::Execute);
     let generation = txn.generation()?;
     memo.tick += 1;
-    // Lowering routes every Eq-constant into selections; a leak here would
-    // silently resurrect the per-param view scan (docs/architecture/30-execution.md).
+    // Lowering routes every positive occurrence's Eq-constant into
+    // selections; a leak here would silently resurrect the per-param
+    // view scan (docs/architecture/30-execution.md). Negated occurrences
+    // are exempt: their Eq-constants ARE view filters — the ordinary
+    // filtered view their anti-probes run against, memoized per
+    // (generation, resolved filters) like any occurrence
+    // (docs/architecture/40-execution.md, § anti-probe filters).
     debug_assert!(
-        resolved_filters.iter().flatten().all(|f| !matches!(
-            f,
-            FilterPredicate::Compare {
-                op: crate::ir::CmpOp::Eq,
-                ..
-            }
-        )),
-        "Eq-constant predicates never reach view filters"
+        resolved_filters
+            .iter()
+            .enumerate()
+            .all(|(occ_idx, filters)| {
+                plan.is_negated(crate::ir::normalize::OccId(
+                    u16::try_from(occ_idx).expect("occurrence ids fit u16"),
+                )) || filters.iter().all(|f| {
+                    !matches!(
+                        f,
+                        FilterPredicate::Compare {
+                            op: crate::ir::CmpOp::Eq,
+                            ..
+                        }
+                    )
+                })
+            }),
+        "Eq-constant predicates never reach a positive occurrence's view filters"
     );
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
         // Warm fast path: an active or parked binding for this exact

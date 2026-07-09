@@ -28,6 +28,7 @@ impl CountingCounters {
                     })
                     .collect();
                 let [pass, fail] = self.residuals[node_idx];
+                let [anti_miss, anti_hit] = self.anti_probes[node_idx];
                 let [batches, batch_entries] = self.batches[node_idx];
                 NodeStats {
                     entries: self.node_entries[node_idx],
@@ -38,6 +39,8 @@ impl CountingCounters {
                     covers,
                     residual_pass: pass,
                     residual_fail: fail,
+                    anti_probe_probed: anti_miss + anti_hit,
+                    anti_probe_rejected: anti_hit,
                     skips: self.skips[node_idx],
                 }
             })

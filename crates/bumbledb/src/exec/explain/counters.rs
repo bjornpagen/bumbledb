@@ -21,6 +21,9 @@ impl Counters for CountingCounters {
     fn residual(&mut self, node: usize, pass: bool) {
         self.residuals[node][usize::from(!pass)] += 1;
     }
+    fn anti_probe(&mut self, node: usize, hit: bool) {
+        self.anti_probes[node][usize::from(hit)] += 1;
+    }
     fn emit(&mut self) {
         self.emits += 1;
     }

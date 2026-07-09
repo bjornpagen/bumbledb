@@ -1,5 +1,6 @@
 //! The leaf pass over one node's cover batch (single-node and last-node).
 
+use super::anti_probe::anti_probe_pass;
 use super::{
     better_cover, BatchToken, Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase,
     KeyCount, LeafBatch, Sink, Source, ValidatedPlan, PREFETCH_WIDTH_FLOOR,
@@ -229,6 +230,27 @@ impl Executor {
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
             counters.phase_end(node_idx, JoinPhase::Residual);
+
+            // Anti-probes: the residual step's sibling (docs/architecture/
+            // 40-execution.md, § anti-probe filters) — this node's lowered
+            // negated atoms probe per surviving binding; hits are
+            // compacted away on the same cursor-write. Slot reads come
+            // from the outer bindings (constant across the batch).
+            anti_probe_pass(
+                &self.anti_probe_slots[node_idx],
+                node_idx,
+                cover_vars,
+                arity,
+                colts,
+                &scratch.entry_keys,
+                &mut scratch.survivors,
+                &mut scratch.probe_keys,
+                &mut scratch.hashes,
+                &mut scratch.mask,
+                &mut scratch.anti_sources,
+                |_, slot| bindings.get(slot),
+                counters,
+            );
 
             // The leaf (docs/perf/ PRD 01): the last plan node hands its
             // surviving batch to the sink whole. No recursion, no journal,
