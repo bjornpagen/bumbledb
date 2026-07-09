@@ -112,12 +112,12 @@ fn in_family_equals_the_union_of_per_element_executions() {
         .expect("execute");
     assert_eq!(id_amount_rows(&got_dup), id_amount_rows(&got_once));
 
-    // A scalar value where the set is expected is a bind-time type error
-    // (a ParamId is scalar or set, never both).
+    // A scalar value where the set is expected is a precise bind-time
+    // error (a ParamId is scalar or set, never both).
     let err = set_query
         .execute_collect(&txn, &cache, &[Value::U64(7)])
         .unwrap_err();
-    assert!(matches!(err, Error::ParamTypeMismatch { param, .. } if param.0 == 0));
+    assert!(matches!(err, Error::ParamSetExpected { param } if param.0 == 0));
 }
 
 /// Out-of-vocabulary string elements resolve to per-element miss

@@ -202,7 +202,7 @@ pub(super) fn check_source(
                 target_check: &checks.target,
                 key_bytes: &key_bytes,
                 fact_bytes,
-                side: Direction::SourceUnsatisfied,
+                direction: Direction::SourceUnsatisfied,
             };
             if interval_position.is_some() {
                 checker.check_coverage(&probe)?;
@@ -311,7 +311,7 @@ pub(super) fn check_target(
                     let fact = fact_by_row(data, txn, source_rel, source_row)?;
                     return Err(Error::ContainmentViolation {
                         statement: sid,
-                        side: Direction::TargetRequired,
+                        direction: Direction::TargetRequired,
                         fact: fact.into(),
                     });
                 }
@@ -381,7 +381,7 @@ pub(super) fn check_target(
             target_check: &selections.containment(sid).target,
             key_bytes,
             fact_bytes,
-            side: Direction::TargetRequired,
+            direction: Direction::TargetRequired,
         };
         checker.check_coverage(&probe)?;
     }
@@ -455,7 +455,7 @@ struct Probe<'a> {
     /// The source fact — the violation payload.
     fact_bytes: &'a [u8],
     /// Which side's judgment a miss convicts.
-    side: Direction,
+    direction: Direction,
 }
 
 impl Probe<'_> {
@@ -465,7 +465,7 @@ impl Probe<'_> {
     fn unsatisfied(&self) -> Error {
         Error::ContainmentViolation {
             statement: self.statement,
-            side: self.side,
+            direction: self.direction,
             fact: self.fact_bytes.into(),
         }
     }

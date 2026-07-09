@@ -1,29 +1,32 @@
-//! Edge-case pins from the design audits: cyclic FKs, nullary relations,
-//! serial exhaustion, wide enums, 1-byte compound guards, and empty
-//! interned values — each a doc claim that previously rested on a
-//! code-reading argument instead of a test.
+//! Edge-case pins from the design audits: cyclic containments, nullary
+//! relations, serial exhaustion, wide enums, 1-byte compound guards, and
+//! empty interned values — each a doc claim that previously rested on a
+//! code-reading argument instead of a test. Plus the PRD 20 bind matrix:
+//! precise per-position errors for every scalar/set misuse, and a valid
+//! mixed bind through the public [`bumbledb::ParamArg`] surface.
 
 use std::path::PathBuf;
 
-use bumbledb::ir::{AggOp, Atom, FindTerm, Query, Term, VarId};
+use bumbledb::error::ValidationError;
+use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Term, VarId};
 use bumbledb::schema::{
-    ConstraintDescriptor, ConstraintId, FieldDescriptor, FieldId, Generation, RelationDescriptor,
-    RelationId, SchemaDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
+    StatementDescriptor, ValueType,
 };
-use bumbledb::{Db, Error, Fact, Value};
+use bumbledb::{Db, Error, Fact, ParamArg, ResultBuffer, ResultValue, Value};
 
 bumbledb::schema! {
     relation Alpha {
         id: u64 as AlphaId, serial,
-        beta: u64 as BetaId, fk(Beta.id),
+        beta: u64 as BetaId,
     }
     relation Beta {
         id: u64 as BetaId, serial,
-        alpha: u64 as AlphaId, fk(Alpha.id),
+        alpha: u64 as AlphaId,
     }
     relation Node {
         id: u64 as NodeId, serial,
-        parent: u64 as NodeId, fk(Node.id),
+        parent: u64 as NodeId,
     }
     relation Gate {
         tag: str,
@@ -33,6 +36,16 @@ bumbledb::schema! {
         payload: bytes,
         name: str,
     }
+    relation Posting {
+        id: u64 as PostingId, serial,
+        account: u64,
+        amount: i64,
+        memo: str,
+    }
+
+    Alpha(beta) <= Beta(id);
+    Beta(alpha) <= Alpha(id);
+    Node(parent) <= Node(id);
 }
 
 fn test_dir(tag: &str) -> PathBuf {
@@ -44,9 +57,9 @@ fn test_dir(tag: &str) -> PathBuf {
 
 /// "Cyclic references insert without any staging concept"
 /// (docs/architecture/10-data-model.md): A→B plus B→A in one delta, and a
-/// self-referencing row.
+/// self-referencing row — judgments run against the final state.
 #[test]
-fn cyclic_foreign_keys_insert_in_one_transaction() {
+fn cyclic_containments_insert_in_one_transaction() {
     let dir = test_dir("cyclic");
     let db = Db::create(&dir, schema()).expect("create");
     db.write(|tx| {
@@ -65,7 +78,7 @@ fn cyclic_foreign_keys_insert_in_one_transaction() {
         })?;
         Ok(())
     })
-    .expect("cycle commits: forward probes run against the final state");
+    .expect("cycle commits: source judgments run against the final state");
 
     // And the failure half: a cycle missing one side aborts whole.
     let err = db
@@ -77,7 +90,7 @@ fn cyclic_foreign_keys_insert_in_one_transaction() {
             Ok(())
         })
         .unwrap_err();
-    assert!(matches!(err, Error::ForeignKeyViolation { .. }));
+    assert!(matches!(err, Error::ContainmentViolation { .. }));
 
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
@@ -136,8 +149,8 @@ fn wide_enum_through_commit_and_scan() {
                 },
                 generation: Generation::None,
             }],
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("256 variants are legal");
@@ -159,9 +172,8 @@ fn wide_enum_through_commit_and_scan() {
     assert_eq!(facts, vec![vec![Value::Enum(0)], vec![Value::Enum(255)]]);
 
     // Bind-time enum range checking: a 256-variant enum accepts every u8,
-    // so pin the rejection on a narrow one via the fk fixture below — see
-    // `one_byte_compound_guards`' schema (2 variants): supplied ordinal 5
-    // is a typed ParamTypeMismatch, not a silent empty result.
+    // so pin the rejection on a narrow one (2 variants): supplied ordinal
+    // 5 is a typed ParamTypeMismatch, not a silent empty result.
     let narrow = SchemaDescriptor {
         relations: vec![RelationDescriptor {
             name: "N".into(),
@@ -179,8 +191,8 @@ fn wide_enum_through_commit_and_scan() {
                     generation: Generation::None,
                 },
             ],
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("valid");
@@ -213,8 +225,8 @@ fn wide_enum_through_commit_and_scan() {
     assert!(matches!(err, Error::ParamTypeMismatch { .. }));
 }
 
-/// Compound unique + FK over 1-byte fields (enum, bool): the dense 2-byte
-/// guard shape in `U`/`R` keys, commit-checked.
+/// A compound key plus a containment over 1-byte fields (enum, bool): the
+/// dense 2-byte guard shape in `U`/`R` keys, commit-judged.
 #[test]
 fn one_byte_compound_guards() {
     let status = ValueType::Enum {
@@ -236,10 +248,6 @@ fn one_byte_compound_guards() {
                         generation: Generation::None,
                     },
                 ],
-                constraints: vec![ConstraintDescriptor::Unique {
-                    name: "state_armed".into(),
-                    fields: Box::new([FieldId(0), FieldId(1)]),
-                }],
             },
             RelationDescriptor {
                 name: "Watcher".into(),
@@ -260,12 +268,26 @@ fn one_byte_compound_guards() {
                         generation: Generation::None,
                     },
                 ],
-                constraints: vec![ConstraintDescriptor::ForeignKey {
-                    name: "watch_fk".into(),
-                    fields: Box::new([FieldId(0), FieldId(1)]),
-                    target_relation: RelationId(0),
-                    target_constraint: ConstraintId(0),
-                }],
+            },
+        ],
+        statements: vec![
+            // Switch(state, armed) -> Switch
+            StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0), FieldId(1)]),
+            },
+            // Watcher(state, armed) <= Switch(state, armed)
+            StatementDescriptor::Containment {
+                source: Side {
+                    relation: RelationId(1),
+                    projection: Box::new([FieldId(0), FieldId(1)]),
+                    selection: Box::new([]),
+                },
+                target: Side {
+                    relation: RelationId(0),
+                    projection: Box::new([FieldId(0), FieldId(1)]),
+                    selection: Box::new([]),
+                },
             },
         ],
     }
@@ -282,8 +304,8 @@ fn one_byte_compound_guards() {
     })
     .expect("guarded insert commits");
 
-    // The FK holds over the 2-byte guard: a watcher of a missing pair
-    // aborts.
+    // The containment holds over the 2-byte guard: a watcher of a
+    // missing pair aborts.
     let err = db
         .write(|tx| {
             tx.insert_dyn(
@@ -293,16 +315,16 @@ fn one_byte_compound_guards() {
             Ok(())
         })
         .unwrap_err();
-    assert!(matches!(err, Error::ForeignKeyViolation { .. }));
+    assert!(matches!(err, Error::ContainmentViolation { .. }));
 
-    // Restrict holds too: deleting the referenced pair aborts.
+    // The target side holds too: deleting the required pair aborts.
     let err = db
         .write(|tx| {
             tx.delete_dyn(switch, &[Value::Enum(1), Value::Bool(true)])?;
             Ok(())
         })
         .unwrap_err();
-    assert!(matches!(err, Error::ForeignKeyViolation { .. }));
+    assert!(matches!(err, Error::ContainmentViolation { .. }));
 }
 
 /// Nullary use of a relation as a nonemptiness gate, end to end: a
@@ -363,4 +385,161 @@ fn zero_binding_gate_with_global_count() {
         .expect("execute");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows.get(0, 0), bumbledb::ResultValue::U64(2));
+}
+
+/// Q(id) :- Posting(id, account = ?set1, amount = ?0, memo = ?2) — one
+/// set among two scalars, the PRD 20 bind-matrix shape.
+fn mixed_params_query() -> Query {
+    Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            relation: Posting::RELATION,
+            bindings: vec![
+                (FieldId(0), Term::Var(VarId(0))),
+                (FieldId(1), Term::ParamSet(ParamId(1))),
+                (FieldId(2), Term::Param(ParamId(0))),
+                (FieldId(3), Term::Param(ParamId(2))),
+            ],
+        }],
+        negated: vec![],
+        predicates: vec![],
+    }
+}
+
+/// The PRD 20 bind matrix through the public [`ParamArg`] surface:
+/// scalar-where-set, set-where-scalar, a mistyped set element, and
+/// non-dense param ids each raise their precise error; a valid mixed
+/// bind (two scalars, one set) executes.
+#[test]
+fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
+    let dir = test_dir("bind-matrix");
+    let db = Db::create(&dir, schema()).expect("create");
+    let ids = db
+        .write(|tx| {
+            let mut ids = Vec::new();
+            for (account, amount, memo) in [
+                (10u64, 5i64, "rent"),
+                (11, 5, "rent"),
+                (12, 5, "rent"),
+                (10, 6, "rent"),
+                (11, 5, "food"),
+            ] {
+                let id: PostingId = tx.alloc()?;
+                tx.insert(&Posting {
+                    id,
+                    account,
+                    amount,
+                    memo: memo.to_owned(),
+                })?;
+                ids.push(id);
+            }
+            Ok(ids)
+        })
+        .expect("seed");
+
+    let mut prepared = db.prepare(&mixed_params_query()).expect("prepare");
+    db.read(|snap| {
+        let rent = Value::String(Box::from(&b"rent"[..]));
+
+        // A valid mixed bind — two scalars, one deduplicated set —
+        // executes through both the reusable-buffer and collect paths.
+        let args = [
+            ParamArg::Scalar(Value::I64(5)),
+            ParamArg::Set(&[Value::U64(10), Value::U64(11), Value::U64(11)]),
+            ParamArg::Scalar(rent.clone()),
+        ];
+        let mut out = ResultBuffer::new();
+        snap.execute_args(&mut prepared, &args, &mut out)?;
+        let mut got: Vec<u64> = (0..out.len())
+            .map(|row| {
+                let ResultValue::U64(id) = out.get(row, 0) else {
+                    panic!("column 0 is the posting id");
+                };
+                id
+            })
+            .collect();
+        got.sort_unstable();
+        assert_eq!(
+            got,
+            vec![ids[0].0, ids[1].0],
+            "accounts 10 and 11, amount 5, rent"
+        );
+        let collected = snap.execute_collect_args(&mut prepared, &args)?;
+        assert_eq!(collected.len(), 2);
+
+        // Scalar where the set is expected: the precise per-position error.
+        let err = snap
+            .execute_collect_args(
+                &mut prepared,
+                &[
+                    ParamArg::Scalar(Value::I64(5)),
+                    ParamArg::Scalar(Value::U64(10)),
+                    ParamArg::Scalar(rent.clone()),
+                ],
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::ParamSetExpected { param } if param.0 == 1),
+            "{err:?}"
+        );
+
+        // Set where a scalar is expected.
+        let err = snap
+            .execute_collect_args(
+                &mut prepared,
+                &[
+                    ParamArg::Set(&[Value::I64(5)]),
+                    ParamArg::Set(&[Value::U64(10)]),
+                    ParamArg::Scalar(rent.clone()),
+                ],
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::ParamScalarExpected { param } if param.0 == 0),
+            "{err:?}"
+        );
+
+        // A mistyped set element names its position.
+        let err = snap
+            .execute_collect_args(
+                &mut prepared,
+                &[
+                    ParamArg::Scalar(Value::I64(5)),
+                    ParamArg::Set(&[Value::U64(10), Value::I64(3)]),
+                    ParamArg::Scalar(rent.clone()),
+                ],
+            )
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::ParamElementTypeMismatch { param, element: 1, .. } if param.0 == 1
+            ),
+            "{err:?}"
+        );
+
+        // ...and the query stays bindable after every rejection.
+        let again = snap.execute_collect_args(&mut prepared, &args)?;
+        assert_eq!(again.len(), 2);
+        Ok(())
+    })
+    .expect("read");
+
+    // Non-dense param ids are a prepare-time validation error: a gap is
+    // a positional slot whose supplied value is never type-checked.
+    let mut gapped = mixed_params_query();
+    gapped.atoms[0].bindings[1] = (FieldId(1), Term::Var(VarId(1)));
+    let Err(err) = db.prepare(&gapped).map(|_| ()) else {
+        panic!("a gapped param id space must fail to prepare");
+    };
+    assert!(
+        matches!(
+            err,
+            Error::Validation(ValidationError::ParamIdGap { param }) if param.0 == 1
+        ),
+        "{err:?}"
+    );
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -44,15 +44,14 @@ impl PreparedQuery<'_> {
         result
     }
 
-    /// Executes with mixed scalar/set parameter arguments — the internal
-    /// entry the set machinery runs through until PRD 20 renders the
-    /// public bind signature (`docs/prd/20-api-errors-render-bind.md`).
+    /// Executes with mixed scalar/set parameter arguments — the
+    /// [`super::ParamArg`] entry behind [`crate::Snapshot::execute_args`].
     ///
     /// # Errors
     ///
-    /// As [`Self::execute`].
-    #[allow(dead_code)] // reader: PRD 20's public bind rendering
-                        // (tests drive it meanwhile)
+    /// As [`Self::execute`], plus the precise per-position bind errors
+    /// (`ParamSetExpected`/`ParamScalarExpected`/
+    /// `ParamElementTypeMismatch`).
     pub(crate) fn execute_args(
         &mut self,
         txn: &ReadTxn<'_>,
@@ -224,8 +223,7 @@ impl PreparedQuery<'_> {
     ///
     /// # Errors
     ///
-    /// As [`Self::execute`].
-    #[cfg(test)]
+    /// As [`Self::execute_args`].
     pub(crate) fn execute_collect_args(
         &mut self,
         txn: &ReadTxn<'_>,

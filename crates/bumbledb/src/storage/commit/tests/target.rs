@@ -295,14 +295,14 @@ fn assert_target_violation(result: Result<()>, statement: StatementId, source_fa
     let err = result.unwrap_err();
     let Error::ContainmentViolation {
         statement: named,
-        side,
+        direction,
         fact,
     } = &err
     else {
         panic!("expected a containment violation, got {err:?}");
     };
     assert_eq!(*named, statement);
-    assert_eq!(*side, Direction::TargetRequired);
+    assert_eq!(*direction, Direction::TargetRequired);
     assert_eq!(**fact, *source_fact, "the violation names the source fact");
 }
 

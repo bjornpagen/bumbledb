@@ -1,7 +1,15 @@
 //! `Display` rendering for every error type — formatting runs lazily, only
 //! when the host actually prints.
+//!
+//! Statements are anonymous (`docs/architecture/30-dependencies.md`), so
+//! the plain `Display` impls cite them by id; the [`Error::display_with`]
+//! and [`SchemaError::display_with`] adapters pair the error with the
+//! schema it speaks about and render the statement back in the `schema!`
+//! algebra notation (`crate::schema::render`).
 
 use std::fmt;
+
+use crate::schema::{render, Schema, SchemaDescriptor, StatementId};
 
 use super::{CorruptionError, Direction, Error, FactShapeError, SchemaError, ValidationError};
 
@@ -456,8 +464,10 @@ impl fmt::Display for Error {
                 statement.0
             ),
             Self::ContainmentViolation {
-                statement, side, ..
-            } => match side {
+                statement,
+                direction,
+                ..
+            } => match direction {
                 Direction::SourceUnsatisfied => write!(
                     f,
                     "statement {}: containment violated — an inserted source fact has no target",
@@ -489,6 +499,25 @@ impl fmt::Display for Error {
             Self::ParamTypeMismatch { param, expected } => {
                 write!(f, "parameter {}: expected {expected:?}", param.0)
             }
+            Self::ParamSetExpected { param } => write!(
+                f,
+                "parameter {}: the query binds a set — supply a slice",
+                param.0
+            ),
+            Self::ParamScalarExpected { param } => write!(
+                f,
+                "parameter {}: the query binds a scalar — a set was supplied",
+                param.0
+            ),
+            Self::ParamElementTypeMismatch {
+                param,
+                element,
+                expected,
+            } => write!(
+                f,
+                "parameter {}, element {element}: expected {expected:?}",
+                param.0
+            ),
             Self::Overflow { find } => {
                 write!(f, "find {find}: aggregate result exceeds its type")
             }
@@ -499,6 +528,123 @@ impl fmt::Display for Error {
                 )
             }
             Self::Corruption(err) => write!(f, "corruption: {err}"),
+        }
+    }
+}
+
+impl Error {
+    /// Pairs the error with the schema it speaks about: the violation
+    /// variants (`FunctionalityViolation`/`ContainmentViolation`) `Display`
+    /// with their statement rendered back in the `schema!` algebra
+    /// notation; every other variant renders as its plain `Display`.
+    /// Formatting allocates — `Display` is never the hot path; the error
+    /// payload itself stays ids and fact bytes.
+    #[must_use]
+    pub fn display_with<'a>(&'a self, schema: &'a Schema) -> impl fmt::Display + 'a {
+        DisplayWith {
+            error: self,
+            schema,
+        }
+    }
+}
+
+/// [`Error::display_with`]'s adapter.
+struct DisplayWith<'a> {
+    error: &'a Error,
+    schema: &'a Schema,
+}
+
+impl fmt::Display for DisplayWith<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.error {
+            Error::FunctionalityViolation { statement, .. } => write!(
+                f,
+                "functionality violated: `{}` — two live facts claim one key",
+                render::render(self.schema, *statement)
+            ),
+            Error::ContainmentViolation {
+                statement,
+                direction,
+                ..
+            } => {
+                let rendered = render::render(self.schema, *statement);
+                match direction {
+                    Direction::SourceUnsatisfied => write!(
+                        f,
+                        "containment violated (source side): `{rendered}` — an inserted source fact has no target"
+                    ),
+                    Direction::TargetRequired => write!(
+                        f,
+                        "containment violated (target side): `{rendered}` — a deleted target key is still required"
+                    ),
+                }
+            }
+            other => write!(f, "{other}"),
+        }
+    }
+}
+
+impl SchemaError {
+    /// The offending statement, for the variants that carry one.
+    fn statement(&self) -> Option<StatementId> {
+        match self {
+            Self::DuplicateRelationName { .. }
+            | Self::DuplicateFieldName { .. }
+            | Self::EnumWithoutVariants { .. }
+            | Self::EnumTooManyVariants { .. }
+            | Self::DuplicateEnumVariant { .. }
+            | Self::SerialOnNonU64 { .. } => None,
+            Self::StatementUnknownRelation { statement, .. }
+            | Self::StatementUnknownField { statement, .. }
+            | Self::EmptyProjection { statement, .. }
+            | Self::DuplicateProjectionField { statement, .. }
+            | Self::DuplicateSelectionField { statement, .. }
+            | Self::FunctionalityMultipleIntervals { statement, .. }
+            | Self::FunctionalityIntervalNotLast { statement, .. }
+            | Self::DuplicateFunctionality { statement, .. }
+            | Self::GuardKeyTooWide { statement, .. }
+            | Self::ContainmentArityMismatch { statement, .. }
+            | Self::ContainmentTypeMismatch { statement, .. }
+            | Self::SelectedFieldProjected { statement, .. }
+            | Self::SelectionLiteralTypeMismatch { statement, .. }
+            | Self::SelectionEnumOrdinalOutOfRange { statement, .. }
+            | Self::SelectionLiteralNotUtf8 { statement, .. }
+            | Self::SelectionIntervalEmpty { statement, .. }
+            | Self::NoMatchingTargetKey { statement, .. }
+            | Self::NoPointwiseTargetKey { statement, .. }
+            | Self::DuplicateStatement { statement, .. } => Some(*statement),
+        }
+    }
+
+    /// Pairs the rejection with the declaration it judged: statement
+    /// variants `Display` with the offending statement rendered back in
+    /// the `schema!` algebra notation (a rejected declaration never seals
+    /// a [`Schema`], so diagnostics render from the descriptor).
+    #[must_use]
+    pub fn display_with<'a>(&'a self, descriptor: &'a SchemaDescriptor) -> impl fmt::Display + 'a {
+        SchemaDisplayWith {
+            error: self,
+            descriptor,
+        }
+    }
+}
+
+/// [`SchemaError::display_with`]'s adapter.
+struct SchemaDisplayWith<'a> {
+    error: &'a SchemaError,
+    descriptor: &'a SchemaDescriptor,
+}
+
+impl fmt::Display for SchemaDisplayWith<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.error.statement() {
+            Some(statement) => write!(
+                f,
+                "{} — in `{}`",
+                self.error,
+                render::render_declared(self.descriptor, statement)
+            ),
+            None => write!(f, "{}", self.error),
         }
     }
 }

@@ -65,15 +65,15 @@ pub mod schema;
 pub(crate) mod storage;
 
 pub use api::db::{BulkLoadError, Db, Fact, Serial, SerialKeyed, Snapshot, WriteTx};
-pub use api::prepared::{PreparedQuery, ResultBuffer, ResultValue, Row};
+pub use api::prepared::{ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row};
 pub use api::stats::{CoverStats, ExecutionStats, GuardStats, NodeStats};
-pub use error::{Error, Result};
+pub use error::{Direction, Error, Result};
 pub use interval::Interval;
 // The IR vocabulary a host needs to build a `Query`, and the id types that
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.
 pub use ir::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
-pub use schema::{FieldId, RelationId, Schema};
+pub use schema::{FieldId, RelationId, Schema, StatementId};
 
 /// The declarative schema surface (docs/architecture/70-api.md). (The macro and the `schema`
 /// module share a name across disjoint namespaces — deliberate:

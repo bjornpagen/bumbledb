@@ -34,20 +34,20 @@ impl PreparedQuery<'_> {
     }
 
     /// Binds and converts all-scalar parameters (the `&[Value]` entry;
-    /// set-typed params reject the scalar shape — the internal set path
-    /// is [`PreparedQuery::bind_param_args`], PRD 20 owns its public
-    /// rendering).
+    /// a set-typed param rejects the scalar shape with
+    /// [`Error::ParamSetExpected`] — the mixed entry is
+    /// [`PreparedQuery::bind_param_args`]).
     pub(super) fn bind_params(&mut self, txn: &ReadTxn<'_>, params: &[Value]) -> Result<()> {
         self.begin_bind(params.len())?;
         for (idx, value) in params.iter().enumerate() {
-            self.bind_one(txn, idx, ParamArg::Scalar(value))?;
+            self.bind_scalar_slot(txn, idx, value)?;
         }
         Ok(())
     }
 
-    /// Binds mixed scalar/set parameter arguments.
-    #[allow(dead_code)] // reader: PRD 20's public bind rendering
-                        // (tests drive it meanwhile)
+    /// Binds mixed scalar/set parameter arguments (the public
+    /// [`ParamArg`] entry — `docs/architecture/70-api.md` § facts and
+    /// results).
     pub(crate) fn bind_param_args(
         &mut self,
         txn: &ReadTxn<'_>,
@@ -55,7 +55,10 @@ impl PreparedQuery<'_> {
     ) -> Result<()> {
         self.begin_bind(args.len())?;
         for (idx, arg) in args.iter().enumerate() {
-            self.bind_one(txn, idx, *arg)?;
+            match arg {
+                ParamArg::Scalar(value) => self.bind_scalar_slot(txn, idx, value)?,
+                ParamArg::Set(values) => self.bind_set_slot(txn, idx, values)?,
+            }
         }
         Ok(())
     }
@@ -77,83 +80,105 @@ impl PreparedQuery<'_> {
         Ok(())
     }
 
-    /// Binds one parameter slot in place.
-    fn bind_one(&mut self, txn: &ReadTxn<'_>, idx: usize, arg: ParamArg<'_>) -> Result<()> {
-        let expected = &self.param_types[idx];
-        let mismatch = || Error::ParamTypeMismatch {
-            param: ParamId(u16::try_from(idx).expect("param ids fit u16")),
-            expected: expected.clone(),
-        };
-        match (self.param_is_set[idx], arg) {
-            (false, ParamArg::Scalar(value)) => {
-                let (resolved, missed) = bind_scalar(txn, idx, value, expected)?;
-                self.resolved_params[idx] = resolved;
-                self.missed_params[idx] = missed;
-                Ok(())
-            }
-            (true, ParamArg::Set(values)) => {
-                // Pooled storage: steal the slot's previous `WordSet` so
-                // a warm re-bind (any size within the documented
-                // assumption) reuses its capacity.
-                let mut words =
-                    match std::mem::replace(&mut self.resolved_params[idx], Const::Word(0)) {
-                        Const::WordSet(mut words) => {
-                            words.clear();
-                            words
-                        }
-                        _ => Vec::new(),
-                    };
-                for value in values {
-                    words.push(element_word(txn, idx, value, expected)?);
-                }
-                // Sets are sets: sorted, deduplicated
-                // (docs/architecture/20-query-ir.md, § param sets).
-                words.sort_unstable();
-                words.dedup();
-                // Per-element intern misses resolved to the never-minted
-                // sentinel; a sentinel matches nothing under `Eq`, so
-                // dropping it here is the same semantics with a smaller
-                // probe set ("out-of-vocabulary elements contribute
-                // nothing"). Only the intern path mints sentinels —
-                // numeric u64::MAX elements are real values and stay.
-                if matches!(expected, ValueType::String | ValueType::Bytes) {
-                    while words.last() == Some(&dict::SENTINEL_ID) {
-                        words.pop();
-                    }
-                }
-                // The empty set matches nothing — the `Eq`-miss
-                // short-circuit machinery, applied where sound
-                // (positive occurrences; `resolve_predicates` reads the
-                // polarity).
-                self.missed_params[idx] = words.is_empty();
-                self.resolved_params[idx] = Const::WordSet(words);
-                Ok(())
-            }
-            _ => Err(mismatch()),
+    /// Binds one scalar slot in place. Precise bind errors per position:
+    /// a set-typed slot rejects the scalar shape before any conversion.
+    fn bind_scalar_slot(&mut self, txn: &ReadTxn<'_>, idx: usize, value: &Value) -> Result<()> {
+        let param = param_id(idx);
+        if self.param_is_set[idx] {
+            return Err(Error::ParamSetExpected { param });
         }
+        let expected = &self.param_types[idx];
+        let Some((resolved, missed)) = convert_scalar(txn, value, expected)? else {
+            return Err(Error::ParamTypeMismatch {
+                param,
+                expected: expected.clone(),
+            });
+        };
+        self.resolved_params[idx] = resolved;
+        self.missed_params[idx] = missed;
+        Ok(())
+    }
+
+    /// Binds one set slot in place, deduplicating into the slot's pooled
+    /// `WordSet` (PRD 17's internal representation).
+    fn bind_set_slot(&mut self, txn: &ReadTxn<'_>, idx: usize, values: &[Value]) -> Result<()> {
+        let param = param_id(idx);
+        if !self.param_is_set[idx] {
+            return Err(Error::ParamScalarExpected { param });
+        }
+        let expected = &self.param_types[idx];
+        // Pooled storage: steal the slot's previous `WordSet` so a warm
+        // re-bind (any size within the documented assumption) reuses its
+        // capacity.
+        let mut words = match std::mem::replace(&mut self.resolved_params[idx], Const::Word(0)) {
+            Const::WordSet(mut words) => {
+                words.clear();
+                words
+            }
+            _ => Vec::new(),
+        };
+        for (element, value) in values.iter().enumerate() {
+            let Some(word) = element_word(txn, value, expected)? else {
+                // Park the pooled Vec back before erroring: the slot
+                // keeps its capacity and the query stays bindable.
+                words.clear();
+                let expected = expected.clone();
+                self.resolved_params[idx] = Const::WordSet(words);
+                return Err(Error::ParamElementTypeMismatch {
+                    param,
+                    element,
+                    expected,
+                });
+            };
+            words.push(word);
+        }
+        // Sets are sets: sorted, deduplicated
+        // (docs/architecture/20-query-ir.md, § param sets).
+        words.sort_unstable();
+        words.dedup();
+        // Per-element intern misses resolved to the never-minted
+        // sentinel; a sentinel matches nothing under `Eq`, so
+        // dropping it here is the same semantics with a smaller
+        // probe set ("out-of-vocabulary elements contribute
+        // nothing"). Only the intern path mints sentinels —
+        // numeric u64::MAX elements are real values and stay.
+        if matches!(expected, ValueType::String | ValueType::Bytes) {
+            while words.last() == Some(&dict::SENTINEL_ID) {
+                words.pop();
+            }
+        }
+        // The empty set matches nothing — the `Eq`-miss
+        // short-circuit machinery, applied where sound
+        // (positive occurrences; `resolve_predicates` reads the
+        // polarity).
+        self.missed_params[idx] = words.is_empty();
+        self.resolved_params[idx] = Const::WordSet(words);
+        Ok(())
     }
 }
 
-/// One set element's column word; a String/Bytes miss resolves to the
+fn param_id(idx: usize) -> ParamId {
+    ParamId(u16::try_from(idx).expect("param ids fit u16"))
+}
+
+/// One set element's column word; `None` = element type mismatch (the
+/// caller names the position). A String/Bytes miss resolves to the
 /// never-minted sentinel intern id (per-element miss semantics,
 /// `docs/architecture/20-query-ir.md`).
-fn element_word(
-    txn: &ReadTxn<'_>,
-    index: usize,
-    value: &Value,
-    expected: &ValueType,
-) -> Result<u64> {
-    let (resolved, _) = bind_scalar(txn, index, value, expected)?;
-    Ok(match resolved {
+fn element_word(txn: &ReadTxn<'_>, value: &Value, expected: &ValueType) -> Result<Option<u64>> {
+    let Some((resolved, _)) = convert_scalar(txn, value, expected)? else {
+        return Ok(None);
+    };
+    Ok(Some(match resolved {
         Const::Word(word) => word,
         Const::Byte(byte) => u64::from(byte),
         Const::Interval { .. } => {
             unreachable!("validated: no interval-typed param sets (IntervalParamSet)")
         }
         Const::Param(_) | Const::ParamSet(_) | Const::WordSet(_) | Const::PendingIntern { .. } => {
-            unreachable!("bind_scalar resolves to column form")
+            unreachable!("convert_scalar resolves to column form")
         }
-    })
+    }))
 }
 
 /// Resolves every occurrence's symbolic predicate constants for this
@@ -414,22 +439,20 @@ fn write_word_set_value(dst: &mut FilterPredicate, words: &[u64]) {
     }
 }
 
-/// Converts a bound scalar param value to column form. A String or Bytes
-/// value that was never interned resolves to the sentinel intern id,
-/// flagged `missed` so `Eq` uses can short-circuit to the empty result.
-fn bind_scalar(
+/// Converts a bound scalar param value to column form; `Ok(None)` = type
+/// mismatch (the caller names the position — scalar slot or set element).
+/// A String or Bytes value that was never interned resolves to the
+/// sentinel intern id, flagged `missed` so `Eq` uses can short-circuit
+/// to the empty result.
+fn convert_scalar(
     txn: &ReadTxn<'_>,
-    index: usize,
     value: &Value,
     expected: &ValueType,
-) -> Result<(Const, bool)> {
+) -> Result<Option<(Const, bool)>> {
     // The shared compatibility check (kind, enum range, UTF-8) — one rule
     // with validation and the dynamic write path.
     if crate::ir::value_matches(value, expected).is_err() {
-        return Err(Error::ParamTypeMismatch {
-            param: ParamId(u16::try_from(index).expect("param ids fit u16")),
-            expected: expected.clone(),
-        });
+        return Ok(None);
     }
     let resolved = match value {
         Value::Bool(v) => Const::Byte(u8::from(*v)),
@@ -448,15 +471,15 @@ fn bind_scalar(
             let text = std::str::from_utf8(bytes).expect("value_matches validated UTF-8");
             match dict::lookup_str(txn, text)? {
                 Some(id) => Const::Word(id),
-                None => return Ok((Const::Word(dict::SENTINEL_ID), true)),
+                None => return Ok(Some((Const::Word(dict::SENTINEL_ID), true))),
             }
         }
         Value::Bytes(bytes) => match dict::lookup_bytes(txn, bytes)? {
             Some(id) => Const::Word(id),
-            None => return Ok((Const::Word(dict::SENTINEL_ID), true)),
+            None => return Ok(Some((Const::Word(dict::SENTINEL_ID), true))),
         },
     };
-    Ok((resolved, false))
+    Ok(Some((resolved, false)))
 }
 
 /// The biased I64 column word (u64 word order equals i64 value order).

@@ -5,6 +5,7 @@
 //! downstream trusts the sealed witness without re-checking.
 
 pub mod fingerprint;
+pub mod render;
 pub(crate) mod runtime;
 
 mod relation;

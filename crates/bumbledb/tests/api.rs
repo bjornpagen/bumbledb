@@ -1,14 +1,15 @@
-//! The 60-api doc integration tests: the `60-api.md` usage shapes end to end
-//! through the public surface — create → write{alloc+insert} → read{point
-//! lookup, join, aggregate} → mutate via delete+insert → read again; the
-//! write-closure abort contracts; the threading contract; and the export →
-//! `bulk_load` ETL round trip.
+//! The `docs/architecture/70-api.md` integration tests: the usage shapes
+//! end to end through the public surface — create → write{alloc+insert} →
+//! read{point lookup, join, aggregate} → mutate via delete+insert → read
+//! again; the write-closure abort contracts; the threading contract; the
+//! commit-time statement judgments with their rendered diagnostics; and
+//! the export → `bulk_load` ETL round trip.
 
 use std::path::PathBuf;
 
 use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Term, Value, VarId};
 use bumbledb::schema::FieldId;
-use bumbledb::{Db, Fact, ResultBuffer, ResultValue};
+use bumbledb::{Db, Direction, Fact, ResultBuffer, ResultValue, StatementId};
 
 bumbledb::schema! {
     relation Holder {
@@ -17,9 +18,11 @@ bumbledb::schema! {
     }
     relation Account {
         id: u64 as AccountId, serial,
-        holder: u64 as HolderId, fk(Holder.id),
+        holder: u64 as HolderId,
         balance: i64,
     }
+
+    Account(holder) <= Holder(id);
 }
 
 fn test_dir(tag: &str) -> PathBuf {
@@ -390,7 +393,8 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
         })
         .expect("export");
 
-    // Import: FK targets first; explicit serial values preserve identity.
+    // Import: containment targets first; explicit serial values preserve
+    // identity.
     let new = Db::create(&dir_new, schema()).expect("create new");
     let loaded = new
         .bulk_load(Holder::RELATION, holders)
@@ -431,7 +435,7 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
 }
 
 #[test]
-fn constraint_violations_surface_from_commit_through_the_public_api() {
+fn statement_violations_surface_from_commit_through_the_public_api() {
     let dir = test_dir("violations");
     let db = Db::create(&dir, schema()).expect("create");
     let holder = db
@@ -445,9 +449,9 @@ fn constraint_violations_surface_from_commit_through_the_public_api() {
         })
         .expect("seed");
 
-    // Unique violation: two live accounts claiming one serial id. The
-    // error carries relation + constraint ids and the offending fact
-    // bytes, and the WHOLE transaction aborts (the good insert too).
+    // Functionality violation: two live accounts claiming one serial id.
+    // The error carries the statement id and the offending fact bytes,
+    // and the WHOLE transaction aborts (the good insert too).
     let err = db
         .write(|tx| {
             tx.insert(&Account {
@@ -463,22 +467,29 @@ fn constraint_violations_surface_from_commit_through_the_public_api() {
             Ok(())
         })
         .unwrap_err();
-    let bumbledb::Error::UniqueViolation {
-        relation,
-        fact_bytes,
+    let bumbledb::Error::FunctionalityViolation {
+        statement,
+        ref fact,
         ..
     } = err
     else {
-        panic!("expected UniqueViolation, got {err}");
+        panic!("expected FunctionalityViolation, got {err}");
     };
-    assert_eq!(relation, Account::RELATION);
-    assert!(!fact_bytes.is_empty());
+    // Materialized order: Holder.id's serial auto-key, Account.id's
+    // serial auto-key, then the declared containment.
+    assert_eq!(statement, StatementId(1));
+    assert!(!fact.is_empty());
+    // The rendered diagnostic cites the statement in the algebra.
+    let rendered = format!("{}", err.display_with(schema()));
+    assert!(rendered.contains("Account(id) -> Account"), "{rendered}");
     let count = db
         .read(|snap| Ok(snap.scan_facts::<Account>()?.count()))
         .expect("scan");
     assert_eq!(count, 0, "the aborted transaction left nothing");
 
-    // Forward FK violation: the fact bytes name the offender.
+    // Containment, source side: an inserted account whose holder does
+    // not exist. `Display` through the schema cites the statement
+    // rendered back in the algebra, and the judgment direction.
     let err = db
         .write(|tx| {
             tx.insert(&Account {
@@ -490,13 +501,21 @@ fn constraint_violations_surface_from_commit_through_the_public_api() {
         .unwrap_err();
     assert!(matches!(
         err,
-        bumbledb::Error::ForeignKeyViolation {
-            violation: bumbledb::error::FkViolation::MissingTarget { .. },
+        bumbledb::Error::ContainmentViolation {
+            statement: StatementId(2),
+            direction: Direction::SourceUnsatisfied,
             ..
         }
     ));
+    let rendered = format!("{}", err.display_with(schema()));
+    assert!(
+        rendered.contains("Account(holder) <= Holder(id)"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("source"), "{rendered}");
 
-    // Restrict: deleting a referenced holder names the referrer by fact.
+    // Containment, target side: deleting a holder a surviving account
+    // still requires — the requiring source is named by its fact.
     db.write(|tx| {
         tx.insert(&Account {
             id: AccountId(1),
@@ -513,14 +532,25 @@ fn constraint_violations_surface_from_commit_through_the_public_api() {
             })
         })
         .unwrap_err();
-    let bumbledb::Error::ForeignKeyViolation {
-        violation: bumbledb::error::FkViolation::RemainingReference { fact_bytes, .. },
+    let bumbledb::Error::ContainmentViolation {
+        direction,
+        ref fact,
         ..
     } = err
     else {
-        panic!("expected RemainingReference, got {err}");
+        panic!("expected ContainmentViolation, got {err}");
     };
-    assert!(!fact_bytes.is_empty(), "the referrer is named by its fact");
+    assert_eq!(direction, Direction::TargetRequired);
+    assert!(
+        !fact.is_empty(),
+        "the requiring source is named by its fact"
+    );
+    let rendered = format!("{}", err.display_with(schema()));
+    assert!(
+        rendered.contains("Account(holder) <= Holder(id)"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("target"), "{rendered}");
 
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
@@ -540,8 +570,8 @@ fn open_mismatches_and_snapshot_usability() {
                 value_type: bumbledb::schema::ValueType::U64,
                 generation: bumbledb::schema::Generation::None,
             }],
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("valid");

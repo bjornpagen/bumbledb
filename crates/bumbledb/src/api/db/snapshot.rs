@@ -1,5 +1,5 @@
 use super::{Fact, Snapshot};
-use crate::api::prepared::{PreparedQuery, ResultBuffer};
+use crate::api::prepared::{ParamArg, PreparedQuery, ResultBuffer};
 use crate::encoding::{decode_field, ValueRef};
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
@@ -35,6 +35,40 @@ impl Snapshot<'_> {
         params: &[Value],
     ) -> Result<ResultBuffer> {
         prepared.execute_collect(&self.txn, self.cache, params)
+    }
+
+    /// Executes with mixed scalar/set parameter arguments
+    /// (`docs/architecture/70-api.md` § facts and results): one
+    /// [`ParamArg`] per `ParamId` position — scalars as values, param
+    /// sets as slices (deduplicated at bind into the prepared query's
+    /// pooled storage).
+    ///
+    /// # Errors
+    ///
+    /// As [`Snapshot::execute`], plus the precise per-position bind
+    /// errors: `ParamSetExpected` (a scalar where the query binds a
+    /// set), `ParamScalarExpected` (a set where it binds a scalar), and
+    /// `ParamElementTypeMismatch` (a mistyped set element).
+    pub fn execute_args(
+        &self,
+        prepared: &mut PreparedQuery<'_>,
+        args: &[ParamArg<'_>],
+        out: &mut ResultBuffer,
+    ) -> Result<()> {
+        prepared.execute_args(&self.txn, self.cache, args, out)
+    }
+
+    /// [`Snapshot::execute_args`]'s fresh-buffer convenience.
+    ///
+    /// # Errors
+    ///
+    /// As [`Snapshot::execute_args`].
+    pub fn execute_collect_args(
+        &self,
+        prepared: &mut PreparedQuery<'_>,
+        args: &[ParamArg<'_>],
+    ) -> Result<ResultBuffer> {
+        prepared.execute_collect_args(&self.txn, self.cache, args)
     }
 
     /// EXPLAIN ANALYZE (docs/architecture/30-execution.md): executes with counting instrumentation

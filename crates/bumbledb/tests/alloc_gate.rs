@@ -18,13 +18,14 @@
 use bumbledb::alloc_counter;
 use bumbledb::ir::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
 use bumbledb::schema::{
-    ConstraintDescriptor, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId,
-    Schema, SchemaDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema,
+    SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{Db, PreparedQuery, ResultBuffer, Snapshot};
 
-/// Posting(id serial, account u64, amount i64) +
-/// Account(id serial, holder u64).
+/// Posting(id serial, account u64, amount i64, memo str) +
+/// Account(id serial, holder u64), with
+/// `Posting(account) <= Account(id)`.
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -52,12 +53,6 @@ fn schema() -> Schema {
                         generation: Generation::None,
                     },
                 ],
-                constraints: vec![ConstraintDescriptor::ForeignKey {
-                    name: "posting_account".into(),
-                    fields: Box::new([FieldId(1)]),
-                    target_relation: RelationId(1),
-                    target_constraint: bumbledb::schema::ConstraintId(0),
-                }],
             },
             RelationDescriptor {
                 name: "Account".into(),
@@ -73,9 +68,20 @@ fn schema() -> Schema {
                         generation: Generation::None,
                     },
                 ],
-                constraints: vec![],
             },
         ],
+        statements: vec![StatementDescriptor::Containment {
+            source: Side {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(1)]),
+                selection: Box::new([]),
+            },
+            target: Side {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0)]),
+                selection: Box::new([]),
+            },
+        }],
     }
     .validate()
     .expect("valid fixture")

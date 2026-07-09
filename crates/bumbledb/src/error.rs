@@ -512,7 +512,7 @@ pub enum Error {
     /// that requires it.
     ContainmentViolation {
         statement: StatementId,
-        side: Direction,
+        direction: Direction,
         /// The source fact: the inserted fact whose target is missing
         /// (`SourceUnsatisfied`), or the surviving fact still requiring a
         /// deleted target key (`TargetRequired`).
@@ -540,6 +540,25 @@ pub enum Error {
     /// the anchor-inferred one.
     ParamTypeMismatch {
         param: ParamId,
+        expected: ValueType,
+    },
+    /// Bind-time: a scalar value supplied where the query binds this
+    /// parameter as a set (`Term::ParamSet`) — supply
+    /// [`crate::ParamArg::Set`].
+    ParamSetExpected {
+        param: ParamId,
+    },
+    /// Bind-time: a set slice supplied where the query binds this
+    /// parameter as a scalar (`Term::Param`) — supply
+    /// [`crate::ParamArg::Scalar`].
+    ParamScalarExpected {
+        param: ParamId,
+    },
+    /// Bind-time: a set element's structural type does not match the
+    /// anchor-inferred element type. `element` indexes the supplied slice.
+    ParamElementTypeMismatch {
+        param: ParamId,
+        element: usize,
         expected: ValueType,
     },
     /// An aggregate's final value exceeds its result type (the once-at-

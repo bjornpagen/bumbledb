@@ -34,16 +34,15 @@ mod tests;
 
 pub(crate) use self::build::prepare;
 
-/// One execution-time parameter binding, internally: a scalar value or
-/// an element slice for a set-typed param (`Term::ParamSet` —
-/// `docs/architecture/20-query-ir.md`, § param sets). The PUBLIC bind
-/// signature is PRD 20's; this is the clean internal representation it
-/// will render into — `execute` wraps a plain `&[Value]` as all-scalars.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum ParamArg<'a> {
-    Scalar(&'a crate::ir::Value),
-    /// Constructed by tests until PRD 20's public bind surface lands.
-    #[allow(dead_code)]
+/// One positional execution argument (`docs/architecture/70-api.md`
+/// § facts and results): params are supplied by `ParamId` position —
+/// scalars as values, param sets as slices. Bind checks count, scalar-
+/// vs-set usage against what validation recorded, and element types;
+/// set slices deduplicate into the prepared query's pooled storage
+/// (sets are sets — `docs/architecture/20-query-ir.md`).
+#[derive(Debug, Clone)]
+pub enum ParamArg<'a> {
+    Scalar(crate::ir::Value),
     Set(&'a [crate::ir::Value]),
 }
 

@@ -102,8 +102,6 @@ pub const MEMBERSHIP_KEY_LEN: usize = 1 + 4 + 32;
 pub const SERIAL_KEY_LEN: usize = 1 + 4 + 2;
 /// `S` key width: tag + relation + stat kind.
 pub const STAT_KEY_LEN: usize = 1 + 4 + 1;
-/// `U` key width before the guard bytes: tag + relation + statement.
-pub const GUARD_KEY_HEADER_LEN: usize = 1 + 4 + 2;
 /// `R` key width after the key bytes: source_rel + source_row.
 pub const REVERSE_KEY_TAIL_LEN: usize = 4 + 8;
 
@@ -142,15 +140,6 @@ pub fn guard_key(
         .relation(relation)
         .statement(statement)
         .put(guard)
-        .finish()
-}
-
-/// `U | relation | statement` — the prefix every guard of one statement on
-/// one relation shares (neighbor-probe and coverage-walk reader).
-pub fn guard_prefix(buf: &mut KeyBuf, relation: RelationId, statement: StatementId) -> usize {
-    KeyWriter::new(buf, NS_GUARD)
-        .relation(relation)
-        .statement(statement)
         .finish()
 }
 
@@ -197,25 +186,6 @@ pub fn stat_key(buf: &mut [u8], relation: RelationId, stat: StatKind) -> usize {
         .relation(relation)
         .put(&[stat as u8])
         .finish()
-}
-
-/// Splits a full `U` key into `(relation, statement, guard)` — the
-/// parse-back for readers that walk guard entries (neighbor probes,
-/// coverage walks). `None` on anything not shaped like a guard key:
-/// corrupt data, not a programmer error — callers raise a typed
-/// corruption error, never a panic.
-#[must_use]
-pub fn parse_guard_key(key: &[u8]) -> Option<(RelationId, StatementId, &[u8])> {
-    if key.len() < GUARD_KEY_HEADER_LEN || key[0] != NS_GUARD {
-        return None;
-    }
-    let relation = RelationId(u32::from_be_bytes(
-        key[1..5].try_into().expect("fixed-width slice"),
-    ));
-    let statement = StatementId(u16::from_be_bytes(
-        key[5..7].try_into().expect("fixed-width slice"),
-    ));
-    Some((relation, statement, &key[GUARD_KEY_HEADER_LEN..]))
 }
 
 /// Splits a full `R` key into `(statement, key_bytes, source_rel,
@@ -332,27 +302,22 @@ mod tests {
         let guard = [1u8, 2, 3];
         let u = key(|b| guard_key(b, RelationId(2), StatementId(5), &guard));
         assert_eq!(u, vec![NS_GUARD, 0, 0, 0, 2, 0, 5, 1, 2, 3]);
-        let prefix = key(|b| guard_prefix(b, RelationId(2), StatementId(5)));
-        assert!(u.starts_with(&prefix));
     }
 
     #[test]
-    fn guard_key_with_16_byte_interval_guard_parses_back() {
-        // Guard = scalar u64 ‖ whole 16-byte interval, contiguous.
+    fn guard_key_keeps_a_16_byte_interval_guard_contiguous() {
+        // Guard = scalar u64 ‖ whole 16-byte interval, contiguous. The
+        // 7-byte header is tag + relation(u32) + statement(u16).
         let mut guard = Vec::new();
         guard.extend_from_slice(&encode_u64(0xAAAA_BBBB_CCCC_DDDD));
         guard.extend_from_slice(&encode_interval_u64(10, 20));
         assert_eq!(guard.len(), 24);
 
         let k = key(|b| guard_key(b, RelationId(3), StatementId(9), &guard));
-        assert_eq!(k.len(), GUARD_KEY_HEADER_LEN + 24);
+        assert_eq!(k.len(), 7 + 24);
         // The interval's 16 bytes sit unsplit at the guard's tail.
-        assert_eq!(&k[GUARD_KEY_HEADER_LEN + 8..], encode_interval_u64(10, 20));
-
-        let (rel, stmt, parsed) = parse_guard_key(&k).expect("well-formed guard key");
-        assert_eq!(rel, RelationId(3));
-        assert_eq!(stmt, StatementId(9));
-        assert_eq!(parsed, &guard[..]);
+        assert_eq!(&k[7 + 8..], encode_interval_u64(10, 20));
+        assert_eq!(&k[7..], &guard[..]);
     }
 
     #[test]
@@ -390,8 +355,6 @@ mod tests {
         let guard = key(|b| guard_key(b, RelationId(1), StatementId(1), &[9]));
         assert!(parse_reverse_key(&guard).is_none());
         let reverse = key(|b| reverse_key(b, StatementId(1), &[9], RelationId(1), 1));
-        assert!(parse_guard_key(&reverse).is_none());
-        assert!(parse_guard_key(&guard[..3]).is_none());
         assert!(parse_reverse_key(&reverse[..R_OVERHEAD - 1]).is_none());
     }
 
