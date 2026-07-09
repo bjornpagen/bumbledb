@@ -1,5 +1,5 @@
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::{RelationId, Resolved, Schema, Statement, StatementDescriptor, StatementId};
+use crate::schema::{RelationId, Resolved, Schema, StatementDescriptor, StatementId};
 use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
 
 use super::{judgment, Applier};
@@ -40,10 +40,9 @@ impl Applier<'_> {
         // fact_bytes — never a scan; interval fields slice as their whole
         // 16 bytes (`keys::guard_bytes`).
         for &sid in relation.keys() {
-            let statement = schema.statement(sid);
             keys::guard_bytes(
                 relation.layout(),
-                key_projection(statement),
+                schema.statement(sid).key_projection(),
                 fact_bytes,
                 &mut self.guard,
             );
@@ -111,7 +110,7 @@ impl Applier<'_> {
             let pointwise = interval_position.is_some();
             keys::guard_bytes(
                 relation.layout(),
-                key_projection(statement),
+                statement.key_projection(),
                 fact_bytes,
                 &mut self.guard,
             );
@@ -324,15 +323,6 @@ impl Applier<'_> {
         *next += 1;
         Ok(row_id)
     }
-}
-
-/// The projection of a key statement (programmer invariant: every id in
-/// `Relation::keys` names a `Functionality` statement).
-fn key_projection(statement: &Statement) -> &[crate::schema::FieldId] {
-    let StatementDescriptor::Functionality { projection, .. } = &statement.descriptor else {
-        unreachable!("validated schema: relation keys are Functionality statements")
-    };
-    projection
 }
 
 pub(super) fn decode_row_id(bytes: &[u8]) -> Result<u64> {

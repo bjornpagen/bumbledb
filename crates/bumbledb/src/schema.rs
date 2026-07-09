@@ -297,6 +297,24 @@ pub struct Statement {
     pub mirror: Option<StatementId>,
 }
 
+impl Statement {
+    /// The projection of a key (`Functionality`) statement — the guard
+    /// tuple's field order (readers: the commit applier's guard
+    /// derivation, `Db::verify_store`'s re-derivation).
+    ///
+    /// # Panics
+    ///
+    /// On a `Containment` — callers hold ids from [`Relation::keys`],
+    /// which the validated schema fills with `Functionality` statements.
+    #[must_use]
+    pub(crate) fn key_projection(&self) -> &[FieldId] {
+        let StatementDescriptor::Functionality { projection, .. } = &self.descriptor else {
+            unreachable!("validated schema: relation keys are Functionality statements")
+        };
+        projection
+    }
+}
+
 /// One relation of a validated schema.
 #[derive(Debug)]
 pub struct Relation {

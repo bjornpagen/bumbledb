@@ -155,6 +155,20 @@ pub struct Db<'s> {
     schema: &'s Schema,
 }
 
+impl<'s> Db<'s> {
+    /// The LMDB environment (reader: `crate::verify_store` — the sweeper
+    /// opens its own snapshot, and its fixture tests inject raw desyncs
+    /// through the environment's write transactions).
+    pub(crate) fn env(&self) -> &Environment {
+        &self.env
+    }
+
+    /// The validated schema (reader: `crate::verify_store`).
+    pub(crate) fn schema(&self) -> &'s Schema {
+        self.schema
+    }
+}
+
 /// One parked read transaction and the commit sequence it saw.
 struct ParkedReader {
     txn: heed::RoTxn<'static, heed::WithoutTls>,

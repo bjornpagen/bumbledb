@@ -153,6 +153,33 @@ pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, tag: u8, raw: &[u8], id: u64) 
     Ok(())
 }
 
+/// One `_dict` reverse-map entry as the sweeper sees it: the minted id, or
+/// the raw key bytes when the key is not the codec's 9-byte shape.
+pub(crate) enum ReverseId<'k> {
+    Id(u64),
+    Malformed(&'k [u8]),
+}
+
+/// One cursor over the reverse map, in id order (reader: `Db::verify_store`'s
+/// dangling-entry statistic — ids referenced by no live fact are the
+/// accepted leak, counted, never findings).
+///
+/// # Errors
+///
+/// `Lmdb` on cursor open; per-item `Lmdb` on iteration failure.
+pub(crate) fn reverse_ids<'txn>(
+    txn: &'txn ReadTxn<'_>,
+) -> Result<impl Iterator<Item = Result<ReverseId<'txn>>>> {
+    let iter = txn.env().dict().prefix_iter(txn.raw(), &[REVERSE])?;
+    Ok(iter.map(|entry| {
+        let (key, _) = entry?;
+        Ok(match key[1..].try_into() {
+            Ok(id) => ReverseId::Id(u64::from_be_bytes(id)),
+            Err(_) => ReverseId::Malformed(key),
+        })
+    }))
+}
+
 /// Resolves an id to its raw bytes (the tag byte is stripped), borrowed from
 /// the LMDB page for the transaction's lifetime.
 ///

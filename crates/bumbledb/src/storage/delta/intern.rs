@@ -61,7 +61,9 @@ impl WriteDelta<'_> {
     /// id, and a double miss proves the fact absent from base *and*
     /// delta — its bytes would embed an id that was never minted — so
     /// the delete is a no-op and the dictionary stays untouched.
-    fn resolve(&self, view: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<Option<u64>> {
+    /// (Additional reader: the commit path's selection-literal encoding,
+    /// `storage::commit::judgment`.)
+    pub(crate) fn resolve(&self, view: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<Option<u64>> {
         if let Some(id) = self.pending_interns[usize::from(tag)].get(raw) {
             return Ok(Some(*id));
         }

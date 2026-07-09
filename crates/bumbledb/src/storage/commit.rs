@@ -22,7 +22,10 @@ use crate::storage::keys::KeyBuf;
 
 mod applier;
 mod apply;
-mod judgment;
+// The selection machinery (`judgment::Selections`, `judgment::satisfies`)
+// is shared with `Db::verify_store` — the sweeper re-checks φ with the
+// commit path's own helper, never a second implementation.
+pub(crate) mod judgment;
 mod write;
 
 #[cfg(test)]

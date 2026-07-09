@@ -46,6 +46,12 @@ pub(crate) struct SideChecks {
     pub(crate) target: SelectionCheck,
 }
 
+/// An intern resolver: maps a dictionary tag plus raw bytes to an intern
+/// id, or `None` when no fact can carry the value — the one seam between
+/// [`Selections::encode`] (delta-aware) and [`Selections::encode_committed`]
+/// (committed dictionary only).
+type InternResolver<'a> = dyn FnMut(u8, &[u8]) -> Result<Option<u64>> + 'a;
+
 /// Pre-encoded selections for every `Containment` statement, built once
 /// per commit — the commit-local scratch that keeps literal encoding out
 /// of the per-fact loops.
@@ -60,8 +66,25 @@ impl Selections {
     /// pending map, then the committed dictionary — a double miss proves
     /// no fact can satisfy the selection ([`SelectionCheck::Never`]).
     pub(crate) fn encode(delta: &WriteDelta<'_>, view: &ReadTxn<'_>) -> Result<Self> {
-        let checks = delta
-            .schema()
+        Self::encode_with(delta.schema(), &mut |tag, raw| {
+            delta.resolve(view, tag, raw)
+        })
+    }
+
+    /// The read-only sibling of [`Selections::encode`] for
+    /// `Db::verify_store`: no delta exists, so String and Bytes literals
+    /// resolve through the committed dictionary alone — a miss proves no
+    /// *committed* fact can satisfy the selection, exactly the judgment
+    /// the sweeper re-checks.
+    pub(crate) fn encode_committed(schema: &Schema, view: &ReadTxn<'_>) -> Result<Self> {
+        Self::encode_with(schema, &mut |tag, raw| {
+            crate::storage::dict::lookup_tagged(view, tag, raw)
+        })
+    }
+
+    /// The shared constructor over an [`InternResolver`].
+    fn encode_with(schema: &Schema, resolve: &mut InternResolver<'_>) -> Result<Self> {
+        let checks = schema
             .statements()
             .iter()
             .map(|statement| {
@@ -70,8 +93,8 @@ impl Selections {
                     return Ok(None);
                 };
                 Ok(Some(SideChecks {
-                    source: encode_selection(delta, view, &source.selection)?,
-                    target: encode_selection(delta, view, &target.selection)?,
+                    source: encode_selection(&source.selection, resolve)?,
+                    target: encode_selection(&target.selection, resolve)?,
                 }))
             })
             .collect::<Result<Box<[_]>>>()?;
@@ -93,9 +116,8 @@ impl Selections {
 }
 
 fn encode_selection(
-    delta: &WriteDelta<'_>,
-    view: &ReadTxn<'_>,
     selection: &[(FieldId, Value)],
+    resolve: &mut InternResolver<'_>,
 ) -> Result<SelectionCheck> {
     if selection.is_empty() {
         return Ok(SelectionCheck::Empty);
@@ -106,15 +128,11 @@ fn encode_selection(
         // per-database); everything else takes the one canonical encoding
         // shared with the fingerprint ([`encode_literal`]).
         let encoded: Box<[u8]> = match literal {
-            Value::String(raw) => {
-                let value =
-                    std::str::from_utf8(raw).expect("validated schema: string literals are UTF-8");
-                match delta.resolve_str(view, value)? {
-                    Some(id) => Box::new(encode_u64(id)),
-                    None => return Ok(SelectionCheck::Never),
-                }
-            }
-            Value::Bytes(raw) => match delta.resolve_bytes(view, raw)? {
+            Value::String(raw) => match resolve(crate::storage::dict::TAG_STRING, raw)? {
+                Some(id) => Box::new(encode_u64(id)),
+                None => return Ok(SelectionCheck::Never),
+            },
+            Value::Bytes(raw) => match resolve(crate::storage::dict::TAG_BYTES, raw)? {
                 Some(id) => Box::new(encode_u64(id)),
                 None => return Ok(SelectionCheck::Never),
             },

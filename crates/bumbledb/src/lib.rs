@@ -64,6 +64,7 @@ pub(crate) mod plan;
 pub mod schema;
 pub(crate) mod storage;
 mod value;
+mod verify_store;
 
 pub use api::db::{BulkLoadError, Db, Fact, Serial, SerialKeyed, Snapshot, WriteTx};
 pub use api::prepared::{ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row};
@@ -75,6 +76,7 @@ pub use interval::Interval;
 // module-path scavenger hunt.
 pub use ir::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
 pub use schema::{FieldId, RelationId, Schema, SerialField, StatementId};
+pub use verify_store::{StoreFinding, StoreReport};
 
 /// The declarative schema surface (docs/architecture/70-api.md). (The macro and the `schema`
 /// module share a name across disjoint namespaces — deliberate:
