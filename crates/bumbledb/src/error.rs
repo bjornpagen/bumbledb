@@ -245,8 +245,23 @@ pub enum SchemaError {
 pub enum FactShapeError {
     /// The relation id is outside the schema — ETL input is data, so an
     /// out-of-range id at the dynamic surface (`insert_dyn`/`delete_dyn`/
-    /// `bulk_load`/`scan`) is a typed error, never an index panic.
+    /// `bulk_load`/`scan`/`serial_field`) is a typed error, never an index
+    /// panic.
     UnknownRelation { relation: RelationId },
+    /// The field id is outside its relation — the field sibling of
+    /// [`FactShapeError::UnknownRelation`], raised by the id-addressed
+    /// dynamic surface ([`crate::Schema::serial_field`]).
+    UnknownField {
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// [`crate::Schema::serial_field`]'s field is not `Serial` generation —
+    /// no witness exists, so no mint can be asked for (parse, don't
+    /// validate: the check runs once at resolution, never per mint).
+    NotASerialField {
+        relation: RelationId,
+        field: FieldId,
+    },
     ArityMismatch {
         relation: RelationId,
         expected: usize,

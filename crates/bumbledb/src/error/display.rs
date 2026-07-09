@@ -19,6 +19,14 @@ impl fmt::Display for FactShapeError {
             Self::UnknownRelation { relation } => {
                 write!(f, "relation {}: not in this schema", relation.0)
             }
+            Self::UnknownField { relation, field } => {
+                write!(f, "relation {} has no field {}", relation.0, field.0)
+            }
+            Self::NotASerialField { relation, field } => write!(
+                f,
+                "relation {}, field {}: not a serial field",
+                relation.0, field.0
+            ),
             Self::ArityMismatch {
                 relation,
                 expected,

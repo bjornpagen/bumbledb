@@ -317,3 +317,100 @@ fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
     })
     .expect("probe");
 }
+
+/// S(id serial, v) — the serial-minting relation for witness tests.
+fn serial_schema() -> Schema {
+    SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            name: "S".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "id".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::Serial,
+                },
+                FieldDescriptor {
+                    name: "v".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                },
+            ],
+        }],
+        statements: vec![],
+    }
+    .validate()
+    .expect("fixture")
+}
+
+/// What the `schema!` macro would generate for `id: u64 as SId, serial` —
+/// the typed mint path's proof-carrying newtype.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SId(u64);
+
+impl Serial for SId {
+    const RELATION: RelationId = RelationId(0);
+    const FIELD: FieldId = FieldId(0);
+    fn from_serial(raw: u64) -> Self {
+        Self(raw)
+    }
+    fn serial(self) -> u64 {
+        self.0
+    }
+}
+
+/// The resolver is the one checking boundary of the untyped mint path:
+/// ids and generation are data, so every mis-aimed resolution is a typed
+/// `FactShape` error, never a panic.
+#[test]
+fn serial_field_rejects_non_witnesses_with_typed_errors() {
+    let schema = serial_schema();
+    assert_eq!(
+        schema.serial_field(RelationId(0), FieldId(1)).unwrap_err(),
+        FactShapeError::NotASerialField {
+            relation: RelationId(0),
+            field: FieldId(1),
+        }
+    );
+    assert_eq!(
+        schema.serial_field(RelationId(9), FieldId(0)).unwrap_err(),
+        FactShapeError::UnknownRelation {
+            relation: RelationId(9),
+        }
+    );
+    assert_eq!(
+        schema.serial_field(RelationId(0), FieldId(9)).unwrap_err(),
+        FactShapeError::UnknownField {
+            relation: RelationId(0),
+            field: FieldId(9),
+        }
+    );
+}
+
+/// Resolve once, mint per row: one witness mints across many `alloc_at`
+/// calls, interleaves with the typed path in one sequence, and the
+/// sequence persists across transactions.
+#[test]
+fn a_witness_mints_the_same_sequence_as_the_typed_path() {
+    let dir = TempDir::new("db-alloc-witness");
+    let schema = serial_schema();
+    let id_field = schema
+        .serial_field(RelationId(0), FieldId(0))
+        .expect("serial field");
+    let db = Db::create(dir.path(), &schema).expect("create");
+    db.write(|tx| {
+        assert_eq!(tx.alloc_at(id_field)?, 0);
+        assert_eq!(tx.alloc::<SId>()?, SId(1), "one sequence, two surfaces");
+        assert_eq!(tx.alloc_at(id_field)?, 2);
+        assert_eq!(tx.alloc_at(id_field)?, 3);
+        assert_eq!(tx.alloc::<SId>()?, SId(4));
+        Ok(())
+    })
+    .expect("mint");
+    // A committed sequence never re-issues: the witness continues where
+    // the first transaction stopped.
+    db.write(|tx| {
+        assert_eq!(tx.alloc_at(id_field)?, 5);
+        Ok(())
+    })
+    .expect("mint again");
+}

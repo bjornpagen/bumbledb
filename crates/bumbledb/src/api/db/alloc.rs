@@ -1,6 +1,6 @@
 use super::{Serial, WriteTx};
 use crate::error::Result;
-use crate::schema::{FieldId, RelationId};
+use crate::schema::SerialField;
 
 impl WriteTx<'_> {
     /// Mints the next serial value for the newtype's field — insert new
@@ -15,17 +15,16 @@ impl WriteTx<'_> {
             .map(T::from_serial)
     }
 
-    /// Untyped serial minting for ETL tooling.
+    /// Untyped serial minting for ETL tooling: the witness carries the
+    /// proof [`crate::Schema::serial_field`] established at resolution, so
+    /// the mint itself re-checks nothing — resolve once per relation, mint
+    /// per row (`70-api.md` § ETL).
     ///
     /// # Errors
     ///
     /// As [`WriteTx::alloc`].
-    ///
-    /// # Panics
-    ///
-    /// If `field` is not `Serial` generation — the untyped path is the
-    /// caller's responsibility to point at a serial field.
-    pub fn alloc_dyn(&mut self, rel: RelationId, field: FieldId) -> Result<u64> {
-        self.delta.alloc(&self.view, rel, field)
+    pub fn alloc_at(&mut self, field: SerialField) -> Result<u64> {
+        self.delta
+            .alloc(&self.view, field.relation(), field.field())
     }
 }

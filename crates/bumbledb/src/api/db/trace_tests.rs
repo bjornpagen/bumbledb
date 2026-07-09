@@ -223,8 +223,12 @@ fn a_noop_serial_commit_keeps_the_view_memo_valid() {
     let dir = TempDir::new("db-trace-noop-serial");
     let db = Db::create(dir.path(), &serial_schema).expect("create");
     let rel = RelationId(0);
+    // Resolve once, mint per row: the witness is the untyped mint handle.
+    let id_field = serial_schema
+        .serial_field(rel, FieldId(0))
+        .expect("serial field");
     db.write(|tx| {
-        let id = tx.alloc_dyn(rel, FieldId(0))?;
+        let id = tx.alloc_at(id_field)?;
         tx.insert_dyn(rel, &[Value::U64(id), Value::U64(42)])
             .map(|_| ())
     })
@@ -252,9 +256,7 @@ fn a_noop_serial_commit_keeps_the_view_memo_valid() {
         .expect("first execute builds");
 
     // The no-op commit: an escaped allocation, no facts.
-    let escaped = db
-        .write(|tx| tx.alloc_dyn(rel, FieldId(0)))
-        .expect("bare alloc");
+    let escaped = db.write(|tx| tx.alloc_at(id_field)).expect("bare alloc");
     assert_eq!(escaped, 1);
     assert_eq!(
         db.generation().expect("generation"),
@@ -273,7 +275,7 @@ fn a_noop_serial_commit_keeps_the_view_memo_valid() {
     assert!(!ns.contains(&obs::names::IMAGE_BUILD), "{ns:?}");
 
     // And the escaped id persisted: the next allocation continues.
-    let next = db.write(|tx| tx.alloc_dyn(rel, FieldId(0))).expect("alloc");
+    let next = db.write(|tx| tx.alloc_at(id_field)).expect("alloc");
     assert_eq!(next, 2);
 }
 

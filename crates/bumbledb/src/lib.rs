@@ -74,7 +74,7 @@ pub use interval::Interval;
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.
 pub use ir::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
-pub use schema::{FieldId, RelationId, Schema, StatementId};
+pub use schema::{FieldId, RelationId, Schema, SerialField, StatementId};
 
 /// The declarative schema surface (docs/architecture/70-api.md). (The macro and the `schema`
 /// module share a name across disjoint namespaces — deliberate:

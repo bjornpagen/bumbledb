@@ -63,7 +63,6 @@ orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [06 — `alloc_dyn`: parse, don't validate](06-serial-field-witness.md)
 - [07 — The high-water allocation contract](07-alloc-highwater-contract.md)
 - [08 — Storage hardening](08-storage-hardening.md)
 - [09 — `verify_store`: namespace coherence](09-verify-store-namespaces.md)

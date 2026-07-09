@@ -87,7 +87,9 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   panics with a named message ("nested Db::write") rather than self-deadlocking on
   the writer mutex forever.
   Write operations: typed `alloc::<NewType>()` via the generated `Serial` newtypes
-  (untyped: `alloc_dyn(relation, field) -> u64`) — serial minting, insert new rows
+  (untyped: `alloc_at(SerialField) -> u64`, taking the witness
+  `Schema::serial_field(relation, field)` resolves — see the ETL section) — serial
+  minting, insert new rows
   without reading a max (`10-data-model.md`); `insert(&fact) -> bool` (changed-state
   report); `delete(&fact) -> bool`; `_dyn` forms of both for ETL tooling.
   `SerialExhausted` raises eagerly at the `alloc` call (the sequence state is knowable
@@ -184,7 +186,13 @@ state** (idempotent re-inserts are consumed but not counted) — changed-not-con
 semantics, stated. Mis-shaped dynamic facts (including out-of-range relation ids and
 `start ≥ end` intervals) are typed `FactShape` errors (decided: ETL input is data,
 not code — no panics on the import path). Explicit serial values preserve identity
-(high-water advances past them). **Import order under bidirectional statements is
+(high-water advances past them). Untyped serial minting is resolve-once/mint-per-row:
+`Schema::serial_field(relation, field) -> Result<SerialField, FactShapeError>`
+validates the ids and the `Serial` generation once and returns a `Copy` witness
+(private fields, one construction site — the type is the proof);
+`tx.alloc_at(witness)` mints with no generation re-check anywhere on the path
+(decided: a per-call typed error inside the mint was rejected — it validates on
+every call and throws the proof away). **Import order under bidirectional statements is
 the importer's obligation:** a `==` statement's cluster must land within one chunk's
 transaction, so the documented import order is dependency-cluster order — parent and
 arm facts interleaved — and a straddled cluster fails its chunk loudly

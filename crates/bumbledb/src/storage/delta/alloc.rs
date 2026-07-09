@@ -14,14 +14,12 @@ impl WriteDelta<'_> {
     ///
     /// `SerialExhausted` when the sequence reaches `u64::MAX`; `Lmdb` on a
     /// failed `Q` read.
-    ///
-    /// # Panics
-    ///
-    /// On a programmer-invariant violation: `field` is not `Serial`
-    /// generation (the typed write path makes this unwritable; the untyped
-    /// path is the caller's responsibility to point at a serial field).
     pub fn alloc(&mut self, view: &ReadTxn<'_>, rel: RelationId, field: FieldId) -> Result<u64> {
-        assert_eq!(
+        // Both callers are proof-carrying — the macro-generated `Serial`
+        // newtypes on the typed path, the `SerialField` witness on the
+        // dynamic path — so the assert documents the invariant; no
+        // boundary re-checks it.
+        debug_assert_eq!(
             self.schema.relation(rel).field(field).generation,
             Generation::Serial,
             "alloc on a non-serial field is a programmer error"

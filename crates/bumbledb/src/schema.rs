@@ -14,6 +14,7 @@ mod type_desc;
 mod validate;
 
 use crate::encoding::FactLayout;
+use crate::error::FactShapeError;
 use crate::value::Value;
 
 /// Dense relation id: the relation's index in schema declaration order.
@@ -72,6 +73,29 @@ pub enum Generation {
     /// The database mints values: monotonic per (relation, field), never
     /// re-issuing a value observable in a committed state. Must be `U64`.
     Serial,
+}
+
+/// A witness that `(relation, field)` names a `Serial`-generation field of
+/// this schema: the proof-carrying handle of the untyped mint path
+/// ([`crate::WriteTx::alloc_at`]). Fields are private and
+/// [`Schema::serial_field`] is the one construction site — holding a value
+/// *is* the proof, so the mint path never re-checks the generation (parse,
+/// don't validate; the ETL access pattern is resolve once per relation,
+/// mint per row).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SerialField {
+    relation: RelationId,
+    field: FieldId,
+}
+
+impl SerialField {
+    pub(crate) fn relation(self) -> RelationId {
+        self.relation
+    }
+
+    pub(crate) fn field(self) -> FieldId {
+        self.field
+    }
 }
 
 /// One field: name + structural type + generation attribute.
@@ -326,6 +350,32 @@ impl Schema {
     #[must_use]
     pub fn relation_checked(&self, id: RelationId) -> Option<&Relation> {
         self.relations.get(id.0 as usize)
+    }
+
+    /// Resolves `(relation, field)` to the [`SerialField`] witness — ids
+    /// and generation validated here, once; every
+    /// [`crate::WriteTx::alloc_at`] mint thereafter carries the proof
+    /// instead of re-checking it (`70-api.md` § ETL).
+    ///
+    /// # Errors
+    ///
+    /// `UnknownRelation`/`UnknownField` on an out-of-range id;
+    /// `NotASerialField` when the field's generation is not `Serial`.
+    pub fn serial_field(
+        &self,
+        relation: RelationId,
+        field: FieldId,
+    ) -> Result<SerialField, FactShapeError> {
+        let Some(rel) = self.relation_checked(relation) else {
+            return Err(FactShapeError::UnknownRelation { relation });
+        };
+        let Some(descriptor) = rel.fields().get(usize::from(field.0)) else {
+            return Err(FactShapeError::UnknownField { relation, field });
+        };
+        if descriptor.generation != Generation::Serial {
+            return Err(FactShapeError::NotASerialField { relation, field });
+        }
+        Ok(SerialField { relation, field })
     }
 
     /// The sealed statements, in materialized order.

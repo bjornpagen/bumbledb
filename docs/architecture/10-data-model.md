@@ -144,7 +144,8 @@ is a **storage behavior, not a type**:
   ```
 
   (The typed surface infers the field from the `Serial` newtype; the untyped form is
-  `tx.alloc_dyn(relation, field)`.)
+  `tx.alloc_at(witness)` with the witness resolved once through
+  `schema.serial_field(relation, field)` — `70-api.md` § ETL.)
 
   `alloc` is the only generator; `insert` is always full-fact and stays idempotent —
   one insert semantics, no generative variant.
