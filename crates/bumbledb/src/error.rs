@@ -259,6 +259,13 @@ pub enum FactShapeError {
         relation: RelationId,
         field: FieldId,
     },
+    /// An interval value with `start >= end`: the empty interval denotes
+    /// no points, and a fact never denotes nothing
+    /// (`docs/architecture/10-data-model.md`).
+    EmptyInterval {
+        relation: RelationId,
+        field: FieldId,
+    },
     /// [`crate::WriteTx::get_dyn`]'s statement id is not a `Functionality`
     /// on the queried relation (out of range, a containment, or another
     /// relation's key) — the dynamic point-read surface is data, so the
@@ -272,6 +279,10 @@ pub enum FactShapeError {
 /// A query validation error (the IR boundary, the 20-query-ir doc): one variant per
 /// roster item in `docs/architecture/20-query-ir.md`, returned at prepare
 /// time.
+///
+/// An `atom` payload is an *occurrence* index: positive atoms first in
+/// query order, then negated atoms — negated atoms are checked under the
+/// same per-atom rules and share the same diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationError {
     UnknownRelation {
@@ -298,17 +309,48 @@ pub enum ValidationError {
         field: FieldId,
         ordinal: u8,
     },
-    /// Param ids must be dense (0..n): a gap would be a positional slot
-    /// whose supplied value is never type-checked.
+    /// An interval literal with `start >= end` in a binding position — it
+    /// denotes no points, and no field value equals or contains nothing
+    /// (comparison sites report
+    /// [`ValidationError::ComparisonEmptyIntervalLiteral`]).
+    EmptyIntervalLiteral {
+        atom: usize,
+        field: FieldId,
+    },
+    /// Param ids must be dense (0..n) across scalars and sets jointly: a
+    /// gap would be a positional slot whose supplied value is never
+    /// type-checked.
     ParamIdGap {
         param: ParamId,
     },
     ParamTypeConflict {
         param: ParamId,
     },
-    /// Type rules violated: cross-type comparison, or an order operator on
-    /// a non-integer type.
+    /// A `ParamId` used both as a scalar (`Term::Param`) and as a set
+    /// (`Term::ParamSet`) — a param is one or the other, never both.
+    ParamScalarAndSet {
+        param: ParamId,
+    },
+    /// A `ParamSet` under any comparison operator but `Eq` — `Ne(x, set)`
+    /// reads as ambiguous quantification; "not in set" is a negated atom
+    /// or the host's complement, written explicitly.
+    ParamSetComparison {
+        index: usize,
+    },
+    /// A `ParamSet` anchored at an interval type: param sets hold points;
+    /// interval-set params are not a thing.
+    IntervalParamSet {
+        param: ParamId,
+    },
+    /// Type rules violated: cross-type comparison, an order operator on a
+    /// non-integer type, or an interval operator over non-interval sides.
     IllegalComparison {
+        index: usize,
+    },
+    /// An order operator (`Lt`/`Le`/`Gt`/`Ge`) with an interval operand —
+    /// intervals are unordered; the predictable mistake gets the dedicated
+    /// diagnostic (`docs/architecture/20-query-ir.md` § comparison rules).
+    OrderComparisonOnInterval {
         index: usize,
     },
     /// Neither side is a variable — write the query you mean.
@@ -326,7 +368,27 @@ pub enum ValidationError {
         index: usize,
         ordinal: u8,
     },
-    /// Datalog safety: a find (or aggregate-input) variable bound by no atom.
+    /// An interval literal with `start >= end` in a comparison position
+    /// (the binding-site sibling of
+    /// [`ValidationError::EmptyIntervalLiteral`]).
+    ComparisonEmptyIntervalLiteral {
+        index: usize,
+    },
+    /// An element-typed variable whose positive atom bindings are all
+    /// interval-field memberships: membership binds no enumerable domain,
+    /// so every point variable needs at least one positive scalar-field
+    /// binding.
+    MembershipOnlyVariable {
+        var: VarId,
+    },
+    /// Negation safety: a variable occurring in a negated atom must occur
+    /// in some positive atom — a negated atom binds nothing, it only
+    /// rejects.
+    NegatedVariableUnbound {
+        var: VarId,
+    },
+    /// Datalog safety: a find (or aggregate-input) variable bound by no
+    /// positive atom.
     UnboundFindVariable {
         var: VarId,
     },
@@ -337,8 +399,11 @@ pub enum ValidationError {
     DuplicateFindTerm {
         index: usize,
     },
-    NoAtoms,
-    /// Sum/Min/Max over a non-integer variable.
+    /// A query with no positive atoms is invalid — negated atoms alone
+    /// bind nothing.
+    NoPositiveAtoms,
+    /// Sum/Min/Max over a non-integer variable (CountDistinct is legal
+    /// over every type — equality is all it needs).
     AggregateInputType {
         find: usize,
     },
@@ -346,15 +411,31 @@ pub enum ValidationError {
     CountWithVariable {
         find: usize,
     },
-    /// Sum/Min/Max require a variable.
+    /// Sum/Min/Max/CountDistinct require a variable, and Arg terms a
+    /// carried variable.
     AggregateWithoutVariable {
         find: usize,
     },
     AggregateOverGroupKey {
         find: usize,
     },
+    /// Arg terms and fold aggregates (Sum/Min/Max/Count/CountDistinct)
+    /// may not mix in one query — "sum of the latest" is two queries.
+    MixedArgAndFold {
+        find: usize,
+    },
+    /// All Arg terms in one query share one key variable and one
+    /// direction; this find disagrees with an earlier Arg term.
+    ArgKeyMismatch {
+        find: usize,
+    },
+    /// An Arg key must be orderable: U64 or I64.
+    NonOrderableArgKey {
+        find: usize,
+    },
     /// Planner cap: the exhaustive left-deep DP accepts at most
-    /// `plan::planner::MAX_OCCURRENCES` atom occurrences.
+    /// `plan::planner::MAX_OCCURRENCES` atom occurrences — negated
+    /// occurrences counted, they consume plan-time work.
     TooManyAtoms {
         count: usize,
     },

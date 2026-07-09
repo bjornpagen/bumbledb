@@ -86,3 +86,198 @@ fn accepts_repeated_variable_within_one_atom() {
     );
     validate(&schema(), &query).expect("valid");
 }
+
+// --- The four accept cases pinning the bivalent-anchor typing rule ---
+
+#[test]
+fn accepts_membership_bound_variable_with_a_scalar_binding_elsewhere() {
+    // (a) t ∈ Posting.span, t = Account.id: the scalar field is the
+    // monovalent anchor — t is element-typed, the span binding is
+    // membership, and Account.id is the enumerable domain.
+    let query = simple(
+        vec![FindTerm::Var(VarId(1))],
+        vec![
+            atom(POSTING, vec![(0, var(0)), (SPAN, var(1))]),
+            atom(ACCOUNT, vec![(0, var(1))]),
+        ],
+    );
+    let witness = validate(&schema(), &query).expect("valid");
+    assert_eq!(witness.var_type(VarId(1)), &ValueType::U64);
+}
+
+#[test]
+fn accepts_a_variable_joined_across_two_interval_fields() {
+    // (b) v in Account.validity and Posting.span: every anchor is
+    // bivalent, so v resolves to the interval type — a value-equality
+    // join, not membership.
+    let query = simple(
+        vec![FindTerm::Var(VarId(0))],
+        vec![
+            atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))]),
+            atom(POSTING, vec![(0, var(2)), (SPAN, var(1))]),
+        ],
+    );
+    let witness = validate(&schema(), &query).expect("valid");
+    assert_eq!(
+        witness.var_type(VarId(1)),
+        &ValueType::Interval {
+            element: IntervalElement::U64
+        }
+    );
+}
+
+#[test]
+fn accepts_an_element_literal_in_an_interval_field_position() {
+    // (c) 7 ∈ Account.validity: an element-typed literal in an interval
+    // field is a membership filter.
+    let query = simple(
+        vec![FindTerm::Var(VarId(0))],
+        vec![atom(
+            ACCOUNT,
+            vec![(0, var(0)), (VALIDITY, Term::Literal(Value::U64(7)))],
+        )],
+    );
+    validate(&schema(), &query).expect("valid");
+}
+
+#[test]
+fn accepts_overlaps_between_interval_variables_from_different_atoms() {
+    // (d) Overlaps(v1, v3): interval-vs-interval overlap needs no shared
+    // point variable — both vars stay bivalent and resolve to intervals.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![
+            atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))]),
+            atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
+        ],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Overlaps,
+            lhs: var(1),
+            rhs: var(3),
+        }],
+    };
+    let witness = validate(&schema(), &query).expect("valid");
+    let interval = ValueType::Interval {
+        element: IntervalElement::U64,
+    };
+    assert_eq!(witness.var_type(VarId(1)), &interval);
+    assert_eq!(witness.var_type(VarId(3)), &interval);
+}
+
+// --- Negation, param sets, and the new aggregates ---
+
+#[test]
+fn accepts_a_zero_binding_negated_atom_as_an_emptiness_gate() {
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(HOLDER, vec![(0, var(0))])],
+        negated: vec![atom(POSTING, vec![])],
+        predicates: vec![],
+    };
+    validate(&schema(), &query).expect("valid");
+}
+
+#[test]
+fn accepts_literals_params_and_sets_inside_negated_atoms() {
+    // ¬Posting(account = a, span = ?0, memo ∈ ?set1): the negated atom's
+    // interval-field param has only bivalent anchors, so it resolves to
+    // the interval type (value equality); the set anchors at Bytes.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(ACCOUNT, vec![(0, var(0))])],
+        negated: vec![atom(
+            POSTING,
+            vec![
+                (1, var(0)),
+                (SPAN, Term::Param(ParamId(0))),
+                (4, Term::ParamSet(ParamId(1))),
+            ],
+        )],
+        predicates: vec![],
+    };
+    let witness = validate(&schema(), &query).expect("valid");
+    let params: Vec<_> = witness.param_types().collect();
+    assert_eq!(
+        params[0],
+        (
+            ParamId(0),
+            &ValueType::Interval {
+                element: IntervalElement::U64
+            }
+        )
+    );
+    assert_eq!(params[1], (ParamId(1), &ValueType::Bytes));
+    assert!(witness.set_params().contains(&ParamId(1)));
+    assert!(!witness.set_params().contains(&ParamId(0)));
+}
+
+#[test]
+fn accepts_param_sets_in_bindings_and_under_eq() {
+    // Account(holder ∈ ?set0, id = x), Eq(x, ?set1): both legal set
+    // positions; each set's type is its element type.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(
+            ACCOUNT,
+            vec![(0, var(0)), (1, Term::ParamSet(ParamId(0)))],
+        )],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Eq,
+            lhs: var(0),
+            rhs: Term::ParamSet(ParamId(1)),
+        }],
+    };
+    let witness = validate(&schema(), &query).expect("valid");
+    let params: Vec<_> = witness.param_types().collect();
+    assert_eq!(params[0], (ParamId(0), &ValueType::U64));
+    assert_eq!(params[1], (ParamId(1), &ValueType::U64));
+    assert_eq!(witness.set_params().len(), 2);
+}
+
+#[test]
+fn accepts_count_distinct_over_every_type() {
+    // CountDistinct over a String variable — equality is all it needs.
+    let query = simple(
+        vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::CountDistinct,
+                over: Some(VarId(1)),
+            },
+        ],
+        vec![atom(HOLDER, vec![(0, var(0)), (1, var(1))])],
+    );
+    validate(&schema(), &query).expect("valid");
+}
+
+#[test]
+fn accepts_arg_restriction_with_a_projected_key() {
+    // finds [at, ArgMax_{at}(memo)]: the key variable may itself be
+    // projected; the carry rides with the attaining bindings.
+    let query = simple(
+        vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::ArgMax { key: VarId(0) },
+                over: Some(VarId(1)),
+            },
+        ],
+        vec![atom(POSTING, vec![(3, var(0)), (4, var(1))])],
+    );
+    validate(&schema(), &query).expect("valid");
+}
+
+#[test]
+fn accepts_an_arg_carry_equal_to_its_key() {
+    // over = the carry, and it may equal the key: ArgMax_{at}(at).
+    let query = simple(
+        vec![FindTerm::Aggregate {
+            op: AggOp::ArgMax { key: VarId(0) },
+            over: Some(VarId(0)),
+        }],
+        vec![atom(POSTING, vec![(3, var(0)), (1, var(1))])],
+    );
+    validate(&schema(), &query).expect("valid");
+}

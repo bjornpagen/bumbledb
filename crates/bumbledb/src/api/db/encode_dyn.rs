@@ -26,6 +26,10 @@ pub(super) fn shape_mismatch(
             relation: rel,
             field,
         },
+        crate::ir::ValueMismatch::IntervalEmpty => FactShapeError::EmptyInterval {
+            relation: rel,
+            field,
+        },
     }
 }
 

@@ -2,16 +2,17 @@ use super::*;
 use crate::error::ValidationError;
 use crate::ir::{FindTerm, Term};
 use crate::schema::{
-    ConstraintDescriptor, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId,
-    Schema, SchemaDescriptor,
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
 };
 
 mod accept;
 mod reject;
 
-/// The fixture schema: Holder(id serial, name string); Account(id
-/// serial, holder u64 fk, status enum); Posting(id serial, account
-/// u64, amount i64, at i64, memo bytes, flag bool).
+/// The fixture schema:
+/// Holder(id serial, name string);
+/// Account(id serial, holder u64, status enum, validity interval<u64>);
+/// Posting(id serial, account u64, amount i64, at i64, memo bytes,
+///         flag bool, span interval<u64>).
 fn schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
         name: name.into(),
@@ -23,12 +24,14 @@ fn schema() -> Schema {
         value_type: ValueType::U64,
         generation: Generation::Serial,
     };
+    let interval_u64 = ValueType::Interval {
+        element: IntervalElement::U64,
+    };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 name: "Holder".into(),
                 fields: vec![serial("id"), field("name", ValueType::String)],
-                constraints: vec![],
             },
             RelationDescriptor {
                 name: "Account".into(),
@@ -41,13 +44,8 @@ fn schema() -> Schema {
                             variants: ["Active", "Closed"].iter().map(|v| Box::from(*v)).collect(),
                         },
                     ),
+                    field("validity", interval_u64.clone()),
                 ],
-                constraints: vec![ConstraintDescriptor::ForeignKey {
-                    name: "account_holder".into(),
-                    fields: Box::new([FieldId(1)]),
-                    target_relation: RelationId(0),
-                    target_constraint: crate::schema::ConstraintId(0),
-                }],
             },
             RelationDescriptor {
                 name: "Posting".into(),
@@ -58,10 +56,11 @@ fn schema() -> Schema {
                     field("at", ValueType::I64),
                     field("memo", ValueType::Bytes),
                     field("flag", ValueType::Bool),
+                    field("span", interval_u64),
                 ],
-                constraints: vec![],
             },
         ],
+        statements: vec![],
     }
     .validate()
     .expect("valid fixture")
@@ -70,6 +69,10 @@ fn schema() -> Schema {
 const HOLDER: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
 const POSTING: RelationId = RelationId(2);
+
+/// Interval fields, by fixture position.
+const VALIDITY: u16 = 3; // Account.validity
+const SPAN: u16 = 6; // Posting.span
 
 fn atom(relation: RelationId, bindings: Vec<(u16, Term)>) -> crate::ir::Atom {
     crate::ir::Atom {

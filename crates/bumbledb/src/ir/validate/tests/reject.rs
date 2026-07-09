@@ -309,9 +309,27 @@ fn rejects_duplicate_find_terms() {
 }
 
 #[test]
-fn rejects_no_atoms() {
+fn rejects_no_positive_atoms() {
     let query = simple(vec![FindTerm::Var(VarId(0))], vec![]);
-    assert!(matches!(expect_err(&query), ValidationError::NoAtoms));
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::NoPositiveAtoms
+    ));
+}
+
+#[test]
+fn rejects_negated_atoms_without_any_positive_atom() {
+    // Negated atoms alone bind nothing: not a query.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![],
+        negated: vec![atom(POSTING, vec![(1, var(0))])],
+        predicates: vec![],
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::NoPositiveAtoms
+    ));
 }
 
 #[test]
@@ -444,8 +462,8 @@ fn rejects_more_distinct_variables_than_the_bitset_at_the_boundary() {
                     generation: Generation::None,
                 })
                 .collect(),
-            constraints: vec![],
         }],
+        statements: vec![],
     }
     .validate()
     .expect("wide fixture");
@@ -462,5 +480,280 @@ fn rejects_more_distinct_variables_than_the_bitset_at_the_boundary() {
     assert!(matches!(
         err,
         ValidationError::TooManyVariables { count: 129 }
+    ));
+}
+
+#[test]
+fn negated_occurrences_count_toward_the_occurrence_cap() {
+    // MAX_OCCURRENCES positive atoms alone pass; one negated atom tips
+    // the occurrence count over — anti-probes consume plan-time work.
+    let cap = crate::plan::planner::MAX_OCCURRENCES;
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: (0..cap).map(|_| atom(HOLDER, vec![(0, var(0))])).collect(),
+        negated: vec![atom(HOLDER, vec![(0, var(0))])],
+        predicates: vec![],
+    };
+    let err = validate(&schema(), &query).unwrap_err();
+    assert!(matches!(err, ValidationError::TooManyAtoms { count } if count == cap + 1));
+}
+
+// --- The PRD 12 reject corpus: the new roster lines ---
+
+#[test]
+fn order_operator_on_an_interval_gets_the_dedicated_diagnostic() {
+    // Lt over Account.validity — the predictable mistake gets the good
+    // error, not a generic IllegalComparison.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Lt,
+            lhs: var(1),
+            rhs: Term::Literal(Value::IntervalU64(1, 5)),
+        }],
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::OrderComparisonOnInterval { index: 0 }
+    ));
+}
+
+#[test]
+fn order_operator_on_two_bivalent_interval_variables() {
+    // Both sides bound only in interval fields: the bivalent anchors
+    // resolve to the interval type, and the order op is rejected with
+    // the dedicated diagnostic.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![
+            atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))]),
+            atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
+        ],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Ge,
+            lhs: var(1),
+            rhs: var(3),
+        }],
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::OrderComparisonOnInterval { index: 0 }
+    ));
+}
+
+#[test]
+fn rejects_param_set_under_ne() {
+    // Ne(x, set) reads as ambiguous quantification: a param set is legal
+    // only in atom bindings and under Eq.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (1, var(1))])],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Ne,
+            lhs: var(1),
+            rhs: Term::ParamSet(ParamId(0)),
+        }],
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::ParamSetComparison { index: 0 }
+    ));
+}
+
+#[test]
+fn rejects_a_param_id_used_both_scalar_and_set() {
+    // ?0 as a set in Posting.account and as a scalar in Holder.id.
+    let query = simple(
+        vec![FindTerm::Var(VarId(0))],
+        vec![
+            atom(POSTING, vec![(0, var(0)), (1, Term::ParamSet(ParamId(0)))]),
+            atom(HOLDER, vec![(0, Term::Param(ParamId(0)))]),
+        ],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::ParamScalarAndSet { param: ParamId(0) }
+    ));
+}
+
+#[test]
+fn rejects_a_membership_only_variable() {
+    // The comparison collapses t to the element type (U64), so its one
+    // atom binding is membership — no enumerable domain.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Eq,
+            lhs: var(1),
+            rhs: Term::Literal(Value::U64(5)),
+        }],
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::MembershipOnlyVariable { var: VarId(1) }
+    ));
+}
+
+#[test]
+fn rejects_a_negated_atom_variable_unbound_by_positive_atoms() {
+    // A negated atom binds nothing; y comes from nowhere.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(HOLDER, vec![(0, var(0))])],
+        negated: vec![atom(POSTING, vec![(1, var(1))])],
+        predicates: vec![],
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::NegatedVariableUnbound { var: VarId(1) }
+    ));
+}
+
+#[test]
+fn rejects_mixed_arg_and_fold_aggregates() {
+    // ArgMax + Sum in one find list: "sum of the latest" is two queries.
+    let query = simple(
+        vec![
+            FindTerm::Aggregate {
+                op: AggOp::ArgMax { key: VarId(0) },
+                over: Some(VarId(1)),
+            },
+            FindTerm::Aggregate {
+                op: AggOp::Sum,
+                over: Some(VarId(2)),
+            },
+        ],
+        vec![atom(POSTING, vec![(3, var(0)), (1, var(1)), (2, var(2))])],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::MixedArgAndFold { find: 1 }
+    ));
+}
+
+#[test]
+fn rejects_arg_terms_with_differing_keys() {
+    let query = simple(
+        vec![
+            FindTerm::Aggregate {
+                op: AggOp::ArgMax { key: VarId(0) },
+                over: Some(VarId(1)),
+            },
+            FindTerm::Aggregate {
+                op: AggOp::ArgMax { key: VarId(2) },
+                over: Some(VarId(3)),
+            },
+        ],
+        vec![atom(
+            POSTING,
+            vec![(3, var(0)), (1, var(1)), (2, var(2)), (0, var(3))],
+        )],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::ArgKeyMismatch { find: 1 }
+    ));
+}
+
+#[test]
+fn rejects_arg_terms_with_differing_directions() {
+    // One key, two directions: ArgMax and ArgMin may not mix either.
+    let query = simple(
+        vec![
+            FindTerm::Aggregate {
+                op: AggOp::ArgMax { key: VarId(0) },
+                over: Some(VarId(1)),
+            },
+            FindTerm::Aggregate {
+                op: AggOp::ArgMin { key: VarId(0) },
+                over: Some(VarId(2)),
+            },
+        ],
+        vec![atom(POSTING, vec![(3, var(0)), (1, var(1)), (2, var(2))])],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::ArgKeyMismatch { find: 1 }
+    ));
+}
+
+#[test]
+fn rejects_a_non_orderable_arg_key() {
+    // Holder.name (String) as the Arg key: no extreme to attain.
+    let query = simple(
+        vec![FindTerm::Aggregate {
+            op: AggOp::ArgMax { key: VarId(0) },
+            over: Some(VarId(1)),
+        }],
+        vec![atom(HOLDER, vec![(1, var(0)), (0, var(1))])],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::NonOrderableArgKey { find: 0 }
+    ));
+}
+
+#[test]
+fn rejects_an_inverted_interval_literal_in_a_binding() {
+    let query = simple(
+        vec![FindTerm::Var(VarId(0))],
+        vec![atom(
+            ACCOUNT,
+            vec![
+                (0, var(0)),
+                (VALIDITY, Term::Literal(Value::IntervalU64(9, 3))),
+            ],
+        )],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::EmptyIntervalLiteral {
+            atom: 0,
+            field: FieldId(VALIDITY)
+        }
+    ));
+}
+
+#[test]
+fn rejects_an_inverted_interval_literal_in_a_comparison() {
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Eq,
+            lhs: var(1),
+            rhs: Term::Literal(Value::IntervalU64(9, 3)),
+        }],
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::ComparisonEmptyIntervalLiteral { index: 0 }
+    ));
+}
+
+#[test]
+fn rejects_an_interval_typed_param_set_anchor() {
+    // v resolves to the interval type (its only anchors are bivalent), so
+    // Eq(v, ?set0) would make ?set0 a set of intervals — not a thing.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Eq,
+            lhs: var(1),
+            rhs: Term::ParamSet(ParamId(0)),
+        }],
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::IntervalParamSet { param: ParamId(0) }
     ));
 }

@@ -73,16 +73,24 @@ pub(crate) enum ValueMismatch {
     EnumOrdinal(u8),
     /// `Value::String` bytes are not UTF-8 (the type's contract).
     Utf8,
+    /// Interval bounds with `start >= end` — the empty interval denotes
+    /// no points and is unrepresentable
+    /// (`docs/architecture/10-data-model.md`).
+    IntervalEmpty,
 }
 
 /// The one `Value` ↔ `ValueType` compatibility check (kind, enum ordinal
-/// range, String UTF-8) — validation, bind-time, and the dynamic write
-/// path all call this so the rules cannot drift apart.
+/// range, String UTF-8, interval non-emptiness) — validation, bind-time,
+/// and the dynamic write path all call this so the rules cannot drift
+/// apart. Note the membership rule is *not* here: an element-typed value
+/// against an `Interval` field is a kind mismatch to this check, and the
+/// IR validation boundary owns that bivalence
+/// (`ir::validate`, the bivalent-anchor resolution).
 pub(crate) fn value_matches(
     value: &Value,
     expected: &crate::schema::ValueType,
 ) -> Result<(), ValueMismatch> {
-    use crate::schema::ValueType;
+    use crate::schema::{IntervalElement, ValueType};
     match (value, expected) {
         (Value::Bool(_), ValueType::Bool)
         | (Value::U64(_), ValueType::U64)
@@ -100,6 +108,30 @@ pub(crate) fn value_matches(
                 Ok(())
             } else {
                 Err(ValueMismatch::EnumOrdinal(*ordinal))
+            }
+        }
+        (
+            Value::IntervalU64(start, end),
+            ValueType::Interval {
+                element: IntervalElement::U64,
+            },
+        ) => {
+            if start < end {
+                Ok(())
+            } else {
+                Err(ValueMismatch::IntervalEmpty)
+            }
+        }
+        (
+            Value::IntervalI64(start, end),
+            ValueType::Interval {
+                element: IntervalElement::I64,
+            },
+        ) => {
+            if start < end {
+                Ok(())
+            } else {
+                Err(ValueMismatch::IntervalEmpty)
             }
         }
         _ => Err(ValueMismatch::Type),

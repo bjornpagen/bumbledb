@@ -41,6 +41,11 @@ impl fmt::Display for FactShapeError {
                 "relation {}, field {}: string bytes are not UTF-8",
                 relation.0, field.0
             ),
+            Self::EmptyInterval { relation, field } => write!(
+                f,
+                "relation {}, field {}: interval start >= end",
+                relation.0, field.0
+            ),
             Self::NotAKeyStatement {
                 relation,
                 statement,
@@ -323,15 +328,39 @@ impl fmt::Display for ValidationError {
                 "atom {atom}: enum ordinal {ordinal} out of range at field {}",
                 field.0
             ),
+            Self::EmptyIntervalLiteral { atom, field } => write!(
+                f,
+                "atom {atom}: interval literal start >= end at field {}",
+                field.0
+            ),
             Self::ParamIdGap { param } => {
                 write!(f, "parameter ids are not dense: {} is unused", param.0)
             }
             Self::ParamTypeConflict { param } => {
                 write!(f, "parameter {} anchored at conflicting types", param.0)
             }
+            Self::ParamScalarAndSet { param } => {
+                write!(
+                    f,
+                    "parameter {} used both as a scalar and as a set",
+                    param.0
+                )
+            }
+            Self::ParamSetComparison { index } => {
+                write!(f, "comparison {index}: a param set is legal only under Eq")
+            }
+            Self::IntervalParamSet { param } => write!(
+                f,
+                "parameter {}: param sets hold points, not intervals",
+                param.0
+            ),
             Self::IllegalComparison { index } => {
                 write!(f, "comparison {index}: type rules violated")
             }
+            Self::OrderComparisonOnInterval { index } => write!(
+                f,
+                "comparison {index}: order operator on an interval — intervals are unordered"
+            ),
             Self::ConstantComparison { index } => {
                 write!(f, "comparison {index}: neither side is a variable")
             }
@@ -341,15 +370,28 @@ impl fmt::Display for ValidationError {
             Self::ComparisonEnumOrdinalOutOfRange { index, ordinal } => {
                 write!(f, "comparison {index}: enum ordinal {ordinal} out of range")
             }
+            Self::ComparisonEmptyIntervalLiteral { index } => {
+                write!(f, "comparison {index}: interval literal start >= end")
+            }
+            Self::MembershipOnlyVariable { var } => write!(
+                f,
+                "variable {} is bound only by membership — no enumerable domain",
+                var.0
+            ),
+            Self::NegatedVariableUnbound { var } => write!(
+                f,
+                "variable {} occurs in a negated atom but in no positive atom",
+                var.0
+            ),
             Self::UnboundFindVariable { var } => {
-                write!(f, "find variable {} bound by no atom", var.0)
+                write!(f, "find variable {} bound by no positive atom", var.0)
             }
             Self::ComparisonOnlyVariable { var } => {
                 write!(f, "variable {} appears only in comparisons", var.0)
             }
             Self::EmptyFinds => write!(f, "the find list is empty"),
             Self::DuplicateFindTerm { index } => write!(f, "find term {index} is a duplicate"),
-            Self::NoAtoms => write!(f, "the query has no atoms"),
+            Self::NoPositiveAtoms => write!(f, "the query has no positive atoms"),
             Self::AggregateInputType { find } => {
                 write!(f, "find {find}: aggregate over a non-integer variable")
             }
@@ -361,6 +403,16 @@ impl fmt::Display for ValidationError {
             }
             Self::AggregateOverGroupKey { find } => {
                 write!(f, "find {find}: aggregate over a group-key variable")
+            }
+            Self::MixedArgAndFold { find } => {
+                write!(f, "find {find}: Arg terms and fold aggregates may not mix")
+            }
+            Self::ArgKeyMismatch { find } => write!(
+                f,
+                "find {find}: Arg terms must share one key variable and one direction"
+            ),
+            Self::NonOrderableArgKey { find } => {
+                write!(f, "find {find}: the Arg key must be U64 or I64")
             }
             Self::TooManyAtoms { count } => {
                 write!(f, "{count} atom occurrences exceed the planner cap")
