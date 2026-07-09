@@ -153,7 +153,13 @@ gate nothing.
   atoms across the binding-shape space (key-covered and not, with params and sets);
   param sets across sizes {0, 1, 2, boundary-large} with per-type miss policies and
   duplicate elements (dedup asserted); membership bindings against literals,
-  params, and variables (each anchoring the element type); aggregates of every op
+  params, and variables (each anchoring the element type) — with the **cost-bound
+  rule**: a var-point membership or cross-atom Overlaps/Contains construct is
+  generated only on an equality-connected spine (the interval occurrence shares an
+  equality join variable with the point's atom, or carries an equality
+  selection) — the keyless form is a Cartesian (`40-execution.md`) and the
+  generator bounding its cost is the same duty as bounding reachable sums;
+  aggregates of every op
   over their legal types (u64 generators must bound reachable sums below 2⁶³);
   CountDistinct over every type; Arg-restriction with and without ties (tie data
   constructed, not hoped for) and with the key projected; multi-aggregate find

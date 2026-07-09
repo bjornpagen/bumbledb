@@ -23,7 +23,12 @@ mechanism names its reader; this is `U`/`M`'s read-side reader).
 (image scan + filter) in v0 — decided; acceptability is policed by the latency budget
 (`00-product.md`), and the range-accelerator OPEN item (which now covers interval
 stabbing — "which intervals contain t" — alongside scalar ranges) triggers on
-violation. Interval predicates lower to word comparisons over the start/end column
+violation. One degenerate named honestly: a membership or overlap join whose
+interval occurrence shares **no equality variable** with the rest of the query is a
+Cartesian with a filter — O(bindings × n), like any Cartesian, and only a stabbing
+structure could do better. Real interval workloads carry their group key
+(per-account, per-room); the randomized generator bounds itself to that shape
+(`60-validation.md`). Interval predicates lower to word comparisons over the start/end column
 pair (`50-storage.md` image layout), so the filter kernels are the existing 8-byte
 shapes; no new NEON widths exist.
 
