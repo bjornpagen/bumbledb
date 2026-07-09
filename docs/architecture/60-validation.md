@@ -225,10 +225,13 @@ and nonempty relations, and empty-input aggregates.
 
 ## The allocation gate
 
-The one numeric gate: a counting allocator asserts the zero-warm-allocation contract
-under the exact protocol defined in `40-execution.md` (single-threaded, N warmups over
-a fixed param set, M measured runs, arena growth counted, caller-provided result
-buffer). It is a boolean, not a budget file.
+The one numeric gate: a counting allocator asserts the high-water allocation contract
+under the exact protocol defined in `40-execution.md` — the steady-state window
+(single-threaded, N warmups over a fixed param set, M measured runs asserting zero,
+arena growth counted, caller-provided result buffer) plus the escalating high-water
+window (allocations only on executions setting a new intermediate high-water; every
+repeat of a seen parameter silent; at least one growth event observed, else the run
+is vacuous). It is a boolean, not a budget file.
 
 ## EXPLAIN assertions
 

@@ -284,23 +284,44 @@ winning end-to-end.
 
 ## The allocation contract
 
-**A warm prepared-query execution performs zero heap allocations**, excluding a
-caller-provided result buffer. All scratch — binding slots, probe keys, batch buffers,
-COLT pools, filtered views, sink state (dedup sets, group maps, distinct sets,
-arg-restriction sets) — is retained-capacity pools owned by the `PreparedQuery`
-(index-addressed `Vec`s that reset without freeing; the `Arena` type proper serves
-only the write delta). Retained scratch is O(touched data + output) per prepared
-query and is documented as such (an app holding N prepared queries retains N scratch
-sets); pools reach a fixpoint for a given data generation.
+**Scratch capacity is a monotone high-water: a warm prepared-query execution
+performs zero heap allocations unless its intermediate sizes exceed every prior
+execution's**, excluding a caller-provided result buffer. All scratch — binding
+slots, probe keys, batch buffers, COLT pools, filtered views, sink state (dedup
+sets, group maps, distinct sets, arg-restriction sets) — is retained-capacity
+pools owned by the `PreparedQuery` (index-addressed `Vec`s that reset without
+freeing; the `Arena` type proper serves only the write delta), so a warm
+execution allocates only when a strictly-increasing input-shape high-water
+pushes a pool past every capacity it has ever held; a re-bind whose
+intermediates fit anything already seen touches the allocator zero times. This
+is the stronger-because-true claim, not a weakening: "zero, unconditionally"
+was false at three sites whose scratch is sized by per-execution intermediates
+no warmup parameter is guaranteed to dominate (origin-cancellation epochs,
+absorb-node origin minting, node-to-node pending buffers —
+`exec/run/cancel.rs`, `exec/run/probe_pass.rs`); monotone high-water
+convergence is what the pools actually guarantee, and it is a claim the gate
+can falsify. Retained scratch is O(touched data + output) per prepared query
+and is documented as such (an app holding N prepared queries retains N scratch
+sets); pools reach a fixpoint per **(data generation, parameter envelope)** —
+once every parameter shape the app binds has been seen at its hottest
+intermediates, every subsequent execution is allocation-free until the data
+generation changes.
 
-**CI gate protocol (the definition of "steady state"):** single-threaded harness; the
-prepared query executes N warmup runs with parameters drawn from a fixed set and no
-intervening writes; then M measured runs over the same parameter set assert **zero**
-allocator hits, arena growth included (post-warmup growth is a failure), result buffer
-caller-provided. First-execution and post-commit rebuild allocations are sanctioned and
-outside the measured window. Param sets draw from the fixed set like scalar params;
-a warm re-bind of a differently-sized set within the documented assumption reuses
-pooled capacity.
+**CI gate protocol (the definition of "steady state"):** single-threaded harness,
+two measured windows. **Steady state:** the prepared query executes N warmup runs
+with parameters drawn from a fixed set and no intervening writes; then M measured
+runs over the same parameter set assert **zero** allocator hits, arena growth
+included (growth inside a seen envelope is a failure), result buffer
+caller-provided. **High-water:** after warmup on the coldest parameter, a
+parameter sequence of strictly increasing selectivity — each parameter binds a
+strictly hotter key — asserts that allocations occur **only** on executions
+setting a new intermediate high-water: every repeat of a previously-seen
+parameter, immediate or later, is allocation-silent, and the window guards its
+own vacuousness — the harness must observe at least one growth event across the
+escalation, or the run proves nothing. First-execution and post-commit rebuild
+allocations are sanctioned and outside both windows. Param sets draw from the
+fixed set like scalar params; a warm re-bind of a differently-sized set within
+the documented assumption reuses pooled capacity.
 
 **Concurrency contract:** the engine owns zero threads (`00-product.md` doctrine).
 Execution is single-threaded per query; `PreparedQuery` is `!Sync` and executes from

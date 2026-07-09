@@ -7,8 +7,10 @@
 //! protocol is single-threaded. The counter wraps the system allocator and
 //! tracks **events** (allocations including reallocations; deallocations)
 //! and **bytes** (window-relative alloc/dealloc totals; absolute live and
-//! peak-live). A measured window must see **zero** of either event kind —
-//! arena growth is a failure, not amortization.
+//! peak-live). A steady-state measured window must see **zero** of either
+//! event kind — growth inside a seen (generation, parameter envelope) is
+//! a failure, not amortization; only a new intermediate high-water may
+//! allocate.
 //!
 //! Event/byte asymmetry for `realloc`, deliberate: a realloc counts as one
 //! allocation event and zero deallocation events (the gate's historical
@@ -24,8 +26,10 @@
 //! Sanctioned allocation windows, documented per the protocol: the first
 //! execution after prepare (COLT pools, sink maps, and view buffers grow
 //! to their high-water), the first execution after a commit (image
-//! rebuild), and caller result-buffer growth. Everything else on a warm
-//! execution is a bug.
+//! rebuild), a warm execution whose intermediates set a new high-water
+//! (scratch is monotone retained-capacity — the escalation window's
+//! growth events), and caller result-buffer growth. Everything else on a
+//! warm execution is a bug.
 
 #![allow(unsafe_code)] // GlobalAlloc is an unsafe trait; this module only
                        // delegates to the system allocator and counts.

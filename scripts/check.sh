@@ -18,7 +18,12 @@ cargo test --workspace
 echo "==> cargo test --workspace --doc"
 cargo test --workspace --doc
 
-echo "==> allocation gate (release)"
+echo "==> allocation gate (release): steady-state + escalating high-water"
+# Both measured windows of the docs/architecture/40-execution.md gate
+# protocol run inside the binary's one test: the fixed-set steady-state
+# zero assertion and the escalating high-water variant (allocations only
+# on new intermediate high-waters; repeats silent; >=1 growth event
+# observed or the run is vacuous).
 # --test-threads=1: the counting allocator is process-global; the gate
 # binary holds one test by invariant (alloc_gate.rs header), and the
 # flag keeps even an accidental second test from turning it flaky.

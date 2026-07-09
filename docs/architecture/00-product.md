@@ -240,9 +240,11 @@ idiom.
    the owner's. **The claim is unearned until the suite runs green on this
    engine.** The "ratchet" is a manually re-run report per meaningful change — not
    a CI gate.
-3. **Allocation:** a warm prepared-query execution performs **zero heap allocations**
-   (and zero deallocations) excluding a caller-provided result buffer, asserted by a
-   counting allocator under the protocol defined in `40-execution.md`. Enforcement
+3. **Allocation:** a warm prepared-query execution within a seen (data generation,
+   parameter envelope) performs **zero heap allocations** (and zero deallocations)
+   excluding a caller-provided result buffer — scratch is a monotone high-water,
+   allocating only on strictly larger intermediates — asserted by a counting
+   allocator under the protocol defined in `40-execution.md`. Enforcement
    today is `scripts/check.sh` (the checked-in gate suite, run before every commit);
    it becomes a CI gate verbatim when CI exists.
 4. **Docs stay true** (stated intent, mechanized as rules 3/5 in

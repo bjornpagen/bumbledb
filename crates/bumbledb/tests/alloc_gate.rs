@@ -1,8 +1,12 @@
 //! The allocation gate (docs/architecture/40-execution.md): the doc's protocol as a contract of warm
 //! prepared-query execution through the public surface — single-threaded
-//! harness (one test function, its own binary), N=8 warmups over a fixed
-//! param set, then M=8 measured runs asserting **zero** allocator hits,
-//! arena growth included, result buffer caller-provided.
+//! harness (one test function, its own binary), two measured windows.
+//! **Steady state:** N=8 warmups over a fixed param set, then M=8 measured
+//! runs asserting **zero** allocator hits, arena growth included, result
+//! buffer caller-provided. **High-water:** a parameter sequence of strictly
+//! increasing selectivity, asserting allocations occur only on executions
+//! that set a new intermediate high-water and that any repeat of a
+//! previously-seen parameter is silent ([`escalation_gate`]).
 //!
 //! Run with `cargo test --features alloc-counter --test alloc_gate`.
 //!
@@ -90,6 +94,13 @@ fn schema() -> Schema {
 const POSTING: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
 
+/// The high-water window's escalation ladder: per rung, one account that
+/// is the sole account of its holder, with this many postings — so each
+/// escalation parameter (holders 5..10, accounts 20..25) binds a strictly
+/// hotter key and every rung's join intermediates strictly dominate the
+/// last's.
+const LADDER: [u64; 5] = [6, 24, 72, 240, 660];
+
 fn populate(db: &Db<'_>) {
     db.write(|tx| {
         for account in 0..20u64 {
@@ -105,6 +116,26 @@ fn populate(db: &Db<'_>) {
                     Value::String(format!("memo-{}", id % 4).into_bytes().into()),
                 ],
             )?;
+        }
+        let mut account = 20u64;
+        let mut holder = 5u64;
+        let mut id = 500u64;
+        for count in LADDER {
+            tx.insert_dyn(ACCOUNT, &[Value::U64(account), Value::U64(holder)])?;
+            for _ in 0..count {
+                tx.insert_dyn(
+                    POSTING,
+                    &[
+                        Value::U64(id),
+                        Value::U64(account),
+                        Value::I64((id.cast_signed() % 100) - 50),
+                        Value::String(format!("memo-{}", id % 4).into_bytes().into()),
+                    ],
+                )?;
+                id += 1;
+            }
+            account += 1;
+            holder += 1;
         }
         Ok(())
     })
@@ -287,6 +318,38 @@ fn string_rotation_query() -> Query {
     }
 }
 
+/// Q(memo, amount) :- Posting(account = a, memo, amount),
+/// Account(id = a, holder = ?0) — the high-water escalation shape
+/// (docs/architecture/40-execution.md): the holder param is an Eq
+/// selection level (one view, probed per execution — no per-param view
+/// churn), and each ladder holder joins strictly more postings than the
+/// last, so intermediates — pending buffers, sink dedup, result staging —
+/// escalate with the parameter.
+fn escalation_query() -> Query {
+    Query {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![
+            Atom {
+                relation: POSTING,
+                bindings: vec![
+                    (FieldId(1), Term::Var(VarId(2))),
+                    (FieldId(3), Term::Var(VarId(0))),
+                    (FieldId(2), Term::Var(VarId(1))),
+                ],
+            },
+            Atom {
+                relation: ACCOUNT,
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(2))),
+                    (FieldId(1), Term::Param(ParamId(0))),
+                ],
+            },
+        ],
+        negated: vec![],
+        predicates: vec![],
+    }
+}
+
 /// Q(amount) :- Posting(id = ?0, amount) — the guard-probe shape.
 fn guard_query() -> Query {
     Query {
@@ -339,6 +402,107 @@ fn gate(
         (bytes.alloc_bytes, bytes.dealloc_bytes),
         (0, 0),
         "{label}: warm byte totals must be zero too"
+    );
+    assert!(!out.is_empty(), "{label}: the fixture produced rows");
+}
+
+/// One measured execution that must not touch the allocator at all —
+/// events and bytes, both directions ([`escalation_gate`]'s repeat steps).
+fn silent(
+    label: &str,
+    step: &str,
+    prepared: &mut PreparedQuery<'_>,
+    snap: &Snapshot<'_>,
+    params: &[Value],
+    out: &mut ResultBuffer,
+) {
+    alloc_counter::reset();
+    snap.execute(prepared, params, out).expect(label);
+    let bytes = alloc_counter::snapshot();
+    assert_eq!(
+        (
+            bytes.allocs,
+            bytes.deallocs,
+            bytes.alloc_bytes,
+            bytes.dealloc_bytes
+        ),
+        (0, 0, 0, 0),
+        "{label}: {step} must be allocation-silent"
+    );
+}
+
+/// The high-water window (docs/architecture/40-execution.md, § CI gate
+/// protocol): warm the coldest parameter to its fixpoint, then walk a
+/// strictly-hotter parameter sequence asserting (a) allocations occur
+/// **only** on executions that set a new intermediate high-water — every
+/// repeat of a previously-seen parameter, immediate or later, is silent —
+/// and (b) the escalation itself observed at least one growth event (a
+/// gate that never sees growth proves nothing).
+///
+/// Mutation demonstration (the gate is not theater; no test-only
+/// injection point lives in the hot path, so the check was done manually
+/// during development): a temporary
+/// `std::hint::black_box(Vec::<u64>::with_capacity(1));` at the top of
+/// `Executor::execute` (`exec/run/execute.rs`) — one heap allocation per
+/// execution — made this variant (run first, ahead of the steady-state
+/// scenarios) fail at its first repeat step: `escalation: repeat of
+/// params[1] right after its high-water run must be allocation-silent`
+/// with `(1, 1, 8, 8) != (0, 0, 0, 0)`; in normal order the steady-state
+/// gate caught the same mutation at its first measured scenario
+/// (`join/batch1: a warm execution allocated: 32 != 0`). Reverting the
+/// mutation turned both green again. Observed sensitivity on the real
+/// engine: the escalation's growth steps reallocated pools on rungs
+/// 24, 72, and 240 (4+4+1 events) and were silent on 660 — the pending
+/// buffers had converged at the batch cap, growth permitted but not
+/// required on a high-water.
+fn escalation_gate(
+    label: &str,
+    prepared: &mut PreparedQuery<'_>,
+    snap: &Snapshot<'_>,
+    params: &[Vec<Value>],
+) {
+    let mut out = ResultBuffer::new();
+    // Warm the coldest parameter to its fixpoint — first-execution
+    // allocations are sanctioned and stay outside the measured window.
+    for _ in 0..8 {
+        snap.execute(prepared, &params[0], &mut out).expect(label);
+    }
+    let mut growth_events = 0u64;
+    for i in 1..params.len() {
+        // A never-seen parameter whose intermediates strictly dominate
+        // every prior execution's: a new high-water — the only execution
+        // class the contract allows to allocate.
+        alloc_counter::reset();
+        snap.execute(prepared, &params[i], &mut out).expect(label);
+        if alloc_counter::count() > 0 {
+            growth_events += 1;
+        }
+        // The same parameter again: its own high-water now dominates it.
+        silent(
+            label,
+            &format!("repeat of params[{i}] right after its high-water run"),
+            prepared,
+            snap,
+            &params[i],
+            &mut out,
+        );
+        // Every previously-seen parameter sits below the high-water.
+        for j in 0..i {
+            silent(
+                label,
+                &format!("repeat of params[{j}] under params[{i}]'s high-water"),
+                prepared,
+                snap,
+                &params[j],
+                &mut out,
+            );
+        }
+    }
+    // The vacuousness guard: an escalation that never grew anything
+    // cannot distinguish a correct engine from a gate with no eyes.
+    assert!(
+        growth_events >= 1,
+        "{label}: the escalation observed no growth event — the fixture is vacuous"
     );
     assert!(!out.is_empty(), "{label}: the fixture produced rows");
 }
@@ -416,6 +580,13 @@ fn zero_warm_allocation_gate() {
             snap,
             &account_params,
         );
+
+        // The high-water window (docs/architecture/40-execution.md § CI
+        // gate protocol): holders 5..10 bind the ladder accounts —
+        // strictly hotter keys, strictly larger intermediates per step.
+        let escalation_params: Vec<Vec<Value>> = (5..10u64).map(|h| vec![Value::U64(h)]).collect();
+        let mut escalation = db.prepare(&escalation_query())?;
+        escalation_gate("escalation", &mut escalation, snap, &escalation_params);
 
         // Warmup convergence: allocation is finite — by the third warmup
         // round a run allocates nothing.
