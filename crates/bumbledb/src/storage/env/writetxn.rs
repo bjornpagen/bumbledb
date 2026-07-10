@@ -1,21 +1,26 @@
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 use super::read_meta::read_u64;
 use super::{WriteTxn, META_DICT_NEXT_ID, META_TX_ID};
 
 impl WriteTxn<'_> {
-    /// Commits (fsync per LMDB defaults).
+    /// Commits (fsync per LMDB defaults). The write path's one durability
+    /// boundary: the errno is parsed here, once ([`Error::from_commit`]).
     ///
     /// # Errors
     ///
-    /// `Lmdb` on commit failure; nothing persists.
+    /// [`Error::CommitSync`] when the commit's write/sync path surfaced a
+    /// raw OS errno, `Lmdb` on any LMDB-coded failure; either way the
+    /// transaction aborted — nothing persists.
     pub fn commit(self) -> Result<()> {
-        self.txn.commit()?;
-        Ok(())
+        self.txn.commit().map_err(Error::from_commit)
     }
 
-    /// Aborts: drops the transaction, nothing persists.
-    pub fn abort(self) {
+    /// Aborts: drops the transaction, nothing persists. Test-only since
+    /// the counters-only flush stopped opening a transaction it might
+    /// discard (the live abort path is simply dropping the value).
+    #[cfg(test)]
+    pub(crate) fn abort(self) {
         drop(self.txn);
     }
 

@@ -174,7 +174,18 @@ mechanics:
    anti-probe (`40-execution.md`) — one mechanism, two callers.
 4. **Counters flush**: row_id high-waters, row counts, `Q` sequences, the pending
    dictionary entries and next-id, storage tx id.
-5. **LMDB commit** (fsync).
+5. **LMDB commit** (fsync). The durability boundary parses its errno once (the
+   trust-boundary rule, applied to the OS): a raw OS errno out of `mdb_txn_commit`
+   — the commit's write/sync syscalls; on macOS the data-page `pwrite`s and
+   `fcntl(F_FULLFSYNC)`, whose errno `mdb.c` surfaces raw with no fallback sync —
+   is the typed `CommitSync` error naming phase and syscall class, never a bare
+   `Lmdb(Io(...))`. The transient form (`F_FULLFSYNC` observed failing under I/O
+   pressure) gets a **bounded, observable retry**: the failed commit aborted its
+   transaction (nothing persisted), so the whole transaction is rebuilt from the
+   immutable plan and re-committed — each retry an obs event
+   (`commit_sync_retry`), the escaping error carrying the count. The contract is
+   untouched: a retry re-runs the full write-and-sync, so every commit that
+   reports success fsynced — no sync mode exists, and none may be born.
 
 User operation order inside the closure is therefore semantically irrelevant; the
 delete-before-insert trap and reference-insertion-ordering are unrepresentable. Crash

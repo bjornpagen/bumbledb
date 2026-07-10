@@ -530,7 +530,7 @@ pub enum OverflowKind {
 /// `docs/architecture/70-api.md`.
 ///
 /// `source()` chains only where the payload *is* an underlying error
-/// (`Io`, `Lmdb`, `BulkLoad`); the structured variants (`Corruption`,
+/// (`Io`, `Lmdb`, `CommitSync`, `BulkLoad`); the structured variants (`Corruption`,
 /// `Schema`, `Validation`, `FactShape`, …) carry data payloads, not
 /// nested errors — a decision, not an omission: chain-walkers see
 /// exactly the real causes, and the structured detail renders through
@@ -612,6 +612,22 @@ pub enum Error {
     FreshExhausted {
         relation: RelationId,
         field: FieldId,
+    },
+    /// The commit's durability boundary failed: `mdb_txn_commit` surfaced
+    /// a raw OS errno from its write/sync path — on macOS the data-page
+    /// `pwrite`s, the `fcntl(F_FULLFSYNC)` data flush, or the `O_DSYNC`
+    /// meta write; LMDB reports one errno for the phase and names no
+    /// syscall, so the type names the phase exactly and the syscall
+    /// class honestly. Parsed once at the boundary
+    /// ([`Error::from_commit`]) — never a bare `Lmdb(Io(...))` a caller
+    /// can only call flaky. The transient form is retried, bounded and
+    /// observable, before this escapes (`docs/architecture/50-storage.md`
+    /// § write path, phase 5); nothing persisted — the failed commit
+    /// aborted its transaction.
+    CommitSync {
+        /// Bounded retries consumed before the error escaped.
+        retries: u32,
+        error: std::io::Error,
     },
     /// A bulk load failed mid-stream: the underlying error plus how many
     /// facts were already durable in the chunks committed before it —

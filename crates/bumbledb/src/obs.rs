@@ -136,6 +136,10 @@ pub mod names {
     pub const COUNTERS_FLUSH: &str = "counters_flush";
     /// Phase 5: the LMDB commit alone — the fsync-bound number. (-, -)
     pub const LMDB_COMMIT: &str = "lmdb_commit";
+    /// One bounded retry of the durability boundary after a transient
+    /// commit-sync failure (`docs/architecture/50-storage.md` § write
+    /// path, phase 5) — never silent. (retry number, OS errno)
+    pub const COMMIT_SYNC_RETRY: &str = "commit_sync_retry";
     /// One `bulk_load` chunk. (facts submitted, facts changed)
     pub const BULK_CHUNK: &str = "bulk_chunk";
     /// One `Db::write`, closure plus commit. (1 committed / 0 aborted, -)

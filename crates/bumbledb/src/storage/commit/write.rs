@@ -10,19 +10,69 @@ use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
 use super::plan::plan_commit;
 use super::{apply, judgment, Applied, CommitReport};
 
+/// The bound on [`commit_bounded`]'s retries of the transient
+/// commit-sync class — a decision, not a knob. With the 10 ms-doubling
+/// backoff the worst case adds 70 ms before the typed error escapes.
+const COMMIT_SYNC_RETRIES: u32 = 3;
+
+/// Bounded, observable retry of the durability boundary (PRD 22 ruling).
+/// `mdb_txn_commit` aborts its transaction on failure — nothing
+/// persisted — so `attempt` rebuilds and re-commits the whole
+/// transaction; its inputs are immutable (the plan, the delta) and
+/// committed state is stable under the single-writer mutex, so every
+/// re-run writes the same bytes. Only the transient sync class retries
+/// ([`Error::CommitSync`]: a raw errno out of the commit's write/sync
+/// syscalls — on macOS `fcntl(F_FULLFSYNC)` has been observed failing
+/// transiently under I/O pressure, and `mdb.c` surfaces the errno raw
+/// with no fallback sync); every other error escapes on the first
+/// throw. Each retry is an obs event (`COMMIT_SYNC_RETRY`), never
+/// silent, and the escaping error carries the count. The durability
+/// contract is untouched: a retry re-runs the full write-and-sync, so
+/// every commit that reports success fsynced — no mode was born.
+///
+/// Dead end, recorded per PRD 22: `mdb_env_set_mapsize` racing readers
+/// is eliminated — `MAP_SIZE` is set once at open and no resize call
+/// exists to race.
+pub(super) fn commit_bounded<T>(mut attempt: impl FnMut() -> Result<T>) -> Result<T> {
+    let mut retries = 0u32;
+    loop {
+        match attempt() {
+            Err(Error::CommitSync { error, .. }) => {
+                if retries == COMMIT_SYNC_RETRIES {
+                    return Err(Error::CommitSync { retries, error });
+                }
+                retries += 1;
+                obs::event(
+                    obs::names::COMMIT_SYNC_RETRY,
+                    obs::Category::Commit,
+                    u64::from(retries),
+                    error
+                        .raw_os_error()
+                        .map_or(0, |code| u64::from(code.unsigned_abs())),
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10 << (retries - 1)));
+            }
+            other => return other,
+        }
+    }
+}
+
 /// The full commit (docs/architecture/50-storage.md): plan derivation
 /// (the pure function of the delta), apply (phases 1-2), the judgment
 /// phase (phase 3 — containment source and target sides), counter flush
 /// (phase 4), LMDB commit (phase 5). Any error anywhere aborts — nothing
-/// persists.
+/// persists. Phases 1-5 run under [`commit_bounded`]: a transient
+/// commit-sync failure rebuilds the transaction and retries, bounded and
+/// observable.
 ///
 /// # Errors
 ///
 /// `FunctionalityViolation` on a key statement violated by the final
 /// state; `ContainmentViolation` on a containment statement the final
 /// state violates — a source left without its target, or a deleted
-/// target key a surviving source still requires; `Lmdb`/`Corruption`
-/// on storage failure.
+/// target key a surviving source still requires; `CommitSync` on a
+/// durability-boundary failure that survived the bounded retry;
+/// `Lmdb`/`Corruption` on storage failure.
 ///
 /// # Panics
 ///
@@ -44,7 +94,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
             let rtxn = env.read_txn()?;
             rtxn.generation()?
         };
-        flush_escaped_fresh_ids(env.write_txn()?, &delta)?;
+        flush_escaped_fresh_ids(env, &delta)?;
         return Ok(CommitReport {
             changed: false,
             new_generation: generation,
@@ -63,42 +113,47 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         let selections = judgment::Selections::encode(&delta, &view)?;
         plan_commit(&delta, schema, selections)
     };
-    let Applied {
-        mut txn,
-        row_id_next,
-    } = apply(&plan, env)?;
+    let report = commit_bounded(|| {
+        let Applied {
+            mut txn,
+            row_id_next,
+        } = apply(&plan, env)?;
 
-    // Phase 3, the judgment phase: final-state probes inside this same
-    // write transaction (LMDB write txns read their own writes) — the
-    // containment source side over the plan's probe list, then the
-    // target side over the plan's disestablished-guard check sets.
-    judgment::check_source(&txn, schema, &plan)?;
-    judgment::check_target(&txn, schema, &plan)?;
+        // Phase 3, the judgment phase: final-state probes inside this same
+        // write transaction (LMDB write txns read their own writes) — the
+        // containment source side over the plan's probe list, then the
+        // target side over the plan's disestablished-guard check sets.
+        judgment::check_source(&txn, schema, &plan)?;
+        judgment::check_target(&txn, schema, &plan)?;
 
-    // Phase 4: counters — row counts, row-id high-waters, fresh sequences,
-    // pending dictionary entries and the dictionary next-id.
-    {
-        let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
-        let interns = delta.pending_interns().count() as u64;
-        flush_counters(&mut txn, &delta, &row_id_next)?;
-        span.set_args(interns, 0);
-    }
+        // Phase 4: counters — row counts, row-id high-waters, fresh
+        // sequences, pending dictionary entries and the dictionary
+        // next-id.
+        {
+            let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
+            let interns = delta.pending_interns().count() as u64;
+            flush_counters(&mut txn, &delta, &row_id_next)?;
+            span.set_args(interns, 0);
+        }
 
-    // The storage tx id advances exactly once per state-changing commit.
-    let new_generation = txn.generation()? + 1;
-    txn.put_generation(new_generation)?;
+        // The storage tx id advances exactly once per state-changing
+        // commit.
+        let new_generation = txn.generation()? + 1;
+        txn.put_generation(new_generation)?;
 
-    // Phase 5: LMDB commit (fsync per environment defaults) — the
-    // fsync-bound number, isolated.
-    {
-        let _s = obs::span(obs::names::LMDB_COMMIT, obs::Category::Commit);
-        txn.commit()?;
-    }
+        // Phase 5: LMDB commit (fsync per environment defaults) — the
+        // fsync-bound number, isolated.
+        {
+            let _s = obs::span(obs::names::LMDB_COMMIT, obs::Category::Commit);
+            txn.commit()?;
+        }
+        Ok(CommitReport {
+            changed: true,
+            new_generation,
+        })
+    })?;
     commit_span.set_args(1, 0);
-    Ok(CommitReport {
-        changed: true,
-        new_generation,
-    })
+    Ok(report)
 }
 
 /// The counters-only commit of a successful no-op write: exactly the
@@ -107,25 +162,29 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
 /// *query-visible* state (`F`/`M`/`U`/`R`) and `Q` marks are write-path
 /// bookkeeping no query reads: every image, memo, and cache key stays
 /// valid, and the tx-id-advances-iff-data-changed rule is untouched.
-/// With no dirty marks the transaction aborts — LMDB sees nothing.
-fn flush_escaped_fresh_ids(mut txn: WriteTxn<'_>, delta: &WriteDelta<'_>) -> Result<()> {
+/// With no dirty marks no transaction begins — LMDB sees nothing. The
+/// same [`commit_bounded`] durability boundary as the full commit: one
+/// mechanism, two callers.
+fn flush_escaped_fresh_ids(env: &Environment, delta: &WriteDelta<'_>) -> Result<()> {
     if delta.dirty_fresh_marks().next().is_none() {
-        txn.abort();
         return Ok(());
     }
-    let data = txn.env().data();
-    let mut key: KeyBuf = [0; MAX_KEY];
-    let mut marks = 0u64;
-    let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
-    for (rel, field, next) in delta.dirty_fresh_marks() {
-        let len = keys::fresh_key(&mut key, rel, field);
-        data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
-        marks += 1;
-    }
-    span.set_args(0, marks);
-    span.end();
-    let _s = obs::span(obs::names::LMDB_COMMIT, obs::Category::Commit);
-    txn.commit()
+    commit_bounded(|| {
+        let mut txn = env.write_txn()?;
+        let data = txn.env().data();
+        let mut key: KeyBuf = [0; MAX_KEY];
+        let mut marks = 0u64;
+        let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
+        for (rel, field, next) in delta.dirty_fresh_marks() {
+            let len = keys::fresh_key(&mut key, rel, field);
+            data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
+            marks += 1;
+        }
+        span.set_args(0, marks);
+        span.end();
+        let _s = obs::span(obs::names::LMDB_COMMIT, obs::Category::Commit);
+        txn.commit()
+    })
 }
 
 /// Phase 4: folds row-count deltas into `S`, writes row-id high-waters,

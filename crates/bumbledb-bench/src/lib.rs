@@ -23,6 +23,8 @@ pub mod scenarios;
 pub mod schema;
 pub mod sqlite_run;
 pub mod sqlmap;
+#[cfg(test)]
+mod stress;
 pub mod trace_out;
 pub mod translate;
 pub mod tripwires;

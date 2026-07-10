@@ -523,6 +523,10 @@ impl fmt::Display for Error {
                 "fresh sequence exhausted (relation {}, field {})",
                 relation.0, field.0
             ),
+            Self::CommitSync { retries, error } => write!(
+                f,
+                "commit durability boundary (page pwrite / F_FULLFSYNC) failed after {retries} retries: {error}"
+            ),
             Self::ForeignPreparedQuery => {
                 write!(
                     f,

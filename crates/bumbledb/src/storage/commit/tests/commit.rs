@@ -344,6 +344,81 @@ fn fresh_ids_allocated_in_an_aborted_txn_are_reissued() {
     assert_eq!(delta.alloc(&view, TARGET, FieldId(0)).expect("alloc"), 1);
 }
 
+// ---------- 50-storage § Write path, phase 5: the durability boundary ----------
+//
+// PRD 22: the one-observed bulk-load EINVAL (`fcntl(F_FULLFSYNC)` /
+// commit-path `pwrite` surfacing a raw errno under I/O pressure). The
+// boundary is typed (`Error::CommitSync`) and the transient class gets
+// the bounded, observable retry — asserted here on the mechanism
+// directly, since a real transient sync failure is not provokable from
+// safe code (the stress harness in `bumbledb-bench` covers the live
+// path).
+
+/// The raw-errno commit failure as heed delivers it (`mdb_txn_commit`'s
+/// EINVAL crossing `MdbError::Other` into `heed::Error::Io`).
+fn einval() -> Error {
+    Error::from_commit(heed::Error::Io(std::io::Error::from_raw_os_error(22)))
+}
+
+#[test]
+fn from_commit_types_the_raw_errno_class_and_nothing_else() {
+    // The one-observed class: a raw OS errno is the typed boundary fact.
+    assert!(
+        matches!(einval(), Error::CommitSync { retries: 0, error } if error.raw_os_error() == Some(22))
+    );
+    // LMDB-coded failures keep their established mapping.
+    assert!(matches!(
+        Error::from_commit(heed::Error::Mdb(heed::MdbError::MapFull)),
+        Error::Lmdb(heed::Error::Mdb(heed::MdbError::MapFull))
+    ));
+    assert!(matches!(
+        Error::from_commit(heed::Error::Mdb(heed::MdbError::ReadersFull)),
+        Error::ReadersFull { .. }
+    ));
+}
+
+#[test]
+fn commit_bounded_absorbs_a_transient_sync_failure() {
+    let mut attempts = 0u32;
+    let out = super::super::write::commit_bounded(|| {
+        attempts += 1;
+        if attempts < 3 {
+            return Err(einval());
+        }
+        Ok(attempts)
+    });
+    assert_eq!(out.expect("recovers"), 3, "two retries, then success");
+}
+
+#[test]
+fn commit_bounded_escapes_typed_with_the_retry_count() {
+    let mut attempts = 0u32;
+    let err = super::super::write::commit_bounded::<()>(|| {
+        attempts += 1;
+        Err(einval())
+    })
+    .unwrap_err();
+    assert_eq!(attempts, 4, "one try plus the bounded three retries");
+    assert!(
+        matches!(&err, Error::CommitSync { retries: 3, error } if error.raw_os_error() == Some(22)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn commit_bounded_passes_every_other_error_through_on_the_first_throw() {
+    let mut attempts = 0u32;
+    let err = super::super::write::commit_bounded::<()>(|| {
+        attempts += 1;
+        Err(Error::Corruption(
+            crate::error::CorruptionError::MetaMissing,
+        ))
+    })
+    .unwrap_err();
+    assert_eq!(attempts, 1, "non-sync errors are deterministic — no retry");
+    assert!(matches!(err, Error::Corruption(_)), "{err:?}");
+}
+
 #[test]
 fn pending_interns_flush_at_commit_and_advance_the_counter() {
     let dir = TempDir::new("commit-pending-interns");
