@@ -65,9 +65,9 @@ macro surface is the algebra with ASCII operator images (`⊆` is not a Rust tok
 
 ```rust
 bumbledb::schema! {
-    relation Holder  { id: u64 as HolderId, serial, name: str }
+    relation Holder  { id: u64 as HolderId, fresh, name: str }
     relation Account {
-        id: u64 as AccountId, serial,
+        id: u64 as AccountId, fresh,
         holder: u64 as HolderId,
         kind: enum Kind { Checking, Savings },
         active: interval<i64>,
@@ -83,7 +83,7 @@ bumbledb::schema! {
 
 There is **no sugar and no field-level constraint syntax**: no `unique` modifier, no
 `fk(...)`, no `union` block. A field carries its type, optional `as NewType`, and
-optional `serial` (which auto-materializes `R(field) -> R`, `10-data-model.md`) —
+optional `fresh` (which auto-materializes `R(field) -> R`, `10-data-model.md`) —
 everything relational is a statement. Statements are anonymous; their identity is
 their materialized-order id, pinned by the fingerprint, and errors cite the
 statement rendered back in this notation.
@@ -152,7 +152,7 @@ one bidirectional conditional containment per variant arm, plus the parent's key
 
 ```rust
 relation Grading {
-    id: u64 as GradingId, serial,
+    id: u64 as GradingId, fresh,
     kind: enum GraderKind { Deterministic, CustomOperator },
 }
 Grading(id | kind == Deterministic)  == DeterministicGrading(grading);

@@ -9,9 +9,9 @@ mod accept;
 mod reject;
 
 /// The fixture schema:
-/// Holder(id serial, name string);
-/// Account(id serial, holder u64, status enum, validity interval<u64>);
-/// Posting(id serial, account u64, amount i64, at i64, memo bytes,
+/// Holder(id fresh, name string);
+/// Account(id fresh, holder u64, status enum, validity interval<u64>);
+/// Posting(id fresh, account u64, amount i64, at i64, memo bytes,
 ///         flag bool, span interval<u64>).
 fn schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
@@ -19,10 +19,10 @@ fn schema() -> Schema {
         value_type: ty,
         generation: Generation::None,
     };
-    let serial = |name: &str| FieldDescriptor {
+    let fresh = |name: &str| FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::Serial,
+        generation: Generation::Fresh,
     };
     let interval_u64 = ValueType::Interval {
         element: IntervalElement::U64,
@@ -31,12 +31,12 @@ fn schema() -> Schema {
         relations: vec![
             RelationDescriptor {
                 name: "Holder".into(),
-                fields: vec![serial("id"), field("name", ValueType::String)],
+                fields: vec![fresh("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
                 name: "Account".into(),
                 fields: vec![
-                    serial("id"),
+                    fresh("id"),
                     field("holder", ValueType::U64),
                     field(
                         "status",
@@ -50,7 +50,7 @@ fn schema() -> Schema {
             RelationDescriptor {
                 name: "Posting".into(),
                 fields: vec![
-                    serial("id"),
+                    fresh("id"),
                     field("account", ValueType::U64),
                     field("amount", ValueType::I64),
                     field("at", ValueType::I64),

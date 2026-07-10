@@ -167,7 +167,7 @@ pub fn load_sqlite(path: &Path, cfg: GenConfig) -> rusqlite::Result<(Connection,
 }
 
 /// Cross-store equality: per-relation counts, then a seeded sample of
-/// facts fetched from `SQLite` by serial id and compared value-for-value
+/// facts fetched from `SQLite` by fresh id and compared value-for-value
 /// against the generator (which both stores loaded from).
 ///
 /// # Panics

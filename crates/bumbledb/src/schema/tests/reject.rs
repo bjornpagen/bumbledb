@@ -83,15 +83,15 @@ fn rejects_duplicate_enum_variant() {
 }
 
 #[test]
-fn rejects_serial_on_non_u64() {
+fn rejects_fresh_on_non_u64() {
     let decl = one_relation(vec![FieldDescriptor {
         name: "id".into(),
         value_type: ValueType::I64,
-        generation: Generation::Serial,
+        generation: Generation::Fresh,
     }]);
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::SerialOnNonU64 {
+        SchemaError::FreshOnNonU64 {
             relation: RelationId(0),
             field: FieldId(0)
         }
@@ -100,7 +100,7 @@ fn rejects_serial_on_non_u64() {
 
 // --- The statement roster ---
 
-/// Two relations with no serials: statement ids equal declaration order.
+/// Two relations with no fresh ids: statement ids equal declaration order.
 fn two_relations(
     source_fields: Vec<FieldDescriptor>,
     target_fields: Vec<FieldDescriptor>,

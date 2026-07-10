@@ -22,7 +22,7 @@ pub use build::build;
 /// DRAM lockstep scans when pitches sit near a multiple). The layout
 /// rule pads PITCHES off multiples of this ([`PitchPadder`]); the old
 /// belief that congruent bases cost "10–20×" is retired — that figure
-/// required a fully serialized dependent chain and never applied to
+/// required a fully dependent load chain and never applied to
 /// scans.
 const SET_STRIDE: usize = 16_384;
 

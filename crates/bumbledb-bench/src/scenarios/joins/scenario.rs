@@ -18,7 +18,7 @@ pub fn scenario() -> Scenario {
         name: "joins",
         about: "JOB-style join-order stress: skewed fan-ins, correlated predicates",
         schema,
-        descriptor: || bumbledb::SchemaDef::descriptor(super::Joins),
+        descriptor: || bumbledb::Theory::descriptor(super::Joins),
         rows: |seed| {
             vec![
                 (ids::KIND, boxed(seed, ids::KIND, KINDS)),

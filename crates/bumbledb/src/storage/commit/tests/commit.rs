@@ -219,8 +219,8 @@ fn counters_after_reopen_match_a_recount_of_f_entries() {
 }
 
 #[test]
-fn a_noop_commit_flushes_escaped_serials_and_nothing_else() {
-    let dir = TempDir::new("commit-noop-serial-flush");
+fn a_noop_commit_flushes_escaped_fresh_ids_and_nothing_else() {
+    let dir = TempDir::new("commit-noop-fresh-flush");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     commit_facts(&env, &schema, &[(TARGET, target_fact(&schema, 5))]);
@@ -241,7 +241,7 @@ fn a_noop_commit_flushes_escaped_serials_and_nothing_else() {
 
     let rtxn = env.read_txn().expect("txn");
     assert_eq!(rtxn.generation().expect("generation"), 1, "no bump");
-    // The escaped serials persisted: a fresh delta continues past them.
+    // The escaped fresh ids persisted: a later delta continues past them.
     let mut fresh = WriteDelta::new(&schema);
     assert_eq!(fresh.alloc(&rtxn, TARGET, FieldId(0)).expect("alloc"), 8);
     // The pending intern was dropped, counter untouched.
@@ -255,9 +255,9 @@ fn a_noop_commit_flushes_escaped_serials_and_nothing_else() {
 #[test]
 fn a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks() {
     // The invariant pinned at `delta/insert.rs`'s advance site: the
-    // committed `Q` high-water covers every committed serial value, so
+    // committed `Q` high-water covers every committed fresh value, so
     // a transaction whose EVERY op is a no-op — even ones carrying
-    // explicit serial values — advances each mark exactly to its base
+    // explicit fresh values — advances each mark exactly to its base
     // (clean) and never triggers the counters-only commit: the storage
     // tx id and the `Q` marks both come out byte-identical.
     let dir = TempDir::new("commit-pure-noop-clean-marks");
@@ -265,7 +265,7 @@ fn a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks() {
     let env = Environment::create(dir.path(), &schema).expect("create");
     commit_facts(&env, &schema, &[(TARGET, target_fact(&schema, 5))]);
     let before = committed_data(&env);
-    let q_key = key(|buf| keys::serial_key(buf, TARGET, FieldId(0)));
+    let q_key = key(|buf| keys::fresh_key(buf, TARGET, FieldId(0)));
     let q_before = {
         let rtxn = env.read_txn().expect("txn");
         env.data()
@@ -280,7 +280,7 @@ fn a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks() {
     );
 
     // Every op a no-op: re-inserting the committed fact (its explicit
-    // serial value 5 is already covered by Q = 6 — mark lands on the
+    // fresh value 5 is already covered by Q = 6 — mark lands on the
     // base, clean) and deleting a fact base never held (records
     // nothing). The delta is empty and no mark is dirty: the commit
     // must write nothing at all.
@@ -315,8 +315,8 @@ fn a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks() {
 }
 
 #[test]
-fn serials_allocated_in_an_aborted_txn_are_reissued() {
-    let dir = TempDir::new("commit-serial-abort");
+fn fresh_ids_allocated_in_an_aborted_txn_are_reissued() {
+    let dir = TempDir::new("commit-fresh-abort");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     {

@@ -8,7 +8,7 @@ use crate::storage::read;
 use crate::testutil::TempDir;
 
 /// Build-time distinct counts are exact per column type
-/// (docs/architecture/40-execution.md): serial ids all-distinct, bools 2, enums 3, and a
+/// (docs/architecture/40-execution.md): fresh ids all-distinct, bools 2, enums 3, and a
 /// skewed i64 column counted through the word set.
 #[test]
 fn distinct_counts_are_exact() {
@@ -18,7 +18,7 @@ fn distinct_counts_are_exact() {
     let txn = env.read_txn().expect("txn");
     let image = build(&txn, &schema, R).expect("build");
     // populated(): ids 0..10, flag i % 2, kind i % 3, amount i*7-30.
-    assert_eq!(image.distinct(0), 10, "serial ids all distinct");
+    assert_eq!(image.distinct(0), 10, "fresh ids all distinct");
     assert_eq!(image.distinct(1), 2, "bools");
     assert_eq!(image.distinct(2), 3, "enum ordinals");
     assert_eq!(image.distinct(3), 10, "amounts all distinct");

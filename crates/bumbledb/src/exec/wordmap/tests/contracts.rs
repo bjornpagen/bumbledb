@@ -63,7 +63,7 @@ fn adversarial_false_tag_rates(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, f6
                 .collect(),
         ),
         (
-            "serial-pairs",
+            "fresh-pairs",
             (0..16_384u64).map(|i| vec![i, i / 64]).collect(),
         ),
         ("random-control", {

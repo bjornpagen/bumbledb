@@ -76,11 +76,11 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     }
 }
 
-fn serial(name: &str) -> FieldDescriptor {
+fn fresh(name: &str) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::Serial,
+        generation: Generation::Fresh,
     }
 }
 
@@ -101,24 +101,24 @@ fn schema() -> &'static Schema {
             relations: vec![
                 RelationDescriptor {
                     name: "Holder".into(),
-                    fields: vec![serial("id"), field("name", ValueType::String)],
+                    fields: vec![fresh("id"), field("name", ValueType::String)],
                 },
                 RelationDescriptor {
                     name: "Account".into(),
                     fields: vec![
-                        serial("id"),
+                        fresh("id"),
                         field("holder", ValueType::U64),
                         field("currency", enum_type(&["Usd", "Eur", "Gbp"])),
                     ],
                 },
                 RelationDescriptor {
                     name: "Instrument".into(),
-                    fields: vec![serial("id"), field("symbol", ValueType::String)],
+                    fields: vec![fresh("id"), field("symbol", ValueType::String)],
                 },
                 RelationDescriptor {
                     name: "JournalEntry".into(),
                     fields: vec![
-                        serial("id"),
+                        fresh("id"),
                         field("source", enum_type(&["Manual", "Import", "System"])),
                         field("created_at", ValueType::I64),
                     ],
@@ -126,7 +126,7 @@ fn schema() -> &'static Schema {
                 RelationDescriptor {
                     name: "Posting".into(),
                     fields: vec![
-                        serial("id"),
+                        fresh("id"),
                         field("entry", ValueType::U64),
                         field("account", ValueType::U64),
                         field("instrument", ValueType::U64),
@@ -143,7 +143,7 @@ fn schema() -> &'static Schema {
                 },
                 RelationDescriptor {
                     name: "Org".into(),
-                    fields: vec![serial("id"), field("name", ValueType::String)],
+                    fields: vec![fresh("id"), field("name", ValueType::String)],
                 },
                 RelationDescriptor {
                     name: "OrgParent".into(),
@@ -167,7 +167,7 @@ fn schema() -> &'static Schema {
                 },
                 RelationDescriptor {
                     name: "Transfer".into(),
-                    fields: vec![serial("id"), field("extref", ValueType::Bytes)],
+                    fields: vec![fresh("id"), field("extref", ValueType::Bytes)],
                 },
             ],
             statements: vec![],

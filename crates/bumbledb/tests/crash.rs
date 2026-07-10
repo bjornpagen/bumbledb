@@ -14,7 +14,7 @@ bumbledb::schema! {
     pub Store;
 
     relation Item {
-        id: u64 as ItemId, serial,
+        id: u64 as ItemId, fresh,
         seq: u64,
     }
 }
@@ -94,12 +94,12 @@ fn kill_during_commit_leaves_a_consistent_database() {
                     "round {round}: committed fact not visible to membership"
                 );
             }
-            // Q consistency: the serial generator continues past every
-            // committed id (a collision would break the serial's auto-key statement).
+            // Q consistency: the fresh-id generator continues past every
+            // committed id (a collision would break the fresh's auto-key statement).
             let next: ItemId = tx.alloc()?;
             assert!(
                 next.0 > max_seen || live.is_empty(),
-                "round {round}: serial {next:?} at or below committed {max_seen}"
+                "round {round}: fresh {next:?} at or below committed {max_seen}"
             );
             tx.insert(&item(next.0))?;
             Ok(())

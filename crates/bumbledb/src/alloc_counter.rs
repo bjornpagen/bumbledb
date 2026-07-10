@@ -168,16 +168,16 @@ mod tests {
     use std::sync::Mutex;
 
     /// These tests read/reset shared global counters and therefore
-    /// serialize among themselves; the *rest* of the lib test binary still
+    /// exclude one another; the *rest* of the lib test binary still
     /// runs concurrently, so every assertion uses a probe allocation large
     /// enough (MiBs) to dominate that background noise, with one-sided
     /// bounds or generous slack.
-    static SERIAL: Mutex<()> = Mutex::new(());
+    static EXCLUSIVE: Mutex<()> = Mutex::new(());
     const MIB: u64 = 1 << 20;
 
     #[test]
     fn bytes_track_a_known_allocation_and_its_free() {
-        let _guard = SERIAL.lock().expect("serial");
+        let _guard = EXCLUSIVE.lock().expect("exclusive");
         let before = snapshot();
         let v: Vec<u8> = Vec::with_capacity(8 * MIB as usize);
         let mid = snapshot();
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn peak_observes_a_transient_spike() {
-        let _guard = SERIAL.lock().expect("serial");
+        let _guard = EXCLUSIVE.lock().expect("exclusive");
         reset_peak();
         let baseline = snapshot().peak_live_bytes;
         let big: Vec<u8> = Vec::with_capacity(16 * MIB as usize);
@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn reset_zeroes_windows_but_not_absolutes() {
-        let _guard = SERIAL.lock().expect("serial");
+        let _guard = EXCLUSIVE.lock().expect("exclusive");
         let keep: Vec<u8> = Vec::with_capacity(8 * MIB as usize);
         reset();
         let snap = snapshot();
@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn realloc_accounts_both_byte_sides() {
-        let _guard = SERIAL.lock().expect("serial");
+        let _guard = EXCLUSIVE.lock().expect("exclusive");
         let mut v: Vec<u8> = Vec::with_capacity(2 * MIB as usize);
         v.extend(std::iter::repeat_n(0u8, 2 * MIB as usize));
         let before = snapshot();

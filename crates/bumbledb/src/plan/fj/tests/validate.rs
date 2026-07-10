@@ -350,7 +350,7 @@ fn duplicate_occurrence_within_a_node_is_rejected() {
 
 #[test]
 fn distinct_bindings_flag_tracks_key_coverage() {
-    // Serial-keyed occurrence: field 0 (the auto-key) is var-bound in
+    // Fresh-keyed occurrence: field 0 (the auto-key) is var-bound in
     // every occurrence -> flag set.
     let query = normalized(
         vec![

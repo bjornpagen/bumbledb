@@ -46,7 +46,7 @@ where
 }
 
 /// The canonical cold touch: commits one `Org` fact whose name carries
-/// the serial id under the `__touch_` prefix — distinct forever (serials
+/// the fresh id under the `__touch_` prefix — distinct forever (fresh ids
 /// never repeat) and disjoint from every corpus name (`org-NN`).
 pub fn org_touch(
     db: &bumbledb::Db<crate::schema::Ledger>,

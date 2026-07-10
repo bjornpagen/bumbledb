@@ -14,7 +14,7 @@ impl<'s> WriteDelta<'s> {
             facts: BTreeMap::new(),
             guards: BTreeMap::new(),
             guard_scratch: Vec::new(),
-            serials: BTreeMap::new(),
+            marks: BTreeMap::new(),
             row_count_delta: BTreeMap::new(),
             pending_interns: [BTreeMap::new(), BTreeMap::new()],
             dict_next: None,

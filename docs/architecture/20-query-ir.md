@@ -2,7 +2,7 @@
 
 ## Decision: no text query language; the IR is pure data
 
-Queries are **plain Rust data structures** — serializable in principle (plain owned
+Queries are **plain Rust data structures** — encodable in principle (plain owned
 data, no borrows, no behavior), inspectable. The IR is the engine's public contract,
 and it is also the language dependencies are written in (`30-dependencies.md`): one
 representation for "what holds" and "what do you want".
@@ -60,7 +60,7 @@ join costume.
 - **The fold domain of every aggregate is the group's set of distinct full bindings
   over all query variables.** Group key = the values of the non-aggregated find
   variables. Two postings of amount 100 to one account are two distinct bindings (their
-  serial ids differ): `Sum(amount) by account` = 200.
+  fresh ids differ): `Sum(amount) by account` = 200.
 - **The footgun, stated loudly:** joining a multiplicity-adding relation into an
   aggregate multiplies the binding set — `Posting ⋈ PostingTag` with 3 tags per posting
   triples the sum, exactly as in SQL. Don't write that query; aggregate first (in v0:
@@ -82,7 +82,7 @@ join costume.
   the group's output rows are projected from that restricted set. This definition
   makes multi-carry coherent by construction (all carried values come from the same
   surviving bindings) and makes ties honest: **a tie yields every attaining row** —
-  the answer is a set; with serial keys ties cannot occur. Validation: all Arg terms
+  the answer is a set; with fresh keys ties cannot occur. Validation: all Arg terms
   in one query share one key variable and one direction; the key must be orderable
   (U64/I64); the key variable may itself be projected. Arg terms and fold aggregates
   (Sum/Min/Max/Count/CountDistinct) may not mix in one query in v0 — "sum of the

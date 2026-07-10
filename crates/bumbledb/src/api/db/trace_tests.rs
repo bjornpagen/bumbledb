@@ -190,19 +190,19 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
     assert_eq!(source.a0, 1, "one probe for the genuine insert");
 }
 
-/// A serial-only no-op commit does not move
+/// A fresh-only no-op commit does not move
 /// the generation, so a prepared query's next execution memo-hits —
 /// the counters-only flush invalidated nothing.
 #[test]
-fn a_noop_serial_commit_keeps_the_view_memo_valid() {
-    let serial_schema = SchemaDescriptor {
+fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
+    let fresh_schema = SchemaDescriptor {
         relations: vec![RelationDescriptor {
             name: "S".into(),
             fields: vec![
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Serial,
+                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "v".into(),
@@ -213,15 +213,15 @@ fn a_noop_serial_commit_keeps_the_view_memo_valid() {
         }],
         statements: vec![],
     };
-    let dir = TempDir::new("db-trace-noop-serial");
-    let db = Db::create(dir.path(), serial_schema.clone()).expect("create");
+    let dir = TempDir::new("db-trace-noop-fresh");
+    let db = Db::create(dir.path(), fresh_schema.clone()).expect("create");
     let rel = RelationId(0);
     // Resolve once, mint per row: the witness is the untyped mint handle.
-    let id_field = serial_schema
+    let id_field = fresh_schema
         .validate()
         .expect("fixture")
-        .serial_field(rel, FieldId(0))
-        .expect("serial field");
+        .fresh_field(rel, FieldId(0))
+        .expect("fresh field");
     db.write(|tx| {
         let id = tx.alloc_at(id_field)?;
         tx.insert_dyn(rel, &[Value::U64(id), Value::U64(42)])

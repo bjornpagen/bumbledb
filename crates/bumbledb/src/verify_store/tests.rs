@@ -19,14 +19,14 @@ const HOLDER: RelationId = RelationId(0);
 const BOOKING: RelationId = RelationId(1);
 const ACCOUNT: RelationId = RelationId(2);
 const CLAIM: RelationId = RelationId(3);
-/// Materialized statement order: the serial auto-FD on `Holder.id` first,
+/// Materialized statement order: the fresh auto-FD on `Holder.id` first,
 /// then the declared statements in declaration order.
 const HOLDER_KEY: StatementId = StatementId(0);
 const BOOKING_KEY: StatementId = StatementId(1);
 const ACCOUNT_HOLDER: StatementId = StatementId(2);
 const CLAIM_BOOKING: StatementId = StatementId(3);
 
-/// Holder(id serial, name str) — scalar key, string field for the
+/// Holder(id fresh, name str) — scalar key, string field for the
 /// dictionary statistic; Booking(room, during) with a pointwise key;
 /// Account(holder, kind) ⊆ Holder under the σ `kind == checking`;
 /// Claim(room, span) ⊆ Booking(room, during) — the coverage-form
@@ -41,7 +41,7 @@ fn schema() -> SchemaDescriptor {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Serial,
+                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "name".into(),

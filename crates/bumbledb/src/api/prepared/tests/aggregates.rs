@@ -8,7 +8,7 @@ use crate::ir::AggOp;
 use crate::schema::IntervalElement;
 
 /// The shared fixture: account 3 holds ("a", 10), ("b", 10), ("a", 25);
-/// account 7 holds ("c", 25). Serial ids 1..=4.
+/// account 7 holds ("c", 25). Fresh ids 1..=4.
 fn posting_fixture(env: &Environment, schema: &Schema) {
     insert_postings(
         env,
@@ -78,7 +78,7 @@ fn count_distinct_collapses_multiplicities_per_group_and_over_strings() {
     assert_eq!(rows, vec![(3, 2, 2), (7, 1, 1)]);
 }
 
-/// The elision fixture (PRD 18): a serial-keyed query proves distinct
+/// The elision fixture (PRD 18): a fresh-keyed query proves distinct
 /// bindings, so the plan elides the binding seen-set — the EXPLAIN
 /// regime observable — while `CountDistinct` still collapses values. The
 /// stats counters carry both halves: `emits` counts every binding
@@ -89,7 +89,7 @@ fn elision_skips_binding_dedup_but_count_distinct_still_collapses() {
     let dir = TempDir::new("prepared-elision-count-distinct");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
-    // Account 3: amounts {10, 10, 25} across three serial-distinct
+    // Account 3: amounts {10, 10, 25} across three fresh-distinct
     // postings.
     insert_postings(
         &env,
@@ -110,7 +110,7 @@ fn elision_skips_binding_dedup_but_count_distinct_still_collapses() {
         atoms: vec![Atom {
             relation: POSTING,
             bindings: vec![
-                (FieldId(0), Term::Var(VarId(2))), // serial id bound: key covered
+                (FieldId(0), Term::Var(VarId(2))), // fresh id bound: key covered
                 (FieldId(1), Term::Var(VarId(0))),
                 (FieldId(3), Term::Var(VarId(1))),
             ],
@@ -121,7 +121,7 @@ fn elision_skips_binding_dedup_but_count_distinct_still_collapses() {
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(
         prepared.distinct_bindings(),
-        "the serial key is covered: the binding seen-set is elided"
+        "the fresh key is covered: the binding seen-set is elided"
     );
     let (out, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(
@@ -135,7 +135,7 @@ fn elision_skips_binding_dedup_but_count_distinct_still_collapses() {
     }
 }
 
-/// `ArgMax` over the serial id — latest posting per account — plus the
+/// `ArgMax` over the fresh id — latest posting per account — plus the
 /// `ArgMin` mirror and the global (no group key) form.
 #[test]
 fn arg_max_picks_the_latest_posting_per_account() {
@@ -323,7 +323,7 @@ fn arg_ties_are_set_honest() {
     assert_eq!(rows, vec![(3, 25), (7, 9)], "key-projected ties collapse");
 }
 
-/// Payroll(id serial u64, emp u64, during Interval<I64>).
+/// Payroll(id fresh u64, emp u64, during Interval<I64>).
 fn interval_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -332,7 +332,7 @@ fn interval_schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Serial,
+                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "emp".into(),

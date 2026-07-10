@@ -29,7 +29,7 @@ const SESSION: RelationId = RelationId(5);
 const REST: RelationId = RelationId(6);
 const REPORT: RelationId = RelationId(7);
 
-/// Declared statement order (no serial fields, so no auto-keys).
+/// Declared statement order (no fresh fields, so no auto-keys).
 const TOTALITY: StatementId = StatementId(4);
 const ARM: StatementId = StatementId(5);
 const TRANSFER_ACCOUNT: StatementId = StatementId(6);

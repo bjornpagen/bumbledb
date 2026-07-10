@@ -11,9 +11,9 @@ use crate::ir::AggOp;
 use crate::plan::chase::with_chase_disabled;
 use crate::schema::{RelationDescriptor, Side, StatementDescriptor};
 
-/// Posting(id serial, account u64, amount i64); Account(id serial,
+/// Posting(id fresh, account u64, amount i64); Account(id fresh,
 /// name str); Posting(account) <= Account(id) — statement 2 after the
-/// two serial auto-keys.
+/// two fresh auto-keys.
 fn chase_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -23,7 +23,7 @@ fn chase_schema() -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Serial,
+                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "account".into(),
@@ -43,7 +43,7 @@ fn chase_schema() -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Serial,
+                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "name".into(),
@@ -152,7 +152,7 @@ fn rows(buffer: &ResultBuffer) -> Vec<Vec<ResultValue<'_>>> {
     rows
 }
 
-/// Grading(id serial, kind enum{Det, Custom}); Det(grading u64, rate
+/// Grading(id fresh, kind enum{Det, Custom}); Det(grading u64, rate
 /// i64) with the declared key Det(grading) -> Det (statement 1 after
 /// Grading's auto-key 0) and the discriminated-union pair
 /// `Grading(id | kind == Det) == Det(grading)` written as its two
@@ -177,7 +177,7 @@ fn du_schema() -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Serial,
+                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "kind".into(),

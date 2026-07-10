@@ -13,7 +13,7 @@ bumbledb::schema! {
     pub Ledger;
 
     relation Account {
-        id: u64 as AccountId, serial,
+        id: u64 as AccountId, fresh,
         holder: str,
         balance: i64,
     }
@@ -175,7 +175,7 @@ fn add(db: &Db<Ledger>, id: AccountId, x: i64) -> bumbledb::Result<()> {
 fn the_upsert_idiom_round_trips_a_counter_across_three_transactions() {
     let dir = common::TempDir::new("points-upsert-counter");
     let db = Db::create(dir.path(), Ledger).expect("create");
-    // An explicit serial value is legal on the write path; the high-water
+    // An explicit fresh value is legal on the write path; the high-water
     // mark advances past it.
     let id = AccountId(7);
     add(&db, id, 1).expect("first upsert inserts");

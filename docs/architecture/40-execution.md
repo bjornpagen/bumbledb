@@ -8,7 +8,7 @@ explains why, this doc is wrong.
 ## Access paths (before any join machinery)
 
 **Guard-probe point lookups.** A single-atom query whose bindings cover a key of the
-relation (an FD statement, including the auto-key on serial fields —
+relation (an FD statement, including the auto-key on fresh fields —
 `30-dependencies.md`) or the full fact executes as: one `U`-guard (or `M`-membership)
 LMDB get → one `F` fetch → decode. No images, no COLT, no plan search. This serves the
 headline "point lookup by key" workload at O(log n), including immediately after a
@@ -133,10 +133,10 @@ Two facts identical on all *bound* variables produce the same binding; the solut
   post-materialization pass: per group the sink keeps the current extreme key and
   the set of surviving projected rows; a strictly-better key clears the set, an
   equal key inserts (ties are set-honest, `20-query-ir.md`), a worse key is a
-  no-op. Memory is O(groups × ties), and ties are structurally rare (serial keys
+  no-op. Memory is O(groups × ties), and ties are structurally rare (fresh keys
   cannot tie).
 - **Elision optimization:** if every atom occurrence's bound fields cover a key of
-  its relation (typical for ledger queries that bind serial ids), distinct facts ⇒
+  its relation (typical for ledger queries that bind fresh ids), distinct facts ⇒
   distinct bindings, and the plan carries a proof flag that lets the aggregate sink
   skip the seen-set entirely. Provable at plan time from the schema's FD statements —
   a representation-level fix, not a runtime branch per binding.
@@ -216,7 +216,7 @@ as a selective equality under the documented small-set assumption
 and each is documented at its definition.
 
 **Join cardinality estimator, written down:** for `L ⋈ R` on join variables J —
-- J covers a key of R (incl. serial auto-keys): estimate = |L| (reference walk; exact
+- J covers a key of R (incl. fresh auto-keys): estimate = |L| (reference walk; exact
   upper bound).
 - J covers a key of L: estimate = min(est(P), |R|) — each R row matches at most one
   prefix row, and each prefix row matches at most |R|; the min is the correct bound.

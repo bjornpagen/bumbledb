@@ -16,11 +16,11 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     }
 }
 
-fn serial(name: &str) -> FieldDescriptor {
+fn fresh(name: &str) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::Serial,
+        generation: Generation::Fresh,
     }
 }
 
@@ -68,23 +68,23 @@ fn participating_stats(normalized: &NormalizedQuery) -> Vec<OccStats> {
         .collect()
 }
 
-/// Posting(id serial, account u64, amount i64); Account(id serial,
+/// Posting(id fresh, account u64, amount i64); Account(id fresh,
 /// name str); Posting(account) <= Account(id) — statement 2 after the
-/// two serial auto-keys.
+/// two fresh auto-keys.
 fn walk_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 name: "Posting".into(),
                 fields: vec![
-                    serial("id"),
+                    fresh("id"),
                     field("account", ValueType::U64),
                     field("amount", ValueType::I64),
                 ],
             },
             RelationDescriptor {
                 name: "Account".into(),
-                fields: vec![serial("id"), field("name", ValueType::String)],
+                fields: vec![fresh("id"), field("name", ValueType::String)],
             },
         ],
         statements: vec![containment((0, &[1], &[]), (1, &[0], &[]))],
@@ -149,7 +149,7 @@ fn the_off_switch_bypasses_the_rewrite() {
     );
 }
 
-/// Grading(id serial, kind enum{Det, Custom}); Det(grading u64, rate
+/// Grading(id fresh, kind enum{Det, Custom}); Det(grading u64, rate
 /// i64) with Det(grading) -> Det; the discriminated-union pair
 /// `Grading(id | kind == Det) == Det(grading)` written as its two
 /// containments — statements 2 and 3 after Grading's auto-key (0) and
@@ -162,7 +162,7 @@ fn du_schema() -> Schema {
         relations: vec![
             RelationDescriptor {
                 name: "Grading".into(),
-                fields: vec![serial("id"), field("kind", kind)],
+                fields: vec![fresh("id"), field("kind", kind)],
             },
             RelationDescriptor {
                 name: "Det".into(),
@@ -224,22 +224,22 @@ fn du_one_sided_walk_eliminates_the_header() {
     assert_eq!(order.order, vec![OccId(0)], "the DP saw one occurrence");
 }
 
-/// `A(id serial, b_ref u64)`; `B(id serial, c_ref u64)`; `C(id serial)`;
+/// `A(id fresh, b_ref u64)`; `B(id fresh, c_ref u64)`; `C(id fresh)`;
 /// `A(b_ref) <= B(id)` (statement 3), `B(c_ref) <= C(id)` (statement 4).
 fn chain_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 name: "A".into(),
-                fields: vec![serial("id"), field("b_ref", ValueType::U64)],
+                fields: vec![fresh("id"), field("b_ref", ValueType::U64)],
             },
             RelationDescriptor {
                 name: "B".into(),
-                fields: vec![serial("id"), field("c_ref", ValueType::U64)],
+                fields: vec![fresh("id"), field("c_ref", ValueType::U64)],
             },
             RelationDescriptor {
                 name: "C".into(),
-                fields: vec![serial("id")],
+                fields: vec![fresh("id")],
             },
         ],
         statements: vec![
@@ -388,14 +388,14 @@ fn a_negated_atom_referencing_the_target_refuses() {
             RelationDescriptor {
                 name: "Posting".into(),
                 fields: vec![
-                    serial("id"),
+                    fresh("id"),
                     field("account", ValueType::U64),
                     field("amount", ValueType::I64),
                 ],
             },
             RelationDescriptor {
                 name: "Account".into(),
-                fields: vec![serial("id"), field("name", ValueType::String)],
+                fields: vec![fresh("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
                 name: "Blocked".into(),
@@ -446,11 +446,11 @@ fn a_membership_point_sourced_from_the_target_refuses() {
         relations: vec![
             RelationDescriptor {
                 name: "Ledger".into(),
-                fields: vec![serial("id"), field("acct", ValueType::U64)],
+                fields: vec![fresh("id"), field("acct", ValueType::U64)],
             },
             RelationDescriptor {
                 name: "Acct".into(),
-                fields: vec![serial("id"), field("ts", ValueType::U64)],
+                fields: vec![fresh("id"), field("ts", ValueType::U64)],
             },
             RelationDescriptor {
                 name: "Session".into(),
@@ -517,7 +517,7 @@ fn a_missing_source_selection_refuses() {
         relations: vec![
             RelationDescriptor {
                 name: "Grading".into(),
-                fields: vec![serial("id"), field("kind", kind)],
+                fields: vec![fresh("id"), field("kind", kind)],
             },
             RelationDescriptor {
                 name: "Det".into(),

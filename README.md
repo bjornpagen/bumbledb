@@ -18,19 +18,19 @@ bumbledb::schema! {
     pub Ledger;
 
     relation Holder {
-        id: u64 as HolderId, serial,
+        id: u64 as HolderId, fresh,
         name: str,
         region: enum Region { Na, Eu, Apac, Latam },
     }
     relation Account {
-        id: u64 as AccountId, serial,
+        id: u64 as AccountId, fresh,
         holder: u64 as HolderId,
         status: enum Status { Open, Frozen, Closed },
         opened_at: i64,
     }
 
     // Everything relational is a statement between the blocks — there are
-    // no field-level modifiers. `serial` auto-materializes R(id) -> R.
+    // no field-level modifiers. `fresh` auto-materializes R(id) -> R.
     Account(holder) <= Holder(id);   // containment: every account's holder exists
 }
 

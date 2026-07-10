@@ -14,7 +14,7 @@ use crate::storage::dict::{TAG_BYTES, TAG_STRING};
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
 
-/// R(id u64 serial, a i64, b i64) + S(x u64, y i64)
+/// R(id u64 fresh, a i64, b i64) + S(x u64, y i64)
 /// + P(emp u64, during interval<i64>, review interval<i64>, at i64)
 /// + E(emp u64, at i64).
 fn schema() -> Schema {
@@ -34,7 +34,7 @@ fn schema() -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Serial,
+                        generation: Generation::Fresh,
                     },
                     field("a", ValueType::I64),
                     field("b", ValueType::I64),

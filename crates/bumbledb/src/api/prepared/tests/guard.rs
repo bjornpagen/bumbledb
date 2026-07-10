@@ -112,7 +112,7 @@ fn guard_probe_queries_flow_through_the_same_surface() {
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(5, 7, "found", 42)]);
     let cache = ImageCache::new();
-    // Q(amount) :- Posting(id = 5, amount) — the serial key: guard probe.
+    // Q(amount) :- Posting(id = 5, amount) — the fresh key: guard probe.
     let query = Query {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
@@ -144,7 +144,7 @@ fn guard_probe_queries_flow_through_the_same_surface() {
 
 /// Booking(room u64, span interval<u64>, label u64) with the declared
 /// pointwise key `Booking(room, span) -> Booking` (statement 0 — no
-/// serials exist).
+/// fresh ids exist).
 fn booking_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {

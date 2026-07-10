@@ -57,7 +57,7 @@ fn concat_halves(start: [u8; 8], end: [u8; 8]) -> [u8; 16] {
 /// [`Value`] variant whose canonical bytes are a pure function of the value.
 /// The one definition site for selection-literal encoding: the commit
 /// judgment's pre-encoded σ literals and the schema fingerprint's canonical
-/// serialization both call this, so the two can never drift apart.
+/// encoding both call this, so the two can never drift apart.
 /// `String`/`Bytes` are the deliberate exception — their fact encoding is a
 /// per-database intern id, not a function of the value — so each consumer
 /// resolves them at its own boundary before calling.

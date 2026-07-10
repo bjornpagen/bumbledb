@@ -6,7 +6,7 @@
 //! M | relation_id | fact_hash                               membership
 //! U | relation_id | statement | guard                      FD guards
 //! R | statement | key_bytes | source_rel | source_row      IND reverse edges
-//! Q | relation_id | field_id                                serial sequences
+//! Q | relation_id | field_id                                fresh sequences
 //! S | relation_id | stat                                    counters
 //! ```
 //!
@@ -48,7 +48,7 @@ pub const NS_FACT: u8 = b'F';
 pub const NS_MEMBERSHIP: u8 = b'M';
 pub const NS_GUARD: u8 = b'U';
 pub const NS_REVERSE: u8 = b'R';
-pub const NS_SERIAL: u8 = b'Q';
+pub const NS_FRESH: u8 = b'Q';
 pub const NS_STAT: u8 = b'S';
 
 /// Which per-relation counter an `S` key addresses.
@@ -99,7 +99,7 @@ pub const FACT_KEY_LEN: usize = 1 + 4 + 8;
 /// `M` key width: tag + relation + 32-byte hash.
 pub const MEMBERSHIP_KEY_LEN: usize = 1 + 4 + 32;
 /// `Q` key width: tag + relation + field.
-pub const SERIAL_KEY_LEN: usize = 1 + 4 + 2;
+pub const FRESH_KEY_LEN: usize = 1 + 4 + 2;
 /// `S` key width: tag + relation + stat kind.
 pub const STAT_KEY_LEN: usize = 1 + 4 + 1;
 /// `R` key width after the key bytes: `source_rel` + `source_row`.
@@ -172,9 +172,9 @@ pub fn reverse_prefix(buf: &mut KeyBuf, statement: StatementId, key_bytes: &[u8]
         .finish()
 }
 
-/// `Q | relation | field` — a serial sequence's key.
-pub fn serial_key(buf: &mut [u8], relation: RelationId, field: FieldId) -> usize {
-    KeyWriter::new(buf, NS_SERIAL)
+/// `Q | relation | field` — a fresh sequence's key.
+pub fn fresh_key(buf: &mut [u8], relation: RelationId, field: FieldId) -> usize {
+    KeyWriter::new(buf, NS_FRESH)
         .relation(relation)
         .put(&field.0.to_be_bytes())
         .finish()
@@ -432,9 +432,9 @@ mod tests {
     }
 
     #[test]
-    fn serial_and_stat_keys() {
-        let q = key(|b| serial_key(b, RelationId(3), FieldId(4)));
-        assert_eq!(q, vec![NS_SERIAL, 0, 0, 0, 3, 0, 4]);
+    fn fresh_and_stat_keys() {
+        let q = key(|b| fresh_key(b, RelationId(3), FieldId(4)));
+        assert_eq!(q, vec![NS_FRESH, 0, 0, 0, 3, 0, 4]);
         let s = key(|b| stat_key(b, RelationId(3), StatKind::RowCount));
         assert_eq!(s, vec![NS_STAT, 0, 0, 0, 3, 0]);
         let hw = key(|b| stat_key(b, RelationId(3), StatKind::RowIdHighWater));
@@ -451,8 +451,8 @@ mod tests {
             key(|b| fact_key(b, RelationId(2), 0)),
             key(|b| membership_key(b, RelationId(1), &[0u8; 32])),
             key(|b| membership_key(b, RelationId(1), &[1u8; 32])),
-            key(|b| serial_key(b, RelationId(1), FieldId(0))),
-            key(|b| serial_key(b, RelationId(1), FieldId(1))),
+            key(|b| fresh_key(b, RelationId(1), FieldId(0))),
+            key(|b| fresh_key(b, RelationId(1), FieldId(1))),
             key(|b| reverse_key(b, StatementId(0), &[9], RelationId(0), 0)),
             key(|b| reverse_key(b, StatementId(1), &[0], RelationId(0), 0)),
             key(|b| stat_key(b, RelationId(1), StatKind::RowCount)),

@@ -35,7 +35,7 @@ const TRANSFER: RelationId = RelationId(8);
 const ROSTER: RelationId = RelationId(9);
 const REST: RelationId = RelationId(10);
 
-/// Declared statement order (no serial fields, so no auto-keys).
+/// Declared statement order (no fresh fields, so no auto-keys).
 const CLAIM_A_TARGET: StatementId = StatementId(4);
 const CLAIM_B_TARGET: StatementId = StatementId(5);
 const SESSION_COVER: StatementId = StatementId(6);

@@ -43,7 +43,7 @@ impl<S> Db<S> {
     /// # Errors
     ///
     /// `f`'s error, or commit-time `FunctionalityViolation` /
-    /// `ContainmentViolation` / `SerialExhausted` / `Lmdb` / `Io`.
+    /// `ContainmentViolation` / `FreshExhausted` / `Lmdb` / `Io`.
     ///
     /// # Panics
     ///
@@ -101,7 +101,7 @@ impl<S> Db<S> {
     }
 
     /// Imports dynamic facts in chunks of 4096 per write
-    /// transaction — the same delta mechanism at scale. Explicit serial
+    /// transaction — the same delta mechanism at scale. Explicit fresh
     /// values preserve identity: the high-water mark advances past them.
     /// Returns the number of facts that changed state.
     ///

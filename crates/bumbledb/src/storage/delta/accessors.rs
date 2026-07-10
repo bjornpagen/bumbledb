@@ -38,21 +38,21 @@ impl WriteDelta<'_> {
             .map(|((rel, _), (slice, _))| (*rel, self.arena.get(*slice)))
     }
 
-    /// Serial next-values to flush to `Q` (reader: the 40-storage doc phase 4).
-    pub(crate) fn serial_marks(&self) -> impl Iterator<Item = (RelationId, FieldId, u64)> + '_ {
-        self.serials
+    /// Fresh next-values to flush to `Q` (reader: the 40-storage doc phase 4).
+    pub(crate) fn fresh_marks(&self) -> impl Iterator<Item = (RelationId, FieldId, u64)> + '_ {
+        self.marks
             .iter()
             .map(|((rel, field), mark)| (*rel, *field, mark.next))
     }
 
-    /// The serial marks that advanced past their committed base — the
+    /// The fresh marks that advanced past their committed base — the
     /// allocations this transaction actually issued. These persist even
     /// when a commit nets to no fact change (reader: the commit's
     /// counters-only path).
-    pub(crate) fn dirty_serial_marks(
+    pub(crate) fn dirty_fresh_marks(
         &self,
     ) -> impl Iterator<Item = (RelationId, FieldId, u64)> + '_ {
-        self.serials.iter().filter_map(|((rel, field), mark)| {
+        self.marks.iter().filter_map(|((rel, field), mark)| {
             (mark.next > mark.base).then_some((*rel, *field, mark.next))
         })
     }

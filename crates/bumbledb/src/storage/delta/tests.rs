@@ -6,7 +6,7 @@ use crate::storage::env::Environment;
 use crate::storage::keys;
 use crate::testutil::TempDir;
 
-/// R(id serial, amount i64).
+/// R(id fresh, amount i64).
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -15,7 +15,7 @@ fn schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Serial,
+                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "amount".into(),
@@ -143,8 +143,8 @@ fn alloc_is_strictly_increasing_and_reads_q_once() {
     // in-memory next must win — Q is read once per (relation, field).
     {
         let mut wtxn = env.write_txn().expect("txn");
-        let mut buf = [0u8; keys::SERIAL_KEY_LEN];
-        let len = keys::serial_key(&mut buf, R, ID);
+        let mut buf = [0u8; keys::FRESH_KEY_LEN];
+        let len = keys::fresh_key(&mut buf, R, ID);
         env.data()
             .put(wtxn.raw_mut(), &buf[..len], 100u64.to_le_bytes().as_slice())
             .expect("put");
@@ -204,7 +204,7 @@ fn explicit_max_exhausts_the_generator() {
     assert!(
         matches!(
             err,
-            Error::SerialExhausted {
+            Error::FreshExhausted {
                 relation: R,
                 field: ID
             }
@@ -251,15 +251,15 @@ fn resolve_never_mints_and_sees_both_id_sources() {
 }
 
 #[test]
-fn dirty_serial_marks_are_exactly_the_advanced_sequences() {
+fn dirty_fresh_marks_are_exactly_the_advanced_sequences() {
     let dir = TempDir::new("delta-dirty-marks");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     // Committed base: Q = 6.
     {
         let mut wtxn = env.write_txn().expect("txn");
-        let mut buf = [0u8; keys::SERIAL_KEY_LEN];
-        let len = keys::serial_key(&mut buf, R, ID);
+        let mut buf = [0u8; keys::FRESH_KEY_LEN];
+        let len = keys::fresh_key(&mut buf, R, ID);
         env.data()
             .put(wtxn.raw_mut(), &buf[..len], 6u64.to_le_bytes().as_slice())
             .expect("put");
@@ -273,21 +273,21 @@ fn dirty_serial_marks_are_exactly_the_advanced_sequences() {
     clean
         .insert(&view, R, &fact(&schema, 3, 1))
         .expect("insert");
-    assert_eq!(clean.serial_marks().count(), 1, "the mark was read");
-    assert_eq!(clean.dirty_serial_marks().count(), 0, "but never advanced");
+    assert_eq!(clean.fresh_marks().count(), 1, "the mark was read");
+    assert_eq!(clean.dirty_fresh_marks().count(), 0, "but never advanced");
 
     // An allocation advances past the base: dirty.
     let mut dirty = WriteDelta::new(&schema);
     assert_eq!(dirty.alloc(&view, R, ID).expect("alloc"), 6);
     assert_eq!(
-        dirty.dirty_serial_marks().collect::<Vec<_>>(),
+        dirty.dirty_fresh_marks().collect::<Vec<_>>(),
         vec![(R, ID, 7)]
     );
 }
 
 #[test]
 fn guard_map_mirrors_the_fact_dispositions() {
-    // The serial auto-key on `id` is StatementId(0) (materialized first).
+    // The fresh auto-key on `id` is StatementId(0) (materialized first).
     const KEY: StatementId = StatementId(0);
     let dir = TempDir::new("delta-guard-map");
     let schema = schema();

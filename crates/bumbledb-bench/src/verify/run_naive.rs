@@ -28,7 +28,7 @@ fn unit_sizes() -> Sizes {
 
 /// The bench schema as the raw descriptor the naive model consumes —
 /// reconstructed from the sealed schema: the declared statements are the
-/// materialized list minus the leading serial auto-keys (the model
+/// materialized list minus the leading fresh auto-keys (the model
 /// re-materializes them itself).
 fn bench_descriptor() -> SchemaDescriptor {
     let sealed = schema();
@@ -36,7 +36,7 @@ fn bench_descriptor() -> SchemaDescriptor {
         .relations()
         .iter()
         .flat_map(|relation| relation.fields().iter())
-        .filter(|field| field.generation == Generation::Serial)
+        .filter(|field| field.generation == Generation::Fresh)
         .count();
     SchemaDescriptor {
         relations: sealed
@@ -119,7 +119,7 @@ fn violating_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 ],
             )],
         }),
-        // The Holder serial key: a second fact under id 0.
+        // The Holder fresh key: a second fact under id 0.
         Op::Write(Delta {
             deletes: vec![],
             inserts: vec![(

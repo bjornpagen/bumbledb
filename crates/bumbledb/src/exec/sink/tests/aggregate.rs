@@ -88,7 +88,7 @@ fn constant_group_batches_fold_once_per_run() {
 fn dedup_constant_group_collapses_duplicates_before_folding() {
     let dir = TempDir::new("sink-dedup-constant");
     let schema = schema();
-    // Serials exist in storage but the query does not bind them:
+    // Fresh ids exist in storage but the query does not bind them:
     // (account, amount) bindings collapse. Account 1 holds amounts
     // {5, 5, 7} -> {5, 7}; account 2 holds {5, 5, 5} -> {5}.
     let postings = vec![
@@ -312,7 +312,7 @@ fn count_distinct_collapses_multiplicities_per_group() {
     // (5 also appears in account 1 — scoping is per group).
     let postings = vec![(1u64, 1u64, 5i64), (2, 1, 5), (3, 1, 7), (4, 2, 5)];
     let views = views_of(&dir, &schema, &postings, &[]);
-    // Serials bound: every fact is a distinct binding.
+    // Fresh ids bound: every fact is a distinct binding.
     let normalized = normalized(
         &schema,
         vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
@@ -350,7 +350,7 @@ fn count_distinct_collapses_multiplicities_per_group() {
     }
 }
 
-/// PRD 18: the elision fixture at the sink observables — a serial-keyed
+/// PRD 18: the elision fixture at the sink observables — a fresh-keyed
 /// plan proves distinct bindings, the sink skips the binding seen-set
 /// (`seen_elided`), and `CountDistinct`'s value sets still dedup
 /// (`distinct_values_held` < bindings folded). The two sets are
@@ -367,7 +367,7 @@ fn elision_skips_the_seen_set_but_never_the_value_sets() {
         vec![],
     );
     let plan = planned(&schema, &normalized, &[0], &[1]);
-    assert!(plan.distinct_bindings(), "serials are bound");
+    assert!(plan.distinct_bindings(), "fresh ids are bound");
     let finds = vec![
         var_spec(&plan, 1),
         agg_spec(&plan, FoldOp::CountDistinct, Some(2), true),
@@ -395,7 +395,7 @@ fn elision_skips_the_seen_set_but_never_the_value_sets() {
 }
 
 /// PRD 18: `ArgMax` restricts each group to the bindings attaining the
-/// key's maximum — latest posting per account by serial id — and
+/// key's maximum — latest posting per account by fresh id — and
 /// `ArgMin` mirrors it; a global (no group key) Arg works.
 #[test]
 fn arg_restriction_picks_the_extreme_binding_per_group() {
@@ -437,7 +437,7 @@ fn arg_restriction_picks_the_extreme_binding_per_group() {
         assert_eq!(
             rows,
             vec![vec![1, i64_to_word(7)], vec![2, i64_to_word(-1)]],
-            "batch {batch}: single winner per group (serial keys cannot tie)"
+            "batch {batch}: single winner per group (fresh keys cannot tie)"
         );
 
         // ArgMin mirror.

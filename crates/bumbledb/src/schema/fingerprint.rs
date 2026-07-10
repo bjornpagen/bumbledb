@@ -1,4 +1,4 @@
-//! Canonical schema serialization and the blake3 fingerprint (docs/architecture/10-data-model.md).
+//! Canonical schema encoding and the blake3 fingerprint (docs/architecture/10-data-model.md).
 //!
 //! The fingerprint inputs are enumerated exhaustively in
 //! `docs/architecture/10-data-model.md`; that list is the contract
@@ -21,9 +21,9 @@ use super::{
 use crate::encoding::encode_literal;
 use crate::value::Value;
 
-/// Bumped whenever the canonical serialization format itself changes. `v1`:
+/// Bumped whenever the canonical encoding format itself changes. `v1`:
 /// the statement redesign — a different format even for schemas that would
-/// serialize identically under `v0` (none do).
+/// encode identically under `v0` (none do).
 const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v1";
 
 /// Deterministic schema identity: blake3 of the canonical bytes. Stored at
@@ -32,7 +32,7 @@ const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v1";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SchemaFingerprint(pub [u8; 32]);
 
-/// Appends the canonical serialization of the schema to `out` — one linear
+/// Appends the canonical encoding of the schema to `out` — one linear
 /// pass over the fingerprint inputs, exhaustively
 /// (`docs/architecture/10-data-model.md` § Schema):
 ///
@@ -56,7 +56,7 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
             put_value_type(out, &field.value_type);
             out.push(match field.generation {
                 Generation::None => 0,
-                Generation::Serial => 1,
+                Generation::Fresh => 1,
             });
         }
     }
@@ -149,7 +149,7 @@ fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
 /// A selection literal in the canonical per-type value encoding
 /// ([`encode_literal`], the one definition site shared with the commit
 /// judgment) — never a `Debug` or ad-hoc format. No variant tag: the
-/// selected field's type is already in the stream (relations serialize
+/// selected field's type is already in the stream (relations encode
 /// before statements), so the literal's shape is a function of bytes already
 /// hashed and no two schemas can alias here. String/Bytes literals hash
 /// their raw bytes, length-prefixed — the fact encoding's intern id is
@@ -165,13 +165,13 @@ fn put_literal(out: &mut Vec<u8>, literal: &Value) {
 mod tests {
     use super::super::{RelationDescriptor, SchemaDescriptor, StatementId};
     use super::*;
-    use crate::schema::tests::{containment, enum_type, fd, field, serial_field, side, side_where};
+    use crate::schema::tests::{containment, enum_type, fd, field, fresh_field, side, side_where};
 
     fn schema_of(descriptor: SchemaDescriptor) -> Schema {
         descriptor.validate().expect("valid fixture")
     }
 
-    /// The mutation fixture: two relations, an enum, two serials (each
+    /// The mutation fixture: two relations, an enum, two fresh ids (each
     /// materializing an auto-Functionality), a declared key, and a
     /// containment with a selection.
     fn base() -> SchemaDescriptor {
@@ -179,12 +179,12 @@ mod tests {
             relations: vec![
                 RelationDescriptor {
                     name: "Holder".into(),
-                    fields: vec![serial_field("id"), field("name", ValueType::String)],
+                    fields: vec![fresh_field("id"), field("name", ValueType::String)],
                 },
                 RelationDescriptor {
                     name: "Account".into(),
                     fields: vec![
-                        serial_field("id"),
+                        fresh_field("id"),
                         field("holder", ValueType::U64),
                         field("status", enum_type(&["Active", "Closed"])),
                     ],
@@ -219,9 +219,9 @@ mod tests {
 
     #[test]
     fn golden_fingerprint_pins_the_hash() {
-        // Pinned: the canonical serialization (and therefore blake3 of it)
+        // Pinned: the canonical encoding (and therefore blake3 of it)
         // must not drift while the format label stays `v1`. `base()` covers
-        // every literal-adjacent input: enums, serial auto-keys, a declared
+        // every literal-adjacent input: enums, fresh auto-keys, a declared
         // key, and a containment with a selection literal.
         assert_eq!(
             hex_of(&base_fingerprint()),
@@ -246,7 +246,7 @@ mod tests {
         ));
         let schema = schema_of(decl);
         // The fixture genuinely seals a pair (materialized ids 3 and 4:
-        // two serial auto-keys and the declared FD precede them).
+        // two fresh auto-keys and the declared FD precede them).
         assert_eq!(
             schema.statement(StatementId(3)).mirror,
             Some(StatementId(4))
@@ -307,10 +307,10 @@ mod tests {
     }
 
     #[test]
-    fn toggling_serial_generation_changes_the_fingerprint() {
+    fn toggling_fresh_generation_changes_the_fingerprint() {
         let mut decl = base();
         // `Account.id`, not `Holder.id`: the containment's target key is
-        // Holder's serial auto-Functionality, which must stay materialized.
+        // Holder's fresh auto-Functionality, which must stay materialized.
         decl.relations[1].fields[0].generation = Generation::None;
         assert_ne!(base_fingerprint(), fingerprint(&schema_of(decl)));
     }
@@ -389,15 +389,15 @@ mod tests {
     }
 
     #[test]
-    fn golden_bytes_pin_the_canonical_serialization() {
-        // One relation R { x: u64 serial }, whose serial materializes one
+    fn golden_bytes_pin_the_canonical_encoding() {
+        // One relation R { x: u64 fresh }, whose fresh materializes one
         // auto-Functionality. This golden is the anti-drift anchor: if it
         // breaks, the format version label must be bumped and every stored
         // fingerprint invalidated (full ETL).
         let schema = schema_of(SchemaDescriptor {
             relations: vec![RelationDescriptor {
                 name: "R".into(),
-                fields: vec![serial_field("x")],
+                fields: vec![fresh_field("x")],
             }],
             statements: vec![],
         });
@@ -414,7 +414,7 @@ mod tests {
         expected.extend_from_slice(&1u32.to_le_bytes()); // field name len
         expected.extend_from_slice(b"x");
         expected.push(2); // ValueType::U64 tag
-        expected.push(1); // Generation::Serial tag
+        expected.push(1); // Generation::Fresh tag
         expected.extend_from_slice(&1u32.to_le_bytes()); // statement count
         expected.push(0); // Functionality form tag
         expected.extend_from_slice(&0u32.to_le_bytes()); // relation id
@@ -424,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn golden_bytes_pin_the_statement_serialization() {
+    fn golden_bytes_pin_the_statement_encoding() {
         // `Account(holder | status = Closed) <= Holder(id)` over a declared
         // key: pins the Containment form — side layout, selection pairs,
         // and the canonical enum-ordinal literal encoding.

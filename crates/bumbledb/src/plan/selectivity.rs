@@ -241,8 +241,8 @@ mod tests {
     use crate::storage::env::Environment;
     use crate::testutil::TempDir;
 
-    /// R(id u64 serial — auto-key, memo str, kind enum[4]);
-    /// S(id u64 serial, r u64) with the containment S(r) <= R(id).
+    /// R(id u64 fresh — auto-key, memo str, kind enum[4]);
+    /// S(id u64 fresh, r u64) with the containment S(r) <= R(id).
     fn schema() -> Schema {
         SchemaDescriptor {
             relations: vec![
@@ -252,7 +252,7 @@ mod tests {
                         FieldDescriptor {
                             name: "id".into(),
                             value_type: ValueType::U64,
-                            generation: Generation::Serial,
+                            generation: Generation::Fresh,
                         },
                         FieldDescriptor {
                             name: "memo".into(),
@@ -277,7 +277,7 @@ mod tests {
                         FieldDescriptor {
                             name: "id".into(),
                             value_type: ValueType::U64,
-                            generation: Generation::Serial,
+                            generation: Generation::Fresh,
                         },
                         FieldDescriptor {
                             name: "r".into(),
@@ -365,7 +365,7 @@ mod tests {
         let txn = env.read_txn().expect("txn");
         let cache = ImageCache::new();
 
-        // Keyed (serial id): estimate = rows / rows = 1, cold or warm.
+        // Keyed (fresh id): estimate = rows / rows = 1, cold or warm.
         let est = occurrence_stats(&txn, &cache, &schema, &eq_on(0, R), 64)
             .expect("estimate")
             .rows;
@@ -467,10 +467,10 @@ mod tests {
         const BIG: RelationId = RelationId(0);
         const SMALL: RelationId = RelationId(1);
         const SRC: RelationId = RelationId(2);
-        let serial_id = || FieldDescriptor {
+        let fresh_id = || FieldDescriptor {
             name: "id".into(),
             value_type: ValueType::U64,
-            generation: Generation::Serial,
+            generation: Generation::Fresh,
         };
         let side = |relation: u32, field: u16| Side {
             relation: RelationId(relation),
@@ -481,16 +481,16 @@ mod tests {
             relations: vec![
                 RelationDescriptor {
                     name: "Big".into(),
-                    fields: vec![serial_id()],
+                    fields: vec![fresh_id()],
                 },
                 RelationDescriptor {
                     name: "Small".into(),
-                    fields: vec![serial_id()],
+                    fields: vec![fresh_id()],
                 },
                 RelationDescriptor {
                     name: "Src".into(),
                     fields: vec![
-                        serial_id(),
+                        fresh_id(),
                         FieldDescriptor {
                             name: "r".into(),
                             value_type: ValueType::U64,

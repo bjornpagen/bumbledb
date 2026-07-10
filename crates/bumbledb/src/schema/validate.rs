@@ -574,7 +574,7 @@ fn resolve_target_key(
     })
 }
 
-/// One relation: field checks (duplicate names, enum shape, serial typing),
+/// One relation: field checks (duplicate names, enum shape, fresh typing),
 /// then the sealed [`Relation`]; the caller fills the statement indices
 /// from the materialized statement list.
 fn validate_relation(
@@ -615,8 +615,8 @@ fn validate_relation(
                 }
             }
         }
-        if field.generation == Generation::Serial && field.value_type != ValueType::U64 {
-            return Err(SchemaError::SerialOnNonU64 {
+        if field.generation == Generation::Fresh && field.value_type != ValueType::U64 {
+            return Err(SchemaError::FreshOnNonU64 {
                 relation: rel_id,
                 field: field_id,
             });

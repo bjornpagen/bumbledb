@@ -7,7 +7,7 @@ use crate::schema::{FieldId, Schema, StatementId};
 /// Classifies a normalized query: `Some(GuardPlan)` iff it is guard-probe
 /// eligible — exactly one atom occurrence (positive, so no negated atoms
 /// exist), no residuals, and the occurrence's by-value constant bindings
-/// cover some key (`Functionality`) statement's projection (serial
+/// cover some key (`Functionality`) statement's projection (fresh
 /// auto-keys included) or bind every field (the full-fact `M` path).
 /// Everything else falls through to Free Join.
 ///

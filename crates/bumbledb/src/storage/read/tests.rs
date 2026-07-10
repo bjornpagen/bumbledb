@@ -11,8 +11,8 @@ use crate::storage::env::Environment;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 use crate::testutil::TempDir;
 
-/// R(id serial, amount i64) with a declared key on amount too:
-/// statement 0 is the serial auto-key (materialized first), statement 1
+/// R(id fresh, amount i64) with a declared key on amount too:
+/// statement 0 is the fresh auto-key (materialized first), statement 1
 /// the declared `R(amount) -> R`.
 fn schema() -> Schema {
     SchemaDescriptor {
@@ -22,7 +22,7 @@ fn schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Serial,
+                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "amount".into(),
@@ -107,7 +107,7 @@ fn guard_probe_hit_and_miss() {
     let row = fact_row(&txn, R, &fact(&schema, 2, 30))
         .expect("probe")
         .expect("present");
-    // The serial auto-key (statement 0) on id and the declared key
+    // The fresh auto-key (statement 0) on id and the declared key
     // (statement 1) on amount both resolve to the same row.
     assert_eq!(
         guard_row(&txn, R, StatementId(0), &encode_u64(2)).expect("probe"),

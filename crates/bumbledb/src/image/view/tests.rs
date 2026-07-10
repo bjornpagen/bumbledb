@@ -22,7 +22,7 @@ fn schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Serial,
+                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "flag".into(),

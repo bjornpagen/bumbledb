@@ -11,7 +11,7 @@ use crate::schema::{
 use std::collections::BTreeMap;
 
 /// Builds a schema of `n` relations, each with `arity` U64 fields; the
-/// first field of each relation is serial (its auto-key).
+/// first field of each relation is fresh (its auto-key).
 fn schema(n: usize, arity: usize) -> Schema {
     SchemaDescriptor {
         relations: (0..n)
@@ -22,7 +22,7 @@ fn schema(n: usize, arity: usize) -> Schema {
                         name: format!("f{f}").into(),
                         value_type: ValueType::U64,
                         generation: if f == 0 {
-                            Generation::Serial
+                            Generation::Fresh
                         } else {
                             Generation::None
                         },
@@ -148,7 +148,7 @@ fn order_cost(
 #[test]
 fn selective_filtered_occurrence_leads_a_reference_walk() {
     // Occ 0: Posting-like, 10_000 rows. Occ 1: Account-like with a
-    // filter measured to 1 survivor; the walk joins on occ 1's serial
+    // filter measured to 1 survivor; the walk joins on occ 1's fresh
     // key (var 0). The planner must iterate the 1-row side first.
     let schema = schema(2, 2);
     let mut occ1 = occurrence(1, 1, vec![(0, 0)]);
@@ -172,7 +172,7 @@ fn selective_filtered_occurrence_leads_a_reference_walk() {
 
 #[test]
 fn non_key_join_is_priced_pessimistically_and_pushed_last() {
-    // Occs 0-1 join on occ 1's serial key; occ 2 joins occ 0 on a
+    // Occs 0-1 join on occ 1's fresh key; occ 2 joins occ 0 on a
     // genuinely non-key shared var (occ 0 field 2 = var 3, occ 2 field
     // 1 = var 3). Pessimism must order occ 2 last.
     let schema = schema(3, 3);
@@ -190,8 +190,8 @@ fn non_key_join_is_priced_pessimistically_and_pushed_last() {
 }
 
 #[test]
-fn key_coverage_fires_through_the_serial_auto_key() {
-    // Two occurrences joined on var 0 = occ 1's serial field: joining
+fn key_coverage_fires_through_the_fresh_auto_key() {
+    // Two occurrences joined on var 0 = occ 1's fresh field: joining
     // occ 1 INTO occ 0 must estimate |occ 0| (a reference walk), not a
     // product.
     let schema = schema(2, 2);
@@ -360,13 +360,13 @@ fn negated_occurrences_enter_no_dp_state() {
 
 #[test]
 fn dp_beats_greedy_on_a_constructed_counterexample() {
-    // A(x big), B(serial x, y), C(y), D(y): greedy grabs the cheapest
+    // A(x big), B(fresh x, y), C(y), D(y): greedy grabs the cheapest
     // immediate pair (C x D, a small product) and pays for it; the DP
-    // routes through B's serial key.
+    // routes through B's fresh key.
     let schema = schema(4, 2);
     let query = normalized(vec![
         occurrence(0, 0, vec![(1, 0)]),         // A: x, non-key
-        occurrence(1, 1, vec![(0, 0), (1, 1)]), // B: serial x, y
+        occurrence(1, 1, vec![(0, 0), (1, 1)]), // B: fresh x, y
         occurrence(2, 2, vec![(1, 1)]),         // C: y, non-key
         occurrence(3, 3, vec![(1, 1)]),         // D: y, non-key
     ]);

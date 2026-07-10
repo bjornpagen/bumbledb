@@ -4,7 +4,7 @@ use super::*;
 fn valid_schema_constructs_with_statement_indices() {
     let schema = ledger_slice().validate().expect("valid schema");
     let holder = schema.relation(RelationId(0));
-    // The serial fields auto-materialized ordinary, visible Functionality
+    // The fresh fields auto-materialized ordinary, visible Functionality
     // statements; the declared Containment follows them.
     assert_eq!(holder.keys(), &[StatementId(0)]);
     assert_eq!(holder.outgoing(), &[]);
@@ -20,7 +20,7 @@ fn valid_schema_constructs_with_statement_indices() {
     assert_eq!(account.layout().fact_width(), 17);
 }
 
-/// The materialization-order pin: two relations with one serial
+/// The materialization-order pin: two relations with one fresh
 /// field each plus two declared statements — auto-FDs take ids 0 and 1
 /// (relation declaration order, then field order), declared statements
 /// take 2 and 3 (declaration order).
@@ -35,12 +35,12 @@ fn statement_ids_are_auto_fds_first_then_declared_order() {
     assert_eq!(
         materialized,
         vec![
-            // id 0: Holder's serial auto-FD.
+            // id 0: Holder's fresh auto-FD.
             StatementDescriptor::Functionality {
                 relation: RelationId(0),
                 projection: Box::new([FieldId(0)]),
             },
-            // id 1: Account's serial auto-FD.
+            // id 1: Account's fresh auto-FD.
             StatementDescriptor::Functionality {
                 relation: RelationId(1),
                 projection: Box::new([FieldId(0)]),
@@ -92,7 +92,7 @@ fn nullary_relation_constructs() {
 
 /// The `docs/architecture/30-dependencies.md` example schema — Holder /
 /// Account / `SavingsTerms` with its three declared statements (`==` lowered
-/// to two mirrored Containments) plus the serial auto-keys — validates,
+/// to two mirrored Containments) plus the fresh auto-keys — validates,
 /// with every statement's `Resolved` exact. The mirrored pair (ids 3 and 4)
 /// pins independent per-direction resolution, and id 3 resolves a key
 /// declared *after* it (forward reference).
@@ -103,12 +103,12 @@ fn example_schema_resolves_exactly() {
         relations: vec![
             RelationDescriptor {
                 name: "Holder".into(),
-                fields: vec![serial_field("id"), field("name", ValueType::String)],
+                fields: vec![fresh_field("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
                 name: "Account".into(),
                 fields: vec![
-                    serial_field("id"),
+                    fresh_field("id"),
                     field("holder", ValueType::U64),
                     field("kind", enum_type(&["Checking", "Savings"])),
                     field(
@@ -165,8 +165,8 @@ fn example_schema_resolves_exactly() {
     assert_eq!(
         resolved,
         vec![
-            &scalar_key, // id 0: Holder(id), serial auto-key
-            &scalar_key, // id 1: Account(id), serial auto-key
+            &scalar_key, // id 0: Holder(id), fresh auto-key
+            &scalar_key, // id 1: Account(id), fresh auto-key
             &probe(0),   // id 2: Account(holder) <= Holder(id)
             &probe(5),   // id 3: Account(id | Savings) <= SavingsTerms(account)
             &probe(1),   // id 4: SavingsTerms(account) <= Account(id | Savings)

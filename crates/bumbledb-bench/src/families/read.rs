@@ -182,7 +182,7 @@ fn range_params(cfg: &GenConfig) -> Vec<Draw> {
 }
 
 /// balance — `Q(a, Sum(amount)) :- Posting(id, account = a, amount),
-/// Account(id = a, holder = ?0)`. The serial id binding makes every
+/// Account(id = a, holder = ?0)`. The fresh id binding makes every
 /// posting a distinct binding, so the fold is the *ledger balance* —
 /// duplicate amounts on one account count once each, not once total —
 /// and the distinct-bindings elision engages (key coverage), putting

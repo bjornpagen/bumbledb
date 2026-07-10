@@ -27,7 +27,7 @@ pub struct RelationId(pub u32);
 pub struct FieldId(pub u16);
 
 /// Dense statement id: the statement's index in the schema-global
-/// materialized order — serial auto-[`StatementDescriptor::Functionality`]
+/// materialized order — fresh auto-[`StatementDescriptor::Functionality`]
 /// statements first, then declared statements in declaration order
 /// ([`SchemaDescriptor::materialized_statements`] owns the rule).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -73,23 +73,23 @@ pub enum Generation {
     None,
     /// The database mints values: monotonic per (relation, field), never
     /// re-issuing a value observable in a committed state. Must be `U64`.
-    Serial,
+    Fresh,
 }
 
-/// A witness that `(relation, field)` names a `Serial`-generation field of
+/// A witness that `(relation, field)` names a `Fresh`-generation field of
 /// this schema: the proof-carrying handle of the untyped mint path
 /// ([`crate::WriteTx::alloc_at`]). Fields are private and
-/// [`Schema::serial_field`] is the one construction site — holding a value
+/// [`Schema::fresh_field`] is the one construction site — holding a value
 /// *is* the proof, so the mint path never re-checks the generation (parse,
 /// don't validate; the ETL access pattern is resolve once per relation,
 /// mint per row).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SerialField {
+pub struct FreshField {
     relation: RelationId,
     field: FieldId,
 }
 
-impl SerialField {
+impl FreshField {
     pub(crate) fn relation(self) -> RelationId {
         self.relation
     }
@@ -225,9 +225,11 @@ pub struct SchemaDescriptor {
     pub statements: Vec<StatementDescriptor>,
 }
 
-/// A named schema definition: the value [`crate::Db::create`] and
-/// [`crate::Db::open`] take, and the type that names the database in
-/// [`crate::Db<S>`]'s typestate. The `schema!` macro emits one unit
+/// A named theory — a schema names a theory (relations plus statements)
+/// and a store models it (`docs/architecture/10-data-model.md`): the
+/// value [`crate::Db::create`] and [`crate::Db::open`] take, and the
+/// type that names the database in [`crate::Db<S>`]'s typestate. The
+/// `schema!` macro emits one unit
 /// struct per invocation (`pub Ledger;` → `pub struct Ledger;` with this
 /// impl), so a fact of schema A cannot reach a database of schema B —
 /// the mismatch is a compile error, not a lucky width check.
@@ -241,13 +243,13 @@ pub struct SchemaDescriptor {
 /// descriptor (ETL tooling, test fixtures) is its own definition. All
 /// such databases share the `Db<SchemaDescriptor>` state — dynamic
 /// schemas get the dynamic surface's runtime checks, not typestate.
-pub trait SchemaDef: Sized {
+pub trait Theory: Sized {
     /// The schema as declared. Consumes the definition value —
     /// implementers are unit structs or one-shot carriers.
     fn descriptor(self) -> SchemaDescriptor;
 }
 
-impl SchemaDef for SchemaDescriptor {
+impl Theory for SchemaDescriptor {
     fn descriptor(self) -> SchemaDescriptor {
         self
     }
@@ -256,9 +258,9 @@ impl SchemaDef for SchemaDescriptor {
 impl SchemaDescriptor {
     /// The materialized statement list — the one owner of the ordering rule
     /// pinned by the fingerprint (`docs/architecture/10-data-model.md`,
-    /// § fingerprint inputs): one auto-`Functionality` per `Serial` field
+    /// § fingerprint inputs): one auto-`Functionality` per `Fresh` field
     /// (relation declaration order, then field order; projection = the one
-    /// serial field), followed by the declared statements in declaration
+    /// fresh field), followed by the declared statements in declaration
     /// order. [`StatementId`] = index into this list, schema-global.
     ///
     /// # Panics
@@ -270,7 +272,7 @@ impl SchemaDescriptor {
         let mut statements: Vec<StatementDescriptor> = Vec::new();
         for (rel_idx, relation) in self.relations.iter().enumerate() {
             for (field_idx, field) in relation.fields.iter().enumerate() {
-                if field.generation == Generation::Serial {
+                if field.generation == Generation::Fresh {
                     statements.push(StatementDescriptor::Functionality {
                         relation: RelationId(
                             u32::try_from(rel_idx).expect("relation count fits u32"),
@@ -396,7 +398,7 @@ impl Schema {
         self.relations.get(id.0 as usize)
     }
 
-    /// Resolves `(relation, field)` to the [`SerialField`] witness — ids
+    /// Resolves `(relation, field)` to the [`FreshField`] witness — ids
     /// and generation validated here, once; every
     /// [`crate::WriteTx::alloc_at`] mint thereafter carries the proof
     /// instead of re-checking it (`70-api.md` § ETL).
@@ -404,22 +406,22 @@ impl Schema {
     /// # Errors
     ///
     /// `UnknownRelation`/`UnknownField` on an out-of-range id;
-    /// `NotASerialField` when the field's generation is not `Serial`.
-    pub fn serial_field(
+    /// `NotAFreshField` when the field's generation is not `Fresh`.
+    pub fn fresh_field(
         &self,
         relation: RelationId,
         field: FieldId,
-    ) -> Result<SerialField, FactShapeError> {
+    ) -> Result<FreshField, FactShapeError> {
         let Some(rel) = self.relation_checked(relation) else {
             return Err(FactShapeError::UnknownRelation { relation });
         };
         let Some(descriptor) = rel.fields().get(usize::from(field.0)) else {
             return Err(FactShapeError::UnknownField { relation, field });
         };
-        if descriptor.generation != Generation::Serial {
-            return Err(FactShapeError::NotASerialField { relation, field });
+        if descriptor.generation != Generation::Fresh {
+            return Err(FactShapeError::NotAFreshField { relation, field });
         }
-        Ok(SerialField { relation, field })
+        Ok(FreshField { relation, field })
     }
 
     /// The sealed statements, in materialized order.

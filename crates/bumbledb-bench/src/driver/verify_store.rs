@@ -100,7 +100,7 @@ mod tests {
     fn findings_render_through_the_statement_renderer() {
         let schema = schema();
         // `Account(holder) <= Holder(id)` is the ledger's first declared
-        // containment; its materialized id follows the serial auto-FDs.
+        // containment; its materialized id follows the fresh auto-FDs.
         let containment = (0..schema.statements().len())
             .map(|id| StatementId(u16::try_from(id).expect("small fixture")))
             .find(|&id| render::render(schema, id).contains("<="))

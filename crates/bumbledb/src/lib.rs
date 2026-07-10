@@ -5,7 +5,7 @@
 //! normative design):
 //!
 //! - Declare a schema with the [`schema!`] macro — its `pub Name;` header
-//!   names a unit struct implementing [`SchemaDef`], and the body expands
+//!   names a unit struct implementing [`Theory`], and the body expands
 //!   to host newtypes and one typed [`Fact`] struct per relation
 //!   (variable-width fields borrowed: `str` → `&str`, `bytes` → `&[u8]`).
 //!   The macro is sugar; [`schema::SchemaDescriptor`] is the contract.
@@ -29,8 +29,8 @@
 //! ```compile_fail
 //! bumbledb::schema! {
 //!     pub Ledger;
-//!     relation Holder { id: u64 as HolderId, serial }
-//!     relation Account { id: u64 as AccountId, serial }
+//!     relation Holder { id: u64 as HolderId, fresh }
+//!     relation Account { id: u64 as AccountId, fresh }
 //! }
 //! let account = AccountId(1);
 //! let _holder: HolderId = account; // mismatched types: rustc refuses
@@ -43,11 +43,11 @@
 //! ```compile_fail
 //! bumbledb::schema! {
 //!     pub Ledger;
-//!     relation Holder { id: u64 as HolderId, serial }
+//!     relation Holder { id: u64 as HolderId, fresh }
 //! }
 //! bumbledb::schema! {
 //!     pub Inventory;
-//!     relation Item { id: u64 as ItemId, serial }
+//!     relation Item { id: u64 as ItemId, fresh }
 //! }
 //! # let dir = std::env::temp_dir().join("bumbledb-doc-cross-schema");
 //! # let _ = std::fs::remove_dir_all(&dir);
@@ -95,7 +95,7 @@ pub(crate) mod storage;
 mod value;
 mod verify_store;
 
-pub use api::db::{BulkLoadError, Db, Fact, Serial, SerialKeyed, Snapshot, WriteTx};
+pub use api::db::{BulkLoadError, Db, Fact, Fresh, FreshKeyed, Snapshot, WriteTx};
 pub use api::prepared::{
     BindValue, OccurrenceDrift, ParamArg, PreparedQuery, ResultBuffer, ResultValue, Row, Staleness,
 };
@@ -113,7 +113,7 @@ pub use plan::chase::with_chase_disabled;
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.
 pub use ir::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
-pub use schema::{FieldId, RelationId, Schema, SchemaDef, SerialField, StatementId};
+pub use schema::{FieldId, FreshField, RelationId, Schema, StatementId, Theory};
 pub use verify_store::{StoreFinding, StoreReport};
 
 /// The declarative schema surface (docs/architecture/70-api.md). (The macro and the `schema`
@@ -125,14 +125,14 @@ pub use verify_store::{StoreFinding, StoreReport};
 /// semantics beyond names flow through schema validation (typed
 /// [`error::SchemaError`] from [`Db::create`] / [`Db::open`]). The
 /// invocation's first item is the header `pub Name;` — the unit struct
-/// that names the schema ([`SchemaDef`]) and disambiguates multiple
-/// schemas in one module. Five shapes the macro itself refuses:
+/// that names the schema ([`Theory`]) and disambiguates multiple
+/// schemas in one module. Six shapes the macro itself refuses:
 ///
 /// A missing header:
 ///
 /// ```compile_fail
 /// bumbledb::schema! {
-///     relation Holder { id: u64 as HolderId, serial }
+///     relation Holder { id: u64 as HolderId, fresh }
 /// }
 /// ```
 ///
@@ -142,7 +142,18 @@ pub use verify_store::{StoreFinding, StoreReport};
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
-///     relation Holder { id: u64 as HolderId, serial, unique }
+///     relation Holder { id: u64 as HolderId, fresh, unique }
+/// }
+/// ```
+///
+/// An unknown modifier — the only modifier is `fresh`, and the dead SQL
+/// generation word takes this same path
+/// (``schema!: unknown field modifier `autoincrement` (the only modifier is `fresh`)``):
+///
+/// ```compile_fail
+/// bumbledb::schema! {
+///     pub Ledger;
+///     relation Holder { id: u64 as HolderId, autoincrement }
 /// }
 /// ```
 ///
@@ -151,8 +162,8 @@ pub use verify_store::{StoreFinding, StoreReport};
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
-///     relation Holder { id: u64 as HolderId, serial }
-///     relation Account { id: u64 as AccountId, serial, holder: u64 as HolderId }
+///     relation Holder { id: u64 as HolderId, fresh }
+///     relation Account { id: u64 as AccountId, fresh, holder: u64 as HolderId }
 ///     Account(holder) -> Holder;
 /// }
 /// ```
@@ -163,7 +174,7 @@ pub use verify_store::{StoreFinding, StoreReport};
 /// bumbledb::schema! {
 ///     pub Ledger;
 ///     relation Account {
-///         id: u64 as AccountId, serial,
+///         id: u64 as AccountId, fresh,
 ///         kind: enum Kind { Checking, Savings },
 ///     }
 ///     Account(id | kind == Savings) -> Account;
@@ -177,7 +188,7 @@ pub use verify_store::{StoreFinding, StoreReport};
 /// ```compile_fail
 /// bumbledb::schema! {
 ///     pub Ledger;
-///     relation Holder { id: u64 as HolderId, serial }
+///     relation Holder { id: u64 as HolderId, fresh }
 ///     Holder(nope) -> Holder;
 /// }
 /// ```

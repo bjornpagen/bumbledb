@@ -1,5 +1,5 @@
 //! Edge-case pins from the design audits: cyclic containments, nullary
-//! relations, serial exhaustion, wide enums, 1-byte compound guards, and
+//! relations, fresh exhaustion, wide enums, 1-byte compound guards, and
 //! empty interned values — each a doc claim that previously rested on a
 //! code-reading argument instead of a test. Plus the PRD 20 bind matrix:
 //! precise per-position errors for every scalar/set misuse, and a valid
@@ -19,27 +19,27 @@ bumbledb::schema! {
     pub Ledger;
 
     relation Alpha {
-        id: u64 as AlphaId, serial,
+        id: u64 as AlphaId, fresh,
         beta: u64 as BetaId,
     }
     relation Beta {
-        id: u64 as BetaId, serial,
+        id: u64 as BetaId, fresh,
         alpha: u64 as AlphaId,
     }
     relation Node {
-        id: u64 as NodeId, serial,
+        id: u64 as NodeId, fresh,
         parent: u64 as NodeId,
     }
     relation Gate {
         tag: str,
     }
     relation Blob {
-        id: u64 as BlobId, serial,
+        id: u64 as BlobId, fresh,
         payload: bytes,
         name: str,
     }
     relation Posting {
-        id: u64 as PostingId, serial,
+        id: u64 as PostingId, fresh,
         account: u64,
         amount: i64,
         memo: str,
@@ -110,11 +110,11 @@ fn empty_strings_and_bytes_round_trip() {
     .expect("scan");
 }
 
-/// An explicit `u64::MAX` serial exhausts the generator through the
+/// An explicit `u64::MAX` fresh exhausts the generator through the
 /// public surface (typed error, not wraparound).
 #[test]
-fn explicit_max_serial_exhausts_the_generator() {
-    let dir = common::TempDir::new("edge-serial-max");
+fn explicit_max_fresh_exhausts_the_generator() {
+    let dir = common::TempDir::new("edge-fresh-max");
     let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
         tx.insert(&Node {
@@ -129,7 +129,7 @@ fn explicit_max_serial_exhausts_the_generator() {
             Ok(())
         })
         .unwrap_err();
-    assert!(matches!(err, Error::SerialExhausted { .. }));
+    assert!(matches!(err, Error::FreshExhausted { .. }));
 }
 
 /// A 256-variant enum (every u8 ordinal valid) commits and scans back.

@@ -4,7 +4,7 @@ use crate::gen::Rng;
 use crate::querygen::target::ids;
 use crate::querygen::{Builder, REPEAT_VAR_PCT};
 
-/// Guardable relations: (relation, serial-id field, projectable fields).
+/// Guardable relations: (relation, fresh-id field, projectable fields).
 const GUARDABLE: &[(RelationId, FieldId, &[FieldId])] = &[
     (ids::HOLDER, ids::holder::ID, &[ids::holder::NAME]),
     (
@@ -42,7 +42,7 @@ const GUARDABLE: &[(RelationId, FieldId, &[FieldId])] = &[
 ];
 
 /// Star satellites: (Posting reference field, relation, projected
-/// payload field) — each satellite joins on its serial id (field 0).
+/// payload field) — each satellite joins on its fresh id (field 0).
 const SATELLITES: &[(FieldId, RelationId, FieldId)] = &[
     (
         ids::posting::ENTRY,
@@ -57,7 +57,7 @@ const SATELLITES: &[(FieldId, RelationId, FieldId)] = &[
     ),
 ];
 
-/// One atom, serial id bound to a param — or, a fifth of the time, a
+/// One atom, fresh id bound to a param — or, a fifth of the time, a
 /// param **set** (the point-lookup-over-a-set family) — with 1–2 vars
 /// projected.
 pub(super) fn guard(b: &mut Builder, rng: &mut Rng) {

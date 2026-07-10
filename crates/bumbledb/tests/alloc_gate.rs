@@ -29,8 +29,8 @@ use bumbledb::{BindValue, Db, PreparedQuery, ResultBuffer, Snapshot};
 
 mod common;
 
-/// Posting(id serial, account u64, amount i64, memo str) +
-/// Account(id serial, holder u64), with
+/// Posting(id fresh, account u64, amount i64, memo str) +
+/// Account(id fresh, holder u64), with
 /// `Posting(account) <= Account(id)`.
 fn schema() -> SchemaDescriptor {
     SchemaDescriptor {
@@ -41,7 +41,7 @@ fn schema() -> SchemaDescriptor {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Serial,
+                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "account".into(),
@@ -66,7 +66,7 @@ fn schema() -> SchemaDescriptor {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Serial,
+                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "holder".into(),
@@ -99,7 +99,7 @@ const ACCOUNT: RelationId = RelationId(1);
 bumbledb::schema! {
     pub GateLedger;
     relation GateItem {
-        id: u64 as GateItemId, serial,
+        id: u64 as GateItemId, fresh,
         memo: str,
     }
 }

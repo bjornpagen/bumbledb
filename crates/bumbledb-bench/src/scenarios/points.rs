@@ -16,11 +16,11 @@ bumbledb::schema! {
     pub Points;
 
     relation Bucket {
-        id: u64 as PBucketId, serial,
+        id: u64 as PBucketId, fresh,
         class: enum Class { Hot, Warm, Cold, Frozen },
     }
     relation Doc {
-        id: u64 as PDocId, serial,
+        id: u64 as PDocId, fresh,
         key: str,
         bucket: u64 as PBucketId,
         size: i64,
@@ -40,7 +40,7 @@ bumbledb::schema! {
 ///
 /// Never in practice: the declared scenario schema is valid.
 pub fn schema() -> &'static bumbledb::Schema {
-    use bumbledb::SchemaDef as _;
+    use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
     SCHEMA.get_or_init(|| {
         Points
@@ -89,7 +89,7 @@ fn param(id: u16) -> Term {
     Term::Param(ParamId(id))
 }
 
-/// p1 — point by serial id (the guard probe vs one B-tree descent).
+/// p1 — point by fresh id (the guard probe vs one B-tree descent).
 fn by_id() -> Query {
     Query {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
@@ -220,7 +220,7 @@ pub fn scenario() -> Scenario {
         name: "points",
         about: "key-value regime: point lookups, tiny fetches, per-query overhead",
         schema,
-        descriptor: || bumbledb::SchemaDef::descriptor(Points),
+        descriptor: || bumbledb::Theory::descriptor(Points),
         rows: |seed| {
             vec![
                 (ids::BUCKET, Box::new((0..BUCKETS).map(bucket_row))),
@@ -237,7 +237,7 @@ pub fn scenario() -> Scenario {
                     name: "p1_by_id",
                     query: by_id,
                     params: |seed| id_params(seed, 1),
-                    about: "serial-id point: guard probe vs B-tree descent",
+                    about: "fresh-id point: guard probe vs B-tree descent",
                 },
                 ScenarioQuery {
                     name: "p2_by_key",

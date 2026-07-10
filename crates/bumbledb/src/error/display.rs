@@ -22,9 +22,9 @@ impl fmt::Display for FactShapeError {
             Self::UnknownField { relation, field } => {
                 write!(f, "relation {} has no field {}", relation.0, field.0)
             }
-            Self::NotASerialField { relation, field } => write!(
+            Self::NotAFreshField { relation, field } => write!(
                 f,
-                "relation {}, field {}: not a serial field",
+                "relation {}, field {}: not a fresh field",
                 relation.0, field.0
             ),
             Self::ArityMismatch {
@@ -169,11 +169,11 @@ impl fmt::Display for SchemaError {
                 "relation {}, field {}: duplicate enum variant `{variant}`",
                 r.0, fd.0
             ),
-            Self::SerialOnNonU64 {
+            Self::FreshOnNonU64 {
                 relation: r,
                 field: fd,
             } => {
-                write!(f, "relation {}, field {}: serial requires u64", r.0, fd.0)
+                write!(f, "relation {}, field {}: fresh requires u64", r.0, fd.0)
             }
             Self::StatementUnknownRelation {
                 statement: s,
@@ -507,9 +507,9 @@ impl fmt::Display for Error {
                     statement.0
                 ),
             },
-            Self::SerialExhausted { relation, field } => write!(
+            Self::FreshExhausted { relation, field } => write!(
                 f,
-                "serial sequence exhausted (relation {}, field {})",
+                "fresh sequence exhausted (relation {}, field {})",
                 relation.0, field.0
             ),
             Self::ForeignPreparedQuery => {
@@ -633,7 +633,7 @@ impl SchemaError {
             | Self::EnumWithoutVariants { .. }
             | Self::EnumTooManyVariants { .. }
             | Self::DuplicateEnumVariant { .. }
-            | Self::SerialOnNonU64 { .. } => None,
+            | Self::FreshOnNonU64 { .. } => None,
             Self::StatementUnknownRelation { statement, .. }
             | Self::StatementUnknownField { statement, .. }
             | Self::EmptyProjection { statement, .. }

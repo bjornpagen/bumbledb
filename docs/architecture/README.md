@@ -100,7 +100,7 @@ re-litigated by accident:
   theorems proved, in `30-dependencies.md`).
 - **Interval is the seventh type**, with the point-set denotation; pointwise keys and
   coverage containments as theorems; order operators and Min/Max refused on it; uuid
-  rejected with the serial rationale (`10-data-model.md`).
+  rejected with the fresh rationale (`10-data-model.md`).
 - **The IR carries** negation (anti-join atoms with the safety rule), point membership
   (a typing rule), param sets (`IN`), `CountDistinct`, and Arg-restriction with
   set-honest ties; the outer join is a documented decomposition, never a node
@@ -115,7 +115,7 @@ re-litigated by accident:
   general FDs answered by normalization (`30-dependencies.md`).
 - **Nominal typing rejected everywhere** — hard structural typing; names live in host
   newtypes (`10-data-model.md`).
-- **Serial is a generation attribute**, not a type; it auto-materializes a key FD.
+- **Fresh is a generation attribute**, not a type; it auto-materializes a key FD.
 - **Dependency enforcement is commit-time, final-state, only** — no per-operation
   checking, no deferral modes.
 - **No `replace` operation** — operation order is semantically irrelevant;

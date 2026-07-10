@@ -94,9 +94,9 @@ fn run(schema: &SchemaDescriptor, cases: Vec<Case>) {
 
 // ---------- functionality — the pointwise-key matrix ----------
 //
-// The engine fixture: Target(id serial) + Keyed(x, y; key x) +
+// The engine fixture: Target(id fresh) + Keyed(x, y; key x) +
 // Booking(room, during, tag; key (room, during)) + Claim(holder) <=
-// Target(id). Materialized order: Target's serial auto-key first.
+// Target(id). Materialized order: Target's fresh auto-key first.
 
 const TARGET: RelationId = RelationId(0);
 const KEYED: RelationId = RelationId(1);
@@ -114,7 +114,7 @@ fn matrix_schema() -> SchemaDescriptor {
                 fields: vec![FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Serial,
+                    generation: Generation::Fresh,
                 }],
             },
             RelationDescriptor {

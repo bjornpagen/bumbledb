@@ -15,8 +15,8 @@ use crate::storage::dict;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
 
-/// Account(id serial u64, holder u64, name string): statement 0 is the
-/// serial auto-key on `id`.
+/// Account(id fresh u64, holder u64, name string): statement 0 is the
+/// fresh auto-key on `id`.
 fn account_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -25,7 +25,7 @@ fn account_schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Serial,
+                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "holder".into(),
@@ -47,7 +47,7 @@ fn account_schema() -> Schema {
 
 /// Booking(room u64, span interval<u64>, label u64) with the declared
 /// pointwise key `Booking(room, span) -> Booking` — statement 0 (no
-/// serials exist).
+/// fresh ids exist).
 fn booking_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -108,7 +108,7 @@ fn stay_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// Shift(id serial u64, span interval<u64>): the serial auto-key plus an
+/// Shift(id fresh u64, span interval<u64>): the fresh auto-key plus an
 /// interval field to decode as a two-slot variable.
 fn shift_schema() -> Schema {
     SchemaDescriptor {
@@ -118,7 +118,7 @@ fn shift_schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Serial,
+                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "span".into(),
@@ -228,7 +228,7 @@ fn fully_key_bound_single_atom_classifies_as_guard_probe() {
     let schema = account_schema();
     let normalized = single(occurrence(
         &[(1, 0), (2, 1)],
-        vec![eq_filter(0, Const::Word(5))], // id = 5, the serial auto-key
+        vec![eq_filter(0, Const::Word(5))], // id = 5, the fresh auto-key
     ));
     let plan = classify(&normalized, &schema).expect("guard probe");
     assert_eq!(plan.statement, Some(StatementId(0)));

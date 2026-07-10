@@ -2,7 +2,7 @@
 //! (`docs/architecture/20-query-ir.md` § negation). Every variable
 //! placed in a negated atom is drawn from the positive atoms' anchors
 //! by provenance — a negated atom binds nothing, only rejects — and the
-//! binding shapes sweep the space: key-covered (a serial key bound; at
+//! binding shapes sweep the space: key-covered (a fresh key bound; at
 //! most one witness) and open (non-key bindings over the multiply-
 //! witnessed relations — rejection must not depend on witness count),
 //! with occasional literal, param, param-set, and membership bindings
@@ -27,9 +27,9 @@ enum Template {
     /// `¬Posting(account = v [, reconciled = literal])` — open,
     /// multiply witnessed (an account has many postings).
     PostingOnAccount,
-    /// `¬JournalEntry(id = v [, source = X])` — key-covered (serial).
+    /// `¬JournalEntry(id = v [, source = X])` — key-covered (fresh).
     EntryById,
-    /// `¬Holder(id = v)` — key-covered (serial).
+    /// `¬Holder(id = v)` — key-covered (fresh).
     HolderById,
     /// `¬Org()` / `¬OrgParent()` — the zero-binding negated gate.
     Gate,

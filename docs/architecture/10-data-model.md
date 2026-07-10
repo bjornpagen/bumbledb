@@ -50,7 +50,7 @@ stop a query joining `Posting.account` to `Instrument.id`; both are U64, that qu
 means what it says. Inclusion statements document intent; the host prevents the
 mistake. This is the design, not a hole.
 **Decision:** nominal typing rejected everywhere. **Alternative:** nominal
-Serial/domain wrappers in the engine. **Why it lost:** owner is a hard
+Fresh/domain wrappers in the engine. **Why it lost:** owner is a hard
 structural-typing fan; nominal safety is free in the host. **Reverses if:** never —
 philosophy.
 
@@ -63,7 +63,7 @@ quadrillion cents), and a second scalar width would multiply the codec and NEON 
 shapes for bytes that don't matter at this scale.
 **Uuid, rejected explicitly:** uuidv7 in the surveyed Postgres workloads
 does three jobs — identity, clash-avoidance, and clock — because Postgres cannot trust
-its clients to mint ids. Here the single-writer engine mints serials (identity and
+its clients to mint ids. Here the single-writer engine mints fresh ids (identity and
 clash-rejection by construction), and wall-clock time is an explicit I64 column.
 An id is an id; a clock is a clock; a type that is secretly both is a lie with a
 timestamp in it. **Reverses if:** never — the jobs are covered separately and better.
@@ -127,10 +127,13 @@ exists to stop telling.
 
 ## Fields: type + generation
 
-A field is `(name, type, generation)` where `generation ∈ {None, Serial}`. Generation
-is a **storage behavior, not a type**:
+A field is `(name, type, generation)` where `generation ∈ {None, Fresh}`. Generation
+is a **storage behavior, not a type**, and the name is the mechanism's own: minting an
+id is generating a **fresh existential witness** — exactly what the chase does when a
+statement demands a value that does not exist. Postgres's word for this was the last
+SQL survivor of the deleted vocabulary; it died in the algebra pass (PRD 01).
 
-- A `Serial` field must be `U64`. The database mints its values: monotonic per
+- A `Fresh` field must be `U64`. The database mints its values: monotonic per
   (relation, field), never re-issuing any value observable in a committed state;
   aborted transactions don't advance the committed sequence.
 - **The usage pattern this exists for** — insert a new row without ever reading a max:
@@ -143,24 +146,24 @@ is a **storage behavior, not a type**:
   })?
   ```
 
-  (The typed surface infers the field from the `Serial` newtype; the untyped form is
+  (The typed surface infers the field from the `Fresh` newtype; the untyped form is
   `tx.alloc_at(witness)` with the witness resolved once through
-  `schema.serial_field(relation, field)` — `70-api.md` § ETL.)
+  `schema.fresh_field(relation, field)` — `70-api.md` § ETL.)
 
   `alloc` is the only generator; `insert` is always full-fact and stays idempotent —
   one insert semantics, no generative variant.
 - Explicit values are legal on the normal write path (not just ETL): inserting with a
   chosen value ≤ or > the high-water mark succeeds and advances the mark past it. This
-  is load-bearing: correcting a serial-keyed fact is `delete(old); insert(new with the
+  is load-bearing: correcting a fresh-keyed fact is `delete(old); insert(new with the
   same id)`. "Never reused" constrains the *generator* only — it never re-issues a
   value that was ever committed; explicit re-supply of a deleted value is legal. Mixed
   explicit/generated allocation within one transaction tracks the running maximum.
-  A *successful* commit persists every serial value it issued, even when no facts
+  A *successful* commit persists every fresh value it issued, even when no facts
   changed — the closure may have returned those ids to the host, and an observed id is
   never re-issued (the counters-only commit writes exactly the dirty `Q` marks: no
   generation bump, no cache eviction). Aborted transactions (`Err`/panic) still drop
   their allocations; nothing they minted was observably returned.
-- **A Serial field auto-materializes a functional dependency** — the statement
+- **A Fresh field auto-materializes a functional dependency** — the statement
   `R(field) -> R`, first in the relation's materialized statement order, ordinary in
   every way and targetable by inclusions like any declared key. Two Accounts sharing
   an AccountId is unrepresentable by construction, with zero special enforcement
@@ -169,18 +172,33 @@ is a **storage behavior, not a type**:
 - Referencing fields are plain `U64` fields; referential intent is carried entirely by
   an explicit inclusion statement. There is no defining-vs-reference occurrence
   question — generation is a per-field-declaration attribute and nothing else.
-- **Serials order within their relation and nowhere else.** A serial is monotonic per
-  (relation, field); comparing serials across relations compares two unrelated mint
+- **Fresh ids order within their relation and nowhere else.** A fresh id is monotonic per
+  (relation, field); comparing fresh ids across relations compares two unrelated mint
   sequences and means nothing. Where the application needs cross-relation "happened
   after", it stores an explicit I64 time or an Interval — the convention exists so
   nobody rediscovers uuid.
 
-**Decision:** serial is a generation attribute + auto-key, not a type.
-**Alternatives:** (a) nominal `Serial{type_name, owning_relation}` — lost to the
-structural ruling; (b) generative insert (insert mints and returns the id) — lost
-because it splits insert into two semantics and breaks idempotence and the fact-hash
-membership check. **Reverses if:** never — this is strictly simpler and preserves the
-ergonomic contract.
+**Decision — three rulings close the generation question, permanently.**
+
+1. **u64-only.** Enforced at declaration (`FreshOnNonU64`). A monotone counter over
+   i64 has no sighting; the census law forbids the surface area. **Reverses if:** a
+   sighted workload needs a signed mint sequence.
+2. **Writable-by-default is load-bearing, not a leak.** Update is delete+insert, so
+   re-inserting a fact writes its existing id back; ETL and `bulk_load` must preserve
+   ids other facts reference. The SQL-standard `GENERATED ALWAYS` shape is
+   incompatible with the engine's own update idiom. Explicit writes advance the
+   high-water (`saturating_add`); exhaustion at `u64::MAX` is ~585,000 years at 10⁶
+   allocs/sec — no guard beyond `FreshExhausted`. **Reverses if:** never —
+   writability is a theorem of the update idiom, not a preference.
+3. **Generation attribute, not a type.** A type is an encoding and the value's
+   encoding *is* u64; a distinct engine type would smuggle nominal typing past the
+   structural-typing law while duplicating what host newtypes already provide under
+   rustc. **Reverses if:** never — philosophy.
+
+**Alternatives, recorded:** (a) nominal `Fresh{type_name, owning_relation}` — lost to
+ruling 3; (b) generative insert (insert mints and returns the id) — lost because it
+splits insert into two semantics and breaks idempotence and the fact-hash membership
+check.
 
 ## Relations are sets of facts; the fact is its own identity
 
@@ -191,12 +209,12 @@ ergonomic contract.
   *appointed* to give rows identity. Here the fact is its own identity — identity is
   the canonical bytes (below). Keys (functional dependencies, `30-dependencies.md`)
   are invariants a relation *satisfies*, plural and unprivileged; an inclusion targets
-  whichever key it names, and serial is a value-minting convenience that happens to
+  whichever key it names, and fresh is a value-minting convenience that happens to
   materialize one. Nothing anywhere appoints "the" key.
 - `insert(fact)` is an idempotent no-op if the fact exists; `delete(fact)` is an
   idempotent no-op if it doesn't. Both report whether they changed state. **There is
   no update operation**; mutation is delete + insert (within one write transaction),
-  with explicit serial re-supply preserving identity across the swap.
+  with explicit fresh re-supply preserving identity across the swap.
 - Nullary (zero-field) relations are legal: a set that is empty or contains the single
   empty fact — a database-level boolean. Every layer (encoding, hashing, IR) defines
   behavior for it because it falls out of the representation.
@@ -205,7 +223,7 @@ ergonomic contract.
 and whole-row `replace`. **Why it lost:** one identity concept (the fact), one mutation
 algebra (insert/delete), no PK-vs-key duality. Consequences now explicit: mutating a
 referenced fact needs dependency-timing rules (commit-time, against the final state —
-`30-dependencies.md`) and serial re-supply (specified above). **Reverses if:** the
+`30-dependencies.md`) and fresh re-supply (specified above). **Reverses if:** the
 delete+insert idiom proves unlivable in real app code.
 
 ## No nulls
@@ -300,8 +318,14 @@ enforcement, no deferral opt-in, and the words *unique*, *foreign key*, *primary
 
 ## Schema
 
+**A schema names a theory; a store models it.** A schema is a presentation of a
+theory — relations plus statements — and a database is a model of that theory; the
+`Theory` trait (`descriptor(self)`) is the definition surface the macro's header
+struct implements, with a runtime-built `SchemaDescriptor` as its own definition
+(`70-api.md`).
+
 Schemas are declared in Rust and compiled into the binary. The declaration produces
-descriptors, the host-side newtypes, and a canonical byte serialization hashed (blake3)
+descriptors, the host-side newtypes, and a canonical byte encoding hashed (blake3)
 into the **schema fingerprint**, stored at database creation; open compares fingerprints
 and mismatches are hard failures. No migration, no ALTER: schema change = ETL into a new
 database (export surface: `70-api.md`).
@@ -313,7 +337,7 @@ type for intervals — and generation flag); then the **dependency statements in
 materialized order** — for each: the judgment form (functionality or containment,
 with direction count) and both sides' (relation id, projection field-id list in
 statement order, selection list as (field id, literal value) pairs in statement
-order). Materialized order = the serial auto-keys first (one per serial field, in
+order). Materialized order = the fresh auto-keys first (one per fresh field, in
 relation-then-field declaration order), then the declared statements in declaration
 order — a deterministic function of the declaration, so statement ids remain pinned
 by the fingerprint without being hashed separately. Relation and field ids are plain
@@ -340,3 +364,18 @@ discipline: EAV, denormalized redundancy. History is immutable event facts or
 interval-stamped facts — never mutable columns; transitive closures are precomputed
 relations maintained by the host (recursion is not coming to the query layer to
 save a modeling shortcut).
+
+**The idioms, recorded once** (each a representation choice, not a library):
+
+- **Money** — i64 minor units, host newtype per currency and scale; `Sum` runs
+  i128-checked so ledger totals cannot wrap silently.
+- **Time** — i64 UTC microseconds, signed on purpose: payroll birthdates predate
+  1970. Dates are i64 days since epoch; both are conventions the host newtypes.
+- **Order** — explicit position columns, never successor pointers: a linked list
+  inside a relation is control flow smuggled into data, and every reorder becomes
+  a dependent chain of writes.
+- **Any/All** — `Max`/`Min` over a bool column: the 0/1 encoding makes the two
+  quantifiers the two extremes; no dedicated operators.
+- **Large content** — facts stay fixed-width; big payloads live in external
+  storage referenced by identity, with content churn recorded on the
+  dictionary-GC OPEN item as its trigger profile.

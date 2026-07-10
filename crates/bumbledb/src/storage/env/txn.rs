@@ -30,7 +30,7 @@ impl Environment {
         }
     }
 
-    /// Begins the write transaction (LMDB serializes writers).
+    /// Begins the write transaction (LMDB admits one writer at a time).
     ///
     /// # Errors
     ///

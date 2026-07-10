@@ -4,24 +4,24 @@
 //! resolved to variant names.
 
 use super::*;
-use crate::schema::tests::{containment, enum_type, fd, field, serial_field, side, side_where};
+use crate::schema::tests::{containment, enum_type, fd, field, fresh_field, side, side_where};
 use crate::schema::{IntervalElement, RelationDescriptor};
 
 /// The `docs/architecture/30-dependencies.md` example schema plus an
 /// interval-selected containment (Shift/Roster). Materialized ids: 0/1
-/// the serial auto-FDs, 2.. the declared statements below in order.
+/// the fresh auto-FDs, 2.. the declared statements below in order.
 fn example() -> SchemaDescriptor {
     let savings = Value::Enum(1); // ["Checking", "Savings"]
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 name: "Holder".into(),
-                fields: vec![serial_field("id"), field("name", ValueType::String)],
+                fields: vec![fresh_field("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
                 name: "Account".into(),
                 fields: vec![
-                    serial_field("id"),
+                    fresh_field("id"),
                     field("holder", ValueType::U64),
                     field("kind", enum_type(&["Checking", "Savings"])),
                     field(
@@ -95,7 +95,7 @@ fn example() -> SchemaDescriptor {
 #[test]
 fn goldens_render_the_exact_macro_notation() {
     let schema = example().validate().expect("the example schema is valid");
-    // A serial auto-FD renders like any declared FD.
+    // A fresh auto-FD renders like any declared FD.
     assert_eq!(render(&schema, StatementId(0)), "Holder(id) -> Holder");
     // A one-way containment.
     assert_eq!(

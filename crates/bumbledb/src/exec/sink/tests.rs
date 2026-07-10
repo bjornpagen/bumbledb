@@ -23,9 +23,9 @@ mod aggregate;
 mod projection;
 mod semantics;
 
-/// Posting(id serial u64, account u64, amount i64) +
+/// Posting(id fresh u64, account u64, amount i64) +
 /// PostingTag(posting u64, tag u64) +
-/// Payroll(id serial u64, emp u64, during Interval<I64>).
+/// Payroll(id fresh u64, emp u64, during Interval<I64>).
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
@@ -35,7 +35,7 @@ fn schema() -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Serial,
+                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "account".into(),
@@ -70,7 +70,7 @@ fn schema() -> Schema {
                     FieldDescriptor {
                         name: "id".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Serial,
+                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "emp".into(),

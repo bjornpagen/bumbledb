@@ -33,9 +33,9 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     // make every recorded entry a genuine state change. It commits without
     // touching query-visible state: the tx id does not advance and no
     // cached image is invalidated. But a *successful* commit persists
-    // every serial value it issued — the closure may have returned those
+    // every fresh value it issued — the closure may have returned those
     // ids to the host — so dirty `Q` marks flush even here
-    // (`flush_escaped_serials`). Pending interns are still dropped: intern
+    // (`flush_escaped_fresh_ids`). Pending interns are still dropped: intern
     // ids never escape (hosts see values, not words), and re-issuing an
     // unflushed provisional id is the established abort semantics.
     if delta.is_empty() {
@@ -44,7 +44,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
             let rtxn = env.read_txn()?;
             rtxn.generation()?
         };
-        flush_escaped_serials(env.write_txn()?, &delta)?;
+        flush_escaped_fresh_ids(env.write_txn()?, &delta)?;
         return Ok(CommitReport {
             changed: false,
             new_generation: generation,
@@ -75,7 +75,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     judgment::check_source(&txn, schema, &plan)?;
     judgment::check_target(&txn, schema, &plan)?;
 
-    // Phase 4: counters — row counts, row-id high-waters, serial sequences,
+    // Phase 4: counters — row counts, row-id high-waters, fresh sequences,
     // pending dictionary entries and the dictionary next-id.
     {
         let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
@@ -108,8 +108,8 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
 /// bookkeeping no query reads: every image, memo, and cache key stays
 /// valid, and the tx-id-advances-iff-data-changed rule is untouched.
 /// With no dirty marks the transaction aborts — LMDB sees nothing.
-fn flush_escaped_serials(mut txn: WriteTxn<'_>, delta: &WriteDelta<'_>) -> Result<()> {
-    if delta.dirty_serial_marks().next().is_none() {
+fn flush_escaped_fresh_ids(mut txn: WriteTxn<'_>, delta: &WriteDelta<'_>) -> Result<()> {
+    if delta.dirty_fresh_marks().next().is_none() {
         txn.abort();
         return Ok(());
     }
@@ -117,8 +117,8 @@ fn flush_escaped_serials(mut txn: WriteTxn<'_>, delta: &WriteDelta<'_>) -> Resul
     let mut key: KeyBuf = [0; MAX_KEY];
     let mut marks = 0u64;
     let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
-    for (rel, field, next) in delta.dirty_serial_marks() {
-        let len = keys::serial_key(&mut key, rel, field);
+    for (rel, field, next) in delta.dirty_fresh_marks() {
+        let len = keys::fresh_key(&mut key, rel, field);
         data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
         marks += 1;
     }
@@ -129,7 +129,7 @@ fn flush_escaped_serials(mut txn: WriteTxn<'_>, delta: &WriteDelta<'_>) -> Resul
 }
 
 /// Phase 4: folds row-count deltas into `S`, writes row-id high-waters,
-/// serial next-values (`Q`), pending dictionary entries, and the
+/// fresh next-values (`Q`), pending dictionary entries, and the
 /// dictionary next-id.
 fn flush_counters(
     txn: &mut WriteTxn<'_>,
@@ -158,8 +158,8 @@ fn flush_counters(
         let len = keys::stat_key(&mut key, *rel, StatKind::RowIdHighWater);
         data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
     }
-    for (rel, field, next) in delta.serial_marks() {
-        let len = keys::serial_key(&mut key, rel, field);
+    for (rel, field, next) in delta.fresh_marks() {
+        let len = keys::fresh_key(&mut key, rel, field);
         data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
     }
     for (tag, raw, id) in delta.pending_interns() {

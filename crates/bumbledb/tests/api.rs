@@ -7,7 +7,7 @@
 
 use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Term, Value, VarId};
 use bumbledb::schema::FieldId;
-use bumbledb::{BindValue, Db, Direction, Fact, ResultBuffer, ResultValue, SchemaDef, StatementId};
+use bumbledb::{BindValue, Db, Direction, Fact, ResultBuffer, ResultValue, StatementId, Theory};
 
 mod common;
 
@@ -24,11 +24,11 @@ bumbledb::schema! {
     pub Ledger;
 
     relation Holder {
-        id: u64 as HolderId, serial,
+        id: u64 as HolderId, fresh,
         name: str,
     }
     relation Account {
-        id: u64 as AccountId, serial,
+        id: u64 as AccountId, fresh,
         holder: u64 as HolderId,
         balance: i64,
     }
@@ -132,7 +132,7 @@ fn usage_shapes_end_to_end() {
     let dir = common::TempDir::new("api-usage");
     let db = Db::create(dir.path(), Ledger).expect("create");
 
-    // Write: serial minting + typed inserts.
+    // Write: fresh minting + typed inserts.
     let accounts = db
         .write(|tx| {
             let alice: HolderId = tx.alloc()?;
@@ -381,7 +381,7 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
         })
         .expect("export");
 
-    // Import: containment targets first; explicit serial values preserve
+    // Import: containment targets first; explicit fresh values preserve
     // identity.
     let new = Db::create(dir_new.path(), Ledger).expect("create new");
     let loaded = new
@@ -404,7 +404,7 @@ fn export_scan_bulk_loads_into_a_fresh_database() {
         .expect("query new");
     assert_eq!(name_amount_rows(&rows_old), name_amount_rows(&rows_new));
 
-    // The serial high-water advanced past the explicit imports.
+    // The fresh high-water advanced past the explicit imports.
     new.write(|tx| {
         let next: HolderId = tx.alloc()?;
         assert!(
@@ -430,7 +430,7 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
         })
         .expect("seed");
 
-    // Functionality violation: two live accounts claiming one serial id.
+    // Functionality violation: two live accounts claiming one fresh id.
     // The error carries the statement id and the offending fact bytes,
     // and the WHOLE transaction aborts (the good insert too).
     let err = db
@@ -456,8 +456,8 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
     else {
         panic!("expected FunctionalityViolation, got {err}");
     };
-    // Materialized order: Holder.id's serial auto-key, Account.id's
-    // serial auto-key, then the declared containment.
+    // Materialized order: Holder.id's fresh auto-key, Account.id's
+    // fresh auto-key, then the declared containment.
     assert_eq!(statement, StatementId(1));
     assert!(!fact.is_empty());
     // The rendered diagnostic cites the statement in the algebra.
@@ -659,7 +659,7 @@ fn bulk_load_equals_sequential_inserts_and_survives_chunks() {
 
     // Set equality of the full export: an ETL bug is a data-loss bug.
     // (Scan order is row-id order, and row ids depend on chunk boundaries
-    // — relations are sets, so the comparison sorts by the serial id.)
+    // — relations are sets, so the comparison sorts by the fresh id.)
     let by_id = |mut rows: Vec<Vec<Value>>| {
         rows.sort_by_key(|f| match f[0] {
             Value::U64(id) => id,
@@ -1120,7 +1120,7 @@ fn prepared_executions_observe_exactly_one_generation() {
     });
 }
 
-/// A *successful* commit persists every serial
+/// A *successful* commit persists every fresh
 /// value it issued, even when no facts changed — an id the closure
 /// returned to the host is never re-issued. Both no-op shapes: the
 /// empty delta (alloc, nothing else) and the nets-to-nothing delta
@@ -1128,8 +1128,8 @@ fn prepared_executions_observe_exactly_one_generation() {
 /// not move for either — `Q` marks are not query-visible state.
 #[test]
 #[allow(clippy::redundant_closure_for_method_calls)] // HRTB: the method path does not unify
-fn escaped_serials_survive_noop_commits() {
-    let dir = common::TempDir::new("api-serial-escape");
+fn escaped_fresh_ids_survive_noop_commits() {
+    let dir = common::TempDir::new("api-fresh-escape");
     let db = Db::create(dir.path(), Ledger).expect("create");
 
     // The empty-delta path.

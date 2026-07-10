@@ -45,7 +45,7 @@ at the engine's own vocabulary, and every PRD names its representation move:
 Dependency-theory and type-theory names only. The register: *statement*,
 *functionality/key (FD)*, *containment (IND)*, *judgment*, *guard*, *reverse
 edge*, *rule*, *head*, *fresh*, *measure*, *denotation*, *arm*, *theory*,
-*model*. Banned as identifiers or concepts: *serial* (dies in PRD 01), *unique*,
+*model*. Banned as identifiers or concepts: *serial* (dead — PRD 01 landed), *unique*,
 *foreign key*, *primary key*, *constraint*, *cascade*, *IN* (the op is
 membership, ∈), *UNION ALL* (there is one union; it is set union). The 13 Allen
 basics keep Allen's names; `Pack` keeps Snodgrass's.
@@ -72,8 +72,8 @@ basics keep Allen's names; `Pack` keeps Snodgrass's.
 
 ## The PRDs
 
-Phase A — the atom:
-- [01 — `fresh`: the generation attribute, renamed and closed](01-fresh.md)
+Phase A — the atom (01 — `fresh` — landed and retired; its rulings live in
+`10-data-model.md`):
 - [02 — The ray: infinity enters the denotation](02-ray.md)
 - [03 — Allen: the interval-pair coordinate system](03-allen-mask.md)
 - [04 — The configuration kernel](04-config-kernel.md)
@@ -91,9 +91,8 @@ Phase C — the temporal completions:
 - [12 — `Pack`: the coalescing fold](12-pack.md)
 
 Phase D — the surface (**landed early**: implemented as `docs/prd/22` before
-this set began execution; 13/14 are reconciliation records):
-- [13 — The borrowed surface: structs and params — LANDED](13-borrowed-surface.md)
-- [14 — The named theory — LANDED, one residual (the `Theory` rename, folded into 01)](14-named-theory.md)
+this set began execution; the 13/14 reconciliation records are retired — done
+items leave the ledger, and 14's residual, the `Theory` rename, landed with 01).
 
 Phase E — the earning:
 - [15 — Oracles and the generator](15-oracles.md)
@@ -111,9 +110,9 @@ Phase G — the intuition:
 Unphased (bug unit, runs any time — the only known flake in the gate suite):
 - [22 — The bulk-load EINVAL: kill the flake, type the boundary](22-bulk-load-einval.md)
 
-Dependency spine: 01–02 free; 03→04; 05→06→07→08; 09 additionally requires
+Dependency spine: 01 landed; 02 free; 03→04; 05→06→07→08; 09 additionally requires
 `docs/prd/` 11–12 (the chase) landed; 10 requires 02; 11→12; 13/14 landed
-(residual rides 01); 15 requires 03/05/10/12; 16 requires 15; 17–18 free
+(residual landed with 01); 15 requires 03/05/10/12; 16 requires 15; 17–18 free
 (17's oracle rows fold into 15 if it lands first); 19 requires 18; 20
 requires 05 (its sweep and renderer target the rules-shaped IR); 21 lands
 last (it is written against the whole set's surface and its recipes are
@@ -179,9 +178,3 @@ witnessed-write family row if F lands first); G closes the set itself.
 - **JS/N-API bindings, now.** Pure anticipation, recorded with their
   quarantine shape in PRD 20; zero deliverable in this set, and no engine
   decision may lean on their existence.
-
-## Idioms chapter (PRD 01 discharges into `10-data-model.md`)
-
-Money = i64 minor units + host newtype + i128-checked `Sum`. Time = i64
-microseconds (payroll birthdates predate 1970). Order = position columns, never
-successor pointers. Any/All = `Max`/`Min` over bool. Large content = refs.

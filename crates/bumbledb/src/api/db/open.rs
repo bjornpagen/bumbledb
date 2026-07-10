@@ -4,10 +4,10 @@ use std::sync::Mutex;
 use super::Db;
 use crate::error::Result;
 use crate::image::cache::ImageCache;
-use crate::schema::{Schema, SchemaDef};
+use crate::schema::{Schema, Theory};
 use crate::storage::env::Environment;
 
-impl<S: SchemaDef> Db<S> {
+impl<S: Theory> Db<S> {
     /// Validates the definition's declared schema, initializes a fresh
     /// environment at `path` with its fingerprint, and opens it. The
     /// definition value is the one the `schema!` macro's `pub Name;`

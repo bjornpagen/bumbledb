@@ -38,7 +38,7 @@ use tuple::{endpoints, overlaps};
 pub struct NaiveDb {
     schema: SchemaDescriptor,
     /// The materialized statement list; [`StatementId`] indexes it
-    /// (serial auto-keys first, then declared statements — the same rule
+    /// (fresh auto-keys first, then declared statements — the same rule
     /// the engine pins in its fingerprint).
     statements: Vec<StatementDescriptor>,
     relations: Vec<BTreeSet<Tuple>>,

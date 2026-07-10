@@ -17,23 +17,23 @@ bumbledb::schema! {
     pub Ledger;
 
     relation Account {
-        id: u64 as AccountId, serial,
+        id: u64 as AccountId, fresh,
         holder: u64 as HolderId,
         kind: enum Kind { Checking, Savings },
         active: interval<i64> as ActiveDuring,
     }
 
-    Account(id) -> Account;                                  // redundant here (serial implies it) — and rejected as a duplicate
+    Account(id) -> Account;                                  // redundant here (fresh implies it) — and rejected as a duplicate
     Account(holder) <= Holder(id);
     Account(id | kind == Savings) == SavingsTerms(account);
 }
 ```
 
-- **Field syntax:** `name: type` with optional `as NewType` and optional `serial`.
+- **Field syntax:** `name: type` with optional `as NewType` and optional `fresh`.
   Types: `bool`, `u64`, `i64`, `str`, `bytes`, `enum Name { Variants }`,
   `interval<i64>`, `interval<u64>`. `as` is legal on u64, i64, and intervals (the
   newtype wraps the engine value; rustc polices domains — `10-data-model.md`).
-  `serial` is legal on `u64` only and auto-materializes `R(field) -> R`.
+  `fresh` is legal on `u64` only and auto-materializes `R(field) -> R`.
   **There are no field-level constraint modifiers** — no `unique`, no `fk(...)`;
   those words do not parse.
 - **Dependency statements:** `Rel(fields...) -> Rel;` (FD, key form only),
@@ -49,12 +49,12 @@ bumbledb::schema! {
   everything semantic beyond names is a normal typed error with the statement
   rendered back.
 - **The header** `pub Ledger;` expands to `pub struct Ledger;` implementing the
-  `SchemaDef` trait (`fn descriptor(self) -> SchemaDescriptor`) — the value the `Db`
+  `Theory` trait (`fn descriptor(self) -> SchemaDescriptor`) — the value the `Db`
   functions take (`Db::create(path, Ledger)`) and the typestate `Db<Ledger>` carries.
   Multiple schemas coexist in one module; their headers disambiguate. There is no
   memoized `schema()` constructor and no panic path: semantic validation runs inside
   `Db::create`/`Db::open` and surfaces as the typed `SchemaError`.
-- The macro generates: the header's `SchemaDef` unit struct, relation descriptors,
+- The macro generates: the header's `Theory` unit struct, relation descriptors,
   dependency statement descriptors, the host newtypes, and per-relation fact structs
   (`Account { id, holder, kind, active }`). **Variable-width fields are borrowed**:
   `str` → `&'a str`, `bytes` → `&'a [u8]` — a struct with any variable-width field
@@ -68,7 +68,7 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
 
 - `Db::open(path, Ledger)` — no tuning parameters: map size, max readers, and LMDB
   flags are internal (fsync durability per `00-product.md`); the schema definition
-  (`SchemaDef` — the macro's header struct, or a runtime-built `SchemaDescriptor`,
+  (`Theory` — the macro's header struct, or a runtime-built `SchemaDescriptor`,
   which implements the trait as itself) is validated here (typed `SchemaError` on an
   invalid declaration) and what gets fingerprint-verified. Open verifies format
   version, then schema fingerprint; each mismatch is a typed hard failure.
@@ -115,13 +115,13 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   Non-reentrant: a nested `write` from within a write closure on the same thread
   panics with a named message ("nested Db::write") rather than self-deadlocking on
   the writer mutex forever.
-  Write operations: typed `alloc::<NewType>()` via the generated `Serial` newtypes
-  (untyped: `alloc_at(SerialField) -> u64`, taking the witness
-  `Schema::serial_field(relation, field)` resolves — see the ETL section) — serial
+  Write operations: typed `alloc::<NewType>()` via the generated `Fresh` newtypes
+  (untyped: `alloc_at(FreshField) -> u64`, taking the witness
+  `Schema::fresh_field(relation, field)` resolves — see the ETL section) — fresh
   minting, insert new rows
   without reading a max (`10-data-model.md`); `insert(&fact) -> bool` (changed-state
   report); `delete(&fact) -> bool`; `_dyn` forms of both for ETL tooling.
-  `SerialExhausted` raises eagerly at the `alloc` call (the sequence state is knowable
+  `FreshExhausted` raises eagerly at the `alloc` call (the sequence state is knowable
   immediately), not at commit. Bulk import is `Db::bulk_load` — a `Db`-level method,
   not a write-closure operation (see the ETL section).
 - **WriteTx point reads (decision):** `tx.contains(&fact) -> bool` (membership — the `insert`/`delete`
@@ -153,7 +153,7 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   two-transaction idiom. **Why it lost:** the surveyed workloads' upserts and
   check-then-act guards are exactly the shape that needs a read of the state being
   written, and the two-txn idiom reintroduces the TOCTOU the single-writer design
-  exists to kill (safe only under host-side serialization nobody polices).
+  exists to kill (safe only under host-side write ordering nobody polices).
   **Reverses if:** never — the guards are already read inside commit; this exposes
   the same gets one phase earlier.
 - **The transaction is a delta** (`50-storage.md`): operations are in-memory set
@@ -233,7 +233,7 @@ remains hand-rolled (no syn/quote — the dependency policy, `00-product.md`).
   error, never a skip — `50-storage.md`). They abort the query; the read transaction
   remains usable.
 - **Write errors:** `FunctionalityViolation`, `ContainmentViolation` (both raised at
-  commit, against the final state, carrying statement ids), `SerialExhausted`,
+  commit, against the final state, carrying statement ids), `FreshExhausted`,
   `Corruption`, `Io`/`Lmdb`. Any error aborts the whole write transaction — and
   since the transaction is a delta, an aborted transaction never touched LMDB at all.
 - Error payloads carry ids, not formatted strings, on hot paths (allocation contract).
@@ -255,10 +255,10 @@ count is **facts that changed
 state** (idempotent re-inserts are consumed but not counted) — changed-not-consumed
 semantics, stated. Mis-shaped dynamic facts (including out-of-range relation ids and
 `start ≥ end` intervals) are typed `FactShape` errors (decided: ETL input is data,
-not code — no panics on the import path). Explicit serial values preserve identity
-(high-water advances past them). Untyped serial minting is resolve-once/mint-per-row:
-`Schema::serial_field(relation, field) -> Result<SerialField, FactShapeError>`
-validates the ids and the `Serial` generation once and returns a `Copy` witness
+not code — no panics on the import path). Explicit fresh values preserve identity
+(high-water advances past them). Untyped fresh minting is resolve-once/mint-per-row:
+`Schema::fresh_field(relation, field) -> Result<FreshField, FactShapeError>`
+validates the ids and the `Fresh` generation once and returns a `Copy` witness
 (private fields, one construction site — the type is the proof);
 `tx.alloc_at(witness)` mints with no generation re-check anywhere on the path
 (decided: a per-call typed error inside the mint was rejected — it validates on

@@ -15,11 +15,11 @@ pub(crate) fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     }
 }
 
-pub(crate) fn serial_field(name: &str) -> FieldDescriptor {
+pub(crate) fn fresh_field(name: &str) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::Serial,
+        generation: Generation::Fresh,
     }
 }
 
@@ -64,19 +64,19 @@ pub(crate) fn containment(source: Side, target: Side) -> StatementDescriptor {
     StatementDescriptor::Containment { source, target }
 }
 
-/// Holder(id serial, name string) + Account(id serial, holder u64, status enum),
+/// Holder(id fresh, name string) + Account(id fresh, holder u64, status enum),
 /// with the statement `Account(holder) <= Holder(id)`.
 fn ledger_slice() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 name: "Holder".into(),
-                fields: vec![serial_field("id"), field("name", ValueType::String)],
+                fields: vec![fresh_field("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
                 name: "Account".into(),
                 fields: vec![
-                    serial_field("id"),
+                    fresh_field("id"),
                     field("holder", ValueType::U64),
                     field("status", enum_type(&["Active", "Closed"])),
                 ],

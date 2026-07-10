@@ -8,9 +8,9 @@
 //! schema! {
 //!     pub Ledger;
 //!
-//!     relation Holder  { id: u64 as HolderId, serial, name: str }
+//!     relation Holder  { id: u64 as HolderId, fresh, name: str }
 //!     relation Account {
-//!         id:     u64 as AccountId, serial,
+//!         id:     u64 as AccountId, fresh,
 //!         holder: u64 as HolderId,
 //!         kind:   enum Kind { Checking, Savings },
 //!         active: interval<i64> as ActiveDuring,
@@ -25,7 +25,7 @@
 //!
 //! The header `pub Ledger;` is the invocation's first item and names the
 //! schema: it expands to `pub struct Ledger;` implementing
-//! `bumbledb::SchemaDef`, the value `Db::create(path, Ledger)` takes and
+//! `bumbledb::Theory`, the value `Db::create(path, Ledger)` takes and
 //! the typestate `Db<Ledger>` carries. Multiple schemas coexist in one
 //! module — their headers disambiguate.
 //!
@@ -33,7 +33,7 @@
 //! (the name names the generated Rust enum only — engine identity is the
 //! structural variant list), `interval<i64>`, `interval<u64>`. `as NewType`
 //! generates the host-side nominal newtype (legal on u64, i64, and both
-//! intervals). `serial` auto-materializes `R(field) -> R` at schema
+//! intervals). `fresh` auto-materializes `R(field) -> R` at schema
 //! resolution. **There are no field-level constraint modifiers** — everything
 //! relational is a dependency statement between the relation blocks
 //! (docs/architecture/30-dependencies.md): `R(X) -> R` (functionality),
@@ -101,7 +101,7 @@ struct Field {
     name: String,
     ty: FieldTy,
     newtype: Option<String>,
-    serial: bool,
+    fresh: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -160,7 +160,7 @@ enum Statement {
 /// The whole parsed invocation: the header's schema name, relation blocks,
 /// and dependency statements, each list in source order.
 struct SchemaAst {
-    /// The `pub Name;` header's name — the emitted `SchemaDef` unit struct.
+    /// The `pub Name;` header's name — the emitted `Theory` unit struct.
     name: String,
     relations: Vec<Relation>,
     statements: Vec<Statement>,
@@ -244,7 +244,7 @@ fn parse_relation(name: String, body: TokenStream) -> Relation {
     relation
 }
 
-/// Parses a field's type, optional `as NewType`, and optional `, serial`.
+/// Parses a field's type, optional `as NewType`, and optional `, fresh`.
 fn parse_field(name: String, tokens: &mut Tokens) -> Field {
     let ty_name = expect_ident(tokens, "a type (bool/u64/i64/str/bytes/enum/interval)");
     reject_deleted_word(&ty_name);
@@ -278,7 +278,7 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
         name,
         ty,
         newtype: None,
-        serial: false,
+        fresh: false,
     };
     if peek_ident(tokens).as_deref() == Some("as") {
         tokens.next();
@@ -288,7 +288,7 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
         );
         field.newtype = Some(expect_ident(tokens, "a newtype name"));
     }
-    // Trailing modifier: `, serial` — distinguished from the next field
+    // Trailing modifier: `, fresh` — distinguished from the next field
     // (an ident followed by `:`) by lookahead.
     if peek_punct(tokens, ',') {
         let mut lookahead = tokens.clone();
@@ -301,19 +301,19 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
             if !is_field_name {
                 reject_deleted_word(&word);
                 assert_eq!(
-                    word, "serial",
-                    "schema!: unknown field modifier `{word}` (the only modifier is `serial`)"
+                    word, "fresh",
+                    "schema!: unknown field modifier `{word}` (the only modifier is `fresh`)"
                 );
                 assert!(
                     field.newtype.is_some(),
-                    "schema!: serial field `{}` needs `as NewType` — without it \
+                    "schema!: fresh field `{}` needs `as NewType` — without it \
                      there is no typed alloc path (use the descriptor API for a \
-                     raw-u64 serial)",
+                     raw-u64 fresh field)",
                     field.name
                 );
-                field.serial = true;
+                field.fresh = true;
                 tokens.next(); // the comma
-                tokens.next(); // `serial`
+                tokens.next(); // `fresh`
             }
         }
     }
@@ -519,7 +519,7 @@ fn parse_schema(input: TokenStream) -> SchemaAst {
     schema
 }
 
-/// The declarative schema surface: expands to the header's `SchemaDef`
+/// The declarative schema surface: expands to the header's `Theory`
 /// unit struct, host-side newtypes and enums, and one typed fact struct
 /// per relation with `encode_write`/`encode_delete`/`encode_read`/`decode`
 /// boundaries. The expansion constructs `SchemaDescriptor` directly — ids
@@ -703,7 +703,7 @@ fn emit_schema_def(out: &mut String, schema: &SchemaAst) {
                      generation: ::bumbledb::schema::Generation::{} }},",
                 field.name,
                 value_type_expr(&field.ty),
-                if field.serial { "Serial" } else { "None" },
+                if field.fresh { "Fresh" } else { "None" },
             );
         }
         let _ = write!(
@@ -748,7 +748,7 @@ fn emit_schema_def(out: &mut String, schema: &SchemaAst) {
          open, surfacing declaration errors as the typed `SchemaError`.\n\
          #[derive(Debug, Clone, Copy, PartialEq, Eq)]\n\
          pub struct {name};\n\
-         impl ::bumbledb::SchemaDef for {name} {{\n\
+         impl ::bumbledb::Theory for {name} {{\n\
              fn descriptor(self) -> ::bumbledb::schema::SchemaDescriptor {{\n\
                  ::bumbledb::schema::SchemaDescriptor {{\n\
                      relations: ::std::vec![{relations}],\n\
@@ -1033,37 +1033,37 @@ fn emit_fact_struct(out: &mut String, schema_name: &str, index: usize, relation:
          }}\n",
     );
 
-    // Serial-minting newtypes: `tx.alloc::<NewType>()` knows its field.
+    // Fresh-minting newtypes: `tx.alloc::<NewType>()` knows its field.
     for (field_idx, field) in relation.fields.iter().enumerate() {
-        let (true, Some(newtype)) = (field.serial, &field.newtype) else {
+        let (true, Some(newtype)) = (field.fresh, &field.newtype) else {
             continue;
         };
         let _ = write!(
             out,
-            "impl ::bumbledb::Serial for {newtype} {{\n\
+            "impl ::bumbledb::Fresh for {newtype} {{\n\
                  type Schema = {schema_name};\n\
                  const RELATION: ::bumbledb::schema::RelationId = ::bumbledb::schema::RelationId({index});\n\
                  const FIELD: ::bumbledb::schema::FieldId = ::bumbledb::schema::FieldId({field_idx});\n\
-                 fn from_serial(raw: u64) -> Self {{ Self(raw) }}\n\
-                 fn serial(self) -> u64 {{ self.0 }}\n\
+                 fn from_fresh(raw: u64) -> Self {{ Self(raw) }}\n\
+                 fn fresh(self) -> u64 {{ self.0 }}\n\
              }}\n",
         );
     }
 
-    // Exactly one serial field: the typed point-read key
-    // (`WriteTx::get::<Fact>(id)`). Relations with zero or several serial
+    // Exactly one fresh field: the typed point-read key
+    // (`WriteTx::get::<Fact>(id)`). Relations with zero or several fresh
     // fields have no single dominant key — those read through `get_dyn`
     // (the multi-key typed shape is an OPEN item, 70-api.md).
-    let serials: Vec<&Field> = relation.fields.iter().filter(|f| f.serial).collect();
-    if let [serial_field] = serials.as_slice() {
-        let newtype = serial_field
+    let fresh_fields: Vec<&Field> = relation.fields.iter().filter(|f| f.fresh).collect();
+    if let [fresh_field] = fresh_fields.as_slice() {
+        let newtype = fresh_field
             .newtype
             .as_ref()
-            .expect("parser demands `as NewType` on serial fields");
+            .expect("parser demands `as NewType` on fresh fields");
         let _ = write!(
             out,
-            "impl<'a> ::bumbledb::SerialKeyed<'a> for {self_ty} {{\n\
-                 type SerialKey = {newtype};\n\
+            "impl<'a> ::bumbledb::FreshKeyed<'a> for {self_ty} {{\n\
+                 type FreshKey = {newtype};\n\
              }}\n",
         );
     }

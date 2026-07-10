@@ -43,14 +43,14 @@ fn field_columns(field: &FieldDescriptor) -> Vec<(String, &'static str)> {
     }
 }
 
-/// The rowid-alias column: the relation's first `Serial` field. Its
+/// The rowid-alias column: the relation's first `Fresh` field. Its
 /// auto-key statement becomes the table's PRIMARY KEY — no separate
 /// index exists or is expected.
-fn serial_column(relation: &Relation) -> Option<&str> {
+fn fresh_column(relation: &Relation) -> Option<&str> {
     relation
         .fields()
         .iter()
-        .find(|field| field.generation == Generation::Serial)
+        .find(|field| field.generation == Generation::Fresh)
         .map(|field| &*field.name)
 }
 
@@ -67,7 +67,7 @@ struct IndexSpec {
 /// The statement-derived index plan — one walk shared by [`schema_ddl`]
 /// and [`expected_indexes`], so the DDL and the contract cannot drift
 /// apart. A scalar key statement (functionality) gets a UNIQUE index
-/// (the lone-serial auto-key is covered by the PRIMARY KEY and skipped);
+/// (the lone-fresh auto-key is covered by the PRIMARY KEY and skipped);
 /// a pointwise key gets the composite `(scalars..., start, end)` index —
 /// the best SQL can do, the judgment itself being the naive lane's
 /// ([`crate::translate::sqlite_expressible`]); a containment source gets
@@ -83,8 +83,7 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
             } => {
                 let rel = schema.relation(*relation);
                 let covered_by_rowid = projection.len() == 1
-                    && serial_column(rel)
-                        == Some(&*rel.fields()[usize::from(projection[0].0)].name);
+                    && fresh_column(rel) == Some(&*rel.fields()[usize::from(projection[0].0)].name);
                 if covered_by_rowid {
                     continue;
                 }
@@ -155,7 +154,7 @@ pub fn ddl(schema: &Schema) -> Vec<String> {
 
 /// The schema-derived DDL: one STRICT table per relation (NOT NULL
 /// everywhere — no nulls exist; interval fields split into their half
-/// columns), a PRIMARY KEY on the lone serial auto-key, then the
+/// columns), a PRIMARY KEY on the lone fresh auto-key, then the
 /// statement-derived indexes ([`index_plan`]). The scenario loaders
 /// enter here (each scenario carries its own predicate-column indexes).
 #[must_use]
@@ -168,7 +167,7 @@ pub fn schema_ddl(schema: &Schema) -> Vec<String> {
                 columns.push(format!("\"{name}\" {sql_ty} NOT NULL"));
             }
         }
-        if let Some(alias) = serial_column(relation) {
+        if let Some(alias) = fresh_column(relation) {
             statements.push(format!(
                 "CREATE TABLE \"{}\" ({}, PRIMARY KEY (\"{alias}\")) STRICT",
                 relation.name(),
@@ -373,15 +372,15 @@ mod tests {
         }
     }
 
-    fn serial(name: &str) -> FieldDescriptor {
+    fn fresh(name: &str) -> FieldDescriptor {
         FieldDescriptor {
             name: name.into(),
             value_type: ValueType::U64,
-            generation: Generation::Serial,
+            generation: Generation::Fresh,
         }
     }
 
-    /// A miniature of the ledger's statement shapes: serial auto-keys
+    /// A miniature of the ledger's statement shapes: fresh auto-keys
     /// (the PRIMARY KEYs), a declared scalar key, two containments, a
     /// pointwise key over an i64 interval, and a keyless relation with a
     /// u64 interval for the round trip.
@@ -390,11 +389,11 @@ mod tests {
             relations: vec![
                 RelationDescriptor {
                     name: "Account".into(),
-                    fields: vec![serial("id"), field("code", ValueType::String)],
+                    fields: vec![fresh("id"), field("code", ValueType::String)],
                 },
                 RelationDescriptor {
                     name: "Org".into(),
-                    fields: vec![serial("id")],
+                    fields: vec![fresh("id")],
                 },
                 RelationDescriptor {
                     name: "Mandate".into(),
@@ -462,7 +461,7 @@ mod tests {
     }
 
     /// The DDL golden, byte-pinned: split interval columns, the PRIMARY
-    /// KEY on the serial auto-key (s0/s1 emit no index), a UNIQUE index
+    /// KEY on the fresh auto-key (s0/s1 emit no index), a UNIQUE index
     /// for the declared scalar key, plain indexes for the containment
     /// sources, and the pointwise key's composite `(scalar, start, end)`.
     #[test]

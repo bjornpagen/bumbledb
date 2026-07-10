@@ -6,7 +6,7 @@
 //! Aggregation never materializes the join: group maps live in sink state;
 //! the fold domain of every aggregate is the group's **set of distinct
 //! full bindings over all query variables** — two postings of amount 100
-//! to one account are two distinct bindings (their serial ids differ), so
+//! to one account are two distinct bindings (their fresh ids differ), so
 //! `Sum(amount) by account` is 200. The stated footgun: joining a
 //! multiplicity-adding relation multiplies the binding set, exactly as in
 //! SQL.

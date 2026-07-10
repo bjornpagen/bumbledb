@@ -34,7 +34,7 @@ const CHILD: RelationId = RelationId(7);
 const COMBO: RelationId = RelationId(8);
 const LINK: RelationId = RelationId(9);
 
-/// Declared statement order (no serial fields, so no auto-keys).
+/// Declared statement order (no fresh fields, so no auto-keys).
 const ACCOUNT_KEY: StatementId = StatementId(0);
 const ROOM_KEY: StatementId = StatementId(1);
 const PARENT_KEY: StatementId = StatementId(2);

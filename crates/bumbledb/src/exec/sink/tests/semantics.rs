@@ -3,14 +3,14 @@ use crate::error::Error;
 use crate::exec::run::{Bindings, Flow, Sink};
 
 #[test]
-fn sum_distinguishes_bound_serials_and_collapses_unbound_ones() {
+fn sum_distinguishes_bound_fresh_ids_and_collapses_unbound_ones() {
     let dir = TempDir::new("sink-footgun");
     let schema = schema();
     // Two postings of amount 100 to account 7.
     let postings = vec![(1u64, 7u64, 100i64), (2, 7, 100)];
     let views = views_of(&dir, &schema, &postings, &[]);
 
-    // Serials bound: two distinct bindings -> Sum = 200.
+    // Fresh ids bound: two distinct bindings -> Sum = 200.
     let normalized_bound = normalized(
         &schema,
         vec![occurrence(0, POSTING, &[(0, 0), (1, 1), (2, 2)])],
@@ -24,7 +24,7 @@ fn sum_distinguishes_bound_serials_and_collapses_unbound_ones() {
     let rows = run_aggregate(&plan, &views[..1], finds).expect("rows");
     assert_eq!(rows, vec![vec![7, i64_to_word(200)]]);
 
-    // Serials unbound: the two facts collapse to one binding -> 100.
+    // Fresh ids unbound: the two facts collapse to one binding -> 100.
     // This documents the set-semantics footgun deliberately.
     let normalized_unbound = normalized(
         &schema,
@@ -78,7 +78,7 @@ fn distinct_flag_elision_matches_the_seen_set_path() {
         vec![],
     );
     let plan = planned(&schema, &normalized, &[0], &[1]);
-    assert!(plan.distinct_bindings(), "serials are bound");
+    assert!(plan.distinct_bindings(), "fresh ids are bound");
     let finds = |plan: &ValidatedPlan| {
         vec![
             var_spec(plan, 1),

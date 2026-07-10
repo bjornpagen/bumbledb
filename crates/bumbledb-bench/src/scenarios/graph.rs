@@ -16,7 +16,7 @@ bumbledb::schema! {
     pub Graph;
 
     relation Node {
-        id: u64 as GNodeId, serial,
+        id: u64 as GNodeId, fresh,
         kind: enum NodeKind { User, Bot, Org, Page, Group },
         score: i64,
     }
@@ -40,7 +40,7 @@ bumbledb::schema! {
 ///
 /// Never in practice: the declared scenario schema is valid.
 pub fn schema() -> &'static bumbledb::Schema {
-    use bumbledb::SchemaDef as _;
+    use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
     SCHEMA.get_or_init(|| {
         Graph
@@ -293,7 +293,7 @@ pub fn scenario() -> Scenario {
         name: "graph",
         about: "power-law directed graph: multi-hop fan-out, cycles",
         schema,
-        descriptor: || bumbledb::SchemaDef::descriptor(Graph),
+        descriptor: || bumbledb::Theory::descriptor(Graph),
         rows: |seed| {
             vec![
                 (

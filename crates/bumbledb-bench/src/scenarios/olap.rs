@@ -2,7 +2,7 @@
 //! rollups — group-by aggregates over wide scans, the regime where
 //! column images and the aggregate sink carry the load and `SQLite` gets
 //! its covering B-trees. Set semantics note: bumbledb folds *distinct*
-//! bindings, so every fact row carries its serial id into the binding
+//! bindings, so every fact row carries its fresh id into the binding
 //! set (the true-rollup pattern the ledger's balance family pins).
 
 use bumbledb::{
@@ -16,12 +16,12 @@ bumbledb::schema! {
     pub Olap;
 
     relation Store {
-        id: u64 as OStoreId, serial,
+        id: u64 as OStoreId, fresh,
         region: enum Region { Na, Eu, Apac, Latam, Mea, Anz },
         tier: enum Tier { Flagship, Standard, Outlet },
     }
     relation Product {
-        id: u64 as OProductId, serial,
+        id: u64 as OProductId, fresh,
         category: enum Category {
             C0, C1, C2, C3, C4, C5, C6, C7, C8, C9, C10, C11, C12, C13, C14, C15,
         },
@@ -29,11 +29,11 @@ bumbledb::schema! {
         price: i64,
     }
     relation Customer {
-        id: u64 as OCustomerId, serial,
+        id: u64 as OCustomerId, fresh,
         segment: enum Segment { Consumer, Smb, Enterprise, Public },
     }
     relation Sale {
-        id: u64 as OSaleId, serial,
+        id: u64 as OSaleId, fresh,
         day: i64,
         store: u64 as OStoreId,
         product: u64 as OProductId,
@@ -57,7 +57,7 @@ bumbledb::schema! {
 ///
 /// Never in practice: the declared scenario schema is valid.
 pub fn schema() -> &'static bumbledb::Schema {
-    use bumbledb::SchemaDef as _;
+    use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
     SCHEMA.get_or_init(|| {
         Olap.descriptor()
@@ -351,7 +351,7 @@ pub fn scenario() -> Scenario {
         name: "olap",
         about: "star-schema rollups: group-by aggregates over the fact table",
         schema,
-        descriptor: || bumbledb::SchemaDef::descriptor(Olap),
+        descriptor: || bumbledb::Theory::descriptor(Olap),
         rows: |seed| {
             vec![
                 (

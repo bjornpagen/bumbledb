@@ -243,7 +243,7 @@ pub struct Coverage {
     pub adjacent_left: u64,
     pub adjacent_right: u64,
     /// Negated atoms, and their binding-shape split: key-covered (a
-    /// serial key field bound) vs open; literal/param/set/membership
+    /// fresh key field bound) vs open; literal/param/set/membership
     /// bindings inside; zero-binding negated gates; open negations over
     /// the multiply-witnessed relations (rejection must not depend on
     /// witness count).

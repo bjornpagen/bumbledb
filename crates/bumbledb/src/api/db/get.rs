@@ -6,7 +6,7 @@
 //! guard gets: no images, no plans, no snapshot.
 
 use super::encode_dyn::shape_mismatch;
-use super::{plumbing, Fact, Serial, SerialKeyed, WriteTx};
+use super::{plumbing, Fact, Fresh, FreshKeyed, WriteTx};
 use crate::encoding::{
     encode_bool, encode_i64, encode_interval_i64, encode_interval_u64, encode_u64,
 };
@@ -43,11 +43,11 @@ impl<S> WriteTx<'_, S> {
         })
     }
 
-    /// Point lookup of the full fact through the relation's serial key —
+    /// Point lookup of the full fact through the relation's fresh key —
     /// reads observe the final-state view the judgment phase will judge
     /// (`docs/architecture/70-api.md`): the delta's guard map first, the
     /// committed `U` → `F` path otherwise. Typed sugar for the dominant
-    /// single-serial-field case; every other key goes through
+    /// single-fresh-field case; every other key goes through
     /// [`WriteTx::get_dyn`].
     ///
     /// The returned fact is a **view at the transaction's lifetime**:
@@ -63,7 +63,7 @@ impl<S> WriteTx<'_, S> {
     /// ```
     /// bumbledb::schema! {
     ///     pub Ledger;
-    ///     relation Account { id: u64 as AccountId, serial, balance: i64 }
+    ///     relation Account { id: u64 as AccountId, fresh, balance: i64 }
     /// }
     ///
     /// fn add(db: &bumbledb::Db<Ledger>, id: AccountId, x: i64) -> bumbledb::Result<()> {
@@ -97,15 +97,15 @@ impl<S> WriteTx<'_, S> {
     ///
     /// `Lmdb` on the guard probe, `Corruption` on undecodable stored
     /// bytes.
-    pub fn get<'tx, F>(&'tx self, id: F::SerialKey) -> Result<Option<F>>
+    pub fn get<'tx, F>(&'tx self, id: F::FreshKey) -> Result<Option<F>>
     where
-        F: SerialKeyed<'tx, Schema = S>,
+        F: FreshKeyed<'tx, Schema = S>,
     {
-        // The serial field's guard is its canonical u64 encoding — the
+        // The fresh field's guard is its canonical u64 encoding — the
         // one-field instance of the guard-byte format `get_dyn` spells
         // out value by value.
-        let guard = encode_u64(id.serial());
-        let key = self.serial_key_statement(F::RELATION, <F::SerialKey as Serial>::FIELD);
+        let guard = encode_u64(id.fresh());
+        let key = self.fresh_key_statement(F::RELATION, <F::FreshKey as Fresh>::FIELD);
         match self.fact_by_guard(F::RELATION, key, &guard)? {
             Some(bytes) => F::decode_write(self, bytes).map(Some),
             None => Ok(None),
@@ -245,13 +245,13 @@ impl<S> WriteTx<'_, S> {
         )
     }
 
-    /// The auto-materialized `Functionality` statement for one serial
+    /// The auto-materialized `Functionality` statement for one fresh
     /// field (schema validation guarantees exactly one exists).
-    fn serial_key_statement(&self, relation: RelationId, field: FieldId) -> StatementId {
+    fn fresh_key_statement(&self, relation: RelationId, field: FieldId) -> StatementId {
         let rel = self.schema.relation(relation);
         *rel.keys()
             .iter()
             .find(|&&statement| self.schema.key_projection(statement) == [field])
-            .expect("validated schema: every serial field materializes its Functionality")
+            .expect("validated schema: every fresh field materializes its Functionality")
     }
 }

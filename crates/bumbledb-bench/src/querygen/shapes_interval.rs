@@ -67,7 +67,7 @@ fn u64_interval(cfg: GenConfig, rng: &mut Rng) -> Value {
 
 /// The cost-bound rule's equality selection for a Transfer occurrence
 /// (Transfers carry no scalar join key, so a var-point or var-vs-var
-/// interval construct over one must pin it): the serial id bound to a
+/// interval construct over one must pin it): the fresh id bound to a
 /// param, or the extref bound to a recomputed in-vocabulary literal.
 /// Returns a projected payload var so the occurrence contributes to the
 /// find set.

@@ -15,25 +15,25 @@ bumbledb::schema! {
     pub Ledger;
 
     relation Holder {
-        id: u64 as HolderId, serial,
+        id: u64 as HolderId, fresh,
         name: str,
     }
     relation Account {
-        id: u64 as AccountId, serial,
+        id: u64 as AccountId, fresh,
         holder: u64 as HolderId,
         currency: enum Currency { Usd, Eur, Gbp },
     }
     relation Instrument {
-        id: u64 as InstrumentId, serial,
+        id: u64 as InstrumentId, fresh,
         symbol: str,
     }
     relation JournalEntry {
-        id: u64 as JournalEntryId, serial,
+        id: u64 as JournalEntryId, fresh,
         source: enum Source { Manual, Import, System },
         created_at: i64,
     }
     relation Posting {
-        id: u64 as PostingId, serial,
+        id: u64 as PostingId, fresh,
         entry: u64 as JournalEntryId,
         account: u64 as AccountId,
         instrument: u64 as InstrumentId,
@@ -45,7 +45,7 @@ bumbledb::schema! {
         tag: enum Tag { Fee, Rebate, Adjustment },
     }
     relation Org {
-        id: u64 as OrgId, serial,
+        id: u64 as OrgId, fresh,
         name: str,
     }
     relation OrgParent {
@@ -79,7 +79,7 @@ bumbledb::schema! {
 /// Never in practice: the ledger declaration passes the acceptance gate
 /// (asserted on first use).
 pub fn schema() -> &'static bumbledb::Schema {
-    use bumbledb::SchemaDef as _;
+    use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
     SCHEMA.get_or_init(|| {
         Ledger
@@ -184,7 +184,7 @@ mod tests {
         );
     }
 
-    /// The doc's statement roster, verbatim: six serial auto-keys first
+    /// The doc's statement roster, verbatim: six fresh auto-keys first
     /// (declaration order), then the eight containments in source order,
     /// then the pointwise key.
     #[test]
@@ -212,7 +212,7 @@ mod tests {
         }
         assert_eq!(
             autos, 6,
-            "Holder/Account/Instrument/JournalEntry/Posting/Org serials"
+            "Holder/Account/Instrument/JournalEntry/Posting/Org fresh ids"
         );
         assert_eq!(pointwise, 1, "the pointwise Mandate key");
         assert_eq!(

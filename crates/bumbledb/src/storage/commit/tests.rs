@@ -26,7 +26,7 @@ mod target;
 // eras each grew their own copies); the schemas themselves stay per-file —
 // each judgment matrix wants its own statement shapes.
 
-/// A plain (non-serial) field.
+/// A plain (non-fresh) field.
 fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
@@ -100,7 +100,7 @@ fn plan_for<'d>(delta: &'d WriteDelta<'_>, env: &Environment) -> CommitPlan<'d> 
     super::plan::plan_commit(delta, delta.schema(), selections)
 }
 
-/// Target(id serial) + Keyed(x u64, y i64; key x) +
+/// Target(id fresh) + Keyed(x u64, y i64; key x) +
 /// Booking(room u64, during interval<u64>, tag u64; key (room, during)) +
 /// Claim(holder u64; Claim(holder) <= Target(id)) — the containment gives
 /// Target's key a dependent, so its guards feed the target-side check.
@@ -112,7 +112,7 @@ fn schema() -> Schema {
                 fields: vec![FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Serial,
+                    generation: Generation::Fresh,
                 }],
             },
             RelationDescriptor {
@@ -156,7 +156,7 @@ const KEYED: RelationId = RelationId(1);
 const BOOKING: RelationId = RelationId(2);
 const CLAIM: RelationId = RelationId(3);
 
-/// Materialized statement order: Target's serial auto-key first, then the
+/// Materialized statement order: Target's fresh auto-key first, then the
 /// declared statements in declaration order.
 const TARGET_KEY: StatementId = StatementId(0);
 const KEYED_KEY: StatementId = StatementId(1);

@@ -11,7 +11,7 @@ use crate::plan::planner::{plan, OccStats};
 use crate::schema::IntervalElement;
 use std::collections::BTreeSet;
 
-/// A(id u64 serial, v i64); B(id u64 serial, a u64, at i64) — the
+/// A(id u64 fresh, v i64); B(id u64 fresh, a u64, at i64) — the
 /// outer-join-idiom fixture (`docs/architecture/20-query-ir.md`).
 fn idiom_schema() -> Schema {
     let field = |name: &str, ty: ValueType| FieldDescriptor {
@@ -19,21 +19,21 @@ fn idiom_schema() -> Schema {
         value_type: ty,
         generation: Generation::None,
     };
-    let serial = |name: &str| FieldDescriptor {
+    let fresh = |name: &str| FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::Serial,
+        generation: Generation::Fresh,
     };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 name: "A".into(),
-                fields: vec![serial("id"), field("v", ValueType::I64)],
+                fields: vec![fresh("id"), field("v", ValueType::I64)],
             },
             RelationDescriptor {
                 name: "B".into(),
                 fields: vec![
-                    serial("id"),
+                    fresh("id"),
                     field("a", ValueType::U64),
                     field("at", ValueType::I64),
                 ],
@@ -139,7 +139,7 @@ fn outer_join_idiom_join_half_validates_into_the_witness() {
         predicates: vec![],
     };
     // 100 A-rows into 1000 B-rows on a non-key field of B: the walk
-    // iterates A (its serial key makes the reverse direction fanout 1,
+    // iterates A (its fresh key makes the reverse direction fanout 1,
     // but iterating the small side first still wins on cost).
     let witness = witness(
         &schema,
@@ -196,7 +196,7 @@ fn outer_join_idiom_absence_half_validates_into_the_witness() {
     // The negated occurrence's probe-order trie schema and key width.
     assert_eq!(witness.occurrence(OccId(1)).trie_schema, vec![vec![x]]);
     assert_eq!(witness.occurrence(OccId(1)).key_widths, vec![1]);
-    // A alone binds its serial key: the elision proof holds (the
+    // A alone binds its fresh key: the elision proof holds (the
     // negated occurrence binds nothing and cannot break it).
     assert!(witness.distinct_bindings());
 }

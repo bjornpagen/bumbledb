@@ -1,6 +1,6 @@
 //! The pure-data query IR, validation, and normalization (docs/architecture).
 //!
-//! Queries are plain data — serializable, inspectable, no behavior
+//! Queries are plain data — encodable, inspectable, no behavior
 //! (`docs/architecture/20-query-ir.md`, normative). No wildcard variant
 //! exists: an unbound field is *absent* from `bindings`, so "wildcard bound
 //! to something" is unwritable. Variables carry dense ids only; names are a
@@ -180,9 +180,9 @@ mod tests {
     // query shapes over the ledger schema (Account, Posting, ...).
 
     #[test]
-    fn point_lookup_by_serial_key() {
+    fn point_lookup_by_fresh_key() {
         // Account(id = ?0, holder = h, status = s) — a single atom binding
-        // the serial key to a param.
+        // the fresh key to a param.
         let query = Query {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
             atoms: vec![Atom {

@@ -36,7 +36,7 @@ fn prepare<'s>(
     super::build::prepare(txn, cache, schema, query)
 }
 
-/// Posting(id serial u64, account u64, memo string, amount i64).
+/// Posting(id fresh u64, account u64, memo string, amount i64).
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -45,7 +45,7 @@ fn schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Serial,
+                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "account".into(),

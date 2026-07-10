@@ -220,7 +220,7 @@ statement; *check constraint* → host newtype constructors; *exclusion constrai
 functional dependency over an interval position; *cascade* → same-transaction
 cluster demolition under final-state judgment; *restrict / no action / deferrable* →
 final-state judgment is the only timing; *trigger* → nothing, on purpose; *null* →
-absent fact in a 0..1 child relation; *uuid* → serial + explicit time columns;
+absent fact in a 0..1 child relation; *uuid* → fresh + explicit time columns;
 *update / upsert* → delete+insert, with WriteTx point reads for the read-modify-write
 idiom.
 

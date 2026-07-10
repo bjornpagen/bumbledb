@@ -30,7 +30,7 @@ fn schema(relations: usize, arity: usize) -> Schema {
                         name: format!("f{f}").into(),
                         value_type: ValueType::U64,
                         generation: if f == 0 {
-                            Generation::Serial
+                            Generation::Fresh
                         } else {
                             Generation::None
                         },

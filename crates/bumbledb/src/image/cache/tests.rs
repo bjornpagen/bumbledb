@@ -15,7 +15,7 @@ fn schema() -> Schema {
             fields: vec![FieldDescriptor {
                 name: "x".into(),
                 value_type: ValueType::U64,
-                generation: Generation::Serial,
+                generation: Generation::Fresh,
             }],
         }],
         statements: vec![],

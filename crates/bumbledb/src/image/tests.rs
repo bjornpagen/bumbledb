@@ -14,7 +14,7 @@ mod interval;
 mod pitch;
 mod timing;
 
-/// R(id u64 serial, flag bool, kind enum[3], amount i64).
+/// R(id u64 fresh, flag bool, kind enum[3], amount i64).
 fn schema() -> Schema {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -23,7 +23,7 @@ fn schema() -> Schema {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Serial,
+                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "flag".into(),

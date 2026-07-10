@@ -1,4 +1,4 @@
-//! The serial-ALU clock proxy: a dependent `mul` chain whose cycle
+//! The fresh-ALU clock proxy: a dependent `mul` chain whose cycle
 //! count is known by construction
 //! (8 muls × latency 3 = 24 cycles per iteration on the reference core),
 //! timed over a loop-amortized window. Wall time over known cycles is an
@@ -27,7 +27,7 @@ const MUL_LATENCY_CYCLES: u64 = 3;
 /// thousands of 41.67 ns timer quanta, so quantization is noise.
 const PROXY_ITERS: u64 = 30_000;
 
-/// One serial chain of `iters × CHAIN_MULS` dependent multiplies. The
+/// One fresh chain of `iters × CHAIN_MULS` dependent multiplies. The
 /// Rust loop around the asm block costs ~2 instructions per 24-cycle
 /// iteration and runs on ports the chain never saturates — it does not
 /// extend the dependent chain.

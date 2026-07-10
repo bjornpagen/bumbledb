@@ -25,25 +25,25 @@ bumbledb::schema! {
     pub Joins;
 
     relation Kind {
-        id: u64 as JKindId, serial,
+        id: u64 as JKindId, fresh,
         name: str,
     }
     relation Company {
-        id: u64 as JCompanyId, serial,
+        id: u64 as JCompanyId, fresh,
         name: str,
         country: enum Country { Us, Uk, De, Fr, Jp, In, Br, Kr },
     }
     relation Person {
-        id: u64 as JPersonId, serial,
+        id: u64 as JPersonId, fresh,
         name: str,
         gender: enum Gender { F, M, X },
     }
     relation Keyword {
-        id: u64 as JKeywordId, serial,
+        id: u64 as JKeywordId, fresh,
         word: str,
     }
     relation Movie {
-        id: u64 as JMovieId, serial,
+        id: u64 as JMovieId, fresh,
         title: str,
         year: i64,
         kind: u64 as JKindId,
@@ -85,7 +85,7 @@ bumbledb::schema! {
 ///
 /// Never in practice: the declared scenario schema is valid.
 pub fn schema() -> &'static bumbledb::Schema {
-    use bumbledb::SchemaDef as _;
+    use bumbledb::Theory as _;
     static SCHEMA: std::sync::OnceLock<bumbledb::Schema> = std::sync::OnceLock::new();
     SCHEMA.get_or_init(|| {
         Joins

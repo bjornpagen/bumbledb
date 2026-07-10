@@ -40,7 +40,7 @@ M | relation_id | fact_hash         -> row_id         membership        (reader:
 U | relation_id | statement | key   -> row_id         FD guards         (reader: functionality checks — put-conflict and neighbor probes —
                                                       guard-probe lookups, WriteTx key reads, coverage walks)
 R | statement | key | source_rel | source_row -> ()   IND reverse edges (reader: target-side containment checks on delete/shrink)
-Q | relation_id | field_id          -> next_u64       serial sequences  (reader: alloc)
+Q | relation_id | field_id          -> next_u64       fresh sequences  (reader: alloc)
 S | relation_id | stat              -> u64            counters: stat 0 = row count (readers: the planner,
                                                       and image build's cross-check against the F scan);
                                                       stat 1 = row_id high-water (reader: commit's row-id assignment)
@@ -188,8 +188,8 @@ verifying they existed (unlike `F`/`M`/`U`, whose absence is the
 `MembershipDesync` hard error); a missing `R` entry is not independently
 detectable at delete time without re-deriving every statement's edges, and the
 class is covered by the offline sweeper, `Db::verify_store` — the same
-compensating control that re-verifies the rest of M↔F↔U↔R consistency. **Counter overflow guards** — the serial ceiling is guarded
-(`SerialExhausted` at `u64::MAX`, because hosts can supply explicit serial values),
+compensating control that re-verifies the rest of M↔F↔U↔R consistency. **Counter overflow guards** — the fresh ceiling is guarded
+(`FreshExhausted` at `u64::MAX`, because hosts can supply explicit fresh values),
 while the storage tx id and row-id high-waters are not: they advance by at most one
 per commit/insert, so wrapping needs ~2⁶⁴ commits — twelve orders beyond the scale
 axiom, and no host input can jump them. The asymmetry is chosen, not overlooked.
@@ -197,7 +197,7 @@ axiom, and no host input can jump them. The asymmetry is chosen, not overlooked.
 **Storage tx id:** advances **once per commit that changed logical state**; a commit
 whose delta is empty (all no-ops) does not advance it and does not invalidate any
 image. It lives in `_meta` and commits atomically with the data. A successful no-op
-commit still flushes any *dirty* serial marks (`Q` values that advanced past their
+commit still flushes any *dirty* fresh marks (`Q` values that advanced past their
 committed base — allocations the closure may have returned to the host) in a
 counters-only LMDB transaction: the tx id identifies query-visible state (`F/M/U/R`),
 and `Q` marks are write-path bookkeeping no query reads, so every image and memo key
@@ -242,7 +242,7 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   100 MB — the number that makes the whole cache design sound. **Column pitches are
   padded off 16 KiB multiples** (measured): L1D set congruence (256 sets × 64 B
   lines, bits 6–13) costs at most 1.55× on real lockstep scans — never the folklore
-  10–20×, which requires a fully serialized dependent chain — while the hazard that
+  10–20×, which requires a fully dependent load chain — while the hazard that
   actually matters is stream-prefetch trackers aliasing on low 16 KiB page-number
   bits: power-of-two-ish pitches with small (1–3 line) staggers cost 4–6× on
   DRAM-tier lockstep scans (8.13 vs 1.78 ns/row). The rule:

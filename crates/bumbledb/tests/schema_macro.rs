@@ -21,7 +21,7 @@ mod common;
 /// The engine itself takes [`Ledger`]; validation runs inside
 /// `Db::create`/`Db::open`.
 fn declared() -> bumbledb::Schema {
-    use bumbledb::SchemaDef as _;
+    use bumbledb::Theory as _;
     Ledger
         .descriptor()
         .validate()
@@ -31,9 +31,9 @@ fn declared() -> bumbledb::Schema {
 bumbledb::schema! {
     pub Ledger;
 
-    relation Holder  { id: u64 as HolderId, serial, name: str }
+    relation Holder  { id: u64 as HolderId, fresh, name: str }
     relation Account {
-        id: u64 as AccountId, serial,
+        id: u64 as AccountId, fresh,
         holder: u64 as HolderId,
         kind: enum Kind { Checking, Savings },
         active: interval<i64>,
@@ -53,11 +53,11 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     }
 }
 
-fn serial_field(name: &str) -> FieldDescriptor {
+fn fresh_field(name: &str) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::Serial,
+        generation: Generation::Fresh,
     }
 }
 
@@ -86,12 +86,12 @@ fn hand_built() -> bumbledb::schema::Schema {
         relations: vec![
             RelationDescriptor {
                 name: "Holder".into(),
-                fields: vec![serial_field("id"), field("name", ValueType::String)],
+                fields: vec![fresh_field("id"), field("name", ValueType::String)],
             },
             RelationDescriptor {
                 name: "Account".into(),
                 fields: vec![
-                    serial_field("id"),
+                    fresh_field("id"),
                     field("holder", ValueType::U64),
                     field(
                         "kind",
@@ -159,7 +159,7 @@ fn statements_land_in_source_order_with_equality_lowered() {
     let schema = declared();
     let descriptors: Vec<&StatementDescriptor> =
         schema.statements().iter().map(|s| &s.descriptor).collect();
-    // Materialized order: the two serial auto-FDs first (Holder.id,
+    // Materialized order: the two fresh auto-FDs first (Holder.id,
     // Account.id), then the declared statements in source order — the `==`
     // contributing its two containments adjacently, `A <= B` first.
     assert_eq!(descriptors.len(), 6);
@@ -329,7 +329,7 @@ mod interval_newtype {
         // Both fields are interval-typed in the descriptor, and the schema
         // passes validation (the FD's one interval is its last position).
         let schema = {
-            use bumbledb::SchemaDef as _;
+            use bumbledb::Theory as _;
             Bookings
                 .descriptor()
                 .validate()
@@ -359,7 +359,7 @@ mod selection_literals {
         pub Telemetry;
 
         relation Sensor {
-            id: u64 as SensorId, serial,
+            id: u64 as SensorId, fresh,
             span: interval<i64>,
             offset: i64,
             live: bool,
@@ -374,13 +374,13 @@ mod selection_literals {
     #[test]
     fn every_literal_kind_resolves_typed() {
         let schema = {
-            use bumbledb::SchemaDef as _;
+            use bumbledb::Theory as _;
             Telemetry
                 .descriptor()
                 .validate()
                 .expect("the declared schema is valid")
         };
-        // Statement 0 is Sensor.id's serial auto-FD; 1 is the containment.
+        // Statement 0 is Sensor.id's fresh auto-FD; 1 is the containment.
         let StatementDescriptor::Containment { target, .. } = &schema.statements()[1].descriptor
         else {
             panic!("the declared statement is a containment");
@@ -423,11 +423,11 @@ mod two_schemas_per_module {
 
     bumbledb::schema! {
         pub LedgerA;
-        relation Alpha { id: u64 as AlphaId, serial, note: str }
+        relation Alpha { id: u64 as AlphaId, fresh, note: str }
     }
     bumbledb::schema! {
         pub LedgerB;
-        relation Beta { id: u64 as BetaId, serial }
+        relation Beta { id: u64 as BetaId, fresh }
     }
 
     #[test]
@@ -459,7 +459,7 @@ mod invalid_declaration {
 
     bumbledb::schema! {
         pub Duplicated;
-        relation Parent { id: u64 as ParentId, serial }
+        relation Parent { id: u64 as ParentId, fresh }
         relation Child { parent: u64 as ParentId }
         Child(parent) <= Parent(id);
         Child(parent) <= Parent(id);

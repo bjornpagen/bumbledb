@@ -29,7 +29,7 @@ fn schema(relations: usize) -> Schema {
                     FieldDescriptor {
                         name: "a".into(),
                         value_type: ValueType::U64,
-                        generation: Generation::Serial,
+                        generation: Generation::Fresh,
                     },
                     FieldDescriptor {
                         name: "b".into(),
@@ -158,7 +158,7 @@ fn normalized(occurrences: Vec<Occurrence>) -> NormalizedQuery {
 fn estimates_and_actuals_populate_for_a_join_fixture() {
     let dir = TempDir::new("explain-join");
     let schema = schema(2);
-    // R0: 5 rows; R1: joins on R0's serial (reference-walk shape).
+    // R0: 5 rows; R1: joins on R0's fresh (reference-walk shape).
     let r0: Vec<(u64, u64)> = (0..5).map(|i| (i, i * 10)).collect();
     let r1: Vec<(u64, u64)> = (0..20).map(|i| (i, i % 5)).collect();
     let views = views_of(&dir, &schema, &[r0, r1]);
@@ -361,7 +361,7 @@ fn the_counted_execution_shows_batching_engaged() {
 fn anti_probe_selectivity_populates_the_counted_execution() {
     let dir = TempDir::new("explain-anti-probe");
     let schema = schema(2);
-    // R0 = postings (serial, payload); R1 = tags (serial, posting id):
+    // R0 = postings (fresh, payload); R1 = tags (fresh, posting id):
     // postings 1, 2, 3 are tagged (2 and 3 multiply).
     let r0: Vec<(u64, u64)> = (0..10).map(|i| (i, 100 + i)).collect();
     let r1 = vec![(0u64, 1u64), (1, 2), (2, 2), (3, 3), (4, 3), (5, 3)];

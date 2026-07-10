@@ -100,14 +100,14 @@ Owned here (00-product describes shape; this doc owns the schema — restated in
 statement notation, with the redesign's temporal surface added):
 
 ```
-relation Holder       { id: u64, serial, name: str }
-relation Account      { id: u64, serial, holder: u64, currency: enum }
-relation Instrument   { id: u64, serial, symbol: str }
-relation JournalEntry { id: u64, serial, source: enum, created_at: i64 }
-relation Posting      { id: u64, serial, entry: u64, account: u64,
+relation Holder       { id: u64, fresh, name: str }
+relation Account      { id: u64, fresh, holder: u64, currency: enum }
+relation Instrument   { id: u64, fresh, symbol: str }
+relation JournalEntry { id: u64, fresh, source: enum, created_at: i64 }
+relation Posting      { id: u64, fresh, entry: u64, account: u64,
                         instrument: u64, amount: i64, at: i64 }
 relation PostingTag   { posting: u64, tag: enum }
-relation Org          { id: u64, serial, name: str }
+relation Org          { id: u64, fresh, name: str }
 relation OrgParent    { child: u64, parent: u64 }
 relation Mandate      { account: u64, org: u64, active: interval<i64> }
 
@@ -197,7 +197,7 @@ gate nothing.
   delete) is the same class, caught via the parent's standing reverse edge.
 - Operation-sequence property tests for the write path: random insert/delete/alloc
   interleavings with judgment checks, asserting idempotence, guard consistency,
-  reverse-edge consistency, and serial monotonicity across commits and aborts —
+  reverse-edge consistency, and fresh monotonicity across commits and aborts —
   **plus WriteTx point reads asserted against the delta-overlaid view** (a read
   inside the transaction equals the post-commit read, on every interleaving).
 - Scalar/vectorized (batch-size 1 vs 2/64/256/partial/empty) equality on every fixture.
@@ -211,7 +211,7 @@ gate nothing.
   rapid write/read interleaving (a reader never sees a mismatched generation — the
   snapshot-sourced tx-id rule under test).
 - **ETL family:** bulk-load ≡ sequential-insert equivalence (full-relation set
-  equality); explicit-serial/high-water property tests; chunk-boundary and mid-stream
+  equality); explicit-fresh/high-water property tests; chunk-boundary and mid-stream
   failure semantics (prior chunks committed, count carried on the error) — including
   the bidirectional-statement cluster-straddle case, which must fail loudly
   (`50-storage.md`); full round-trip (export → fresh database → import in

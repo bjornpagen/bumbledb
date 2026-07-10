@@ -378,7 +378,7 @@ impl Coverage {
             let key_covered = atom
                 .bindings
                 .iter()
-                .any(|(field, _)| relation.field(*field).generation == Generation::Serial);
+                .any(|(field, _)| relation.field(*field).generation == Generation::Fresh);
             if key_covered {
                 self.negation_key_covered += 1;
             } else {

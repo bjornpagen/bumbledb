@@ -312,8 +312,8 @@ fn get_dyn_rejects_mis_shaped_requests_with_typed_errors() {
     .expect("probe");
 }
 
-/// S(id serial, v) — the serial-minting relation for witness tests.
-fn serial_schema() -> SchemaDescriptor {
+/// S(id fresh, v) — the fresh-minting relation for witness tests.
+fn fresh_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
             name: "S".into(),
@@ -321,7 +321,7 @@ fn serial_schema() -> SchemaDescriptor {
                 FieldDescriptor {
                     name: "id".into(),
                     value_type: ValueType::U64,
-                    generation: Generation::Serial,
+                    generation: Generation::Fresh,
                 },
                 FieldDescriptor {
                     name: "v".into(),
@@ -334,19 +334,19 @@ fn serial_schema() -> SchemaDescriptor {
     }
 }
 
-/// What the `schema!` macro would generate for `id: u64 as SId, serial` —
+/// What the `schema!` macro would generate for `id: u64 as SId, fresh` —
 /// the typed mint path's proof-carrying newtype.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SId(u64);
 
-impl Serial for SId {
+impl Fresh for SId {
     type Schema = SchemaDescriptor;
     const RELATION: RelationId = RelationId(0);
     const FIELD: FieldId = FieldId(0);
-    fn from_serial(raw: u64) -> Self {
+    fn from_fresh(raw: u64) -> Self {
         Self(raw)
     }
-    fn serial(self) -> u64 {
+    fn fresh(self) -> u64 {
         self.0
     }
 }
@@ -355,23 +355,23 @@ impl Serial for SId {
 /// ids and generation are data, so every mis-aimed resolution is a typed
 /// `FactShape` error, never a panic.
 #[test]
-fn serial_field_rejects_non_witnesses_with_typed_errors() {
-    let schema = serial_schema().validate().expect("fixture");
+fn fresh_field_rejects_non_witnesses_with_typed_errors() {
+    let schema = fresh_schema().validate().expect("fixture");
     assert_eq!(
-        schema.serial_field(RelationId(0), FieldId(1)).unwrap_err(),
-        FactShapeError::NotASerialField {
+        schema.fresh_field(RelationId(0), FieldId(1)).unwrap_err(),
+        FactShapeError::NotAFreshField {
             relation: RelationId(0),
             field: FieldId(1),
         }
     );
     assert_eq!(
-        schema.serial_field(RelationId(9), FieldId(0)).unwrap_err(),
+        schema.fresh_field(RelationId(9), FieldId(0)).unwrap_err(),
         FactShapeError::UnknownRelation {
             relation: RelationId(9),
         }
     );
     assert_eq!(
-        schema.serial_field(RelationId(0), FieldId(9)).unwrap_err(),
+        schema.fresh_field(RelationId(0), FieldId(9)).unwrap_err(),
         FactShapeError::UnknownField {
             relation: RelationId(0),
             field: FieldId(9),
@@ -385,11 +385,11 @@ fn serial_field_rejects_non_witnesses_with_typed_errors() {
 #[test]
 fn a_witness_mints_the_same_sequence_as_the_typed_path() {
     let dir = TempDir::new("db-alloc-witness");
-    let schema = serial_schema().validate().expect("fixture");
+    let schema = fresh_schema().validate().expect("fixture");
     let id_field = schema
-        .serial_field(RelationId(0), FieldId(0))
-        .expect("serial field");
-    let db = Db::create(dir.path(), serial_schema()).expect("create");
+        .fresh_field(RelationId(0), FieldId(0))
+        .expect("fresh field");
+    let db = Db::create(dir.path(), fresh_schema()).expect("create");
     db.write(|tx| {
         assert_eq!(tx.alloc_at(id_field)?, 0);
         assert_eq!(tx.alloc::<SId>()?, SId(1), "one sequence, two surfaces");

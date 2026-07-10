@@ -115,7 +115,7 @@ mod tests {
     }
 
     /// The aggregate families' fold regimes, pinned: balance binds the
-    /// posting serial — distinct bindings proven, the seen-set elided.
+    /// posting fresh — distinct bindings proven, the seen-set elided.
     /// stats binds no key coverage **by design** (collapsing duplicate
     /// (currency, amount, at, account) bindings is the family's set
     /// semantics), so its dedup pass is semantically required. A planner
@@ -139,7 +139,7 @@ mod tests {
         assert!(!regime("stats"), "stats' dedup is semantics");
         assert!(
             regime("latest_posting_per_account"),
-            "the Arg family binds the posting serial"
+            "the Arg family binds the posting fresh"
         );
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);

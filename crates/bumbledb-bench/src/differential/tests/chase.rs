@@ -28,11 +28,11 @@ fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
     }
 }
 
-fn serial(name: &str) -> FieldDescriptor {
+fn fresh(name: &str) -> FieldDescriptor {
     FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
-        generation: Generation::Serial,
+        generation: Generation::Fresh,
     }
 }
 
@@ -140,23 +140,23 @@ fn three_way(db: &Db<SchemaDescriptor>, naive: &NaiveDb, query: &Query, fallen: 
     );
 }
 
-/// Posting(id serial, account u64, amount i64); Account(id serial,
+/// Posting(id fresh, account u64, amount i64); Account(id fresh,
 /// holder u64); Posting(account) <= Account(id) — statement 2 after the
-/// two serial auto-keys.
+/// two fresh auto-keys.
 fn walk_descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 name: "Posting".into(),
                 fields: vec![
-                    serial("id"),
+                    fresh("id"),
                     field("account", ValueType::U64),
                     field("amount", ValueType::I64),
                 ],
             },
             RelationDescriptor {
                 name: "Account".into(),
-                fields: vec![serial("id"), field("holder", ValueType::U64)],
+                fields: vec![fresh("id"), field("holder", ValueType::U64)],
             },
         ],
         statements: vec![StatementDescriptor::Containment {
@@ -223,7 +223,7 @@ fn the_existence_walk_agrees_three_ways_on_both_sinks() {
     three_way(&db, &naive, &aggregate, "Account");
 }
 
-/// Grading(id serial, kind enum{Det, Custom}); Det(grading u64, rate
+/// Grading(id fresh, kind enum{Det, Custom}); Det(grading u64, rate
 /// i64) with the declared key Det(grading) -> Det and the pair
 /// `Grading(id | kind == Det) == Det(grading)` as its two containments
 /// — statements 1, 2, 3 after Grading's auto-key.
@@ -235,7 +235,7 @@ fn du_descriptor() -> SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
                 name: "Grading".into(),
-                fields: vec![serial("id"), field("kind", kind)],
+                fields: vec![fresh("id"), field("kind", kind)],
             },
             RelationDescriptor {
                 name: "Det".into(),
