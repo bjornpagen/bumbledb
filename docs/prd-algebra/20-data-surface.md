@@ -70,7 +70,9 @@ the portable half of the API, not ETL plumbing).
    already exist; their reader list grows.
 5. **`ir::render` — the read-side syntax.** The statement renderer's sibling:
    roster errors and EXPLAIN print the offending query in the docs' rule
-   notation (`head(p, d) :- Busy(person: p, during: d), Allen(INTERSECTS)…`).
+   notation (`(p, d) | Busy(person: p, during: d), Allen(d, INTERSECTS, ?w);`
+   — the set-builder grammar, normative in PRD 23: the schema grammar's own
+   query side, promoted).
    When the write-side surface is data, the renderer *is* the pretty syntax
    — ergonomics on the side that costs nothing and crosses every boundary.
 6. **JS/N-API bindings are explicitly PUNTED — pure anticipation, zero
@@ -96,7 +98,8 @@ the portable half of the API, not ETL plumbing).
    `Theory`-level manifest render (plain data out of the descriptor — no
    serde, the dependency law stands; the manifest is a Rust value the
    downstream binding serializes however it likes).
-3. `ir::render`: rule notation, deterministic, used by `SchemaError`-class
+3. `ir::render`: the query notation (PRD 23's set-builder grammar),
+   deterministic, used by `SchemaError`-class
    query errors and the stats/EXPLAIN surface; golden-tested.
 4. Docs: the two-surface framing ("the theory surface / the data surface"),
    the open-ended-grammar ruling and its categorical boundary, the

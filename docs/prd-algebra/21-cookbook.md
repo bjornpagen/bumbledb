@@ -96,9 +96,11 @@ the comments are the prose.
    module (include-or-duplicate, whichever the macro's item position
    allows) and must validate — a grammar change that breaks a recipe breaks
    the build, and the recipe is amended in the same change (the cookbook
-   obeys rule 5 mechanically, not aspirationally). Queries stay
-   render-notation comments (they are data; the notation is the renderer's,
-   golden-tested in PRD 20).
+   obeys rule 5 mechanically, not aspirationally). Queries are written in
+   **the query notation** — PRD 23's set-builder grammar, the schema
+   grammar's own query side (`(head) | body;`) — and double as PRD 23's
+   round-trip golden corpus: each cookbook query must expand through
+   `query!` and render back byte-exactly.
 
 ## Passing criteria
 
