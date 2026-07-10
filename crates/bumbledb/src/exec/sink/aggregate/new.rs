@@ -20,18 +20,21 @@ impl AggregateSink {
     /// groups).
     ///
     /// Dedup is **per-query-shape**: a single-rule sink (`union` false)
-    /// keys the whole slot array and elides it under the plan's
-    /// distinct-bindings proof; a multi-rule sink keys the **head
-    /// projection** — rule-independent by construction — and KEEPS the
-    /// seen-set unconditionally. ALG 08's composition point: rules
-    /// provably pairwise-disjoint and each internally distinct ⇒ the
-    /// union seen-set elides here too — correct first, elided when
-    /// proven.
+    /// keys the whole slot array; a multi-rule sink keys the **head
+    /// projection** — rule-independent by construction. `distinct` is
+    /// the caller's proof that the emitted dedup-key stream is
+    /// duplicate-free, and it elides the seen-set entirely: single-rule,
+    /// the plan's distinct-bindings flag; multi-rule, the rule-
+    /// disjointness composition (docs/architecture/40-execution.md § set
+    /// semantics — pairwise-disjoint rules, per-rule distinct bindings,
+    /// and heads reading every slot). One flag, one mechanism — the
+    /// elision is a representation (`seen: None`), never a hot-loop
+    /// branch.
     #[must_use]
     pub fn with_capacity_hint(
         finds: Vec<FindSpec>,
         slot_count: usize,
-        distinct_bindings: bool,
+        distinct: bool,
         union: bool,
         hint: usize,
     ) -> Self {
@@ -94,13 +97,12 @@ impl AggregateSink {
             groups: WordMap::with_capacity_hint(key_words, hint.min(4096)),
             key_scratch: vec![0; key_words],
             binding_scratch: vec![0; slot_count],
-            // Single-rule: whole-binding key, elidable by the proof.
-            // Multi-rule: head-projection key, never elided (ALG 08).
-            seen: if union {
-                Some(WordMap::with_capacity_hint(union_words, hint))
-            } else {
-                (!distinct_bindings).then(|| WordMap::with_capacity_hint(slot_count, hint))
-            },
+            // Single-rule: whole-binding key. Multi-rule: head-projection
+            // key. Either is elided exactly when the caller proved its
+            // stream duplicate-free (`distinct`).
+            seen: (!distinct).then(|| {
+                WordMap::with_capacity_hint(if union { union_words } else { slot_count }, hint)
+            }),
             union_scratch: vec![0; union_words],
             union_spans,
             acc_scratch: Vec::with_capacity(n_aggs),
@@ -177,6 +179,22 @@ impl AggregateSink {
     #[must_use]
     pub fn seen_elided(&self) -> bool {
         self.seen.is_none()
+    }
+
+    /// The differential guard's override: reinstates an elided seen-set
+    /// (whole-binding or head-projection keyed, matching the regime) so a
+    /// covered query runs both ways — the elision is *never* semantic,
+    /// and forced-off results must be byte-identical.
+    #[cfg(test)]
+    pub fn force_seen(&mut self) {
+        if self.seen.is_none() {
+            let arity = if self.union_spans.is_some() {
+                self.union_scratch.len()
+            } else {
+                self.binding_scratch.len()
+            };
+            self.seen = Some(WordMap::with_capacity_hint(arity, 0));
+        }
     }
 
     /// Distinct values held across every live `CountDistinct` set — the

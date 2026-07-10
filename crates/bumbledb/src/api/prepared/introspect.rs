@@ -85,6 +85,8 @@ impl<S> PreparedQuery<'_, S> {
                     }),
                 }],
                 emits: emitted,
+                // A single-rule program has no pair to prove.
+                disjoint_rules: None,
             };
             return Ok((out, stats));
         }
@@ -147,6 +149,7 @@ impl<S> PreparedQuery<'_, S> {
             ExecutionStats {
                 rules: rule_stats,
                 emits,
+                disjoint_rules: self.disjoint_rules_stat(),
             },
         ))
     }
@@ -168,14 +171,49 @@ impl<S> PreparedQuery<'_, S> {
     /// Whether the aggregate sink's binding seen-set is elided
     /// (30-execution) — the regime observable for the batch-fold fast
     /// path. Per-query-shape: a single-rule program elides under its
-    /// plan's distinct-bindings proof; a multi-rule program keeps the
-    /// spanning seen-set until ALG 08's disjointness theorem exists.
+    /// plan's distinct-bindings proof; a multi-rule program elides under
+    /// the rule-disjointness composition (docs/architecture/
+    /// 40-execution.md § set semantics): disjoint rules ∧ per-rule
+    /// distinct bindings ∧ heads reading every slot.
     #[must_use]
     pub fn distinct_bindings(&self) -> bool {
         match &*self.rules {
             [rule] => rule.plan.distinct_bindings(),
-            _ => false,
+            _ => self.union_elided,
         }
+    }
+
+    /// Whether the program's rules are provably pairwise disjoint
+    /// (docs/architecture/40-execution.md § set semantics) — the flag
+    /// that drops the projection sink's cross-rule guard and, composed
+    /// with per-rule distinct bindings, elides the aggregate seen-set.
+    /// Always `false` for single-rule programs (no pair exists). The
+    /// witness itself is reported by EXPLAIN and
+    /// [`crate::api::stats::ExecutionStats::disjoint_rules`].
+    #[must_use]
+    pub fn disjoint_rules(&self) -> bool {
+        self.disjoint_rules.is_some()
+    }
+
+    /// The stats-facing witness rendering: `(relation, field)` by name,
+    /// through the schema the query was prepared against.
+    fn disjoint_rules_stat(&self) -> Option<crate::api::stats::DisjointRules> {
+        self.disjoint_rules.map(|witness| {
+            let relation = self.schema.relation(witness.relation);
+            crate::api::stats::DisjointRules {
+                relation: relation.name().to_owned(),
+                field: relation.field(witness.field).name.to_string(),
+            }
+        })
+    }
+
+    /// The differential guard's override: forces the disjointness
+    /// elision off before an execution, so every covered query can run
+    /// both regimes against identical inputs — the elision is *never*
+    /// semantic, and the results must be byte-identical.
+    #[cfg(test)]
+    pub(super) fn force_disjoint_off(&mut self) {
+        self.sink.force_disjoint_off();
     }
 
     /// The result column types, one per head position — the metadata a

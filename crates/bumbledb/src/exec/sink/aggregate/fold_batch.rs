@@ -26,8 +26,8 @@ impl AggregateSink {
     /// the row loop, and the row loops themselves shaped as the
     /// kernelized gather folds.
     /// The dedup-regime batch arm: the seen-set pass
-    /// runs per row (semantically required — the plan could not prove
-    /// distinct bindings), collecting first-seen entries; those then
+    /// runs per row (semantically required — prepare could not prove the
+    /// key stream duplicate-free), collecting first-seen entries; those then
     /// gather-fold through the same constant-group core as the elided
     /// path, group probe hoisted and all.
     pub(super) fn fold_batch_dedup_constant_group(&mut self, batch: &LeafBatch<'_>) {

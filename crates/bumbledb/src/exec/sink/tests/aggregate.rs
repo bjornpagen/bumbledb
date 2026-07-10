@@ -739,3 +739,75 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
         "Sum folds {{100, 250, 300}} once each; Count counts the union"
     );
 }
+
+/// The union elision (docs/architecture/40-execution.md § set
+/// semantics): a multi-rule sink whose caller proved the head-projection
+/// stream duplicate-free carries NO seen-set — every emit folds, zero
+/// insertions structurally — and on disjoint streams its rows equal the
+/// spanning regime's exactly.
+#[test]
+fn the_elided_union_folds_disjoint_streams_like_the_spanning_regime() {
+    use crate::exec::run::{Bindings, Sink};
+
+    // Head: (group var, Sum(x), Count) — the cross-layout shape of the
+    // spanning test above, but with provably collision-free streams.
+    let spec = |group: usize, x: usize| {
+        vec![
+            FindSpec::Var {
+                slot: group,
+                width: 1,
+            },
+            FindSpec::Agg {
+                op: FoldOp::Sum,
+                over_slot: Some(x),
+                over_width: 1,
+                signed: false,
+            },
+            FindSpec::Agg {
+                op: FoldOp::Count,
+                over_slot: None,
+                over_width: 1,
+                signed: false,
+            },
+        ]
+    };
+    let feed = |sink: &mut AggregateSink| {
+        sink.reset();
+        // Rule A: (g = 7, x = 100) and (g = 7, x = 250).
+        let mut bindings = Bindings::new(2);
+        for x in [100u64, 250] {
+            bindings.reset();
+            bindings.set(0, 7);
+            bindings.set(1, x);
+            sink.emit(&bindings);
+        }
+        // Rule B, re-aimed to its own layout: disjoint x values (the
+        // proof's promise — no cross-rule duplicate exists to absorb).
+        sink.aim(&spec(2, 0), 3);
+        let mut bindings = Bindings::new(3);
+        for (x, existential) in [(300u64, 41u64), (400, 42)] {
+            bindings.reset();
+            bindings.set(0, x);
+            bindings.set(1, existential);
+            bindings.set(2, 7);
+            sink.emit(&bindings);
+        }
+    };
+
+    let mut elided = AggregateSink::with_capacity_hint(spec(0, 1), 2, true, true, 0);
+    assert!(elided.seen_elided(), "the proof deleted the seen-set");
+    feed(&mut elided);
+    assert_eq!(
+        elided.distinct_seen(),
+        None,
+        "zero seen-set insertions — no set exists"
+    );
+
+    let mut spanning = AggregateSink::with_capacity_hint(spec(0, 1), 2, false, true, 0);
+    feed(&mut spanning);
+    assert_eq!(
+        elided.into_rows().expect("in range"),
+        spanning.into_rows().expect("in range"),
+        "the elision is never semantic"
+    );
+}

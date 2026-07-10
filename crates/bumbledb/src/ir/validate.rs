@@ -218,10 +218,12 @@ pub struct RuleWitness<'a> {
     query: &'a ValidatedQuery,
 }
 
-impl RuleWitness<'_> {
-    /// The lowered rule, verbatim.
+impl<'a> RuleWitness<'a> {
+    /// The lowered rule, verbatim — at the witness's own lifetime, so a
+    /// caller can outlive the `RuleWitness` handle itself (the
+    /// disjointness analysis collects every rule's finds at once).
     #[must_use]
-    pub fn rule(&self) -> &LoweredRule {
+    pub fn rule(&self) -> &'a LoweredRule {
         self.rule
     }
 

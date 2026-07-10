@@ -9,18 +9,24 @@ impl ProjectionSink {
     #[cfg(test)]
     #[must_use]
     pub fn new(slots: Vec<usize>) -> Self {
-        Self::with_capacity_hint(slots, 0)
+        Self::with_capacity_hint(slots, 0, false)
     }
 
     /// Presized construction: `hint` is the plan's
     /// output-cardinality estimate — the seen-set allocates once instead
     /// of rehash-doubling through the first measured execution.
+    /// `disjoint` is the rule-disjointness proof
+    /// (docs/architecture/40-execution.md § set semantics): the cross-rule
+    /// guard is dropped — [`Self::aim`] drains the map per rule — while
+    /// per-rule dedup stays, as the semantics require.
     #[must_use]
-    pub fn with_capacity_hint(slots: Vec<usize>, hint: usize) -> Self {
+    pub fn with_capacity_hint(slots: Vec<usize>, hint: usize, disjoint: bool) -> Self {
         let arity = slots.len();
         Self {
             slots,
             seen: WordMap::with_capacity_hint(arity, hint),
+            disjoint,
+            rows: Vec::new(),
             scratch: vec![0; arity],
             batch_sources: vec![None; arity],
             scan_rows: Vec::new(),
@@ -31,11 +37,22 @@ impl ProjectionSink {
     /// Re-aims the projected slots at one rule's binding layout (the
     /// rule loop, docs/architecture/40-execution.md): the head's word
     /// arity is fixed — types and widths are the head's — but each rule
-    /// supplies its own slots. The seen-set is untouched: its keys are
-    /// projected (head-shaped) tuples, rule-independent by construction,
-    /// and its spanning rules IS the union. Single-rule sinks are built
-    /// aimed and never call this.
+    /// supplies its own slots. Spanning regime: the seen-set is untouched
+    /// — its keys are projected (head-shaped) tuples, rule-independent by
+    /// construction, and its spanning rules IS the union. Disjoint
+    /// regime: the finished rule's tuples drain into [`Self::rows`] and
+    /// the map clears — the theorem proved cross-rule collisions
+    /// impossible, so the guard the spanning map provided held nothing,
+    /// and the next rule dedups only against itself. Single-rule sinks
+    /// are built aimed and never call this.
     pub fn aim(&mut self, finds: &[FindSpec]) {
+        if self.disjoint {
+            let rows = &mut self.rows;
+            for (key, ()) in self.seen.iter() {
+                rows.extend_from_slice(key);
+            }
+            self.seen.clear();
+        }
         self.slots.clear();
         self.slots.extend(finds.iter().flat_map(|spec| match spec {
             FindSpec::Var { slot, width } => *slot..slot + width,
@@ -51,26 +68,39 @@ impl ProjectionSink {
     }
 
     /// The distinct projected tuples, unordered (results are sets; the
-    /// host sorts).
+    /// host sorts): drained rows of finished disjoint rules, then the
+    /// live seen-set (all of it, when spanning).
     pub fn rows(&self) -> impl Iterator<Item = &[u64]> {
-        self.seen.iter().map(|(key, ())| key)
+        self.rows
+            .chunks_exact(self.scratch.len())
+            .chain(self.seen.iter().map(|(key, ())| key))
     }
 
     /// Distinct rows held (finalize's reservation).
     #[must_use]
     pub fn len(&self) -> usize {
-        self.seen.len()
+        self.rows.len() / self.scratch.len() + self.seen.len()
     }
 
     /// Whether no rows landed (clippy's `len` companion).
     #[must_use]
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        self.seen.len() == 0
+        self.len() == 0
+    }
+
+    /// The differential guard's override: back to the spanning regime,
+    /// so a covered query runs both ways — the elision is *never*
+    /// semantic, and forced-off results must be byte-identical.
+    #[cfg(test)]
+    pub fn force_spanning(&mut self) {
+        debug_assert!(self.rows.is_empty(), "override before the execution");
+        self.disjoint = false;
     }
 
     /// Empties the sink for the next execution, retaining capacity.
     pub fn reset(&mut self) {
+        self.rows.clear();
         self.seen.clear();
     }
 }

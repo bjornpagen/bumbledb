@@ -19,6 +19,7 @@ mod check_occurrence_coverage;
 mod check_selections;
 mod derive_nodes;
 mod factor;
+mod provably_disjoint;
 mod provably_distinct;
 mod split_filters;
 mod validate;
@@ -26,6 +27,7 @@ mod validate;
 pub use binary2fj::binary2fj;
 pub(crate) use check_selections::check_selections;
 pub use factor::factor;
+pub use provably_disjoint::{provably_disjoint_rules, DisjointWitness};
 pub(crate) use split_filters::split_filters;
 pub use validate::validate;
 

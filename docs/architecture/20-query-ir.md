@@ -86,8 +86,8 @@ join costume.
   variables. **Across rules**, aggregates read the head: the fold domain is
   the union of the rules' binding sets projected to the head (the executor's
   spanning seen-set keys exactly that head projection —
-  `40-execution.md` § the rule loop; the cross-rule elision theorem is
-  PRD ALG-08's). Two postings of amount 100 to one account are two distinct bindings (their
+  `40-execution.md` § the rule loop; provably disjoint rules elide it,
+  § set semantics). Two postings of amount 100 to one account are two distinct bindings (their
   fresh ids differ): `Sum(amount) by account` = 200.
 - **The footgun, stated loudly:** joining a multiplicity-adding relation into an
   aggregate multiplies the binding set — `Posting ⋈ PostingTag` with 3 tags per posting

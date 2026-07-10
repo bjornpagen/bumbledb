@@ -169,6 +169,19 @@ pub struct PreparedQuery<'s, S> {
     /// any other environment's snapshot is `Error::ForeignPreparedQuery`
     /// — checked first at every execution entry.
     env_instance: u64,
+    /// The rule-disjointness proof (docs/architecture/40-execution.md
+    /// § set semantics): `Some` iff the program's rules are provably
+    /// pairwise disjoint, carrying the witness — the (relation, field)
+    /// whose differing pinned literals forbid cross-rule head
+    /// collisions. `None` for single-rule programs and unproven pairs.
+    /// Readers: the sink configuration (built at prepare), EXPLAIN and
+    /// the structured stats (an elision must name its proof).
+    disjoint_rules: Option<crate::plan::fj::DisjointWitness>,
+    /// The union elision, composed at prepare: disjoint rules ∧ per-rule
+    /// distinct bindings ∧ heads reading every slot — the multi-rule
+    /// aggregate seen-set is elided exactly when this holds
+    /// (introspection's observable; the sink was built from it).
+    union_elided: bool,
     /// Per rule, in rule order: the rule's validated plan plus its
     /// plan-shaped execution scratch — the whole plan pipeline ran per
     /// rule at prepare. Execution runs the rules **sequentially** into

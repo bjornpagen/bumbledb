@@ -181,3 +181,56 @@ fn interval_projection_carries_both_slot_words() {
         assert_eq!(got, expected, "batch {batch}");
     }
 }
+
+/// The disjoint-rules regime (docs/architecture/40-execution.md § set
+/// semantics): `aim` drains the finished rule's tuples and clears the
+/// map — the cross-rule guard is dropped — while per-rule dedup stays,
+/// and the emit path is the same code in both regimes.
+#[test]
+fn the_disjoint_regime_drains_per_rule_and_keeps_per_rule_dedup() {
+    use crate::exec::run::{Bindings, Sink};
+
+    let spec = |slots: [usize; 2]| {
+        vec![
+            FindSpec::Var {
+                slot: slots[0],
+                width: 1,
+            },
+            FindSpec::Var {
+                slot: slots[1],
+                width: 1,
+            },
+        ]
+    };
+    let mut sink = crate::exec::sink::ProjectionSink::with_capacity_hint(vec![0, 1], 0, true);
+    sink.reset(); // once per execution, never per rule
+
+    // Rule A: a within-rule duplicate is absorbed by the per-rule map.
+    let mut bindings = Bindings::new(2);
+    for (a, b) in [(1u64, 10u64), (1, 10), (2, 20)] {
+        bindings.reset();
+        bindings.set(0, a);
+        bindings.set(1, b);
+        sink.emit(&bindings);
+    }
+    assert_eq!(sink.len(), 2, "per-rule dedup held");
+
+    // Rule B, re-aimed to a swapped layout: the drain point — rule A's
+    // tuples move to the finished rows, the map clears, and rule B
+    // dedups only against itself.
+    sink.aim(&spec([1, 0]));
+    let mut bindings = Bindings::new(2);
+    for (a, b) in [(3u64, 30u64), (3, 30)] {
+        bindings.reset();
+        bindings.set(1, a);
+        bindings.set(0, b);
+        sink.emit(&bindings);
+    }
+    assert_eq!(sink.len(), 3, "rule B's duplicate absorbed within-rule");
+    let got: BTreeSet<Vec<u64>> = sink.rows().map(<[u64]>::to_vec).collect();
+    assert_eq!(
+        got,
+        BTreeSet::from([vec![1, 10], vec![2, 20], vec![3, 30]]),
+        "drained rows and the live map chain into one set"
+    );
+}

@@ -26,12 +26,26 @@ impl EitherSink {
 
     /// Distinct head tuples (projection) or seen bindings (aggregate)
     /// held — the union observable behind per-rule absorbed accounting.
-    /// `None` when the aggregate seen-set is elided (single-rule
-    /// distinct-bindings proof: nothing is ever absorbed).
+    /// `None` when the aggregate seen-set is elided (the distinct proof:
+    /// nothing is ever absorbed).
     pub(super) fn distinct_seen(&self) -> Option<usize> {
         match self {
             Self::Projection(sink) => Some(sink.len()),
             Self::Aggregate(sink) => sink.distinct_seen(),
+        }
+    }
+
+    /// The differential guard's override (docs/architecture/
+    /// 40-execution.md § set semantics): forces the disjointness elision
+    /// off — the projection sink back to the spanning regime, the
+    /// aggregate seen-set reinstated — so a covered query runs both ways
+    /// and the results must be byte-identical (the elision is *never*
+    /// semantic).
+    #[cfg(test)]
+    pub(super) fn force_disjoint_off(&mut self) {
+        match self {
+            Self::Projection(sink) => sink.force_spanning(),
+            Self::Aggregate(sink) => sink.force_seen(),
         }
     }
 }

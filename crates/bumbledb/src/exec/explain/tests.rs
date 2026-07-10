@@ -205,6 +205,7 @@ fn estimates_and_actuals_populate_for_a_join_fixture() {
         stats: ExecutionStats {
             emits: rule.emitted,
             rules: vec![rule],
+            disjoint_rules: None,
         },
     };
     let text = format!("{report}");
@@ -277,6 +278,7 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
         stats: ExecutionStats {
             emits: rule.emitted,
             rules: vec![rule],
+            disjoint_rules: None,
         },
     };
     assert!(format!("{report}").contains("exact=1"));
@@ -309,6 +311,7 @@ fn guard_probe_queries_report_their_classification() {
                 guard: Some(crate::api::stats::GuardStats { hit: true }),
             }],
             emits: 0,
+            disjoint_rules: None,
         },
     };
     let text = format!("{report}");
@@ -427,6 +430,7 @@ fn anti_probe_selectivity_populates_the_counted_execution() {
         stats: ExecutionStats {
             emits: rule.emitted,
             rules: vec![rule],
+            disjoint_rules: None,
         },
     };
     let text = format!("{report}");

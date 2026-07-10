@@ -18,6 +18,7 @@ mod aggregates;
 mod buffer;
 mod chase;
 mod correctness;
+mod disjoint;
 mod explain;
 mod guard;
 mod params;

@@ -7,8 +7,10 @@ impl AggregateSink {
     /// representation.
     pub(super) fn fold_scratch_row(&mut self) {
         // Binding dedup: fold only the first occurrence of each distinct
-        // binding — unless the plan proved distinctness (elision,
-        // single-rule only). Single-rule key: the whole slot array, so an
+        // key — unless the elision proved the stream duplicate-free
+        // (single-rule: distinct bindings; multi-rule: the rule-
+        // disjointness composition, docs/architecture/40-execution.md
+        // § set semantics). Single-rule key: the whole slot array, so an
         // interval variable's two words are both hashed (the SlotWidth
         // layout). Multi-rule key: the head projection — rule-independent
         // by construction, so the seen-set spanning rules folds each

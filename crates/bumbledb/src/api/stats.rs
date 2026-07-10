@@ -16,6 +16,23 @@ pub struct ExecutionStats {
     /// Bindings emitted to the sink across all rules (the sum of the
     /// per-rule `emitted`).
     pub emits: u64,
+    /// The rule-disjointness proof (docs/architecture/40-execution.md
+    /// § set semantics): `Some` iff the program's rules are provably
+    /// pairwise disjoint, naming the witness — an elision must name its
+    /// proof. `None` for single-rule programs and unproven pairs (the
+    /// spanning seen-set stays).
+    pub disjoint_rules: Option<DisjointRules>,
+}
+
+/// The disjointness witness, rendered by name: the relation and field
+/// whose differing pinned literals make the rules' head rows
+/// collision-free (EXPLAIN's `disjoint_rules: proven (R.f)`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisjointRules {
+    /// The witness relation's name.
+    pub relation: String,
+    /// The pinned discriminator field's name.
+    pub field: String,
 }
 
 /// One rule's counted execution under the shared sink.

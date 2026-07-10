@@ -33,6 +33,18 @@ impl fmt::Display for Report<'_> {
                 self.rules.len(),
                 absorbed,
             )?;
+            // The rule-disjointness proof (docs/architecture/
+            // 40-execution.md § set semantics): an elision must name its
+            // proof — the witness (R, f) whose differing pinned literals
+            // forbid cross-rule head collisions.
+            match &self.stats.disjoint_rules {
+                Some(witness) => writeln!(
+                    f,
+                    "disjoint_rules: proven ({}.{})",
+                    witness.relation, witness.field,
+                )?,
+                None => writeln!(f, "disjoint_rules: unproven")?,
+            }
         }
         Ok(())
     }

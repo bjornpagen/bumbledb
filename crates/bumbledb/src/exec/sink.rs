@@ -12,6 +12,12 @@
 //! projection sink keys the projected find tuple, and the multi-rule
 //! aggregate sink keys the head projection (`union_spans`), never the
 //! rule's full slot array — dedup keys must be rule-independent.
+//! When prepare proves the rules pairwise **disjoint**
+//! (docs/architecture/40-execution.md § set semantics), the cross-rule
+//! guard is dropped: the projection sink drains its map per rule
+//! (per-rule dedup stays), and the aggregate sink — the proof composed
+//! with per-rule distinct bindings and full-slot head coverage — elides
+//! its seen-set entirely.
 //!
 //! Aggregation never materializes the join: group maps live in sink state;
 //! the fold domain of every aggregate is the group's **set of distinct
@@ -101,6 +107,17 @@ pub struct ProjectionSink {
     /// expanded by the constructor's caller from the plan's layout map).
     slots: Vec<usize>,
     seen: WordMap<()>,
+    /// The disjoint-rules regime (docs/architecture/40-execution.md § set
+    /// semantics): the rules are provably pairwise disjoint, so the
+    /// cross-rule guard is dropped — [`Self::aim`] drains the seen-set
+    /// into [`Self::rows`] at each rule entry and per-rule dedup is all
+    /// the map ever does. The emit paths are untouched: the regime is a
+    /// rule-boundary representation, never a hot-loop branch.
+    disjoint: bool,
+    /// Finished rules' distinct head tuples under the disjoint regime —
+    /// flat word rows, arity words each ([`Self::rows`] chains them ahead
+    /// of the live seen-set). Always empty when spanning.
+    rows: Vec<u64>,
     scratch: Vec<u64>,
     /// Per-slot leaf-batch sources, recomputed at batch entry —
     /// per-slot work, not per-row (the pointer-keyed
@@ -195,11 +212,12 @@ pub struct AggregateSink {
     /// not a scalar accumulator, so no gather kernel or scan pushdown
     /// applies; batches route through the per-row scratch fold.
     row_fold_only: bool,
-    /// Binding dedup, elided when the plan proves distinct bindings
-    /// (single-rule programs only — a multi-rule sink keeps its seen-set
-    /// until ALG 08's disjointness proof exists). Single-rule key: the
-    /// whole slot array — an interval variable's two words are both
-    /// hashed (the `SlotWidth` layout). Multi-rule key: the head
+    /// Binding dedup, elided (`None`) when the emitted key stream is
+    /// proven duplicate-free: single-rule, the plan's distinct-bindings
+    /// proof; multi-rule, the rule-disjointness composition
+    /// (docs/architecture/40-execution.md § set semantics). Single-rule
+    /// key: the whole slot array — an interval variable's two words are
+    /// both hashed (the `SlotWidth` layout). Multi-rule key: the head
     /// projection ([`Self::union_spans`]).
     seen: Option<WordMap<()>>,
     /// The multi-rule union regime's dedup-key spans (`None` =

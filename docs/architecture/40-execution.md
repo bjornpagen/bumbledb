@@ -146,10 +146,26 @@ Two facts identical on all *bound* variables produce the same binding; the solut
   its relation (typical for ledger queries that bind fresh ids), distinct facts ⇒
   distinct bindings, and the plan carries a proof flag that lets the aggregate sink
   skip the seen-set entirely. Provable at plan time from the schema's FD statements —
-  a representation-level fix, not a runtime branch per binding. **Per-query-shape**:
-  the elision applies to single-rule programs; a multi-rule sink keeps its seen-set
-  (§ the rule loop) until the exclusivity theorem (PRD ALG-08) proves the rules
-  pairwise-disjoint — correct first, elided when proven.
+  a representation-level fix, not a runtime branch per binding.
+- **Rule-disjointness elision** (the exclusivity theorem's third consumer —
+  `30-dependencies.md`): a multi-rule program's cross-rule dedup is deleted at plan
+  time when the rules are **provably pairwise disjoint**
+  (`plan/fj/provably_disjoint.rs`). **Witness form**: a relation R and a field f
+  such that both rules bind a positive occurrence of R whose filters pin f to
+  *different* concrete literals, **and** that occurrence's bound key columns flow
+  to the same head positions in both rules — equal head rows would force the two
+  pinned facts to agree on a key of R, one fact whose f cannot equal two different
+  literals. The DU-arm union (one rule per `kind`) is exactly this shape.
+  Conservative and pairwise: params, sets, and mixed constant forms pin nothing;
+  any unprovable pair keeps the seen-set — correct first, elided when proven.
+  Two consumers: the **projection sink** drops the cross-rule guard (its map
+  drains per rule at re-aim; per-rule dedup stays, as the semantics require), and
+  the **aggregate sink** composes the proof with per-rule distinct bindings and a
+  head projection reading every slot (distinct bindings ⇒ distinct head tuples) to
+  elide the union seen-set entirely — the same `seen: None` representation as the
+  single-rule elision, no hot-loop branch. EXPLAIN names the proof:
+  `disjoint_rules: proven (R.f)`. A test-only override forces the flag off and the
+  differential corpus pins byte-identical results — the elision is never semantic.
 
 **Deviation D2 (set semantics — replaces the old D2):** the paper is bag-semantic
 (leaves may carry multiplicity, output is a tuple stream). We: sets everywhere; leaves
@@ -193,6 +209,9 @@ and stays a non-goal.
   the fold domain is the union of the rules' binding sets projected to the head".
   The single-rule aggregate keys the full slot array (its fold domain is the rule's
   distinct full bindings — the normative single-rule semantics, unchanged).
+  Under the rule-disjointness proof (§ set semantics) the spanning guard is
+  dropped: the projection map drains per rule and the composed aggregate
+  seen-set is elided — a collision the theorem forbids needs no set to absorb it.
 - **Per-rule re-aiming:** the sink's slot tables (projection slots; aggregate finds,
   group spans, head-projection spans) re-aim to each rule's binding layout at rule
   entry — head positions are fixed (arity, ops, widths, types), slots are the rule's.
@@ -472,7 +491,9 @@ and the chase's eliminated occurrences — read straight off the plan's
 Det(grading)`) — plus the **head-level union accounting**: per rule, bindings
 emitted to the shared sink vs absorbed by the spanning seen-set (absorbed =
 emitted − newly-seen: two O(1) reads per rule, no per-tuple cost; an elided
-seen-set absorbs nothing by proof). The obs registry mirrors it: one `RULE` span
+seen-set absorbs nothing by proof), and — multi-rule programs — the
+rule-disjointness line naming its witness (`disjoint_rules: proven (R.f)`,
+or `unproven`). The obs registry mirrors it: one `RULE` span
 per rule under the execute span (`rule_N` — the index rides in the name,
 `MAX_RULES`-bounded), args (emitted, absorbed), populated on counted paths.
 Output shape: OPEN. Release builds contain no other instrumentation: no per-tuple labels, no
