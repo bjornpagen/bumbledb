@@ -183,13 +183,10 @@ fn distinct_of(
     rows: u64,
 ) -> crate::error::Result<u64> {
     let descriptor = schema.relation(relation);
-    let keyed = descriptor.keys().iter().any(|id| {
-        matches!(
-            &schema.statement(*id).descriptor,
-            StatementDescriptor::Functionality { projection, .. }
-                if projection.as_ref() == [field]
-        )
-    });
+    let keyed = descriptor
+        .keys()
+        .iter()
+        .any(|id| schema.key_projection(*id) == [field]);
     if keyed {
         return Ok(rows.max(1));
     }

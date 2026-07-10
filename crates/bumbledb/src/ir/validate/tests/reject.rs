@@ -147,8 +147,10 @@ fn rejects_self_comparison() {
             rhs: var(0),
         }],
     };
-    let err = validate(&schema(), &query).unwrap_err();
-    assert!(matches!(err, ValidationError::SelfComparison { index: 0 }));
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::SelfComparison { index: 0 }
+    ));
 }
 
 #[test]
@@ -168,7 +170,7 @@ fn rejects_order_operators_on_bool_and_enum() {
                 rhs: var(2),
             }],
         };
-        let err = validate(&schema(), &query).unwrap_err();
+        let err = expect_err(&query);
         assert!(
             matches!(err, ValidationError::IllegalComparison { index: 0 }),
             "order ops are integer-only; got {err:?}"
@@ -189,37 +191,12 @@ fn enum_ordinal_in_a_comparison_reports_the_precise_variant() {
             rhs: Term::Literal(Value::Enum(9)),
         }],
     };
-    let err = validate(&schema(), &query).unwrap_err();
     assert!(matches!(
-        err,
+        expect_err(&query),
         ValidationError::ComparisonEnumOrdinalOutOfRange {
             index: 0,
             ordinal: 9
         }
-    ));
-}
-
-#[test]
-fn rejects_duplicate_aggregate_find_terms() {
-    let query = Query {
-        finds: vec![
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
-        ],
-        atoms: vec![atom(HOLDER, vec![(0, var(0))])],
-        negated: vec![],
-        predicates: vec![],
-    };
-    let err = validate(&schema(), &query).unwrap_err();
-    assert!(matches!(
-        err,
-        ValidationError::DuplicateFindTerm { index: 1 }
     ));
 }
 
@@ -300,6 +277,21 @@ fn rejects_empty_finds() {
 fn rejects_duplicate_find_terms() {
     let query = simple(
         vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(0))],
+        vec![atom(HOLDER, vec![(0, var(0))])],
+    );
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::DuplicateFindTerm { index: 1 }
+    ));
+
+    // Aggregate terms collide under the same structural equality: two
+    // nullary Counts are one find written twice.
+    let count = || FindTerm::Aggregate {
+        op: AggOp::Count,
+        over: None,
+    };
+    let query = simple(
+        vec![count(), count()],
         vec![atom(HOLDER, vec![(0, var(0))])],
     );
     assert!(matches!(
@@ -396,30 +388,6 @@ fn rejects_aggregate_over_group_key() {
 }
 
 #[test]
-fn param_anchoring_is_total_by_construction() {
-    // An unanchored param is unwritable: a param in an atom binding is
-    // typed by its field; a param in a comparison is typed by the
-    // variable side (a variable-free comparison is already
-    // `ConstantComparison`). This pins the anchored case; the roster
-    // item is discharged by representation, not by a check.
-    let query = Query {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![atom(HOLDER, vec![(0, var(0))])],
-        negated: vec![],
-        predicates: vec![Comparison {
-            op: CmpOp::Eq,
-            lhs: var(0),
-            rhs: Term::Param(ParamId(0)),
-        }],
-    };
-    let witness = validate(&schema(), &query).expect("valid");
-    assert_eq!(
-        witness.param_types().next(),
-        Some((ParamId(0), &ValueType::U64))
-    );
-}
-
-#[test]
 fn rejects_sparse_param_ids() {
     // ?1 without ?0: the gap would be an unchecked positional slot.
     let query = Query {
@@ -431,8 +399,7 @@ fn rejects_sparse_param_ids() {
         negated: vec![],
         predicates: vec![],
     };
-    let err = validate(&schema(), &query).unwrap_err();
-    assert!(matches!(err, ValidationError::ParamIdGap { param } if param.0 == 0));
+    assert!(matches!(expect_err(&query), ValidationError::ParamIdGap { param } if param.0 == 0));
 }
 
 #[test]
@@ -444,8 +411,7 @@ fn rejects_more_atoms_than_the_planner_cap_at_the_boundary() {
         negated: vec![],
         predicates: vec![],
     };
-    let err = validate(&schema(), &query).unwrap_err();
-    assert!(matches!(err, ValidationError::TooManyAtoms { count } if count == over));
+    assert!(matches!(expect_err(&query), ValidationError::TooManyAtoms { count } if count == over));
 }
 
 #[test]
@@ -494,8 +460,9 @@ fn negated_occurrences_count_toward_the_occurrence_cap() {
         negated: vec![atom(HOLDER, vec![(0, var(0))])],
         predicates: vec![],
     };
-    let err = validate(&schema(), &query).unwrap_err();
-    assert!(matches!(err, ValidationError::TooManyAtoms { count } if count == cap + 1));
+    assert!(
+        matches!(expect_err(&query), ValidationError::TooManyAtoms { count } if count == cap + 1)
+    );
 }
 
 // --- The PRD 12 reject corpus: the new roster lines ---

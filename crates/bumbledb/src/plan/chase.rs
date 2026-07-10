@@ -132,13 +132,11 @@ fn removable(
         if !scalar_positions_only(&statement.resolved) {
             continue; // condition 4
         }
-        for b_idx in 0..normalized.occurrences.len() {
-            let b = &normalized.occurrences[b_idx];
+        for (b_idx, b) in normalized.occurrences.iter().enumerate() {
             if !b.role.participates() || b.relation != target.relation {
                 continue;
             }
-            for a_idx in 0..normalized.occurrences.len() {
-                let a = &normalized.occurrences[a_idx];
+            for (a_idx, a) in normalized.occurrences.iter().enumerate() {
                 if a_idx == b_idx || a.role == Role::Negated || a.relation != source.relation {
                     continue;
                 }

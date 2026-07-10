@@ -423,4 +423,23 @@ impl Schema {
     pub fn dependents(&self, id: StatementId) -> &[StatementId] {
         &self.dependents[usize::from(id.0)]
     }
+
+    /// The projection of a key statement — the one place an id from
+    /// [`Relation::keys`] is unpacked to its field list (guard byte
+    /// order, coverage checks, the planner's key var sets).
+    ///
+    /// # Panics
+    ///
+    /// On a programmer-invariant violation: an id naming a non-key
+    /// statement — `Relation::keys()` indexes `Functionality` statements
+    /// only.
+    #[must_use]
+    pub fn key_projection(&self, id: StatementId) -> &[FieldId] {
+        match &self.statement(id).descriptor {
+            StatementDescriptor::Functionality { projection, .. } => projection,
+            StatementDescriptor::Containment { .. } => {
+                unreachable!("Relation::keys() indexes Functionality statements")
+            }
+        }
+    }
 }

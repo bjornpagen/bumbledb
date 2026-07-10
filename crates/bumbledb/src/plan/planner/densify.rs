@@ -1,7 +1,7 @@
 use super::{OccInfo, OccStats, MAX_DISTINCT_VARS};
 use crate::ir::normalize::Occurrence;
 use crate::ir::VarId;
-use crate::schema::{Schema, StatementDescriptor};
+use crate::schema::Schema;
 
 /// Densifies the participating occurrences into bitset form, resolving stats
 /// and translating key (`Functionality` statement) projections to
@@ -54,13 +54,8 @@ pub(super) fn densify(
                 .keys()
                 .iter()
                 .filter_map(|id| {
-                    let StatementDescriptor::Functionality { projection, .. } =
-                        &schema.statement(*id).descriptor
-                    else {
-                        unreachable!("Relation::keys() indexes Functionality statements")
-                    };
                     let mut set = 0u128;
-                    for field in projection {
+                    for field in schema.key_projection(*id) {
                         let (_, var) = occurrence.vars.iter().find(|(f, _)| f == field)?;
                         set |= 1 << var_index[var];
                     }

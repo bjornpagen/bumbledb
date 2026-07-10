@@ -44,13 +44,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ir::{ParamId, Query, VarId};
+use crate::ir::{FindTerm, ParamId, Query, VarId};
 use crate::schema::{IntervalElement, ValueType};
 
 mod context;
 mod finds;
-mod param_types;
-mod sink_vars;
 #[allow(clippy::module_inception)]
 mod validate;
 
@@ -104,6 +102,41 @@ impl ValidatedQuery {
     #[must_use]
     pub fn param_type(&self, param: ParamId) -> &ValueType {
         &self.param_types[&param]
+    }
+
+    /// Every param with its resolved type, in id order (bind-time checking,
+    /// The 30-execution doc). A set param's type is its *element* type.
+    pub fn param_types(&self) -> impl Iterator<Item = (ParamId, &ValueType)> {
+        self.param_types.iter().map(|(p, t)| (*p, t))
+    }
+
+    /// The params bound as sets (`Term::ParamSet`) — bind-time expects a
+    /// slice of values of the element type for each.
+    #[must_use]
+    pub fn set_params(&self) -> &BTreeSet<ParamId> {
+        &self.set_params
+    }
+
+    /// The plan's sink-relevance set (the D2 gating bits' source). For a
+    /// pure projection it is the group key — the suffix skip may cross
+    /// nodes binding nothing projected. For an aggregate-bearing find
+    /// list it is **every** variable: the fold is defined over the
+    /// distinct full binding set, so no node's bindings are skippable,
+    /// and the `sink_relevant` bits themselves encode the illegality —
+    /// any `SkipSuffix` a future sink ever signaled under an aggregate
+    /// plan is absorbed at the node that produced it.
+    #[must_use]
+    pub fn sink_vars(&self) -> BTreeSet<VarId> {
+        let has_aggregate = self
+            .query
+            .finds
+            .iter()
+            .any(|term| matches!(term, FindTerm::Aggregate { .. }));
+        if has_aggregate {
+            self.var_types.keys().copied().collect()
+        } else {
+            self.group_key.clone()
+        }
     }
 
     /// The group key: non-aggregated find variables (test observability;

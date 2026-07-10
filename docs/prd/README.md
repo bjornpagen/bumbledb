@@ -63,7 +63,6 @@ orchestrator work, not a PRD.
 
 ## The PRDs
 
-- [18 — Elegance: IR and plan](18-elegance-ir-plan.md)
 - [19 — Elegance: exec and image](19-elegance-exec-image.md)
 - [20 — Elegance: api and macros](20-elegance-api-macros.md)
 - [21 — Elegance: bench crate](21-elegance-bench.md)

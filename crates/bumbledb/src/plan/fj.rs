@@ -12,7 +12,7 @@ use crate::ir::normalize::{
     AntiProbe, OccId, PlacedComparison, PlacedWordComparison, Role, SlotWidth,
 };
 use crate::ir::VarId;
-use crate::schema::RelationId;
+use crate::schema::{FieldId, RelationId};
 
 mod binary2fj;
 mod check_occurrence_coverage;
@@ -20,12 +20,8 @@ mod check_selections;
 mod derive_nodes;
 mod factor;
 mod provably_distinct;
-mod slot_of;
 mod split_filters;
 mod validate;
-
-#[cfg(test)]
-mod occurrence;
 
 pub use binary2fj::binary2fj;
 pub(crate) use check_selections::check_selections;
@@ -109,7 +105,7 @@ pub enum PlanError {
 /// keeps the scannable rest (docs/architecture/40-execution.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection {
-    pub field: crate::schema::FieldId,
+    pub field: FieldId,
     pub value: Const,
 }
 
@@ -126,7 +122,7 @@ pub struct Selection {
 pub struct PointProbe {
     pub occ: OccId,
     /// The interval field and bound point variable of each filter.
-    pub filters: Vec<(crate::schema::FieldId, VarId)>,
+    pub filters: Vec<(FieldId, VarId)>,
 }
 
 /// One occurrence's execution-facing description — every role lives in
@@ -144,7 +140,7 @@ pub struct PlanOccurrence {
     /// `Eliminated` marks directly.
     pub role: Role,
     /// The field each variable reads from.
-    pub vars: Vec<(crate::schema::FieldId, VarId)>,
+    pub vars: Vec<(FieldId, VarId)>,
     /// Probeable equalities, ordered by field id (deterministic plans).
     /// Always empty for a negated occurrence: its Eq-constants stay in
     /// `filters` (below).
@@ -168,7 +164,7 @@ pub struct PlanOccurrence {
     /// anti-probe evaluates them inside the probe — a binding is
     /// rejected only if a matching fact **also** satisfies every
     /// membership.
-    pub point_filters: Vec<(crate::schema::FieldId, VarId)>,
+    pub point_filters: Vec<(FieldId, VarId)>,
     /// The field→column map (docs/architecture/50-storage.md image
     /// layout): one [`ColumnSpan`] per field of the relation, in
     /// declaration order — an interval field spans two word columns;
@@ -297,6 +293,53 @@ impl ValidatedPlan {
     #[must_use]
     pub fn estimates(&self) -> &[u64] {
         &self.estimates
+    }
+
+    /// The first slot index of a variable (its only slot for scalars; an
+    /// interval variable's end word sits at `slot_of(var) + 1` — the
+    /// two-slot layout, [`SlotWidth`]).
+    ///
+    /// # Panics
+    ///
+    /// On a programmer-invariant violation: a variable outside the plan.
+    #[must_use]
+    pub fn slot_of(&self, var: VarId) -> usize {
+        let mut slot = 0;
+        for (candidate, width) in &self.slots {
+            if *candidate == var {
+                return slot;
+            }
+            slot += width.slots();
+        }
+        panic!("validated plan binds every variable")
+    }
+
+    /// A variable's slot width in words (2 for an interval variable —
+    /// the [`SlotWidth`] layout): the layout map's companion to
+    /// [`Self::slot_of`], so slot consumers never assume width 1.
+    ///
+    /// # Panics
+    ///
+    /// On a programmer-invariant violation: a variable outside the plan.
+    #[must_use]
+    pub fn width_of(&self, var: VarId) -> usize {
+        self.slots
+            .iter()
+            .find(|(candidate, _)| *candidate == var)
+            .map(|(_, width)| width.slots())
+            .expect("validated plan binds every variable")
+    }
+
+    /// # Panics
+    ///
+    /// On a programmer-invariant violation: an occurrence outside the plan.
+    #[cfg(test)]
+    #[must_use]
+    pub fn occurrence(&self, occ: OccId) -> &PlanOccurrence {
+        self.occurrences
+            .iter()
+            .find(|o| o.occ_id == occ)
+            .expect("validated plan covers its occurrences")
     }
 }
 

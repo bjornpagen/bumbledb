@@ -1,6 +1,6 @@
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::normalize::NormalizedQuery;
-use crate::schema::{Schema, StatementDescriptor};
+use crate::schema::Schema;
 use std::collections::BTreeSet;
 
 /// The distinct-bindings elision check (40-execution): every participating
@@ -48,12 +48,10 @@ pub(super) fn provably_distinct(normalized: &NormalizedQuery, schema: &Schema) -
                 }))
                 .collect();
             relation.keys().iter().any(|id| {
-                let StatementDescriptor::Functionality { projection, .. } =
-                    &schema.statement(*id).descriptor
-                else {
-                    unreachable!("Relation::keys() indexes Functionality statements")
-                };
-                projection.iter().all(|f| bound_fields.contains(f))
+                schema
+                    .key_projection(*id)
+                    .iter()
+                    .all(|f| bound_fields.contains(f))
             })
         })
 }

@@ -114,13 +114,8 @@ fn order_cost(
             .keys()
             .iter()
             .filter_map(|id| {
-                let StatementDescriptor::Functionality { projection, .. } =
-                    &schema.statement(*id).descriptor
-                else {
-                    unreachable!("keys() indexes Functionality statements")
-                };
                 let mut set = 0u128;
-                for field in projection {
+                for field in schema.key_projection(*id) {
                     let (_, var) = occ(i).vars.iter().find(|(f, _)| f == field)?;
                     set |= 1 << var_index[var];
                 }

@@ -2,7 +2,7 @@ use super::{GuardPlan, GuardVar};
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::normalize::NormalizedQuery;
 use crate::ir::CmpOp;
-use crate::schema::{FieldId, Schema, StatementDescriptor, StatementId};
+use crate::schema::{FieldId, Schema, StatementId};
 
 /// Classifies a normalized query: `Some(GuardPlan)` iff it is guard-probe
 /// eligible — exactly one atom occurrence (positive, so no negated atoms
@@ -73,11 +73,12 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<GuardPl
         .keys()
         .iter()
         .find(|id| {
-            key_projection(schema, **id)
+            schema
+                .key_projection(**id)
                 .iter()
                 .all(|f| value_of(*f).is_some())
         })
-        .map(|id| (Some(*id), key_projection(schema, *id).to_vec()))
+        .map(|id| (Some(*id), schema.key_projection(*id).to_vec()))
         .or_else(|| {
             let all: Vec<FieldId> = (0..relation.fields().len())
                 .map(|i| FieldId(u16::try_from(i).expect("validated schema")))
@@ -145,14 +146,4 @@ fn unconsumed_filters(
         })
         .cloned()
         .collect()
-}
-
-/// A key statement's projection (the guard-byte field order).
-fn key_projection(schema: &Schema, id: StatementId) -> &[FieldId] {
-    match &schema.statement(id).descriptor {
-        StatementDescriptor::Functionality { projection, .. } => projection,
-        StatementDescriptor::Containment { .. } => {
-            unreachable!("Relation::keys() indexes Functionality statements")
-        }
-    }
 }

@@ -1,5 +1,5 @@
 use crate::arena::ArenaSlice;
-use crate::schema::{RelationId, StatementDescriptor, StatementId};
+use crate::schema::{RelationId, StatementId};
 use crate::storage::keys;
 
 use super::{GuardDisposition, GuardOverlay, WriteDelta};
@@ -24,14 +24,9 @@ impl WriteDelta<'_> {
     ) {
         let relation = self.schema.relation(rel);
         for &statement in relation.keys() {
-            let StatementDescriptor::Functionality { projection, .. } =
-                &self.schema.statement(statement).descriptor
-            else {
-                unreachable!("validated schema: relation keys are Functionality statements")
-            };
             keys::guard_bytes(
                 relation.layout(),
-                projection,
+                self.schema.key_projection(statement),
                 fact_bytes,
                 &mut self.guard_scratch,
             );

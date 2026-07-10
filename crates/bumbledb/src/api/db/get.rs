@@ -13,7 +13,7 @@ use crate::encoding::{
 };
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
-use crate::schema::{FieldId, RelationId, StatementDescriptor, StatementId};
+use crate::schema::{FieldId, RelationId, StatementId};
 use crate::storage::delta::GuardOverlay;
 use crate::storage::read;
 
@@ -138,11 +138,7 @@ impl WriteTx<'_> {
             }
             .into());
         }
-        let StatementDescriptor::Functionality { projection, .. } =
-            &self.schema.statement(key).descriptor
-        else {
-            unreachable!("validated schema: relation keys are Functionality statements")
-        };
+        let projection = self.schema.key_projection(key);
         if key_values.len() != projection.len() {
             return Err(FactShapeError::ArityMismatch {
                 relation,
@@ -263,13 +259,7 @@ impl WriteTx<'_> {
         let rel = self.schema.relation(relation);
         *rel.keys()
             .iter()
-            .find(|&&statement| {
-                matches!(
-                    &self.schema.statement(statement).descriptor,
-                    StatementDescriptor::Functionality { projection, .. }
-                        if projection.as_ref() == [field].as_slice()
-                )
-            })
+            .find(|&&statement| self.schema.key_projection(statement) == [field])
             .expect("validated schema: every serial field materializes its Functionality")
     }
 }

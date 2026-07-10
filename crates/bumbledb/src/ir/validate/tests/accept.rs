@@ -46,6 +46,30 @@ fn accepts_params_anchored_by_fields_and_comparisons() {
 }
 
 #[test]
+fn param_anchoring_is_total_by_construction() {
+    // An unanchored param is unwritable: a param in an atom binding is
+    // typed by its field; a param in a comparison is typed by the
+    // variable side (a variable-free comparison is already
+    // `ConstantComparison`). This pins the anchored case; the roster
+    // item is discharged by representation, not by a check.
+    let query = Query {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(HOLDER, vec![(0, var(0))])],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Eq,
+            lhs: var(0),
+            rhs: Term::Param(ParamId(0)),
+        }],
+    };
+    let witness = validate(&schema(), &query).expect("valid");
+    assert_eq!(
+        witness.param_types().next(),
+        Some((ParamId(0), &ValueType::U64))
+    );
+}
+
+#[test]
 fn accepts_all_aggregate_finds() {
     // Empty group key, one global group — legal per the doc.
     let query = simple(
