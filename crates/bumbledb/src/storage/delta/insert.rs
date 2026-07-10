@@ -96,14 +96,10 @@ impl WriteDelta<'_> {
                 FieldId(u16::try_from(idx).expect("validated schema: field ids fit u16"));
             let raw = field_bytes(fact_bytes, relation.layout(), idx);
             let value = decode_u64(raw.try_into().expect("serial fields are 8 bytes"));
-            let mark = match self.serial_next.get(&(rel, field_id)).copied() {
-                Some(mark) => mark,
-                None => self.serial_base_of(view, rel, field_id)?,
-            };
+            let mark = self.serial_mark(view, rel, field_id)?;
             // `saturating_add`: an explicit u64::MAX is legal to insert; the
             // sequence is then exhausted for the generator (alloc errors).
-            self.serial_next
-                .insert((rel, field_id), mark.max(value.saturating_add(1)));
+            mark.next = mark.next.max(value.saturating_add(1));
         }
         Ok(())
     }

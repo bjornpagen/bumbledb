@@ -1,6 +1,4 @@
 use crate::error::Result;
-#[cfg(test)]
-use crate::error::{CorruptionError, Error};
 
 use super::read_meta::read_u64;
 use super::{WriteTxn, META_DICT_NEXT_ID, META_TX_ID};
@@ -34,16 +32,11 @@ impl WriteTxn<'_> {
 
     /// Reads the dictionary next-id counter (reader: `storage::dict`'s
     /// direct-write intern, test-only since the delta's pending-intern set
-    /// re-homed the live path in the 40-storage doc).
+    /// re-homed the live path in the 40-storage doc), sentinel-checked
+    /// ([`super::read_meta::read_dict_next_id`]).
     #[cfg(test)]
     pub(crate) fn dict_next_id(&self) -> Result<u64> {
-        let next = read_u64(&self.env.meta, &self.txn, META_DICT_NEXT_ID)?;
-        if next == u64::MAX {
-            return Err(Error::Corruption(CorruptionError::MalformedValue(
-                "dict next id",
-            )));
-        }
-        Ok(next)
+        super::read_meta::read_dict_next_id(&self.env.meta, &self.txn)
     }
 
     /// Writes the dictionary next-id counter.

@@ -64,6 +64,18 @@ pub enum GuardOverlay<'a> {
     Absent,
 }
 
+/// One serial sequence's transaction-local state
+/// ([`WriteDelta::serials`]): initialized in one piece from the lazy `Q`
+/// read, so an entry without its base is unrepresentable.
+#[derive(Debug, Clone, Copy)]
+struct SerialMark {
+    /// The committed `Q` value the sequence started from — the
+    /// dirtiness baseline.
+    base: u64,
+    /// The next value to issue; a transaction sees its own allocations.
+    next: u64,
+}
+
 /// The accumulated write transaction.
 pub struct WriteDelta<'s> {
     schema: &'s Schema,
@@ -92,16 +104,12 @@ pub struct WriteDelta<'s> {
     /// Scratch for guard derivation, reused across `insert`/`delete` calls
     /// (the write path may allocate, but not per key statement per fact).
     guard_scratch: Vec<u8>,
-    /// Serial next-values, lazily initialized from `Q` once per
-    /// `(relation, field)` per transaction; a transaction sees its own
-    /// allocations. The stored value is the *next* value to issue.
-    serial_next: BTreeMap<(RelationId, FieldId), u64>,
-    /// The committed `Q` value each sequence started from this
-    /// transaction (populated by the same lazy read): a mark is *dirty* —
-    /// it escaped as an allocation the closure may have returned — iff it
-    /// advanced past this base. Dirty marks persist even on a no-op
-    /// commit (`40-storage.md`).
-    serial_base: BTreeMap<(RelationId, FieldId), u64>,
+    /// Serial sequences touched this transaction, lazily initialized
+    /// from `Q` once per `(relation, field)`. A mark is *dirty* — it
+    /// escaped as an allocation the closure may have returned — iff its
+    /// `next` advanced past its `base`. Dirty marks persist even on a
+    /// no-op commit (`40-storage.md`).
+    serials: BTreeMap<(RelationId, FieldId), SerialMark>,
     /// Net row-count change per relation, maintained alongside the
     /// changed-state reports (flushed to `S` by the 40-storage doc).
     row_count_delta: BTreeMap<RelationId, i64>,

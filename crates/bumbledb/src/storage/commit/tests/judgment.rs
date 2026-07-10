@@ -7,20 +7,18 @@
 //! scalar target, a pointwise target with selected and unselected
 //! coverage statements, and a selected source.
 
-use crate::encoding::{encode_fact, encode_u64, ValueRef};
+use crate::encoding::{encode_u64, ValueRef};
 use crate::error::{Direction, Error, Result};
 use crate::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
+    FieldId, RelationDescriptor, RelationId, Schema, SchemaDescriptor, StatementDescriptor,
+    StatementId, ValueType,
 };
-use crate::storage::commit::commit;
-use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::storage::keys;
 use crate::testutil::TempDir;
 use crate::value::Value;
 
-use super::{committed_data, key};
+use super::{apply_delta, committed_data, fact, field, interval, key, selected, side};
 
 const PARENT: RelationId = RelationId(0);
 const CHILD: RelationId = RelationId(1);
@@ -48,27 +46,6 @@ const REPORT_ACCOUNT: StatementId = StatementId(9);
 /// Account(id): a conditional source.
 #[allow(clippy::too_many_lines)] // one fixture: eight relations, ten statements
 fn schema() -> Schema {
-    let field = |name: &str, value_type: ValueType| FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    };
-    let interval = ValueType::Interval {
-        element: IntervalElement::U64,
-    };
-    let side = |relation: RelationId, projection: &[u16]| Side {
-        relation,
-        projection: projection.iter().map(|&f| FieldId(f)).collect(),
-        selection: Box::new([]),
-    };
-    let selected = |relation: RelationId, projection: &[u16], selection: &[(u16, Value)]| Side {
-        relation,
-        projection: projection.iter().map(|&f| FieldId(f)).collect(),
-        selection: selection
-            .iter()
-            .map(|(f, literal)| (FieldId(*f), literal.clone()))
-            .collect(),
-    };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -94,20 +71,17 @@ fn schema() -> Schema {
                 name: "Shift".into(),
                 fields: vec![
                     field("worker", ValueType::U64),
-                    field("span", interval.clone()),
+                    field("span", interval()),
                     field("rested", ValueType::Bool),
                 ],
             },
             RelationDescriptor {
                 name: "Session".into(),
-                fields: vec![
-                    field("worker", ValueType::U64),
-                    field("span", interval.clone()),
-                ],
+                fields: vec![field("worker", ValueType::U64), field("span", interval())],
             },
             RelationDescriptor {
                 name: "Rest".into(),
-                fields: vec![field("worker", ValueType::U64), field("span", interval)],
+                fields: vec![field("worker", ValueType::U64), field("span", interval())],
             },
             RelationDescriptor {
                 name: "Report".into(),
@@ -220,21 +194,9 @@ fn report(schema: &Schema, subject: u64, urgent: bool) -> Vec<u8> {
     )
 }
 
-fn fact(schema: &Schema, rel: RelationId, values: &[ValueRef]) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(values, schema.relation(rel).layout(), &mut b);
-    b
-}
-
 /// Inserts all facts in one delta and commits.
 fn insert_all(env: &Environment, schema: &Schema, facts: &[(RelationId, Vec<u8>)]) -> Result<()> {
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (rel, fact) in facts {
-        delta.insert(&view, *rel, fact).expect("record insert");
-    }
-    drop(view);
-    commit(delta, env).map(|_| ())
+    apply_delta(env, schema, &[], facts)
 }
 
 /// Commits `base`, then inserts `facts` in a second delta; on an abort,
@@ -396,11 +358,7 @@ fn deleting_a_source_removes_its_reverse_edge() {
     .expect("commit");
     assert_eq!(reverse_entries(&env, REPORT_ACCOUNT).len(), 1);
 
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(&schema);
-    delta.delete(&view, REPORT, &r).expect("delete");
-    drop(view);
-    commit(delta, &env).expect("commit");
+    apply_delta(&env, &schema, &[(REPORT, r)], &[]).expect("commit");
     assert!(reverse_entries(&env, REPORT_ACCOUNT).is_empty());
 }
 

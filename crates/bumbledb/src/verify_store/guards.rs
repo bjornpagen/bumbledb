@@ -5,25 +5,21 @@
 //! interval start, so one lookback checks `prev.end <= next.start` — the
 //! invariant the neighbor probe assumes but never re-checks globally.
 
-use std::ops::Bound;
-
 use crate::error::Result;
 use crate::schema::{RelationId, Resolved, StatementId};
 use crate::storage::keys;
 
-use super::{StoreFinding, Sweep};
+use super::{namespace, StoreFinding, Sweep};
 
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;
     let schema = s.schema;
-    let (lo, hi) = ([keys::NS_GUARD], [keys::NS_GUARD + 1]);
-    let bounds: (Bound<&[u8]>, Bound<&[u8]>) = (Bound::Included(&lo[..]), Bound::Excluded(&hi[..]));
     let mut derived = Vec::new();
     // The previous pointwise guard key: consecutive keys of one
     // scalar-prefix group sit adjacent under the cursor, so a single
     // lookback walks every successive pair.
     let mut prev_pointwise: Option<&[u8]> = None;
-    for entry in s.data.range(txn.raw(), &bounds)? {
+    for entry in namespace(s.data, txn, keys::NS_GUARD)? {
         let (key, value) = entry?;
         // U | relation(4) | statement(2) | guard — the guard is nonempty
         // (projections are non-empty by validation).

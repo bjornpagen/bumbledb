@@ -1,6 +1,7 @@
 use super::plan::CommitPlan;
 use super::*;
 use crate::encoding::{encode_fact, ValueRef};
+use crate::error::Result;
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
     SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
@@ -8,6 +9,7 @@ use crate::schema::{
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::storage::keys::{KeyBuf, MAX_KEY};
+use crate::value::Value;
 
 use std::collections::BTreeSet;
 
@@ -17,6 +19,77 @@ mod functionality;
 mod judgment;
 mod plan;
 mod target;
+
+// ---------- shared fixture vocabulary ----------
+//
+// Every commit-test schema builds from these shorthands (the PRD 07/08/09
+// eras each grew their own copies); the schemas themselves stay per-file —
+// each judgment matrix wants its own statement shapes.
+
+/// A plain (non-serial) field.
+fn field(name: &str, value_type: ValueType) -> FieldDescriptor {
+    FieldDescriptor {
+        name: name.into(),
+        value_type,
+        generation: Generation::None,
+    }
+}
+
+/// The one interval type the fixtures use.
+fn interval() -> ValueType {
+    ValueType::Interval {
+        element: IntervalElement::U64,
+    }
+}
+
+/// An unselected statement side.
+fn side(relation: RelationId, projection: &[u16]) -> Side {
+    Side {
+        relation,
+        projection: projection.iter().map(|&f| FieldId(f)).collect(),
+        selection: Box::new([]),
+    }
+}
+
+/// A selected statement side.
+fn selected(relation: RelationId, projection: &[u16], selection: &[(u16, Value)]) -> Side {
+    Side {
+        relation,
+        projection: projection.iter().map(|&f| FieldId(f)).collect(),
+        selection: selection
+            .iter()
+            .map(|(f, literal)| (FieldId(*f), literal.clone()))
+            .collect(),
+    }
+}
+
+/// Encodes one fact of `rel` — the one encode stanza behind every
+/// per-file fact shorthand.
+fn fact(schema: &Schema, rel: RelationId, values: &[ValueRef]) -> Vec<u8> {
+    let mut b = Vec::new();
+    encode_fact(values, schema.relation(rel).layout(), &mut b);
+    b
+}
+
+/// Records `deletes` then `inserts` into one delta and commits (order is
+/// semantically irrelevant — the delta is set arithmetic).
+fn apply_delta(
+    env: &Environment,
+    schema: &Schema,
+    deletes: &[(RelationId, Vec<u8>)],
+    inserts: &[(RelationId, Vec<u8>)],
+) -> Result<()> {
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(schema);
+    for (rel, fact) in deletes {
+        delta.delete(&view, *rel, fact).expect("record delete");
+    }
+    for (rel, fact) in inserts {
+        delta.insert(&view, *rel, fact).expect("record insert");
+    }
+    drop(view);
+    super::commit(delta, env).map(|_| ())
+}
 
 /// Derives a delta's commit plan exactly as `commit` does: selection
 /// literals encoded against the committed dictionary plus the delta's
@@ -32,11 +105,6 @@ fn plan_for<'d>(delta: &'d WriteDelta<'_>, env: &Environment) -> CommitPlan<'d> 
 /// Claim(holder u64; Claim(holder) <= Target(id)) — the containment gives
 /// Target's key a dependent, so its guards feed the target-side check.
 fn schema() -> Schema {
-    let field = |name: &str, value_type: ValueType| FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -55,12 +123,7 @@ fn schema() -> Schema {
                 name: "Booking".into(),
                 fields: vec![
                     field("room", ValueType::U64),
-                    field(
-                        "during",
-                        ValueType::Interval {
-                            element: IntervalElement::U64,
-                        },
-                    ),
+                    field("during", interval()),
                     field("tag", ValueType::U64),
                 ],
             },
@@ -79,16 +142,8 @@ fn schema() -> Schema {
                 projection: Box::new([FieldId(0), FieldId(1)]),
             },
             StatementDescriptor::Containment {
-                source: Side {
-                    relation: CLAIM,
-                    projection: Box::new([FieldId(0)]),
-                    selection: Box::new([]),
-                },
-                target: Side {
-                    relation: TARGET,
-                    projection: Box::new([FieldId(0)]),
-                    selection: Box::new([]),
-                },
+                source: side(CLAIM, &[0]),
+                target: side(TARGET, &[0]),
             },
         ],
     }
@@ -109,49 +164,29 @@ const BOOKING_KEY: StatementId = StatementId(2);
 const CLAIM_TARGET: StatementId = StatementId(3);
 
 fn target_fact(schema: &Schema, id: u64) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(
-        &[ValueRef::U64(id)],
-        schema.relation(TARGET).layout(),
-        &mut b,
-    );
-    b
+    fact(schema, TARGET, &[ValueRef::U64(id)])
 }
 
 fn keyed_fact(schema: &Schema, x: u64, y: i64) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(
-        &[ValueRef::U64(x), ValueRef::I64(y)],
-        schema.relation(KEYED).layout(),
-        &mut b,
-    );
-    b
+    fact(schema, KEYED, &[ValueRef::U64(x), ValueRef::I64(y)])
 }
 
 fn claim_fact(schema: &Schema, holder: u64) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(
-        &[ValueRef::U64(holder)],
-        schema.relation(CLAIM).layout(),
-        &mut b,
-    );
-    b
+    fact(schema, CLAIM, &[ValueRef::U64(holder)])
 }
 
 /// A Booking fact: `during = [start, end)`; `tag` distinguishes facts
 /// sharing a key guard (an exact-duplicate key on distinct facts).
 fn booking_fact(schema: &Schema, room: u64, start: u64, end: u64, tag: u64) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(
+    fact(
+        schema,
+        BOOKING,
         &[
             ValueRef::U64(room),
             ValueRef::IntervalU64(start, end),
             ValueRef::U64(tag),
         ],
-        schema.relation(BOOKING).layout(),
-        &mut b,
-    );
-    b
+    )
 }
 
 fn all_data_keys(txn: &WriteTxn<'_>, env: &Environment) -> BTreeSet<Vec<u8>> {

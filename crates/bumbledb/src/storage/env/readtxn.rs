@@ -1,7 +1,7 @@
-use crate::error::{CorruptionError, Error, Result};
+use crate::error::Result;
 
-use super::read_meta::read_u64;
-use super::{ReadTxn, META_DICT_NEXT_ID, META_TX_ID};
+use super::read_meta::{read_dict_next_id, read_u64};
+use super::{ReadTxn, META_TX_ID};
 
 impl ReadTxn<'_> {
     /// The reader's generation: the storage tx id read from `_meta` *inside
@@ -21,15 +21,9 @@ impl ReadTxn<'_> {
     }
 
     /// The committed dictionary next-id as of this snapshot (reader: the
-    /// delta's lazy pending-intern counter). A stored `u64::MAX` — the
-    /// miss sentinel, never mintable — is corrupt data, typed.
+    /// delta's lazy pending-intern counter), sentinel-checked
+    /// ([`read_dict_next_id`]).
     pub(crate) fn dict_next_id(&self) -> Result<u64> {
-        let next = read_u64(&self.env.meta, &self.txn, META_DICT_NEXT_ID)?;
-        if next == u64::MAX {
-            return Err(Error::Corruption(CorruptionError::MalformedValue(
-                "dict next id",
-            )));
-        }
-        Ok(next)
+        read_dict_next_id(&self.env.meta, &self.txn)
     }
 }

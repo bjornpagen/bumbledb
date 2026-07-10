@@ -35,7 +35,7 @@ fn const_bytes(
             unreachable!("classification: a param-set binding never reaches the guard path")
         }
         Const::PendingIntern { tag, bytes } => {
-            let id = dict::lookup_tagged(txn, *tag, bytes)?.unwrap_or(dict::SENTINEL_ID);
+            let id = dict::lookup(txn, *tag, bytes)?.unwrap_or(dict::SENTINEL_ID);
             out.extend_from_slice(&id.to_be_bytes());
         }
     }
@@ -57,7 +57,7 @@ fn const_operand(txn: &ReadTxn<'_>, value: &Const, params: &[Const]) -> Result<F
             unreachable!("classification: a param-set binding never reaches the guard path")
         }
         Const::PendingIntern { tag, bytes } => Ok(FactOperand::Word(
-            dict::lookup_tagged(txn, *tag, bytes)?.unwrap_or(dict::SENTINEL_ID),
+            dict::lookup(txn, *tag, bytes)?.unwrap_or(dict::SENTINEL_ID),
         )),
     }
 }

@@ -274,7 +274,7 @@ fn resolve_selection_into(
             out.extend_from_slice(words);
         }
         Const::WordSet(_) => unreachable!("lowering emits ParamSet markers, never resolved sets"),
-        Const::PendingIntern { tag, bytes } => match dict::lookup_tagged(txn, *tag, bytes)? {
+        Const::PendingIntern { tag, bytes } => match dict::lookup(txn, *tag, bytes)? {
             Some(word) => out.push(word),
             None => return Ok(false),
         },
@@ -324,8 +324,7 @@ fn resolve_filter_into(
                     return Ok(true);
                 }
                 Const::WordSet(_) => unreachable!("templates carry ParamSet markers"),
-                Const::PendingIntern { tag, bytes } => match dict::lookup_tagged(txn, *tag, bytes)?
-                {
+                Const::PendingIntern { tag, bytes } => match dict::lookup(txn, *tag, bytes)? {
                     Some(id) => Const::Word(id),
                     None if *op == CmpOp::Eq && !negated => return Ok(false),
                     None => Const::Word(dict::SENTINEL_ID),

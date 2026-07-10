@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 
 use heed::types::Bytes;
-use heed::{AnyTls, Database, RoTxn};
+use heed::Database;
 
 use crate::error::{CorruptionError, Error, Result};
 use crate::schema::fingerprint::{fingerprint, SchemaFingerprint};
@@ -10,6 +10,7 @@ use crate::schema::Schema;
 
 use super::acquire_lock::acquire_lock;
 use super::open_env::open_env;
+use super::read_meta::read_u32;
 use super::{Environment, FORMAT_VERSION, META_FINGERPRINT, META_FORMAT_VERSION, NEXT_INSTANCE};
 
 impl Environment {
@@ -69,12 +70,4 @@ impl Environment {
             _lock: lock,
         })
     }
-}
-
-fn read_u32(meta: &Database<Bytes, Bytes>, rtxn: &RoTxn<'_, AnyTls>, key: &[u8]) -> Result<u32> {
-    let bytes: [u8; 4] = meta
-        .get(rtxn, key)?
-        .and_then(|b| b.try_into().ok())
-        .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
-    Ok(u32::from_le_bytes(bytes))
 }

@@ -10,19 +10,18 @@
 //! `==` pair, and a containment whose target projection permutes the
 //! target key's order.
 
-use crate::encoding::{encode_fact, encode_interval_u64, encode_u64, ValueRef};
+use crate::encoding::{encode_interval_u64, encode_u64, ValueRef};
 use crate::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
+    FieldId, RelationDescriptor, RelationId, Schema, SchemaDescriptor, StatementDescriptor,
+    StatementId, ValueType,
 };
-use crate::storage::commit::commit;
 use crate::storage::commit::plan::{CommitPlan, EdgeOp, FactOp, GuardOp};
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
 use crate::value::Value;
 
-use super::plan_for;
+use super::{apply_delta, fact, field, interval, plan_for, selected, side};
 
 const ACCOUNT: RelationId = RelationId(0);
 const TRANSFER: RelationId = RelationId(1);
@@ -58,24 +57,6 @@ const LINK_COMBO: StatementId = StatementId(11);
 /// key Combo(x, y): a non-identity key permutation.
 #[allow(clippy::too_many_lines)] // one fixture schema, a table
 fn schema() -> Schema {
-    let field = |name: &str, value_type: ValueType| FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    };
-    let interval = ValueType::Interval {
-        element: IntervalElement::U64,
-    };
-    let side = |relation: RelationId, projection: &[u16]| Side {
-        relation,
-        projection: projection.iter().map(|&f| FieldId(f)).collect(),
-        selection: Box::new([]),
-    };
-    let selected = |relation: RelationId, projection: &[u16], f: u16, literal: bool| Side {
-        relation,
-        projection: projection.iter().map(|&f| FieldId(f)).collect(),
-        selection: Box::new([(FieldId(f), Value::Bool(literal))]),
-    };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -98,13 +79,13 @@ fn schema() -> Schema {
                 name: "Room".into(),
                 fields: vec![
                     field("room", ValueType::U64),
-                    field("during", interval.clone()),
+                    field("during", interval()),
                     field("tag", ValueType::U64),
                 ],
             },
             RelationDescriptor {
                 name: "Stay".into(),
-                fields: vec![field("room", ValueType::U64), field("during", interval)],
+                fields: vec![field("room", ValueType::U64), field("during", interval())],
             },
             RelationDescriptor {
                 name: "Report".into(),
@@ -153,14 +134,14 @@ fn schema() -> Schema {
             },
             StatementDescriptor::Containment {
                 source: side(TRANSFER, &[0]),
-                target: selected(ACCOUNT, &[0], 1, true),
+                target: selected(ACCOUNT, &[0], &[(1, Value::Bool(true))]),
             },
             StatementDescriptor::Containment {
                 source: side(GRANT, &[0]),
                 target: side(ACCOUNT, &[0]),
             },
             StatementDescriptor::Containment {
-                source: selected(REPORT, &[0], 1, true),
+                source: selected(REPORT, &[0], &[(1, Value::Bool(true))]),
                 target: side(ACCOUNT, &[0]),
             },
             StatementDescriptor::Containment {
@@ -183,12 +164,6 @@ fn schema() -> Schema {
     }
     .validate()
     .expect("valid fixture")
-}
-
-fn fact(schema: &Schema, rel: RelationId, values: &[ValueRef]) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(values, schema.relation(rel).layout(), &mut b);
-    b
 }
 
 fn account(schema: &Schema, id: u64, active: bool, note: u64) -> Vec<u8> {
@@ -241,13 +216,7 @@ fn link(schema: &Schema, p: u64, q: u64) -> Vec<u8> {
 
 /// Commits `facts` as one base delta.
 fn commit_base(env: &Environment, schema: &Schema, facts: &[(RelationId, Vec<u8>)]) {
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (rel, fact) in facts {
-        delta.insert(&view, *rel, fact).expect("record insert");
-    }
-    drop(view);
-    commit(delta, env).expect("base commit");
+    apply_delta(env, schema, &[], facts).expect("base commit");
 }
 
 /// Records `deletes` then `inserts` into one delta and derives its plan,

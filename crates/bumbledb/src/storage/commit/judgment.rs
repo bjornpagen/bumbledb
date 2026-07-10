@@ -33,8 +33,8 @@ use crate::storage::env::{ReadTxn, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 use crate::value::Value;
 
-use super::applier::decode_row_id;
 use super::plan::CommitPlan;
+use super::{decode_row_id, fact_by_row};
 
 /// One side's selection σ, its literals pre-encoded for byte comparison.
 pub(crate) enum SelectionCheck {
@@ -86,7 +86,7 @@ impl Selections {
     /// the sweeper re-checks.
     pub(crate) fn encode_committed(schema: &Schema, view: &ReadTxn<'_>) -> Result<Self> {
         Self::encode_with(schema, &mut |tag, raw| {
-            crate::storage::dict::lookup_tagged(view, tag, raw)
+            crate::storage::dict::lookup(view, tag, raw)
         })
     }
 
@@ -177,11 +177,10 @@ pub(crate) fn satisfies(check: &SelectionCheck, layout: &FactLayout, fact_bytes:
 /// only the probe *results* are read here.
 pub(super) fn check_source(
     txn: &WriteTxn<'_>,
-    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
     schema: &Schema,
     plan: &CommitPlan<'_>,
 ) -> Result<()> {
-    let mut checker = Checker::new(txn.raw(), data, schema);
+    let mut checker = Checker::new(txn.raw(), txn.env().data(), schema);
     let mut probes = 0u64;
     let mut span = obs::span(obs::names::JUDGMENT_SOURCE, obs::Category::Commit);
     for op in &plan.inserts {
@@ -233,10 +232,10 @@ pub(super) fn check_source(
 #[allow(clippy::too_many_lines)] // the target-side judgment, one phase per block
 pub(super) fn check_target(
     txn: &WriteTxn<'_>,
-    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
     schema: &Schema,
     plan: &CommitPlan<'_>,
 ) -> Result<()> {
+    let data = txn.env().data();
     let mut span = obs::span(obs::names::JUDGMENT_TARGET, obs::Category::Commit);
     let mut scanned = 0u64;
     let mut key: KeyBuf = [0; MAX_KEY];
@@ -320,7 +319,7 @@ pub(super) fn check_target(
                     let (_, _, source_rel, source_row) = keys::parse_reverse_key(r_key).ok_or(
                         Error::Corruption(CorruptionError::MalformedValue("R key shape")),
                     )?;
-                    let fact = fact_by_row(data, txn, source_rel, source_row)?;
+                    let fact = fact_by_row(data, txn.raw(), source_rel, source_row)?;
                     return Err(Error::ContainmentViolation {
                         statement: sid,
                         direction: Direction::TargetRequired,
@@ -342,7 +341,7 @@ pub(super) fn check_target(
         let Resolved::Containment { target_key, .. } = &statement.resolved else {
             unreachable!("validated schema: Containment resolves as Containment")
         };
-        let fact_bytes = fact_by_row(data, txn, source_rel, source_row)?;
+        let fact_bytes = fact_by_row(data, txn.raw(), source_rel, source_row)?;
         let probe = Probe {
             statement: sid,
             target_relation: target.relation,
@@ -377,27 +376,7 @@ fn establishing_fact<'t>(
         .ok_or(Error::Corruption(CorruptionError::MalformedValue(
             "re-established U guard",
         )))?;
-    fact_by_row(data, txn, relation, decode_row_id(value)?)
-}
-
-/// Fetches a fact's canonical bytes by row — the surviving source (the
-/// violation payload or the coverage walk's subject) and the
-/// re-establishing target (the ψ check's subject). Borrowed from the
-/// transaction: the target side reads, never copies, until an error is
-/// built.
-fn fact_by_row<'t>(
-    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
-    txn: &'t WriteTxn<'_>,
-    relation: RelationId,
-    row_id: u64,
-) -> Result<&'t [u8]> {
-    let mut key: KeyBuf = [0; MAX_KEY];
-    let f_len = keys::fact_key(&mut key, relation, row_id);
-    data.get(txn.raw(), &key[..f_len])?
-        .ok_or(Error::Corruption(CorruptionError::MissingFact {
-            relation,
-            row_id,
-        }))
+    fact_by_row(data, txn.raw(), relation, decode_row_id(value)?)
 }
 
 /// One (source fact, containment statement) judgment pair: everything a
@@ -581,16 +560,7 @@ impl<'a> Checker<'a> {
             return Ok(());
         }
         let row_id = decode_row_id(value)?;
-        // Own scratch: `self.key` still holds the caller's guard key.
-        let mut key: KeyBuf = [0; MAX_KEY];
-        let f_len = keys::fact_key(&mut key, probe.target_relation, row_id);
-        let target_fact = self
-            .data
-            .get(self.txn, &key[..f_len])?
-            .ok_or(Error::Corruption(CorruptionError::MissingFact {
-                relation: probe.target_relation,
-                row_id,
-            }))?;
+        let target_fact = fact_by_row(self.data, self.txn, probe.target_relation, row_id)?;
         let layout = self.schema.relation(probe.target_relation).layout();
         if satisfies(probe.target_check, layout, target_fact) {
             Ok(())

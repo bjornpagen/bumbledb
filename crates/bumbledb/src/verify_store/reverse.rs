@@ -6,22 +6,18 @@
 //! fact that still satisfies φ (the commit path's own satisfaction helper)
 //! and re-derives the same permuted key bytes.
 
-use std::ops::Bound;
-
 use crate::error::Result;
 use crate::schema::{Resolved, StatementDescriptor};
 use crate::storage::commit::judgment;
 use crate::storage::keys;
 
-use super::{StoreFinding, Sweep};
+use super::{namespace, StoreFinding, Sweep};
 
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;
     let schema = s.schema;
-    let (lo, hi) = ([keys::NS_REVERSE], [keys::NS_REVERSE + 1]);
-    let bounds: (Bound<&[u8]>, Bound<&[u8]>) = (Bound::Included(&lo[..]), Bound::Excluded(&hi[..]));
     let mut derived = Vec::new();
-    for entry in s.data.range(txn.raw(), &bounds)? {
+    for entry in namespace(s.data, txn, keys::NS_REVERSE)? {
         let (key, _) = entry?;
         let Some((sid, key_bytes, source_rel, source_row)) = keys::parse_reverse_key(key) else {
             s.malformed(key, "R key shape");

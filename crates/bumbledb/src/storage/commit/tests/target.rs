@@ -11,19 +11,17 @@
 //! two σ-carrying containments whose targets can re-land a key guard
 //! with a changed ψ-relevant non-key field.
 
-use crate::encoding::{encode_fact, ValueRef};
+use crate::encoding::ValueRef;
 use crate::error::{Direction, Error, Result};
 use crate::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
-    SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType,
+    FieldId, RelationDescriptor, RelationId, Schema, SchemaDescriptor, StatementDescriptor,
+    StatementId, ValueType,
 };
-use crate::storage::commit::commit;
-use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use crate::testutil::TempDir;
 use crate::value::Value;
 
-use super::committed_data;
+use super::{apply_delta, committed_data, fact, field, interval, selected, side};
 
 const TARGET: RelationId = RelationId(0);
 const CLAIM_A: RelationId = RelationId(1);
@@ -59,26 +57,6 @@ const REST_COVER: StatementId = StatementId(12);
 /// `rested` (a byte-identical segment can re-land outside ψ).
 #[allow(clippy::too_many_lines)] // one fixture schema, a table
 fn schema() -> Schema {
-    let field = |name: &str, value_type: ValueType| FieldDescriptor {
-        name: name.into(),
-        value_type,
-        generation: Generation::None,
-    };
-    let interval = ValueType::Interval {
-        element: IntervalElement::U64,
-    };
-    let roster_interval = interval.clone();
-    let rest_interval = interval.clone();
-    let side = |relation: RelationId, projection: &[u16]| Side {
-        relation,
-        projection: projection.iter().map(|&f| FieldId(f)).collect(),
-        selection: Box::new([]),
-    };
-    let selected = |relation: RelationId, projection: &[u16], field: u16, literal: bool| Side {
-        relation,
-        projection: projection.iter().map(|&f| FieldId(f)).collect(),
-        selection: Box::new([(FieldId(field), Value::Bool(literal))]),
-    };
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -95,14 +73,11 @@ fn schema() -> Schema {
             },
             RelationDescriptor {
                 name: "Shift".into(),
-                fields: vec![
-                    field("worker", ValueType::U64),
-                    field("span", interval.clone()),
-                ],
+                fields: vec![field("worker", ValueType::U64), field("span", interval())],
             },
             RelationDescriptor {
                 name: "Session".into(),
-                fields: vec![field("worker", ValueType::U64), field("span", interval)],
+                fields: vec![field("worker", ValueType::U64), field("span", interval())],
             },
             RelationDescriptor {
                 name: "Parent".into(),
@@ -128,16 +103,13 @@ fn schema() -> Schema {
                 name: "Roster".into(),
                 fields: vec![
                     field("worker", ValueType::U64),
-                    field("span", roster_interval),
+                    field("span", interval()),
                     field("rested", ValueType::Bool),
                 ],
             },
             RelationDescriptor {
                 name: "Rest".into(),
-                fields: vec![
-                    field("worker", ValueType::U64),
-                    field("span", rest_interval),
-                ],
+                fields: vec![field("worker", ValueType::U64), field("span", interval())],
             },
         ],
         statements: vec![
@@ -187,11 +159,11 @@ fn schema() -> Schema {
             },
             StatementDescriptor::Containment {
                 source: side(TRANSFER, &[0]),
-                target: selected(ACCOUNT, &[0], 1, true),
+                target: selected(ACCOUNT, &[0], &[(1, Value::Bool(true))]),
             },
             StatementDescriptor::Containment {
                 source: side(REST, &[0, 1]),
-                target: selected(ROSTER, &[0, 1], 2, true),
+                target: selected(ROSTER, &[0, 1], &[(2, Value::Bool(true))]),
             },
         ],
     }
@@ -200,77 +172,43 @@ fn schema() -> Schema {
 }
 
 fn u64_fact(schema: &Schema, rel: RelationId, v: u64) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(&[ValueRef::U64(v)], schema.relation(rel).layout(), &mut b);
-    b
+    fact(schema, rel, &[ValueRef::U64(v)])
 }
 
 fn target_fact(schema: &Schema, id: u64, note: u64) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(
-        &[ValueRef::U64(id), ValueRef::U64(note)],
-        schema.relation(TARGET).layout(),
-        &mut b,
-    );
-    b
+    fact(schema, TARGET, &[ValueRef::U64(id), ValueRef::U64(note)])
 }
 
 fn span_fact(schema: &Schema, rel: RelationId, worker: u64, start: u64, end: u64) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(
+    fact(
+        schema,
+        rel,
         &[ValueRef::U64(worker), ValueRef::IntervalU64(start, end)],
-        schema.relation(rel).layout(),
-        &mut b,
-    );
-    b
+    )
 }
 
 fn account_fact(schema: &Schema, id: u64, active: bool, note: u64) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(
+    fact(
+        schema,
+        ACCOUNT,
         &[
             ValueRef::U64(id),
             ValueRef::Bool(active),
             ValueRef::U64(note),
         ],
-        schema.relation(ACCOUNT).layout(),
-        &mut b,
-    );
-    b
+    )
 }
 
 fn roster_fact(schema: &Schema, worker: u64, start: u64, end: u64, rested: bool) -> Vec<u8> {
-    let mut b = Vec::new();
-    encode_fact(
+    fact(
+        schema,
+        ROSTER,
         &[
             ValueRef::U64(worker),
             ValueRef::IntervalU64(start, end),
             ValueRef::Bool(rested),
         ],
-        schema.relation(ROSTER).layout(),
-        &mut b,
-    );
-    b
-}
-
-/// Records `deletes` then `inserts` in one delta and commits (order is
-/// semantically irrelevant — the delta is set arithmetic).
-fn apply_delta(
-    env: &Environment,
-    schema: &Schema,
-    deletes: &[(RelationId, Vec<u8>)],
-    inserts: &[(RelationId, Vec<u8>)],
-) -> Result<()> {
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (rel, fact) in deletes {
-        delta.delete(&view, *rel, fact).expect("record delete");
-    }
-    for (rel, fact) in inserts {
-        delta.insert(&view, *rel, fact).expect("record insert");
-    }
-    drop(view);
-    commit(delta, env).map(|_| ())
+    )
 }
 
 /// Commits `base`, then applies a second delta of `deletes` + `inserts`;

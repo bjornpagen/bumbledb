@@ -39,6 +39,7 @@
 //! counter — never a judgment about namespace coherence.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound;
 
 use crate::error::{Direction, Result};
 use crate::schema::{RelationId, Schema, StatementId};
@@ -241,6 +242,18 @@ struct Sweep<'a, 'env> {
     /// Every intern id referenced by a live fact's String/Bytes fields —
     /// the dictionary pass's liveness set.
     referenced_interns: BTreeSet<u64>,
+}
+
+/// One cursor over a whole key namespace `[tag, tag + 1)` — every pass's
+/// driving range (heed copies the bounds into the cursor).
+fn namespace<'txn>(
+    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+    txn: &'txn ReadTxn<'_>,
+    tag: u8,
+) -> Result<heed::RoRange<'txn, heed::types::Bytes, heed::types::Bytes>> {
+    let (lo, hi) = ([tag], [tag + 1]);
+    let bounds: (Bound<&[u8]>, Bound<&[u8]>) = (Bound::Included(&lo[..]), Bound::Excluded(&hi[..]));
+    Ok(data.range(txn.raw(), &bounds)?)
 }
 
 impl<'a> Sweep<'a, '_> {

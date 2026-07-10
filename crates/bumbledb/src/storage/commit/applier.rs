@@ -3,7 +3,7 @@ use crate::schema::{RelationId, StatementId};
 use crate::storage::keys::{self, KeyBuf, StatKind, MAX_KEY};
 
 use super::plan::FactOp;
-use super::Applier;
+use super::{decode_row_id, fact_by_row, Applier};
 
 impl Applier<'_> {
     /// Phase-1 step: removes one fact's F/M/U/R entries, every key byte
@@ -93,7 +93,7 @@ impl Applier<'_> {
             if let Some(value) = self.data.get(self.txn.raw(), &self.key[..u_len])? {
                 let incumbent = if guard.pointwise {
                     let incumbent_row = decode_row_id(value)?;
-                    Some(self.fetch_fact(rel, incumbent_row)?)
+                    Some(fact_by_row(self.data, self.txn.raw(), rel, incumbent_row)?.into())
                 } else {
                     None
                 };
@@ -187,28 +187,12 @@ impl Applier<'_> {
         };
         // Cold aborting path: name the incumbent by its fact bytes via
         // row_id → F get (errors carry facts, never row ids).
-        let incumbent = self.fetch_fact(rel, row)?;
+        let incumbent = fact_by_row(self.data, self.txn.raw(), rel, row)?;
         Err(Error::FunctionalityViolation {
             statement,
             fact: fact_bytes.into(),
-            incumbent: Some(incumbent),
+            incumbent: Some(incumbent.into()),
         })
-    }
-
-    /// Fetches a fact's canonical bytes by row id — the incumbent lookup
-    /// of an aborting violation (cold path; one sanctioned extra get).
-    fn fetch_fact(&self, rel: RelationId, row_id: u64) -> Result<Box<[u8]>> {
-        // Own scratch: `self.key` still holds the caller's guard key.
-        let mut key: KeyBuf = [0; MAX_KEY];
-        let f_len = keys::fact_key(&mut key, rel, row_id);
-        Ok(self
-            .data
-            .get(self.txn.raw(), &key[..f_len])?
-            .ok_or(Error::Corruption(CorruptionError::MissingFact {
-                relation: rel,
-                row_id,
-            }))?
-            .into())
     }
 
     /// Assigns the next row id for `rel`, lazily initializing from the
@@ -223,9 +207,7 @@ impl Applier<'_> {
                 let mut key: KeyBuf = [0; MAX_KEY];
                 let len = keys::stat_key(&mut key, rel, StatKind::RowIdHighWater);
                 let stored = match self.data.get(self.txn.raw(), &key[..len])? {
-                    Some(bytes) => u64::from_le_bytes(bytes.try_into().map_err(|_| {
-                        Error::Corruption(CorruptionError::MalformedValue("S row-id high water"))
-                    })?),
+                    Some(bytes) => crate::storage::stored_u64(bytes, "S row-id high water")?,
                     None => 0,
                 };
                 entry.insert(stored)
@@ -235,10 +217,4 @@ impl Applier<'_> {
         *next += 1;
         Ok(row_id)
     }
-}
-
-pub(super) fn decode_row_id(bytes: &[u8]) -> Result<u64> {
-    Ok(u64::from_le_bytes(bytes.try_into().map_err(|_| {
-        Error::Corruption(CorruptionError::MalformedValue("M row id"))
-    })?))
 }

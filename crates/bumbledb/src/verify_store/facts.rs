@@ -8,25 +8,21 @@
 //! no second scan) and collects the referenced intern ids, checking each
 //! against the dictionary next-id counter.
 
-use std::ops::Bound;
-
 use crate::encoding::{fact_hash, field_bytes, TypeDesc};
 use crate::error::{Direction, Error, Result};
 use crate::schema::{RelationId, Resolved, StatementDescriptor};
 use crate::storage::commit::judgment;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 
-use super::{StoreFinding, Sweep};
+use super::{namespace, StoreFinding, Sweep};
 
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;
     let schema = s.schema;
-    let (lo, hi) = ([keys::NS_FACT], [keys::NS_FACT + 1]);
-    let bounds: (Bound<&[u8]>, Bound<&[u8]>) = (Bound::Included(&lo[..]), Bound::Excluded(&hi[..]));
     let mut scratch: KeyBuf = [0; MAX_KEY];
     let mut guard = Vec::new();
     let mut checker = judgment::Checker::new(txn.raw(), s.data, schema);
-    for entry in s.data.range(txn.raw(), &bounds)? {
+    for entry in namespace(s.data, txn, keys::NS_FACT)? {
         let (key, fact) = entry?;
         if key.len() != keys::FACT_KEY_LEN {
             s.malformed(key, "F key length");

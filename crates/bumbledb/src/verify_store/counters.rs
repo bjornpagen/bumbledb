@@ -6,23 +6,20 @@
 //! convict the absent entry.
 
 use std::collections::BTreeSet;
-use std::ops::Bound;
 
 use crate::error::Result;
 use crate::schema::RelationId;
 use crate::storage::keys::{self, StatKind};
 
-use super::{StoreFinding, Sweep};
+use super::{namespace, StoreFinding, Sweep};
 
 const ROW_COUNT: u8 = StatKind::RowCount as u8;
 const HIGH_WATER: u8 = StatKind::RowIdHighWater as u8;
 
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;
-    let (lo, hi) = ([keys::NS_STAT], [keys::NS_STAT + 1]);
-    let bounds: (Bound<&[u8]>, Bound<&[u8]>) = (Bound::Included(&lo[..]), Bound::Excluded(&hi[..]));
     let mut seen: BTreeSet<(RelationId, u8)> = BTreeSet::new();
-    for entry in s.data.range(txn.raw(), &bounds)? {
+    for entry in namespace(s.data, txn, keys::NS_STAT)? {
         let (key, value) = entry?;
         if key.len() != keys::STAT_KEY_LEN {
             s.malformed(key, "S key length");

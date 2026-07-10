@@ -3,7 +3,7 @@ use crate::schema::{FieldId, Generation, RelationId};
 use crate::storage::env::ReadTxn;
 use crate::storage::keys;
 
-use super::WriteDelta;
+use super::{SerialMark, WriteDelta};
 
 impl WriteDelta<'_> {
     /// Mints the next serial value for a `Serial`-generation field: reads
@@ -24,34 +24,34 @@ impl WriteDelta<'_> {
             Generation::Serial,
             "alloc on a non-serial field is a programmer error"
         );
-        let next = match self.serial_next.get(&(rel, field)).copied() {
-            Some(next) => next,
-            None => self.serial_base_of(view, rel, field)?,
-        };
+        let mark = self.serial_mark(view, rel, field)?;
+        let next = mark.next;
         if next == u64::MAX {
             return Err(Error::SerialExhausted {
                 relation: rel,
                 field,
             });
         }
-        self.serial_next.insert((rel, field), next + 1);
+        mark.next = next + 1;
         Ok(next)
     }
 
-    /// The committed `Q` value for a sequence, read once per transaction
-    /// and remembered as the dirtiness baseline.
-    pub(super) fn serial_base_of(
+    /// The sequence's transaction-local mark, lazily initialized whole
+    /// from the committed `Q` value (read once per transaction; the base
+    /// is the dirtiness baseline).
+    pub(super) fn serial_mark(
         &mut self,
         view: &ReadTxn<'_>,
         rel: RelationId,
         field: FieldId,
-    ) -> Result<u64> {
-        if let Some(base) = self.serial_base.get(&(rel, field)) {
-            return Ok(*base);
+    ) -> Result<&mut SerialMark> {
+        match self.serials.entry((rel, field)) {
+            std::collections::btree_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let base = read_serial_next(view, rel, field)?;
+                Ok(entry.insert(SerialMark { base, next: base }))
+            }
         }
-        let base = read_serial_next(view, rel, field)?;
-        self.serial_base.insert((rel, field), base);
-        Ok(base)
     }
 }
 
@@ -62,11 +62,7 @@ fn read_serial_next(view: &ReadTxn<'_>, rel: RelationId, field: FieldId) -> Resu
     let len = keys::serial_key(&mut buf, rel, field);
     debug_assert_eq!(len, buf.len());
     match view.env().data().get(view.raw(), &buf[..len])? {
-        Some(bytes) => Ok(u64::from_le_bytes(bytes.try_into().map_err(|_| {
-            Error::Corruption(crate::error::CorruptionError::MalformedValue(
-                "Q serial next",
-            ))
-        })?)),
+        Some(bytes) => crate::storage::stored_u64(bytes, "Q serial next"),
         None => Ok(0),
     }
 }

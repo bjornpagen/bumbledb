@@ -2,20 +2,16 @@
 //! row id must resolve to a live `F` fact whose blake3 matches the key —
 //! the reverse direction of the `F` pass's membership check.
 
-use std::ops::Bound;
-
 use crate::encoding::fact_hash;
 use crate::error::Result;
 use crate::schema::RelationId;
 use crate::storage::keys;
 
-use super::{StoreFinding, Sweep};
+use super::{namespace, StoreFinding, Sweep};
 
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;
-    let (lo, hi) = ([keys::NS_MEMBERSHIP], [keys::NS_MEMBERSHIP + 1]);
-    let bounds: (Bound<&[u8]>, Bound<&[u8]>) = (Bound::Included(&lo[..]), Bound::Excluded(&hi[..]));
-    for entry in s.data.range(txn.raw(), &bounds)? {
+    for entry in namespace(s.data, txn, keys::NS_MEMBERSHIP)? {
         let (key, value) = entry?;
         if key.len() != keys::MEMBERSHIP_KEY_LEN {
             s.malformed(key, "M key length");

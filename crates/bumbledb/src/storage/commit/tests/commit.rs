@@ -11,13 +11,7 @@ use crate::testutil::TempDir;
 // ---------- 50-storage § Write path: full commit ----------
 
 fn commit_facts(env: &Environment, schema: &Schema, facts: &[(RelationId, Vec<u8>)]) {
-    let view = env.read_txn().expect("txn");
-    let mut delta = WriteDelta::new(schema);
-    for (rel, fact) in facts {
-        delta.insert(&view, *rel, fact).expect("insert");
-    }
-    drop(view);
-    commit(delta, env).expect("commit");
+    apply_delta(env, schema, &[], facts).expect("commit");
 }
 
 #[test]

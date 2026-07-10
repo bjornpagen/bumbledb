@@ -72,15 +72,15 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     // write transaction (LMDB write txns read their own writes) — the
     // containment source side over the plan's probe list, then the
     // target side over the plan's disestablished-guard check sets.
-    judgment::check_source(&txn, env.data(), schema, &plan)?;
-    judgment::check_target(&txn, env.data(), schema, &plan)?;
+    judgment::check_source(&txn, schema, &plan)?;
+    judgment::check_target(&txn, schema, &plan)?;
 
     // Phase 4: counters — row counts, row-id high-waters, serial sequences,
     // pending dictionary entries and the dictionary next-id.
     {
         let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
         let interns = delta.pending_interns().count() as u64;
-        flush_counters(&mut txn, env, &delta, &row_id_next)?;
+        flush_counters(&mut txn, &delta, &row_id_next)?;
         span.set_args(interns, 0);
     }
 
@@ -133,24 +133,20 @@ fn flush_escaped_serials(mut txn: WriteTxn<'_>, delta: &WriteDelta<'_>) -> Resul
 /// dictionary next-id.
 fn flush_counters(
     txn: &mut WriteTxn<'_>,
-    env: &Environment,
     delta: &WriteDelta<'_>,
     row_id_next: &BTreeMap<RelationId, u64>,
 ) -> Result<()> {
-    let data = env.data();
+    let data = txn.env().data();
     let mut key: KeyBuf = [0; MAX_KEY];
     for (rel, count_delta) in delta.row_count_deltas() {
         if count_delta == 0 {
             continue;
         }
         let len = keys::stat_key(&mut key, rel, StatKind::RowCount);
-        let current =
-            match data.get(txn.raw(), &key[..len])? {
-                Some(bytes) => u64::from_le_bytes(bytes.try_into().map_err(|_| {
-                    Error::Corruption(CorruptionError::MalformedValue("S row count"))
-                })?),
-                None => 0,
-            };
+        let current = match data.get(txn.raw(), &key[..len])? {
+            Some(bytes) => crate::storage::stored_u64(bytes, "S row count")?,
+            None => 0,
+        };
         let updated = current
             .checked_add_signed(count_delta)
             .ok_or(Error::Corruption(CorruptionError::MalformedValue(

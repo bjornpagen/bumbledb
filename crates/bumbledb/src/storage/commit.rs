@@ -16,9 +16,13 @@
 
 use std::collections::BTreeMap;
 
+use heed::types::Bytes;
+use heed::{AnyTls, Database, RoTxn};
+
+use crate::error::{CorruptionError, Error, Result};
 use crate::schema::RelationId;
 use crate::storage::env::WriteTxn;
-use crate::storage::keys::KeyBuf;
+use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 
 mod applier;
 mod apply;
@@ -63,4 +67,30 @@ struct Applier<'env> {
     data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
     row_id_next: BTreeMap<RelationId, u64>,
     key: KeyBuf,
+}
+
+/// Decodes one stored `M`/`U` row-id value (applier and judgment share
+/// the one decoder).
+fn decode_row_id(bytes: &[u8]) -> Result<u64> {
+    crate::storage::stored_u64(bytes, "M row id")
+}
+
+/// Fetches a fact's canonical bytes by row id, borrowed from the
+/// transaction — the one `F` get behind the applier's violation payloads
+/// and the judgment's probe subjects. Every caller resolved the row id
+/// inside this same transaction's view, so a miss is corruption, never a
+/// race. Own scratch: callers' key buffers stay untouched.
+fn fact_by_row<'t>(
+    data: Database<Bytes, Bytes>,
+    txn: &'t RoTxn<'_, AnyTls>,
+    relation: RelationId,
+    row_id: u64,
+) -> Result<&'t [u8]> {
+    let mut key: KeyBuf = [0; MAX_KEY];
+    let f_len = keys::fact_key(&mut key, relation, row_id);
+    data.get(txn, &key[..f_len])?
+        .ok_or(Error::Corruption(CorruptionError::MissingFact {
+            relation,
+            row_id,
+        }))
 }

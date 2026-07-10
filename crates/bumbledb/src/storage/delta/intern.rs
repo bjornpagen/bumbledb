@@ -67,7 +67,7 @@ impl WriteDelta<'_> {
         if let Some(id) = self.pending_interns[usize::from(tag)].get(raw) {
             return Ok(Some(*id));
         }
-        crate::storage::dict::lookup_tagged(view, tag, raw)
+        crate::storage::dict::lookup(view, tag, raw)
     }
 
     fn intern(&mut self, view: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<u64> {

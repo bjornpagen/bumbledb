@@ -40,9 +40,9 @@ impl WriteDelta<'_> {
 
     /// Serial next-values to flush to `Q` (reader: the 40-storage doc phase 4).
     pub(crate) fn serial_marks(&self) -> impl Iterator<Item = (RelationId, FieldId, u64)> + '_ {
-        self.serial_next
+        self.serials
             .iter()
-            .map(|((rel, field), next)| (*rel, *field, *next))
+            .map(|((rel, field), mark)| (*rel, *field, mark.next))
     }
 
     /// The serial marks that advanced past their committed base — the
@@ -52,12 +52,8 @@ impl WriteDelta<'_> {
     pub(crate) fn dirty_serial_marks(
         &self,
     ) -> impl Iterator<Item = (RelationId, FieldId, u64)> + '_ {
-        self.serial_next.iter().filter_map(|((rel, field), next)| {
-            let base = self
-                .serial_base
-                .get(&(*rel, *field))
-                .expect("every serial_next entry began with a base read");
-            (next > base).then_some((*rel, *field, *next))
+        self.serials.iter().filter_map(|((rel, field), mark)| {
+            (mark.next > mark.base).then_some((*rel, *field, mark.next))
         })
     }
 

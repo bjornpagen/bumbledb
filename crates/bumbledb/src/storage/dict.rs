@@ -120,13 +120,11 @@ pub fn lookup_bytes(txn: &ReadTxn<'_>, value: &[u8]) -> Result<Option<u64>> {
     lookup(txn, TAG_BYTES, value)
 }
 
-/// Read-only tagged lookup (reader: the delta's pending-intern path, which
-/// must consult the committed dictionary before minting a provisional id).
-pub(crate) fn lookup_tagged(txn: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<Option<u64>> {
-    lookup(txn, tag, raw)
-}
-
-fn lookup(txn: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<Option<u64>> {
+/// Read-only tagged lookup (readers: the string/bytes fronts above; the
+/// delta's pending-intern path, which must consult the committed
+/// dictionary before minting a provisional id; the sweeper's
+/// committed-only selection encoding).
+pub(crate) fn lookup(txn: &ReadTxn<'_>, tag: u8, raw: &[u8]) -> Result<Option<u64>> {
     let dict = txn.env().dict();
     match dict.get(txn.raw(), &forward_key(tag, raw))? {
         None => Ok(None),
