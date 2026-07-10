@@ -5,7 +5,7 @@ use crate::ir::{AggOp, CmpOp, Comparison, MaskTerm, Value};
 
 #[test]
 fn accepts_the_containment_walk_join_with_predicates() {
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             atom(POSTING, vec![(1, var(0)), (2, var(1)), (3, var(2))]),
@@ -17,16 +17,16 @@ fn accepts_the_containment_walk_join_with_predicates() {
             lhs: var(2),
             rhs: Term::Literal(Value::I64(100)),
         }],
-    };
+    });
     let witness = validate(&schema(), &query).expect("valid");
-    assert_eq!(witness.var_type(VarId(0)), &ValueType::U64);
-    assert_eq!(witness.var_type(VarId(2)), &ValueType::I64);
-    assert_eq!(witness.group_key().len(), 1);
+    assert_eq!(witness.rule(0).var_type(VarId(0)), &ValueType::U64);
+    assert_eq!(witness.rule(0).var_type(VarId(2)), &ValueType::I64);
+    assert_eq!(witness.rule(0).group_key().len(), 1);
 }
 
 #[test]
 fn accepts_params_anchored_by_fields_and_comparisons() {
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(
             POSTING,
@@ -38,7 +38,7 @@ fn accepts_params_anchored_by_fields_and_comparisons() {
             lhs: var(1),
             rhs: Term::Param(ParamId(1)),
         }],
-    };
+    });
     let witness = validate(&schema(), &query).expect("valid");
     let params: Vec<_> = witness.param_types().collect();
     assert_eq!(params[0], (ParamId(0), &ValueType::U64));
@@ -52,7 +52,7 @@ fn param_anchoring_is_total_by_construction() {
     // variable side (a variable-free comparison is already
     // `ConstantComparison`). This pins the anchored case; the roster
     // item is discharged by representation, not by a check.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
         negated: vec![],
@@ -61,7 +61,7 @@ fn param_anchoring_is_total_by_construction() {
             lhs: var(0),
             rhs: Term::Param(ParamId(0)),
         }],
-    };
+    });
     let witness = validate(&schema(), &query).expect("valid");
     assert_eq!(
         witness.param_types().next(),
@@ -86,7 +86,7 @@ fn accepts_all_aggregate_finds() {
         vec![atom(POSTING, vec![(2, var(0))])],
     );
     let witness = validate(&schema(), &query).expect("valid");
-    assert!(witness.group_key().is_empty());
+    assert!(witness.rule(0).group_key().is_empty());
 }
 
 #[test]
@@ -126,7 +126,7 @@ fn accepts_membership_bound_variable_with_a_scalar_binding_elsewhere() {
         ],
     );
     let witness = validate(&schema(), &query).expect("valid");
-    assert_eq!(witness.var_type(VarId(1)), &ValueType::U64);
+    assert_eq!(witness.rule(0).var_type(VarId(1)), &ValueType::U64);
 }
 
 #[test]
@@ -143,7 +143,7 @@ fn accepts_a_variable_joined_across_two_interval_fields() {
     );
     let witness = validate(&schema(), &query).expect("valid");
     assert_eq!(
-        witness.var_type(VarId(1)),
+        witness.rule(0).var_type(VarId(1)),
         &ValueType::Interval {
             element: IntervalElement::U64
         }
@@ -224,7 +224,7 @@ fn accepts_allen_between_interval_variables_from_different_atoms() {
         MaskTerm::Param(ParamId(0)),
     ];
     for mask in masks {
-        let query = Query {
+        let query = Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![
                 atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))]),
@@ -236,13 +236,13 @@ fn accepts_allen_between_interval_variables_from_different_atoms() {
                 lhs: var(1),
                 rhs: var(3),
             }],
-        };
+        });
         let witness = validate(&schema(), &query).expect("valid");
         let interval = ValueType::Interval {
             element: IntervalElement::U64,
         };
-        assert_eq!(witness.var_type(VarId(1)), &interval);
-        assert_eq!(witness.var_type(VarId(3)), &interval);
+        assert_eq!(witness.rule(0).var_type(VarId(1)), &interval);
+        assert_eq!(witness.rule(0).var_type(VarId(3)), &interval);
         if let MaskTerm::Param(param) = mask {
             assert!(witness.mask_params().contains(&param));
         }
@@ -253,12 +253,12 @@ fn accepts_allen_between_interval_variables_from_different_atoms() {
 
 #[test]
 fn accepts_a_zero_binding_negated_atom_as_an_emptiness_gate() {
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
         negated: vec![atom(POSTING, vec![])],
         predicates: vec![],
-    };
+    });
     validate(&schema(), &query).expect("valid");
 }
 
@@ -267,7 +267,7 @@ fn accepts_literals_params_and_sets_inside_negated_atoms() {
     // ¬Posting(account = a, span = ?0, memo ∈ ?set1): the negated atom's
     // interval-field param has only bivalent anchors, so it resolves to
     // the interval type (value equality); the set anchors at Bytes.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0))])],
         negated: vec![atom(
@@ -279,7 +279,7 @@ fn accepts_literals_params_and_sets_inside_negated_atoms() {
             ],
         )],
         predicates: vec![],
-    };
+    });
     let witness = validate(&schema(), &query).expect("valid");
     let params: Vec<_> = witness.param_types().collect();
     assert_eq!(
@@ -300,7 +300,7 @@ fn accepts_literals_params_and_sets_inside_negated_atoms() {
 fn accepts_param_sets_in_bindings_and_under_eq() {
     // Account(holder ∈ ?set0, id = x), Eq(x, ?set1): both legal set
     // positions; each set's type is its element type.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(
             ACCOUNT,
@@ -312,7 +312,7 @@ fn accepts_param_sets_in_bindings_and_under_eq() {
             lhs: var(0),
             rhs: Term::ParamSet(ParamId(1)),
         }],
-    };
+    });
     let witness = validate(&schema(), &query).expect("valid");
     let params: Vec<_> = witness.param_types().collect();
     assert_eq!(params[0], (ParamId(0), &ValueType::U64));

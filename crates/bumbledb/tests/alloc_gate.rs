@@ -20,7 +20,9 @@
 #![cfg(feature = "alloc-counter")]
 
 use bumbledb::alloc_counter;
-use bumbledb::ir::{AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Term, Value, VarId};
+use bumbledb::ir::{
+    AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Rule, Term, Value, VarId,
+};
 use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
     StatementDescriptor, ValueType,
@@ -155,7 +157,7 @@ fn populate(db: &Db<SchemaDescriptor>) {
 /// Q(holder, amount) :- Posting(account = a, amount), Account(id = a,
 /// holder), amount >= ?0 — the join shape.
 fn join_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -179,12 +181,12 @@ fn join_query() -> Query {
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(ParamId(0)),
         }],
-    }
+    })
 }
 
 /// Q(holder, Sum(amount)) :- ... — the aggregate shape.
 fn aggregate_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -219,7 +221,7 @@ fn aggregate_query() -> Query {
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(ParamId(0)),
         }],
-    }
+    })
 }
 
 /// Q(holder, memo) :- Posting(account = a, memo), Account(id = a, holder),
@@ -227,7 +229,7 @@ fn aggregate_query() -> Query {
 /// literal under Ne, and a projection narrower than the join (the D2
 /// SkipSuffix path live on every duplicate (holder, memo) pair).
 fn string_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(3))],
         atoms: vec![
             Atom {
@@ -251,12 +253,12 @@ fn string_query() -> Query {
             lhs: Term::Var(VarId(3)),
             rhs: Term::Literal(Value::String(Box::from(&b"memo-0"[..]))),
         }],
-    }
+    })
 }
 
 /// Q(holder, Min(amount), Max(amount)) :- ... — the Min/Max aggregate shape.
 fn minmax_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -287,7 +289,7 @@ fn minmax_query() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// Q(amount) :- Posting(memo = ?0, amount) — the selection shape
@@ -295,7 +297,7 @@ fn minmax_query() -> Query {
 /// COLT's selection level; after the rotation's first cycle forces every
 /// probed subtrie, further rotation must not touch the allocator.
 fn selection_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -306,14 +308,14 @@ fn selection_query() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// Q(memo, amount) :- Posting(account = ?0, memo, amount) — string
 /// results across rotating params (docs/architecture/40-execution.md): the finalize memo and
 /// the buffer byte heap must both sit at their high-water after warmup.
 fn string_rotation_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -325,7 +327,7 @@ fn string_rotation_query() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// Q(memo, amount) :- Posting(account = a, memo, amount),
@@ -336,7 +338,7 @@ fn string_rotation_query() -> Query {
 /// last, so intermediates — pending buffers, sink dedup, result staging —
 /// escalate with the parameter.
 fn escalation_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -357,12 +359,12 @@ fn escalation_query() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// Q(amount) :- Posting(id = ?0, amount) — the guard-probe shape.
 fn guard_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -373,7 +375,7 @@ fn guard_query() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// The gate protocol for one prepared query and its fixed param set.

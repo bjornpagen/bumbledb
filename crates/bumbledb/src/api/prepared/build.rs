@@ -1,14 +1,15 @@
 use super::{
     AggregateSink, Bindings, Colt, EitherSink, ExecPlan, Executor, FindSpec, OccurrencePin,
-    PreparedQuery, ProjectionSink, ResolveMemo, Schema, ValueType, ViewMemo, PARKED_SLOTS,
+    PreparedQuery, PreparedRule, ProjectionSink, ResolveMemo, Schema, ValueType, ViewMemo,
+    PARKED_SLOTS,
 };
 
 use crate::error::Result;
 use crate::exec::dispatch::classify;
 use crate::image::cache::ImageCache;
 use crate::image::view::View;
-use crate::ir::normalize::normalize;
-use crate::ir::validate::validate;
+use crate::ir::normalize::{normalize, NormalizedQuery};
+use crate::ir::validate::{validate, RuleWitness};
 use crate::ir::{AggOp, FindTerm, Query};
 use crate::obs;
 use crate::plan::fj::{binary2fj, factor};
@@ -17,6 +18,10 @@ use crate::storage::env::ReadTxn;
 use crate::storage::read;
 
 /// Prepares a query: the one-time pipeline, allocation-sanctioned.
+/// Validation and normalization see the whole program; everything after —
+/// statistics, the DP, lowering, plan validation — runs **per rule**, and
+/// the prepared query carries one [`PreparedRule`] per rule under one
+/// head-owned sink configuration.
 ///
 /// # Errors
 ///
@@ -27,8 +32,6 @@ use crate::storage::read;
 ///
 /// Only on programmer-invariant violations (`binary2fj` + `factor`
 /// construct valid plans by construction).
-#[allow(clippy::too_many_lines)] // the pipeline's stages in order; each
-                                 // is one span-wrapped step
 pub(crate) fn prepare<'s, S>(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
@@ -40,16 +43,113 @@ pub(crate) fn prepare<'s, S>(
         let _s = obs::span(obs::names::VALIDATE, obs::Category::Prepare);
         validate(schema, query)?
     };
-    let mut normalized = {
+    let normalized = {
         let _s = obs::span(obs::names::NORMALIZE, obs::Category::Prepare);
         normalize(schema, &witness)
     };
+
+    let mut rules = Vec::with_capacity(normalized.len());
+    let mut column_types = Vec::new();
+    for (rule_idx, normalized_rule) in normalized.into_iter().enumerate() {
+        let rule = witness.rule(rule_idx);
+        let (prepared, types) = prepare_rule(txn, cache, schema, &rule, normalized_rule)?;
+        if rule_idx == 0 {
+            // The head's result-type row — validation pinned the
+            // positional alignment, so every rule computes this same row.
+            column_types = types;
+        }
+        rules.push(prepared);
+    }
+
+    // Dense param typing for bind-time checks (validation rejected gaps
+    // — jointly across value and mask params, across all rules — so the
+    // id-ordered merge is positional). A set param records its element
+    // type plus the set-ness bit — bind expects a slice for it. The
+    // point-ness bit marks element-typed params at interval positions:
+    // bind rejects their domain ceiling (the point-domain law). Mask
+    // params (`Allen` mask positions) are absent from the witness's
+    // value typing and fill their slots with the mask shape.
+    let value_types: std::collections::BTreeMap<crate::ir::ParamId, &ValueType> =
+        witness.param_types().collect();
+    let param_count = value_types.len() + witness.mask_params().len();
+    let mut param_types = Vec::with_capacity(param_count);
+    let mut param_is_set = Vec::with_capacity(param_count);
+    let mut param_is_point = Vec::with_capacity(param_count);
+    for idx in 0..param_count {
+        let id = crate::ir::ParamId(u16::try_from(idx).expect("param ids fit u16"));
+        param_types.push(value_types.get(&id).map_or_else(
+            || {
+                debug_assert!(witness.mask_params().contains(&id), "dense param ids");
+                super::ParamShape::AllenMask
+            },
+            |ty| super::ParamShape::Value((*ty).clone()),
+        ));
+        param_is_set.push(witness.set_params().contains(&id));
+        param_is_point.push(witness.point_params().contains(&id));
+    }
+
+    // The one sink configuration — head-owned shape (projection vs
+    // aggregate, arity, distinctness), sized against rule 0's plan. Its
+    // find-spec slot table is rule 0's layout; the per-rule re-aim rides
+    // with ALG 07's union loop (execution is single-rule-gated until
+    // then).
+    let first = &rules[0];
+    let (output_hint, slot_count) = match &first.plan {
+        ExecPlan::FreeJoin(plan) => (
+            // Sink presizing: the last node's planner estimate bounds
+            // the binding stream the sink consumes.
+            usize::try_from(plan.estimates().last().copied().unwrap_or(0).min(1 << 21))
+                .expect("clamped"),
+            plan.slot_count(),
+        ),
+        ExecPlan::GuardProbe(guard) => (1, guard.slot_count()),
+    };
+    let sink = make_sink(
+        &first.finds,
+        slot_count,
+        first.plan.distinct_bindings(),
+        output_hint,
+    );
+
+    let all_words = column_types
+        .iter()
+        .all(|ty| !matches!(ty, ValueType::String | ValueType::Bytes));
+    Ok(PreparedQuery {
+        schema,
+        env_instance: txn.env_instance(),
+        rules,
+        column_types,
+        param_types,
+        param_is_set,
+        param_is_point,
+        resolved_params: Vec::new(),
+        missed_params: Vec::new(),
+        sink,
+        row_scratch: Vec::new(),
+        all_words,
+        resolve_memo: ResolveMemo::new(),
+        guard_key: Vec::new(),
+        marker: std::marker::PhantomData,
+    })
+}
+
+/// The per-rule pipeline tail: chase → classify → statistics → DP →
+/// lowering → plan validation — the conjunctive query's pipeline, with
+/// zero changes, over one rule. Returns the rule's prepared artifact and
+/// its result-type row (the head's; identical across rules).
+fn prepare_rule(
+    txn: &ReadTxn<'_>,
+    cache: &ImageCache,
+    schema: &Schema,
+    rule: &RuleWitness<'_>,
+    mut normalized: NormalizedQuery,
+) -> Result<(PreparedRule, Vec<ValueType>)> {
     // The chase (plan/chase.rs): containment-implied occurrence
     // elimination, after normalization and before statistics and the DP
     // (docs/architecture/40-execution.md planner placement). Eliminated
     // occurrences keep their ids and are skipped by every downstream
     // path through the one participates-in-planning predicate.
-    crate::plan::chase::chase(&mut normalized, schema, &query.finds);
+    crate::plan::chase::chase(&mut normalized, schema, &rule.rule().finds);
 
     // Classification first: a guard probe needs no statistics or planning.
     let classified = {
@@ -100,8 +200,8 @@ pub(crate) fn prepare<'s, S>(
         factor(&mut fj);
         // Group key for projections; every variable for aggregates —
         // skip-illegality under a fold is encoded in the bits themselves
-        // (`ValidatedQuery::sink_vars`).
-        let sink_vars = witness.sink_vars();
+        // (`RuleWitness::sink_vars`).
+        let sink_vars = rule.sink_vars();
         let validated = crate::plan::fj::validate(
             &fj,
             &normalized,
@@ -114,34 +214,7 @@ pub(crate) fn prepare<'s, S>(
         ExecPlan::FreeJoin(validated)
     };
 
-    let finds = find_specs(query, &witness, &exec_plan);
-
-    // Dense param typing for bind-time checks (validation rejected gaps
-    // — jointly across value and mask params — so the id-ordered merge
-    // is positional). A set param records its element type plus the
-    // set-ness bit — bind expects a slice for it. The point-ness bit
-    // marks element-typed params at interval positions: bind rejects
-    // their domain ceiling (the point-domain law). Mask params (`Allen`
-    // mask positions) are absent from the witness's value typing and
-    // fill their slots with the mask shape.
-    let value_types: std::collections::BTreeMap<crate::ir::ParamId, &ValueType> =
-        witness.param_types().collect();
-    let param_count = value_types.len() + witness.mask_params().len();
-    let mut param_types = Vec::with_capacity(param_count);
-    let mut param_is_set = Vec::with_capacity(param_count);
-    let mut param_is_point = Vec::with_capacity(param_count);
-    for idx in 0..param_count {
-        let id = crate::ir::ParamId(u16::try_from(idx).expect("param ids fit u16"));
-        param_types.push(value_types.get(&id).map_or_else(
-            || {
-                debug_assert!(witness.mask_params().contains(&id), "dense param ids");
-                super::ParamShape::AllenMask
-            },
-            |ty| super::ParamShape::Value((*ty).clone()),
-        ));
-        param_is_set.push(witness.set_params().contains(&id));
-        param_is_point.push(witness.point_params().contains(&id));
-    }
+    let finds = find_specs(rule, &exec_plan);
 
     // Binding slots are WORDS: an interval variable holds two (the
     // SlotWidth layout) — `slot_count`, never the variable count.
@@ -161,50 +234,22 @@ pub(crate) fn prepare<'s, S>(
         let _s = obs::span(obs::names::BUILD_COLTS, obs::Category::Prepare);
         build_view_memo(&exec_plan)
     };
-    // Sink presizing: the last node's planner
-    // estimate bounds the binding stream the sink consumes.
-    let output_hint = match &exec_plan {
-        ExecPlan::FreeJoin(plan) => {
-            usize::try_from(plan.estimates().last().copied().unwrap_or(0).min(1 << 21))
-                .expect("clamped")
-        }
-        ExecPlan::GuardProbe(_) => 1,
-    };
-    let sink = make_sink(
-        &finds,
-        slot_count,
-        exec_plan.distinct_bindings(),
-        output_hint,
-    );
-
-    let all_words = finds
-        .iter()
-        .all(|(_, ty)| !matches!(ty, ValueType::String | ValueType::Bytes));
     let guard_finds = guard_find_table(&exec_plan, &finds);
-    Ok(PreparedQuery {
-        schema,
-        env_instance: txn.env_instance(),
-        plan: exec_plan,
-        executor,
-        bindings: Bindings::new(slot_count),
-        finds,
-        param_types,
-        param_is_set,
-        param_is_point,
-        resolved_params: Vec::new(),
-        missed_params: Vec::new(),
-        resolved_filters: vec![Vec::new(); occurrence_count],
-        resolved_selections: vec![Vec::new(); occurrence_count],
-        memo,
-        sink,
-        row_scratch: Vec::new(),
-        all_words,
-        guard_finds,
-        resolve_memo: ResolveMemo::new(),
-        guard_key: Vec::new(),
-        pinned: pins.into_boxed_slice(),
-        marker: std::marker::PhantomData,
-    })
+    let (specs, types) = finds.into_iter().unzip();
+    Ok((
+        PreparedRule {
+            plan: exec_plan,
+            executor,
+            bindings: Bindings::new(slot_count),
+            finds: specs,
+            resolved_filters: vec![Vec::new(); occurrence_count],
+            resolved_selections: vec![Vec::new(); occurrence_count],
+            memo,
+            guard_finds,
+            pinned: pins.into_boxed_slice(),
+        },
+        types,
+    ))
 }
 
 /// COLT sources with their fixed column schemas over [`View::Unbound`]:
@@ -276,17 +321,14 @@ fn build_view_memo(exec_plan: &ExecPlan) -> ViewMemo {
     memo
 }
 
-/// Derives per-find output specs (slot spans + result types) from the
-/// witness and the classified plan. Slots and widths both come from the
-/// plan's binding-slot layout (`slot_of`/`width_of` — the `SlotWidth` map):
-/// an interval variable's find spans two words, and no consumer assumes
-/// width 1.
-fn find_specs(
-    query: &Query,
-    witness: &crate::ir::validate::ValidatedQuery,
-    exec_plan: &ExecPlan,
-) -> Vec<(FindSpec, ValueType)> {
-    query
+/// Derives one rule's per-find output specs (slot spans + result types)
+/// from its witness slice and classified plan. Slots and widths both come
+/// from the rule's binding-slot layout (`slot_of`/`width_of` — the
+/// `SlotWidth` map): an interval variable's find spans two words, and no
+/// consumer assumes width 1. The types are the head's (validation aligned
+/// every rule's row); the specs are this rule's.
+fn find_specs(rule: &RuleWitness<'_>, exec_plan: &ExecPlan) -> Vec<(FindSpec, ValueType)> {
+    rule.rule()
         .finds
         .iter()
         .map(|term| match term {
@@ -295,7 +337,7 @@ fn find_specs(
                     slot: exec_plan.slot_of(*var),
                     width: exec_plan.width_of(*var),
                 },
-                witness.var_type(*var).clone(),
+                rule.var_type(*var).clone(),
             ),
             FindTerm::Aggregate { op, over } => match op {
                 // Arg-restriction: the carry's span plus the shared key
@@ -309,7 +351,7 @@ fn find_specs(
                             key_slot: exec_plan.slot_of(*key),
                             max: matches!(op, AggOp::ArgMax { .. }),
                         },
-                        witness.var_type(carry).clone(),
+                        rule.var_type(carry).clone(),
                     )
                 }
                 AggOp::Sum | AggOp::Min | AggOp::Max | AggOp::Count | AggOp::CountDistinct => {
@@ -317,7 +359,7 @@ fn find_specs(
                         Some(var) => (
                             Some(exec_plan.slot_of(*var)),
                             exec_plan.width_of(*var),
-                            witness.var_type(*var).clone(),
+                            rule.var_type(*var).clone(),
                         ),
                         None => (None, 1, ValueType::U64), // Count
                     };
@@ -374,17 +416,12 @@ fn guard_find_table(
     }
 }
 
-/// Builds the sink matching the find shape (the variant is fixed per
+/// Builds the sink matching the head shape (the variant is fixed per
 /// prepared query — an enum, not `dyn`).
-fn make_sink(
-    finds: &[(FindSpec, ValueType)],
-    slot_count: usize,
-    distinct: bool,
-    hint: usize,
-) -> EitherSink {
+fn make_sink(finds: &[FindSpec], slot_count: usize, distinct: bool, hint: usize) -> EitherSink {
     let all_plain = finds
         .iter()
-        .all(|(spec, _)| matches!(spec, FindSpec::Var { .. }));
+        .all(|spec| matches!(spec, FindSpec::Var { .. }));
     if all_plain {
         // Word-level slot expansion through the layout map: an interval
         // find contributes its two consecutive slots, so the projection
@@ -392,7 +429,7 @@ fn make_sink(
         // find type.
         let slots = finds
             .iter()
-            .flat_map(|(spec, _)| match spec {
+            .flat_map(|spec| match spec {
                 FindSpec::Var { slot, width } => *slot..slot + width,
                 FindSpec::Agg { .. } | FindSpec::Arg { .. } => unreachable!("no aggregates here"),
             })
@@ -400,7 +437,7 @@ fn make_sink(
         EitherSink::Projection(ProjectionSink::with_capacity_hint(slots, hint))
     } else {
         EitherSink::Aggregate(Box::new(AggregateSink::with_capacity_hint(
-            finds.iter().map(|(spec, _)| *spec).collect(),
+            finds.to_vec(),
             slot_count,
             distinct,
             hint,

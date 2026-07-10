@@ -3,14 +3,14 @@
 
 use super::Context;
 use crate::error::ValidationError;
-use crate::ir::{AggOp, FindTerm, Query, VarId};
+use crate::ir::{AggOp, FindTerm, Rule, VarId};
 use crate::schema::ValueType;
 use std::collections::BTreeSet;
 
 impl Context {
     pub(super) fn check_finds(
         &self,
-        query: &Query,
+        rule: &Rule,
         group_key: &BTreeSet<VarId>,
     ) -> Result<(), ValidationError> {
         // The Arg discipline: all Arg terms share one key variable and one
@@ -18,7 +18,7 @@ impl Context {
         let mut arg_spec: Option<(VarId, bool)> = None; // (key, is_max)
         let mut arg_seen = false;
         let mut fold_seen = false;
-        for (find_idx, term) in query.finds.iter().enumerate() {
+        for (find_idx, term) in rule.finds.iter().enumerate() {
             match term {
                 FindTerm::Var(var) => {
                     if !self.atom_vars.contains(var) {

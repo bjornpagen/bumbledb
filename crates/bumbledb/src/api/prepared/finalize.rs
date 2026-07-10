@@ -1,4 +1,4 @@
-use super::{EitherSink, FindSpec, ResolveMemo, ResultBuffer, ValueType};
+use super::{EitherSink, ResolveMemo, ResultBuffer, ValueType};
 
 use crate::error::Result;
 use crate::storage::env::ReadTxn;
@@ -15,7 +15,7 @@ pub(super) fn finalize(
     row_scratch: &mut Vec<u64>,
     memo: &mut ResolveMemo,
     txn: &ReadTxn<'_>,
-    finds: &[(FindSpec, ValueType)],
+    types: &[ValueType],
     all_words: bool,
     out: &mut ResultBuffer,
 ) -> Result<()> {
@@ -27,37 +27,37 @@ pub(super) fn finalize(
     // semantics, softened by the run memo).
     match sink {
         EitherSink::Projection(sink) => {
-            out.cells.reserve(sink.len() * finds.len());
+            out.cells.reserve(sink.len() * types.len());
             if all_words {
                 for row in sink.rows() {
-                    push_word_row(out, finds, row);
+                    push_word_row(out, types, row);
                 }
                 return Ok(());
             }
             for row in sink.rows() {
-                push_resolved_row(out, txn, memo, finds, row)?;
+                push_resolved_row(out, txn, memo, types, row)?;
             }
             Ok(())
         }
         EitherSink::Aggregate(sink) => {
-            out.cells.reserve(sink.group_count() * finds.len());
+            out.cells.reserve(sink.group_count() * types.len());
             if all_words {
                 return sink.finalize_into(row_scratch, |row| {
-                    push_word_row(out, finds, row);
+                    push_word_row(out, types, row);
                     Ok(())
                 });
             }
             sink.finalize_into(row_scratch, |row| {
-                push_resolved_row(out, txn, memo, finds, row)
+                push_resolved_row(out, txn, memo, types, row)
             })
         }
     }
 }
 
 /// One word row's cells, all-words regime: infallible, no dictionary.
-fn push_word_row(out: &mut ResultBuffer, finds: &[(FindSpec, ValueType)], row: &[u64]) {
+fn push_word_row(out: &mut ResultBuffer, types: &[ValueType], row: &[u64]) {
     let mut word = 0;
-    for (_, ty) in finds {
+    for ty in types {
         if let ValueType::Interval { element } = ty {
             out.cells.push(ResultBuffer::interval_cell(
                 *element,
@@ -78,11 +78,11 @@ fn push_resolved_row(
     out: &mut ResultBuffer,
     txn: &ReadTxn<'_>,
     memo: &mut ResolveMemo,
-    finds: &[(FindSpec, ValueType)],
+    types: &[ValueType],
     row: &[u64],
 ) -> Result<()> {
     let mut word = 0;
-    for (_, ty) in finds {
+    for ty in types {
         if let ValueType::Interval { element } = ty {
             out.cells.push(ResultBuffer::interval_cell(
                 *element,

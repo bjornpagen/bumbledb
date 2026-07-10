@@ -336,6 +336,26 @@ impl fmt::Display for ValidationError {
     #[allow(clippy::too_many_lines)] // a rendering table: one arm per variant
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EmptyRuleSet => write!(f, "the rule set is empty — the empty union is no query"),
+            Self::TooManyRules { count } => {
+                write!(f, "{count} rules exceed the rule cap")
+            }
+            Self::HeadArityMismatch {
+                rule,
+                expected,
+                found,
+            } => write!(
+                f,
+                "rule {rule}: {found} find terms against a head of arity {expected}"
+            ),
+            Self::HeadTypeMismatch { rule, position } => write!(
+                f,
+                "rule {rule}: find term {position} disagrees with the head's positional type"
+            ),
+            Self::HeadAggregateMismatch { rule, position } => write!(
+                f,
+                "rule {rule}: find term {position} disagrees with the head's shape at that position"
+            ),
             Self::UnknownRelation { atom, relation } => {
                 write!(f, "atom {atom}: unknown relation {}", relation.0)
             }
@@ -593,6 +613,11 @@ impl fmt::Display for Error {
                 "parameter {}: full Allen mask — every pair satisfies it; \
                  write no predicate",
                 param.0
+            ),
+            Self::MultiRuleExecution { rules } => write!(
+                f,
+                "execution of a {rules}-rule program is not implemented yet \
+                 (PRD ALG-07); every rule's plan is prepared"
             ),
             Self::Overflow(super::OverflowKind::Aggregate { find }) => {
                 write!(f, "find {find}: aggregate result exceeds its type")

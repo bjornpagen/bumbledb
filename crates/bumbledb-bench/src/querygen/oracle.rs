@@ -51,7 +51,7 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
         )
     };
     let mut var_anchor = std::collections::HashMap::new();
-    for atom in &query.atoms {
+    for atom in &query.rules[0].atoms {
         for (field, term) in &atom.bindings {
             if let Term::Var(var) = term {
                 if !is_interval(atom.relation, *field) {
@@ -61,14 +61,14 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
         }
     }
     let mut count = 0u16;
-    for atom in query.atoms.iter().chain(&query.negated) {
+    for atom in query.rules[0].atoms.iter().chain(&query.rules[0].negated) {
         for (_, term) in &atom.bindings {
             if let Term::Param(p) | Term::ParamSet(p) = term {
                 count = count.max(p.0 + 1);
             }
         }
     }
-    for comparison in &query.predicates {
+    for comparison in &query.rules[0].predicates {
         for term in [&comparison.lhs, &comparison.rhs] {
             if let Term::Param(p) | Term::ParamSet(p) = term {
                 count = count.max(p.0 + 1);
@@ -97,7 +97,7 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
             }
         }
     };
-    for atom in query.atoms.iter().chain(&query.negated) {
+    for atom in query.rules[0].atoms.iter().chain(&query.rules[0].negated) {
         for (field, term) in &atom.bindings {
             match term {
                 Term::Param(p) => place(&mut anchors, *p, atom.relation, *field, false),
@@ -106,7 +106,7 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
             }
         }
     }
-    for comparison in &query.predicates {
+    for comparison in &query.rules[0].predicates {
         let (param, set, var) = match (&comparison.lhs, &comparison.rhs) {
             (Term::Param(p), Term::Var(v)) | (Term::Var(v), Term::Param(p)) => (*p, false, *v),
             (Term::ParamSet(p), Term::Var(v)) | (Term::Var(v), Term::ParamSet(p)) => (*p, true, *v),

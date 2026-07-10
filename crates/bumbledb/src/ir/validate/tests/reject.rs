@@ -118,7 +118,7 @@ fn rejects_conflicting_param_anchors() {
 #[test]
 fn rejects_order_comparison_on_non_integer() {
     // Holder.name is a String: Lt is illegal (equality-only type).
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(1)), (1, var(0))])],
         negated: vec![],
@@ -127,7 +127,7 @@ fn rejects_order_comparison_on_non_integer() {
             lhs: var(0),
             rhs: Term::Literal(Value::String(Box::from(&b"x"[..]))),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::IllegalComparison { index: 0 }
@@ -137,7 +137,7 @@ fn rejects_order_comparison_on_non_integer() {
 #[test]
 fn rejects_self_comparison() {
     // x < x is constant-valued: write the query you mean.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
         negated: vec![],
@@ -146,7 +146,7 @@ fn rejects_self_comparison() {
             lhs: var(0),
             rhs: var(0),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::SelfComparison { index: 0 }
@@ -157,7 +157,7 @@ fn rejects_self_comparison() {
 fn rejects_order_operators_on_bool_and_enum() {
     // Posting.flag is Bool (field 5); Account.status is Enum (field 2).
     for (rel, field) in [(POSTING, 5u16), (ACCOUNT, 2u16)] {
-        let query = Query {
+        let query = Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![
                 atom(rel, vec![(field, var(0)), (0, var(1))]),
@@ -169,7 +169,7 @@ fn rejects_order_operators_on_bool_and_enum() {
                 lhs: var(0),
                 rhs: var(2),
             }],
-        };
+        });
         let err = expect_err(&query);
         assert!(
             matches!(err, ValidationError::IllegalComparison { index: 0 }),
@@ -181,7 +181,7 @@ fn rejects_order_operators_on_bool_and_enum() {
 #[test]
 fn enum_ordinal_in_a_comparison_reports_the_precise_variant() {
     // Account.status has 2 variants; ordinal 9 is out of range.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(2, var(0))])],
         negated: vec![],
@@ -190,7 +190,7 @@ fn enum_ordinal_in_a_comparison_reports_the_precise_variant() {
             lhs: var(0),
             rhs: Term::Literal(Value::Enum(9)),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::ComparisonEnumOrdinalOutOfRange {
@@ -203,7 +203,7 @@ fn enum_ordinal_in_a_comparison_reports_the_precise_variant() {
 #[test]
 fn rejects_cross_type_comparison() {
     // U64 var vs I64 var: no silent coercion, ever.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, vec![(1, var(0)), (2, var(1))])],
         negated: vec![],
@@ -212,7 +212,7 @@ fn rejects_cross_type_comparison() {
             lhs: var(0),
             rhs: var(1),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::IllegalComparison { index: 0 }
@@ -221,7 +221,7 @@ fn rejects_cross_type_comparison() {
 
 #[test]
 fn rejects_constant_comparison() {
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
         negated: vec![],
@@ -230,7 +230,7 @@ fn rejects_constant_comparison() {
             lhs: Term::Literal(Value::U64(1)),
             rhs: Term::Param(ParamId(0)),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::ConstantComparison { index: 0 }
@@ -251,7 +251,7 @@ fn rejects_unbound_find_variable() {
 
 #[test]
 fn rejects_comparison_only_variable() {
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
         negated: vec![],
@@ -260,7 +260,7 @@ fn rejects_comparison_only_variable() {
             lhs: var(9), // appears in no atom
             rhs: var(0),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::ComparisonOnlyVariable { var: VarId(9) }
@@ -312,12 +312,12 @@ fn rejects_no_positive_atoms() {
 #[test]
 fn rejects_negated_atoms_without_any_positive_atom() {
     // Negated atoms alone bind nothing: not a query.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![],
         negated: vec![atom(POSTING, vec![(1, var(0))])],
         predicates: vec![],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::NoPositiveAtoms
@@ -390,7 +390,7 @@ fn rejects_aggregate_over_group_key() {
 #[test]
 fn rejects_sparse_param_ids() {
     // ?1 without ?0: the gap would be an unchecked positional slot.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(
             HOLDER,
@@ -398,19 +398,19 @@ fn rejects_sparse_param_ids() {
         )],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     assert!(matches!(expect_err(&query), ValidationError::ParamIdGap { param } if param.0 == 0));
 }
 
 #[test]
 fn rejects_more_atoms_than_the_planner_cap_at_the_boundary() {
     let over = crate::plan::planner::MAX_OCCURRENCES + 1;
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: (0..over).map(|_| atom(HOLDER, vec![(0, var(0))])).collect(),
         negated: vec![],
         predicates: vec![],
-    };
+    });
     assert!(matches!(expect_err(&query), ValidationError::TooManyAtoms { count } if count == over));
 }
 
@@ -433,7 +433,7 @@ fn rejects_more_distinct_variables_than_the_bitset_at_the_boundary() {
     }
     .validate()
     .expect("wide fixture");
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![crate::ir::Atom {
             relation: RelationId(0),
@@ -441,7 +441,7 @@ fn rejects_more_distinct_variables_than_the_bitset_at_the_boundary() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let err = validate(&wide, &query).unwrap_err();
     assert!(matches!(
         err,
@@ -454,12 +454,12 @@ fn negated_occurrences_count_toward_the_occurrence_cap() {
     // MAX_OCCURRENCES positive atoms alone pass; one negated atom tips
     // the occurrence count over — anti-probes consume plan-time work.
     let cap = crate::plan::planner::MAX_OCCURRENCES;
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: (0..cap).map(|_| atom(HOLDER, vec![(0, var(0))])).collect(),
         negated: vec![atom(HOLDER, vec![(0, var(0))])],
         predicates: vec![],
-    };
+    });
     assert!(
         matches!(expect_err(&query), ValidationError::TooManyAtoms { count } if count == cap + 1)
     );
@@ -471,7 +471,7 @@ fn negated_occurrences_count_toward_the_occurrence_cap() {
 fn order_operator_on_an_interval_gets_the_dedicated_diagnostic() {
     // Lt over Account.validity — the predictable mistake gets the good
     // error, not a generic IllegalComparison.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
@@ -480,7 +480,7 @@ fn order_operator_on_an_interval_gets_the_dedicated_diagnostic() {
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(1, 5)),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::OrderComparisonOnInterval { index: 0 }
@@ -492,7 +492,7 @@ fn order_operator_on_two_bivalent_interval_variables() {
     // Both sides bound only in interval fields: the bivalent anchors
     // resolve to the interval type, and the order op is rejected with
     // the dedicated diagnostic.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))]),
@@ -504,7 +504,7 @@ fn order_operator_on_two_bivalent_interval_variables() {
             lhs: var(1),
             rhs: var(3),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::OrderComparisonOnInterval { index: 0 }
@@ -515,7 +515,7 @@ fn order_operator_on_two_bivalent_interval_variables() {
 fn rejects_param_set_under_ne() {
     // Ne(x, set) reads as ambiguous quantification: a param set is legal
     // only in atom bindings and under Eq.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (1, var(1))])],
         negated: vec![],
@@ -524,7 +524,7 @@ fn rejects_param_set_under_ne() {
             lhs: var(1),
             rhs: Term::ParamSet(ParamId(0)),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::ParamSetComparison { index: 0 }
@@ -551,7 +551,7 @@ fn rejects_a_param_id_used_both_scalar_and_set() {
 fn rejects_a_membership_only_variable() {
     // The comparison collapses t to the element type (U64), so its one
     // atom binding is membership — no enumerable domain.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
@@ -560,7 +560,7 @@ fn rejects_a_membership_only_variable() {
             lhs: var(1),
             rhs: Term::Literal(Value::U64(5)),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::MembershipOnlyVariable { var: VarId(1) }
@@ -570,12 +570,12 @@ fn rejects_a_membership_only_variable() {
 #[test]
 fn rejects_a_negated_atom_variable_unbound_by_positive_atoms() {
     // A negated atom binds nothing; y comes from nowhere.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(HOLDER, vec![(0, var(0))])],
         negated: vec![atom(POSTING, vec![(1, var(1))])],
         predicates: vec![],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::NegatedVariableUnbound { var: VarId(1) }
@@ -689,7 +689,7 @@ fn rejects_an_inverted_interval_literal_in_a_binding() {
 
 #[test]
 fn rejects_an_inverted_interval_literal_in_a_comparison() {
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
@@ -698,7 +698,7 @@ fn rejects_an_inverted_interval_literal_in_a_comparison() {
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(9, 3)),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::ComparisonEmptyIntervalLiteral { index: 0 }
@@ -730,7 +730,7 @@ fn rejects_a_point_literal_at_the_ceiling_in_a_membership_binding() {
 fn rejects_a_point_literal_at_the_ceiling_under_contains() {
     // The comparison-site sibling: a Contains right side is an interval
     // position, so the ceiling is equally not a point there.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
@@ -739,7 +739,7 @@ fn rejects_a_point_literal_at_the_ceiling_under_contains() {
             lhs: var(1),
             rhs: Term::Literal(Value::U64(u64::MAX)),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::ComparisonPointLiteralAtCeiling { index: 0 }
@@ -750,7 +750,7 @@ fn rejects_a_point_literal_at_the_ceiling_under_contains() {
 fn rejects_an_interval_typed_param_set_anchor() {
     // v resolves to the interval type (its only anchors are bivalent), so
     // Eq(v, ?set0) would make ?set0 a set of intervals — not a thing.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
@@ -759,7 +759,7 @@ fn rejects_an_interval_typed_param_set_anchor() {
             lhs: var(1),
             rhs: Term::ParamSet(ParamId(0)),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::IntervalParamSet { param: ParamId(0) }
@@ -771,7 +771,7 @@ fn rejects_an_interval_typed_param_set_anchor() {
 #[test]
 fn rejects_the_empty_allen_mask() {
     // Allen(v, [1,5), ∅): no basic can hold — "never"; write no query.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
@@ -782,7 +782,7 @@ fn rejects_the_empty_allen_mask() {
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(1, 5)),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::EmptyAllenMask { index: 0 }
@@ -793,7 +793,7 @@ fn rejects_the_empty_allen_mask() {
 fn rejects_the_full_allen_mask() {
     // Allen(v, w, all 13): every pair satisfies it — "always"; write no
     // predicate.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))]),
@@ -807,7 +807,7 @@ fn rejects_the_full_allen_mask() {
             lhs: var(1),
             rhs: var(3),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::FullAllenMask { index: 0 }
@@ -818,7 +818,7 @@ fn rejects_the_full_allen_mask() {
 fn rejects_allen_over_non_interval_sides() {
     // Allen over two scalar variables: the interval-pair comparison
     // types over intervals only.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, vec![(0, var(0)), (2, var(1))])],
         negated: vec![],
@@ -829,7 +829,7 @@ fn rejects_allen_over_non_interval_sides() {
             lhs: var(1),
             rhs: Term::Literal(Value::I64(5)),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::IllegalComparison { index: 0 }
@@ -840,7 +840,7 @@ fn rejects_allen_over_non_interval_sides() {
 fn rejects_contains_between_two_intervals() {
     // The interval⊇interval Contains is gone — that predicate is
     // Allen(COVERS); an interval-typed right side is illegal.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))]),
@@ -852,13 +852,13 @@ fn rejects_contains_between_two_intervals() {
             lhs: var(1),
             rhs: var(3),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::IllegalComparison { index: 0 }
     ));
     // The literal form of the same mistake.
-    let literal = Query {
+    let literal = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))])],
         negated: vec![],
@@ -867,7 +867,7 @@ fn rejects_contains_between_two_intervals() {
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(1, 5)),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&literal),
         ValidationError::IllegalComparison { index: 0 }
@@ -878,7 +878,7 @@ fn rejects_contains_between_two_intervals() {
 fn rejects_a_mask_param_with_a_value_anchor() {
     // ?0 is both the Allen mask and a field binding: a mask is not a
     // data-model type, so the anchors conflict.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             atom(
@@ -899,7 +899,7 @@ fn rejects_a_mask_param_with_a_value_anchor() {
             lhs: var(1),
             rhs: var(3),
         }],
-    };
+    });
     assert!(matches!(
         expect_err(&query),
         ValidationError::ParamTypeConflict { param: ParamId(0) }

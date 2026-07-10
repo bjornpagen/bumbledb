@@ -17,8 +17,8 @@ documented decomposition, never a node."
   where a `PredicateTree` is `Leaf(Comparison) | And(Vec<Self>) | Or(Vec<Self>)`.
   Negated atoms and membership stay leaf-level (no OR over atoms — atoms
   disjoin by writing two rules, which is what rules are for).
-- Validation-time lowering: distribute to DNF; each disjunct becomes a **rule**
-  (the rule's atoms are cloned; its predicate list is the disjunct's leaves);
+- Validation-time lowering: distribute to DNF; each DNF term becomes a **rule**
+  (the rule's atoms are cloned; its predicate list is that term's leaves);
   the result then validates under PRD 05's ordinary roster, including
   `MAX_RULES`. Distribution that exceeds the cap is a typed error naming the
   blowup (`DnfExceedsRules { produced, cap }`) — the exponential case is

@@ -169,12 +169,16 @@ pub struct PreparedQuery<'s, S> {
     /// any other environment's snapshot is `Error::ForeignPreparedQuery`
     /// — checked first at every execution entry.
     env_instance: u64,
-    plan: ExecPlan,
-    /// The Free Join executor scratch (unused for guard probes).
-    executor: Option<Executor>,
-    bindings: Bindings,
-    /// Per find term: the output spec and its result type.
-    finds: Vec<(FindSpec, ValueType)>,
+    /// Per rule, in rule order: the rule's validated plan plus its
+    /// execution scratch — the whole plan pipeline ran per rule at
+    /// prepare. The sink configuration below stays query-level: one head,
+    /// one sink. **Execution is single-rule today** — the union-driving
+    /// loop over this list is PRD ALG-07's; a 2+-rule query executes as
+    /// the typed `Error::MultiRuleExecution`, never a wrong answer.
+    rules: Vec<PreparedRule>,
+    /// Per head position: the result type (identical across rules — the
+    /// head's positional alignment pins it at validation).
+    column_types: Vec<ValueType>,
     /// Dense per-param expected shapes (validation rejects id gaps). A
     /// set param's entry carries its **element** type.
     param_types: Vec<ParamShape>,
@@ -199,6 +203,41 @@ pub struct PreparedQuery<'s, S> {
     /// result; under `Ne` the sentinel word matches everything; on a
     /// negated occurrence it just matches nothing.
     missed_params: Vec<bool>,
+    /// The sink, reset per execution with capacities retained — **one**
+    /// sink configuration, owned by the head (its shape is the head's:
+    /// projection vs aggregate, arity, distinctness). Its find-spec slot
+    /// table is rule 0's binding-slot layout; re-aiming the specs per
+    /// rule as the union loop switches plans is PRD ALG-07's, with the
+    /// single-rule gate standing until then.
+    sink: EitherSink,
+    /// Aggregate-finalization row scratch.
+    row_scratch: Vec<u64>,
+    /// No interned finds: finalize takes the
+    /// infallible all-words blit.
+    all_words: bool,
+    /// The per-finalize intern-resolution memo (docs/architecture/40-execution.md).
+    resolve_memo: ResolveMemo,
+    /// Guard-key byte scratch.
+    guard_key: Vec<u8>,
+    /// Marker: a prepared query is single-threaded scratch (`Cell` makes
+    /// it `!Sync`), pinned to schema `S` (`fn() -> S` keeps auto-traits
+    /// independent of `S`).
+    marker: std::marker::PhantomData<PreparedMarker<S>>,
+}
+
+/// One rule's prepared artifact: the validated plan the pipeline built
+/// for it, plus every piece of execution scratch whose shape is the
+/// plan's (slot layout, occurrence count, view memo). The prepared query
+/// is a list of these — one per rule — under one head-owned sink.
+struct PreparedRule {
+    plan: ExecPlan,
+    /// The Free Join executor scratch (unused for guard probes).
+    executor: Option<Executor>,
+    bindings: Bindings,
+    /// The rule's head projection: per head position, the output spec
+    /// over this rule's binding-slot layout (result types live on the
+    /// query — they are the head's, identical across rules).
+    finds: Vec<FindSpec>,
     /// Per occurrence: residual filters with symbolic constants
     /// substituted, reused — in place, so a set-carrying filter's
     /// `WordSet` capacity survives re-binds (the allocation contract).
@@ -211,32 +250,18 @@ pub struct PreparedQuery<'s, S> {
     /// The view memo (docs/architecture/40-execution.md): per occurrence, the active binding
     /// (whose COLT the executor consumes) plus parked bindings under LRU.
     memo: ViewMemo,
-    /// The sink, reset per execution with capacities retained.
-    sink: EitherSink,
-    /// Aggregate-finalization row scratch.
-    row_scratch: Vec<u64>,
-    /// No interned finds: finalize takes the
-    /// infallible all-words blit.
-    all_words: bool,
     /// The guard fast lane's find table: each output
     /// column's fact field and type, in find order. `Some` for guard
     /// plans whose finds are all plain variables; aggregate-find guards
     /// keep the sink path.
     guard_finds: Option<Vec<(crate::schema::FieldId, ValueType)>>,
-    /// The per-finalize intern-resolution memo (docs/architecture/40-execution.md).
-    resolve_memo: ResolveMemo,
-    /// Guard-key byte scratch.
-    guard_key: Vec<u8>,
     /// The staleness pin record (`staleness.rs`): per participating
-    /// occurrence, the statistics the plan was costed with. Cold data —
-    /// written once at build, read only by [`PreparedQuery::staleness`]
-    /// and the stats surface, never by execution. Empty for guard
-    /// probes (classification precedes statistics; nothing is read).
+    /// occurrence, the statistics the rule's plan was costed with. Cold
+    /// data — written once at build, read only by
+    /// [`PreparedQuery::staleness`] and the stats surface, never by
+    /// execution. Empty for guard probes (classification precedes
+    /// statistics; nothing is read).
     pinned: Box<[OccurrencePin]>,
-    /// Marker: a prepared query is single-threaded scratch (`Cell` makes
-    /// it `!Sync`), pinned to schema `S` (`fn() -> S` keeps auto-traits
-    /// independent of `S`).
-    marker: std::marker::PhantomData<PreparedMarker<S>>,
 }
 
 /// [`PreparedQuery`]'s phantom payload: `!Sync` scratch pinned to `S`.

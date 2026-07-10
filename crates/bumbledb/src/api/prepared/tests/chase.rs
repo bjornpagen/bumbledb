@@ -134,7 +134,7 @@ fn walk_atoms() -> Vec<Atom> {
 /// The prepared plan's roles — asserting the marks so neither side of
 /// the differential is vacuously equal.
 fn plan_roles(prepared: &PreparedQuery<'_, ()>) -> Vec<Role> {
-    let ExecPlan::FreeJoin(plan) = &prepared.plan else {
+    let ExecPlan::FreeJoin(plan) = &prepared.rules[0].plan else {
         panic!("a two-atom query plans as Free Join");
     };
     plan.occurrences().iter().map(|o| o.role).collect()
@@ -262,7 +262,7 @@ fn the_du_fixture_explain_pins_the_eliminated_line() {
     populate_du(&env, &schema);
     let cache = ImageCache::new();
     let txn = env.read_txn().expect("txn");
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -282,7 +282,7 @@ fn the_du_fixture_explain_pins_the_eliminated_line() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
 
     let (rows, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
@@ -318,16 +318,16 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
 
     // Projection sink: Q(pid, m) — posting ids keep duplicate amounts
     // distinct, so the set comparison is over real multi-row output.
-    let projection = Query {
+    let projection = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: walk_atoms(),
         negated: vec![],
         predicates: vec![],
-    };
+    });
     // Aggregate sink: Q(x, Sum(m)) — pid stays bound (not projected),
     // so the fold domain counts every posting; the eliminated plan must
     // reproduce it without ever touching Account.
-    let aggregate = Query {
+    let aggregate = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(1)),
             FindTerm::Aggregate {
@@ -338,7 +338,7 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
         atoms: walk_atoms(),
         negated: vec![],
         predicates: vec![],
-    };
+    });
 
     for query in [&projection, &aggregate] {
         let mut chased = prepare(&txn, &cache, &schema, query).expect("prepare");

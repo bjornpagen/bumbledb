@@ -230,14 +230,14 @@ fn generated_string_literals_are_nul_free() {
     let mut rng = Rng::new(SEED);
     for _ in 0..N {
         let query = random_query(&mut rng, CFG);
-        for atom in query.atoms.iter().chain(&query.negated) {
+        for atom in query.rules[0].atoms.iter().chain(&query.rules[0].negated) {
             for (_, term) in &atom.bindings {
                 if let bumbledb::Term::Literal(bumbledb::Value::String(raw)) = term {
                     assert!(!raw.contains(&0), "a generated literal carries NUL");
                 }
             }
         }
-        for comparison in &query.predicates {
+        for comparison in &query.rules[0].predicates {
             for term in [&comparison.lhs, &comparison.rhs] {
                 if let bumbledb::Term::Literal(bumbledb::Value::String(raw)) = term {
                     assert!(!raw.contains(&0), "a generated literal carries NUL");

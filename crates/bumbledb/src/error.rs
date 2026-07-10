@@ -317,11 +317,44 @@ pub enum FactShapeError {
 /// A query validation error (the IR boundary): one variant per roster item
 /// in `docs/architecture/20-query-ir.md`, returned at prepare time.
 ///
-/// An `atom` payload is an *occurrence* index: positive atoms first in
-/// query order, then negated atoms — negated atoms are checked under the
+/// Rules validate one at a time, in order: every rule-local payload (an
+/// `atom` occurrence index, a comparison `index`, a `find` position, a
+/// `var`) names a position **inside the first failing rule**. An `atom`
+/// payload is an *occurrence* index within that rule: positive atoms first
+/// in rule order, then negated atoms — negated atoms are checked under the
 /// same per-atom rules and share the same diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationError {
+    /// A query with no rules denotes nothing — the empty union is not a
+    /// query; write no query (`docs/architecture/20-query-ir.md`, the
+    /// rules shape).
+    EmptyRuleSet,
+    /// The rule-count cap ([`crate::ir::MAX_RULES`]), counted
+    /// independently of the per-rule occurrence cap.
+    TooManyRules {
+        count: usize,
+    },
+    /// A rule's find-term count differs from the head's arity — rules
+    /// align against the head position by position.
+    HeadArityMismatch {
+        rule: usize,
+        expected: usize,
+        found: usize,
+    },
+    /// A rule's find term at `position` resolves to a different
+    /// structural type than the head's pinned positional type row (rule
+    /// 0's row pins it; every later rule must agree).
+    HeadTypeMismatch {
+        rule: usize,
+        position: usize,
+    },
+    /// A rule's find term at `position` has the wrong *shape* against the
+    /// head: a variable where the head names an aggregate, an aggregate
+    /// where it names a variable, or a different aggregate-op kind.
+    HeadAggregateMismatch {
+        rule: usize,
+        position: usize,
+    },
     UnknownRelation {
         atom: usize,
         relation: RelationId,
@@ -716,6 +749,14 @@ pub enum Error {
     /// [`ValidationError::FullAllenMask`]).
     FullAllenMaskParam {
         param: ParamId,
+    },
+    /// Execution of a multi-rule program: the prepared query carries
+    /// every rule's plan, but the union-driving executor loop (one head,
+    /// one sink) is PRD ALG-07's deliverable — until it lands, executing
+    /// a 2+-rule query is this typed refusal, never a wrong answer.
+    /// Single-rule programs execute in full.
+    MultiRuleExecution {
+        rules: usize,
     },
     /// A computed value crossed its representation — valid input whose
     /// result cannot be represented, so a typed error, never a panic.

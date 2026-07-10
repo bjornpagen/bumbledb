@@ -1,6 +1,6 @@
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, Query, Term, Value,
-    VarId,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, FindTerm, MaskTerm, ParamId, Query, Rule, Term,
+    Value, VarId,
 };
 
 use crate::families::{scalar_draw, Draw, Family, Kind};
@@ -19,7 +19,7 @@ fn param(id: u16) -> Term {
 
 /// point — `Q(amount, at) :- Posting(id = ?0, amount, at)`. Guard probe.
 fn point_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: ids::POSTING,
@@ -31,7 +31,7 @@ fn point_query() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 fn point_params(cfg: &GenConfig) -> Vec<Draw> {
@@ -47,7 +47,7 @@ fn point_params(cfg: &GenConfig) -> Vec<Draw> {
 /// `containment_walk` — `Q(name, amount) :- Posting(account = ?0, amount),
 /// Account(id = ?0, holder = h), Holder(id = h, name)`.
 fn containment_walk_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -68,7 +68,7 @@ fn containment_walk_query() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 fn cold_account(rng: &mut Rng, sizes: &Sizes) -> u64 {
@@ -93,7 +93,7 @@ fn containment_walk_params(cfg: &GenConfig) -> Vec<Draw> {
 /// walk across postings/entries/accounts, an enum literal pinning the
 /// account side (~1/3 of accounts).
 fn chain_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Var(VarId(1)),
@@ -130,7 +130,7 @@ fn chain_query() -> Query {
             lhs: var(2),
             rhs: param(0),
         }],
-    }
+    })
 }
 
 fn chain_params(cfg: &GenConfig) -> Vec<Draw> {
@@ -145,7 +145,7 @@ fn chain_params(cfg: &GenConfig) -> Vec<Draw> {
 /// range — `Q(id, amount) :- Posting(id, amount, at)`, `at >= ?0`,
 /// `at < ?1` — the pure scan family.
 fn range_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: ids::POSTING,
@@ -168,7 +168,7 @@ fn range_query() -> Query {
                 rhs: param(1),
             },
         ],
-    }
+    })
 }
 
 fn range_params(cfg: &GenConfig) -> Vec<Draw> {
@@ -191,7 +191,7 @@ fn range_params(cfg: &GenConfig) -> Vec<Draw> {
 /// and the distinct-bindings elision engages (key coverage), putting
 /// the seen-set-elided aggregate path under the oracle.
 pub(super) fn balance_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -215,7 +215,7 @@ pub(super) fn balance_query() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 fn balance_params(cfg: &GenConfig) -> Vec<Draw> {
@@ -234,7 +234,7 @@ fn balance_params(cfg: &GenConfig) -> Vec<Draw> {
 /// amount, at), Account(id = a, currency = c)` — the literal-free full
 /// fold grouped by currency.
 fn stats_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -266,7 +266,7 @@ fn stats_query() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 fn stats_params(_: &GenConfig) -> Vec<Draw> {
@@ -277,7 +277,7 @@ fn stats_params(_: &GenConfig) -> Vec<Draw> {
 /// string — `Q(id, amount) :- Posting(id, amount, instrument = i),
 /// Instrument(id = i, symbol = ?0)` — the interned-string point lookup.
 fn string_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -298,7 +298,7 @@ fn string_query() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 fn string_params(cfg: &GenConfig) -> Vec<Draw> {
@@ -325,7 +325,7 @@ fn string_params(cfg: &GenConfig) -> Vec<Draw> {
 /// generator routes [`gen::HOT_TAG_PCT`]% of first tags to `Fee`
 /// (ordinal 0), so the rotation spans hot and uniform fan-outs.
 fn skew_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -342,7 +342,7 @@ fn skew_query() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 fn skew_params(_: &GenConfig) -> Vec<Draw> {
@@ -361,7 +361,7 @@ fn skew_params(_: &GenConfig) -> Vec<Draw> {
 /// whose ordered comparison exercises residual placement, and whose
 /// `(x, y)` pairs are witnessed by many distinct entries.
 fn spread_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -385,7 +385,7 @@ fn spread_query() -> Query {
             lhs: var(0),
             rhs: var(1),
         }],
-    }
+    })
 }
 
 fn spread_params(_: &GenConfig) -> Vec<Draw> {
@@ -402,7 +402,7 @@ fn spread_params(_: &GenConfig) -> Vec<Draw> {
 /// variables, a cyclic hypergraph — exactly the dynamic-cover stress
 /// the paper's triangle exposes.
 fn triangle_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
@@ -440,7 +440,7 @@ fn triangle_query() -> Query {
                 rhs: param(1),
             },
         ],
-    }
+    })
 }
 
 fn triangle_params(cfg: &GenConfig) -> Vec<Draw> {
@@ -472,7 +472,7 @@ fn triangle_params(cfg: &GenConfig) -> Vec<Draw> {
 /// retired host-side union convention): entries touching any account of
 /// a bound set, `IN`-list on the `SQLite` side, re-rendered per draw.
 fn entries_for_account_set_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: ids::POSTING,
@@ -483,7 +483,7 @@ fn entries_for_account_set_query() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 fn entries_for_account_set_params(cfg: &GenConfig) -> Vec<Draw> {
@@ -512,7 +512,7 @@ fn entries_for_account_set_params(cfg: &GenConfig) -> Vec<Draw> {
 /// posting ids only, so roughly half of any account's postings
 /// survive the anti-join).
 fn postings_without_tag_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: ids::POSTING,
@@ -527,7 +527,7 @@ fn postings_without_tag_query() -> Query {
             bindings: vec![(ids::posting_tag::POSTING, var(0))],
         }],
         predicates: vec![],
-    }
+    })
 }
 
 fn postings_without_tag_params(cfg: &GenConfig) -> Vec<Draw> {
@@ -547,7 +547,7 @@ fn postings_without_tag_params(cfg: &GenConfig) -> Vec<Draw> {
 /// strictly increasing per posting id, so groups are tie-free — tie
 /// semantics are the query generator's lane).
 fn latest_posting_per_account_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -565,7 +565,7 @@ fn latest_posting_per_account_query() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 fn latest_posting_per_account_params(_: &GenConfig) -> Vec<Draw> {
@@ -581,7 +581,7 @@ fn latest_posting_per_account_params(_: &GenConfig) -> Vec<Draw> {
 /// rule: a lone interval-position param would read as interval value
 /// equality), exactly the doc's at-instant probe form.
 fn mandate_at_instant_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
@@ -602,7 +602,7 @@ fn mandate_at_instant_query() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 fn mandate_at_instant_params(cfg: &GenConfig) -> Vec<Draw> {
@@ -636,7 +636,7 @@ fn mandate_at_instant_params(cfg: &GenConfig) -> Vec<Draw> {
 /// same-account intersection impossible, so the join must cross accounts
 /// to produce anything beyond the reflexive pairs.
 fn mandate_overlap_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -664,7 +664,7 @@ fn mandate_overlap_query() -> Query {
             lhs: var(2),
             rhs: var(3),
         }],
-    }
+    })
 }
 
 fn mandate_overlap_params(cfg: &GenConfig) -> Vec<Draw> {

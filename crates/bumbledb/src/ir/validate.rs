@@ -3,7 +3,20 @@
 //! nothing (post-mortem §38: v5 validated one plan four times).
 //!
 //! The roster, transcribed from `docs/architecture/20-query-ir.md` and
-//! checked off in code order below — it is exhaustive by contract:
+//! checked off in code order below — it is exhaustive by contract.
+//!
+//! The program shape first (rules are validated one at a time; every
+//! rule-local diagnostic names a position inside the first failing rule):
+//!
+//!  0. empty rule set; more than [`crate::ir::MAX_RULES`] rules (counted
+//!     independently of the per-rule occurrence cap); head/rule positional
+//!     arity, shape, or type mismatch (each rule's find terms align
+//!     against the head position by position — rule 0's resolved type row
+//!     pins the head's positional types, and every later rule must agree)
+//!
+//! Then, per rule (a rule validates exactly as a conjunctive query did;
+//! variables are rule-scoped, params query-global — param typing unifies
+//! across rules after each rule's own fixpoint):
 //!
 //!  1. unknown relation ids
 //!  2. unknown field ids
@@ -55,7 +68,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ir::{FindTerm, ParamId, Query, VarId};
+use crate::ir::{FindTerm, ParamId, Query, Rule, VarId};
 use crate::schema::{IntervalElement, ValueType};
 
 mod context;
@@ -67,10 +80,20 @@ pub use validate::validate;
 
 /// The sealed witness: the query plus the derived tables downstream layers
 /// trust. Unconstructible outside this module.
+///
+/// Variables are rule-scoped, so their typing lives per rule
+/// ([`RuleWitness`]); params are query-global, so their tables live here
+/// once — unified across the rules' own typing fixpoints.
 #[derive(Debug)]
 pub struct ValidatedQuery {
     query: Query,
-    var_types: BTreeMap<VarId, ValueType>,
+    /// The head's positional type row, pinned at validation: rule 0's
+    /// resolved find-term types (an aggregate position carries its fold
+    /// input type; nullary `Count` is `U64`), which every later rule was
+    /// checked against position by position.
+    head_types: Vec<ValueType>,
+    /// Per rule, in rule order: its variable typing and group key.
+    rules: Vec<RuleTyping>,
     param_types: BTreeMap<ParamId, ValueType>,
     /// Param ids bound as sets (`Term::ParamSet`); their entry in
     /// `param_types` is the *element* type.
@@ -85,36 +108,50 @@ pub struct ValidatedQuery {
     /// rejection at bind. Disjoint from `param_types` — a mask is not a
     /// data-model type.
     mask_params: BTreeSet<ParamId>,
+}
+
+/// One rule's derived typing tables — rule-scoped by definition.
+#[derive(Debug)]
+struct RuleTyping {
+    var_types: BTreeMap<VarId, ValueType>,
     /// Non-aggregated find variables — the group key under aggregation.
     group_key: BTreeSet<VarId>,
 }
 
 impl ValidatedQuery {
-    /// The validated query, verbatim.
+    /// The head's pinned positional type row (see the field doc). Its
+    /// production consumer is the rule-execution union loop (PRD ALG-07);
+    /// until that lands, validation writes it and the tests read it.
+    #[cfg_attr(not(test), allow(dead_code))]
     #[must_use]
-    pub fn query(&self) -> &Query {
-        &self.query
+    pub fn head_types(&self) -> &[ValueType] {
+        &self.head_types
     }
 
-    /// The resolved structural type of a variable.
+    /// One rule's slice of the witness — the unit the per-rule pipeline
+    /// (normalize → chase → plan) consumes.
     ///
     /// # Panics
     ///
-    /// On a programmer-invariant violation: an unknown `VarId` (the witness
-    /// resolved every variable).
+    /// On a programmer-invariant violation: an index at or beyond
+    /// [`Self::rule_count`].
     #[must_use]
-    pub fn var_type(&self, var: VarId) -> &ValueType {
-        &self.var_types[&var]
+    pub fn rule(&self, index: usize) -> RuleWitness<'_> {
+        RuleWitness {
+            rule: &self.query.rules[index],
+            typing: &self.rules[index],
+            query: self,
+        }
     }
 
-    /// Every variable with its resolved type, in id order (the slot-layout
-    /// roster — normalization builds the binding-slot widths from it).
-    pub fn var_types(&self) -> impl Iterator<Item = (VarId, &ValueType)> {
-        self.var_types.iter().map(|(v, t)| (*v, t))
+    /// Every rule's witness slice, in rule order.
+    pub fn rules(&self) -> impl Iterator<Item = RuleWitness<'_>> {
+        (0..self.rules.len()).map(|index| self.rule(index))
     }
 
     /// The resolved type of a scalar param (for a set param this is the
-    /// *element* type).
+    /// *element* type). Query-global: one binding surface, any rule may
+    /// reference any param.
     ///
     /// # Panics
     ///
@@ -154,26 +191,73 @@ impl ValidatedQuery {
     pub fn mask_params(&self) -> &BTreeSet<ParamId> {
         &self.mask_params
     }
+}
 
-    /// The plan's sink-relevance set (the D2 gating bits' source). For a
-    /// pure projection it is the group key — the suffix skip may cross
-    /// nodes binding nothing projected. For an aggregate-bearing find
-    /// list it is **every** variable: the fold is defined over the
-    /// distinct full binding set, so no node's bindings are skippable,
+/// One rule of the witness: the rule plus its own typing tables, with the
+/// query-global param tables reachable through it. Everything downstream
+/// of validation runs per rule and consumes exactly this view.
+#[derive(Clone, Copy)]
+pub struct RuleWitness<'a> {
+    rule: &'a Rule,
+    typing: &'a RuleTyping,
+    query: &'a ValidatedQuery,
+}
+
+impl RuleWitness<'_> {
+    /// The rule, verbatim.
+    #[must_use]
+    pub fn rule(&self) -> &Rule {
+        self.rule
+    }
+
+    /// The resolved structural type of one of this rule's variables.
+    ///
+    /// # Panics
+    ///
+    /// On a programmer-invariant violation: an unknown `VarId` (the witness
+    /// resolved every variable of the rule).
+    #[must_use]
+    pub fn var_type(&self, var: VarId) -> &ValueType {
+        &self.typing.var_types[&var]
+    }
+
+    /// Every variable of this rule with its resolved type, in id order
+    /// (the slot-layout roster — normalization builds the binding-slot
+    /// widths from it).
+    pub fn var_types(&self) -> impl Iterator<Item = (VarId, &ValueType)> {
+        self.typing.var_types.iter().map(|(v, t)| (*v, t))
+    }
+
+    /// The resolved type of a param — query-global
+    /// ([`ValidatedQuery::param_type`]).
+    ///
+    /// # Panics
+    ///
+    /// As [`ValidatedQuery::param_type`].
+    #[must_use]
+    pub fn param_type(&self, param: ParamId) -> &ValueType {
+        self.query.param_type(param)
+    }
+
+    /// The rule's plan's sink-relevance set (the D2 gating bits' source).
+    /// For a pure projection it is the group key — the suffix skip may
+    /// cross nodes binding nothing projected. For an aggregate-bearing
+    /// head it is **every** variable of the rule: the fold is defined over
+    /// the distinct full binding set, so no node's bindings are skippable,
     /// and the `sink_relevant` bits themselves encode the illegality —
     /// any `SkipSuffix` a future sink ever signaled under an aggregate
     /// plan is absorbed at the node that produced it.
     #[must_use]
     pub fn sink_vars(&self) -> BTreeSet<VarId> {
         let has_aggregate = self
-            .query
+            .rule
             .finds
             .iter()
             .any(|term| matches!(term, FindTerm::Aggregate { .. }));
         if has_aggregate {
-            self.var_types.keys().copied().collect()
+            self.typing.var_types.keys().copied().collect()
         } else {
-            self.group_key.clone()
+            self.typing.group_key.clone()
         }
     }
 
@@ -182,7 +266,7 @@ impl ValidatedQuery {
     #[cfg(test)]
     #[must_use]
     pub fn group_key(&self) -> &BTreeSet<VarId> {
-        &self.group_key
+        &self.typing.group_key
     }
 }
 

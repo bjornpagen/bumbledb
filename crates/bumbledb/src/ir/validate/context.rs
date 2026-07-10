@@ -1,6 +1,6 @@
 use super::{Context, ParamKind, TypeSlot};
 use crate::error::ValidationError;
-use crate::ir::{CmpOp, Comparison, MaskTerm, ParamId, Query, Term, Value, VarId};
+use crate::ir::{CmpOp, Comparison, MaskTerm, ParamId, Rule, Term, Value, VarId};
 use crate::schema::{FieldId, IntervalElement, Schema, ValueType};
 
 /// The structural type of a literal, for matching against a field or
@@ -232,13 +232,13 @@ impl Context {
     pub(super) fn check_atoms(
         &mut self,
         schema: &Schema,
-        query: &Query,
+        rule: &Rule,
     ) -> Result<(), ValidationError> {
-        let occurrences = query
+        let occurrences = rule
             .atoms
             .iter()
             .map(|atom| (atom, false))
-            .chain(query.negated.iter().map(|atom| (atom, true)));
+            .chain(rule.negated.iter().map(|atom| (atom, true)));
         for (occ_idx, (atom, negated)) in occurrences.enumerate() {
             if usize::try_from(atom.relation.0).expect("64-bit usize") >= schema.relations().len() {
                 return Err(ValidationError::UnknownRelation {
@@ -377,44 +377,28 @@ impl Context {
 
     // --- comparisons ------------------------------------------------------
 
-    pub(super) fn check_comparisons(&mut self, query: &Query) -> Result<(), ValidationError> {
-        self.comparison_shapes(query)?;
-        self.propagate_comparison_anchors(query)?;
+    pub(super) fn check_comparisons(&mut self, rule: &Rule) -> Result<(), ValidationError> {
+        self.comparison_shapes(rule)?;
+        self.propagate_comparison_anchors(rule)?;
         self.resolve_bivalents();
-        self.comparison_types(query)?;
+        self.comparison_types(rule)?;
         // A param with no anchor is unwritable by construction: every
         // param position is itself an anchor (a field binding types it
         // immediately; a comparison against a variable types it via the
         // variable; param-only comparisons are already
         // `ConstantComparison`) — the roster item is discharged by
-        // representation, not by a check.
-        //
-        // A mask param is anchored by its mask position alone; any value
-        // anchor on the same id (a field binding, a comparison side) is a
-        // type conflict — a mask is not a data-model type.
-        for param in &self.mask_params {
-            if self.param_slots.contains_key(param) {
-                return Err(ValidationError::ParamTypeConflict { param: *param });
-            }
-        }
-        // Param ids must be dense — jointly across scalars, sets, and
-        // masks: a gap would be a positional slot at execution whose
-        // supplied value is never type-checked.
-        for (position, param) in self.param_kinds.keys().enumerate() {
-            if usize::from(param.0) != position {
-                return Err(ValidationError::ParamIdGap {
-                    param: ParamId(u16::try_from(position).expect("param ids fit u16")),
-                });
-            }
-        }
+        // representation, not by a check. The two whole-program param
+        // rules — mask-vs-value conflicts and id density — are checked
+        // after every rule contributed (params are query-global;
+        // `validate::ParamTables`).
         Ok(())
     }
 
     /// Shape rules that need no types: self-comparisons, constant
     /// comparisons (no variable side), comparison-only variables, param
     /// roles, and the `ParamSet`-only-under-`Eq` rule.
-    fn comparison_shapes(&mut self, query: &Query) -> Result<(), ValidationError> {
-        for (index, Comparison { op, lhs, rhs }) in query.predicates.iter().enumerate() {
+    fn comparison_shapes(&mut self, rule: &Rule) -> Result<(), ValidationError> {
+        for (index, Comparison { op, lhs, rhs }) in rule.predicates.iter().enumerate() {
             // The Allen mask position, both vacuity rules for literals
             // (∅ = "never": write no query; full = "always": write no
             // predicate) and the roster registration for params (their
@@ -477,10 +461,10 @@ impl Context {
     /// them against final types. `Contains` propagates nothing — its
     /// right side is legally either reading of the left (the predicate
     /// form of the membership rule), so neither side names the other.
-    fn propagate_comparison_anchors(&mut self, query: &Query) -> Result<(), ValidationError> {
+    fn propagate_comparison_anchors(&mut self, rule: &Rule) -> Result<(), ValidationError> {
         loop {
             let mut changed = false;
-            for Comparison { op, lhs, rhs } in &query.predicates {
+            for Comparison { op, lhs, rhs } in &rule.predicates {
                 if matches!(op, CmpOp::Contains) {
                     continue;
                 }
@@ -587,8 +571,8 @@ impl Context {
     /// Per-operator type legality over final types, and the param
     /// anchoring those rules imply. Runs after `resolve_bivalents`: every
     /// variable slot is monovalent here.
-    fn comparison_types(&mut self, query: &Query) -> Result<(), ValidationError> {
-        for (index, Comparison { op, lhs, rhs }) in query.predicates.iter().enumerate() {
+    fn comparison_types(&mut self, rule: &Rule) -> Result<(), ValidationError> {
+        for (index, Comparison { op, lhs, rhs }) in rule.predicates.iter().enumerate() {
             match op {
                 CmpOp::Eq | CmpOp::Ne => self.check_equality(index, lhs, rhs)?,
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {

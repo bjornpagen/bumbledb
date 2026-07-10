@@ -6,7 +6,7 @@
 //! mixed bind through the public [`bumbledb::ParamArg`] surface.
 
 use bumbledb::error::ValidationError;
-use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Term, VarId};
+use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Rule, Term, VarId};
 use bumbledb::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
     StatementDescriptor, ValueType,
@@ -195,7 +195,7 @@ fn wide_enum_through_commit_and_scan() {
             .map(|_| ())
     })
     .expect("seed");
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: RelationId(0),
@@ -206,7 +206,7 @@ fn wide_enum_through_commit_and_scan() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = db2.prepare(&query).expect("prepare");
     let err = db2
         .read(|snap| {
@@ -338,7 +338,7 @@ fn zero_binding_gate_with_global_count() {
     .expect("seed");
 
     // Count(nodes) gated on Gate being nonempty.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
             op: AggOp::Count,
             over: None,
@@ -355,7 +355,7 @@ fn zero_binding_gate_with_global_count() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = db.prepare(&query).expect("prepare");
 
     // Gate empty: no rows at all (empty-input aggregate = empty set).
@@ -376,7 +376,7 @@ fn zero_binding_gate_with_global_count() {
 /// Q(id) :- Posting(id, account = ?set1, amount = ?0, memo = ?2) — one
 /// set among two scalars, the PRD 20 bind-matrix shape.
 fn mixed_params_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: Posting::RELATION,
@@ -389,7 +389,7 @@ fn mixed_params_query() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// The PRD 20 bind matrix through the public [`ParamArg`] surface:
@@ -513,7 +513,7 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
     // Non-dense param ids are a prepare-time validation error: a gap is
     // a positional slot whose supplied value is never type-checked.
     let mut gapped = mixed_params_query();
-    gapped.atoms[0].bindings[1] = (FieldId(1), Term::Var(VarId(1)));
+    gapped.rules[0].atoms[0].bindings[1] = (FieldId(1), Term::Var(VarId(1)));
     let Err(err) = db.prepare(&gapped).map(|_| ()) else {
         panic!("a gapped param id space must fail to prepare");
     };

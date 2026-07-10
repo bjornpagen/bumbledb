@@ -57,7 +57,7 @@ fn the_stats_surface_carries_the_pinned_rows() {
     );
 
     // A guard probe classifies before statistics: nothing is pinned.
-    let guard_query = Query {
+    let guard_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -68,7 +68,7 @@ fn the_stats_surface_carries_the_pinned_rows() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
     let (_, stats) = guard
         .profile(&txn, &cache, &[BindValue::U64(1)])
@@ -117,7 +117,7 @@ fn profile_returns_structured_stats_matching_the_execution() {
     assert!(report.contains("emitted bindings: 2"), "{report}");
 
     // Guard profile: no nodes, a hit flag.
-    let guard_query = Query {
+    let guard_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -128,7 +128,7 @@ fn profile_returns_structured_stats_matching_the_execution() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
     let (rows, stats) = guard
         .profile(&txn, &cache, &[BindValue::U64(1)])

@@ -4,7 +4,7 @@ use crate::allen::AllenMask;
 use crate::encoding::{encode_fact, encode_i64, ValueRef};
 use crate::image::view::{Const, MaskConst, ResolvedWordSource};
 use crate::ir::validate::validate;
-use crate::ir::{Atom, Comparison, FindTerm, MaskTerm, ParamId, Query, Term, Value};
+use crate::ir::{Atom, Comparison, FindTerm, MaskTerm, ParamId, Query, Rule, Term, Value};
 use crate::schema::{
     FieldDescriptor, Generation, IntervalElement, RelationDescriptor, Schema, SchemaDescriptor,
     ValueType,
@@ -89,16 +89,18 @@ fn w(value: i64) -> u64 {
 
 fn normalized(query: &Query) -> NormalizedQuery {
     let schema = schema();
-    normalize(&schema, &validate(&schema, query).expect("valid"))
+    let mut rules = normalize(&schema, &validate(&schema, query).expect("valid"));
+    assert_eq!(rules.len(), 1, "these fixtures are one-rule programs");
+    rules.remove(0)
 }
 
 fn query(atoms: Vec<Atom>, negated: Vec<Atom>, predicates: Vec<Comparison>) -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms,
         negated,
         predicates,
-    }
+    })
 }
 
 #[test]
@@ -228,7 +230,7 @@ fn interval_literals_lower_to_encoded_word_pairs() {
 #[test]
 fn same_relation_atoms_get_distinct_occurrences_with_independent_filters() {
     // A self-join: R(id=v0, a=1) x R(id=v1, a=2).
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -248,7 +250,7 @@ fn same_relation_atoms_get_distinct_occurrences_with_independent_filters() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let norm = normalized(&query);
     assert_eq!(norm.occurrences.len(), 2);
     assert_eq!(norm.occurrences[0].occ_id, OccId(0));
@@ -346,7 +348,7 @@ fn occurrence_vars_are_duplicate_free_over_generated_inputs() {
         let Ok(witness) = validate(&schema, &query) else {
             continue;
         };
-        let norm = normalize(&schema, &witness);
+        let norm = &normalize(&schema, &witness)[0];
         for occurrence in &norm.occurrences {
             let mut seen = std::collections::BTreeSet::new();
             for (_, v) in &occurrence.vars {
@@ -803,7 +805,7 @@ fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
     // point resolves from the variable's binding once bound (the
     // point-membership scan, docs/architecture/40-execution.md); the
     // membership position binds no variable of P.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -817,7 +819,7 @@ fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let norm = normalized(&query);
     assert_eq!(norm.occurrences[0].vars, vec![(P_EMP, VarId(1))]);
     assert_eq!(
@@ -1095,7 +1097,7 @@ fn residuals_are_never_single_occurrence_across_the_new_kinds() {
     // Scalar comparisons and membership across atoms, with a negated atom
     // in the mix: negated occurrences never absorb comparisons and never
     // host residual variables.
-    let mixed = Query {
+    let mixed = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -1116,7 +1118,7 @@ fn residuals_are_never_single_occurrence_across_the_new_kinds() {
             lhs: var(0),
             rhs: var(1),
         }],
-    };
+    });
     let norm = normalized(&mixed);
     assert_residuals_cross_atom(&norm);
     // The pair co-occurs only in the *negated* atom — it must residualize

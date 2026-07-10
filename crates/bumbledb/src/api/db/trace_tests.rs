@@ -231,7 +231,7 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
     assert_eq!(db.generation().expect("generation"), 1);
 
     // Q(id, v) :- S(id, v) — a full-scan free join that builds views.
-    let query = crate::ir::Query {
+    let query = crate::ir::Query::single(crate::ir::Rule {
         finds: vec![
             crate::ir::FindTerm::Var(crate::ir::VarId(0)),
             crate::ir::FindTerm::Var(crate::ir::VarId(1)),
@@ -245,7 +245,7 @@ fn a_noop_fresh_commit_keeps_the_view_memo_valid() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = db.prepare(&query).expect("prepare");
     db.read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
         .expect("first execute builds");

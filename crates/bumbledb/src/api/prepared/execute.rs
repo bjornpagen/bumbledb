@@ -1,6 +1,6 @@
 use super::{BindValue, ExecPlan, PreparedQuery, ResultBuffer, ValueType};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::exec::dispatch::execute_guard;
 use crate::exec::run::NoopCounters;
 use crate::image::cache::ImageCache;
@@ -16,8 +16,10 @@ impl<S> PreparedQuery<'_, S> {
     ///
     /// # Errors
     ///
-    /// `ParamCountMismatch`/`ParamTypeMismatch` at bind time; `Overflow`
-    /// from aggregate finalization; `Lmdb`/`Corruption` from storage.
+    /// `ParamCountMismatch`/`ParamTypeMismatch` at bind time;
+    /// `MultiRuleExecution` for a 2+-rule program (the union loop is PRD
+    /// ALG-07's); `Overflow` from aggregate finalization;
+    /// `Lmdb`/`Corruption` from storage.
     ///
     /// # Panics
     ///
@@ -31,9 +33,10 @@ impl<S> PreparedQuery<'_, S> {
         out: &mut ResultBuffer,
     ) -> Result<()> {
         self.check_snapshot(txn)?;
+        self.gate_single_rule()?;
         let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
         out.clear();
-        out.arity = self.finds.len();
+        out.arity = self.column_types.len();
         {
             let _s = obs::span(obs::names::BIND_PARAMS, obs::Category::Execute);
             self.bind_params(txn, params)?;
@@ -59,9 +62,10 @@ impl<S> PreparedQuery<'_, S> {
         out: &mut ResultBuffer,
     ) -> Result<()> {
         self.check_snapshot(txn)?;
+        self.gate_single_rule()?;
         let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
         out.clear();
-        out.arity = self.finds.len();
+        out.arity = self.column_types.len();
         {
             let _s = obs::span(obs::names::BIND_PARAMS, obs::Category::Execute);
             self.bind_param_args(txn, args)?;
@@ -71,20 +75,33 @@ impl<S> PreparedQuery<'_, S> {
         result
     }
 
-    /// The post-bind execution body shared by every bind shape.
+    /// The single-rule execution gate: every rule's plan is prepared, but
+    /// the union-driving executor loop (one head, one sink) is PRD
+    /// ALG-07's deliverable — a 2+-rule program is a typed refusal at
+    /// every execution entry, never a wrong answer.
+    pub(super) fn gate_single_rule(&self) -> Result<()> {
+        match self.rules.len() {
+            1 => Ok(()),
+            rules => Err(Error::MultiRuleExecution { rules }),
+        }
+    }
+
+    /// The post-bind execution body shared by every bind shape. Runs the
+    /// gated single rule (`self.rules[0]`).
     fn run_bound(
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
         out: &mut ResultBuffer,
     ) -> Result<()> {
-        match &self.plan {
+        let rule = &mut self.rules[0];
+        match &rule.plan {
             ExecPlan::GuardProbe(guard) => {
                 // The point fast lane: one probe, one
                 // fetch, cells decoded straight into the buffer — no
                 // sink, no bindings, no finalize pass. Aggregate-find
                 // guards (rare) keep the sink path below.
-                if self.guard_finds.is_some() {
+                if rule.guard_finds.is_some() {
                     return self.execute_guard_direct(txn, out);
                 }
                 self.sink.reset();
@@ -94,7 +111,7 @@ impl<S> PreparedQuery<'_, S> {
                     self.schema,
                     &self.resolved_params,
                     &mut self.guard_key,
-                    &mut self.bindings,
+                    &mut rule.bindings,
                     &mut self.sink,
                 )?;
             }
@@ -125,25 +142,26 @@ impl<S> PreparedQuery<'_, S> {
             &mut self.row_scratch,
             &mut self.resolve_memo,
             txn,
-            &self.finds,
+            &self.column_types,
             self.all_words,
             out,
         )
     }
 
     /// The Free Join body shared by every entry (`execute`,
-    /// `execute_args`, `profile`): resets the sink, resolves this
-    /// execution's predicate constants, and runs the join. `Ok(false)` =
-    /// the positive-occurrence `Eq` short-circuit (a dictionary miss or
-    /// empty set emptied the whole conjunctive query — nothing ran, the
-    /// sink stays reset, and the caller skips finalize).
+    /// `execute_args`, `profile`), over the gated single rule: resets the
+    /// sink, resolves this execution's predicate constants, and runs the
+    /// join. `Ok(false)` = the positive-occurrence `Eq` short-circuit (a
+    /// dictionary miss or empty set emptied the whole conjunctive rule —
+    /// nothing ran, the sink stays reset, and the caller skips finalize).
     pub(super) fn run_free_join<C: crate::exec::run::Counters>(
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
         counters: &mut C,
     ) -> Result<bool> {
-        let ExecPlan::FreeJoin(plan) = &self.plan else {
+        let rule = &mut self.rules[0];
+        let ExecPlan::FreeJoin(plan) = &rule.plan else {
             unreachable!("free join entries dispatch on the plan")
         };
         self.sink.reset();
@@ -154,8 +172,8 @@ impl<S> PreparedQuery<'_, S> {
                 plan,
                 &self.resolved_params,
                 &self.missed_params,
-                &mut self.resolved_filters,
-                &mut self.resolved_selections,
+                &mut rule.resolved_filters,
+                &mut rule.resolved_selections,
             )?
         };
         if !resolved {
@@ -164,7 +182,7 @@ impl<S> PreparedQuery<'_, S> {
         // This execution's Allen-residual masks (literal or bound param)
         // resolve into the executor before the join runs — the hot path
         // never touches the param slice.
-        self.executor
+        rule.executor
             .as_mut()
             .expect("free join plans carry executor scratch")
             .bind_allen_masks(&self.resolved_params);
@@ -173,13 +191,13 @@ impl<S> PreparedQuery<'_, S> {
             self.schema,
             txn,
             cache,
-            self.executor
+            rule.executor
                 .as_mut()
                 .expect("free join plans carry executor scratch"),
-            &mut self.bindings,
-            &self.resolved_filters,
-            &self.resolved_selections,
-            &mut self.memo,
+            &mut rule.bindings,
+            &rule.resolved_filters,
+            &rule.resolved_selections,
+            &mut rule.memo,
             &mut self.sink,
             counters,
         )?;
@@ -189,10 +207,11 @@ impl<S> PreparedQuery<'_, S> {
     /// The point fast lane's body: probe + fetch +
     /// direct cell decode, no sink machinery.
     fn execute_guard_direct(&mut self, txn: &ReadTxn<'_>, out: &mut ResultBuffer) -> Result<()> {
-        let ExecPlan::GuardProbe(guard) = &self.plan else {
+        let rule = &self.rules[0];
+        let ExecPlan::GuardProbe(guard) = &rule.plan else {
             unreachable!("guard_finds implies a guard plan")
         };
-        let guard_finds = self.guard_finds.as_ref().expect("checked by the caller");
+        let guard_finds = rule.guard_finds.as_ref().expect("checked by the caller");
         self.resolve_memo.clear();
         let Some(fact) = crate::exec::dispatch::guard_probe_fact(
             guard,

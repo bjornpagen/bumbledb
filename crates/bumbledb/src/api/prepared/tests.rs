@@ -3,7 +3,7 @@ use super::*;
 use crate::encoding::{encode_fact, ValueRef};
 use crate::error::Error;
 use crate::image::cache::ImageCache;
-use crate::ir::{Atom, CmpOp, Comparison, FindTerm, Query, Term, Value, VarId};
+use crate::ir::{Atom, CmpOp, Comparison, FindTerm, Query, Rule, Term, Value, VarId};
 use crate::schema::{
     FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
 };
@@ -19,6 +19,7 @@ mod correctness;
 mod explain;
 mod guard;
 mod params;
+mod rules;
 mod selection;
 mod sets;
 mod snapshot;
@@ -96,7 +97,7 @@ fn insert_postings(env: &Environment, schema: &Schema, rows: &[(u64, u64, &str, 
 
 /// Q(memo, amount) :- Posting(account = ?0, memo, amount), amount >= ?1.
 fn by_account_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -112,7 +113,7 @@ fn by_account_query() -> Query {
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(crate::ir::ParamId(1)),
         }],
-    }
+    })
 }
 
 fn rows_of(buffer: &ResultBuffer) -> Vec<(String, i64)> {
@@ -135,7 +136,7 @@ fn rows_of(buffer: &ResultBuffer) -> Vec<(String, i64)> {
 /// (docs/architecture/40-execution.md): a param-Eq on a field outside
 /// every key.
 fn by_memo_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -146,7 +147,7 @@ fn by_memo_query() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 fn memo_param(text: &str) -> Vec<BindValue<'_>> {

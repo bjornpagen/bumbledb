@@ -14,7 +14,7 @@ use bumbledb::schema::{
     StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    with_chase_disabled, AggOp, Atom, Db, FindTerm, Query, RelationId, Term, Value, VarId,
+    with_chase_disabled, AggOp, Atom, Db, FindTerm, Query, RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::differential::{engine_query, Rows};
@@ -201,13 +201,13 @@ fn the_existence_walk_agrees_three_ways_on_both_sinks() {
         atom(0, &[(0, var(0)), (1, var(1)), (2, var(2))]),
         atom(1, &[(0, var(1))]),
     ];
-    let projection = Query {
+    let projection = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: atoms.clone(),
         negated: vec![],
         predicates: vec![],
-    };
-    let aggregate = Query {
+    });
+    let aggregate = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(1)),
             FindTerm::Aggregate {
@@ -218,7 +218,7 @@ fn the_existence_walk_agrees_three_ways_on_both_sinks() {
         atoms,
         negated: vec![],
         predicates: vec![],
-    };
+    });
     three_way(&db, &naive, &projection, "Account");
     three_way(&db, &naive, &aggregate, "Account");
 }
@@ -290,13 +290,13 @@ fn the_du_header_direction_agrees_three_ways_on_both_sinks() {
     let (db, naive) = stores(dir.path(), &descriptor, du_inserts());
     let (header, child) = du_atoms();
     let atoms = vec![child, header];
-    let projection = Query {
+    let projection = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: atoms.clone(),
         negated: vec![],
         predicates: vec![],
-    };
-    let aggregate = Query {
+    });
+    let aggregate = Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
             op: AggOp::Sum,
             over: Some(VarId(1)),
@@ -304,7 +304,7 @@ fn the_du_header_direction_agrees_three_ways_on_both_sinks() {
         atoms,
         negated: vec![],
         predicates: vec![],
-    };
+    });
     three_way(&db, &naive, &projection, "Grading");
     three_way(&db, &naive, &aggregate, "Grading");
 }
@@ -321,13 +321,13 @@ fn the_du_child_direction_agrees_three_ways_on_both_sinks() {
     let (db, naive) = stores(dir.path(), &descriptor, du_inserts());
     let (header, child) = du_atoms();
     let atoms = vec![header, child];
-    let projection = Query {
+    let projection = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: atoms.clone(),
         negated: vec![],
         predicates: vec![],
-    };
-    let aggregate = Query {
+    });
+    let aggregate = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -338,7 +338,7 @@ fn the_du_child_direction_agrees_three_ways_on_both_sinks() {
         atoms,
         negated: vec![],
         predicates: vec![],
-    };
+    });
     three_way(&db, &naive, &projection, "Det");
     three_way(&db, &naive, &aggregate, "Det");
 }
@@ -354,7 +354,7 @@ fn the_missing_phi_near_miss_refuses_and_still_agrees() {
     let dir = TempDir::new("du-missing-phi");
     let descriptor = du_descriptor();
     let (db, naive) = stores(dir.path(), &descriptor, du_inserts());
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![
             atom(0, &[(0, var(0)), (1, var(2))]),
@@ -362,7 +362,7 @@ fn the_missing_phi_near_miss_refuses_and_still_agrees() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     assert!(
         eliminated(&db, &query).is_empty(),
         "without φ the chase must refuse"

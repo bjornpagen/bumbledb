@@ -204,7 +204,7 @@ fn read_path_traces_phases_memo_hits_and_guard() {
     assert!(!second_names.contains(&obs::names::IMAGE_BUILD));
 
     // A guard-shaped query: guard_probe, never join.
-    let guard_query = Query {
+    let guard_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -215,7 +215,7 @@ fn read_path_traces_phases_memo_hits_and_guard() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut guard = prepare(&txn, &cache, &schema, &guard_query).expect("prepare");
     obs::start_capture();
     guard

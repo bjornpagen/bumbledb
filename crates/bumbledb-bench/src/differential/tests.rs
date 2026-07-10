@@ -14,7 +14,7 @@ use bumbledb::schema::{
 };
 use bumbledb::{
     AggOp, AllenMask, Atom, CmpOp, Comparison, Db, FindTerm, MaskTerm, ParamId, Query, RelationId,
-    Term, Value, VarId,
+    Rule, Term, Value, VarId,
 };
 
 use crate::differential::{run, Op, Summary};
@@ -252,12 +252,12 @@ fn atom(relation: RelationId, bindings: Vec<(u16, Term)>) -> Atom {
 }
 
 fn plain(finds: Vec<FindTerm>, atoms: Vec<Atom>) -> Query {
-    Query {
+    Query::single(Rule {
         finds,
         atoms,
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 fn booking_atom() -> Atom {
@@ -313,7 +313,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         ),
         // 6: markers with no booking in room 0 (negation).
         (
-            Query {
+            Query::single(Rule {
                 finds: vec![v(0)],
                 atoms: vec![atom(MARKER, vec![(0, var(0))])],
                 negated: vec![atom(
@@ -321,7 +321,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                     vec![(0, Term::Literal(Value::U64(0))), (2, var(0))],
                 )],
                 predicates: vec![],
-            },
+            }),
             vec![],
         ),
         // 7: bookings per room.
@@ -365,7 +365,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         ),
         // 13: overlapping spans across distinct bookings.
         (
-            Query {
+            Query::single(Rule {
                 finds: vec![v(2), v(5)],
                 atoms: vec![
                     booking_atom(),
@@ -386,12 +386,12 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                         rhs: var(5),
                     },
                 ],
-            },
+            }),
             vec![],
         ),
         // 14: spans containing another booking's span.
         (
-            Query {
+            Query::single(Rule {
                 finds: vec![v(2), v(5)],
                 atoms: vec![
                     booking_atom(),
@@ -412,12 +412,12 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                         rhs: var(5),
                     },
                 ],
-            },
+            }),
             vec![],
         ),
         // 15: markers lying inside a booking's span, as a predicate.
         (
-            Query {
+            Query::single(Rule {
                 finds: vec![v(2), v(3)],
                 atoms: vec![booking_atom(), atom(MARKER, vec![(0, var(3))])],
                 negated: vec![],
@@ -426,7 +426,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                     lhs: var(1),
                     rhs: var(3),
                 }],
-            },
+            }),
             vec![],
         ),
         // 16: bookings of one room (scalar param).
@@ -453,7 +453,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         ),
         // 18: references above a threshold (order predicate).
         (
-            Query {
+            Query::single(Rule {
                 finds: vec![v(2)],
                 atoms: vec![booking_atom()],
                 negated: vec![],
@@ -462,13 +462,13 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                     lhs: var(2),
                     rhs: Term::Literal(Value::U64(4)),
                 }],
-            },
+            }),
             vec![],
         ),
         // 19: markers not referenced from rooms in a set (negation with a
         // param set inside the negated atom).
         (
-            Query {
+            Query::single(Rule {
                 finds: vec![v(0)],
                 atoms: vec![atom(MARKER, vec![(0, var(0))])],
                 negated: vec![atom(
@@ -476,7 +476,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                     vec![(0, Term::ParamSet(ParamId(0))), (2, var(0))],
                 )],
                 predicates: vec![],
-            },
+            }),
             vec![ParamValue::Set(vec![Value::U64(1), Value::U64(2)])],
         ),
         // 20: markers gated on Booking being nonempty (zero-binding atom).

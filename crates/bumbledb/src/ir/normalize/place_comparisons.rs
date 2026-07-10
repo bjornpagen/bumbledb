@@ -4,7 +4,7 @@ use super::{
 };
 use crate::allen::AllenMask;
 use crate::image::view::{Const, FilterPredicate, MaskConst, ResolvedWordSource};
-use crate::ir::validate::ValidatedQuery;
+use crate::ir::validate::RuleWitness;
 use crate::ir::{CmpOp, Comparison, MaskTerm, Term, VarId};
 use crate::schema::{FieldId, ValueType};
 
@@ -28,8 +28,8 @@ fn flip(op: CmpOp) -> CmpOp {
 }
 
 /// Whether the variable resolved to an interval type.
-fn interval_typed(query: &ValidatedQuery, var: VarId) -> bool {
-    matches!(query.var_type(var), ValueType::Interval { .. })
+fn interval_typed(rule: &RuleWitness<'_>, var: VarId) -> bool {
+    matches!(rule.var_type(var), ValueType::Interval { .. })
 }
 
 /// The constant side of an interval comparison, as a filter constant
@@ -59,11 +59,11 @@ fn mask_const(mask: MaskTerm, mirrored: bool) -> MaskConst {
 /// Interval `Eq`/`Ne` canonicalization: they are the derived facts
 /// `Allen(EQUALS)` / `Allen(¬EQUALS)`, so exactly one interval-pair form
 /// leaves normalization. Every other comparison passes through.
-fn canonicalize(query: &ValidatedQuery, comparison: &Comparison) -> CmpOp {
+fn canonicalize(rule: &RuleWitness<'_>, comparison: &Comparison) -> CmpOp {
     let on_intervals = || {
         [&comparison.lhs, &comparison.rhs]
             .iter()
-            .any(|term| matches!(term, Term::Var(var) if interval_typed(query, *var)))
+            .any(|term| matches!(term, Term::Var(var) if interval_typed(rule, *var)))
     };
     match comparison.op {
         CmpOp::Eq if on_intervals() => CmpOp::Allen {
@@ -106,7 +106,7 @@ fn word(var: VarId, word: IntervalWord) -> VarWord {
 /// (docs/architecture/20-query-ir.md).
 #[allow(clippy::too_many_lines)] // one linear pass, each comparison class in order
 pub(super) fn place_comparisons(
-    query: &ValidatedQuery,
+    rule: &RuleWitness<'_>,
     occurrences: &mut [Occurrence],
 ) -> (
     Vec<PlacedComparison>,
@@ -116,8 +116,8 @@ pub(super) fn place_comparisons(
     let mut residuals = Vec::new();
     let mut word_residuals = Vec::new();
     let mut allen_residuals = Vec::new();
-    for comparison in &query.query().predicates {
-        let op = canonicalize(query, comparison);
+    for comparison in &rule.rule().predicates {
+        let op = canonicalize(rule, comparison);
         match (&comparison.lhs, &comparison.rhs) {
             (Term::Var(lhs), Term::Var(rhs)) => {
                 let same_atom = occurrences

@@ -51,7 +51,10 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
             EMPTY_STORE_RANDOM_CASES,
             0x0112_0002,
             "empty random",
-            |query| gate_bearing += u32::from(query.atoms.iter().any(|a| a.bindings.is_empty())),
+            |query| {
+                gate_bearing +=
+                    u32::from(query.rules[0].atoms.iter().any(|a| a.bindings.is_empty()));
+            },
         );
     });
     // The structural check holds only for a full slice — a bundle-budget

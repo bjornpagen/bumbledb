@@ -5,7 +5,7 @@
 //! commit-time statement judgments with their rendered diagnostics; and
 //! the export → `bulk_load` ETL round trip.
 
-use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Term, Value, VarId};
+use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Rule, Term, Value, VarId};
 use bumbledb::schema::FieldId;
 use bumbledb::{BindValue, Db, Direction, Fact, ResultBuffer, ResultValue, StatementId, Theory};
 
@@ -38,7 +38,7 @@ bumbledb::schema! {
 
 /// Q(name, balance) :- Account(holder = h, balance), Holder(id = h, name).
 fn join_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -58,13 +58,13 @@ fn join_query() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// Q(name, Sum(balance)) :- Account(holder = h, balance), Holder(id = h,
 /// name).
 fn aggregate_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -90,12 +90,12 @@ fn aggregate_query() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// Q(balance) :- Account(id = ?0, balance) — the point-lookup (guard) shape.
 fn point_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: Account::RELATION,
@@ -106,7 +106,7 @@ fn point_query() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// Collects a two-column (String, I64) result buffer into a sorted vec —
@@ -754,7 +754,7 @@ fn cover_choice_iterates_the_selected_side() {
 
     // Q(h, Sum(balance)) :- Account(holder = h, balance),
     //                       Holder(id = h, name = ?0).
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -780,7 +780,7 @@ fn cover_choice_iterates_the_selected_side() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = db.prepare(&query).expect("prepare");
     let params = vec![BindValue::Str("target")];
     let (out, stats) = db

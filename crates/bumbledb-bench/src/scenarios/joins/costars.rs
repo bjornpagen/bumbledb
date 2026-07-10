@@ -1,11 +1,11 @@
-use bumbledb::{Atom, FieldId, FindTerm, Query, VarId};
+use bumbledb::{Atom, FieldId, FindTerm, Query, Rule, VarId};
 
 use super::ids;
 use super::term::{param, var};
 
 /// j2 — costars: the self-join through a shared movie, hot vs cold.
 pub(super) fn costars() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
@@ -19,5 +19,5 @@ pub(super) fn costars() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }

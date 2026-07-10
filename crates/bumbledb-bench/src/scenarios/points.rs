@@ -6,7 +6,7 @@
 //! dictionary on every lookup.
 
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, Query, Term, Value, VarId,
+    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, Query, Rule, Term, Value, VarId,
 };
 
 use super::{mix, Scenario, ScenarioQuery};
@@ -91,7 +91,7 @@ fn param(id: u16) -> Term {
 
 /// p1 — point by fresh id (the guard probe vs one B-tree descent).
 fn by_id() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: ids::DOC,
@@ -103,7 +103,7 @@ fn by_id() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 fn id_params(seed: u64, salt: u64) -> Vec<Vec<Value>> {
@@ -118,7 +118,7 @@ fn id_params(seed: u64, salt: u64) -> Vec<Vec<Value>> {
 
 /// p2 — point by string key (interning on every execution).
 fn by_key() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: ids::DOC,
@@ -130,7 +130,7 @@ fn by_key() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 fn key_params(seed: u64) -> Vec<Vec<Value>> {
@@ -146,7 +146,7 @@ fn key_params(seed: u64) -> Vec<Vec<Value>> {
 
 /// p3 — bucket fetch through the containment edge: ~73 docs per bucket.
 fn bucket_fetch() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
@@ -164,7 +164,7 @@ fn bucket_fetch() -> Query {
             lhs: var(1),
             rhs: param(1),
         }],
-    }
+    })
 }
 
 fn bucket_params(_: u64) -> Vec<Vec<Value>> {
@@ -179,7 +179,7 @@ fn bucket_params(_: u64) -> Vec<Vec<Value>> {
 
 /// p4 — size-band count: secondary-range aggregation, no join.
 fn size_band() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
             op: AggOp::Count,
             over: None,
@@ -201,7 +201,7 @@ fn size_band() -> Query {
                 rhs: param(1),
             },
         ],
-    }
+    })
 }
 
 fn size_band_params(_: u64) -> Vec<Vec<Value>> {

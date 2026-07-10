@@ -1,4 +1,4 @@
-use bumbledb::{Atom, FieldId, FindTerm, Query, Value, VarId};
+use bumbledb::{Atom, FieldId, FindTerm, Query, Rule, Value, VarId};
 
 use super::term::{param, var};
 use super::{ids, mix, HOT_PEOPLE, PEOPLE};
@@ -7,7 +7,7 @@ use crate::gen::Rng;
 /// j1 — one hot person, one cold person, one mid, one miss: fan-in skew
 /// on a 2-atom containment walk.
 pub(super) fn filmography() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -25,7 +25,7 @@ pub(super) fn filmography() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 pub(super) fn filmography_params(seed: u64) -> Vec<Vec<Value>> {

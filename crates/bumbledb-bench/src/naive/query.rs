@@ -1,12 +1,15 @@
 //! Literal query semantics by nested loops
 //! (`docs/architecture/20-query-ir.md`, normative). The model evaluates a
-//! *validated* query: params substituted first, then the cross product of
-//! the positive atoms enumerated fact by fact, bindings built from scalar
-//! occurrences, membership evaluated as a per-binding test (a point value
-//! must lie in the fact's interval), predicates via the endpoint formulas,
-//! negated atoms as plain anti-joins, full bindings deduplicated into a
-//! `BTreeSet`, and finds projected or folded per the aggregation rules
-//! (Sum in i128, `CountDistinct` via `BTreeSet`, Arg terms as literal
+//! *validated* query — a program of rules — **from the definition: the
+//! query denotes the set union of its rules' denotations.** Per rule:
+//! params substituted first (params are query-global; variables are
+//! rule-scoped), then the cross product of the positive atoms enumerated
+//! fact by fact, bindings built from scalar occurrences, membership
+//! evaluated as a per-binding test (a point value must lie in the fact's
+//! interval), predicates via the endpoint formulas, negated atoms as
+//! plain anti-joins, full bindings deduplicated into a `BTreeSet`, and
+//! finds projected or folded per the aggregation rules (Sum in i128,
+//! `CountDistinct` via `BTreeSet`, Arg terms as literal
 //! restrict-then-project with ties surviving, empty-input global
 //! aggregates yielding the empty set).
 
@@ -14,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bumbledb::schema::ValueType;
 use bumbledb::{
-    AggOp, Atom, Basic, CmpOp, Comparison, FindTerm, MaskTerm, Query, Term, Value, VarId,
+    AggOp, Atom, Basic, CmpOp, Comparison, FindTerm, MaskTerm, Query, Rule, Term, Value, VarId,
 };
 
 use super::tuple::{cmp_value, contains_point, endpoints, point};
@@ -66,8 +69,16 @@ struct Env<'a> {
 }
 
 impl NaiveDb {
-    /// Evaluates a validated query with positional parameters: the set of
-    /// distinct full bindings, projected and folded per the find list.
+    /// Evaluates a validated query with positional parameters, from the
+    /// definition: the **set union of the rules' denotations**. Per rule,
+    /// the set of distinct full bindings is projected and folded per its
+    /// find list; a one-rule program is exactly the conjunctive query.
+    ///
+    /// A multi-rule aggregate head folds over the union of the rules'
+    /// binding sets projected to the head (the rules-IR definition; PRD
+    /// ALG-07 owns the executor's dedup semantics). The single-rule fold
+    /// domain stays the rule's distinct **full** binding set — the
+    /// normative aggregation rule, unchanged.
     ///
     /// # Errors
     ///
@@ -83,9 +94,33 @@ impl NaiveDb {
         query: &Query,
         params: &[ParamValue],
     ) -> Result<BTreeSet<Tuple>, QueryError> {
-        let var_count = count_vars(query);
+        if let [rule] = query.rules.as_slice() {
+            let bindings = self.rule_bindings(rule, params);
+            return project(&rule.finds, &bindings);
+        }
+        let aggregated = query
+            .head
+            .iter()
+            .any(|term| matches!(term, bumbledb::HeadTerm::Aggregate(_)));
+        if aggregated {
+            return self.union_fold(query, params);
+        }
+        // Projection head: the union of the per-rule projected sets —
+        // one union, set semantics.
+        let mut rows = BTreeSet::new();
+        for rule in &query.rules {
+            let bindings = self.rule_bindings(rule, params);
+            rows.extend(project(&rule.finds, &bindings)?);
+        }
+        Ok(rows)
+    }
+
+    /// One rule's distinct full binding set — the conjunctive semantics
+    /// over the rule's own variable scope.
+    fn rule_bindings(&self, rule: &Rule, params: &[ParamValue]) -> BTreeSet<Tuple> {
+        let var_count = count_vars(rule);
         let mut scalar_anchored = vec![false; var_count];
-        for atom in &query.atoms {
+        for atom in &rule.atoms {
             for (field, term) in &atom.bindings {
                 if let Term::Var(var) = term {
                     if !self.atom_field_is_interval(atom, *field) {
@@ -96,17 +131,17 @@ impl NaiveDb {
         }
         let env = Env {
             relations: &self.relations,
-            atoms: query
+            atoms: rule
                 .atoms
                 .iter()
                 .map(|atom| self.flatten(atom, params))
                 .collect(),
-            negated: query
+            negated: rule
                 .negated
                 .iter()
                 .map(|atom| self.flatten(atom, params))
                 .collect(),
-            predicates: query
+            predicates: rule
                 .predicates
                 .iter()
                 .map(|Comparison { op, lhs, rhs }| {
@@ -137,7 +172,77 @@ impl NaiveDb {
         let mut assignment = vec![None; var_count];
         let mut pending = Vec::new();
         enumerate(&env, 0, &mut assignment, &mut pending, &mut bindings);
-        project(&query.finds, &bindings)
+        bindings
+    }
+
+    /// The multi-rule aggregate fold: each rule's binding set projected
+    /// to the head (per position: the variable's value, or the
+    /// aggregate's fold-input value — the nullary `Count` contributes a
+    /// constant filler), unioned as a set, then grouped and folded per
+    /// position. Arg terms are single-rule-only until PRD ALG-07 defines
+    /// their cross-rule restriction (their key is a rule variable the
+    /// head projection does not carry).
+    fn union_fold(
+        &self,
+        query: &Query,
+        params: &[ParamValue],
+    ) -> Result<BTreeSet<Tuple>, QueryError> {
+        let head = &query.rules[0].finds;
+        assert!(
+            !head.iter().any(|term| matches!(
+                term,
+                FindTerm::Aggregate {
+                    op: AggOp::ArgMax { .. } | AggOp::ArgMin { .. },
+                    ..
+                }
+            )),
+            "multi-rule Arg restriction is undefined until PRD ALG-07"
+        );
+        let mut domain: BTreeSet<Tuple> = BTreeSet::new();
+        for rule in &query.rules {
+            for binding in &self.rule_bindings(rule, params) {
+                domain.insert(Tuple(
+                    rule.finds
+                        .iter()
+                        .map(|term| match term {
+                            FindTerm::Var(var)
+                            | FindTerm::Aggregate {
+                                over: Some(var), ..
+                            } => binding.0[usize::from(var.0)].clone(),
+                            // Nullary Count: no fold input — a constant
+                            // filler keeps positions stable.
+                            FindTerm::Aggregate { over: None, .. } => Value::Bool(false),
+                        })
+                        .collect(),
+                ));
+            }
+        }
+        // Group by the variable positions; fold each aggregate position
+        // over its group's projected tuples.
+        let mut groups: BTreeMap<Tuple, Vec<&Tuple>> = BTreeMap::new();
+        for row in &domain {
+            let key = Tuple(
+                head.iter()
+                    .zip(&row.0)
+                    .filter(|(term, _)| matches!(term, FindTerm::Var(_)))
+                    .map(|(_, value)| value.clone())
+                    .collect(),
+            );
+            groups.entry(key).or_default().push(row);
+        }
+        let mut rows = BTreeSet::new();
+        for group in groups.values() {
+            let row: Result<Vec<Value>, QueryError> = head
+                .iter()
+                .enumerate()
+                .map(|(index, term)| match term {
+                    FindTerm::Var(_) => Ok(group[0].0[index].clone()),
+                    FindTerm::Aggregate { op, .. } => fold_position(*op, index, group),
+                })
+                .collect();
+            rows.insert(Tuple(row?));
+        }
+        Ok(rows)
     }
 
     fn flatten(&self, atom: &Atom, params: &[ParamValue]) -> FlatAtom {
@@ -165,7 +270,7 @@ impl NaiveDb {
     }
 }
 
-fn count_vars(query: &Query) -> usize {
+fn count_vars(rule: &Rule) -> usize {
     fn see(count: &mut usize, var: VarId) {
         *count = (*count).max(usize::from(var.0) + 1);
     }
@@ -175,16 +280,16 @@ fn count_vars(query: &Query) -> usize {
         }
     }
     let mut count = 0;
-    for atom in query.atoms.iter().chain(&query.negated) {
+    for atom in rule.atoms.iter().chain(&rule.negated) {
         for (_, term) in &atom.bindings {
             see_term(&mut count, term);
         }
     }
-    for Comparison { lhs, rhs, .. } in &query.predicates {
+    for Comparison { lhs, rhs, .. } in &rule.predicates {
         see_term(&mut count, lhs);
         see_term(&mut count, rhs);
     }
-    for find in &query.finds {
+    for find in &rule.finds {
         match find {
             FindTerm::Var(var) => see(&mut count, *var),
             FindTerm::Aggregate { op, over } => {
@@ -544,6 +649,54 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
         }
     }
     Ok(rows)
+}
+
+/// One fold aggregate over a group of head-projected tuples (the
+/// multi-rule union fold): the position's values are the fold inputs.
+fn fold_position(op: AggOp, index: usize, group: &[&Tuple]) -> Result<Value, QueryError> {
+    let values = || group.iter().map(move |row| &row.0[index]);
+    match op {
+        AggOp::Count => Ok(Value::U64(
+            u64::try_from(group.len()).expect("group sizes fit u64"),
+        )),
+        AggOp::CountDistinct => {
+            let distinct: BTreeSet<Tuple> =
+                values().map(|value| Tuple(vec![value.clone()])).collect();
+            Ok(Value::U64(
+                u64::try_from(distinct.len()).expect("group sizes fit u64"),
+            ))
+        }
+        AggOp::Sum => {
+            let total: i128 = values()
+                .map(|value| point(value).expect("validated: Sum takes integers"))
+                .sum();
+            match values().next().expect("groups are nonempty") {
+                Value::U64(_) => u64::try_from(total)
+                    .map(Value::U64)
+                    .map_err(|_| QueryError::Overflow { find: index }),
+                Value::I64(_) => i64::try_from(total)
+                    .map(Value::I64)
+                    .map_err(|_| QueryError::Overflow { find: index }),
+                other => panic!("validated: Sum takes integers, got {other:?}"),
+            }
+        }
+        AggOp::Min | AggOp::Max => {
+            let picked = values()
+                .max_by(|a, b| {
+                    let ordering = cmp_value(a, b);
+                    if matches!(op, AggOp::Max) {
+                        ordering
+                    } else {
+                        ordering.reverse()
+                    }
+                })
+                .expect("groups are nonempty");
+            Ok(picked.clone())
+        }
+        AggOp::ArgMax { .. } | AggOp::ArgMin { .. } => {
+            unreachable!("multi-rule Arg terms are rejected by the caller")
+        }
+    }
 }
 
 /// One fold aggregate over a group's binding set.

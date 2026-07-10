@@ -100,7 +100,7 @@ fn string_params_resolve_per_execution() {
     let cache = ImageCache::new();
 
     // Q(amount) :- Posting(memo = ?0, amount).
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -111,7 +111,7 @@ fn string_params_resolve_per_execution() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let mut out = ResultBuffer::new();
@@ -209,7 +209,7 @@ fn a_mask_param_rebinds_the_temporal_relation_per_execution() {
     let cache = ImageCache::new();
 
     // Q(a) :- Mandate(account = a, active = v), Allen(v, [10,20), ?0).
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: RelationId(0),
@@ -226,7 +226,7 @@ fn a_mask_param_rebinds_the_temporal_relation_per_execution() {
             lhs: Term::Var(VarId(1)),
             rhs: Term::Literal(Value::IntervalU64(10, 20)),
         }],
-    };
+    });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let mut out = ResultBuffer::new();
@@ -278,7 +278,7 @@ fn a_cross_atom_mask_param_resolves_into_the_executors_residual() {
     // Q(a, b) :- Mandate(account = a, active = u),
     //            Mandate(account = b, active = v),
     //            Allen(u, v, ?0), a < b.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![
             Atom {
@@ -311,7 +311,7 @@ fn a_cross_atom_mask_param_resolves_into_the_executors_residual() {
                 rhs: Term::Var(VarId(2)),
             },
         ],
-    };
+    });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let mut out = ResultBuffer::new();

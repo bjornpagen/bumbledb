@@ -14,7 +14,7 @@ fn guard_fast_lane_hits_misses_and_type_errors() {
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "memo-a", 41), (2, 8, "memo-b", 42)]);
     // Q(account, memo, amount) :- Posting(id = ?0, account, memo, amount).
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Var(VarId(1)),
@@ -31,12 +31,12 @@ fn guard_fast_lane_hits_misses_and_type_errors() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let txn = env.read_txn().expect("txn");
     let cache = crate::image::cache::ImageCache::new();
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
     assert!(
-        prepared.guard_finds.is_some(),
+        prepared.rules[0].guard_finds.is_some(),
         "plain-variable guard takes the fast lane"
     );
     let mut out = ResultBuffer::new();
@@ -70,7 +70,7 @@ fn a_guard_prepare_and_execute_build_no_image() {
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "memo-a", 41)]);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Var(VarId(1)),
@@ -87,11 +87,14 @@ fn a_guard_prepare_and_execute_build_no_image() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let txn = env.read_txn().expect("txn");
     let cache = crate::image::cache::ImageCache::new();
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
-    assert!(prepared.guard_finds.is_some(), "the fast lane classified");
+    assert!(
+        prepared.rules[0].guard_finds.is_some(),
+        "the fast lane classified"
+    );
     let mut out = ResultBuffer::new();
     prepared
         .execute(&txn, &cache, &[BindValue::U64(1)], &mut out)
@@ -113,7 +116,7 @@ fn guard_probe_queries_flow_through_the_same_surface() {
     insert_postings(&env, &schema, &[(5, 7, "found", 42)]);
     let cache = ImageCache::new();
     // Q(amount) :- Posting(id = 5, amount) — the fresh key: guard probe.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -124,10 +127,10 @@ fn guard_probe_queries_flow_through_the_same_surface() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(prepared.plan, ExecPlan::GuardProbe(_)));
+    assert!(matches!(prepared.rules[0].plan, ExecPlan::GuardProbe(_)));
     let out = prepared
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
@@ -202,7 +205,7 @@ fn insert_bookings(env: &Environment, schema: &Schema, rows: &[(u64, (u64, u64),
 /// Q(label) :- Booking(room = 1, span <op> ?span-term) with the span term
 /// supplied by the caller — the by-value/membership twin queries.
 fn booking_query(span_term: Term) -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: RelationId(0),
@@ -214,7 +217,7 @@ fn booking_query(span_term: Term) -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// A point lookup through the pointwise key with the interval bound **by
@@ -234,7 +237,7 @@ fn pointwise_key_point_lookup_is_guarded_and_image_free() {
     let txn = env.read_txn().expect("txn");
     let query = booking_query(Term::Literal(Value::IntervalU64(5, 10)));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(prepared.plan, ExecPlan::GuardProbe(_)));
+    assert!(matches!(prepared.rules[0].plan, ExecPlan::GuardProbe(_)));
 
     let out = prepared
         .execute_collect(&txn, &cache, &[])
@@ -290,7 +293,7 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
     let query = booking_query(Term::Literal(Value::U64(7)));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(
-        matches!(prepared.plan, ExecPlan::FreeJoin(_)),
+        matches!(prepared.rules[0].plan, ExecPlan::FreeJoin(_)),
         "membership binding is not a key cover"
     );
 
@@ -361,26 +364,28 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
     let cache = ImageCache::new();
     let txn = env.read_txn().expect("txn");
     // Q(count()) :- Stay(owner = 2, span = [5, 10)) — the existence shape.
-    let count_stay = |span: (u64, u64)| Query {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: None,
-        }],
-        atoms: vec![Atom {
-            relation: RelationId(0),
-            bindings: vec![
-                (FieldId(0), Term::Literal(Value::U64(2))),
-                (
-                    FieldId(1),
-                    Term::Literal(Value::IntervalU64(span.0, span.1)),
-                ),
-            ],
-        }],
-        negated: vec![],
-        predicates: vec![],
+    let count_stay = |span: (u64, u64)| {
+        Query::single(Rule {
+            finds: vec![FindTerm::Aggregate {
+                op: AggOp::Count,
+                over: None,
+            }],
+            atoms: vec![Atom {
+                relation: RelationId(0),
+                bindings: vec![
+                    (FieldId(0), Term::Literal(Value::U64(2))),
+                    (
+                        FieldId(1),
+                        Term::Literal(Value::IntervalU64(span.0, span.1)),
+                    ),
+                ],
+            }],
+            negated: vec![],
+            predicates: vec![],
+        })
     };
     let mut prepared = prepare(&txn, &cache, &schema, &count_stay((5, 10))).expect("prepare");
-    assert!(matches!(prepared.plan, ExecPlan::GuardProbe(_)));
+    assert!(matches!(prepared.rules[0].plan, ExecPlan::GuardProbe(_)));
     let (_, report) = prepared.explain(&txn, &cache, &[]).expect("explain");
     assert!(report.contains("full-fact membership probe"), "{report}");
 
@@ -450,7 +455,7 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
     let cache = ImageCache::new();
     let txn = env.read_txn().expect("txn");
     // Q(val) :- Doc(name = ?0, val).
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: RelationId(0),
@@ -461,9 +466,9 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(prepared.plan, ExecPlan::GuardProbe(_)));
+    assert!(matches!(prepared.rules[0].plan, ExecPlan::GuardProbe(_)));
 
     let out = prepared
         .execute_collect(&txn, &cache, &[BindValue::Str("ghost")])

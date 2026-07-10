@@ -35,15 +35,15 @@ pub fn translate(
         param_index: BTreeMap::new(),
         params: Vec::new(),
     };
-    for atom in &query.atoms {
+    for atom in &query.rules[0].atoms {
         b.atom(atom)?;
     }
     b.flush_deferred()?;
-    for comparison in &query.predicates {
+    for comparison in &query.rules[0].predicates {
         b.comparison(comparison)?;
     }
     // Negation last: the NOT EXISTS subqueries append to the core's WHERE.
-    for (index, atom) in query.negated.iter().enumerate() {
+    for (index, atom) in query.rules[0].negated.iter().enumerate() {
         b.negated_atom(index, atom)?;
     }
     if b.from.is_empty() {
@@ -59,7 +59,7 @@ pub fn translate(
 
     let sql = if let Some((key, is_max)) = arg_restriction(query) {
         arg_sql(query, &b, &from, &where_clause, key, is_max)?
-    } else if query
+    } else if query.rules[0]
         .finds
         .iter()
         .any(|f| matches!(f, FindTerm::Aggregate { .. }))
@@ -67,7 +67,7 @@ pub fn translate(
         fold_sql(query, &b, &from, &where_clause)?
     } else {
         let mut cols: Vec<String> = Vec::new();
-        for find in &query.finds {
+        for find in &query.rules[0].finds {
             match find {
                 FindTerm::Var(var) => match b.columns.get(var) {
                     Some(VarCols::Scalar(column)) => cols.push(column.clone()),
@@ -98,7 +98,7 @@ pub fn translate(
 /// (validation guarantees all Arg terms share one key and direction, and
 /// that no fold aggregate mixes in).
 fn arg_restriction(query: &Query) -> Option<(VarId, bool)> {
-    query.finds.iter().find_map(|find| match find {
+    query.rules[0].finds.iter().find_map(|find| match find {
         FindTerm::Aggregate {
             op: AggOp::ArgMax { key },
             ..
@@ -151,7 +151,7 @@ fn fold_sql(query: &Query, b: &Builder, from: &str, where_clause: &str) -> Resul
     );
     let mut group: Vec<String> = Vec::new();
     let mut outer: Vec<String> = Vec::new();
-    for find in &query.finds {
+    for find in &query.rules[0].finds {
         match find {
             FindTerm::Var(var) => {
                 let names = var_names(b, *var, "")?;
@@ -218,7 +218,7 @@ fn arg_sql(
     );
     let mut group: Vec<String> = Vec::new();
     let mut outer: Vec<String> = Vec::new();
-    for find in &query.finds {
+    for find in &query.rules[0].finds {
         match find {
             FindTerm::Var(var) => {
                 group.extend(var_names(b, *var, "")?);

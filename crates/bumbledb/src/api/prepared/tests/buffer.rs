@@ -15,7 +15,7 @@ fn overflow_errors_leave_the_buffer_reusable() {
         &[(1, 7, "a", i64::MAX), (2, 7, "b", 1), (3, 8, "c", 4)],
     );
     // Sum by account: account 7 overflows at finalize.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -33,7 +33,7 @@ fn overflow_errors_leave_the_buffer_reusable() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let txn = env.read_txn().expect("txn");
     let cache = crate::image::cache::ImageCache::new();
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
@@ -51,7 +51,7 @@ fn overflow_errors_leave_the_buffer_reusable() {
         );
     }
     // A passing query fills the same buffer with exactly its rows.
-    let ok_query = Query {
+    let ok_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -67,7 +67,7 @@ fn overflow_errors_leave_the_buffer_reusable() {
             lhs: Term::Var(VarId(0)),
             rhs: Term::Literal(crate::ir::Value::U64(8)),
         }],
-    };
+    });
     let mut ok = prepare(&txn, &cache, &schema, &ok_query).expect("prepares");
     ok.execute(&txn, &cache, &[], &mut out).expect("executes");
     assert_eq!(out.len(), 1);

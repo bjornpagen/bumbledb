@@ -6,7 +6,7 @@
 //! B-tree plans.
 
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, Query, Term, Value, VarId,
+    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, Query, Rule, Term, Value, VarId,
 };
 
 use super::{mix, Scenario, ScenarioQuery};
@@ -129,7 +129,7 @@ fn start_params(seed: u64, salt: u64) -> Vec<Vec<Value>> {
 
 /// g1 — direct out-neighbors.
 fn neighbors() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: ids::EDGE,
@@ -137,12 +137,12 @@ fn neighbors() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// g2 — two hops out.
 fn two_hop() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
@@ -156,12 +156,12 @@ fn two_hop() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// g3 — three-hop reach, counted (the intermediate explosion, folded).
 fn three_hop_count() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
             op: AggOp::Count,
             over: None,
@@ -182,12 +182,12 @@ fn three_hop_count() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// g4 — mutual (reciprocal) edges among a node kind: the 2-cycle.
 fn mutual() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -205,12 +205,12 @@ fn mutual() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// g5 — triangles through a start node: the 3-cycle, counted.
 fn triangles_from() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
             op: AggOp::Count,
             over: None,
@@ -231,12 +231,12 @@ fn triangles_from() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// g6 — weighted hop with node filter: ranges on both hop and target.
 fn weighted_hop() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
@@ -265,7 +265,7 @@ fn weighted_hop() -> Query {
                 rhs: param(2),
             },
         ],
-    }
+    })
 }
 
 fn weighted_hop_params(seed: u64) -> Vec<Vec<Value>> {

@@ -7,6 +7,7 @@ use crate::schema::{
 
 mod accept;
 mod reject;
+mod rules;
 
 /// The fixture schema:
 /// Holder(id fresh, name string);
@@ -86,12 +87,12 @@ fn var(id: u16) -> Term {
 }
 
 fn simple(finds: Vec<FindTerm>, atoms: Vec<crate::ir::Atom>) -> Query {
-    Query {
+    Query::single(Rule {
         finds,
         atoms,
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 fn expect_err(query: &Query) -> ValidationError {

@@ -18,8 +18,10 @@ impl<S> PreparedQuery<'_, S> {
     /// no-knobs surface (`docs/architecture/00-product.md`).
     #[doc(hidden)]
     pub fn set_batch_size(&mut self, batch: usize) {
-        if let ExecPlan::FreeJoin(plan) = &self.plan {
-            self.executor = Some(Executor::with_batch_size(plan, batch));
+        for rule in &mut self.rules {
+            if let ExecPlan::FreeJoin(plan) = &rule.plan {
+                rule.executor = Some(Executor::with_batch_size(plan, batch));
+            }
         }
     }
 

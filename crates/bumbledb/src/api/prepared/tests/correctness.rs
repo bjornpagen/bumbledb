@@ -22,7 +22,7 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
 
     // Q(id) :- Posting(id, account = a), a >= 7 — a u64 ordered
     // comparison over the dense id domain.
-    let range = Query {
+    let range = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -37,7 +37,7 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
             lhs: Term::Var(VarId(1)),
             rhs: Term::Literal(Value::U64(7)),
         }],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &range).expect("prepare");
     let out = prepared
         .execute_collect(&txn, &cache, &[])
@@ -56,7 +56,7 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
     // Q(x, y) :- Posting(account = k, amount = x),
     //            Posting(account = k, amount = y), x < y — the
     // cross-atom residual, checked by nested loop.
-    let spread = Query {
+    let spread = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -80,7 +80,7 @@ fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
             lhs: Term::Var(VarId(0)),
             rhs: Term::Var(VarId(1)),
         }],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &spread).expect("prepare");
     let out = prepared
         .execute_collect(&txn, &cache, &[])
@@ -130,7 +130,7 @@ fn aggregates_fold_every_binding_of_existential_suffixes() {
     //                 Posting(account = x, memo = m)
     // — m is existential; the self-join's second occurrence opens a
     // node binding only m.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -156,7 +156,7 @@ fn aggregates_fold_every_binding_of_existential_suffixes() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
 
     // The nested-loop reference over distinct (x, y, m) bindings.
     let mut bindings = std::collections::BTreeSet::new();
@@ -207,7 +207,7 @@ fn ne_against_a_never_interned_string_matches_everything() {
     let cache = ImageCache::new();
 
     // Literal path: Q(amount) :- Posting(memo = m, amount), m != "ghost".
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -222,7 +222,7 @@ fn ne_against_a_never_interned_string_matches_everything() {
             lhs: Term::Var(VarId(1)),
             rhs: Term::Literal(Value::String(Box::from(&b"ghost"[..]))),
         }],
-    };
+    });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
@@ -231,7 +231,7 @@ fn ne_against_a_never_interned_string_matches_everything() {
     assert_eq!(out.len(), 2, "no stored memo equals a never-interned value");
 
     // Param path: Q(amount) :- Posting(memo = m, amount), m != ?0.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -246,7 +246,7 @@ fn ne_against_a_never_interned_string_matches_everything() {
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(crate::ir::ParamId(0)),
         }],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
         .execute_collect(&txn, &cache, &[BindValue::Str("ghost")])

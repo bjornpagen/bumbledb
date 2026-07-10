@@ -6,28 +6,38 @@ use super::{
     AntiProbe, NormalizedQuery, OccId, Occurrence, Role, SlotWidth,
 };
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
-use crate::ir::validate::ValidatedQuery;
+use crate::ir::validate::{RuleWitness, ValidatedQuery};
 use crate::ir::{Atom, CmpOp, Term, Value, VarId};
 use crate::schema::{FieldId, Schema, ValueType};
 
-/// Lowers the witness into paper form.
+/// Lowers the witness into paper form, rule by rule: one
+/// [`NormalizedQuery`] per rule, in rule order — the normalized artifact
+/// is a list because the query is a program.
 ///
 /// # Panics
 ///
 /// Only on programmer-invariant violations already excluded by validation
 /// (e.g. a comparison variable bound by no atom).
 #[must_use]
-pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> NormalizedQuery {
-    let positive = query.query().atoms.len();
-    let mut occurrences: Vec<Occurrence> =
-        Vec::with_capacity(positive + query.query().negated.len());
-    for (idx, atom) in query.query().atoms.iter().enumerate() {
-        occurrences.push(lower_atom(schema, query, idx, Role::Positive, atom));
+pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> Vec<NormalizedQuery> {
+    query
+        .rules()
+        .map(|rule| normalize_rule(schema, &rule))
+        .collect()
+}
+
+/// Lowers one rule — exactly the conjunctive query's lowering, over the
+/// rule's own variable scope.
+fn normalize_rule(schema: &Schema, rule: &RuleWitness<'_>) -> NormalizedQuery {
+    let positive = rule.rule().atoms.len();
+    let mut occurrences: Vec<Occurrence> = Vec::with_capacity(positive + rule.rule().negated.len());
+    for (idx, atom) in rule.rule().atoms.iter().enumerate() {
+        occurrences.push(lower_atom(schema, rule, idx, Role::Positive, atom));
     }
-    for (idx, atom) in query.query().negated.iter().enumerate() {
+    for (idx, atom) in rule.rule().negated.iter().enumerate() {
         occurrences.push(lower_atom(
             schema,
-            query,
+            rule,
             positive + idx,
             Role::Negated,
             atom,
@@ -45,11 +55,11 @@ pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> NormalizedQuery {
         })
         .collect();
 
-    let (residuals, word_residuals, allen_residuals) = place_comparisons(query, &mut occurrences);
+    let (residuals, word_residuals, allen_residuals) = place_comparisons(rule, &mut occurrences);
 
     // The binding-slot widths — the two-slot interval layout, decided at
     // [`SlotWidth`] and exported here to the plan witness.
-    let slot_widths: BTreeMap<VarId, SlotWidth> = query
+    let slot_widths: BTreeMap<VarId, SlotWidth> = rule
         .var_types()
         .map(|(var, value_type)| (var, SlotWidth::of(value_type)))
         .collect();
@@ -98,7 +108,7 @@ fn is_membership(field_type: &ValueType, term_type: &ValueType) -> bool {
 /// bindings.
 fn lower_atom(
     schema: &Schema,
-    query: &ValidatedQuery,
+    witness: &RuleWitness<'_>,
     idx: usize,
     role: Role,
     atom: &Atom,
@@ -114,7 +124,7 @@ fn lower_atom(
     for (field, term) in &atom.bindings {
         if let Term::Var(var) = term {
             let field_type = &relation.field(*field).value_type;
-            if is_membership(field_type, query.var_type(*var)) {
+            if is_membership(field_type, witness.var_type(*var)) {
                 continue;
             }
             if !vars.iter().any(|(_, v)| v == var) {
@@ -129,7 +139,7 @@ fn lower_atom(
         let field_type = &relation.field(*field).value_type;
         match term {
             Term::Var(var) => {
-                if is_membership(field_type, query.var_type(*var)) {
+                if is_membership(field_type, witness.var_type(*var)) {
                     // Membership: `start ≤ var < end`. With the point
                     // variable scalar-bound in this atom, the condition is
                     // a same-fact field composition; otherwise it reads the
@@ -163,7 +173,7 @@ fn lower_atom(
                 }
             }
             Term::Param(param) => {
-                if is_membership(field_type, query.param_type(*param)) {
+                if is_membership(field_type, witness.param_type(*param)) {
                     filters.push(FilterPredicate::PointIn {
                         field: *field,
                         point: ResolvedWordSource::Param(*param),

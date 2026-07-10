@@ -35,7 +35,7 @@ fn count_distinct_collapses_multiplicities_per_group_and_over_strings() {
     let cache = ImageCache::new();
     let txn = env.read_txn().expect("txn");
 
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -58,7 +58,7 @@ fn count_distinct_collapses_multiplicities_per_group_and_over_strings() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
         .execute_collect(&txn, &cache, &[])
@@ -99,7 +99,7 @@ fn elision_skips_binding_dedup_but_count_distinct_still_collapses() {
     let cache = ImageCache::new();
     let txn = env.read_txn().expect("txn");
 
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -117,7 +117,7 @@ fn elision_skips_binding_dedup_but_count_distinct_still_collapses() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(
         prepared.distinct_bindings(),
@@ -154,21 +154,23 @@ fn arg_max_picks_the_latest_posting_per_account() {
             (FieldId(3), Term::Var(VarId(1))),
         ],
     }];
-    let arg = |max: bool| Query {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: if max {
-                    AggOp::ArgMax { key: VarId(2) }
-                } else {
-                    AggOp::ArgMin { key: VarId(2) }
+    let arg = |max: bool| {
+        Query::single(Rule {
+            finds: vec![
+                FindTerm::Var(VarId(0)),
+                FindTerm::Aggregate {
+                    op: if max {
+                        AggOp::ArgMax { key: VarId(2) }
+                    } else {
+                        AggOp::ArgMin { key: VarId(2) }
+                    },
+                    over: Some(VarId(1)),
                 },
-                over: Some(VarId(1)),
-            },
-        ],
-        atoms: atoms.clone(),
-        negated: vec![],
-        predicates: vec![],
+            ],
+            atoms: atoms.clone(),
+            negated: vec![],
+            predicates: vec![],
+        })
     };
 
     let amounts = |out: &ResultBuffer| {
@@ -201,7 +203,7 @@ fn arg_max_picks_the_latest_posting_per_account() {
     assert_eq!(amounts(&out), vec![(3, 10), (7, 25)], "ArgMin mirrors");
 
     // Global group: the latest posting overall.
-    let global = Query {
+    let global = Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
             op: AggOp::ArgMax { key: VarId(2) },
             over: Some(VarId(1)),
@@ -209,7 +211,7 @@ fn arg_max_picks_the_latest_posting_per_account() {
         atoms,
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &global).expect("prepare");
     let out = prepared
         .execute_collect(&txn, &cache, &[])
@@ -247,7 +249,7 @@ fn arg_ties_are_set_honest() {
     let txn = env.read_txn().expect("txn");
 
     // Q(account, ArgMax_amount(memo)) — carries the memo.
-    let carry_memo = Query {
+    let carry_memo = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -266,7 +268,7 @@ fn arg_ties_are_set_honest() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &carry_memo).expect("prepare");
     let out = prepared
         .execute_collect(&txn, &cache, &[])
@@ -290,7 +292,7 @@ fn arg_ties_are_set_honest() {
 
     // Key-also-projected: the carry IS the key variable — ties project
     // equal rows and collapse.
-    let carry_key = Query {
+    let carry_key = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -308,7 +310,7 @@ fn arg_ties_are_set_honest() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &carry_key).expect("prepare");
     let out = prepared
         .execute_collect(&txn, &cache, &[])
@@ -394,7 +396,7 @@ fn interval_find_round_trips_through_the_result_buffer() {
     let txn = env.read_txn().expect("txn");
 
     // Q(emp, during) :- Payroll(emp, during).
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: PAYROLL,
@@ -405,7 +407,7 @@ fn interval_find_round_trips_through_the_result_buffer() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let types: Vec<ValueType> = prepared.column_types().cloned().collect();
     assert_eq!(
@@ -458,7 +460,7 @@ fn count_distinct_over_intervals_uses_value_identity() {
     let cache = ImageCache::new();
     let txn = env.read_txn().expect("txn");
 
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -476,7 +478,7 @@ fn count_distinct_over_intervals_uses_value_identity() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let out = prepared
         .execute_collect(&txn, &cache, &[])

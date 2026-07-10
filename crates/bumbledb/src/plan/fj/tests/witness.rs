@@ -6,7 +6,7 @@ use super::*;
 use crate::image::{ColumnSpan, ColumnWidth};
 use crate::ir::normalize::normalize;
 use crate::ir::validate::validate as validate_ir;
-use crate::ir::{Atom, CmpOp, Comparison, FindTerm, MaskTerm, Query, Term};
+use crate::ir::{Atom, CmpOp, Comparison, FindTerm, MaskTerm, Query, Rule, Term};
 use crate::plan::planner::{plan, OccStats};
 use crate::schema::IntervalElement;
 use std::collections::BTreeSet;
@@ -94,11 +94,11 @@ fn stats(rows_and_distincts: &[(u64, &[(u16, u64)])]) -> Vec<OccStats> {
 /// stats, lower, factor, validate into the witness.
 fn witness(schema: &Schema, query: &Query, occ_stats: &[OccStats]) -> ValidatedPlan {
     let validated = validate_ir(schema, query).expect("valid query");
-    let normalized = normalize(schema, &validated);
+    let normalized = normalize(schema, &validated).remove(0);
     let join_order = plan(&normalized, schema, occ_stats);
     let mut fj_plan = binary2fj(&normalized, &join_order);
     factor(&mut fj_plan);
-    let sink_vars: BTreeSet<VarId> = query
+    let sink_vars: BTreeSet<VarId> = query.rules[0]
         .finds
         .iter()
         .filter_map(|f| match f {
@@ -123,7 +123,7 @@ fn outer_join_idiom_join_half_validates_into_the_witness() {
     let schema = idiom_schema();
     let x = VarId(0);
     let y = VarId(1);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(x), FindTerm::Var(y)],
         atoms: vec![
             Atom {
@@ -137,7 +137,7 @@ fn outer_join_idiom_join_half_validates_into_the_witness() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     // 100 A-rows into 1000 B-rows on a non-key field of B: the walk
     // iterates A (its fresh key makes the reverse direction fanout 1,
     // but iterating the small side first still wins on cost).
@@ -172,7 +172,7 @@ fn outer_join_idiom_join_half_validates_into_the_witness() {
 fn outer_join_idiom_absence_half_validates_into_the_witness() {
     let schema = idiom_schema();
     let x = VarId(0);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(x)],
         atoms: vec![Atom {
             relation: RelationId(0),
@@ -183,7 +183,7 @@ fn outer_join_idiom_absence_half_validates_into_the_witness() {
             bindings: vec![(FieldId(1), Term::Var(x))],
         }],
         predicates: vec![],
-    };
+    });
     let witness = witness(&schema, &query, &stats(&[(100, &[(0, 100)])]));
 
     // One node — the negated occurrence joined nothing.
@@ -212,7 +212,7 @@ fn allen_residual_query_validates_into_the_witness() {
     let d1 = VarId(1);
     let e2 = VarId(2);
     let d2 = VarId(3);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(e1), FindTerm::Var(e2)],
         atoms: vec![
             Atom {
@@ -232,7 +232,7 @@ fn allen_residual_query_validates_into_the_witness() {
             lhs: Term::Var(d1),
             rhs: Term::Var(d2),
         }],
-    };
+    });
     // Asymmetric rows force the order: the 5-row side iterates first
     // (a disconnected pair is a cross product either way; cost counts
     // the root iteration).
@@ -312,7 +312,7 @@ fn interval_value_equality_joins_with_a_two_word_key() {
     let schema = interval_schema();
     let e1 = VarId(0);
     let d = VarId(1);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(e1)],
         atoms: vec![
             Atom {
@@ -326,7 +326,7 @@ fn interval_value_equality_joins_with_a_two_word_key() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let witness = witness(
         &schema,
         &query,

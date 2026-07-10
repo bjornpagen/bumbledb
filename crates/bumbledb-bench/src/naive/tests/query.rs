@@ -12,7 +12,7 @@ use bumbledb::schema::{
 };
 use bumbledb::{
     AggOp, AllenMask, Atom, CmpOp, Comparison, FieldId, FindTerm, MaskTerm, ParamId, Query,
-    RelationId, Term, Value, VarId,
+    RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::naive::query::ParamValue;
@@ -123,12 +123,12 @@ fn duplicate_witnesses_collapse() {
         posting(2, 7, 100),
         posting(3, 8, 5),
     ]);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, vec![(0, var(1)), (1, var(0)), (2, var(2))])],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     assert_eq!(
         db.query(&query, &[]).unwrap(),
         rows(vec![vec![Value::U64(7)], vec![Value::U64(8)]])
@@ -140,7 +140,7 @@ fn aggregation_footgun_triples_the_sum() {
     // Joining the multiplicity-adding PostingTag into the aggregate
     // multiplies the binding set: 3 tags on one posting of 100 ⇒ 300.
     let db = db(vec![posting(1, 7, 100), tag(1, 0), tag(1, 1), tag(1, 2)]);
-    let plain = Query {
+    let plain = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -151,12 +151,12 @@ fn aggregation_footgun_triples_the_sum() {
         atoms: vec![atom(POSTING, vec![(0, var(1)), (1, var(0)), (2, var(2))])],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     assert_eq!(
         db.query(&plain, &[]).unwrap(),
         rows(vec![vec![Value::U64(7), Value::I64(100)]])
     );
-    let joined = Query {
+    let joined = Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -170,7 +170,7 @@ fn aggregation_footgun_triples_the_sum() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     assert_eq!(
         db.query(&joined, &[]).unwrap(),
         rows(vec![vec![Value::U64(7), Value::I64(300)]])
@@ -181,7 +181,7 @@ fn aggregation_footgun_triples_the_sum() {
 fn empty_input_global_aggregate_is_the_empty_set() {
     // Over empty input the result is the empty set — not a 0 or NULL row.
     let db = db(vec![]);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![
             FindTerm::Aggregate {
                 op: AggOp::Sum,
@@ -195,7 +195,7 @@ fn empty_input_global_aggregate_is_the_empty_set() {
         atoms: vec![atom(POSTING, vec![(0, var(1)), (1, var(0)), (2, var(2))])],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     assert_eq!(db.query(&query, &[]).unwrap(), rows(vec![]));
 }
 
@@ -208,7 +208,7 @@ fn arg_tie_yields_every_attaining_row() {
         posting(2, 7, 100),
         posting(3, 7, 99),
     ]);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
             op: AggOp::ArgMax { key: VarId(2) },
             over: Some(VarId(1)),
@@ -216,7 +216,7 @@ fn arg_tie_yields_every_attaining_row() {
         atoms: vec![atom(POSTING, vec![(0, var(1)), (1, var(0)), (2, var(2))])],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     assert_eq!(
         db.query(&query, &[]).unwrap(),
         rows(vec![vec![Value::U64(1)], vec![Value::U64(2)]])
@@ -228,7 +228,7 @@ fn membership_boundaries_are_half_open() {
     // Mandate active over [10, 20): the start is in, the end is out.
     let db = db(vec![mandate(1, 10, 20)]);
     for (point, expect_hit) in [(9u64, false), (10, true), (19, true), (20, false)] {
-        let query = Query {
+        let query = Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![atom(
                 MANDATE,
@@ -236,7 +236,7 @@ fn membership_boundaries_are_half_open() {
             )],
             negated: vec![],
             predicates: vec![],
-        };
+        });
         let expected = if expect_hit {
             rows(vec![vec![Value::U64(1)]])
         } else {
@@ -256,7 +256,7 @@ fn point_variable_membership_uses_the_scalar_anchor() {
         posting(2, 25, 5),
         mandate(9, 10, 20),
     ]);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             atom(POSTING, vec![(0, var(1)), (1, var(0)), (2, var(2))]),
@@ -264,7 +264,7 @@ fn point_variable_membership_uses_the_scalar_anchor() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     assert_eq!(
         db.query(&query, &[]).unwrap(),
         rows(vec![vec![Value::U64(12)]])
@@ -280,7 +280,7 @@ fn interval_variable_on_interval_fields_is_value_equality() {
         mandate(2, 10, 20),
         mandate(3, 10, 21),
     ]);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![
             atom(MANDATE, vec![(0, var(0)), (1, var(1))]),
@@ -292,7 +292,7 @@ fn interval_variable_on_interval_fields_is_value_equality() {
             lhs: var(0),
             rhs: var(2),
         }],
-    };
+    });
     assert_eq!(
         db.query(&query, &[]).unwrap(),
         rows(vec![vec![Value::U64(1), Value::U64(2)]])
@@ -310,12 +310,12 @@ fn negation_rejects_once_regardless_of_multiplicities() {
         tag(1, 0),
         tag(1, 1),
     ]);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, vec![(0, var(0)), (1, var(1)), (2, var(2))])],
         negated: vec![atom(TAG, vec![(0, var(0))])],
         predicates: vec![],
-    };
+    });
     assert_eq!(
         db.query(&query, &[]).unwrap(),
         rows(vec![vec![Value::U64(3)]])
@@ -325,12 +325,12 @@ fn negation_rejects_once_regardless_of_multiplicities() {
 #[test]
 fn negated_zero_binding_atom_is_an_emptiness_gate() {
     let db = db(vec![posting(1, 7, 100), tag(1, 0)]);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(POSTING, vec![(0, var(0)), (1, var(1)), (2, var(2))])],
         negated: vec![atom(TAG, vec![])],
         predicates: vec![],
-    };
+    });
     assert_eq!(db.query(&query, &[]).unwrap(), rows(vec![]));
 }
 
@@ -341,7 +341,7 @@ fn count_distinct_folds_values_not_bindings() {
         posting(2, 7, 100),
         posting(3, 8, 5),
     ]);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![
             FindTerm::Aggregate {
                 op: AggOp::Count,
@@ -355,7 +355,7 @@ fn count_distinct_folds_values_not_bindings() {
         atoms: vec![atom(POSTING, vec![(0, var(1)), (1, var(0)), (2, var(2))])],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     // 3 distinct bindings, 2 distinct accounts.
     assert_eq!(
         db.query(&query, &[]).unwrap(),
@@ -370,7 +370,7 @@ fn param_set_membership_and_the_empty_set() {
         posting(2, 8, 50),
         posting(3, 9, 25),
     ]);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(
             POSTING,
@@ -378,7 +378,7 @@ fn param_set_membership_and_the_empty_set() {
         )],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let hit = db
         .query(
             &query,
@@ -397,7 +397,7 @@ fn allen_masks_use_the_point_set_definitions() {
         mandate(2, 15, 25),
         mandate(3, 20, 30),
     ]);
-    let overlapping = Query {
+    let overlapping = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
         atoms: vec![
             atom(MANDATE, vec![(0, var(0)), (1, var(1))]),
@@ -418,7 +418,7 @@ fn allen_masks_use_the_point_set_definitions() {
                 rhs: var(2),
             },
         ],
-    };
+    });
     // [10,20) and [20,30) are adjacent, not intersecting.
     assert_eq!(
         db.query(&overlapping, &[]).unwrap(),
@@ -428,7 +428,7 @@ fn allen_masks_use_the_point_set_definitions() {
         ])
     );
     // COVERS against a literal: only [15,25) ⊇ [16,22).
-    let covering = Query {
+    let covering = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![atom(MANDATE, vec![(0, var(0)), (1, var(1))])],
         negated: vec![],
@@ -439,7 +439,7 @@ fn allen_masks_use_the_point_set_definitions() {
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(16, 22)),
         }],
-    };
+    });
     assert_eq!(
         db.query(&covering, &[]).unwrap(),
         rows(vec![vec![Value::U64(2)]])
@@ -449,7 +449,7 @@ fn allen_masks_use_the_point_set_definitions() {
 #[test]
 fn sum_overflow_is_the_one_runtime_error() {
     let db = db(vec![posting(1, 7, i64::MAX), posting(2, 7, 1)]);
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
             op: AggOp::Sum,
             over: Some(VarId(2)),
@@ -457,6 +457,103 @@ fn sum_overflow_is_the_one_runtime_error() {
         atoms: vec![atom(POSTING, vec![(0, var(1)), (1, var(0)), (2, var(2))])],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     assert!(db.query(&query, &[]).is_err());
+}
+
+#[test]
+fn a_query_denotes_the_set_union_of_its_rules_denotations() {
+    // Two rules over one head: account 7's amounts, account 8's amounts.
+    // The union is a set — the shared amount 100 appears once.
+    let db = db(vec![
+        posting(1, 7, 100),
+        posting(2, 7, 250),
+        posting(3, 8, 100),
+        posting(4, 9, 999),
+    ]);
+    let by_account = |account: u64| Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(
+            POSTING,
+            vec![(1, Term::Literal(Value::U64(account))), (2, var(0))],
+        )],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let query = Query {
+        head: vec![bumbledb::HeadTerm::Var],
+        rules: vec![by_account(7), by_account(8)],
+    };
+    assert_eq!(
+        db.query(&query, &[]).unwrap(),
+        rows(vec![vec![Value::I64(100)], vec![Value::I64(250)]]),
+        "one union, set semantics: 100 appears once"
+    );
+}
+
+#[test]
+fn variables_are_rule_scoped_in_the_model_too() {
+    // VarId(0) is the projected I64 amount in rule 0 and an unprojected
+    // U64 account in rule 1 — two variables, one id, two scopes.
+    let db = db(vec![posting(1, 7, 100), posting(2, 8, 250)]);
+    let first = Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(
+            POSTING,
+            vec![(1, Term::Literal(Value::U64(7))), (2, var(0))],
+        )],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let second = Rule {
+        finds: vec![FindTerm::Var(VarId(1))],
+        atoms: vec![atom(POSTING, vec![(1, var(0)), (2, var(1))])],
+        negated: vec![],
+        predicates: vec![Comparison {
+            op: CmpOp::Eq,
+            lhs: var(0),
+            rhs: Term::Literal(Value::U64(8)),
+        }],
+    };
+    let query = Query {
+        head: vec![bumbledb::HeadTerm::Var],
+        rules: vec![first, second],
+    };
+    assert_eq!(
+        db.query(&query, &[]).unwrap(),
+        rows(vec![vec![Value::I64(100)], vec![Value::I64(250)]]),
+    );
+}
+
+#[test]
+fn a_multi_rule_aggregate_folds_over_the_union_projected_to_the_head() {
+    // Sum over the union of the two rules' head projections: accounts 7
+    // and 8 contribute {100, 250} ∪ {100} = {100, 250} → 350 (the
+    // rules-IR definition; PRD ALG-07 owns the executor's dedup
+    // refinements).
+    let db = db(vec![
+        posting(1, 7, 100),
+        posting(2, 7, 250),
+        posting(3, 8, 100),
+    ]);
+    let sum_of = |account: u64| Rule {
+        finds: vec![FindTerm::Aggregate {
+            op: AggOp::Sum,
+            over: Some(VarId(0)),
+        }],
+        atoms: vec![atom(
+            POSTING,
+            vec![(1, Term::Literal(Value::U64(account))), (2, var(0))],
+        )],
+        negated: vec![],
+        predicates: vec![],
+    };
+    let query = Query {
+        head: vec![bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Sum)],
+        rules: vec![sum_of(7), sum_of(8)],
+    };
+    assert_eq!(
+        db.query(&query, &[]).unwrap(),
+        rows(vec![vec![Value::I64(350)]]),
+    );
 }

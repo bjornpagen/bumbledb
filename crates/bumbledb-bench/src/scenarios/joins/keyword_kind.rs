@@ -1,4 +1,4 @@
-use bumbledb::{Atom, CmpOp, Comparison, FieldId, FindTerm, Query, Value, VarId};
+use bumbledb::{Atom, CmpOp, Comparison, FieldId, FindTerm, Query, Rule, Value, VarId};
 
 use super::corpus::s;
 use super::term::{param, var};
@@ -8,7 +8,7 @@ use crate::gen::Rng;
 /// j3 — keyword × kind: two interned-string/enum-selective dimensions
 /// pinching a 3-way join from both sides.
 pub(super) fn keyword_kind() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -35,7 +35,7 @@ pub(super) fn keyword_kind() -> Query {
             lhs: var(1),
             rhs: param(1),
         }],
-    }
+    })
 }
 
 pub(super) fn keyword_kind_params(seed: u64) -> Vec<Vec<Value>> {

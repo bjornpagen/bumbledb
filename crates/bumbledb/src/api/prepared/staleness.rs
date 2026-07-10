@@ -51,8 +51,8 @@ pub struct OccurrenceDrift {
 }
 
 /// The plan-drift report [`PreparedQuery::staleness`] returns: one
-/// [`OccurrenceDrift`] per participating occurrence, plus the worst
-/// ratio for hosts that want one number.
+/// [`OccurrenceDrift`] per participating occurrence — across every rule,
+/// in rule order — plus the worst ratio for hosts that want one number.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Staleness {
     /// Per participating occurrence, in occurrence-id order.
@@ -90,8 +90,9 @@ impl<S> PreparedQuery<'_, S> {
     pub fn staleness(&self, snap: &Snapshot<'_, S>) -> Result<Staleness> {
         self.check_snapshot(snap.txn())?;
         let per_occurrence = self
-            .pinned
+            .rules
             .iter()
+            .flat_map(|rule| rule.pinned.iter())
             .map(|pin| {
                 let live = read::row_count(snap.txn(), pin.relation)?;
                 Ok(OccurrenceDrift {
@@ -114,8 +115,9 @@ impl<S> PreparedQuery<'_, S> {
     /// participating occurrence, the statistics every node estimate
     /// derives from, with the relation name resolved.
     pub(super) fn pinned_rows(&self) -> Vec<crate::api::stats::PinnedRows> {
-        self.pinned
+        self.rules
             .iter()
+            .flat_map(|rule| rule.pinned.iter())
             .map(|pin| crate::api::stats::PinnedRows {
                 occurrence: pin.occ_id.0,
                 relation: self.schema.relation(pin.relation).name().to_owned(),

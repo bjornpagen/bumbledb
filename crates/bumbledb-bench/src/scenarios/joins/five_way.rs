@@ -1,4 +1,4 @@
-use bumbledb::{Atom, CmpOp, Comparison, FieldId, FindTerm, Query, Value, VarId};
+use bumbledb::{Atom, CmpOp, Comparison, FieldId, FindTerm, Query, Rule, Value, VarId};
 
 use super::ids;
 use super::term::{param, var};
@@ -6,7 +6,7 @@ use super::term::{param, var};
 /// j4 — the JOB-shaped 5-way: fact table pinched by three dimension
 /// filters (gender, country, year window) on alternating sides.
 pub(super) fn five_way() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -51,7 +51,7 @@ pub(super) fn five_way() -> Query {
                 rhs: param(3),
             },
         ],
-    }
+    })
 }
 
 pub(super) fn five_way_params(_: u64) -> Vec<Vec<Value>> {

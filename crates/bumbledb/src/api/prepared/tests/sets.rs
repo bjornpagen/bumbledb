@@ -9,7 +9,7 @@ use crate::ir::ParamId;
 
 /// Q(id, amount) :- Posting(id, account = ?set0, amount).
 fn by_account_set_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -21,13 +21,13 @@ fn by_account_set_query() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// Q(id, amount) :- Posting(id, account = ?0, amount) — the scalar twin.
 fn by_account_scalar_query() -> Query {
     let mut query = by_account_set_query();
-    query.atoms[0].bindings[1] = (FieldId(1), Term::Param(ParamId(0)));
+    query.rules[0].atoms[0].bindings[1] = (FieldId(1), Term::Param(ParamId(0)));
     query
 }
 
@@ -143,7 +143,7 @@ fn out_of_vocabulary_string_elements_contribute_nothing() {
     let txn = env.read_txn().expect("txn");
 
     // Q(amount) :- Posting(memo = ?set0, amount).
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: POSTING,
@@ -154,7 +154,7 @@ fn out_of_vocabulary_string_elements_contribute_nothing() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
 
     let string = |text: &str| Value::String(Box::from(text.as_bytes()));
@@ -284,7 +284,7 @@ fn membership_point_var_join_end_to_end() {
     let txn = env.read_txn().expect("txn");
 
     // Q(emp, at) :- Payroll(emp, during ∋ at), Event(emp, at).
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -304,7 +304,7 @@ fn membership_point_var_join_end_to_end() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let got = prepared
         .execute_collect(&txn, &cache, &[])
@@ -329,7 +329,7 @@ fn set_membership_matches_any_element() {
     let txn = env.read_txn().expect("txn");
 
     // Q(emp) :- Payroll(emp, during ∋ ?set0).
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: PAYROLL,
@@ -340,7 +340,7 @@ fn set_membership_matches_any_element() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let emps = |buffer: &ResultBuffer| {
         let mut out: Vec<u64> = (0..buffer.len())
@@ -391,7 +391,7 @@ fn ray_fixture(dir: &TempDir, schema: &Schema) -> Environment {
 
 /// Q(emp) :- Payroll(emp, during ∋ point-literal).
 fn membership_literal_query(point: u64) -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: PAYROLL,
@@ -402,7 +402,7 @@ fn membership_literal_query(point: u64) -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// The point-domain law, both halves (`docs/architecture/10-data-model.md`):
@@ -458,7 +458,7 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
     // Q(emp) :- Payroll(emp, during ∋ ?0), Event(emp, at = ?0): the
     // scalar-field anchor types ?0 at the element, so the Payroll
     // binding is membership and ?0 is a point param.
-    let scalar_query = Query {
+    let scalar_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
@@ -478,7 +478,7 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &scalar_query).expect("prepare");
     let err = prepared
         .execute_collect_args(&txn, &cache, &[ParamArg::Scalar(BindValue::U64(u64::MAX))])
@@ -490,7 +490,7 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
 
     // Q(emp) :- Payroll(emp, during ∋ ?set0): a point set — the same
     // rejection per element, and the last point still matches.
-    let set_query = Query {
+    let set_query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
             relation: PAYROLL,
@@ -501,7 +501,7 @@ fn point_param_at_the_ceiling_is_a_bind_error() {
         }],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &set_query).expect("prepare");
     let ceiling = [Value::U64(u64::MAX)];
     let err = prepared
@@ -602,7 +602,7 @@ fn negated_set_bindings_reject_under_any_element() {
     let txn = env.read_txn().expect("txn");
 
     // Q(amount) :- Posting(account, amount), not Block(account, kind = ?set0).
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![Atom {
             relation: RelationId(0),
@@ -619,7 +619,7 @@ fn negated_set_bindings_reject_under_any_element() {
             ],
         }],
         predicates: vec![],
-    };
+    });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let run = |prepared: &mut PreparedQuery<'_, ()>, kinds: &[u64]| {
         let values: Vec<Value> = kinds.iter().map(|k| Value::U64(*k)).collect();

@@ -1,4 +1,4 @@
-use bumbledb::{Atom, FieldId, FindTerm, Query, VarId};
+use bumbledb::{Atom, FieldId, FindTerm, Query, Rule, VarId};
 
 use super::ids;
 use super::term::{param, var};
@@ -6,7 +6,7 @@ use super::term::{param, var};
 /// j6 — keyword neighborhood: movies sharing any keyword with a
 /// person's movies — the fan-out explosion a bad order makes fatal.
 pub(super) fn keyword_neighborhood() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
@@ -24,5 +24,5 @@ pub(super) fn keyword_neighborhood() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }

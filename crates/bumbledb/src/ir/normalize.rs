@@ -1,5 +1,9 @@
-//! Normalization (docs/architecture/20-query-ir.md): lowers a [`ValidatedQuery`] into the paper-form
-//! conjunctive query execution consumes — distinct-variable atom
+//! Normalization (docs/architecture/20-query-ir.md): lowers a
+//! [`crate::ir::validate::ValidatedQuery`] **rule by rule** into the
+//! paper-form conjunctive queries execution consumes — the normalized
+//! artifact is a list, one [`NormalizedQuery`] per rule, because the query
+//! is a program. Each rule lowers exactly as the conjunctive query did:
+//! distinct-variable atom
 //! occurrences (positive and negated, one table with a [`Role`]), per-atom
 //! filters (membership and interval predicates included), and the residual
 //! list: cross-atom comparisons, decomposed interval word comparisons, and

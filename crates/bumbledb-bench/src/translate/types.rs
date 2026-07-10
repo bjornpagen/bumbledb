@@ -65,7 +65,7 @@ impl TermTypes {
 /// anchors scalar.
 pub(super) fn infer(query: &Query, schema: &Schema) -> TermTypes {
     let mut types = TermTypes::default();
-    for atom in query.atoms.iter().chain(&query.negated) {
+    for atom in query.rules[0].atoms.iter().chain(&query.rules[0].negated) {
         let relation = schema.relation(atom.relation);
         for (field, term) in &atom.bindings {
             let interval_field = matches!(
@@ -87,7 +87,7 @@ pub(super) fn infer(query: &Query, schema: &Schema) -> TermTypes {
     }
     loop {
         let mut changed = false;
-        for Comparison { op, lhs, rhs } in &query.predicates {
+        for Comparison { op, lhs, rhs } in &query.rules[0].predicates {
             match op {
                 // Order operators are scalar-only by the type rules.
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {

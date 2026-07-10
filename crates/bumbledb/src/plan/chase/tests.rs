@@ -1,7 +1,7 @@
 use super::*;
 use crate::ir::normalize::{normalize, NormalizedQuery, OccId};
 use crate::ir::validate::validate;
-use crate::ir::{Atom, Query, Term, Value};
+use crate::ir::{Atom, Query, Rule, Term, Value};
 use crate::plan::planner::{plan, OccStats};
 use crate::schema::{
     FieldDescriptor, Generation, IntervalElement, RelationDescriptor, RelationId, Schema,
@@ -45,8 +45,8 @@ fn containment(
 /// Runs the full honest pipeline: validate → normalize → chase.
 fn chased(schema: &Schema, query: &Query) -> NormalizedQuery {
     let witness = validate(schema, query).expect("valid fixture query");
-    let mut normalized = normalize(schema, &witness);
-    chase(&mut normalized, schema, &query.finds);
+    let mut normalized = normalize(schema, &witness).remove(0);
+    chase(&mut normalized, schema, &query.rules[0].finds);
     normalized
 }
 
@@ -97,7 +97,7 @@ fn walk_schema() -> Schema {
 /// existence-walk shape: the reference target joined only to certify
 /// the reference the containment already certifies.
 fn walk_query() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -114,7 +114,7 @@ fn walk_query() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// The existence-walk shape eliminates the reference target, and the DP
@@ -138,10 +138,10 @@ fn the_off_switch_bypasses_the_rewrite() {
     let schema = walk_schema();
     let query = walk_query();
     let witness = validate(&schema, &query).expect("valid fixture query");
-    let mut normalized = normalize(&schema, &witness);
-    with_chase_disabled(|| chase(&mut normalized, &schema, &query.finds));
+    let mut normalized = normalize(&schema, &witness).remove(0);
+    with_chase_disabled(|| chase(&mut normalized, &schema, &query.rules[0].finds));
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
-    chase(&mut normalized, &schema, &query.finds);
+    chase(&mut normalized, &schema, &query.rules[0].finds);
     assert_eq!(
         roles(&normalized),
         vec![Role::Positive, Role::Eliminated(StatementId(2))],
@@ -193,7 +193,7 @@ fn du_schema() -> Schema {
 #[test]
 fn du_one_sided_walk_eliminates_the_header() {
     let schema = du_schema();
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -213,7 +213,7 @@ fn du_one_sided_walk_eliminates_the_header() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let normalized = chased(&schema, &query);
     assert_eq!(
         roles(&normalized),
@@ -257,7 +257,7 @@ fn chain_schema() -> Schema {
 #[test]
 fn a_containment_chain_eliminates_both_targets_in_fixpoint() {
     let schema = chain_schema();
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
@@ -281,7 +281,7 @@ fn a_containment_chain_eliminates_both_targets_in_fixpoint() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let normalized = chased(&schema, &query);
     assert_eq!(
         roles(&normalized),
@@ -326,7 +326,7 @@ fn a_partial_key_join_refuses() {
     }
     .validate()
     .expect("valid fixture");
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
@@ -343,7 +343,7 @@ fn a_partial_key_join_refuses() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
@@ -353,7 +353,7 @@ fn a_partial_key_join_refuses() {
 #[test]
 fn a_projected_non_key_field_refuses() {
     let schema = walk_schema();
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1)), FindTerm::Var(VarId(2))],
         atoms: vec![
             Atom {
@@ -373,7 +373,7 @@ fn a_projected_non_key_field_refuses() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
@@ -406,7 +406,7 @@ fn a_negated_atom_referencing_the_target_refuses() {
     }
     .validate()
     .expect("valid fixture");
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -429,7 +429,7 @@ fn a_negated_atom_referencing_the_target_refuses() {
             bindings: vec![(FieldId(0), Term::Var(VarId(2)))],
         }],
         predicates: vec![],
-    };
+    });
     let normalized = chased(&schema, &query);
     assert_eq!(
         roles(&normalized),
@@ -469,7 +469,7 @@ fn a_membership_point_sourced_from_the_target_refuses() {
     }
     .validate()
     .expect("valid fixture");
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
@@ -496,7 +496,7 @@ fn a_membership_point_sourced_from_the_target_refuses() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let normalized = chased(&schema, &query);
     assert_eq!(
         roles(&normalized),
@@ -534,27 +534,29 @@ fn a_missing_source_selection_refuses() {
     }
     .validate()
     .expect("valid fixture");
-    let query = |kind_filter: bool| Query {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![
-            Atom {
-                relation: RelationId(0),
-                bindings: if kind_filter {
-                    vec![
-                        (FieldId(0), Term::Var(VarId(0))),
-                        (FieldId(1), Term::Literal(Value::Enum(0))),
-                    ]
-                } else {
-                    vec![(FieldId(0), Term::Var(VarId(0)))]
+    let query = |kind_filter: bool| {
+        Query::single(Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![
+                Atom {
+                    relation: RelationId(0),
+                    bindings: if kind_filter {
+                        vec![
+                            (FieldId(0), Term::Var(VarId(0))),
+                            (FieldId(1), Term::Literal(Value::Enum(0))),
+                        ]
+                    } else {
+                        vec![(FieldId(0), Term::Var(VarId(0)))]
+                    },
                 },
-            },
-            Atom {
-                relation: RelationId(1),
-                bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
-            },
-        ],
-        negated: vec![],
-        predicates: vec![],
+                Atom {
+                    relation: RelationId(1),
+                    bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                },
+            ],
+            negated: vec![],
+            predicates: vec![],
+        })
     };
     let normalized = chased(&schema, &query(false));
     assert_eq!(
@@ -576,7 +578,7 @@ fn a_missing_source_selection_refuses() {
 #[test]
 fn an_extra_target_selection_refuses() {
     let schema = walk_schema();
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1))],
         atoms: vec![
             Atom {
@@ -599,7 +601,7 @@ fn an_extra_target_selection_refuses() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
@@ -636,7 +638,7 @@ fn an_interval_typed_pair_refuses() {
     }
     .validate()
     .expect("valid fixture");
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
@@ -656,7 +658,7 @@ fn an_interval_typed_pair_refuses() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let normalized = chased(&schema, &query);
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
@@ -670,7 +672,7 @@ fn mutual_containments_never_eliminate_both() {
     // Q(g) :- Det(grading = g), Grading(id = g, kind == Det) — neither
     // side binds anything beyond the join variable, so both directions'
     // conditions hold; support acyclicity must keep one.
-    let query = Query {
+    let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![
             Atom {
@@ -687,7 +689,7 @@ fn mutual_containments_never_eliminate_both() {
         ],
         negated: vec![],
         predicates: vec![],
-    };
+    });
     let normalized = chased(&schema, &query);
     assert_eq!(
         roles(&normalized),

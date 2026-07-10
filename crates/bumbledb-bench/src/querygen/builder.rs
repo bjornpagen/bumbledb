@@ -1,4 +1,4 @@
-use bumbledb::{Atom, FieldId, FindTerm, ParamId, Query, RelationId, Term, VarId};
+use bumbledb::{Atom, FieldId, FindTerm, ParamId, Query, RelationId, Rule, Term, VarId};
 
 use crate::querygen::Builder;
 
@@ -102,11 +102,11 @@ impl Builder {
     }
 
     pub(super) fn into_query(self) -> Query {
-        Query {
+        Query::single(Rule {
             finds: self.finds,
             atoms: self.atoms,
             negated: self.negated,
             predicates: self.predicates,
-        }
+        })
     }
 }

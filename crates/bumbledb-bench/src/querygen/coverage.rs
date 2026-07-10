@@ -80,7 +80,7 @@ fn typing(query: &Query) -> Typing {
         var_pos: HashMap::new(),
     };
     // Pass one: scalar-field positions anchor vars and params.
-    for (atom_idx, atom) in query.atoms.iter().enumerate() {
+    for (atom_idx, atom) in query.rules[0].atoms.iter().enumerate() {
         for (field, term) in &atom.bindings {
             let ty = field_type(atom, *field);
             if let Term::Var(var) = term {
@@ -101,7 +101,7 @@ fn typing(query: &Query) -> Typing {
             }
         }
     }
-    for atom in &query.negated {
+    for atom in &query.rules[0].negated {
         for (field, term) in &atom.bindings {
             if matches!(field_type(atom, *field), ValueType::Interval { .. }) {
                 continue;
@@ -113,7 +113,7 @@ fn typing(query: &Query) -> Typing {
     }
     // Pass two: interval-field var positions with no scalar anchor are
     // interval-typed (the bivalent default).
-    for atom in &query.atoms {
+    for atom in &query.rules[0].atoms {
         for (field, term) in &atom.bindings {
             let ty = field_type(atom, *field);
             if !matches!(ty, ValueType::Interval { .. }) {
@@ -150,7 +150,7 @@ fn spine_violations(query: &Query, t: &Typing) -> u64 {
     // var at an interval field (value equality). A membership position
     // (element-typed var at an interval field) is not an equality.
     let mut eq_atoms: HashMap<VarId, BTreeSet<usize>> = HashMap::new();
-    for (index, atom) in query.atoms.iter().enumerate() {
+    for (index, atom) in query.rules[0].atoms.iter().enumerate() {
         for (field, term) in &atom.bindings {
             let Term::Var(var) = term else { continue };
             let field_interval = matches!(field_type(atom, *field), ValueType::Interval { .. });
@@ -173,7 +173,7 @@ fn spine_violations(query: &Query, t: &Typing) -> u64 {
     };
     // The atoms the rule binds: var-point membership occurrences…
     let mut needs: BTreeSet<usize> = BTreeSet::new();
-    for (index, atom) in query.atoms.iter().enumerate() {
+    for (index, atom) in query.rules[0].atoms.iter().enumerate() {
         for (field, term) in &atom.bindings {
             if !matches!(field_type(atom, *field), ValueType::Interval { .. }) {
                 continue;
@@ -186,7 +186,7 @@ fn spine_violations(query: &Query, t: &Typing) -> u64 {
         }
     }
     // …and interval-typed sides of cross-atom Allen/Contains.
-    for comparison in &query.predicates {
+    for comparison in &query.rules[0].predicates {
         if !matches!(comparison.op, CmpOp::Allen { .. } | CmpOp::Contains) {
             continue;
         }
@@ -206,9 +206,9 @@ fn spine_violations(query: &Query, t: &Typing) -> u64 {
     }
     let mut violations = needs
         .into_iter()
-        .filter(|index| !has_eq_edge(*index) && !has_eq_selection(&query.atoms[*index]))
+        .filter(|index| !has_eq_edge(*index) && !has_eq_selection(&query.rules[0].atoms[*index]))
         .count() as u64;
-    for atom in &query.negated {
+    for atom in &query.rules[0].negated {
         let mut memberships = 0usize;
         let mut others = 0usize;
         for (field, term) in &atom.bindings {
@@ -278,7 +278,7 @@ impl Coverage {
     /// (the composition detector's input).
     fn record_membership(&mut self, query: &Query, t: &Typing) -> bool {
         let mut any = false;
-        for atom in &query.atoms {
+        for atom in &query.rules[0].atoms {
             for (field, term) in &atom.bindings {
                 let Some(element) = element_of(&field_type(atom, *field)) else {
                     continue;
@@ -314,7 +314,7 @@ impl Coverage {
 
     fn record_comparisons(&mut self, query: &Query, t: &Typing) -> bool {
         let mut has_allen = false;
-        for comparison in &query.predicates {
+        for comparison in &query.rules[0].predicates {
             let ty = match (&comparison.lhs, &comparison.rhs) {
                 (Term::Var(var), _) | (_, Term::Var(var)) => t
                     .var_types
@@ -370,7 +370,7 @@ impl Coverage {
     /// Negated-atom shapes: gate / key-covered / open (with the
     /// multiply-witnessed relations tracked), and the binding-term mix.
     fn record_negations(&mut self, query: &Query, t: &Typing) {
-        for atom in &query.negated {
+        for atom in &query.rules[0].negated {
             self.negations += 1;
             if atom.bindings.is_empty() {
                 self.negation_gate += 1;
@@ -418,7 +418,7 @@ impl Coverage {
         let mut arg_key_projected = false;
         let mut projected_words = 0u64;
         let mut interval_finds = 0u64;
-        for term in &query.finds {
+        for term in &query.rules[0].finds {
             match term {
                 FindTerm::Var(var) => {
                     has_var_find = true;
@@ -488,7 +488,7 @@ impl Coverage {
     fn record(&mut self, query: &Query, shape: Shape, tags: GenTags) {
         self.record_shape(shape);
         self.record_chase(tags.chase);
-        self.gates += query
+        self.gates += query.rules[0]
             .atoms
             .iter()
             .filter(|atom| atom.bindings.is_empty())
@@ -500,7 +500,7 @@ impl Coverage {
         self.adjacent_right += u64::from(tags.adjacent_right);
         let t = typing(query);
         // Repeated in-atom variables.
-        for atom in &query.atoms {
+        for atom in &query.rules[0].atoms {
             let vars: Vec<&Term> = atom
                 .bindings
                 .iter()
@@ -516,7 +516,7 @@ impl Coverage {
             }
         }
         // Param and param-set binding occurrences (positive + negated).
-        for atom in query.atoms.iter().chain(&query.negated) {
+        for atom in query.rules[0].atoms.iter().chain(&query.rules[0].negated) {
             for (_, term) in &atom.bindings {
                 match term {
                     Term::Param(_) => self.params += 1,
@@ -530,14 +530,14 @@ impl Coverage {
         self.record_negations(query, &t);
         let has_aggregate = self.record_finds(query, &t);
         // The structural compositions where bugs hide.
-        let has_negation = !query.negated.is_empty();
-        let uses_set = query
+        let has_negation = !query.rules[0].negated.is_empty();
+        let uses_set = query.rules[0]
             .atoms
             .iter()
-            .chain(&query.negated)
+            .chain(&query.rules[0].negated)
             .flat_map(|atom| &atom.bindings)
             .any(|(_, term)| matches!(term, Term::ParamSet(_)))
-            || query
+            || query.rules[0]
                 .predicates
                 .iter()
                 .any(|c| matches!(c.lhs, Term::ParamSet(_)) || matches!(c.rhs, Term::ParamSet(_)));

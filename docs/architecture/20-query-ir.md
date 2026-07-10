@@ -26,12 +26,36 @@ to other-language bindings; data structures translate to anything. Builders/macr
 appear later as sugar *producing* the IR. (Host newtypes still give compile-time nominal
 safety at the app layer — see `10-data-model.md`.)
 
+## The query shape: one head, a set of rules
+
+A query is a **program**: one head and a non-empty list of conjunctive
+**rules** — which is precisely a **non-recursive Datalog program**. The head
+owns the find shape (arity, aggregate ops, and the positional type row —
+computed at validation and pinned in the witness); each rule is a conjunct
+(positive atoms, negated atoms, predicates) whose find terms align against
+the head position by position. The single-rule query is the degenerate case
+and embeds the conjunctive query unchanged (`Query::single`); every
+pre-rules query is a one-rule program.
+
+- **Denotation: the query denotes the set union of its rules' denotations.**
+  Set semantics means there is exactly one union — no bag distinction exists
+  or is representable (there is no UNION ALL to refuse).
+- **Variables are strictly rule-scoped**: the same `VarId` in two rules
+  names two unrelated variables (they may resolve to different types). A
+  rule is its own typing scope and its own plan.
+- **Params are query-global**: one binding surface; any rule may reference
+  any param, and every rule's anchors must resolve one type per param.
+- Rules are deliberately **one step short of the fixpoint**: a rule's head
+  is never a body atom, so no recursion is expressible. The recursion `OPEN`
+  item (below) gains its landing pad here and is not entered.
+
 ## Semantics
 
-- The logical solution of a query is the **set of distinct bindings of all query
-  variables** that satisfy every positive atom, every membership binding, every
-  predicate, and **no negated atom** (below); projection returns the **set** of
-  projected facts.
+- The logical solution of a **rule** is the **set of distinct bindings of
+  the rule's variables** that satisfy every positive atom, every membership
+  binding, every predicate, and **no negated atom** (below); projection
+  returns the **set** of projected facts, and the query's solution is the
+  union of its rules' projections.
 - **Existential variables never multiply projection output.** (Scoped to projection —
   see aggregation below.)
 - Distinctness is the default and only behavior; there is no DISTINCT concept.
@@ -39,7 +63,7 @@ safety at the app layer — see `10-data-model.md`.)
 
 ### Negation (normative)
 
-A query carries a list of **negated atoms**. A binding satisfies a negated atom iff
+A rule carries a list of **negated atoms**. A binding satisfies a negated atom iff
 **no fact** of its relation matches the atom's bindings under that variable
 assignment — plain anti-join over sets; no null trick, no three-valued logic.
 **Safety rule:** every variable occurring in a negated atom must also occur in a
@@ -58,8 +82,11 @@ join costume.
 ### Aggregation (normative)
 
 - **The fold domain of every aggregate is the group's set of distinct full bindings
-  over all query variables.** Group key = the values of the non-aggregated find
-  variables. Two postings of amount 100 to one account are two distinct bindings (their
+  over all the rule's variables.** Group key = the values of the non-aggregated find
+  variables. **Across rules**, aggregates read the head: the fold domain is
+  the union of the rules' binding sets projected to the head (dedup
+  semantics are owned by the rule-execution PRD, ALG-07; the elision
+  theorem by ALG-08). Two postings of amount 100 to one account are two distinct bindings (their
   fresh ids differ): `Sum(amount) by account` = 200.
 - **The footgun, stated loudly:** joining a multiplicity-adding relation into an
   aggregate multiplies the binding set — `Posting ⋈ PostingTag` with 3 tags per posting
@@ -99,11 +126,19 @@ join costume.
 
 ```rust
 Query {
-    finds:      Vec<FindTerm>,        // ≥1; duplicates rejected
+    head:       Vec<HeadTerm>,        // ≥1; the find shape every rule aligns to
+    rules:      Vec<Rule>,            // ≥1, ≤ MAX_RULES (16)
+}
+Rule {
+    finds:      Vec<FindTerm>,        // one per head position; duplicates rejected
     atoms:      Vec<Atom>,            // ≥1; conjunctive, positive
     negated:    Vec<Atom>,            // anti-join atoms (safety rule above)
     predicates: Vec<Comparison>,
 }
+HeadTerm   = Var | Aggregate(HeadOp)  // var-free: variables are rule-scoped,
+                                      //   so the head names shapes and the
+                                      //   rules supply the variables
+HeadOp     = Sum | Min | Max | Count | CountDistinct | ArgMax | ArgMin
 Atom {
     relation:   RelationId,
     bindings:   Vec<(FieldId, Term)>, // named-field; absence of a field IS the wildcard
@@ -130,7 +165,11 @@ MaskTerm   = Literal(AllenMask) | Param(ParamId)  // a variable or set mask is
                                                   //   unrepresentable, not rejected
 ```
 
-Representation notes (the branch-removal decisions): no wildcard variant — an unbound
+Representation notes (the branch-removal decisions): no `union`/`or` node
+exists — disjunction at the top **is** the rule list, so an OR execution
+node is unwritable, and the head's var-free shape makes "a head variable
+shared across rules" equally unwritable (rules align positionally instead).
+No wildcard variant — an unbound
 field is absent from `bindings`, so "wildcard bound to something" is unwritable.
 Variables carry dense ids only; names are a debugging sidecar. `Value` has exactly one
 variant per data-model type — no universal-integer variant: U64 and I64 literals are
@@ -208,14 +247,14 @@ never grow again, because nothing exists outside the coordinate system.
 - **Point membership is untouched**: Allen is a pair-of-intervals algebra;
   the membership typing rule above is a different judgment.
 
-**The three-confinement disjunction law** (the set's organizing rule,
-PRD ALG-05 owns the third): OR is never an execution node — disjunction is
+**The three-confinement disjunction law** (the set's organizing rule):
+OR is never an execution node — disjunction is
 data in exactly three confinements. *Inside a predicate*: an Allen mask is a
 disjunction of basics, evaluated as one classify-and-test. *Inside a
 position*: a `ParamSet` is a disjunction of values, evaluated as one probe
-set. *At the top*: rules (the rules-shaped IR) are a disjunction of
+set. *At the top*: rules (the query shape above) are a disjunction of
 conjunctive queries, evaluated as a set union. The tangled middle — a
-cross-atom OR inside one conjunction — is refused representation; DNF
+cross-atom OR inside one rule — is refused representation; DNF
 lowering recovers it as rules.
 
 Constraint-side unification (no semantics change): the pointwise key
@@ -256,7 +295,10 @@ admitted as a term because the alternative is N point queries per batch fetch.
 
 ## Normalization (owned here; runs inside validation)
 
-The paper's formalism (§2) assumes atoms with all-distinct variables, no self-joins
+Normalization runs **per rule** — a rule lowers exactly as the conjunctive
+query did, and the normalized artifact is a **list**, one entry per rule,
+because the query is a program. The paper's formalism (§2) assumes atoms
+with all-distinct variables, no self-joins
 (renamed apart), and selections pushed to base tables. The IR deliberately permits all
 three; **normalization lowers IR form to paper form**:
 
@@ -287,7 +329,7 @@ external optimizer to have done it. Execution placement of filters and residuals
 specified in `40-execution.md`. **Reverses if:** never — the paper's assumption is a
 WLOG, not a design.
 
-Degenerate shapes, ruled: a query with no positive atoms is invalid (negated atoms
+Degenerate shapes, ruled: a rule with no positive atoms is invalid (negated atoms
 alone bind nothing); an atom with zero bindings is legal and means a nonemptiness
 gate on that relation (Cartesian with the rest, well-defined under the plan
 formalism) — a zero-binding *negated* atom is an emptiness gate, equally legal;
@@ -298,7 +340,26 @@ atom is invalid (use one variable twice across fields for equality, or a filter)
 ## Validation boundary (the roster is exhaustive)
 
 Malformed IR is rejected once, at the boundary, yielding a `ValidatedQuery` witness that
-everything downstream trusts — no inner layer re-validates. Rejections: unknown
+everything downstream trusts — no inner layer re-validates.
+
+The program shape first, each with a distinct typed error: an **empty rule
+set** (the empty union is no query); more than **`MAX_RULES` (16) rules**
+(the roster cap, documented at the definition and counted independently of
+the per-rule occurrence cap — rules are planned one at a time, so the
+program's breadth is bounded here and each rule's width there); and **head
+misalignment** — a rule whose find-term count differs from the head's arity,
+whose term shape (variable vs aggregate-op kind) differs at a position, or
+whose resolved positional type differs from the pinned row (rule 0's
+resolved types pin the head's positional type row in the witness; every
+later rule must agree position by position). Rules then validate **one at a
+time** under the per-rule roster below — a rule validates exactly as a
+conjunctive query did, with its own bivalent-anchor typing fixpoint — and
+every rule-local diagnostic names a position inside the first failing rule.
+Params, being query-global, unify after the rules' own fixpoints: type,
+scalar-vs-set role, and value-vs-mask role must agree across rules, and id
+density is judged jointly across the whole program.
+
+Per-rule rejections: unknown
 relation/field ids; duplicate FieldId in one atom's bindings; variable type conflicts
 (structural — membership bindings anchor the *element* type); literal-vs-field and
 param-anchor type mismatches (non-UTF-8 String literals and `start ≥ end` interval
@@ -326,7 +387,14 @@ invariants.
 ## Prepared queries
 
 A `ValidatedQuery` is planned once into a `PreparedQuery` — the reusable object the
-zero-allocation contract is written against (`40-execution.md`). **Plans pin the
+zero-allocation contract is written against (`40-execution.md`). The plan
+pipeline (statistics → DP → lowering → plan validation) runs **per rule**:
+the prepared query holds one validated plan per rule and **one** sink
+configuration, owned by the head. (Execution of multi-rule programs — the
+union loop driving every rule's plan into the one sink — is PRD ALG-07's;
+until it lands a 2+-rule execution is the typed `MultiRuleExecution`
+refusal, never a wrong answer, while single-rule programs execute in
+full.) **Plans pin the
 statistics read at prepare time and are never invalidated by writes**; stale plans are
 accepted at this scale, and re-preparation is explicit. The compensating control is
 `PreparedQuery::staleness` (`70-api.md`): the pinned per-occurrence row counts survive
@@ -347,7 +415,9 @@ shows a stale-plan regression a re-prepare wouldn't have.
 
 **Recursion** = an explicit fixpoint construct, semi-naive, if a real need appears —
 the surveyed workloads precompute their closures and the modeling discipline blesses
-that (`10-data-model.md`). **`Pack`** = the coalescing aggregate over interval
+that (`10-data-model.md`). The rules shape is its landing pad, deliberately
+not entered: a query is already a non-recursive Datalog program, one step
+short of the fixpoint — a rule's head is never a body atom. **`Pack`** = the coalescing aggregate over interval
 variables (maximal disjoint intervals per group — Snodgrass's coalesce, Postgres's
 `range_agg`); its result is a *set* of intervals per group, which breaks the
 one-row-per-group aggregate shape, so it waits for both a real need and a shape

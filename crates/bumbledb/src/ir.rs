@@ -15,7 +15,16 @@ use crate::schema::{FieldId, RelationId};
 /// normative IR block in `docs/architecture/20-query-ir.md` names it here.
 pub use crate::value::Value;
 
-/// Dense query-variable id.
+/// The rule-count cap: a query is a program of at most this many rules,
+/// rejected at validation (`ValidationError::TooManyRules`). Counted
+/// independently of the per-rule occurrence cap
+/// ([`crate::plan::planner::MAX_OCCURRENCES`]): rules are planned one at a
+/// time, so the roster bounds the program's breadth here and each rule's
+/// width there.
+pub const MAX_RULES: usize = 16;
+
+/// Dense query-variable id — **rule-scoped**: the same `VarId` in two
+/// rules names two unrelated variables (each rule is its own scope).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VarId(pub u16);
 
@@ -100,6 +109,60 @@ pub enum FindTerm {
     Aggregate { op: AggOp, over: Option<VarId> },
 }
 
+impl FindTerm {
+    /// The head position this term projects into — its var-free shape.
+    #[must_use]
+    pub fn head_term(&self) -> HeadTerm {
+        match self {
+            Self::Var(_) => HeadTerm::Var,
+            Self::Aggregate { op, .. } => HeadTerm::Aggregate(op.head_op()),
+        }
+    }
+}
+
+/// The aggregate-op kind at a head position: [`AggOp`] with its rule-scoped
+/// variables stripped (an Arg key is a rule variable; the head is
+/// var-free). Rules supply the variables; validation checks each rule's
+/// find term against the head's op kind position by position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadOp {
+    Sum,
+    Min,
+    Max,
+    Count,
+    CountDistinct,
+    ArgMax,
+    ArgMin,
+}
+
+impl AggOp {
+    /// This op's var-free head shape.
+    #[must_use]
+    pub fn head_op(self) -> HeadOp {
+        match self {
+            Self::Sum => HeadOp::Sum,
+            Self::Min => HeadOp::Min,
+            Self::Max => HeadOp::Max,
+            Self::Count => HeadOp::Count,
+            Self::CountDistinct => HeadOp::CountDistinct,
+            Self::ArgMax { .. } => HeadOp::ArgMax,
+            Self::ArgMin { .. } => HeadOp::ArgMin,
+        }
+    }
+}
+
+/// One head position: the find shape every rule must project at this
+/// position — a plain variable or an aggregate op. Var-free by
+/// construction: variables are rule-scoped, so the head names shapes and
+/// each rule's find terms supply the variables (positional alignment; the
+/// positional *type* row is computed at validation and pinned in the
+/// witness).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadTerm {
+    Var,
+    Aggregate(HeadOp),
+}
+
 /// The `Allen` comparison's mask position: a literal mask, or a param
 /// resolved at bind (`Value::AllenMask` / [`crate::BindValue::AllenMask`])
 /// — the temporal relation as a bind-time argument. A two-variant sum, not
@@ -165,12 +228,18 @@ pub struct Comparison {
     pub rhs: Term,
 }
 
-/// A conjunctive query: the logical solution is the set of distinct
-/// bindings of all query variables; projection returns the set of
-/// projected facts.
+/// One rule: a conjunctive body projecting its find terms against the
+/// query's head. The rule's denotation is the set of distinct bindings of
+/// its variables satisfying every positive atom, every predicate, and no
+/// negated atom, projected through `finds`.
+///
+/// A rule is its **own variable scope**: `VarId`s never cross rules — the
+/// same id in two rules names two unrelated variables (they may even
+/// resolve to different types). Params, by contrast, are query-global.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Query {
-    /// At least one term; duplicates rejected at validation.
+pub struct Rule {
+    /// One term per head position; the shape (var vs aggregate-op kind)
+    /// and the positional type must match the head, checked at validation.
     pub finds: Vec<FindTerm>,
     /// At least one atom; conjunctive, positive.
     pub atoms: Vec<Atom>,
@@ -181,10 +250,55 @@ pub struct Query {
     /// every variable occurring in a negated atom must also occur in a
     /// positive atom — a negated atom **binds nothing, only rejects**.
     /// Literals, params, param sets, and membership bindings are all legal
-    /// here; negation is a *position* in the query, not a kind of atom, so
+    /// here; negation is a *position* in the rule, not a kind of atom, so
     /// the list reuses [`Atom`] unchanged.
     pub negated: Vec<Atom>,
     pub predicates: Vec<Comparison>,
+}
+
+impl Rule {
+    /// The head shape this rule's find terms project — the degenerate
+    /// one-rule query's head is exactly this row.
+    #[must_use]
+    pub fn head(&self) -> Vec<HeadTerm> {
+        self.finds.iter().map(FindTerm::head_term).collect()
+    }
+}
+
+/// A query: a non-recursive Datalog program — one head, a non-empty set
+/// of conjunctive rules (`docs/architecture/20-query-ir.md`, normative).
+///
+/// **Denotation: the set union of the rules' denotations.** Set semantics
+/// means there is exactly one union — no bag distinction exists or is
+/// representable. Disjunction is data, never an execution node: a mask
+/// inside a predicate, a set inside a position, rules at the top — the
+/// three confinements; a cross-atom OR inside one rule is refused
+/// representation (DNF lowering recovers it as rules).
+///
+/// The single-rule query is the degenerate case and embeds the
+/// conjunctive query unchanged ([`Query::single`]). Rules are one step
+/// short of the fixpoint on purpose — recursion stays an `OPEN` item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Query {
+    /// The find shape (arity + aggregate ops) every rule aligns against,
+    /// position by position; at least one term, duplicates within a rule
+    /// rejected at validation. The positional type row is computed at
+    /// validation and pinned in the witness.
+    pub head: Vec<HeadTerm>,
+    /// At least one rule, at most [`MAX_RULES`].
+    pub rules: Vec<Rule>,
+}
+
+impl Query {
+    /// The degenerate one-rule program — the conjunctive query, with the
+    /// head derived from the rule's own find shape.
+    #[must_use]
+    pub fn single(rule: Rule) -> Self {
+        Self {
+            head: rule.head(),
+            rules: vec![rule],
+        }
+    }
 }
 
 #[cfg(test)]
@@ -199,7 +313,7 @@ mod tests {
     fn point_lookup_by_fresh_key() {
         // Account(id = ?0, holder = h, status = s) — a single atom binding
         // the fresh key to a param.
-        let query = Query {
+        let query = Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
             atoms: vec![Atom {
                 relation: RelationId(1),
@@ -211,15 +325,15 @@ mod tests {
             }],
             negated: vec![],
             predicates: vec![],
-        };
-        assert_eq!(query.atoms.len(), 1);
+        });
+        assert_eq!(query.rules[0].atoms.len(), 1);
     }
 
     #[test]
     fn containment_walk_join_with_range_predicate() {
         // Posting(account = a, amount = amt, at = t), Account(id = a):
         // a containment walk joined on `a`, with t >= <timestamp>.
-        let query = Query {
+        let query = Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(1))],
             atoms: vec![
                 Atom {
@@ -241,16 +355,16 @@ mod tests {
                 lhs: Term::Var(VarId(2)),
                 rhs: Term::Literal(Value::I64(1_700_000_000_000_000)),
             }],
-        };
-        assert_eq!(query.atoms.len(), 2);
-        assert_eq!(query.predicates.len(), 1);
+        });
+        assert_eq!(query.rules[0].atoms.len(), 2);
+        assert_eq!(query.rules[0].predicates.len(), 1);
     }
 
     #[test]
     fn aggregate_balance_by_account() {
         // finds: [account, Sum(amount), Count] — group key from output;
         // Count is nullary (over: None).
-        let query = Query {
+        let query = Query::single(Rule {
             finds: vec![
                 FindTerm::Var(VarId(0)),
                 FindTerm::Aggregate {
@@ -272,9 +386,9 @@ mod tests {
             }],
             negated: vec![],
             predicates: vec![],
-        };
+        });
         assert!(matches!(
-            query.finds[1],
+            query.rules[0].finds[1],
             FindTerm::Aggregate {
                 op: AggOp::Sum,
                 over: Some(_)
@@ -284,7 +398,7 @@ mod tests {
 
     #[test]
     fn zero_binding_atom_is_a_nonemptiness_gate() {
-        let query = Query {
+        let query = Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![
                 Atom {
@@ -298,8 +412,8 @@ mod tests {
             ],
             negated: vec![],
             predicates: vec![],
-        };
-        assert!(query.atoms[1].bindings.is_empty());
+        });
+        assert!(query.rules[0].atoms[1].bindings.is_empty());
     }
 
     #[test]
@@ -307,7 +421,7 @@ mod tests {
         // Account(id = a, region ∈ ?set0), ¬Posting(account = a):
         // accounts in a region set with no postings. The negated atom
         // reuses `a` (the safety rule) and binds nothing.
-        let query = Query {
+        let query = Query::single(Rule {
             finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![Atom {
                 relation: RelationId(1),
@@ -321,8 +435,8 @@ mod tests {
                 bindings: vec![(FieldId(2), Term::Var(VarId(0)))],
             }],
             predicates: vec![],
-        };
-        assert_eq!(query.negated.len(), 1);
+        });
+        assert_eq!(query.rules[0].negated.len(), 1);
     }
 
     #[test]

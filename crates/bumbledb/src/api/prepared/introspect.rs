@@ -27,7 +27,9 @@ impl<S> PreparedQuery<'_, S> {
         params: &[BindValue<'_>],
     ) -> Result<(ResultBuffer, String)> {
         let (out, stats) = self.profile(txn, cache, params)?;
-        let report = match &self.plan {
+        // `profile` gated the program to one rule; the report renders its
+        // plan (per-rule reports ride with ALG 07's union loop).
+        let report = match &self.rules[0].plan {
             ExecPlan::GuardProbe(guard) => format!("{}", Report::GuardProbe { plan: guard }),
             ExecPlan::FreeJoin(plan) => format!("{}", Report::FreeJoin { plan, stats }),
         };
@@ -53,9 +55,10 @@ impl<S> PreparedQuery<'_, S> {
         params: &[BindValue<'_>],
     ) -> Result<(ResultBuffer, ExecutionStats)> {
         self.check_snapshot(txn)?;
+        self.gate_single_rule()?;
         let mut out = ResultBuffer::new();
-        out.arity = self.finds.len();
-        if matches!(&self.plan, ExecPlan::GuardProbe(_)) {
+        out.arity = self.column_types.len();
+        if matches!(&self.rules[0].plan, ExecPlan::GuardProbe(_)) {
             self.execute(txn, cache, params, &mut out)?;
             let stats = ExecutionStats {
                 nodes: Vec::new(),
@@ -77,7 +80,7 @@ impl<S> PreparedQuery<'_, S> {
         // resolved (a short-circuited execution counted nothing and has
         // nothing to drain).
         self.bind_params(txn, params)?;
-        let mut counters = match &self.plan {
+        let mut counters = match &self.rules[0].plan {
             ExecPlan::GuardProbe(_) => unreachable!("handled above"),
             ExecPlan::FreeJoin(plan) => CountingCounters::new(plan),
         };
@@ -87,12 +90,12 @@ impl<S> PreparedQuery<'_, S> {
                 &mut self.row_scratch,
                 &mut self.resolve_memo,
                 txn,
-                &self.finds,
+                &self.column_types,
                 self.all_words,
                 &mut out,
             )?;
         }
-        let ExecPlan::FreeJoin(plan) = &self.plan else {
+        let ExecPlan::FreeJoin(plan) = &self.rules[0].plan else {
             unreachable!("handled above")
         };
         Ok((
@@ -103,10 +106,11 @@ impl<S> PreparedQuery<'_, S> {
 
     /// Whether every plan node binds a sink-relevant variable — the
     /// pipelined executor's eligibility; `None` for
-    /// guard plans (no join runs at all).
+    /// guard plans (no join runs at all). Reads rule 0's plan — the one
+    /// executable rule until ALG 07's union loop lands.
     #[must_use]
     pub fn skip_free(&self) -> Option<bool> {
-        match &self.plan {
+        match &self.rules[0].plan {
             ExecPlan::FreeJoin(plan) => Some(plan.skip_free()),
             ExecPlan::GuardProbe(_) => None,
         }
@@ -114,17 +118,17 @@ impl<S> PreparedQuery<'_, S> {
 
     /// Whether the plan proved distinct bindings (the aggregate sink's
     /// seen-set elision, 30-execution) — the regime observable for the
-    /// batch-fold fast path.
+    /// batch-fold fast path. Reads rule 0's plan, as [`Self::skip_free`].
     #[must_use]
     pub fn distinct_bindings(&self) -> bool {
-        self.plan.distinct_bindings()
+        self.rules[0].plan.distinct_bindings()
     }
 
-    /// The result column types, one per find term in `finds` order — the
-    /// metadata a generic host needs to type an (even empty) result. The
-    /// buffer itself stays typeless: stamping owned types per execution
-    /// would allocate on the warm path.
+    /// The result column types, one per head position — the metadata a
+    /// generic host needs to type an (even empty) result. The buffer
+    /// itself stays typeless: stamping owned types per execution would
+    /// allocate on the warm path.
     pub fn column_types(&self) -> impl Iterator<Item = &ValueType> {
-        self.finds.iter().map(|(_, ty)| ty)
+        self.column_types.iter()
     }
 }

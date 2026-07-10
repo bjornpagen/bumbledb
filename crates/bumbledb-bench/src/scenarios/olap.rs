@@ -6,7 +6,7 @@
 //! set (the true-rollup pattern the ledger's balance family pins).
 
 use bumbledb::{
-    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, Query, Term, Value, VarId,
+    AggOp, Atom, CmpOp, Comparison, FieldId, FindTerm, ParamId, Query, Rule, Term, Value, VarId,
 };
 
 use super::{mix, Scenario, ScenarioQuery};
@@ -135,7 +135,7 @@ fn param(id: u16) -> Term {
 
 /// o1 — revenue by region: full-fact rollup through one dimension.
 fn revenue_by_region() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -159,12 +159,12 @@ fn revenue_by_region() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// o2 — category totals inside a day window: the windowed drill.
 fn category_window() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -204,7 +204,7 @@ fn category_window() -> Query {
                 rhs: param(1),
             },
         ],
-    }
+    })
 }
 
 fn day_windows(_: u64) -> Vec<Vec<Value>> {
@@ -219,7 +219,7 @@ fn day_windows(_: u64) -> Vec<Vec<Value>> {
 
 /// o3 — promo split: the 2-group full-scan fold.
 fn promo_split() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -237,12 +237,12 @@ fn promo_split() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// o4 — segment × category: the two-dimension rollup (64 groups).
 fn segment_category() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Var(VarId(1)),
@@ -271,13 +271,13 @@ fn segment_category() -> Query {
         ],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// o5 — per-store extremes: Min/Max over the whole fact table, 200
 /// groups.
 fn store_extremes() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
@@ -299,12 +299,12 @@ fn store_extremes() -> Query {
         }],
         negated: vec![],
         predicates: vec![],
-    }
+    })
 }
 
 /// o6 — brand drill: selective dimension point + day range, summed.
 fn brand_drill() -> Query {
-    Query {
+    Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
             op: AggOp::Sum,
             over: Some(VarId(0)),
@@ -330,7 +330,7 @@ fn brand_drill() -> Query {
             lhs: var(2),
             rhs: param(1),
         }],
-    }
+    })
 }
 
 fn brand_drill_params(seed: u64) -> Vec<Vec<Value>> {
