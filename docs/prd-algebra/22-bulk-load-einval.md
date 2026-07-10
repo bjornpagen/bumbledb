@@ -1,4 +1,4 @@
-# PRD 24 — The bulk-load EINVAL: kill the flake, type the boundary
+# PRD 22 — The bulk-load EINVAL: kill the flake, type the boundary
 
 **Depends on:** nothing (independent bug unit; may run any time, and early —
 it is the only known flake in the gate suite).

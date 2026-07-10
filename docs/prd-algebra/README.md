@@ -109,7 +109,7 @@ Phase G — the intuition:
 - [21 — The cookbook: modeling intuition as schemas (doc unit)](21-cookbook.md)
 
 Unphased (bug unit, runs any time — the only known flake in the gate suite):
-- [24 — The bulk-load EINVAL: kill the flake, type the boundary](24-bulk-load-einval.md)
+- [22 — The bulk-load EINVAL: kill the flake, type the boundary](22-bulk-load-einval.md)
 
 Dependency spine: 01–02 free; 03→04; 05→06→07→08; 09 additionally requires
 `docs/prd/` 11–12 (the chase) landed; 10 requires 02; 11→12; 13/14 landed
