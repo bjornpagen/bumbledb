@@ -58,5 +58,6 @@ pub fn filter_any_point_in_u64(starts: &[u64], ends: &[u64], points: &[u64], out
 
 // The old interval-vs-constant comparison kernels (overlaps, contains,
 // within-over-pairs) are gone with their operators: interval-pair
-// predicates are Allen masks now, evaluated classify-then-test on the
-// scalar path until PRD 04's configuration kernel lands.
+// predicates are Allen masks, evaluated by the configuration kernel
+// (`super::allen` — one branchless, flag-free kernel for all 8192
+// masks).

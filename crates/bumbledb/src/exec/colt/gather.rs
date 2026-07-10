@@ -12,6 +12,12 @@ impl Colt {
     /// per-key fanout of a fully-descended cursor; the forced arm exists
     /// for zero-arity gate occurrences whose root a sibling probe forced.
     #[must_use]
+    #[allow(clippy::inline_always)]
+    // the per-element probe class carries no calls (`scripts/
+    // check-asm.sh`); this wrapper only builds the check closure — the
+    // recursive walk below is the deliberately-outlined body, and its
+    // name is outside the gated class by construction
+    #[inline(always)]
     pub fn any_position_matches(&self, cursor: Cursor, checks: &[(usize, usize, u64)]) -> bool {
         let check = |position: u32| {
             checks.iter().all(|(start_col, end_col, point)| {

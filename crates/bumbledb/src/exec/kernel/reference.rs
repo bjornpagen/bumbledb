@@ -27,6 +27,40 @@ pub fn filter_any_point_in_u64(starts: &[u64], ends: &[u64], points: &[u64], out
     });
 }
 
+/// Scalar reference of [`super::allen_code_batch`]'s core: PRD 03's
+/// `classify` decision tree per pair — deliberately **never** the
+/// signature table, so the property tests cross-check the NEON table
+/// against the tree, bit for bit. The code is the [`crate::allen::Basic`]
+/// discriminant (its bit index in the mask coordinate system).
+pub fn allen_codes(
+    a_starts: &[u64],
+    a_ends: &[u64],
+    b_starts: &[u64],
+    b_ends: &[u64],
+    codes: &mut [u8],
+) {
+    for (i, code) in codes.iter_mut().enumerate() {
+        *code =
+            crate::allen::classify_bounds(&a_starts[i], &a_ends[i], &b_starts[i], &b_ends[i]) as u8;
+    }
+}
+
+/// [`allen_codes`] with a constant right operand.
+pub fn allen_codes_const(starts: &[u64], ends: &[u64], b_start: u64, b_end: u64, codes: &mut [u8]) {
+    for (i, code) in codes.iter_mut().enumerate() {
+        *code = crate::allen::classify_bounds(&starts[i], &ends[i], &b_start, &b_end) as u8;
+    }
+}
+
+/// Scalar reference of [`super::allen_filter_batch`]'s core:
+/// `keep[i] = 1` iff the mask holds `codes[i]` — one shift, one and
+/// (flag-free even here).
+pub fn allen_keep(codes: &[u8], mask_bits: u16, keep: &mut [u8]) {
+    for (keep, &code) in keep.iter_mut().zip(codes) {
+        *keep = ((mask_bits >> u32::from(code)) & 1) as u8;
+    }
+}
+
 /// Branchless cursor-write over the whole column.
 fn push_matching(len: usize, out: &mut Vec<u32>, keep: impl Fn(usize) -> bool) {
     let start = out.len();

@@ -243,8 +243,9 @@ impl std::ops::BitOr for AllenMask {
 }
 
 /// Classifies an interval pair: **the** total reference implementation of
-/// the algebra (the batch kernel is a later PRD's; this one is the
-/// semantics). Total by construction — the match covers the 3 × 3
+/// the algebra (the configuration kernel — `exec/kernel/allen.rs` — is
+/// the batch form, property-tested bit-identical against this one; this
+/// one is the semantics). Total by construction — the match covers the 3 × 3
 /// endpoint orderings, and both operands are nonempty half-open intervals
 /// by [`Interval`]'s parse — and exactly one basic is returned (JEPD is a
 /// theorem of the match shape, property-tested against the point-set

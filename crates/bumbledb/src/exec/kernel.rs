@@ -1,8 +1,9 @@
 //! The explicit-SIMD and unrolled-fold kernels (docs/architecture/40-execution.md):
 //! fixed-width predicate scans,
-//! survivor compaction, and the fold/accumulate kernels behind
-//! the aggregate sink's batch path, all behind scalar-identical
-//! signatures.
+//! survivor compaction, the configuration kernel (Allen mask
+//! classification and membership — [`allen_code_batch`] /
+//! [`allen_filter_batch`]), and the fold/accumulate kernels behind the
+//! aggregate sink's batch path, all behind scalar-identical signatures.
 //!
 //! `unsafe` is sanctioned here per the 00-product policy. The NEON paths
 //! are `cfg(target_arch = "aarch64")`; every other 64-bit platform
@@ -42,6 +43,7 @@
 //! non-aarch64 dispatch arms are one-line calls into [`reference`], which
 //! compiles and is property-tested on every target.
 
+mod allen;
 mod compact;
 mod filter;
 mod fold;
@@ -60,6 +62,9 @@ pub mod reference;
 #[allow(unsafe_code)] // the 30-execution doc: the one sanctioned unsafe module
 mod neon;
 
+pub use allen::{
+    allen_code_batch, allen_filter_batch, allen_filter_columns, allen_filter_columns_const,
+};
 pub use compact::compact_u32_by_mask;
 pub use filter::{
     filter_any_point_in_u64, filter_eq_u64, filter_eq_u8, filter_point_in_u64, filter_range_u64,

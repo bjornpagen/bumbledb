@@ -34,9 +34,11 @@ width, so a non-prefix guard lookup or a range scan under a low-cardinality
 leading field (enums, discriminators) is servable with zero new structures by
 cursor `set_range` prefix-hopping (O(distinct-leading-prefixes × log n)); not
 applicable to interval stabbing, whose pointwise layout needs the coverage-walk
-shape. Interval predicates lower to word comparisons over the start/end column
-pair (`50-storage.md` image layout), so the filter kernels are the existing 8-byte
-shapes; no new NEON widths exist. The membership kernel (`s ≤ t < e`, two unsigned
+shape. Interval membership predicates lower to word comparisons over the
+start/end column pair (`50-storage.md` image layout), and interval-pair
+predicates classify through the configuration kernel (§ vectorized
+execution — masks, not ops); both are the existing 8-byte shapes and no
+new NEON widths exist. The membership kernel (`s ≤ t < e`, two unsigned
 word compares) needs no ray awareness: a ray's end (`MAX` = ∞, the point-domain
 law — `10-data-model.md`) is just the largest word, so `t = MAX−1` — the last
 point — passes against `[s, MAX)` through the same two compares, and validation
@@ -281,8 +283,16 @@ the shipped shape. **No indirect
 dispatch exists in the hot path**: sinks, counters, and kernels are monomorphized
 generics, never `dyn`. NEON (`cfg(aarch64)`, 128-bit = 2×u64) is confined to the
 sanctioned kernel shapes:
-fixed-width predicate scans (interval membership/overlap included — two-word
-compares over the start/end column pair, no new width), survivor compaction,
+fixed-width predicate scans (interval membership included — two-word
+compares over the start/end column pair, no new width), **the
+configuration kernel** (interval-pair predicates are Allen *masks*, not
+ops: 8 `cmhi`/`cmeq` predicate lanes over the four endpoint words pack
+into a 6-bit signature, a 64-byte nibble table held in q registers maps
+signature → basic code via `tbl`, and membership is the broadcast mask's
+16-byte `tbl` — one branchless, **flag-free** kernel for all 8192 masks,
+dense in filter position and gathered in residual/anti-probe position,
+with the flag-free law enforced structurally by `scripts/check-asm.sh`
+on the release disassembly), survivor compaction,
 fold/accumulate kernels (Sum/Min/Max/Count over batch columns, strided or
 gathered — Sum semantics unchanged: i128 accumulation, one range check at
 finalization), gather kernels (position-indexed column reads), and

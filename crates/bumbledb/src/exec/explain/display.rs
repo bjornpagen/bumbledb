@@ -103,6 +103,24 @@ fn fmt_free_join(
             node_stats.residual_pass,
             node_stats.residual_fail,
         )?;
+        // Per-node mask selectivity, est vs actual: est is the mask's
+        // measure in the coordinate system (popcount/13, the
+        // selectivity model's fraction — `plan/selectivity.rs`); actual
+        // rides the residual pass/fail counts above (the configuration
+        // kernel fires the same residual counter per element — no new
+        // instrumentation category).
+        if !node.allen_residuals.is_empty() {
+            write!(f, "    allen masks (est keep, actual above):")?;
+            for placed in &node.allen_residuals {
+                match placed.mask {
+                    crate::ir::MaskTerm::Literal(mask) => {
+                        write!(f, " {:#06x}({}/13)", mask.bits(), mask.popcount())?;
+                    }
+                    crate::ir::MaskTerm::Param(param) => write!(f, " param{}(?/13)", param.0)?,
+                }
+            }
+            writeln!(f)?;
+        }
         writeln!(
             f,
             "    anti-probes: {} placed, probed={} rejected={}",

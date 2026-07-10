@@ -255,6 +255,201 @@ fn fold_throughput_contiguous_sum() {
     );
 }
 
+/// The configuration kernel's boundary corpus: four endpoint streams of
+/// length `len` with heavy boundary mass — a small domain so adjacency
+/// and equal endpoints occur constantly, nesting by construction, and
+/// rays (`end == u64::MAX`, the point-domain law) mixed in. The leading
+/// pairs pin the named shapes (adjacent, nested, equal, rays) whenever
+/// `len` admits them.
+#[allow(clippy::type_complexity)] // four parallel streams IS the operand shape
+fn allen_corpus(len: usize, rng: &mut Lcg) -> (Vec<u64>, Vec<u64>, Vec<u64>, Vec<u64>) {
+    const MAX: u64 = u64::MAX;
+    let named: &[(u64, u64, u64, u64)] = &[
+        (0, 5, 5, 9),     // adjacent (meets)
+        (5, 9, 0, 5),     // adjacent (met-by)
+        (0, 10, 3, 7),    // nested (contains)
+        (3, 7, 0, 10),    // nested (during)
+        (2, 6, 2, 6),     // equal
+        (3, MAX, 7, MAX), // two rays
+        (0, 5, 5, MAX),   // meets a ray
+        (2, MAX, 2, 6),   // started-by, bounded inside a ray
+    ];
+    let (mut a_s, mut a_e) = (Vec::with_capacity(len), Vec::with_capacity(len));
+    let (mut b_s, mut b_e) = (Vec::with_capacity(len), Vec::with_capacity(len));
+    for i in 0..len {
+        let (x_s, x_e, y_s, y_e) = if i < named.len() {
+            named[i]
+        } else {
+            let mut draw = || {
+                let s = rng.next() % 12;
+                match rng.next() % 4 {
+                    0 => (s, MAX), // a ray flavor per few pairs
+                    n => (s, s + 1 + n % 12),
+                }
+            };
+            let ((x_s, x_e), (y_s, y_e)) = (draw(), draw());
+            (x_s, x_e, y_s, y_e)
+        };
+        a_s.push(x_s);
+        a_e.push(x_e);
+        b_s.push(y_s);
+        b_e.push(y_e);
+    }
+    (a_s, a_e, b_s, b_e)
+}
+
+/// Lengths that stress the configuration kernel's window widths (8 for
+/// codes, 16 for the mask `tbl`): lane multiples ±1 for both, plus the
+/// small-batch scalar fallbacks.
+const ALLEN_LENGTHS: &[usize] = &[0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 100, 257];
+
+/// The unsafe-allowlist law for the configuration kernel:
+/// `allen_code_batch` is bit-identical to the scalar reference AND to
+/// PRD 03's `classify` (the reference is the decision tree; the kernel
+/// is the signature table — the test cross-checks table against tree)
+/// across randomized inputs including every boundary shape: adjacent,
+/// nested, equal, rays, lane-multiple ±1 lengths.
+#[test]
+fn allen_code_batch_matches_reference_and_classify_bit_for_bit() {
+    let mut rng = Lcg(0xA11E);
+    for &len in ALLEN_LENGTHS {
+        let (a_s, a_e, b_s, b_e) = allen_corpus(len, &mut rng);
+        let mut kernel = Vec::new();
+        allen_code_batch(&a_s, &a_e, &b_s, &b_e, &mut kernel);
+        let mut reference = vec![0u8; len];
+        super::reference::allen_codes(&a_s, &a_e, &b_s, &b_e, &mut reference);
+        assert_eq!(kernel, reference, "codes len {len}");
+        for i in 0..len {
+            let a = crate::interval::Interval::<u64>::new(a_s[i], a_e[i]).expect("nonempty");
+            let b = crate::interval::Interval::<u64>::new(b_s[i], b_e[i]).expect("nonempty");
+            assert_eq!(
+                kernel[i],
+                crate::allen::classify(a, b) as u8,
+                "classify at {i} of len {len}: {:?} vs {:?}",
+                (a_s[i], a_e[i]),
+                (b_s[i], b_e[i]),
+            );
+        }
+        // The constant-operand reference against classify too (its live
+        // dispatch reader is the non-aarch64 build; here it is oracle-
+        // checked on every target).
+        let (c_s, c_e) = (3u64, 9u64);
+        let c = crate::interval::Interval::<u64>::new(c_s, c_e).expect("nonempty");
+        let mut reference_const = vec![0u8; len];
+        super::reference::allen_codes_const(&a_s, &a_e, c_s, c_e, &mut reference_const);
+        for i in 0..len {
+            let a = crate::interval::Interval::<u64>::new(a_s[i], a_e[i]).expect("nonempty");
+            assert_eq!(reference_const[i], crate::allen::classify(a, c) as u8);
+        }
+    }
+}
+
+/// `allen_filter_batch` (codes + broadcast mask → keep bytes) is
+/// bit-identical to the scalar reference across the 13 singletons, the
+/// workload composites, and randomized masks — and its keep byte equals
+/// `mask.contains(classify(...))` per pair.
+#[test]
+fn allen_filter_batch_matches_reference_across_masks() {
+    use crate::allen::{AllenMask, Basic};
+    let mut rng = Lcg(0x13F1);
+    let mut masks: Vec<AllenMask> = Basic::ALL
+        .iter()
+        .map(|b| AllenMask::new(b.bit()).expect("singleton"))
+        .collect();
+    masks.extend([
+        AllenMask::INTERSECTS,
+        AllenMask::COVERS,
+        AllenMask::DISJOINT,
+        AllenMask::EMPTY,
+        AllenMask::FULL,
+    ]);
+    for _ in 0..16 {
+        masks.push(AllenMask::new((rng.next() & 0x1FFF) as u16).expect("13-bit"));
+    }
+    for &len in ALLEN_LENGTHS {
+        let (a_s, a_e, b_s, b_e) = allen_corpus(len, &mut rng);
+        let mut codes = Vec::new();
+        allen_code_batch(&a_s, &a_e, &b_s, &b_e, &mut codes);
+        for &mask in &masks {
+            let mut kernel = Vec::new();
+            allen_filter_batch(&codes, mask, &mut kernel);
+            let mut reference = vec![0u8; len];
+            super::reference::allen_keep(&codes, mask.bits(), &mut reference);
+            assert_eq!(
+                kernel,
+                reference,
+                "keep len {len} mask {:#06x}",
+                mask.bits()
+            );
+            for i in 0..len {
+                let a = crate::interval::Interval::<u64>::new(a_s[i], a_e[i]).expect("nonempty");
+                let b = crate::interval::Interval::<u64>::new(b_s[i], b_e[i]).expect("nonempty");
+                assert_eq!(
+                    kernel[i] != 0,
+                    mask.contains(crate::allen::classify(a, b)),
+                    "membership at {i} of len {len} mask {:#06x}",
+                    mask.bits(),
+                );
+            }
+        }
+    }
+}
+
+/// The dense filter-position compositions (`allen_filter_columns` and
+/// its constant-operand form) produce exactly the scalar
+/// classify-and-test survivor positions, ascending, across boundary
+/// lengths and masks — including chunk-boundary lengths around the
+/// stack chunk width.
+#[test]
+fn allen_filter_columns_match_the_scalar_survivors_bit_for_bit() {
+    use crate::allen::AllenMask;
+    let mut rng = Lcg(0xC01);
+    let masks = [
+        AllenMask::INTERSECTS,
+        AllenMask::COVERS,
+        AllenMask::DISJOINT,
+        AllenMask::EQUALS,
+        AllenMask::new(0x0AAA).expect("13-bit"),
+    ];
+    for &len in &[0usize, 1, 7, 8, 9, 16, 17, 255, 256, 257, 300] {
+        let (a_s, a_e, b_s, b_e) = allen_corpus(len, &mut rng);
+        for &mask in &masks {
+            let naive = |x_s: u64, x_e: u64, y_s: u64, y_e: u64| {
+                mask.contains(crate::allen::classify(
+                    crate::interval::Interval::<u64>::new(x_s, x_e).expect("nonempty"),
+                    crate::interval::Interval::<u64>::new(y_s, y_e).expect("nonempty"),
+                ))
+            };
+            let mut kernel = Vec::new();
+            allen_filter_columns(&a_s, &a_e, &b_s, &b_e, mask, &mut kernel);
+            let expected: Vec<u32> = (0..len)
+                .filter(|&i| naive(a_s[i], a_e[i], b_s[i], b_e[i]))
+                .map(|i| u32::try_from(i).expect("small"))
+                .collect();
+            assert_eq!(
+                kernel,
+                expected,
+                "columns len {len} mask {:#06x}",
+                mask.bits()
+            );
+
+            let (c_s, c_e) = (3u64, 9u64);
+            let mut kernel_const = Vec::new();
+            allen_filter_columns_const(&a_s, &a_e, c_s, c_e, mask, &mut kernel_const);
+            let expected_const: Vec<u32> = (0..len)
+                .filter(|&i| naive(a_s[i], a_e[i], c_s, c_e))
+                .map(|i| u32::try_from(i).expect("small"))
+                .collect();
+            assert_eq!(
+                kernel_const,
+                expected_const,
+                "columns-const len {len} mask {:#06x}",
+                mask.bits()
+            );
+        }
+    }
+}
+
 #[test]
 fn compaction_keeps_exactly_the_masked_items_in_order() {
     // Empty and full survivor sets, plus a mixed mask.

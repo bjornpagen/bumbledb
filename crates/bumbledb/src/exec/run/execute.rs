@@ -249,6 +249,8 @@ impl Executor {
                     residual_sources: Vec::new(),
                     word_residual_sources: Vec::new(),
                     allen_sources: Vec::new(),
+                    allen_gather: Vec::new(),
+                    allen_codes: Vec::new(),
                     anti_sources: anti_specs.iter().map(|_| Vec::new()).collect(),
                     point_checks: Vec::new(),
                     mask: Vec::with_capacity(batch),

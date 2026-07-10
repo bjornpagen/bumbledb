@@ -694,3 +694,162 @@ fn negated_membership_rejects_only_covered_events() {
     let expected: BTreeSet<(u64, u64)> = [(1, 9), (1, 20), (3, 15)].into_iter().collect();
     assert_eq!(got, expected);
 }
+
+/// A splitmix64 step — the repo's no-dependency randomness.
+fn splitmix(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Random `(tag, start, end)` rows over a small point domain — boundary
+/// coincidences (equal endpoints, adjacency) occur constantly — with a
+/// ray flavor mixed in (`end == MAX`, the point-domain law).
+fn random_interval_rows(count: usize, tag_base: u64, state: &mut u64) -> Vec<(u64, u64, u64)> {
+    (0..count)
+        .map(|i| {
+            let start = splitmix(state) % 12;
+            let end = match splitmix(state) % 4 {
+                0 => u64::MAX,
+                n => start + 1 + n % 12,
+            };
+            (tag_base + i as u64, start, end)
+        })
+        .collect()
+}
+
+/// The naive model: nested-loop classify-and-test over the raw rows.
+fn naive_allen_pairs(
+    mask: AllenMask,
+    a_rows: &[(u64, u64, u64)],
+    b_rows: &[(u64, u64, u64)],
+) -> BTreeSet<(u64, u64)> {
+    a_rows
+        .iter()
+        .flat_map(|&(ta, a_s, a_e)| {
+            b_rows.iter().filter_map(move |&(tb, b_s, b_e)| {
+                let a = crate::interval::Interval::<u64>::new(a_s, a_e).expect("nonempty");
+                let b = crate::interval::Interval::<u64>::new(b_s, b_e).expect("nonempty");
+                mask.contains(crate::allen::classify(a, b))
+                    .then_some((ta, tb))
+            })
+        })
+        .collect()
+}
+
+/// The 13 singletons, the workload composites, and 32 random masks.
+fn mask_suite(state: &mut u64) -> Vec<AllenMask> {
+    let mut masks: Vec<AllenMask> = crate::allen::Basic::ALL
+        .iter()
+        .map(|basic| AllenMask::new(basic.bit()).expect("singleton"))
+        .collect();
+    masks.extend([
+        AllenMask::INTERSECTS,
+        AllenMask::COVERS,
+        AllenMask::DISJOINT,
+    ]);
+    for _ in 0..32 {
+        masks.push(AllenMask::new((splitmix(state) & 0x1FFF) as u16).expect("13-bit"));
+    }
+    masks
+}
+
+/// The configuration kernel end-to-end against the naive model: on a
+/// randomized small corpus (rays included), each of the 13 singleton
+/// masks, `INTERSECTS`, `COVERS`, `DISJOINT`, and 32 random masks
+/// produce exactly the nested-loop classify-and-test pairs — the
+/// residual evaluates at the leaf through `run_node`'s
+/// configuration-kernel pass.
+#[test]
+fn allen_masks_agree_with_the_naive_model_on_a_randomized_corpus() {
+    let dir = TempDir::new("run-allen-naive");
+    let schema = tagged_interval_schema(2);
+    let mut state = 0x04C0_FFEE_u64;
+    let a_rows = random_interval_rows(24, 1, &mut state);
+    let b_rows = random_interval_rows(20, 1001, &mut state);
+    let views = tagged_interval_views(&dir, &schema, &[a_rows.clone(), b_rows.clone()]);
+    for mask in mask_suite(&mut state) {
+        let query = interval_pair_query(vec![], allen_residual(mask));
+        let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
+        let rows = run(&plan, &views);
+        let got: BTreeSet<(u64, u64)> = rows
+            .iter()
+            .map(|row| (row[plan.slot_of(VarId(0))], row[plan.slot_of(VarId(2))]))
+            .collect();
+        assert_eq!(
+            got,
+            naive_allen_pairs(mask, &a_rows, &b_rows),
+            "mask {:#06x}",
+            mask.bits()
+        );
+    }
+}
+
+/// The pipelined twin: a third occurrence joined after the pair puts
+/// the Allen residual on a **middle** node, so it evaluates through
+/// `probe_pass`'s configuration-kernel pass (gather → codes → broadcast
+/// mask → compaction) — same answers as the naive model, mask by mask.
+#[test]
+fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
+    let dir = TempDir::new("run-allen-naive-pipe");
+    let schema = tagged_interval_schema(3);
+    let mut state = 0x0BEE_5EED_u64;
+    let a_rows = random_interval_rows(16, 1, &mut state);
+    let b_rows = random_interval_rows(12, 1001, &mut state);
+    let c_rows = random_interval_rows(2, 5001, &mut state);
+    let views = tagged_interval_views(
+        &dir,
+        &schema,
+        &[a_rows.clone(), b_rows.clone(), c_rows.clone()],
+    );
+    let occurrences = (0..3u16)
+        .map(|occ| Occurrence {
+            occ_id: OccId(occ),
+            relation: RelationId(u32::from(occ)),
+            role: Role::Positive,
+            vars: vec![
+                (FieldId(0), VarId(occ * 2)),
+                (FieldId(1), VarId(occ * 2 + 1)),
+            ],
+            filters: vec![],
+        })
+        .collect::<Vec<_>>();
+    let slot_widths: BTreeMap<VarId, SlotWidth> = (0..3u16)
+        .flat_map(|occ| {
+            [
+                (VarId(occ * 2), SlotWidth::One),
+                (VarId(occ * 2 + 1), SlotWidth::Two),
+            ]
+        })
+        .collect();
+    for mask in mask_suite(&mut state).into_iter().step_by(4) {
+        let query = NormalizedQuery {
+            occurrences: occurrences.clone(),
+            residuals: vec![],
+            word_residuals: vec![],
+            allen_residuals: vec![PlacedAllen {
+                lhs: VarId(1),
+                rhs: VarId(3),
+                mask: MaskTerm::Literal(mask),
+            }],
+            anti_probes: vec![],
+            slot_widths: slot_widths.clone(),
+        };
+        let plan = planned_with_sinks(&query, &schema, &[0, 1, 2], &all_vars(&query));
+        let rows = run(&plan, &views);
+        let got: BTreeSet<(u64, u64)> = rows
+            .iter()
+            .map(|row| (row[plan.slot_of(VarId(0))], row[plan.slot_of(VarId(2))]))
+            .collect();
+        // C is an unconstrained (nonempty) factor: projecting it away
+        // leaves exactly the naive pair set.
+        assert_eq!(
+            got,
+            naive_allen_pairs(mask, &a_rows, &b_rows),
+            "mask {:#06x}",
+            mask.bits()
+        );
+    }
+}

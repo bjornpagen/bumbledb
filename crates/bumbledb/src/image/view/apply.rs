@@ -172,11 +172,11 @@ fn row_matches(
             let idx = points.partition_point(|&p| p < start);
             idx < points.len() && points[idx] < end
         }
-        // The Allen kinds: classify-then-test on the scalar path —
-        // encoded words preserve value order, so classification over
-        // column words equals classification over values (the batch
-        // kernel is PRD 04's; the shape already carries the four
-        // endpoints and the mask it will need).
+        // The Allen kinds: classify-then-test — the scalar fallback and
+        // reference beside the configuration kernel (`kernel_scan` takes
+        // the dense pivot; this loop refines non-pivot conjuncts).
+        // Encoded words preserve value order, so classification over
+        // column words equals classification over values.
         FilterPredicate::FieldsAllen { left, right, mask } => {
             let (l_start, l_end) = interval_at(image, *left, position);
             let (r_start, r_end) = interval_at(image, *right, position);
@@ -328,9 +328,13 @@ fn interval_columns(image: &RelationImage, field: FieldId) -> (&[u64], &[u64]) {
 /// `FieldWithin`) lower to compositions of that same shape over the
 /// start/end column pair — two compare-and-mask passes `AND`ed, never a
 /// new kernel shape (docs/architecture/40-execution.md, § access
-/// paths); the Allen kinds are scalar until PRD 04's configuration
-/// kernel. Returns whether the scan ran; `false` falls back to the
-/// scalar `row_matches` loop.
+/// paths); the Allen kinds take the configuration kernel over the dense
+/// stride-1 column pairs (one branchless, flag-free kernel for every
+/// mask — `exec/kernel/allen.rs`). A negated occurrence's view rides
+/// this same path: its Allen filters classify identically and the probe
+/// inverts at the hit, exactly like every other predicate class.
+/// Returns whether the scan ran; `false` falls back to the scalar
+/// `row_matches` loop.
 fn kernel_scan(
     image: &RelationImage,
     predicate: &FilterPredicate,
@@ -366,14 +370,44 @@ fn kernel_scan(
             crate::exec::kernel::filter_range_u64(words, *start, *end - 1, out);
             return true;
         }
+        // The Allen kinds: dense stride-1 endpoint columns through the
+        // configuration kernel — codes via the 8 predicate lanes and the
+        // 64-byte `tbl` nibble table, membership via the broadcast mask,
+        // survivors via the branchless cursor-write.
+        FilterPredicate::FieldsAllen { left, right, mask } => {
+            let (l_starts, l_ends) = interval_columns(image, *left);
+            let (r_starts, r_ends) = interval_columns(image, *right);
+            crate::exec::kernel::allen_filter_columns(
+                l_starts,
+                l_ends,
+                r_starts,
+                r_ends,
+                mask_of(*mask, params),
+                out,
+            );
+            return true;
+        }
+        FilterPredicate::FieldAllen { field, other, mask } => {
+            let (starts, ends) = interval_columns(image, *field);
+            let Const::Interval { start, end } = resolve(other, params) else {
+                unreachable!("validated: the Allen constant side is an interval")
+            };
+            crate::exec::kernel::allen_filter_columns_const(
+                starts,
+                ends,
+                *start,
+                *end,
+                mask_of(*mask, params),
+                out,
+            );
+            return true;
+        }
         // Same-fact comparisons read two varying columns per position —
-        // no constant side, no kernel shape — and the Allen kinds are
-        // classify-then-test until PRD 04's configuration kernel slots
-        // in here; the scalar loop evaluates them all.
-        FilterPredicate::FieldsCompare { .. }
-        | FilterPredicate::FieldsAllen { .. }
-        | FilterPredicate::FieldAllen { .. }
-        | FilterPredicate::FieldsContainPoint { .. } => return false,
+        // no constant side, no kernel shape; the scalar loop evaluates
+        // them.
+        FilterPredicate::FieldsCompare { .. } | FilterPredicate::FieldsContainPoint { .. } => {
+            return false
+        }
     }
     let FilterPredicate::Compare { field, op, value } = predicate else {
         unreachable!("every other kind returned above")

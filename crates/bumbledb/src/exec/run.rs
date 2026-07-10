@@ -364,6 +364,14 @@ struct NodeScratch {
     /// 0/1 (batch key words and binding slots lay intervals out
     /// identically — the `SlotWidth` layout).
     allen_sources: Vec<(Source, Source)>,
+    /// Allen-residual endpoint gather scratch: the four per-survivor
+    /// endpoint streams `[a.start | a.end | b.start | b.end]`, each of
+    /// the survivor count, gathered per residual pass and classified
+    /// whole by the configuration kernel (pooled — capacity retained).
+    allen_gather: Vec<u64>,
+    /// Allen-residual configuration codes, aligned with the survivor
+    /// set (pooled — capacity retained).
+    allen_codes: Vec<u8>,
     /// Anti-probe key sources, aligned with the node's anti-probe list
     /// (one inner vec per anti-probe, one source per key **word**) —
     /// resolved per pass against the runtime cover choice, exactly like

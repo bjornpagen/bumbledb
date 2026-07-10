@@ -105,9 +105,9 @@ pub enum MaskConst {
 ///
 /// The membership kinds are **fixed word-comparison compositions** over
 /// the interval field's two encoded column words; the `Allen` kinds carry
-/// the mask with the four endpoint operands — classify-then-test on the
-/// scalar path (the batch kernel is PRD 04's; the shape already carries
-/// everything it needs). No expression tree exists: shapes as kinds is
+/// the mask with the four endpoint operands — the configuration kernel's
+/// operand shape (`exec/kernel/allen.rs`; classify-then-test scalar on
+/// the refine path). No expression tree exists: shapes as kinds is
 /// the representation-over-control-flow answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilterPredicate {

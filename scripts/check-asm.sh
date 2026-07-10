@@ -50,6 +50,36 @@ no_calls_inside() {
     fi
 }
 
+# no_flag_writers_inside SYMBOL_SUBSTR LABEL
+#
+# The flag-free law, structural (docs/architecture/40-execution.md, the
+# configuration kernel; m2max.core.flag-port-asymmetry /
+# m2max.core.flag-strand-mlp): the Allen hot path carries zero scalar
+# flag-writing instructions — cmp/csel/adds/ccmp confine to the 3-port
+# triad dense and halve gathered miss lanes (~28 -> ~14) — so the gate
+# greps the kernel symbols' machine code for them (LLVM substitutes;
+# the source proves nothing). Calls are forbidden too: a bl would
+# launder a flag writer into another symbol.
+no_flag_writers_inside() {
+    sym="$1"; label="$2"
+    if ! grep -qE "^[0-9a-f]+ <[^>]*${sym}[^>]*>:" "$DUMP"; then
+        echo "check-asm: FAIL [$label] — no symbol matching '${sym}' in $BIN"
+        FAIL=1
+        return
+    fi
+    awk -v pat="$sym" '
+        /^[0-9a-f]+ <.*>:/ { insym = (index($0, pat) != 0) }
+        insym { print }
+    ' "$DUMP" > "$SYM"
+    if grep -E "[[:space:]](cmp|csel|adds|ccmp|bl)[[:space:]]" "$SYM" > "$BAD"; then
+        echo "check-asm: FAIL [$label] — flag writers (or calls) inside '${sym}':"
+        sed 's/^/  /' "$BAD" | head -8
+        FAIL=1
+    else
+        echo "check-asm: ok   [$label] ${sym} free of scalar flag writers (cmp/csel/adds/ccmp)"
+    fi
+}
+
 # --- The probe path is call-free per element (measured).
 # The Descend arm may call run_node/pump/sink machinery; what may NOT
 # appear is a call in the per-element probe class: the colt probe chain,
@@ -68,6 +98,13 @@ no_calls_inside "run_node"   "$PROBE_CLASS" "probe run_node"
 # calls to the hash or the general compare are not.
 SINK_CLASS='bcmp|memcmp|hash_words|hash_core|get_or_insert|6insert17h|entry_core|entry_hashed_core|probe_with|key_at_matches'
 no_calls_inside "emit_batch" "$SINK_CLASS" "sink emit_batch"
+
+# --- The configuration kernel is flag-free (the Allen hot path:
+# cmhi/cmeq predicate lanes, tbl nibble table, broadcast-mask tbl —
+# never a scalar cmp/csel classify).
+no_flag_writers_inside "allen_code_batch_neon"       "allen flag-free codes"
+no_flag_writers_inside "allen_code_batch_const_neon" "allen flag-free codes-const"
+no_flag_writers_inside "allen_filter_batch_neon"     "allen flag-free filter"
 
 if [ "$FAIL" -ne 0 ]; then
     echo "check-asm: FAILURES (see above)"

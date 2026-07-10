@@ -214,10 +214,13 @@ impl Executor {
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
-        // Allen residuals: classify the (start, end) pairs — read at
-        // word-base offsets 0/1 — and test the resolved mask, compacted
-        // like every residual (the line-parallel twin of `run_node`'s
-        // pass; docs/architecture/20-query-ir.md, § the Allen operator).
+        // Allen residuals: gather the four endpoint streams per
+        // survivor — read at word-base offsets 0/1, batch key words or
+        // the element's parent row — classify the whole batch through
+        // the configuration kernel, test the resolved broadcast mask,
+        // and compact on the branchless cursor-write (the line-parallel
+        // twin of `run_node`'s pass; docs/architecture/40-execution.md,
+        // § vectorized execution).
         for (r_idx, (residual, lhs_slot, rhs_slot)) in
             self.allen_residual_slots[node_idx].iter().enumerate()
         {
@@ -226,8 +229,11 @@ impl Executor {
             let lhs_word = super::word_base(cover_vars, residual.lhs, |v| self.width_of(v));
             let rhs_word = super::word_base(cover_vars, residual.rhs, |v| self.width_of(v));
             let n = scratch.survivors.len();
-            scratch.mask.clear();
-            scratch.mask.resize(n, 0);
+            scratch.allen_gather.clear();
+            scratch.allen_gather.resize(4 * n, 0);
+            let (a_starts, rest) = scratch.allen_gather.split_at_mut(n);
+            let (a_ends, rest) = rest.split_at_mut(n);
+            let (b_starts, b_ends) = rest.split_at_mut(n);
             for k in 0..n {
                 let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
                 let parent = scratch.parents[element] as usize;
@@ -235,15 +241,21 @@ impl Executor {
                     Some(word) => scratch.entry_keys[element * arity + word + offset],
                     None => scratch.pending_bindings[parent * slot_count + slot + offset],
                 };
-                let basic = crate::allen::classify_bounds(
-                    &value(lhs_word, *lhs_slot, 0),
-                    &value(lhs_word, *lhs_slot, 1),
-                    &value(rhs_word, *rhs_slot, 0),
-                    &value(rhs_word, *rhs_slot, 1),
-                );
-                let pass = mask.contains(basic);
-                counters.residual(node_idx, pass);
-                scratch.mask[k] = u8::from(pass);
+                a_starts[k] = value(lhs_word, *lhs_slot, 0);
+                a_ends[k] = value(lhs_word, *lhs_slot, 1);
+                b_starts[k] = value(rhs_word, *rhs_slot, 0);
+                b_ends[k] = value(rhs_word, *rhs_slot, 1);
+            }
+            crate::exec::kernel::allen_code_batch(
+                a_starts,
+                a_ends,
+                b_starts,
+                b_ends,
+                &mut scratch.allen_codes,
+            );
+            crate::exec::kernel::allen_filter_batch(&scratch.allen_codes, mask, &mut scratch.mask);
+            for &keep in &scratch.mask {
+                counters.residual(node_idx, keep != 0);
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
