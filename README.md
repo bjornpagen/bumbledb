@@ -130,6 +130,95 @@ monomorphization, one software-prefetch pass, alias-hoisted loops, and a
 single run-coherence memo. Nothing else made the cut — an optimization that
 cannot cite its number does not ship.
 
+## The theory grammar
+
+A `schema!` block is a **presentation of a theory** in dependency theory's
+own notation, ASCII-projected (the lexer bans `⊆`; nothing else changed).
+The *signature* is the relation blocks — names and typed fields; the
+*axioms* are the statements between them. Nothing inside the braces is
+Rust: the macro is a compiler front-end that assigns these tokens the
+calculus's semantics, and its grammar is open-ended and gate-governed — a
+statement form enters when it carries an enforcement plan, never before.
+(Surface shown as ruled by the algebra pass, `docs/prd-algebra/`; where the
+code still speaks a pre-algebra name, that set is the gap ledger.)
+
+### The signature — the seven types
+
+| type | syntax | encoding (canonical; identity = bytes) | denotes | query operators |
+|---|---|---|---|---|
+| `u64` | `n: u64` | big-endian word, order-preserving | a natural | `==` `!=` `<` `<=` `>` `>=`, ∈-sets, `Sum/Min/Max/Count` |
+| `i64` | `t: i64` | sign-flipped big-endian (memcmp order = numeric order) | an integer | same as `u64` |
+| `bool` | `b: bool` | one byte, strictly 0/1 (anything else is corruption) | a truth value | `==` `!=`; Any/All are `Max`/`Min` |
+| `enum` | `k: enum K { A, B }` | declaration-order ordinal; the name is host-only | a finite sum | `==` `!=`, ∈-sets; **order refused** (the ordinal is encoding, not semantics) |
+| `str` | `s: str` | intern id — the dictionary maps repeated text to words; UTF-8 parsed at intern | text under reuse | `==` `!=`, ∈-sets; **order/prefix refused** |
+| `bytes<N>` | `h: bytes<32>` | N raw bytes inline, word-padded; never interned | an identity (digest) | `==` `!=`, ∈-sets; **order refused** (a hash's order is an encoding artifact) |
+| `interval<E>` | `d: interval<i64>` | two order-preserving words `(start, end)`, half-open `[s, e)`, `s < e`; `end = MAX` denotes the ray `[s, ∞)` | **the set of points** `{p : s ≤ p < e}` | `p ∈ d` (membership), `Allen(mask)` (all 8,192 pair relations), `Duration` (the measure), `Pack` (coalesce) |
+
+The two byte-shaped types split by one law — **intern what repeats; inline
+what identifies** — and share no other axis. The interval's preconditions
+(nonempty, half-open) are not conventions: they are exactly what makes
+Allen's thirteen basic relations jointly exhaustive and pairwise disjoint.
+Idioms, not types: time is `i64` epoch-microseconds; money is `i64` minor
+units under a host newtype; floats never persist.
+
+**Field modifiers** (both are host/engine boundary markers, not relations):
+
+- `as NewType` — "known to the host as": mints the nominal layer rustc
+  polices (`HolderId` ≠ `AccountId` at compile time). The engine itself
+  stays structural — a type is an encoding, and names live in the host.
+- `fresh` — a *generation* attribute: the engine mints fresh existential
+  witnesses (dependency theory's fresh values, the chase's own move), and
+  the key theorem `R(f) -> R` materializes automatically — a generator
+  whose outputs could collide would not be a generator, so the statement is
+  a consequence, not a choice. `u64` only.
+
+### The axioms — the statements
+
+Three operators; each is the literature's own symbol under ASCII.
+
+**`R(X) -> R` — the functional dependency** (Armstrong's arrow, verbatim).
+πX is injective on R: no two facts agree on X. Read `->` as *determines*.
+Only the key form exists, and the grammar enforces that representationally:
+the right-hand side admits no projection, so the rejected non-key FD is
+*unwritable*, not merely invalid. **Pointwise lifting:** when X ends in an
+interval position, "agree on X" reads through the denotation — no two facts
+share the scalar prefix *and any point* — so per-group interval
+disjointness (SQL's exclusion constraint) is this statement on this type,
+a theorem rather than a feature.
+
+**`A(X | φ) <= B(Y | ψ)` — the (conditional) inclusion dependency**:
+πX(σφ(A)) ⊆ πY(σψ(B)). Read `<=` as *is contained in* — it is `⊆` written
+in the tokens Rust lexes, and the choice is principled: the subset order is
+an order. The acceptance gate requires Y to be a key of B (one guard probe
+answers "is this tuple present"). SQL's foreign key is the unselected
+special case; the selected form is the CIND of the data-quality
+literature. **Pointwise lifting:** an interval position turns containment
+into *coverage* — every point of A's interval lies under B's segments,
+checkable in O(log n + segments) because B's own key keeps its segments
+disjoint and ordered.
+
+**`A(..) == B(..)` — mutual inclusion**: both containments, each judged
+independently. Read `==` as *exactly*. This is the discriminated-union
+operator: `Parent(id | kind == V) == Arm(parent)` buys totality (a V-kinded
+parent *has* its arm row, same commit), arm validity (an arm row's parent
+exists *with that kind*), and exclusivity (an id in two arms would force
+`kind` to equal two variants — a contradiction, not a rule).
+
+**Selections `| f == v`** are σ with equality only — the same restriction
+the CIND literature imposes — and a selected field may not also be
+projected. `|` reads as *such that*, the set-builder bar. The two levels of
+`==` (sets between atoms, values inside selections) are one concept —
+equality of denotations — at two types, exactly as mathematics uses `=`.
+
+**The judgment discipline**, which is what makes the notation load-bearing:
+a statement is accepted only if the checker holds an
+O(log n)-per-touched-fact enforcement plan (the acceptance gate), and every
+statement is judged once per commit against the transaction's *final
+state* — no modes, no deferral, no triggers. A committed database is a
+model of its theory, always. Where SQL's constraint zoo went, word by word,
+is recorded in [00 — Product](docs/architecture/00-product.md)'s deleted
+vocabulary.
+
 ## Architecture
 
 The design is documented before it is code, and the docs are normative:
