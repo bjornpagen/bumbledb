@@ -64,6 +64,7 @@ orchestrator work, not a PRD.
 ## The PRDs
 
 - [20 — Elegance: api and macros](20-elegance-api-macros.md)
+- [22 — Borrowed structs, borrowed params, and the named-schema typestate](22-borrowed-structs-typestate.md) — **runs after 20 and before 21** (same emission code as 20's territory; 21 stays the closing pass and cleans this surface's bench fallout)
 - [21 — Elegance: bench crate](21-elegance-bench.md)
 
 ## Refusals (recorded, with reasons — do not re-litigate)
@@ -90,6 +91,21 @@ as a deliberate decision:
 - **Boundary guards are not branches to eliminate.** The reopen-trust ceiling
   (PRD 08) and the dynamic-surface witnesses (PRD 06) check once at a trust
   boundary — that is parse-don't-validate working, not a violation of it.
+- **The results redesign is refused, both variants** (borrow-at-finalize
+  `ResultBuffer<'snap>`, and words-on-access): observationally identical to the
+  current memoized one-copy design for real hosts — the copy is the lifetime
+  decoupler that lets results outlive snapshots, and the deleted copy is noise
+  beside the dict get next to it. Elegance-for-elegance's-sake; the borrowed
+  surface stops at facts and params (PRD 22).
+- **No hash swap of any kind.** blake3 full-width is the identity hash — the
+  decision block with the AEGIS-128L alternative and the hardware-SHA-256
+  reversal trigger lives beside the collision axiom in `10-data-model.md`; the
+  M-key-width question is an OPEN item, not a swap.
+- **The schema macro stays emission-shaped:** derive-inversion, schema
+  composition/fragments, syn/quote adoption, and expression-position `schema!`
+  are each refused for structural reasons recorded in the planning discussion —
+  the macro emits one named schema's descriptors and nothing else (PRD 22's
+  header is the whole growth).
 
 ## Elegance-pass constraints (bind PRDs 16–21 jointly)
 
