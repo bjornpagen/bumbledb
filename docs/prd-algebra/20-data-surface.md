@@ -25,11 +25,22 @@ the portable half of the API, not ETL plumbing).
 ## Context (decided shape — owner-ruled 2026-07-10)
 
 1. **`schema!` is the sole idiomatic schema surface, and its grammar is
-   FROZEN**: relations + statements, forever. Emission may grow (structs,
-   newtypes, the theory ZST, id constants); grammar may not. The descriptor
-   path (`SchemaDescriptor` implementing the definition trait) remains the
-   *data* schema surface — the bench crate, the oracle, and any future
-   binding that needs runtime schemas — existing, not blessed.
+   OPEN-ENDED — owner-evolvable, forever.** This is a research database:
+   the dependency calculus is not done growing (richer statement forms,
+   deeper selections, whatever the theory needs next), and compatibility is
+   never a design input (`00-product.md`), so the grammar changes whenever
+   the design improves — the fingerprint makes every grammar-visible change
+   a new theory, and ETL is the story, exactly as for any other break.
+   Grammar growth is governed by the **acceptance gate**, not by stability
+   promises: a statement form enters when it carries an enforcement plan,
+   and by nothing else. The one boundary that holds is categorical, not
+   temporal: **the macro speaks the theory language — schema and
+   statements, whatever dependency theory grows into — and never the query
+   language.** Statements are code; queries are data (item 2); that line
+   does not move even as everything on the theory side of it does. The
+   descriptor path (`SchemaDescriptor` implementing the definition trait)
+   remains the *data* schema surface — the bench crate, the oracle, and any
+   future binding that needs runtime schemas — existing, not blessed.
 2. **The query surface is the IR, permanently: pure data.** No builder API,
    no typed query variables, no text language, no ergonomic layer in the
    engine — ever. Any convenience syntax lives in a downstream package (in
@@ -88,7 +99,8 @@ the portable half of the API, not ETL plumbing).
 3. `ir::render`: rule notation, deterministic, used by `SchemaError`-class
    query errors and the stats/EXPLAIN surface; golden-tested.
 4. Docs: the two-surface framing ("the theory surface / the data surface"),
-   the grammar freeze, the trust-boundary law, the punt record.
+   the open-ended-grammar ruling and its categorical boundary, the
+   trust-boundary law, the punt record.
 
 ## Passing criteria
 
@@ -97,9 +109,10 @@ the portable half of the API, not ETL plumbing).
 - `[test]` `ir::render` goldens: the calendar union query and one
   Pack/Duration head render to the documented notation byte-exactly.
 - `[shape]` No query builder, no query macro, no text-language surface
-  exists in the engine (grep); the grammar-freeze sentence is in
-  `70-api.md`; the punt record and the two refusals (builder; engine-side
-  sugar) are in the refusals ledger.
+  exists in the engine (grep); `70-api.md` states the open-ended-grammar
+  ruling and its categorical boundary (theory language in the macro, query
+  language never); the punt record and the two refusals (builder;
+  engine-side sugar) are in the refusals ledger.
 - `[shape]` Id constants exist per relation/field; the manifest is
   reachable from the theory; no serde/N-API dependency exists anywhere in
   the engine workspace (the dependency law's grep, extended).
@@ -108,7 +121,7 @@ the portable half of the API, not ETL plumbing).
 ## Doc amendments (rule 5)
 
 `20-query-ir.md`: the surface ruling, the trust-boundary law, the renderer.
-`70-api.md`: the two-surface framing, the grammar freeze, the manifest, the
-punt record. `00-product.md`: the text-language OPEN item superseded by the
+`70-api.md`: the two-surface framing, the open-ended grammar with its
+categorical boundary, the manifest, the punt record. `00-product.md`: the text-language OPEN item superseded by the
 sharper ruling; the anticipated-binding note added to the non-goals with its
 quarantine shape. Architecture README: OPEN list updated accordingly.
