@@ -102,6 +102,7 @@ Phase F — the write side, the type ledger, and the surface ruling:
 - [18 — The generation witness: read-compute-write as a value](18-generation-witness.md)
 - [19 — Derived relations: the view story, canonized (doc unit)](19-derived-relations.md)
 - [20 — The data surface, ruled: schemas are code, queries are data](20-data-surface.md)
+- [23 — The query notation: set-builder, promoted from the schema grammar](23-query-notation.md)
 
 Phase G — the intuition:
 - [21 — The cookbook: modeling intuition as schemas (doc unit)](21-cookbook.md)
@@ -113,7 +114,9 @@ Dependency spine: 01 and 02 landed; 03→04; 05→06→07→08; 09 additionally 
 `docs/prd/` 11–12 (the chase) landed; 10 free (its dependency, 02, landed); 11→12; 13/14 landed
 (residual landed with 01); 15 requires 03/05/10/12; 16 requires 15; 17–18 free
 (17's oracle rows fold into 15 if it lands first); 19 requires 18; 20
-requires 05 (its sweep and renderer target the rules-shaped IR); 21 lands
+requires 05 (its sweep and renderer target the rules-shaped IR); 23 requires
+05 and 20 and coordinates with 21 (the cookbook's queries are written in the
+23 notation, round-trip-pinned against `ir::render`); 21 lands
 last (it is written against the whole set's surface and its recipes are
 rot-proofed by compilation). Phases A/B/C/F may interleave; E closes the
 measured half of the set (16 gains a `bytes<32>` content-hash column and a
